@@ -1,0 +1,51 @@
+[workspace]
+members = [
+    "src-tauri",
+    "blockloom-app",
+    "blockloom-core",
+    "blockloom-protocol",
+    "blockloom-runtime",
+]
+resolver = "2"
+
+default-members = [
+    "blockloom-app",
+    "blockloom-core",
+    "blockloom-protocol",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+blockstitch-core = { git = "https://github.com/Blockworked/blockstitch", rev = "cbde6c0a" }
+tauri = { git = "https://github.com/Blockworked/tauri", rev = "769171ab" }
+tauri-build = { git = "https://github.com/Blockworked/tauri", rev = "769171ab", features = [] }
+tauri-runtime-cef = { git = "https://github.com/Blockworked/tauri", rev = "769171ab", default-features = false }
+bevy = "0.19.1"
+bevy_rapier2d = "0.36.0"
+bevy_rapier3d = "0.36.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.0", features = ["sync"] }
+tracing = "0.1.44"
+tracing-log = "0.2.0"
+tracing-subscriber = "0.3.23"
+uuid = { version = "1.24.0", features = ["v4"] }
+dirs = "7.0.0"
+rfd = "0.17.2"
+axum = { version = "0.8.9", features = ["ws"] }
+tower-http = { version = "0.7.1", features = ["cors"] }
+
+# The CEF runtime and the `cef` bindings are forks, pinned the same way
+# Blockwork pins them - see that repo's Cargo.toml.
+[patch.crates-io]
+cef = { git = "https://github.com/Blockworked/cef-rs", rev = "b8fad92" }
+cef-dll-sys = { git = "https://github.com/Blockworked/cef-rs", rev = "b8fad92" }
+dpi = { git = "https://github.com/tauri-apps/winit-gtk4", branch = "master" }
+
+# The runtime process renders a live game world; a debug-speed Bevy is
+# unusable, so its dependencies stay optimized even in a debug build.
+[profile.dev.package."*"]
+opt-level = 3

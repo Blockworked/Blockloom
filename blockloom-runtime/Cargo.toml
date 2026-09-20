@@ -1,0 +1,19 @@
+[package]
+name = "blockloom-runtime"
+version.workspace = true
+edition.workspace = true
+description = "The game world: a Bevy app that renders a Blockloom project and runs its blocks."
+
+[[bin]]
+name = "blockloom-runtime"
+path = "src/main.rs"
+
+[dependencies]
+blockloom-core = { path = "../blockloom-core" }
+blockloom-protocol = { path = "../blockloom-protocol" }
+bevy.workspace = true
+bevy_rapier2d.workspace = true
+bevy_rapier3d.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true

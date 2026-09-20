@@ -1,0 +1,13 @@
+[package]
+name = "blockloom-core"
+version.workspace = true
+edition.workspace = true
+description = "Blockloom's engine library: the project document, block vocabulary, VM and sensor state."
+
+[dependencies]
+blockstitch-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+dirs.workspace = true
+tracing.workspace = true

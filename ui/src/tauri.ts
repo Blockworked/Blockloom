@@ -1,0 +1,157 @@
+// One function per backend command. Everything the UI does to the document
+// goes through here, and every result comes back as a fresh state snapshot on
+// the `state-updated` event rather than as a return value.
+import { invoke, listen, getVersion } from './bridge';
+import type {
+  BlockPieceDto,
+  BlockShapeDto,
+  CameraDto,
+  InstrPath,
+  InstructionDto,
+  Mode,
+  PhysicsDto,
+  PlacementDto,
+  StateDto,
+  ValueDto,
+  ValueKind,
+  ValueLocation,
+  VisualDto,
+} from './types';
+
+export function getState(): Promise<StateDto> {
+  return invoke('get_state');
+}
+
+export function onStateUpdated(cb: (state: StateDto) => void): Promise<() => void> {
+  return listen<StateDto>('state-updated', evt => cb(evt.payload));
+}
+
+export function getAppVersion(): Promise<string> {
+  return getVersion();
+}
+
+// ─── Projects ───────────────────────────────────────────────────────────────
+export const selectProject = (index: number) => invoke<void>('select_project', { index });
+export const newProject = (name: string, mode: Mode) => invoke<void>('new_project', { name, mode });
+export const removeProject = () => invoke<void>('remove_project');
+export const setProjectName = (name: string) => invoke<void>('set_project_name', { name });
+export const saveProject = () => invoke<void>('save_project');
+
+/** Asks where to save, then exports. Resolves quietly if the dialog was
+ * cancelled. */
+export async function exportProject(): Promise<void> {
+  const defaultName = await invoke<string>('export_file_name');
+  const path = await invoke<string | null>('pick_project_file', { save: true, defaultName });
+  if (path) await invoke<void>('export_project', { path });
+}
+
+export async function importProject(): Promise<void> {
+  const path = await invoke<string | null>('pick_project_file', { save: false });
+  if (path) await invoke<void>('import_project', { path });
+}
+
+// ─── The world ──────────────────────────────────────────────────────────────
+export const setMode = (mode: Mode) => invoke<void>('set_mode', { mode });
+export const setBackground = (color: string) => invoke<void>('set_background', { color });
+export const setGravity = (gravity: [number, number, number]) => invoke<void>('set_gravity', { gravity });
+export const setCamera = (camera: CameraDto) => invoke<void>('set_camera', { camera });
+
+// ─── Actors ─────────────────────────────────────────────────────────────────
+export const selectActor = (actorId: string) => invoke<void>('select_actor', { actorId });
+export const addActor = (shape: string) => invoke<string>('add_actor', { shape });
+export const duplicateActor = (actorId: string) => invoke<string>('duplicate_actor', { actorId });
+export const removeActor = (actorId: string) => invoke<void>('remove_actor', { actorId });
+export const renameActor = (actorId: string, name: string) => invoke<void>('rename_actor', { actorId, name });
+export const setActorVisual = (actorId: string, visual: VisualDto) =>
+  invoke<void>('set_actor_visual', { actorId, visual });
+export const setActorPlacement = (actorId: string, placement: PlacementDto) =>
+  invoke<void>('set_actor_placement', { actorId, placement });
+export const setActorPhysics = (actorId: string, physics: PhysicsDto) =>
+  invoke<void>('set_actor_physics', { actorId, physics });
+export const setActorVisible = (actorId: string, visible: boolean) =>
+  invoke<void>('set_actor_visible', { actorId, visible });
+
+// ─── Running ────────────────────────────────────────────────────────────────
+export const runProject = () => invoke<void>('run_project');
+export const stopProject = () => invoke<void>('stop_project');
+export const pauseProject = (paused: boolean) => invoke<void>('pause_project', { paused });
+export const closeRuntime = () => invoke<void>('close_runtime');
+
+// ─── Instructions ───────────────────────────────────────────────────────────
+export const addInstruction = (strandId: string, path: InstrPath, instruction: InstructionDto) =>
+  invoke<void>('add_instruction', { strandId, path, instruction });
+export const editInstruction = (strandId: string, path: InstrPath, instruction: InstructionDto) =>
+  invoke<void>('edit_instruction', { strandId, path, instruction });
+export const removeInstruction = (strandId: string, path: InstrPath) =>
+  invoke<void>('remove_instruction', { strandId, path });
+export const deleteInstruction = (strandId: string, path: InstrPath, x: number, y: number) =>
+  invoke<string | null>('delete_instruction', { strandId, path, x, y });
+export const pasteInstructions = (x: number, y: number, instructions: InstructionDto[]) =>
+  invoke<string>('paste_instructions', { x, y, instructions });
+
+// ─── Strands ────────────────────────────────────────────────────────────────
+export const addStrand = (x: number | null, y: number | null, instruction: InstructionDto | null) =>
+  invoke<string>('add_strand', { x, y, instruction });
+export const removeStrand = (strandId: string) => invoke<void>('remove_strand', { strandId });
+export const moveStrand = (strandId: string, x: number, y: number) =>
+  invoke<void>('move_strand', { strandId, x, y });
+export const splitStrand = (strandId: string, path: InstrPath, x: number, y: number) =>
+  invoke<string>('split_strand', { strandId, path, x, y });
+export const mergeStrand = (draggedId: string, targetId: string, path: InstrPath) =>
+  invoke<void>('merge_strand', { draggedId, targetId, path });
+
+// ─── Values ─────────────────────────────────────────────────────────────────
+export const editValueField = (location: ValueLocation, text: string) =>
+  invoke<void>('edit_value_field', { location, text });
+export const setValueKind = (location: ValueLocation, kind: ValueKind) =>
+  invoke<void>('set_value_kind', { location, kind });
+export const takeValue = (location: ValueLocation) => invoke<ValueDto>('take_value', { location });
+export const putValue = (location: ValueLocation, value: ValueDto) =>
+  invoke<void>('put_value', { location, value });
+export const previewValue = (value: ValueDto) => invoke<string>('preview_value', { value });
+export const createFloatingValue = (x: number, y: number, value: ValueDto, originBlockId: string | null) =>
+  invoke<string>('create_floating_value', { x, y, value, originBlockId });
+export const moveFloatingValue = (floatingId: string, x: number, y: number) =>
+  invoke<void>('move_floating_value', { floatingId, x, y });
+export const removeFloatingValue = (floatingId: string) =>
+  invoke<void>('remove_floating_value', { floatingId });
+
+// ─── Comments ───────────────────────────────────────────────────────────────
+export const createComment = (x: number, y: number, text: string) =>
+  invoke<string>('create_comment', { x, y, text });
+export const createAttachedComment = (attachedTo: string, x: number, y: number, text: string) =>
+  invoke<string>('create_comment', { x, y, text, attachedTo });
+export const moveComment = (commentId: string, x: number, y: number) =>
+  invoke<void>('move_comment', { commentId, x, y });
+export const editCommentText = (commentId: string, text: string) =>
+  invoke<void>('edit_comment_text', { commentId, text });
+export const setCommentCollapsed = (commentId: string, collapsed: boolean) =>
+  invoke<void>('set_comment_collapsed', { commentId, collapsed });
+export const removeComment = (commentId: string) => invoke<void>('remove_comment', { commentId });
+
+// ─── Variables and custom blocks ────────────────────────────────────────────
+export const createVariable = (name: string, scope: 'actor' | 'global') =>
+  invoke<void>('create_variable', { name, scope });
+export const renameVariable = (oldName: string, newName: string) =>
+  invoke<void>('rename_variable', { oldName, newName });
+export const deleteVariable = (name: string) => invoke<void>('delete_variable', { name });
+export const createBlock = (pieces: BlockPieceDto[], shape: BlockShapeDto, color: string) =>
+  invoke<string>('create_block', { pieces, shape, color });
+export const editBlock = (blockId: string, pieces: BlockPieceDto[], shape: BlockShapeDto, color: string) =>
+  invoke<void>('edit_block', { blockId, pieces, shape, color });
+export const deleteBlock = (blockId: string) => invoke<void>('delete_block', { blockId });
+
+// ─── Undo and the log ───────────────────────────────────────────────────────
+export const undo = () => invoke<void>('undo');
+export const redo = () => invoke<void>('redo');
+export const clearLog = () => invoke<void>('clear_log');
+export const pushLog = (kind: string, text: string) => invoke<void>('push_log', { kind, text });
+
+// ─── The window ─────────────────────────────────────────────────────────────
+/** Resets page zoom to 100% - Ctrl/Cmd+0 can't rely on the browser's own
+ * accelerator in this CEF runtime. */
+export const resetZoom = () => invoke<void>('reset_zoom');
+/** Matches the native window's background to the theme, so no white shows
+ * before the page paints or while the window closes. */
+export const setThemeBackground = (theme: 'light' | 'dark') =>
+  invoke<void>('set_theme_background', { theme });

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width">
+  <title>Blockloom</title>
+  <script>
+    // Apply the saved theme before any CSS loads, so the window never flashes.
+    (function () {
+      try {
+        var t = localStorage.getItem('blockstitch-theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    })();
+  </script>
+  <style>
+    html { background: #1c1c1e; }
+    html[data-theme="light"] { background: #f2f2f5; }
+  </style>
+</head>
+<body>
+<div id="app"></div>
+<div id="dd-portal"></div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

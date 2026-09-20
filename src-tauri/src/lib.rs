@@ -1,0 +1,165 @@
+//! Blockloom's editor window: a Tauri app on a CEF runtime.
+//!
+//! Unlike Blockwork, there's no daemon - this process owns the backend
+//! (`blockloom-app`) directly, and every frontend command goes straight into
+//! `Backend::dispatch`. The one other process is the game world
+//! (`blockloom-runtime`), spawned on Play, because Bevy needs an event loop of
+//! its own and this one belongs to CEF.
+
+mod theme;
+
+use blockloom_app::{AppHandle as BackendHandle, Backend, Event};
+use serde_json::Value;
+use tauri::{Emitter, Manager, State};
+
+/// The event the frontend listens on for state snapshots.
+const STATE_EVENT: &str = "state-updated";
+
+pub fn run() {
+    tracing_subscriber::fmt::init();
+    let _ = tracing_log::LogTracer::init();
+
+    // CEF re-execs this same binary for its helper processes (renderer, GPU,
+    // zygote, ...), tagged with a `--type=` switch. Those must fall straight
+    // through to `tauri::Builder::run`, which hands them to
+    // `cef::execute_process` and exits - no backend, no window, no runtime.
+    let is_cef_subprocess = std::env::args().any(|arg| arg.starts_with("--type="));
+
+    // `--ozone-platform=x11` forces the X11 Ozone platform. The CEF runtime
+    // picks Wayland whenever `WAYLAND_DISPLAY` is set, so clear it to keep CEF
+    // and winit agreeing on X11; the switch below covers Chromium itself.
+    let ozone_platform = if is_cef_subprocess {
+        None
+    } else {
+        ozone_platform_arg()
+    };
+    if ozone_platform.as_deref() == Some("x11") {
+        // SAFETY: cleared before any thread reading the env starts; the CEF
+        // runtime only reads it during init, on this thread.
+        unsafe {
+            std::env::remove_var("WAYLAND_DISPLAY");
+        }
+    }
+
+    let mut cef = tauri_runtime_cef::Cef::default()
+        .command_line_args([("--use-mock-keychain", None::<String>)]);
+    if let Some(platform) = &ozone_platform {
+        cef = cef.command_line_arg("--ozone-platform", Some(platform.clone()));
+    }
+    let mut builder = tauri::Builder::default().runtime(cef);
+
+    if !is_cef_subprocess {
+        builder = builder.setup(|app| {
+            let handle = app.handle().clone();
+            // Every state change is re-emitted to the page as one event; the
+            // frontend keeps no other copy of the truth.
+            let backend = Backend::start(BackendHandle::new(move |event| {
+                if let Event::State(json) = event {
+                    let _ = handle.emit(STATE_EVENT, RawJson(json.to_string()));
+                }
+            }));
+            app.manage(backend);
+            theme::create_main_window(app.handle())?;
+            Ok(())
+        });
+    }
+
+    builder
+        .invoke_handler(tauri::generate_handler![
+            call,
+            reset_zoom,
+            pick_project_file,
+            theme::set_theme_background
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building the Blockloom window")
+        .run(|app, event| {
+            // The game window is this process's child: it goes when we go.
+            if let tauri::RunEvent::Exit = event
+                && let Some(backend) = app.try_state::<Backend>()
+            {
+                backend.shutdown();
+            }
+        });
+}
+
+/// A JSON string forwarded to the webview verbatim, so the state snapshot isn't
+/// parsed and re-serialized on the way through. `Clone` is Tauri's requirement
+/// for an event payload.
+#[derive(Clone)]
+struct RawJson(String);
+
+impl serde::Serialize for RawJson {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serde_json::value::RawValue::from_string(self.0.clone())
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+
+/// Runs a backend command (see `ui/src/bridge.ts`).
+#[tauri::command]
+fn call(backend: State<'_, Backend>, cmd: String, args: Value) -> Result<Value, String> {
+    backend.dispatch(&cmd, args)
+}
+
+/// Resets Chromium page zoom to 100%. Handled here rather than by the browser's
+/// own Ctrl+0 accelerator, which this CEF runtime can't be relied on to deliver
+/// (opt-in per webview; absent entirely on Alloy-style webviews).
+#[tauri::command]
+fn reset_zoom(app: tauri::AppHandle) -> Result<(), String> {
+    let windows = app.webview_windows();
+    if windows.is_empty() {
+        return Err("no app window".to_string());
+    }
+    for window in windows.values() {
+        window.set_zoom(1.0).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Shows a file dialog for a `.blockloom` file - a save dialog pre-filled with
+/// `default_name` when `save` is set, an open dialog otherwise. Runs here rather
+/// than in the backend so the dialog belongs to the editor window. Returns
+/// `None` if the user cancelled.
+#[tauri::command]
+async fn pick_project_file(save: bool, default_name: Option<String>) -> Option<String> {
+    let dialog = rfd::AsyncFileDialog::new().add_filter(
+        "Blockloom project",
+        &[blockloom_core::project::PROJECT_EXTENSION],
+    );
+    let file = if save {
+        dialog
+            .set_title("Export project")
+            .set_file_name(default_name.unwrap_or_default())
+            .save_file()
+            .await
+    } else {
+        dialog.set_title("Import project").pick_file().await
+    };
+    file.map(|file| file.path().to_string_lossy().into_owned())
+}
+
+/// This process's `--ozone-platform` choice, if it was given one.
+fn ozone_platform_arg() -> Option<String> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut chosen = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if let Some(value) = arg.strip_prefix("--ozone-platform=") {
+            if !value.is_empty() {
+                chosen = Some(value.to_string());
+            }
+        } else if arg == "--ozone-platform"
+            && let Some(next) = args.get(index + 1)
+            && !next.is_empty()
+            && !next.starts_with('-')
+        {
+            chosen = Some(next.clone());
+            index += 1;
+        }
+        index += 1;
+    }
+    chosen
+}

@@ -1,0 +1,360 @@
+//! Maps a command name plus its JSON arguments onto the matching function in
+//! `commands.rs`. Argument names are camelCase, the spelling the frontend
+//! already uses with Tauri's `invoke`.
+
+use crate::commands;
+use crate::state::{InstrPath, ValueLocation};
+use blockloom_core::blocks::{BlockPiece, BlockShape, Instruction};
+use blockloom_core::scene::{Camera, Mode, Physics, Placement, Visual};
+use blockloom_core::value::Value as BlockValue;
+use blockloom_core::wire;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
+
+use crate::Backend;
+
+fn arg<T: DeserializeOwned>(args: &Value, name: &str) -> Result<T, String> {
+    let value = args.get(name).cloned().unwrap_or(Value::Null);
+    serde_json::from_value(value).map_err(|e| format!("invalid argument '{name}': {e}"))
+}
+
+/// An instruction comes in flat (`{"id": _, "type": _, ...}`) and has to be
+/// folded back into blockstitch's `{id, kind}` shape - see [`wire`].
+fn instruction_arg(args: &Value, name: &str) -> Result<Instruction, String> {
+    let value = args.get(name).cloned().unwrap_or(Value::Null);
+    wire::from_wire(value).map_err(|e| format!("invalid argument '{name}': {e}"))
+}
+
+fn instructions_arg(args: &Value, name: &str) -> Result<Vec<Instruction>, String> {
+    let value = args.get(name).cloned().unwrap_or(Value::Null);
+    wire::from_wire(value).map_err(|e| format!("invalid argument '{name}': {e}"))
+}
+
+fn to_json<T: serde::Serialize>(value: T) -> Result<Value, String> {
+    serde_json::to_value(value).map_err(|e| e.to_string())
+}
+
+impl Backend {
+    /// Runs the command named `cmd` with `args` (a JSON object keyed by
+    /// camelCase argument name) and returns its result as JSON.
+    pub fn dispatch(&self, cmd: &str, args: Value) -> Result<Value, String> {
+        let state = &self.state;
+        let app = &self.app;
+        match cmd {
+            "get_state" => to_json(commands::get_state(state)?),
+
+            // ── Projects ───────────────────────────────────────────────────
+            "select_project" => {
+                to_json(commands::select_project(state, app, arg(&args, "index")?)?)
+            }
+            "new_project" => to_json(commands::new_project(
+                state,
+                app,
+                arg(&args, "name").ok(),
+                arg(&args, "mode").unwrap_or_default(),
+            )?),
+            "remove_project" => to_json(commands::remove_project(state, app)?),
+            "set_project_name" => {
+                to_json(commands::set_project_name(state, app, arg(&args, "name")?)?)
+            }
+            "save_project" => to_json(commands::save_open_project(state, app)?),
+            "export_file_name" => to_json(commands::export_file_name(state)?),
+            "export_project" => to_json(commands::export_project(state, arg(&args, "path")?)?),
+            "import_project" => to_json(commands::import_project(state, app, arg(&args, "path")?)?),
+
+            // ── The world ──────────────────────────────────────────────────
+            "set_mode" => {
+                let mode: Mode = arg(&args, "mode")?;
+                to_json(commands::set_mode(state, app, mode)?)
+            }
+            "set_background" => {
+                to_json(commands::set_background(state, app, arg(&args, "color")?)?)
+            }
+            "set_gravity" => {
+                let gravity: [f32; 3] = arg(&args, "gravity")?;
+                to_json(commands::set_gravity(state, app, gravity)?)
+            }
+            "set_camera" => {
+                let camera: Camera = arg(&args, "camera")?;
+                to_json(commands::set_camera(state, app, camera)?)
+            }
+
+            // ── Actors ─────────────────────────────────────────────────────
+            "select_actor" => to_json(commands::select_actor(state, app, arg(&args, "actorId")?)?),
+            "add_actor" => to_json(commands::add_actor(
+                state,
+                app,
+                arg(&args, "shape")?,
+                arg(&args, "name").ok(),
+            )?),
+            "duplicate_actor" => to_json(commands::duplicate_actor(
+                state,
+                app,
+                arg(&args, "actorId")?,
+            )?),
+            "remove_actor" => to_json(commands::remove_actor(state, app, arg(&args, "actorId")?)?),
+            "rename_actor" => to_json(commands::rename_actor(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "name")?,
+            )?),
+            "set_actor_visual" => {
+                let visual: Visual = arg(&args, "visual")?;
+                to_json(commands::set_actor_visual(
+                    state,
+                    app,
+                    arg(&args, "actorId")?,
+                    visual,
+                )?)
+            }
+            "set_actor_placement" => {
+                let placement: Placement = arg(&args, "placement")?;
+                to_json(commands::set_actor_placement(
+                    state,
+                    app,
+                    arg(&args, "actorId")?,
+                    placement,
+                )?)
+            }
+            "set_actor_physics" => {
+                let physics: Physics = arg(&args, "physics")?;
+                to_json(commands::set_actor_physics(
+                    state,
+                    app,
+                    arg(&args, "actorId")?,
+                    physics,
+                )?)
+            }
+            "set_actor_visible" => to_json(commands::set_actor_visible(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "visible")?,
+            )?),
+
+            // ── Running ────────────────────────────────────────────────────
+            "run_project" => to_json(commands::run_project(self, state, app)?),
+            "stop_project" => to_json(commands::stop_project(state, app)?),
+            "pause_project" => to_json(commands::pause_project(state, app, arg(&args, "paused")?)?),
+            "close_runtime" => to_json(commands::close_runtime(state, app)?),
+
+            // ── Instructions ───────────────────────────────────────────────
+            "add_instruction" => to_json(commands::add_instruction(
+                state,
+                app,
+                arg(&args, "strandId")?,
+                arg::<InstrPath>(&args, "path")?,
+                instruction_arg(&args, "instruction")?,
+            )?),
+            "edit_instruction" => to_json(commands::edit_instruction(
+                state,
+                app,
+                arg(&args, "strandId")?,
+                arg::<InstrPath>(&args, "path")?,
+                instruction_arg(&args, "instruction")?,
+            )?),
+            "remove_instruction" => to_json(commands::remove_instruction(
+                state,
+                app,
+                arg(&args, "strandId")?,
+                arg::<InstrPath>(&args, "path")?,
+            )?),
+            "delete_instruction" => to_json(commands::delete_instruction(
+                state,
+                app,
+                arg(&args, "strandId")?,
+                arg::<InstrPath>(&args, "path")?,
+                arg(&args, "x")?,
+                arg(&args, "y")?,
+            )?),
+            "paste_instructions" => to_json(commands::paste_instructions(
+                state,
+                app,
+                arg(&args, "x")?,
+                arg(&args, "y")?,
+                instructions_arg(&args, "instructions")?,
+            )?),
+
+            // ── Strands ────────────────────────────────────────────────────
+            "add_strand" => {
+                let instruction = match args.get("instruction") {
+                    Some(Value::Null) | None => None,
+                    Some(_) => Some(instruction_arg(&args, "instruction")?),
+                };
+                to_json(commands::add_strand(
+                    state,
+                    app,
+                    arg(&args, "x").ok(),
+                    arg(&args, "y").ok(),
+                    instruction,
+                )?)
+            }
+            "remove_strand" => to_json(commands::remove_strand(
+                state,
+                app,
+                arg(&args, "strandId")?,
+            )?),
+            "move_strand" => to_json(commands::move_strand(
+                state,
+                app,
+                arg(&args, "strandId")?,
+                arg(&args, "x")?,
+                arg(&args, "y")?,
+            )?),
+            "split_strand" => to_json(commands::split_strand(
+                state,
+                app,
+                arg(&args, "strandId")?,
+                arg::<InstrPath>(&args, "path")?,
+                arg(&args, "x")?,
+                arg(&args, "y")?,
+            )?),
+            "merge_strand" => to_json(commands::merge_strand(
+                state,
+                app,
+                arg(&args, "draggedId")?,
+                arg(&args, "targetId")?,
+                arg::<InstrPath>(&args, "path")?,
+            )?),
+
+            // ── Values ─────────────────────────────────────────────────────
+            "edit_value_field" => to_json(commands::edit_value_field(
+                state,
+                app,
+                arg::<ValueLocation>(&args, "location")?,
+                arg(&args, "text")?,
+            )?),
+            "set_value_kind" => to_json(commands::set_value_kind(
+                state,
+                app,
+                arg::<ValueLocation>(&args, "location")?,
+                arg(&args, "kind")?,
+            )?),
+            "take_value" => to_json(commands::take_value(
+                state,
+                app,
+                arg::<ValueLocation>(&args, "location")?,
+            )?),
+            "put_value" => to_json(commands::put_value(
+                state,
+                app,
+                arg::<ValueLocation>(&args, "location")?,
+                arg::<BlockValue>(&args, "value")?,
+            )?),
+            "preview_value" => to_json(commands::preview_value(
+                state,
+                arg::<BlockValue>(&args, "value")?,
+            )?),
+            "create_floating_value" => to_json(commands::create_floating_value(
+                state,
+                app,
+                arg(&args, "x")?,
+                arg(&args, "y")?,
+                arg::<BlockValue>(&args, "value")?,
+                arg(&args, "originBlockId").ok().flatten(),
+            )?),
+            "move_floating_value" => to_json(commands::move_floating_value(
+                state,
+                app,
+                arg(&args, "floatingId")?,
+                arg(&args, "x")?,
+                arg(&args, "y")?,
+            )?),
+            "remove_floating_value" => to_json(commands::remove_floating_value(
+                state,
+                app,
+                arg(&args, "floatingId")?,
+            )?),
+
+            // ── Comments ───────────────────────────────────────────────────
+            "create_comment" => to_json(commands::create_comment(
+                state,
+                app,
+                arg(&args, "x")?,
+                arg(&args, "y")?,
+                arg(&args, "text").unwrap_or_default(),
+                arg(&args, "attachedTo").ok().flatten(),
+            )?),
+            "move_comment" => to_json(commands::move_comment(
+                state,
+                app,
+                arg(&args, "commentId")?,
+                arg(&args, "x")?,
+                arg(&args, "y")?,
+            )?),
+            "edit_comment_text" => to_json(commands::edit_comment_text(
+                state,
+                app,
+                arg(&args, "commentId")?,
+                arg(&args, "text")?,
+            )?),
+            "set_comment_collapsed" => to_json(commands::set_comment_collapsed(
+                state,
+                app,
+                arg(&args, "commentId")?,
+                arg(&args, "collapsed")?,
+            )?),
+            "remove_comment" => to_json(commands::remove_comment(
+                state,
+                app,
+                arg(&args, "commentId")?,
+            )?),
+
+            // ── Variables and custom blocks ────────────────────────────────
+            "create_variable" => to_json(commands::create_variable(
+                state,
+                app,
+                arg(&args, "name")?,
+                arg(&args, "scope").unwrap_or_else(|_| "actor".to_string()),
+            )?),
+            "rename_variable" => to_json(commands::rename_variable(
+                state,
+                app,
+                arg(&args, "oldName")?,
+                arg(&args, "newName")?,
+            )?),
+            "delete_variable" => {
+                to_json(commands::delete_variable(state, app, arg(&args, "name")?)?)
+            }
+            "create_block" => {
+                let pieces: Vec<BlockPiece> = arg(&args, "pieces")?;
+                let shape: BlockShape = arg(&args, "shape")?;
+                to_json(commands::create_block(
+                    state,
+                    app,
+                    pieces,
+                    shape,
+                    arg(&args, "color")?,
+                )?)
+            }
+            "edit_block" => {
+                let pieces: Vec<BlockPiece> = arg(&args, "pieces")?;
+                let shape: BlockShape = arg(&args, "shape")?;
+                to_json(commands::edit_block(
+                    state,
+                    app,
+                    arg(&args, "blockId")?,
+                    pieces,
+                    shape,
+                    arg(&args, "color")?,
+                )?)
+            }
+            "delete_block" => to_json(commands::delete_block(state, app, arg(&args, "blockId")?)?),
+
+            // ── Undo, log ──────────────────────────────────────────────────
+            "undo" => to_json(commands::undo(state, app)?),
+            "redo" => to_json(commands::redo(state, app)?),
+            "value_kind_exists" => to_json(commands::value_kind_exists(arg(&args, "kind")?)?),
+            "push_log" => to_json(commands::push_log(
+                state,
+                app,
+                arg(&args, "kind")?,
+                arg(&args, "text")?,
+            )?),
+            "clear_log" => to_json(commands::clear_log(state, app)?),
+
+            other => Err(format!("Unknown command: {other}")),
+        }
+    }
+}

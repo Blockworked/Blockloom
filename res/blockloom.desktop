@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Blockloom
+GenericName=Block-based game engine
+Comment=Build 2D and 3D games out of blocks
+Exec=blockloom
+Icon=blockloom
+Terminal=false
+Categories=Development;IDE;Game;
+StartupWMClass=com.blockworked.Blockloom

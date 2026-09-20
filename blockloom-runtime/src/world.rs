@@ -1,0 +1,780 @@
+//! Everything about the running world that doesn't depend on which dimension
+//! it is: rebuilding it from a project, publishing what the sensing blocks
+//! read, stepping the VM, and applying the effects that are pure transform or
+//! visibility changes.
+//!
+//! Every system here touches the `!Send` [`Engine`], which is what pins them
+//! all to the main thread - the same thread the VM's thread-local sensor
+//! snapshot lives on.
+
+use crate::engine::{ActorId, Dimension, Engine, Gliding, PendingEffects};
+use crate::{bridge, dim2, dim3};
+use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
+use blockloom_core::project::Actor;
+use blockloom_core::scene::{Axis, BodyKind, Mode, Visual};
+use blockloom_core::sense::{ActorSense, Sensors, normalize_key};
+use blockloom_core::vm::{Effect, Event};
+use blockloom_protocol::{ActorStatus, EditorMessage, RuntimeMessage, Status, VariableValue};
+use std::collections::{HashMap, HashSet};
+
+/// The one camera the project controls.
+#[derive(Component)]
+pub struct WorldCamera;
+
+/// `#RRGGBB` as the renderer wants it. An unparseable color reads as magenta,
+/// which is easier to notice than a silent black.
+pub fn parse_color(hex: &str) -> Color {
+    match Srgba::hex(hex) {
+        Ok(color) => color.into(),
+        Err(_) => Color::srgb(1.0, 0.0, 1.0),
+    }
+}
+
+pub fn transform_for(actor: &Actor) -> Transform {
+    let [x, y, z] = actor.placement.position;
+    let [rx, ry, rz] = actor.placement.rotation;
+    Transform {
+        translation: Vec3::new(x, y, z),
+        rotation: Quat::from_euler(
+            EulerRot::XYZ,
+            rx.to_radians(),
+            ry.to_radians(),
+            rz.to_radians(),
+        ),
+        scale: Vec3::splat(actor.placement.scale),
+    }
+}
+
+pub fn visibility_for(actor: &Actor) -> Visibility {
+    if actor.visible {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    }
+}
+
+/// Records (or clears) a contact between two entities, and starts any
+/// `when I touch` strand it satisfies - in both directions, since either
+/// actor may be the one listening.
+pub fn note_contact(engine: &mut Engine, a: Entity, b: Entity, started: bool) {
+    let Some(first) = engine.actor_id_of(a).map(str::to_string) else {
+        return;
+    };
+    let Some(second) = engine.actor_id_of(b).map(str::to_string) else {
+        return;
+    };
+    for (actor, other) in [(&first, &second), (&second, &first)] {
+        let contacts = engine.touching.entry(actor.clone()).or_default();
+        if started {
+            contacts.insert(other.clone());
+        } else {
+            contacts.remove(other);
+        }
+    }
+    if started {
+        engine.vm.fire(Event::Collision {
+            actor: first.clone(),
+            with: second.clone(),
+        });
+        engine.vm.fire(Event::Collision {
+            actor: second,
+            with: first,
+        });
+    }
+}
+
+// ─── Editor messages ───────────────────────────────────────────────────────
+
+pub fn pump_editor(
+    mut engine: NonSendMut<Engine>,
+    time: Res<Time>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let now = time.elapsed_secs() as f64;
+    loop {
+        let message = match engine.incoming.try_recv() {
+            Ok(message) => message,
+            Err(std::sync::mpsc::TryRecvError::Empty) => break,
+            // The editor closed the pipe: nothing left to render for.
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                exit.write(AppExit::Success);
+                return;
+            }
+        };
+        match message {
+            EditorMessage::Load { project } => {
+                engine.project = *project;
+                let loaded = engine.project.clone();
+                engine.vm.load(&loaded);
+                engine.running = false;
+                engine.rebuild = true;
+            }
+            EditorMessage::Start => {
+                let project = engine.project.clone();
+                engine.vm.load(&project);
+                engine.touching.clear();
+                engine.says.clear();
+                engine.rebuild = true;
+                engine.running = true;
+                engine.paused = false;
+                engine.started_at = now;
+                engine.vm.fire(Event::Started);
+            }
+            EditorMessage::Stop => {
+                engine.vm.stop_all();
+                engine.running = false;
+                engine.rebuild = true;
+                bridge::send(&RuntimeMessage::Stopped);
+            }
+            EditorMessage::Pause { paused } => engine.paused = paused,
+            EditorMessage::Shutdown => {
+                exit.write(AppExit::Success);
+                return;
+            }
+        }
+    }
+}
+
+// ─── Building the world ────────────────────────────────────────────────────
+
+/// Despawns everything and spawns it again from the project. Called on load,
+/// on every Start (so actors go back where they were authored), and on stop.
+pub fn rebuild_world(
+    mut commands: Commands,
+    mut engine: NonSendMut<Engine>,
+    dimension: Res<Dimension>,
+    mut effects: ResMut<PendingEffects>,
+    mut clear_color: ResMut<ClearColor>,
+    assets: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    actors: Query<Entity, With<ActorId>>,
+    cameras: Query<Entity, With<WorldCamera>>,
+) {
+    if !engine.rebuild {
+        return;
+    }
+    engine.rebuild = false;
+
+    for entity in &actors {
+        commands.entity(entity).despawn();
+    }
+    for entity in &cameras {
+        commands.entity(entity).despawn();
+    }
+    engine.entities.clear();
+    engine.touching.clear();
+
+    let project = engine.project.clone();
+    clear_color.0 = parse_color(&project.world.background);
+    match dimension.0 {
+        Mode::TwoD => {
+            commands.spawn((
+                Camera2d,
+                Projection::Orthographic(OrthographicProjection {
+                    scale: 1.0 / project.world.camera.zoom.max(0.05),
+                    ..OrthographicProjection::default_2d()
+                }),
+                WorldCamera,
+            ));
+            for actor in &project.actors {
+                if let Some(entity) = dim2::spawn_actor(&mut commands, actor, &assets) {
+                    engine.entities.insert(actor.id.clone(), entity);
+                } else {
+                    warn!("{} has a 3D shape in a 2D project", actor.name);
+                }
+            }
+        }
+        Mode::ThreeD => {
+            dim3::spawn_scenery(&mut commands, &project.world.camera);
+            for actor in &project.actors {
+                if let Some(entity) =
+                    dim3::spawn_actor(&mut commands, actor, &mut meshes, &mut materials)
+                {
+                    engine.entities.insert(actor.id.clone(), entity);
+                } else {
+                    warn!("{} has a 2D shape in a 3D project", actor.name);
+                }
+            }
+        }
+    }
+    // The dimension's own effect system owns the physics pipeline, so gravity
+    // is set the same way a `set gravity` block would set it.
+    effects.0.push(Effect::SetGravity {
+        gravity: project.world.gravity,
+    });
+}
+
+// ─── Sensing ───────────────────────────────────────────────────────────────
+
+/// Publishes the snapshot reporter blocks read, and starts `when key pressed`
+/// strands for keys that went down this frame.
+pub fn publish_sensors(
+    mut engine: NonSendMut<Engine>,
+    time: Res<Time>,
+    dimension: Res<Dimension>,
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
+    actors: Query<(&ActorId, &Transform, &Visibility)>,
+) {
+    let now = time.elapsed_secs() as f64;
+    let held: HashSet<String> = keys.get_pressed().filter_map(key_name).collect();
+    let mouse = mouse_world_position(dimension.0, &windows, &cameras).unwrap_or_default();
+
+    let mut senses: HashMap<String, ActorSense> = HashMap::new();
+    for (id, transform, visibility) in &actors {
+        let (rx, ry, rz) = transform.rotation.to_euler(EulerRot::XYZ);
+        senses.insert(
+            id.0.clone(),
+            ActorSense {
+                name: engine
+                    .project
+                    .actor(&id.0)
+                    .map(|actor| actor.name.clone())
+                    .unwrap_or_default(),
+                position: transform.translation.to_array(),
+                rotation: [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()],
+                visible: *visibility != Visibility::Hidden,
+                touching: engine.touching.get(&id.0).cloned().unwrap_or_default(),
+            },
+        );
+    }
+
+    blockloom_core::sense::publish(Sensors {
+        time: engine.run_time(now),
+        keys: held,
+        mouse,
+        mouse_down: buttons.pressed(MouseButton::Left),
+        actors: senses,
+    });
+
+    if engine.running {
+        for key in keys.get_just_pressed().filter_map(key_name) {
+            engine.vm.fire(Event::Key(key));
+        }
+    }
+}
+
+/// Where the pointer is in world units: straight out in 2D, and where it meets
+/// the ground plane in 3D (so `mouse x`/`mouse y` name a place an actor can
+/// actually stand).
+fn mouse_world_position(
+    mode: Mode,
+    windows: &Query<&Window, With<PrimaryWindow>>,
+    cameras: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
+) -> Option<[f32; 2]> {
+    let window = windows.iter().next()?;
+    let cursor = window.cursor_position()?;
+    let (camera, camera_transform) = cameras.iter().next()?;
+    match mode {
+        Mode::TwoD => {
+            let point = camera.viewport_to_world_2d(camera_transform, cursor).ok()?;
+            Some([point.x, point.y])
+        }
+        Mode::ThreeD => {
+            let ray = camera.viewport_to_world(camera_transform, cursor).ok()?;
+            let distance = ray.intersect_plane(Vec3::ZERO, InfinitePlane3d::new(Vec3::Y))?;
+            let point = ray.get_point(distance);
+            Some([point.x, point.z])
+        }
+    }
+}
+
+/// Starts `when I am clicked` strands for whatever the pointer hit.
+pub fn detect_clicks(
+    mut engine: NonSendMut<Engine>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    dimension: Res<Dimension>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
+    actors: Query<(&ActorId, &Transform)>,
+) {
+    if !engine.running || !buttons.just_pressed(MouseButton::Left) {
+        return;
+    }
+    let Some(window) = windows.iter().next() else {
+        return;
+    };
+    let Some(cursor) = window.cursor_position() else {
+        return;
+    };
+    let Some((camera, camera_transform)) = cameras.iter().next() else {
+        return;
+    };
+
+    let mut hits: Vec<String> = Vec::new();
+    match dimension.0 {
+        Mode::TwoD => {
+            let Ok(point) = camera.viewport_to_world_2d(camera_transform, cursor) else {
+                return;
+            };
+            for (id, transform) in &actors {
+                let Some(visual) = engine.project.actor(&id.0).map(|a| a.visual.clone()) else {
+                    continue;
+                };
+                let half = half_extents(&visual) * transform.scale.truncate();
+                let delta = point - transform.translation.truncate();
+                if delta.x.abs() <= half.x && delta.y.abs() <= half.y {
+                    hits.push(id.0.clone());
+                }
+            }
+        }
+        Mode::ThreeD => {
+            let Ok(ray) = camera.viewport_to_world(camera_transform, cursor) else {
+                return;
+            };
+            for (id, transform) in &actors {
+                let Some(visual) = engine.project.actor(&id.0).map(|a| a.visual.clone()) else {
+                    continue;
+                };
+                // A bounding sphere is close enough to pick with, and needs no
+                // collider - an actor with no body is still clickable.
+                let radius = (half_extents3(&visual) * transform.scale).length();
+                let to_center = transform.translation - ray.origin;
+                let along = to_center.dot(*ray.direction);
+                if along < 0.0 {
+                    continue;
+                }
+                let closest = ray.origin + *ray.direction * along;
+                if closest.distance(transform.translation) <= radius {
+                    hits.push(id.0.clone());
+                }
+            }
+        }
+    }
+    for actor in hits {
+        engine.vm.fire(Event::Click { actor });
+    }
+}
+
+fn half_extents(visual: &Visual) -> Vec2 {
+    match visual {
+        Visual::Rect { size, .. } | Visual::Image { size, .. } => {
+            Vec2::new(size[0] / 2.0, size[1] / 2.0)
+        }
+        Visual::Circle { radius, .. } => Vec2::splat(*radius),
+        _ => Vec2::ZERO,
+    }
+}
+
+fn half_extents3(visual: &Visual) -> Vec3 {
+    match visual {
+        Visual::Cuboid { size, .. } => Vec3::new(size[0] / 2.0, size[1] / 2.0, size[2] / 2.0),
+        Visual::Sphere { radius, .. } => Vec3::splat(*radius),
+        Visual::Capsule { radius, height, .. } => {
+            Vec3::new(*radius, height / 2.0 + radius, *radius)
+        }
+        Visual::Plane { size, .. } => Vec3::new(size[0] / 2.0, 0.1, size[1] / 2.0),
+        _ => Vec3::ZERO,
+    }
+}
+
+// ─── Running blocks ────────────────────────────────────────────────────────
+
+/// One VM tick per rendered frame. Says and errors go straight to the editor;
+/// everything else is left in [`PendingEffects`] for the apply systems.
+pub fn step_vm(
+    mut engine: NonSendMut<Engine>,
+    time: Res<Time>,
+    mut effects: ResMut<PendingEffects>,
+) {
+    if !engine.running || engine.paused {
+        return;
+    }
+    let now = engine.run_time(time.elapsed_secs() as f64);
+    let mut produced = Vec::new();
+    engine.vm.tick(now, &mut produced);
+    for effect in &produced {
+        match effect {
+            Effect::Say { actor, text } => {
+                engine.note_say(actor, text);
+                bridge::send(&RuntimeMessage::Say {
+                    actor: actor.clone(),
+                    text: text.clone(),
+                });
+            }
+            Effect::Error { actor, message } => bridge::send(&RuntimeMessage::Error {
+                actor: actor.clone(),
+                message: message.clone(),
+            }),
+            _ => {}
+        }
+    }
+    effects.0.extend(produced);
+
+    // A run that has nothing left to do is over, and the editor's Play button
+    // should go back to normal.
+    if !engine.vm.is_running() {
+        engine.running = false;
+        bridge::send(&RuntimeMessage::Stopped);
+    }
+}
+
+/// The dimension-agnostic effects: anything that's a transform, a scale or a
+/// visibility change.
+pub fn apply_common(
+    mut commands: Commands,
+    effects: Res<PendingEffects>,
+    mut engine: NonSendMut<Engine>,
+    dimension: Res<Dimension>,
+    mut transforms: Query<(&mut Transform, &mut Visibility)>,
+) {
+    let positions: HashMap<String, Vec3> = engine
+        .entities
+        .iter()
+        .filter_map(|(id, entity)| {
+            transforms
+                .get(*entity)
+                .ok()
+                .map(|(transform, _)| (id.clone(), transform.translation))
+        })
+        .collect();
+
+    for effect in &effects.0 {
+        let Some(actor) = effect_actor(effect) else {
+            if let Effect::Stopped = effect {
+                engine.running = false;
+                bridge::send(&RuntimeMessage::Stopped);
+            }
+            continue;
+        };
+        let Some(entity) = engine.entities.get(actor).copied() else {
+            continue;
+        };
+        let Ok((mut transform, mut visibility)) = transforms.get_mut(entity) else {
+            continue;
+        };
+        match effect {
+            Effect::Move { steps, .. } => {
+                // A dynamic body is moved through its velocity instead, by the
+                // dimension's own system - teleporting one every frame stops
+                // the solver ever resolving a contact, and it walks through
+                // walls and floors. See `dim2::apply_effects`.
+                if is_dynamic(&engine, actor) {
+                    continue;
+                }
+                let forward = forward_of(&transform, dimension.0);
+                transform.translation += forward * *steps;
+            }
+            Effect::GoTo { position, .. } => {
+                transform.translation = vec3_in(dimension.0, *position, transform.translation);
+            }
+            Effect::ChangePosition { axis, by, .. } => {
+                if is_dynamic(&engine, actor) {
+                    continue;
+                }
+                if let Some(index) = position_axis(dimension.0, *axis) {
+                    transform.translation[index] += *by;
+                }
+            }
+            Effect::Turn { axis, degrees, .. } => {
+                if let Some(index) = rotation_axis(dimension.0, *axis) {
+                    let mut euler = euler_of(&transform);
+                    euler[index] += degrees.to_radians();
+                    transform.rotation = quat_of(euler);
+                }
+            }
+            Effect::SetRotation { axis, degrees, .. } => {
+                if let Some(index) = rotation_axis(dimension.0, *axis) {
+                    let mut euler = euler_of(&transform);
+                    euler[index] = degrees.to_radians();
+                    transform.rotation = quat_of(euler);
+                }
+            }
+            Effect::PointTowards { target, .. } => {
+                let here = transform.translation;
+                let Some(to) = target_position(&engine, &positions, target, here) else {
+                    continue;
+                };
+                match dimension.0 {
+                    Mode::TwoD => {
+                        let delta = to - here;
+                        let mut euler = euler_of(&transform);
+                        euler[2] = delta.y.atan2(delta.x);
+                        transform.rotation = quat_of(euler);
+                    }
+                    Mode::ThreeD => transform.look_at(to, Vec3::Y),
+                }
+            }
+            Effect::SetScale { factor, .. } => transform.scale = Vec3::splat(*factor),
+            Effect::SetVisible { visible, .. } => {
+                *visibility = if *visible {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                };
+            }
+            Effect::Glide {
+                seconds, target, ..
+            } => {
+                let to = vec3_in(dimension.0, *target, transform.translation);
+                if *seconds <= 0.0 {
+                    transform.translation = to;
+                } else {
+                    commands.entity(entity).insert(Gliding {
+                        from: transform.translation,
+                        to,
+                        elapsed: 0.0,
+                        duration: *seconds,
+                    });
+                }
+            }
+            // Physics, colors and speech are somebody else's job.
+            _ => {}
+        }
+    }
+}
+
+/// Advances every glide, and drops the component when it arrives.
+pub fn step_glides(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut gliding: Query<(Entity, &mut Transform, &mut Gliding)>,
+) {
+    for (entity, mut transform, mut glide) in &mut gliding {
+        glide.elapsed += time.delta_secs();
+        let progress = (glide.elapsed / glide.duration).clamp(0.0, 1.0);
+        transform.translation = glide.from.lerp(glide.to, progress);
+        if progress >= 1.0 {
+            commands.entity(entity).remove::<Gliding>();
+        }
+    }
+}
+
+/// Keeps the camera on the actor the project follows, if any.
+pub fn follow_camera(
+    engine: NonSend<Engine>,
+    dimension: Res<Dimension>,
+    actors: Query<(&ActorId, &Transform), Without<WorldCamera>>,
+    mut cameras: Query<&mut Transform, With<WorldCamera>>,
+) {
+    let Some(follow) = engine.project.world.camera.follow.clone() else {
+        return;
+    };
+    let Some(target) = actors
+        .iter()
+        .find(|(id, _)| id.0 == follow)
+        .map(|(_, transform)| transform.translation)
+    else {
+        return;
+    };
+    let Ok(mut camera) = cameras.single_mut() else {
+        return;
+    };
+    match dimension.0 {
+        Mode::TwoD => camera.translation = Vec3::new(target.x, target.y, camera.translation.z),
+        Mode::ThreeD => {
+            let settings = &engine.project.world.camera;
+            let offset = Vec3::from(settings.position) - Vec3::from(settings.look_at);
+            camera.translation = target + offset;
+            camera.look_at(target, Vec3::Y);
+        }
+    }
+}
+
+/// Tells the editor where everything is, a few times a second.
+pub fn report_status(
+    mut engine: NonSendMut<Engine>,
+    time: Res<Time>,
+    actors: Query<(&ActorId, &Transform, &Visibility)>,
+) {
+    let now = time.elapsed_secs() as f64;
+    if now < engine.next_report {
+        return;
+    }
+    engine.next_report = now + 0.2;
+    let statuses = actors
+        .iter()
+        .map(|(id, transform, visibility)| {
+            let (rx, ry, rz) = transform.rotation.to_euler(EulerRot::XYZ);
+            ActorStatus {
+                id: id.0.clone(),
+                position: transform.translation.to_array(),
+                rotation: [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()],
+                visible: *visibility != Visibility::Hidden,
+            }
+        })
+        .collect();
+    let globals = engine
+        .vm
+        .variables()
+        .0
+        .iter()
+        .map(|(name, value)| VariableValue {
+            name: name.clone(),
+            value: value.clone(),
+        })
+        .collect();
+    bridge::send(&RuntimeMessage::Status(Status {
+        running: engine.running,
+        paused: engine.paused,
+        time: engine.run_time(now),
+        fps: 1.0 / time.delta_secs().max(f32::EPSILON),
+        actors: statuses,
+        globals,
+    }));
+}
+
+/// Empties the effect list once every apply system has seen it.
+pub fn clear_effects(mut effects: ResMut<PendingEffects>) {
+    effects.0.clear();
+}
+
+// ─── Small shared helpers ──────────────────────────────────────────────────
+
+fn effect_actor(effect: &Effect) -> Option<&String> {
+    match effect {
+        Effect::Move { actor, .. }
+        | Effect::GoTo { actor, .. }
+        | Effect::ChangePosition { actor, .. }
+        | Effect::Glide { actor, .. }
+        | Effect::Turn { actor, .. }
+        | Effect::SetRotation { actor, .. }
+        | Effect::PointTowards { actor, .. }
+        | Effect::SetScale { actor, .. }
+        | Effect::SetBody { actor, .. }
+        | Effect::ApplyImpulse { actor, .. }
+        | Effect::SetVelocity { actor, .. }
+        | Effect::Say { actor, .. }
+        | Effect::SetVisible { actor, .. }
+        | Effect::SetColor { actor, .. }
+        | Effect::Error { actor, .. } => Some(actor),
+        Effect::SetGravity { .. } | Effect::Stopped => None,
+    }
+}
+
+/// A block's `z` is ignored in a 2D project, so the actor keeps its own.
+fn vec3_in(mode: Mode, value: [f32; 3], current: Vec3) -> Vec3 {
+    match mode {
+        Mode::TwoD => Vec3::new(value[0], value[1], current.z),
+        Mode::ThreeD => Vec3::new(value[0], value[1], value[2]),
+    }
+}
+
+/// Which way an actor faces, as a unit vector. In 2D a rotation of zero faces
+/// right, so turning anticlockwise raises the angle.
+pub fn forward_of(transform: &Transform, mode: Mode) -> Vec3 {
+    match mode {
+        Mode::TwoD => {
+            let angle = transform.rotation.to_euler(EulerRot::XYZ).2;
+            Vec3::new(angle.cos(), angle.sin(), 0.0)
+        }
+        Mode::ThreeD => *transform.forward(),
+    }
+}
+
+/// True when the physics engine owns this actor's movement.
+pub fn is_dynamic(engine: &Engine, actor: &str) -> bool {
+    engine
+        .project
+        .actor(actor)
+        .is_some_and(|actor| actor.physics.body == BodyKind::Dynamic)
+}
+
+/// Which coordinate an axis names. A 2D project has no depth to change, so Z
+/// is ignored there rather than moving a sprite out of view.
+pub fn position_axis(mode: Mode, axis: Axis) -> Option<usize> {
+    match (mode, axis) {
+        (Mode::TwoD, Axis::Z) => None,
+        _ => Some(axis.index()),
+    }
+}
+
+/// Which rotation an axis names. In 2D only Z is a rotation at all; X and Y
+/// would tip a sprite out of the plane.
+fn rotation_axis(mode: Mode, axis: Axis) -> Option<usize> {
+    match (mode, axis) {
+        (Mode::TwoD, Axis::Z) => Some(2),
+        (Mode::TwoD, _) => None,
+        (Mode::ThreeD, _) => Some(axis.index()),
+    }
+}
+
+fn euler_of(transform: &Transform) -> [f32; 3] {
+    let (x, y, z) = transform.rotation.to_euler(EulerRot::XYZ);
+    [x, y, z]
+}
+
+fn quat_of(euler: [f32; 3]) -> Quat {
+    Quat::from_euler(EulerRot::XYZ, euler[0], euler[1], euler[2])
+}
+
+/// Where a `point towards` target is: another actor, or the mouse.
+fn target_position(
+    engine: &Engine,
+    positions: &HashMap<String, Vec3>,
+    target: &str,
+    here: Vec3,
+) -> Option<Vec3> {
+    if target.eq_ignore_ascii_case("mouse") {
+        return blockloom_core::sense::read(|sensors| {
+            Some(Vec3::new(sensors.mouse[0], sensors.mouse[1], here.z))
+        });
+    }
+    let id = engine
+        .project
+        .actors
+        .iter()
+        .find(|actor| actor.id == target || actor.name.eq_ignore_ascii_case(target))
+        .map(|actor| actor.id.clone())?;
+    positions.get(&id).copied()
+}
+
+/// Our name for a key, matching what the blocks are written with.
+fn key_name(code: &KeyCode) -> Option<String> {
+    let name = match code {
+        KeyCode::Space => "space",
+        KeyCode::ArrowUp => "up arrow",
+        KeyCode::ArrowDown => "down arrow",
+        KeyCode::ArrowLeft => "left arrow",
+        KeyCode::ArrowRight => "right arrow",
+        KeyCode::Enter | KeyCode::NumpadEnter => "enter",
+        KeyCode::Escape => "escape",
+        KeyCode::ShiftLeft | KeyCode::ShiftRight => "shift",
+        KeyCode::ControlLeft | KeyCode::ControlRight => "control",
+        KeyCode::AltLeft | KeyCode::AltRight => "alt",
+        KeyCode::Tab => "tab",
+        KeyCode::Backspace => "backspace",
+        KeyCode::KeyA => "a",
+        KeyCode::KeyB => "b",
+        KeyCode::KeyC => "c",
+        KeyCode::KeyD => "d",
+        KeyCode::KeyE => "e",
+        KeyCode::KeyF => "f",
+        KeyCode::KeyG => "g",
+        KeyCode::KeyH => "h",
+        KeyCode::KeyI => "i",
+        KeyCode::KeyJ => "j",
+        KeyCode::KeyK => "k",
+        KeyCode::KeyL => "l",
+        KeyCode::KeyM => "m",
+        KeyCode::KeyN => "n",
+        KeyCode::KeyO => "o",
+        KeyCode::KeyP => "p",
+        KeyCode::KeyQ => "q",
+        KeyCode::KeyR => "r",
+        KeyCode::KeyS => "s",
+        KeyCode::KeyT => "t",
+        KeyCode::KeyU => "u",
+        KeyCode::KeyV => "v",
+        KeyCode::KeyW => "w",
+        KeyCode::KeyX => "x",
+        KeyCode::KeyY => "y",
+        KeyCode::KeyZ => "z",
+        KeyCode::Digit0 | KeyCode::Numpad0 => "0",
+        KeyCode::Digit1 | KeyCode::Numpad1 => "1",
+        KeyCode::Digit2 | KeyCode::Numpad2 => "2",
+        KeyCode::Digit3 | KeyCode::Numpad3 => "3",
+        KeyCode::Digit4 | KeyCode::Numpad4 => "4",
+        KeyCode::Digit5 | KeyCode::Numpad5 => "5",
+        KeyCode::Digit6 | KeyCode::Numpad6 => "6",
+        KeyCode::Digit7 | KeyCode::Numpad7 => "7",
+        KeyCode::Digit8 | KeyCode::Numpad8 => "8",
+        KeyCode::Digit9 | KeyCode::Numpad9 => "9",
+        _ => return None,
+    };
+    Some(normalize_key(name))
+}

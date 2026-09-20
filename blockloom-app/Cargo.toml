@@ -1,0 +1,29 @@
+[package]
+name = "blockloom-app"
+version.workspace = true
+edition.workspace = true
+description = "Blockloom's backend: every command the editor issues, and the state it edits."
+
+[features]
+# A browser-reachable HTTP/WebSocket bridge onto the same commands, for
+# iterating on the frontend with `pnpm run dev` instead of relaunching CEF.
+dev-bridge = ["dep:axum", "dep:tower-http", "dep:tokio"]
+
+[[bin]]
+name = "blockloom-devserver"
+path = "src/bin/devserver.rs"
+required-features = ["dev-bridge"]
+
+[dependencies]
+blockloom-core = { path = "../blockloom-core" }
+blockloom-protocol = { path = "../blockloom-protocol" }
+blockstitch-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+dirs.workspace = true
+uuid.workspace = true
+axum = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "process"] }
