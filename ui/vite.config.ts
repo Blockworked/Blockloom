@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 
-// Standard Tauri + Vite wiring: a fixed dev port matching tauri.conf.json's
-// `devUrl`, and file-watching that ignores the Rust side of the project.
+// Fixed dev port for the browser dev-bridge loop (`just dev-ui` +
+// `just dev-backend`), and file-watching that ignores the Rust side.
 export default defineConfig({
   plugins: [vue()],
   clearScreen: false,

@@ -2,8 +2,7 @@
   "productName": "Blockloom",
   "identifier": "com.blockworked.Blockloom",
   "build": {
-    "frontendDist": "../ui/dist",
-    "devUrl": "http://localhost:1420"
+    "frontendDist": "../ui/dist"
   },
   "app": {
     "withGlobalTauri": false,
