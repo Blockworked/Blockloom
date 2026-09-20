@@ -601,7 +601,7 @@ pub fn report_status(
     let globals = engine
         .vm
         .variables()
-        .0
+        .globals
         .iter()
         .map(|(name, value)| VariableValue {
             name: name.clone(),

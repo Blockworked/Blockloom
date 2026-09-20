@@ -13,6 +13,19 @@ use crate::value::{Evaluated, Value};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// One scope's variables, by name.
+pub type VariableValues = HashMap<String, Evaluated>;
+/// Every actor's own variables, by actor id.
+pub type ActorVariables = HashMap<String, VariableValues>;
+
+/// A borrowed look at every variable in play.
+pub struct VariableSnapshot<'a> {
+    /// The project's shared variables.
+    pub globals: &'a VariableValues,
+    /// Each actor's own, by actor id.
+    pub actors: &'a ActorVariables,
+}
+
 /// Steps one script may take in a single frame before being made to yield.
 /// Loops yield on their own; this only catches pathological straight-line code.
 const STEP_BUDGET: usize = 10_000;
@@ -95,8 +108,8 @@ pub struct Vm {
     names: HashMap<String, String>,
     /// Actor id -> custom block id -> input names, in declaration order.
     block_inputs: HashMap<String, HashMap<String, Vec<String>>>,
-    globals: HashMap<String, Evaluated>,
-    actor_vars: HashMap<String, HashMap<String, Evaluated>>,
+    globals: VariableValues,
+    actor_vars: ActorVariables,
     scripts: Vec<Script>,
     /// Events to start scripts for, drained at the top of the next tick.
     pending: Vec<Event>,
@@ -180,15 +193,12 @@ impl Vm {
         self.pending.clear();
     }
 
-    /// Current variable values: the project's globals, then each actor's own
-    /// by actor id - what the editor's watchers show.
-    pub fn variables(
-        &self,
-    ) -> (
-        &HashMap<String, Evaluated>,
-        &HashMap<String, HashMap<String, Evaluated>>,
-    ) {
-        (&self.globals, &self.actor_vars)
+    /// Current variable values - what the editor's watchers show.
+    pub fn variables(&self) -> VariableSnapshot<'_> {
+        VariableSnapshot {
+            globals: &self.globals,
+            actors: &self.actor_vars,
+        }
     }
 
     /// Runs every live script for one frame. `now` is seconds since the run
@@ -231,10 +241,11 @@ impl Vm {
             .programs
             .iter()
             .flat_map(|(actor, program)| {
-                program.entries.iter().filter_map(|entry| {
-                    self.entry_matches(actor, &entry.trigger, &event)
-                        .then(|| (actor.clone(), entry.strand_id.clone(), entry.pc))
-                })
+                program
+                    .entries
+                    .iter()
+                    .filter(|entry| self.entry_matches(actor, &entry.trigger, &event))
+                    .map(|entry| (actor.clone(), entry.strand_id.clone(), entry.pc))
             })
             .collect();
         for (actor, strand_id, pc) in matches {
@@ -398,23 +409,21 @@ impl Vm {
                         Some(Frame::Loop {
                             begin: frame_begin,
                             end,
-                            remaining,
-                        }) if *frame_begin == begin => match remaining {
-                            Some(left) => {
-                                *left -= 1;
-                                if *left <= 0 {
-                                    let after = *end + 1;
-                                    script.frames.pop();
-                                    script.pc = after;
-                                } else {
-                                    // Straight back into the body: a `repeat`
-                                    // counts its own head exactly once.
-                                    script.pc = begin + 1;
-                                }
+                            remaining: Some(left),
+                        }) if *frame_begin == begin => {
+                            *left -= 1;
+                            if *left <= 0 {
+                                let after = *end + 1;
+                                script.frames.pop();
+                                script.pc = after;
+                            } else {
+                                // Straight back into the body: a `repeat` counts
+                                // its own head exactly once.
+                                script.pc = begin + 1;
                             }
-                            // Back to the head, so a `while` re-checks.
-                            None => script.pc = begin,
-                        },
+                        }
+                        // `forever` and `while` bounce off the head instead, so
+                        // a `while`'s condition is re-checked every time.
                         _ => script.pc = begin,
                     }
                     if !immediate {
@@ -828,16 +837,15 @@ fn current_params(script: &Script) -> Option<HashMap<String, Evaluated>> {
     })
 }
 
-/// `(frame index, begin, end)` of the nearest enclosing loop - not looking
-/// past a call boundary, since a loop can't be escaped from inside a block.
+/// `(frame index, begin, end)` of the nearest enclosing loop. Only the
+/// innermost frame can be it: a loop pushes its frame on entry, so anything
+/// nested deeper is above it - and a call frame on top means the `break` is
+/// inside a custom block, which can't escape its caller's loop.
 fn nearest_loop(script: &Script) -> Option<(usize, usize, usize)> {
-    for (index, frame) in script.frames.iter().enumerate().rev() {
-        match frame {
-            Frame::Loop { begin, end, .. } => return Some((index, *begin, *end)),
-            Frame::Call { .. } => return None,
-        }
+    match script.frames.last()? {
+        Frame::Loop { begin, end, .. } => Some((script.frames.len() - 1, *begin, *end)),
+        Frame::Call { .. } => None,
     }
-    None
 }
 
 /// `(frame index, return pc)` of the innermost call frame.

@@ -221,8 +221,10 @@ fn variables_are_read_and_changed_through_their_own_scope() {
     project.create_global("score").unwrap();
     let mut vm = Harness::started(&project);
     assert_eq!(says(&vm.run(1)), vec!["5".to_string()]);
-    let (globals, _) = vm.vm.variables();
-    assert_eq!(globals.get("score"), Some(&Evaluated::Number(5.0)));
+    assert_eq!(
+        vm.vm.variables().globals.get("score"),
+        Some(&Evaluated::Number(5.0))
+    );
 }
 
 #[test]

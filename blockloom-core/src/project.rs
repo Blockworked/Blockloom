@@ -391,7 +391,7 @@ pub fn load_projects() -> Vec<Project> {
             }
         })
         .collect();
-    projects.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    projects.sort_by_key(|project| project.name.to_lowercase());
     projects
 }
 

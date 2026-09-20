@@ -9,6 +9,10 @@
 //!
 //! Usage: `blockloom-runtime [--mode 2d|3d]`.
 
+// A Bevy system declares every query and resource it touches as an argument, so
+// the usual argument-count limit doesn't apply here.
+#![allow(clippy::too_many_arguments)]
+
 mod bridge;
 mod dim2;
 mod dim3;

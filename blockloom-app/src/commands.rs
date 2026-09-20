@@ -110,7 +110,7 @@ pub(crate) fn new_project(
     project::save_project(&project)?;
     s.projects.push(project);
     s.projects
-        .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        .sort_by_key(|project| project.name.to_lowercase());
     let id = s.projects.last().map(|p| p.id.clone());
     s.selected = s.projects.iter().position(|p| Some(&p.id) == id.as_ref());
     s.selected_actor = None;
@@ -190,7 +190,7 @@ pub(crate) fn import_project(
     let id = project.id.clone();
     s.projects.push(project);
     s.projects
-        .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        .sort_by_key(|project| project.name.to_lowercase());
     s.selected = s.projects.iter().position(|p| p.id == id);
     s.selected_actor = None;
     s.history.clear();
