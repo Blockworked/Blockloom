@@ -998,4 +998,34 @@ mod tests {
         );
         assert!(project.is_global(&project.actors[1].id, "score"));
     }
+
+    #[test]
+    fn a_renamed_asset_is_followed_through_the_document() {
+        let mut project = Project::starter("p", Mode::TwoD);
+        let id = project.actors[0].id.clone();
+        let actor = project.actor_mut(&id).unwrap();
+        actor.components.insert(ActorComponent::Look {
+            visual: Visual::Image {
+                path: "assets/sprites/player.png".to_string(),
+                size: [80.0, 80.0],
+            },
+        });
+        actor.components.insert(ActorComponent::Script {
+            path: "assets/scripts/player.rs".to_string(),
+        });
+
+        // The file itself.
+        assert!(project.repoint_asset("assets/sprites/player.png", "assets/sprites/hero.png"));
+        // A folder takes everything under it with it.
+        assert!(project.repoint_asset("assets/sprites", "art"));
+        // Nothing that matches is nothing to save.
+        assert!(!project.repoint_asset("assets/nothing.png", "assets/still-nothing.png"));
+
+        let actor = project.actor(&id).unwrap();
+        assert!(matches!(
+            actor.visual(),
+            Some(Visual::Image { path, .. }) if path == "art/hero.png"
+        ));
+        assert_eq!(actor.components.script(), Some("assets/scripts/player.rs"));
+    }
 }

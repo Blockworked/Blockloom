@@ -198,9 +198,9 @@ export function componentName(component: ActorComponentDto): string {
   return component.component === 'Custom' ? component.name : component.component;
 }
 
-/** Saved presentation settings for runtime speech bubbles. `font_asset` is a
- * stable handoff point for the planned asset manager; null uses the runtime's
- * built-in sans-serif font. */
+/** Saved presentation settings for runtime speech bubbles. `font_asset` names
+ * a font in the project folder, the way the asset tray spells one; null uses
+ * the runtime's built-in sans-serif font. */
 export interface SpeechBubbleStyleDto {
   background: string;
   border: string;

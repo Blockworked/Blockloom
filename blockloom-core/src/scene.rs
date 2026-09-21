@@ -254,8 +254,8 @@ pub struct SpeechBubbleStyle {
     /// Screen-space offset from the top of the speaking actor.
     #[serde(default = "default_bubble_offset")]
     pub offset: [f32; 2],
-    /// Optional font asset path. The future asset manager can own and update
-    /// this reference; an absent value uses Bevy's built-in sans-serif font.
+    /// A font in the project folder, spelled the way [`crate::assets`] does.
+    /// An absent value uses Bevy's built-in sans-serif font.
     #[serde(default)]
     pub font_asset: Option<String>,
 }

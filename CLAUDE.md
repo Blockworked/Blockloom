@@ -112,10 +112,12 @@ Two processes: the editor window, and the game world.
   `components.rs` (what an actor is made of - see below), `blocks.rs` (the
   block vocabulary and its `BlockKind` impl), `fields.rs` (what the frontend
   calls each value slot), `project.rs` (the saved document and the folder it
-  lives in), `library.rs` (the project folders the Dashboard lists), `vm/`
-  (the block VM), `script/` (compiling a project's Rust scripts, and the ABI
-  they talk over), `sense.rs` (the world state reporter blocks read), and
-  `wire.rs` (the one shape difference between documents and the frontend).
+  lives in), `library.rs` (the project folders the Dashboard lists),
+  `assets.rs` (the files inside one of those folders, which the asset tray
+  manages and the runtime loads images and fonts from), `vm/` (the block VM),
+  `script/` (compiling a project's Rust scripts, and the ABI they talk over),
+  `sense.rs` (the world state reporter blocks read), and `wire.rs` (the one
+  shape difference between documents and the frontend).
 - **`blockstitch-core`** (sibling repo, see above) - the shared block-editor
   backend. `value` is the `Value`/`Op` expression system, extended by an app
   through `register_operators` (Blockloom registers its sensing reporters in
@@ -231,6 +233,17 @@ new** - not a pair of `.vue` files. The
 two blocks whose row comes from a `BlockDef` rather than their type
 (`BlockHeader`, `CallBlock`) are still hand-written, in `components/fields/`.
 
+The asset tray along the bottom (`components/AssetTray.vue`) is a file manager
+over the project folder: it lists, makes, imports, renames, moves and deletes
+files, and an asset dragged out of it lands on any input wrapped in
+`AssetDrop.vue` (the Look component's Image, the Script component's path).
+Asset paths are relative to the project folder with forward slashes
+(`assets/sprites/player.png`), the same spelling `Script` uses, and
+`Project::repoint_asset` follows a renamed or moved file through the document
+so the actor using it doesn't end up pointing at nothing. The listing is not
+part of the state snapshot - a folder changes for reasons the editor never
+hears about - so the tray re-lists after each of its own changes.
+
 A project is a folder, not a file: `<name>/project.blockloom` beside an
 `assets/`. The folder sits wherever the New Project dialog was pointed
 (`~/Blockloom/projects` by default), and the app owns the folder's name - it
@@ -256,6 +269,6 @@ lands.
   built.
 - `say` shows as a camera-projected speech bubble over its actor in both 2D and
   3D, and is also recorded in the editor log. Bubble styling is saved on the
-  world with an optional font asset path for the planned asset manager.
+  world with an optional font asset path, which no inspector row exposes yet.
 - A reporter-shaped custom block runs to completion in place, so a `wait` inside
   one passes straight through.
