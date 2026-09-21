@@ -192,6 +192,22 @@ pub fn register_blockloom_operators() {
     register_operators(OPERATORS);
 }
 
+/// The sensing reporters as JSON-ready specs for the block vocabulary: the
+/// wire `op` name, how many args it takes, and its default args as a usage
+/// example. A reporter slots into any value slot as a `Value::Op`.
+pub fn reporter_specs() -> Vec<serde_json::Value> {
+    OPERATORS
+        .iter()
+        .map(|op| {
+            serde_json::json!({
+                "name": op.kind,
+                "arity": op.arity,
+                "exampleArgs": (op.default_args)(),
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

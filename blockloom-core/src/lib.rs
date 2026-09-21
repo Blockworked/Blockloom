@@ -41,6 +41,7 @@ pub mod script;
 pub mod sense;
 pub mod value;
 pub mod vm;
+pub mod vocabulary;
 pub mod wire;
 
 /// Registers Blockloom's own reporter blocks with blockstitch, so a saved

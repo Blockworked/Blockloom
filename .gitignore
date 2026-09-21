@@ -16,3 +16,7 @@ dist/
 
 # RustRover
 .idea/
+
+mcp/node_modules/
+mcp/dist-test/
+opencode.json

@@ -16,10 +16,11 @@
 //! can read the world straight back after each step.
 
 use crate::Backend;
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 /// One argument a command takes.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize)]
 pub struct ArgSpec {
     pub name: &'static str,
     pub ty: &'static str,
@@ -29,7 +30,7 @@ pub struct ArgSpec {
 /// One command an agent can issue. `name` is the shell spelling (kebab-case),
 /// `cmd` is the name `Backend::dispatch` knows it by (camelCase) - so the two
 /// halves can drift without either side noticing.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct CommandSpec {
     pub name: &'static str,
     pub cmd: &'static str,
@@ -52,6 +53,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         cmd: "get_state",
         aliases: &["state"],
         summary: "The whole snapshot: Dashboard list, project, actors, log.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "block-vocabulary",
+        cmd: "block_vocabulary",
+        aliases: &["blocks", "vocabulary"],
+        summary: "Every block with its slots, dropdowns and bodies, as JSON.",
         args: &[],
     },
     // ── Projects ──────────────────────────────────────────────────────────
@@ -1408,6 +1416,16 @@ fn help_for(topic: &str) -> Result<String, String> {
     }
     lines.push(format!("Dispatcher name: \"{}\".", spec.cmd));
     Ok(lines.join("\n"))
+}
+
+// ─── Specs ────────────────────────────────────────────────────────────────
+
+/// The whole command registry as JSON, keyed so a machine can build a tool
+/// list straight from it. Printed by the shell's `--specs` flag, and what an
+/// MCP host reads at startup so its tools can't drift from the commands.
+pub fn specs_json() -> String {
+    let payload = serde_json::json!({ "commands": COMMANDS });
+    serde_json::to_string(&payload).unwrap_or_else(|e| e.to_string())
 }
 
 // ─── Running ─────────────────────────────────────────────────────────────

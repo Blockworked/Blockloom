@@ -87,6 +87,12 @@ pub(crate) fn get_state(state: &SharedState) -> Result<StateDto, String> {
     Ok(state_dto(&s))
 }
 
+/// Every block and value slot, as one JSON document an agent can author
+/// against. No state: the vocabulary is the same in any project.
+pub(crate) fn block_vocabulary() -> Result<serde_json::Value, String> {
+    Ok(blockloom_core::vocabulary::block_vocabulary())
+}
+
 // ─── Projects ──────────────────────────────────────────────────────────────
 
 /// Opens the project in `dir`, replacing whatever was open. The Dashboard's

@@ -27,9 +27,10 @@ use std::io::{BufRead, IsTerminal, Write};
 fn usage() -> &'static str {
     concat!(
         "blockloom-shell - drive a Blockloom backend from a shell\n\n",
-        "Usage: blockloom-shell [--eval <line>] [--no-state]\n\n",
+        "Usage: blockloom-shell [--eval <line>] [--no-state] [--specs]\n\n",
         "  --eval <line>   Run one command line and exit.\n",
         "  --no-state      Leave the state snapshot out of responses.\n",
+        "  --specs         Print the whole command registry as JSON and exit.\n",
         "  --help          Show this help.\n"
     )
 }
@@ -53,6 +54,10 @@ fn main() {
                 }
             },
             "--no-state" => with_state = false,
+            "--specs" => {
+                println!("{}", blockloom_app::shell::specs_json());
+                return;
+            }
             "--help" | "-h" => {
                 println!("{}", usage());
                 return;

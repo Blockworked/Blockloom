@@ -43,6 +43,7 @@ impl Backend {
         let app = &self.app;
         match cmd {
             "get_state" => to_json(commands::get_state(state)?),
+            "block_vocabulary" => to_json(commands::block_vocabulary()?),
 
             // ── Projects ───────────────────────────────────────────────────
             "open_project" => to_json(commands::open_project(state, app, arg(&args, "path")?)?),

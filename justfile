@@ -89,6 +89,15 @@ stage-player target file:
 test:
     cargo test --workspace
 
+# An MCP server standing on `blockloom-shell`: every backend command becomes
+# an MCP tool, so an agent can drive a project the way a user does. Builds the
+# workspace first so the shell is current, then wires an MCP client to it.
+mcp:
+    just build
+    cd mcp && pnpm install && pnpm run build
+    echo Wire your MCP client to:
+    echo {"command":"node","args":["{{ justfile_directory() }}\\mcp\\dist\\index.js"]}
+
 clean:
     cargo clean
 

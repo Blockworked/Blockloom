@@ -102,6 +102,22 @@ snapshot (useful for bandwidth with large projects). Piped mode exits 1
 if any command errors. **Don't edit the same project from the shell and
 the window simultaneously** - each holds its own in-memory copy.
 
+#### MCP server (`mcp/`)
+
+AI agents can also reach this through the Model Context Protocol: `mcp/` is a
+pnpm/Node package (`@blockworked/blockloom-mcp`, entry `src/index.ts`) that
+spawns `blockloom-shell --no-state` and exposes every `--specs` command as an
+MCP tool, with schemas derived from the same registry (see `src/registry.ts`,
+which maps every `ArgSpec.ty` prose string to a zod schema - a new prose type
+must be taught there). Tool calls are one shell line, responses are the
+`{ok, result, error}` shape, plus `blockloom://state` and `blockloom://blocks`
+resources. Each session is its own backend, so the window-and-shell warning
+above applies to it too - one MCP server process and the editor must not hold
+the same project. The shell resolves as `target/debug|release/blockloom-shell`
+beside the repo, `BLOCKLOOM_MCP_SHELL`, or `--shell`; `just mcp` builds
+everything and prints the client config line for the built `dist/index.js`.
+Build/test with `cd mcp && pnpm install && pnpm run build && pnpm test`.
+
 ## Architecture
 
 ### Cargo workspace

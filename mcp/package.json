@@ -1,0 +1,29 @@
+{
+  "name": "@blockworked/blockloom-mcp",
+  "version": "0.0.1",
+  "description": "A Model Context Protocol server that drives a Blockloom backend through blockloom-shell, so an AI agent can create and edit projects exactly as a user can.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "blockloom-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/*.test.js\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
