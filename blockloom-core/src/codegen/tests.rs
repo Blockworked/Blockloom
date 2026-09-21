@@ -279,7 +279,11 @@ fn a_loop_gives_the_frame_back_at_its_back_edge() {
         "{source}"
     );
     // And nothing else in it does, or a `forever` would hang the game.
-    assert_eq!(source.matches("return;").count(), 4, "{source}");
+    let actor = source
+        .split("#[unsafe(no_mangle)]")
+        .next()
+        .expect("the actor source comes before the ABI exports");
+    assert_eq!(actor.matches("return;").count(), 4, "{source}");
 }
 
 #[test]

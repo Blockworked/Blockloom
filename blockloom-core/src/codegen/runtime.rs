@@ -149,6 +149,87 @@ pub struct Entry {
     pub run: fn(&mut dyn Host, &mut State),
 }
 
+/// One live entry in a compiled run.
+struct Live {
+    entry: usize,
+    state: State,
+}
+
+/// The scheduler held inside a compiled logic library.
+pub struct Runner {
+    live: Vec<Live>,
+}
+
+impl Runner {
+    pub fn new() -> Self {
+        Self { live: Vec::new() }
+    }
+
+    pub fn reset(&mut self) {
+        self.live.clear();
+    }
+
+    /// Starts every matching entry, replacing an existing run of the same
+    /// strand in place as the VM does.
+    pub fn fire(
+        &mut self,
+        entries: &[Entry],
+        kind: &str,
+        actor: &str,
+        detail: &str,
+        other_name: &str,
+    ) {
+        for (index, entry) in entries.iter().enumerate() {
+            let matches = match (entry.trigger, kind) {
+                ("Started", "Started") => true,
+                ("Key", "Key") | ("Message", "Message") => entry.detail == detail,
+                ("Clicked", "Clicked") => entry.actor == actor,
+                ("Collision", "Collision") => {
+                    entry.actor == actor
+                        && (entry.detail.is_empty()
+                            || entry.detail == detail
+                            || entry.detail.eq_ignore_ascii_case(other_name))
+                }
+                _ => false,
+            };
+            if !matches {
+                continue;
+            }
+            let fresh = Live {
+                entry: index,
+                state: entry.begin(),
+            };
+            match self.live.iter_mut().find(|live| {
+                let old = &entries[live.entry];
+                old.actor == entry.actor && old.strand == entry.strand
+            }) {
+                Some(old) => *old = fresh,
+                None => self.live.push(fresh),
+            }
+        }
+    }
+
+    /// Gives every live strand one slice. True means `stop all` ended the run.
+    pub fn tick(&mut self, entries: &[Entry], host: &mut dyn Host, now: f64) -> bool {
+        for live in &mut self.live {
+            live.state.now = now;
+            (entries[live.entry].run)(host, &mut live.state);
+            if live.state.stopping {
+                self.live.clear();
+                return true;
+            }
+        }
+        self.live.retain(|live| !live.state.done());
+        false
+    }
+}
+
+impl Default for Runner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Entry {
     /// A fresh run of this strand, ready for the first [`Entry::run`].
     pub fn begin(&self) -> State {
@@ -295,6 +376,363 @@ pub trait Host {
     /// A value that wouldn't evaluate. The program carries on with a zero.
     fn error(&mut self, actor: &str, message: &str);
 }
+
+// --- Native logic boundary -------------------------------------------------
+
+pub const LOGIC_ABI_VERSION: u32 = 1;
+pub const ABI_OK: u32 = 0;
+pub const ABI_TOO_LONG: u32 = 1;
+pub const ABI_MISSING: u32 = 2;
+pub const ABI_PANIC: u32 = 3;
+pub const TICK_STOPPED: u32 = 1;
+
+pub const VALUE_NUMBER: u32 = 0;
+pub const VALUE_TEXT: u32 = 1;
+pub const VALUE_BOOL: u32 = 2;
+pub const VALUE_ERROR: u32 = 3;
+
+pub const READ_SENSE: u32 = 1;
+pub const READ_VARIABLE: u32 = 2;
+
+pub const ACT_MOVE: u32 = 1;
+pub const ACT_GO_TO: u32 = 2;
+pub const ACT_CHANGE_POSITION: u32 = 3;
+pub const ACT_GLIDE: u32 = 4;
+pub const ACT_TURN: u32 = 5;
+pub const ACT_SET_ROTATION: u32 = 6;
+pub const ACT_POINT_TOWARDS: u32 = 7;
+pub const ACT_SET_SCALE: u32 = 8;
+pub const ACT_SET_BODY: u32 = 9;
+pub const ACT_APPLY_IMPULSE: u32 = 10;
+pub const ACT_SET_VELOCITY: u32 = 11;
+pub const ACT_SET_GRAVITY: u32 = 12;
+pub const ACT_SET_DENSITY: u32 = 13;
+pub const ACT_SET_MASS: u32 = 14;
+pub const ACT_SAY: u32 = 15;
+pub const ACT_SET_VISIBLE: u32 = 16;
+pub const ACT_SET_COLOR: u32 = 17;
+pub const ACT_SET_FIELD: u32 = 18;
+pub const ACT_SET_CAMERA_VIEW: u32 = 19;
+pub const ACT_ATTACH: u32 = 20;
+pub const ACT_DETACH: u32 = 21;
+pub const ACT_BROADCAST: u32 = 22;
+pub const ACT_ERROR: u32 = 23;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AbiStr {
+    pub ptr: *const u8,
+    pub len: usize,
+}
+
+impl AbiStr {
+    pub const EMPTY: Self = Self {
+        ptr: std::ptr::null(),
+        len: 0,
+    };
+
+    pub fn borrow(value: &str) -> Self {
+        Self {
+            ptr: value.as_ptr(),
+            len: value.len(),
+        }
+    }
+
+    /// # Safety
+    /// The pointer must name UTF-8 for `len` bytes for this call.
+    pub unsafe fn as_str<'a>(self) -> &'a str {
+        if self.ptr.is_null() || self.len == 0 {
+            return "";
+        }
+        let bytes = unsafe { std::slice::from_raw_parts(self.ptr, self.len) };
+        std::str::from_utf8(bytes).unwrap_or("")
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AbiValue {
+    pub kind: u32,
+    pub number: f64,
+    pub text: AbiStr,
+}
+
+impl AbiValue {
+    fn borrow(value: &Val) -> Self {
+        match value {
+            Val::Num(number) => Self {
+                kind: VALUE_NUMBER,
+                number: *number,
+                text: AbiStr::EMPTY,
+            },
+            Val::Text(text) => Self {
+                kind: VALUE_TEXT,
+                number: 0.0,
+                text: AbiStr::borrow(text),
+            },
+            Val::Bool(value) => Self {
+                kind: VALUE_BOOL,
+                number: if *value { 1.0 } else { 0.0 },
+                text: AbiStr::EMPTY,
+            },
+        }
+    }
+}
+
+#[repr(C)]
+pub struct LogicHostApi {
+    pub abi: u32,
+    pub read: extern "C" fn(
+        *mut std::ffi::c_void,
+        AbiStr,
+        u32,
+        AbiStr,
+        *const AbiValue,
+        usize,
+        *mut AbiValue,
+        *mut u8,
+        usize,
+        *mut usize,
+    ) -> u32,
+    pub set_variable: extern "C" fn(*mut std::ffi::c_void, AbiStr, AbiStr, AbiValue),
+    pub act:
+        extern "C" fn(*mut std::ffi::c_void, AbiStr, u32, AbiStr, AbiStr, f64, f64, f64, AbiValue),
+}
+
+/// A generated program's safe view of the runtime callbacks.
+pub struct AbiHost {
+    ctx: *mut std::ffi::c_void,
+    api: *const LogicHostApi,
+}
+
+impl AbiHost {
+    /// # Safety
+    /// Both pointers are supplied by the runtime for the duration of a call.
+    pub unsafe fn new(ctx: *mut std::ffi::c_void, api: *const LogicHostApi) -> Self {
+        Self { ctx, api }
+    }
+
+    fn api(&self) -> &LogicHostApi {
+        unsafe { &*self.api }
+    }
+
+    fn read_value(&mut self, actor: &str, what: u32, name: &str, args: &[Val]) -> R {
+        let wire: Vec<AbiValue> = args.iter().map(AbiValue::borrow).collect();
+        let mut value = AbiValue {
+            kind: VALUE_NUMBER,
+            number: 0.0,
+            text: AbiStr::EMPTY,
+        };
+        let mut needed = 0;
+        let mut text = vec![0_u8; 256];
+        loop {
+            let status = (self.api().read)(
+                self.ctx,
+                AbiStr::borrow(actor),
+                what,
+                AbiStr::borrow(name),
+                wire.as_ptr(),
+                wire.len(),
+                &mut value,
+                text.as_mut_ptr(),
+                text.len(),
+                &mut needed,
+            );
+            if status == ABI_TOO_LONG {
+                text.resize(needed, 0);
+                continue;
+            }
+            if status == ABI_MISSING {
+                return Ok(Val::Num(0.0));
+            }
+            if status != ABI_OK {
+                return Err("compiled logic host failed to answer".to_string());
+            }
+            return match value.kind {
+                VALUE_NUMBER => Ok(Val::Num(value.number)),
+                VALUE_BOOL => Ok(Val::Bool(value.number != 0.0)),
+                VALUE_TEXT => Ok(Val::Text(
+                    String::from_utf8_lossy(&text[..needed]).into_owned(),
+                )),
+                VALUE_ERROR => Err(String::from_utf8_lossy(&text[..needed]).into_owned()),
+                _ => Err("compiled logic host returned an invalid value".to_string()),
+            };
+        }
+    }
+
+    fn act_wire(
+        &mut self,
+        actor: &str,
+        kind: u32,
+        a: &str,
+        b: &str,
+        numbers: [f64; 3],
+        value: &Val,
+    ) {
+        (self.api().act)(
+            self.ctx,
+            AbiStr::borrow(actor),
+            kind,
+            AbiStr::borrow(a),
+            AbiStr::borrow(b),
+            numbers[0],
+            numbers[1],
+            numbers[2],
+            AbiValue::borrow(value),
+        );
+    }
+}
+
+impl Host for AbiHost {
+    fn act(&mut self, actor: &str, act: Act) {
+        let zero = Val::Num(0.0);
+        match act {
+            Act::Move { steps } => {
+                self.act_wire(actor, ACT_MOVE, "", "", [steps as f64, 0.0, 0.0], &zero)
+            }
+            Act::GoTo { position } => {
+                self.act_wire(actor, ACT_GO_TO, "", "", position.map(f64::from), &zero)
+            }
+            Act::ChangePosition { axis, by } => self.act_wire(
+                actor,
+                ACT_CHANGE_POSITION,
+                "",
+                "",
+                [axis as f64, by as f64, 0.0],
+                &zero,
+            ),
+            Act::Glide { seconds, target } => self.act_wire(
+                actor,
+                ACT_GLIDE,
+                "",
+                "",
+                [seconds as f64, target[0] as f64, target[1] as f64],
+                &Val::Num(target[2] as f64),
+            ),
+            Act::Turn { axis, degrees } => self.act_wire(
+                actor,
+                ACT_TURN,
+                "",
+                "",
+                [axis as f64, degrees as f64, 0.0],
+                &zero,
+            ),
+            Act::SetRotation { axis, degrees } => self.act_wire(
+                actor,
+                ACT_SET_ROTATION,
+                "",
+                "",
+                [axis as f64, degrees as f64, 0.0],
+                &zero,
+            ),
+            Act::PointTowards { target } => {
+                self.act_wire(actor, ACT_POINT_TOWARDS, target, "", [0.0; 3], &zero)
+            }
+            Act::SetScale { factor } => self.act_wire(
+                actor,
+                ACT_SET_SCALE,
+                "",
+                "",
+                [factor as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetBody { body } => self.act_wire(actor, ACT_SET_BODY, body, "", [0.0; 3], &zero),
+            Act::ApplyImpulse { impulse } => self.act_wire(
+                actor,
+                ACT_APPLY_IMPULSE,
+                "",
+                "",
+                impulse.map(f64::from),
+                &zero,
+            ),
+            Act::SetVelocity { velocity } => self.act_wire(
+                actor,
+                ACT_SET_VELOCITY,
+                "",
+                "",
+                velocity.map(f64::from),
+                &zero,
+            ),
+            Act::SetGravity { gravity } => self.act_wire(
+                actor,
+                ACT_SET_GRAVITY,
+                "",
+                "",
+                gravity.map(f64::from),
+                &zero,
+            ),
+            Act::SetDensity { density } => self.act_wire(
+                actor,
+                ACT_SET_DENSITY,
+                "",
+                "",
+                [density as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetMass { mass } => {
+                self.act_wire(actor, ACT_SET_MASS, "", "", [mass as f64, 0.0, 0.0], &zero)
+            }
+            Act::Say { text } => self.act_wire(actor, ACT_SAY, &text, "", [0.0; 3], &zero),
+            Act::SetVisible { visible } => self.act_wire(
+                actor,
+                ACT_SET_VISIBLE,
+                "",
+                "",
+                [if visible { 1.0 } else { 0.0 }, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetColor { color } => {
+                self.act_wire(actor, ACT_SET_COLOR, &color, "", [0.0; 3], &zero)
+            }
+            Act::SetComponentField {
+                component,
+                field,
+                value,
+            } => self.act_wire(actor, ACT_SET_FIELD, component, field, [0.0; 3], &value),
+            Act::SetCameraView { view } => {
+                self.act_wire(actor, ACT_SET_CAMERA_VIEW, view, "", [0.0; 3], &zero)
+            }
+            Act::AttachComponent { component } => {
+                self.act_wire(actor, ACT_ATTACH, component, "", [0.0; 3], &zero)
+            }
+            Act::DetachComponent { component } => {
+                self.act_wire(actor, ACT_DETACH, component, "", [0.0; 3], &zero)
+            }
+            Act::Broadcast { name } => {
+                self.act_wire(actor, ACT_BROADCAST, name, "", [0.0; 3], &zero)
+            }
+        }
+    }
+
+    fn sense(&mut self, actor: &str, kind: &str, args: &[Val]) -> R {
+        self.read_value(actor, READ_SENSE, kind, args)
+    }
+
+    fn variable(&mut self, actor: &str, name: &str) -> Val {
+        self.read_value(actor, READ_VARIABLE, name, &[])
+            .unwrap_or(Val::Num(0.0))
+    }
+
+    fn set_variable(&mut self, actor: &str, name: &str, value: Val) {
+        (self.api().set_variable)(
+            self.ctx,
+            AbiStr::borrow(actor),
+            AbiStr::borrow(name),
+            AbiValue::borrow(&value),
+        );
+    }
+
+    fn error(&mut self, actor: &str, message: &str) {
+        self.act_wire(actor, ACT_ERROR, message, "", [0.0; 3], &Val::Num(0.0));
+    }
+}
+
+pub const SYM_LOGIC_ABI: &[u8] = b"blockloom_logic_abi";
+pub const SYM_LOGIC_NEW: &[u8] = b"blockloom_logic_new";
+pub const SYM_LOGIC_FREE: &[u8] = b"blockloom_logic_free";
+pub const SYM_LOGIC_RESET: &[u8] = b"blockloom_logic_reset";
+pub const SYM_LOGIC_FIRE: &[u8] = b"blockloom_logic_fire";
+pub const SYM_LOGIC_TICK: &[u8] = b"blockloom_logic_tick";
 
 // ─── Reading a value at an instruction's slot ───────────────────────────────
 // The VM reports a bad slot once and stands a zero in its place; a slot that

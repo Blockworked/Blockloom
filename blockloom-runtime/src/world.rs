@@ -137,11 +137,11 @@ pub fn note_contact(engine: &mut Engine, a: Entity, b: Entity, started: bool) {
         }
     }
     if started {
-        engine.vm.fire(Event::Collision {
+        engine.fire(Event::Collision {
             actor: first.clone(),
             with: second.clone(),
         });
-        engine.vm.fire(Event::Collision {
+        engine.fire(Event::Collision {
             actor: second,
             with: first,
         });
@@ -179,6 +179,7 @@ pub fn pump_editor(
                 engine.project_dir = dir.map(std::path::PathBuf::from);
                 let loaded = engine.project.clone();
                 engine.vm.load(&loaded);
+                open_logic(&mut engine);
                 engine.speech.clear();
                 engine.running = false;
                 engine.paused = false;
@@ -188,6 +189,9 @@ pub fn pump_editor(
             EditorMessage::Start => {
                 let project = engine.project.clone();
                 engine.vm.load(&project);
+                if let Some(logic) = &mut engine.logic {
+                    logic.reset();
+                }
                 engine.touching.clear();
                 engine.speech.clear();
                 engine.rebuild = true;
@@ -195,10 +199,10 @@ pub fn pump_editor(
                 engine.paused = false;
                 engine.pause_began = None;
                 engine.started_at = now;
-                engine.vm.fire(Event::Started);
+                engine.fire(Event::Started);
             }
             EditorMessage::Stop => {
-                engine.vm.stop_all();
+                engine.stop_program();
                 engine.speech.clear();
                 engine.running = false;
                 engine.paused = false;
@@ -341,6 +345,28 @@ fn open_scripts(engine: &mut Engine, project: &blockloom_core::project::Project)
     }
 }
 
+/// Opens native block logic only in a shipped player. Editor Play remains the
+/// reference VM, including while an older compiled library is still present.
+fn open_logic(engine: &mut Engine) {
+    engine.logic = None;
+    if bridge::attached() {
+        return;
+    }
+    let Some(dir) = engine.project_dir.as_deref() else {
+        return;
+    };
+    if !crate::logic::LoadedLogic::is_built(dir) {
+        return;
+    }
+    match crate::logic::LoadedLogic::load(dir) {
+        Ok(logic) => engine.logic = Some(logic),
+        Err(message) => bridge::send(&RuntimeMessage::Error {
+            actor: String::new(),
+            message,
+        }),
+    }
+}
+
 /// Runs every scripted for this fixed step: `start` once per run, then `tick`
 /// with the step's delta. Their effects join the VM's in the same list, so a
 /// script and a canvas driving one actor are applied together, in order.
@@ -368,7 +394,7 @@ pub fn step_scripts(
         script.tick(actor, &mut asked, dt);
     }
     for message in asked.messages.drain(..) {
-        engine.vm.fire(Event::Message(message));
+        engine.fire(Event::Message(message));
     }
     for effect in &asked.effects {
         // Says and errors go to the editor the same way the VM's do.
@@ -454,7 +480,7 @@ pub fn publish_sensors(
 
     if engine.running && !engine.paused {
         for key in keys.get_just_pressed().filter_map(key_name) {
-            engine.vm.fire(Event::Key(key));
+            engine.fire(Event::Key(key));
         }
     }
 }
@@ -566,7 +592,7 @@ pub fn detect_clicks(
         }
     }
     for actor in hits {
-        engine.vm.fire(Event::Click { actor });
+        engine.fire(Event::Click { actor });
     }
 }
 
@@ -606,8 +632,8 @@ pub fn actor_top(actor: &Actor, transform: &Transform, mode: Mode) -> Vec3 {
 
 // ─── Running blocks ────────────────────────────────────────────────────────
 
-/// One VM tick per fixed step. Says and errors go straight to the editor;
-/// everything else is left in [`PendingEffects`] for the apply systems.
+/// One block-program tick per fixed step, through native logic in a fast build
+/// and the VM otherwise. Effects take the same path after either scheduler.
 pub fn step_vm(
     mut engine: NonSendMut<Engine>,
     time: Res<Time>,
@@ -618,7 +644,21 @@ pub fn step_vm(
     }
     let now = engine.run_time(time.elapsed_secs() as f64);
     let mut produced = Vec::new();
-    engine.vm.tick(now, &mut produced);
+    let mut messages = Vec::new();
+    if engine.logic.is_some() {
+        let variables = engine.variables.clone();
+        engine.logic.as_mut().expect("checked above").tick(
+            now,
+            variables,
+            &mut produced,
+            &mut messages,
+        );
+    } else {
+        engine.vm.tick(now, &mut produced);
+    }
+    for message in messages {
+        engine.fire(Event::Message(message));
+    }
     for effect in &produced {
         match effect {
             Effect::Say { actor, text } => {
@@ -1108,9 +1148,8 @@ pub fn report_status(
             }
         })
         .collect();
-    let globals = engine
-        .vm
-        .variables()
+    let variables = engine.variables.snapshot();
+    let globals = variables
         .globals
         .iter()
         .map(|(name, value)| VariableValue {

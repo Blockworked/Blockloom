@@ -1,4 +1,4 @@
-//! The runtime's own state: the loaded project, the VM running it, and which
+//! The runtime's own state: the loaded project, its block scheduler, and which
 //! entity each actor is.
 //!
 //! This is a `!Send` resource (the VM holds `Rc`s), which is exactly what's
@@ -10,7 +10,7 @@ use blockloom_core::components::CameraAttach;
 use blockloom_core::project::Project;
 use blockloom_core::scene::Mode;
 use blockloom_core::value::Evaluated;
-use blockloom_core::vm::Vm;
+use blockloom_core::vm::{Variables, Vm};
 use blockloom_protocol::EditorMessage;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -68,6 +68,10 @@ pub struct Engine {
     pub link: Option<Sender<EditorMessage>>,
     pub project: Project,
     pub vm: Vm,
+    pub variables: Variables,
+    /// A built game's native block program. Editor Play keeps using the VM so
+    /// what is being edited always runs immediately.
+    pub logic: Option<crate::logic::LoadedLogic>,
     /// Actor id -> its entity, for as long as the world stands.
     pub entities: HashMap<String, Entity>,
     pub running: bool,
@@ -102,11 +106,14 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(incoming: Receiver<EditorMessage>, mode: Mode) -> Self {
+        let variables = Variables::default();
         Self {
             incoming,
             link: None,
             project: Project::starter("Untitled", mode),
-            vm: Vm::new(),
+            vm: Vm::with_variables(variables.clone()),
+            variables,
+            logic: None,
             entities: HashMap::new(),
             running: false,
             paused: false,
@@ -152,6 +159,21 @@ impl Engine {
             self.speech.remove(actor);
         } else {
             self.speech.insert(actor.to_string(), text.to_string());
+        }
+    }
+
+    pub fn fire(&mut self, event: blockloom_core::vm::Event) {
+        if let Some(logic) = &mut self.logic {
+            logic.fire(event, &self.project);
+        } else {
+            self.vm.fire(event);
+        }
+    }
+
+    pub fn stop_program(&mut self) {
+        self.vm.stop_all();
+        if let Some(logic) = &mut self.logic {
+            logic.reset();
         }
     }
 }

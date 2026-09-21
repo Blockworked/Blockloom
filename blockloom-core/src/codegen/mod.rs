@@ -49,16 +49,100 @@
 #[allow(dead_code)]
 mod runtime;
 
-pub use runtime::{Act, Entry, Host, R, State, Status, Val};
+pub use runtime::{
+    ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH, ACT_BROADCAST,
+    ACT_CHANGE_POSITION, ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_MOVE, ACT_POINT_TOWARDS,
+    ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD,
+    ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_VELOCITY,
+    ACT_SET_VISIBLE, ACT_TURN, AbiStr, AbiValue, Act, Entry, Host, LOGIC_ABI_VERSION, LogicHostApi,
+    R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE,
+    SYM_LOGIC_NEW, SYM_LOGIC_RESET, SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL,
+    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
+};
 
 use crate::project::Project;
 use crate::value::{Op, Value};
 use crate::vm::{Action, LoopKind, Program, Step, compile as compile_program};
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// The support code every generated program is built on, pasted in whole -
 /// there is no Cargo behind the compile, so there is nothing to depend on.
 const RUNTIME_SOURCE: &str = include_str!("runtime.rs");
+
+const EXPORT_SOURCE: &str = r#"
+#[unsafe(no_mangle)]
+pub extern "C" fn blockloom_logic_abi() -> u32 {
+    LOGIC_ABI_VERSION
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn blockloom_logic_new() -> *mut std::ffi::c_void {
+    Box::into_raw(Box::new(Runner::new())).cast()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn blockloom_logic_free(state: *mut std::ffi::c_void) {
+    if !state.is_null() {
+        drop(unsafe { Box::from_raw(state.cast::<Runner>()) });
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn blockloom_logic_reset(state: *mut std::ffi::c_void) {
+    if let Some(runner) = unsafe { state.cast::<Runner>().as_mut() } {
+        runner.reset();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn blockloom_logic_fire(
+    state: *mut std::ffi::c_void,
+    kind: AbiStr,
+    actor: AbiStr,
+    detail: AbiStr,
+    other_name: AbiStr,
+) {
+    let Some(runner) = (unsafe { state.cast::<Runner>().as_mut() }) else {
+        return;
+    };
+    runner.fire(
+        ENTRIES,
+        unsafe { kind.as_str() },
+        unsafe { actor.as_str() },
+        unsafe { detail.as_str() },
+        unsafe { other_name.as_str() },
+    );
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn blockloom_logic_tick(
+    state: *mut std::ffi::c_void,
+    ctx: *mut std::ffi::c_void,
+    api: *const LogicHostApi,
+    now: f64,
+) -> u32 {
+    let Some(runner) = (unsafe { state.cast::<Runner>().as_mut() }) else {
+        return ABI_PANIC;
+    };
+    let Some(api_ref) = (unsafe { api.as_ref() }) else {
+        return ABI_PANIC;
+    };
+    if api_ref.abi != LOGIC_ABI_VERSION {
+        return ABI_PANIC;
+    }
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut host = unsafe { AbiHost::new(ctx, api) };
+        runner.tick(ENTRIES, &mut host, now)
+    })) {
+        Ok(true) => TICK_STOPPED,
+        Ok(false) => ABI_OK,
+        Err(_) => ABI_PANIC,
+    }
+}
+"#;
 
 /// A block this doesn't compile. Naming it is the point: a build that falls
 /// back to the VM says which block sent it there.
@@ -80,6 +164,79 @@ impl std::fmt::Display for Unsupported {
 }
 
 type Emit<T> = Result<T, Unsupported>;
+
+pub const LOGIC_STEM: &str = "blockloom_logic";
+
+pub fn library_path(project_dir: &Path) -> PathBuf {
+    library_path_for(project_dir, None)
+}
+
+pub fn library_path_for(project_dir: &Path, target: Option<&str>) -> PathBuf {
+    crate::script::build_dir_for(project_dir, target)
+        .join(crate::script::dylib_name(LOGIC_STEM, target))
+}
+
+/// Compiles the generated state machines as one native shared library.
+pub fn compile_for(
+    project: &Project,
+    project_dir: &Path,
+    target: Option<&str>,
+) -> Result<PathBuf, String> {
+    let source = compile(project).map_err(|error| error.to_string())?;
+    let toolchain = crate::script::toolchain_version()?;
+    if let Some(triple) = target {
+        crate::script::target_installed(triple)?;
+    }
+    let build = crate::script::build_dir_for(project_dir, target);
+    std::fs::create_dir_all(&build).map_err(|error| format!("{}: {error}", build.display()))?;
+    let source_path = build.join(format!("{LOGIC_STEM}.rs"));
+    let library = library_path_for(project_dir, target);
+    let stamp = build.join(format!("{LOGIC_STEM}.stamp"));
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source.hash(&mut hasher);
+    let wanted = format!(
+        "logic abi {LOGIC_ABI_VERSION}\n{toolchain}\ntarget {}\nprofile opt3-lto-fat-cu1\nsource {:016x}\n",
+        target.unwrap_or("host"),
+        hasher.finish()
+    );
+    if library.is_file() && std::fs::read_to_string(&stamp).is_ok_and(|previous| previous == wanted)
+    {
+        return Ok(library);
+    }
+    std::fs::write(&source_path, source)
+        .map_err(|error| format!("{}: {error}", source_path.display()))?;
+    let mut command = Command::new("rustc");
+    if let Some(triple) = target {
+        command.arg("--target").arg(triple);
+    }
+    let output = command
+        .arg("--edition")
+        .arg("2024")
+        .arg("--crate-type")
+        .arg("cdylib")
+        .arg("--crate-name")
+        .arg(LOGIC_STEM)
+        .arg("-C")
+        .arg("opt-level=3")
+        .arg("-C")
+        .arg("codegen-units=1")
+        .arg("-C")
+        .arg("lto=fat")
+        .arg("-o")
+        .arg(&library)
+        .arg(&source_path)
+        .output()
+        .map_err(|error| format!("couldn't run rustc: {error}"))?;
+    if !output.status.success() {
+        let _ = std::fs::remove_file(&stamp);
+        return Err(format!(
+            "Blockloom's generated logic didn't compile:\n{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    std::fs::write(&stamp, wanted).map_err(|error| format!("{}: {error}", stamp.display()))?;
+    Ok(library)
+}
 
 /// Compiles every actor's canvas into one Rust source file, or names the
 /// first thing that stopped it.
@@ -119,7 +276,7 @@ pub fn compile(project: &Project) -> Emit<String> {
         "// Generated by Blockloom from {}. Rebuilt on every build; don't edit.\n\
          #![allow(unused, clippy::all)]\n\n\
          {RUNTIME_SOURCE}\n\
-         pub static ENTRIES: &[Entry] = &[\n{}\n];\n\n{bodies}",
+         pub static ENTRIES: &[Entry] = &[\n{}\n];\n\n{bodies}\n{EXPORT_SOURCE}",
         literal(&project.name),
         entries.join("\n")
     ))

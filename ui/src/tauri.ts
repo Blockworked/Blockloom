@@ -73,8 +73,8 @@ export const listBuildTargets = () => invoke<BuildTarget[]>('list_build_targets'
 /** Builds the open project for `target` into a folder under `path`: the
  *  player, the project's pack and its assets, which runs without Blockloom.
  *  Resolves to where it landed. */
-export const buildGame = (path: string, target: string) =>
-  invoke<string>('build_game', { path, target });
+export const buildGame = (path: string, target: string, fast: boolean) =>
+  invoke<string>('build_game', { path, target, fast });
 
 // ─── The world ──────────────────────────────────────────────────────────────
 export const setMode = (mode: Mode) => invoke<void>('set_mode', { mode });

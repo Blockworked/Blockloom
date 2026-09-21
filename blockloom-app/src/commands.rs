@@ -14,6 +14,7 @@ use blockloom_core::blocks::{
     ActorGraph, BlockPiece, BlockShape, Instruction, InstructionKind, normalize_block_color,
 };
 use blockloom_core::build;
+use blockloom_core::codegen;
 use blockloom_core::components::{ActorComponent, Components};
 use blockloom_core::library;
 use blockloom_core::project::{self, Actor, Project};
@@ -888,8 +889,17 @@ pub(crate) fn list_build_targets(state: &SharedState) -> Result<Vec<build::Targe
             .iter()
             .any(|actor| actor.components.script().is_some())
     });
+    let fast_source = s
+        .project()
+        .ok_or_else(|| "No project is open".to_string())
+        .and_then(|project| {
+            codegen::compile(project)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        });
     Ok(build::targets(
         has_scripts,
+        fast_source,
         &blockloom_protocol::runtime_path(),
     ))
 }
@@ -903,6 +913,7 @@ pub(crate) fn build_game(
     app: &AppHandle,
     path: String,
     target: Option<String>,
+    fast: Option<bool>,
 ) -> Result<String, String> {
     let mut s = lock(state)?;
     let Some(project) = s.project().cloned() else {
@@ -926,6 +937,23 @@ pub(crate) fn build_game(
         })?;
     auto_save(&s);
 
+    let fast_source = codegen::compile(&project)
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    let fast_toolchain = match build::script_target(target) {
+        None => script::toolchain_version().map(|_| ()),
+        Some(triple) => script::target_installed(triple),
+    };
+    let fast = match fast {
+        Some(false) => false,
+        Some(true) => {
+            fast_source?;
+            fast_toolchain?;
+            true
+        }
+        None => fast_source.is_ok() && fast_toolchain.is_ok(),
+    };
+
     // A script that won't compile can't be shipped around: the built game
     // would load an actor whose behaviour silently isn't there. Cross builds
     // compile their own copy, since a script is native code like the player.
@@ -936,16 +964,21 @@ pub(crate) fn build_game(
         return Err("A script didn't compile, so the game wasn't built - see the log".to_string());
     }
 
-    let built = build::build(&project, &dir, target, &player, Path::new(&path))?;
+    if fast {
+        codegen::compile_for(&project, &dir, build::script_target(target))?;
+    }
+
+    let built = build::build(&project, &dir, target, &player, Path::new(&path), fast)?;
     s.push_log(LogLine {
         kind: "say".to_string(),
         actor: "Blockloom".to_string(),
         text: format!(
-            "Built {} for {}: {} asset(s), {} script(s) -> {}",
+            "Built {} for {}: {} asset(s), {} script(s), {} blocks -> {}",
             project.name,
             target.label,
             built.assets,
             built.scripts,
+            if built.compiled { "native" } else { "VM" },
             built.dir.display()
         ),
     });

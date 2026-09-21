@@ -181,6 +181,11 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 ty: "target triple (default: this machine)",
                 required: false,
             },
+            ArgSpec {
+                name: "fast",
+                ty: "boolean (default: on when available)",
+                required: false,
+            },
         ],
     },
     // ── The world ─────────────────────────────────────────────────────────

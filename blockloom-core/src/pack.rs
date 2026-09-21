@@ -8,14 +8,14 @@
 //!   game/
 //!     game.pack          this file: the whole document
 //!     assets/...         the project's assets
-//!     .blockloom/build/  the script libraries, where the runtime looks
+//!     .blockloom/build/  native blocks and script libraries
 //! ```
 //!
 //! The player finds `game/game.pack` next to its own executable, so renaming
 //! the binary is all the branding a build needs. `game/` is handed to the
-//! runtime as the project folder, which is why the assets and the built
-//! scripts keep the spelling they have in a project - nothing in the runtime
-//! has to know whether it is playing a folder or a build.
+//! runtime as the project folder, which is why the assets and built libraries
+//! keep the spelling they have in a project - nothing in the runtime has to
+//! know whether it is playing a folder or a build.
 
 use crate::project::Project;
 use serde::{Deserialize, Serialize};

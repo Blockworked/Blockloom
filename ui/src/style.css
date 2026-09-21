@@ -882,6 +882,22 @@ body.asset-resizing {
   font: inherit;
 }
 
+.build-fast-option {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 0.9rem;
+  font-size: 0.9rem;
+}
+
+.build-fast-option input {
+  margin: 0;
+}
+
+.build-fast-option:has(input:disabled) {
+  opacity: 0.55;
+}
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;

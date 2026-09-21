@@ -22,6 +22,7 @@ mod bridge;
 mod dim2;
 mod dim3;
 mod engine;
+mod logic;
 mod overlay;
 mod player;
 mod script;

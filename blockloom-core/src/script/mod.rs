@@ -134,7 +134,7 @@ fn crate_name(relative: &str) -> String {
 /// What a shared library is called on `target`, which is not always this
 /// machine: a build for another platform has to name the file that platform's
 /// way or nothing there will load it.
-fn dylib_name(stem: &str, target: Option<&str>) -> String {
+pub(crate) fn dylib_name(stem: &str, target: Option<&str>) -> String {
     let (windows, apple) = match target {
         Some(triple) => (
             triple.contains("windows"),

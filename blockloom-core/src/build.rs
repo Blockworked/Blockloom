@@ -1,10 +1,8 @@
 //! Building a project into a game that runs on its own.
 //!
 //! A build is the player binary, the project's [`crate::pack::GamePack`], its
-//! assets and its compiled scripts, laid out in one folder (see [`crate::pack`]
-//! for the shape). Nothing here compiles the blocks - the player runs the same
-//! VM the editor does - so a build costs a file copy and works on any machine,
-//! with or without a Rust toolchain.
+//! assets, compiled scripts, and optional native block logic, laid out in one
+//! folder (see [`crate::pack`] for the shape).
 //!
 //! Which platforms an install can build for is a question about what it has
 //! beside it. The player is a native binary that nothing here can produce, so
@@ -15,6 +13,7 @@
 //! [`targets`] answers both questions at once, which is what the Build dialog
 //! shows.
 
+use crate::codegen;
 use crate::pack::{self, GamePack};
 use crate::project::{self, Project};
 use crate::script;
@@ -109,6 +108,10 @@ pub struct TargetStatus {
     pub ready: bool,
     /// What it would build with, or what is missing.
     pub note: String,
+    /// Whether this project can compile its blocks natively for the target.
+    pub fast_ready: bool,
+    /// Why native blocks are or are not available.
+    pub fast_note: String,
 }
 
 /// Every platform, in the order the dialog lists them: this machine first,
@@ -116,16 +119,25 @@ pub struct TargetStatus {
 ///
 /// `has_scripts` is whether the project has any Rust in it, which is what
 /// decides whether a toolchain gets a say.
-pub fn targets(has_scripts: bool, fallback_player: &Path) -> Vec<TargetStatus> {
+pub fn targets(
+    has_scripts: bool,
+    fast_source: Result<(), String>,
+    fallback_player: &Path,
+) -> Vec<TargetStatus> {
     let mut statuses: Vec<TargetStatus> = TARGETS
         .iter()
-        .map(|target| status(target, has_scripts, fallback_player))
+        .map(|target| status(target, has_scripts, &fast_source, fallback_player))
         .collect();
     statuses.sort_by_key(|status| !status.host);
     statuses
 }
 
-fn status(target: &Target, has_scripts: bool, fallback_player: &Path) -> TargetStatus {
+fn status(
+    target: &Target,
+    has_scripts: bool,
+    fast_source: &Result<(), String>,
+    fallback_player: &Path,
+) -> TargetStatus {
     let host = is_host(target);
     let (ready, note) = match player_for(target, fallback_player) {
         None => (
@@ -156,12 +168,33 @@ fn status(target: &Target, has_scripts: bool, fallback_player: &Path) -> TargetS
             },
         },
     };
+    let fast_toolchain = match script_target(target) {
+        None => script::toolchain_version().map(|_| ()),
+        Some(triple) => script::target_installed(triple),
+    };
+    let (fast_ready, fast_note) = if !ready {
+        (
+            false,
+            "The platform is not available for a build.".to_string(),
+        )
+    } else if let Err(error) = fast_source {
+        (false, error.clone())
+    } else if let Err(error) = fast_toolchain {
+        (false, error)
+    } else {
+        (
+            true,
+            "Blocks will be compiled to optimized native code.".to_string(),
+        )
+    };
     TargetStatus {
         triple: target.triple.to_string(),
         label: target.label.to_string(),
         host,
         ready,
         note,
+        fast_ready,
+        fast_note,
     }
 }
 
@@ -206,6 +239,7 @@ pub struct Build {
     pub target: &'static str,
     pub assets: usize,
     pub scripts: usize,
+    pub compiled: bool,
 }
 
 /// What the build folder is called. The platform is in the name because one
@@ -228,6 +262,7 @@ pub fn build(
     target: &'static Target,
     player: &Path,
     parent: &Path,
+    fast: bool,
 ) -> Result<Build, String> {
     let dir = parent.join(build_name(project, target));
     clear_build_dir(&dir)?;
@@ -251,6 +286,12 @@ pub fn build(
 
     let assets = copy_assets(project_dir, &game)?;
     let scripts = copy_scripts(project, project_dir, &game, target)?;
+    let compiled = if fast {
+        copy_logic(project_dir, &game, target)?;
+        true
+    } else {
+        false
+    };
 
     Ok(Build {
         dir,
@@ -258,7 +299,27 @@ pub fn build(
         target: target.triple,
         assets,
         scripts,
+        compiled,
     })
+}
+
+fn copy_logic(project_dir: &Path, game: &Path, target: &Target) -> Result<(), String> {
+    let library = codegen::library_path_for(project_dir, script_target(target));
+    if !library.is_file() {
+        return Err(format!(
+            "the blocks haven't been compiled for {}, so a fast build can't be made",
+            target.label
+        ));
+    }
+    let build = script::build_dir(game);
+    std::fs::create_dir_all(&build).map_err(|error| format!("{}: {error}", build.display()))?;
+    let file = library
+        .file_name()
+        .ok_or_else(|| format!("{} has no file name", library.display()))?;
+    let target = build.join(file);
+    std::fs::copy(&library, &target)
+        .map_err(|error| format!("{} -> {}: {error}", library.display(), target.display()))?;
+    make_executable(&target)
 }
 
 fn binary_name(name: &str, target: &Target) -> String {
@@ -429,7 +490,7 @@ mod tests {
         let out = root.join("out");
         let target = a_target();
 
-        let built = build(&project, &project_dir, target, &player, &out).unwrap();
+        let built = build(&project, &project_dir, target, &player, &out, false).unwrap();
 
         assert_eq!(built.dir, out.join(format!("Pond Game ({})", target.label)));
         assert!(built.binary.is_file());
@@ -459,13 +520,39 @@ mod tests {
         let (project, project_dir, player) = a_project(&root);
         let out = root.join("out");
 
-        let first = build(&project, &project_dir, a_target(), &player, &out).unwrap();
+        let first = build(&project, &project_dir, a_target(), &player, &out, false).unwrap();
         std::fs::write(first.dir.join("leftover.txt"), b"old").unwrap();
-        let second = build(&project, &project_dir, a_target(), &player, &out).unwrap();
+        let second = build(&project, &project_dir, a_target(), &player, &out, false).unwrap();
 
         assert_eq!(first.dir, second.dir);
         assert!(!second.dir.join("leftover.txt").exists());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_fast_build_carries_the_native_block_library() {
+        let root = temp("native-logic");
+        let (project, project_dir, player) = a_project(&root);
+        let library = codegen::library_path(&project_dir);
+        std::fs::create_dir_all(library.parent().unwrap()).unwrap();
+        std::fs::write(&library, b"native logic").unwrap();
+
+        let built = build(
+            &project,
+            &project_dir,
+            a_target(),
+            &player,
+            &root.join("out"),
+            true,
+        )
+        .unwrap();
+
+        assert!(built.compiled);
+        assert!(
+            codegen::library_path(&pack::game_dir(&built.dir)).is_file(),
+            "the player must find native logic in its normal build folder"
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -478,7 +565,7 @@ mod tests {
         std::fs::create_dir_all(&taken).unwrap();
         std::fs::write(taken.join("taxes.txt"), b"mine").unwrap();
 
-        let error = build(&project, &project_dir, target, &player, &out).unwrap_err();
+        let error = build(&project, &project_dir, target, &player, &out, false).unwrap_err();
 
         assert!(error.contains("isn't a built game"), "{error}");
         assert!(taken.join("taxes.txt").is_file());
@@ -504,7 +591,7 @@ mod tests {
         let fallback = root.join("blockloom-runtime");
         std::fs::write(&fallback, b"MZ").unwrap();
 
-        let statuses = targets(false, &fallback);
+        let statuses = targets(false, Ok(()), &fallback);
         let host = statuses.first().expect("at least one target");
 
         // This machine comes first and can always build, since the runtime the

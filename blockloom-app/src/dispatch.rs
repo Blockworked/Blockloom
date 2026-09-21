@@ -69,6 +69,7 @@ impl Backend {
                 app,
                 arg(&args, "path")?,
                 arg(&args, "target").ok().flatten(),
+                arg(&args, "fast").ok().flatten(),
             )?),
 
             // ── The world ──────────────────────────────────────────────────

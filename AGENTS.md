@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Project
 
@@ -269,13 +269,13 @@ Pond Game/
   game/
     game.pack          the document, and the format version it was written at
     assets/...         the project's assets, minus the script sources
-    .blockloom/build/  native blocks and script libraries
+    .blockloom/build/  the script libraries, where the runtime already looks
 ```
 
 `blockloom-core/src/build.rs` lays that out and `commands::build_game` drives
 it. The player finds `game/game.pack` beside its own executable, so renaming
 the binary is the whole of the branding, and `game/` is handed to the runtime
-as the project folder - which is why the assets and native libraries keep
+as the project folder - which is why the assets and the script libraries keep
 the spelling they have inside a project. Nothing in the runtime knows whether
 it is playing a folder or a build.
 
@@ -286,12 +286,11 @@ false, so the status corner and the editor handshake are skipped), and exits
 when the world stops, since nothing can press Play again - `stop all` is how a
 built game quits. `--play <folder>` runs a build without renaming anything.
 
-A build always ships the document so the VM remains a fallback. With "Compile
-blocks for maximum speed" enabled, it also ships one optimized native logic
-library and the player schedules that instead. The option defaults on when the
-project and target toolchain support it. Scripts ship as the libraries the
-editor already compiled, and one that won't compile fails the build rather
-than shipping an actor that quietly does nothing.
+A build ships the blocks as the document and runs them on the same VM the
+editor plays with, so it needs no toolchain and costs a file copy. Scripts are
+the exception: they ship as the libraries the editor already compiled, and one
+that won't compile fails the build rather than shipping an actor that quietly
+does nothing.
 
 Which platforms an install can build for is a question about what it has beside
 it. The player is a native binary Blockloom can't produce, so one per platform
@@ -373,15 +372,10 @@ still runs, and still does whatever it does to the world.
 What it won't compile is a custom block that can reach itself through statement
 calls - its loops would share one set of counters where the VM gives every
 invocation a frame. `Unsupported` refuses the whole project rather than
-emitting half of one, so the Build dialog can disable native logic and name what
-sent it there.
-
-`vm::Variables` is the live variable home shared by either scheduler. Generated
-logic exports one runner behind the ABI in `codegen/runtime.rs`, and
-`blockloom-runtime/src/logic.rs` loads it, translates events and effects, and
-answers variable and sensing callbacks. Editor Play stays on the VM as the
-reference behavior. A packaged player uses the native runner whenever its
-build carries one, and falls back to the VM when it does not.
+emitting half of one, so whatever calls it can fall back to the VM knowing what
+sent it there. Nothing calls it yet: there is no scheduler on this side and no
+home for variables both halves can reach, so a build still ships the document
+and the runtime still plays it.
 
 ### Frontend (`ui/`)
 
@@ -432,8 +426,8 @@ lands.
   or one file; macOS gets that same folder rather than an `.app` bundle.
 - Building for another platform needs its player staged by hand, and a scripted
   project also needs that target's `std` and a linker for it.
-- Recursive statement-shaped custom blocks fall back to the VM because their
-  loop counters still need to move onto each call frame.
+- A built game's blocks are interpreted, the same way the editor plays them.
+  Nothing compiles a project down.
 - A script needs a Rust toolchain on the machine that presses Play, which a
   packaged install can't assume. The script editor is a plain textarea, and a
   script's errors only show in the run log.

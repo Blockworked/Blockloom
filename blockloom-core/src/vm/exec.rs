@@ -10,6 +10,7 @@ use super::program::{Action, LoopKind, Program, Step, Trigger, compile};
 use crate::project::Project;
 use crate::sense;
 use crate::value::{Evaluated, Value};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -18,12 +19,82 @@ pub type VariableValues = HashMap<String, Evaluated>;
 /// Every actor's own variables, by actor id.
 pub type ActorVariables = HashMap<String, VariableValues>;
 
-/// A borrowed look at every variable in play.
-pub struct VariableSnapshot<'a> {
+/// A snapshot of every variable in play.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VariableSnapshot {
     /// The project's shared variables.
-    pub globals: &'a VariableValues,
+    pub globals: VariableValues,
     /// Each actor's own, by actor id.
-    pub actors: &'a ActorVariables,
+    pub actors: ActorVariables,
+}
+
+#[derive(Debug, Default)]
+struct VariableState {
+    globals: VariableValues,
+    actors: ActorVariables,
+}
+
+/// The live variables of one run. The VM and compiled logic hold clones of
+/// this handle, so either scheduler reads and writes the same slots.
+#[derive(Debug, Clone, Default)]
+pub struct Variables(Rc<RefCell<VariableState>>);
+
+impl Variables {
+    pub fn load(&self, project: &Project) {
+        let mut state = self.0.borrow_mut();
+        state.globals = project
+            .globals
+            .iter()
+            .map(|variable| (variable.name.clone(), variable.value.clone()))
+            .collect();
+        state.actors = project
+            .actors
+            .iter()
+            .map(|actor| (actor.id.clone(), actor.graph.variable_values()))
+            .collect();
+    }
+
+    pub fn read(&self, actor: &str, name: &str) -> Evaluated {
+        let state = self.0.borrow();
+        state
+            .actors
+            .get(actor)
+            .and_then(|variables| variables.get(name))
+            .or_else(|| state.globals.get(name))
+            .cloned()
+            .unwrap_or(Evaluated::Number(0.0))
+    }
+
+    /// Writes an actor slot first, then a global, and otherwise declares an
+    /// actor slot. This is the variable rule blocks have always used.
+    pub fn write(&self, actor: &str, name: &str, value: Evaluated) {
+        let mut state = self.0.borrow_mut();
+        if let Some(slot) = state
+            .actors
+            .get_mut(actor)
+            .and_then(|variables| variables.get_mut(name))
+        {
+            *slot = value;
+            return;
+        }
+        if let Some(slot) = state.globals.get_mut(name) {
+            *slot = value;
+            return;
+        }
+        state
+            .actors
+            .entry(actor.to_string())
+            .or_default()
+            .insert(name.to_string(), value);
+    }
+
+    pub fn snapshot(&self) -> VariableSnapshot {
+        let state = self.0.borrow();
+        VariableSnapshot {
+            globals: state.globals.clone(),
+            actors: state.actors.clone(),
+        }
+    }
 }
 
 /// Steps one script may take in a single frame before being made to yield.
@@ -108,8 +179,7 @@ pub struct Vm {
     names: HashMap<String, String>,
     /// Actor id -> custom block id -> input names, in declaration order.
     block_inputs: HashMap<String, HashMap<String, Vec<String>>>,
-    globals: VariableValues,
-    actor_vars: ActorVariables,
+    variables: Variables,
     scripts: Vec<Script>,
     /// Events to start scripts for, drained at the top of the next tick.
     pending: Vec<Event>,
@@ -127,12 +197,15 @@ impl Default for Vm {
 
 impl Vm {
     pub fn new() -> Self {
+        Self::with_variables(Variables::default())
+    }
+
+    pub fn with_variables(variables: Variables) -> Self {
         Self {
             programs: HashMap::new(),
             names: HashMap::new(),
             block_inputs: HashMap::new(),
-            globals: HashMap::new(),
-            actor_vars: HashMap::new(),
+            variables,
             scripts: Vec::new(),
             pending: Vec::new(),
             now: 0.0,
@@ -147,21 +220,14 @@ impl Vm {
         self.programs.clear();
         self.names.clear();
         self.block_inputs.clear();
-        self.actor_vars.clear();
         self.scripts.clear();
         self.pending.clear();
         self.stopping = false;
-        self.globals = project
-            .globals
-            .iter()
-            .map(|v| (v.name.clone(), v.value.clone()))
-            .collect();
+        self.variables.load(project);
         for actor in &project.actors {
             self.programs
                 .insert(actor.id.clone(), Rc::new(compile(&actor.graph)));
             self.names.insert(actor.id.clone(), actor.name.clone());
-            self.actor_vars
-                .insert(actor.id.clone(), actor.graph.variable_values());
             let inputs = actor
                 .graph
                 .block_defs
@@ -194,11 +260,12 @@ impl Vm {
     }
 
     /// Current variable values - what the editor's watchers show.
-    pub fn variables(&self) -> VariableSnapshot<'_> {
-        VariableSnapshot {
-            globals: &self.globals,
-            actors: &self.actor_vars,
-        }
+    pub fn variables(&self) -> VariableSnapshot {
+        self.variables.snapshot()
+    }
+
+    pub fn variable_store(&self) -> Variables {
+        self.variables.clone()
     }
 
     /// Runs every live script for one frame. `now` is seconds since the run
@@ -692,33 +759,13 @@ impl Vm {
     // ─── Variables ──────────────────────────────────────────────────────────
 
     fn read_var(&self, actor: &str, name: &str) -> Evaluated {
-        self.actor_vars
-            .get(actor)
-            .and_then(|vars| vars.get(name))
-            .or_else(|| self.globals.get(name))
-            .cloned()
-            .unwrap_or(Evaluated::Number(0.0))
+        self.variables.read(actor, name)
     }
 
     /// Writes to the actor's own variable when it has one by that name, the
     /// project global when it doesn't, and otherwise declares it on the actor.
     fn write_var(&mut self, actor: &str, name: &str, value: Evaluated) {
-        if let Some(slot) = self
-            .actor_vars
-            .get_mut(actor)
-            .and_then(|vars| vars.get_mut(name))
-        {
-            *slot = value;
-            return;
-        }
-        if let Some(slot) = self.globals.get_mut(name) {
-            *slot = value;
-            return;
-        }
-        self.actor_vars
-            .entry(actor.to_string())
-            .or_default()
-            .insert(name.to_string(), value);
+        self.variables.write(actor, name, value);
     }
 
     // ─── Evaluation ─────────────────────────────────────────────────────────

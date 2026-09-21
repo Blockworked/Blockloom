@@ -367,6 +367,10 @@ export interface BuildTarget {
   ready: boolean;
   /** What it would build with, or what is missing. */
   note: string;
+  /** Whether this project's blocks can be compiled for this platform. */
+  fast_ready: boolean;
+  /** Why native blocks are or are not available. */
+  fast_note: string;
 }
 
 export interface StateDto {

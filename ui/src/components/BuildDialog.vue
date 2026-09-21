@@ -3,7 +3,7 @@
 // where to put it. The platform list comes from the backend with a reason
 // attached to each one that isn't available, since "why can't I pick macOS"
 // is the whole question this dialog has to answer.
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { FolderOpen } from 'lucide-vue-next';
 import { state } from '../store';
 import { buildGame, listBuildTargets, pickFolder } from '../tauri';
@@ -17,8 +17,12 @@ const location = ref(state.default_project_location);
 const error = ref('');
 const built = ref('');
 const busy = ref(false);
+const fast = ref(false);
 
 const chosen = computed(() => targets.value.find(target => target.triple === triple.value));
+watch(chosen, target => {
+  fast.value = Boolean(target?.fast_ready);
+});
 
 onMounted(async () => {
   try {
@@ -41,7 +45,7 @@ async function submit() {
   error.value = '';
   built.value = '';
   try {
-    built.value = await buildGame(location.value.trim(), triple.value);
+    built.value = await buildGame(location.value.trim(), triple.value, fast.value);
   } catch (e) {
     error.value = String(e);
   } finally {
@@ -65,6 +69,12 @@ async function submit() {
         </select>
       </div>
       <p v-if="chosen" class="panel-note">{{ chosen.note }}</p>
+
+      <label class="build-fast-option">
+        <input v-model="fast" type="checkbox" :disabled="!chosen?.fast_ready">
+        <span>Compile blocks for maximum speed</span>
+      </label>
+      <p v-if="chosen" class="panel-note">{{ chosen.fast_note }}</p>
 
       <label class="dialog-label" for="build-location">Where to put it</label>
       <div class="dialog-row">
