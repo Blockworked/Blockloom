@@ -178,12 +178,12 @@ pub fn apply_effects(
                 }
             }
             Effect::ApplyImpulse { actor, impulse } => {
-                if let Some((_, mut external)) = engine
+                if let Some((mut velocity, _)) = engine
                     .entities
                     .get(actor)
                     .and_then(|entity| bodies.get_mut(*entity).ok())
                 {
-                    external.impulse = Vec3::new(impulse[0], impulse[1], impulse[2]);
+                    velocity.linear += Vec3::new(impulse[0], impulse[1], impulse[2]);
                 }
             }
             Effect::SetGravity { gravity } => {

@@ -21,6 +21,7 @@ mod overlay;
 mod script;
 mod world;
 
+use bevy::asset::{AssetPlugin, UnapprovedPathMode};
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
 use blockloom_core::scene::Mode;
@@ -33,12 +34,19 @@ fn main() {
 
     let incoming = bridge::listen();
     let mut app = App::new();
+    // Project assets live in the project's own folder, anywhere on disk, and
+    // are handed to the asset server as absolute paths. Those are unapproved
+    // by default in Bevy 0.19 (`Forbid`), which fails the load and leaves a
+    // white sprite - so allow them here. The files are the user's own.
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "Blockloom".to_string(),
             resolution: WindowResolution::new(960, 720),
             ..default()
         }),
+        ..default()
+    }).set(AssetPlugin {
+        unapproved_path_mode: UnapprovedPathMode::Allow,
         ..default()
     }))
     .insert_resource(ClearColor(Color::srgb(0.11, 0.14, 0.19)))

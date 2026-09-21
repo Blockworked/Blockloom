@@ -289,6 +289,20 @@ body {
   color: var(--blockstitch-red);
 }
 
+/* The Image size aspect lock: accent when engaged, not red on hover. */
+.aspect-lock:hover {
+  color: var(--blockstitch-accent);
+}
+
+.aspect-lock.on {
+  color: var(--blockstitch-accent);
+}
+
+.aspect-lock:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .component-add-button,
 .component-add-field {
   display: flex;

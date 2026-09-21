@@ -12,7 +12,7 @@
 // so a file dragged out of the asset tray lands on them.
 import { computed, ref, watch } from 'vue';
 import { AppDropdown, SwitchControl } from 'blockstitch';
-import { Plus, X } from 'lucide-vue-next';
+import { Lock, LockOpen, Plus, X } from 'lucide-vue-next';
 import { mode, openActor, state } from '../store';
 import {
   addActorComponent,
@@ -91,6 +91,30 @@ watch(
   },
   { immediate: true },
 );
+
+/** Whether the Image size inputs keep the file's own aspect. UI-only. */
+const aspectLocked = ref(true);
+/** The loaded image's own pixels, from the preview above. */
+const naturalSize = ref<{ w: number; h: number } | null>(null);
+
+watch(preview, url => {
+  naturalSize.value = null;
+  if (!url) return;
+  const img = new Image();
+  img.onload = () => {
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+      naturalSize.value = { w: img.naturalWidth, h: img.naturalHeight };
+    }
+  };
+  img.src = url;
+});
+
+function imageAspect(): number | null {
+  if (naturalSize.value && naturalSize.value.h > 0) {
+    return naturalSize.value.w / naturalSize.value.h;
+  }
+  return null;
+}
 
 function num(e: Event, fallback: number): number {
   const parsed = Number((e.target as HTMLInputElement).value);
@@ -187,6 +211,31 @@ function writeSize(component: ActorComponentDto, index: number, value: number) {
   const size = [...sizeOf(component)];
   size[index] = value;
   writeVisual(component, { size } as unknown as Partial<VisualDto>);
+}
+
+/** Writes one Image dimension, carrying the other along when the aspect is
+ * locked to the file's own proportions. */
+function writeSizeAspect(component: ActorComponentDto, index: number, value: number) {
+  const aspect = aspectLocked.value ? imageAspect() : null;
+  const size = [...sizeOf(component)];
+  if (size.length < 2 || !aspect || !(value > 0)) {
+    writeSize(component, index, value);
+    return;
+  }
+  const next = index === 0 ? [value, value / aspect] : [value * aspect, value];
+  writeVisual(component, { size: next } as unknown as Partial<VisualDto>);
+}
+
+/** Flips the aspect lock. Turning it on snaps the height to the width, so
+ * what is on screen is already at the file's proportions. */
+function toggleAspectLock(component: ActorComponentDto) {
+  aspectLocked.value = !aspectLocked.value;
+  if (!aspectLocked.value) return;
+  const aspect = imageAspect();
+  const size = sizeOf(component);
+  if (aspect && size.length === 2 && size[0] > 0) {
+    writeVisual(component, { size: [size[0], size[0] / aspect] } as unknown as Partial<VisualDto>);
+  }
 }
 
 /** Swapping a shape keeps what carries over (its color) and takes sensible
@@ -436,7 +485,32 @@ function writeGravity(index: number, value: number) {
             <label>Height</label>
             <input type="number" step="any" :value="heightOf(component)" @change="e => writeVisual(component, { height: num(e, 1) } as Partial<VisualDto>)">
           </div>
-          <div class="panel-row triple" v-if="sizeOf(component).length">
+          <div class="panel-row triple" v-if="visualOf(component).shape === 'Image' && sizeOf(component).length === 2">
+            <label>Size</label>
+            <input
+              type="number"
+              step="any"
+              :value="sizeOf(component)[0]"
+              @change="e => writeSizeAspect(component, 0, num(e, sizeOf(component)[0]))"
+            >
+            <input
+              type="number"
+              step="any"
+              :value="sizeOf(component)[1]"
+              @change="e => writeSizeAspect(component, 1, num(e, sizeOf(component)[1]))"
+            >
+            <button
+              class="component-remove aspect-lock"
+              :class="{ on: aspectLocked }"
+              :title="naturalSize ? (aspectLocked ? `Locked to ${naturalSize.w}×${naturalSize.h}` : `Lock to ${naturalSize.w}×${naturalSize.h}`) : 'Load an image to lock its aspect'"
+              :disabled="!naturalSize"
+              @click="toggleAspectLock(component)"
+            >
+              <Lock v-if="aspectLocked" :size="13" />
+              <LockOpen v-else :size="13" />
+            </button>
+          </div>
+          <div class="panel-row triple" v-else-if="sizeOf(component).length">
             <label>Size</label>
             <input
               v-for="(dimension, i) in sizeOf(component)"
