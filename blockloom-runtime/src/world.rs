@@ -168,6 +168,7 @@ pub fn rebuild_world(
     assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut textures: ResMut<Assets<Image>>,
     actors: Query<Entity, With<ActorId>>,
     cameras: Query<Entity, With<WorldCamera>>,
 ) {
@@ -198,7 +199,9 @@ pub fn rebuild_world(
                 WorldCamera,
             ));
             for actor in &project.actors {
-                if let Some(entity) = dim2::spawn_actor(&mut commands, actor, &assets) {
+                if let Some(entity) =
+                    dim2::spawn_actor(&mut commands, actor, &assets, &mut textures)
+                {
                     engine.entities.insert(actor.id.clone(), entity);
                 } else {
                     warn!("{} has a 3D shape in a 2D project", actor.name);
@@ -334,8 +337,17 @@ pub fn detect_clicks(
                 let Some(visual) = engine.project.actor(&id.0).map(|a| a.visual.clone()) else {
                     continue;
                 };
-                let half = half_extents(&visual) * transform.scale.truncate();
                 let delta = point - transform.translation.truncate();
+                // A circle is picked by distance, not by box: the corners of
+                // its bounding square aren't part of the actor.
+                if let Visual::Circle { radius, .. } = &visual {
+                    let scale = transform.scale.truncate().abs().max_element();
+                    if delta.length() <= radius * scale {
+                        hits.push(id.0.clone());
+                    }
+                    continue;
+                }
+                let half = half_extents(&visual) * transform.scale.truncate();
                 if delta.x.abs() <= half.x && delta.y.abs() <= half.y {
                     hits.push(id.0.clone());
                 }

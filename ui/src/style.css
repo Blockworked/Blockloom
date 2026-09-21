@@ -120,6 +120,51 @@ body {
   height: 16px;
 }
 
+/* ── Scrollbars ──────────────────────────────────────────────────────────── */
+/* Blockloom's own scroll containers use the same thin overlay thumb as
+   blockstitch's canvas and palette, instead of the native OS scrollbar. */
+
+.side-panel,
+.sidebar-scroll,
+.run-log-lines,
+.dialog {
+  scrollbar-width: thin;
+  scrollbar-color: var(--blockstitch-scrollbar-thumb) transparent;
+}
+
+.side-panel::-webkit-scrollbar,
+.sidebar-scroll::-webkit-scrollbar,
+.run-log-lines::-webkit-scrollbar,
+.dialog::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.side-panel::-webkit-scrollbar-track,
+.sidebar-scroll::-webkit-scrollbar-track,
+.run-log-lines::-webkit-scrollbar-track,
+.dialog::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.side-panel::-webkit-scrollbar-thumb,
+.sidebar-scroll::-webkit-scrollbar-thumb,
+.run-log-lines::-webkit-scrollbar-thumb,
+.dialog::-webkit-scrollbar-thumb {
+  background: var(--blockstitch-scrollbar-thumb);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.side-panel::-webkit-scrollbar-thumb:hover,
+.sidebar-scroll::-webkit-scrollbar-thumb:hover,
+.run-log-lines::-webkit-scrollbar-thumb:hover,
+.dialog::-webkit-scrollbar-thumb:hover {
+  background: var(--blockstitch-scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
 /* ── Layout ──────────────────────────────────────────────────────────────── */
 
 .editor-body {

@@ -3,7 +3,9 @@
 //! pixel, which is why gravity defaults to a few hundred of them.
 
 use crate::engine::{ActorId, Engine, PendingEffects};
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy_rapier2d::prelude as rp;
 use blockloom_core::project::Actor;
 use blockloom_core::scene::{BodyKind, Visual};
@@ -24,16 +26,50 @@ fn collider_for(visual: &Visual) -> Option<rp::Collider> {
     }
 }
 
-fn sprite_for(visual: &Visual, assets: &AssetServer) -> Option<Sprite> {
+/// A white disc on a transparent background, so a `Circle` draws round
+/// through the same sprite pipeline every other 2D actor uses. The texture
+/// is white so `Sprite::color` tints it exactly; the transparent corners are
+/// what makes it read as a circle instead of a square.
+fn circle_image(radius: f32) -> Image {
+    let diameter = (radius * 2.0).ceil().max(2.0) as u32;
+    let center = diameter as f32 / 2.0;
+    let mut data = Vec::with_capacity((diameter * diameter * 4) as usize);
+    for y in 0..diameter {
+        for x in 0..diameter {
+            // Half-pixel antialiased edge: fully opaque half a pixel inside
+            // the radius, fading to transparent half a pixel outside it.
+            let dist =
+                Vec2::new(x as f32 + 0.5 - center, y as f32 + 0.5 - center).length();
+            let alpha = (radius + 0.5 - dist).clamp(0.0, 1.0);
+            data.extend_from_slice(&[255, 255, 255, (alpha * 255.0) as u8]);
+        }
+    }
+    Image::new(
+        Extent3d {
+            width: diameter,
+            height: diameter,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    )
+}
+
+fn sprite_for(
+    visual: &Visual,
+    assets: &AssetServer,
+    textures: &mut Assets<Image>,
+) -> Option<Sprite> {
     match visual {
         Visual::Rect { color, size } => Some(Sprite {
             color: crate::world::parse_color(color),
             custom_size: Some(Vec2::new(size[0], size[1])),
             ..default()
         }),
-        // A circle is drawn as a square sprite for now; its collider is a
-        // proper ball, so physics still behaves round.
         Visual::Circle { color, radius } => Some(Sprite {
+            image: textures.add(circle_image(*radius)),
             color: crate::world::parse_color(color),
             custom_size: Some(Vec2::splat(radius * 2.0)),
             ..default()
@@ -48,8 +84,13 @@ fn sprite_for(visual: &Visual, assets: &AssetServer) -> Option<Sprite> {
 }
 
 /// Spawns one actor, or nothing if its visual belongs to the other dimension.
-pub fn spawn_actor(commands: &mut Commands, actor: &Actor, assets: &AssetServer) -> Option<Entity> {
-    let sprite = sprite_for(&actor.visual, assets)?;
+pub fn spawn_actor(
+    commands: &mut Commands,
+    actor: &Actor,
+    assets: &AssetServer,
+    textures: &mut Assets<Image>,
+) -> Option<Entity> {
+    let sprite = sprite_for(&actor.visual, assets, textures)?;
     let mut entity = commands.spawn((
         Name::new(actor.name.clone()),
         ActorId(actor.id.clone()),
@@ -57,6 +98,11 @@ pub fn spawn_actor(commands: &mut Commands, actor: &Actor, assets: &AssetServer)
         crate::world::transform_for(actor),
         crate::world::visibility_for(actor),
     ));
+    insert_body(&mut entity, actor);
+    Some(entity.id())
+}
+
+fn insert_body(entity: &mut EntityCommands, actor: &Actor) {
     if let (Some(body), Some(collider)) =
         (body_for(actor.physics.body), collider_for(&actor.visual))
     {
@@ -74,7 +120,6 @@ pub fn spawn_actor(commands: &mut Commands, actor: &Actor, assets: &AssetServer)
             entity.insert(rp::LockedAxes::ROTATION_LOCKED);
         }
     }
-    Some(entity.id())
 }
 
 fn body_for(body: BodyKind) -> Option<rp::RigidBody> {
@@ -248,5 +293,41 @@ pub fn sync_pause(
 ) {
     for mut config in &mut configs {
         config.physics_pipeline_active = engine.running && !engine.paused;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn circle_texture_is_a_disc_not_a_square() {
+        let radius = 30.0;
+        let image = circle_image(radius);
+        let data = image.data.as_ref().expect("texture has pixel data");
+        let d = (radius * 2.0).ceil() as usize;
+        assert_eq!(data.len(), d * d * 4);
+        let alpha_at = |x: usize, y: usize| data[(y * d + x) * 4 + 3];
+        // The middle of the disc is fully opaque...
+        assert_eq!(alpha_at(d / 2, d / 2), 255);
+        // ...the middle of each edge is on the disc (up to antialiasing)...
+        assert!(alpha_at(d / 2, 0) >= 250);
+        assert!(alpha_at(d / 2, d - 1) >= 250);
+        assert!(alpha_at(0, d / 2) >= 250);
+        assert!(alpha_at(d - 1, d / 2) >= 250);
+        // ...and the corners are fully transparent: the square is gone.
+        assert_eq!(alpha_at(0, 0), 0);
+        assert_eq!(alpha_at(d - 1, 0), 0);
+        assert_eq!(alpha_at(0, d - 1), 0);
+        assert_eq!(alpha_at(d - 1, d - 1), 0);
+        // White throughout so `Sprite::color` tints the actor exactly.
+        assert!(
+            data.chunks_exact(4)
+                .all(|p| p[0] == 255 && p[1] == 255 && p[2] == 255)
+        );
+        assert_eq!(
+            image.texture_descriptor.format,
+            TextureFormat::Rgba8UnormSrgb
+        );
     }
 }
