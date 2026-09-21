@@ -145,7 +145,8 @@ Two processes: the editor window, and the game world.
   `assets.rs` (the files inside one of those folders, which the asset tray
   manages and the runtime loads images and fonts from), `pack.rs` (that
   document again, as a built game carries it) with `build.rs` (what lays a
-  build out), `vm/` (the block VM),
+  build out), `vm/` (the block VM), `codegen/` (the same blocks as Rust
+  instead),
   `script/` (compiling a project's Rust scripts, and the ABI they talk over),
   `sense.rs` (the world state reporter blocks read), and `wire.rs` (the one
   shape difference between documents and the frontend).
@@ -308,6 +309,58 @@ attached to every platform it can't offer.
 A build folder is named for the project and the platform - `Pond Game (Linux
 x64)` - because one output folder holds a build per platform, and three folders
 called the same thing would be three chances to ship the wrong one.
+
+### Compiling the blocks
+
+`blockloom-core/src/codegen/` emits a project's blocks as Rust source: an
+expression becomes an expression, a variable read becomes a call rather than a
+hash lookup, and a strand becomes a function. It is meant for the same no-Cargo
+`rustc` pipeline the scripts use, so a built game can carry native logic beside
+its native scripts.
+
+A strand can be suspended, so it isn't a straight run of Rust: it comes out as
+a `match` over the program counter, over the very same flattened `Vec<Step>`
+the VM walks. Straight-line blocks fuse into one arm, and every point the VM
+can give the frame back - a `wait`, a `glide`, each iteration of a loop - is an
+arm of its own that picks up where it left off. What the VM works out at run
+time on a frame stack is known here while emitting, so a `repeat` counts down
+in a flat slot the entry table sized and an `escape loop` is just a jump.
+
+The rule it has to keep is that a compiled program and the VM ask the world for
+exactly the same things in the same order, on the same tick - including the
+mistakes, since a bad slot reports itself once and stands a zero in its place,
+while a slot that evaluated fine but isn't a number is silently zero.
+`tests/codegen.rs` is that rule: it runs a project both ways off one clock,
+prints what each one asked for and which tick it asked on, and compares line
+for line. Add a block to the emitter and add a case there, or the two halves
+drift and a compiled game stops meaning what the played one meant.
+
+The one difference on purpose is the VM's per-tick step budget, which compiled
+code doesn't count against. Every back edge belongs to a loop and every loop
+yields, so a compiled strand can't spin; the budget only catches ten thousand
+straight-line blocks in a row, and a counter on every block would cost what
+compiling was for.
+
+`codegen/runtime.rs` is the support code a generated program is built on - the
+value type, the operators over it, and the `Host` trait it asks through. Like
+`script/abi.rs` it is compiled twice, once into `blockloom-core` so the tests
+can hold it against `Evaluated`, and once as text into every emitted program.
+Anything that reads the world or the clock is a question for the host, so
+`random` and `current time` go the same way sensing blocks do: one run of a
+game has one source of each rather than two that disagree.
+
+Two things shape the emitted code. Every slot is read into a `let` before the
+act that uses it, because reading a slot borrows the host and so does handing
+it something to do. And `and`/`or` take their second operand as a closure,
+because the VM's short circuit is observable: `false and <a bad slot>` reports
+nothing.
+
+What compiles so far is everything but custom blocks, which are `Unsupported`
+- that refuses the whole project rather than emitting half of one, so whatever
+calls it can fall back to the VM knowing which block sent it there. Nothing
+calls it yet: there is no scheduler on this side and no home for variables
+both halves can reach, so a build still ships the document and the runtime
+still plays it.
 
 ### Frontend (`ui/`)
 

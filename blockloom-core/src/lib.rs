@@ -16,6 +16,8 @@
 //! - [`pack`] is that document again, as a built game carries it, and
 //!   [`build`] is what lays one out: the player binary, the pack, the assets
 //!   and the compiled scripts, in a folder that runs on its own.
+//! - [`codegen`] compiles those same canvases into Rust instead, for a built
+//!   game that runs native code rather than walking the tree.
 //! - [`vm`] compiles those canvases into a flat program and runs every script
 //!   cooperatively, one slice per rendered frame, emitting [`vm::Effect`]s for
 //!   a host to apply. `blockloom-runtime` is that host.
@@ -27,6 +29,7 @@
 pub mod assets;
 pub mod blocks;
 pub mod build;
+pub mod codegen;
 pub mod components;
 pub mod fields;
 pub mod library;

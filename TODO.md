@@ -13,11 +13,21 @@ Obvious gaps already identified in the project notes:
 - [x] Build for platforms other than the one doing the building: stage a player
       payload per target under `players/<triple>/`, and let the Build dialog
       pick between the targets an install actually has one for.
-- [ ] Compile a project's blocks instead of interpreting them in a build:
-      transpile each actor's flattened program into a Rust state machine, built
-      with the same no-Cargo `rustc` pipeline the scripts use and loaded over the
-      same C boundary. The yield rule has to survive exactly, so gate it on
-      running both against each other and comparing effect streams tick by tick.
+- [ ] Compile a project's blocks instead of interpreting them in a build.
+      Every block but a custom one is done (`blockloom-core/src/codegen/`,
+      with `tests/codegen.rs` running the two halves off one clock and
+      comparing them line for line, tick for tick). What's left:
+      - Custom blocks, including the reporter-shaped ones that run in place.
+        A call needs a return pc the flat counter slots don't cover, so this
+        is where the emitter finally needs a frame stack of its own.
+      - Somewhere for a variable to live that both a compiled program and the
+        VM can reach, since the VM owns them today and a host call can't borrow
+        it mid-tick.
+      - The C boundary and the scheduling: the emitted program behind
+        `script/abi.rs`-style exports, loaded by the player the way a script
+        is, with the VM handing a compiled strand over instead of stepping it.
+      - Then the `fast` option on a build, defaulting on where the toolchain
+        allows it.
 - [ ] Add a save-data system so a finished game can persist the player's progress across runs, with a block API and a matching Rust script API.
 - [x] Redesign projects as folders: the app always starts on a Dashboard page for creating new projects and opening existing ones, with each project stored as a folder so it can hold assets.
 - [x] Add a component system built on Bevy's ECS components that turns all properties into components, with support for custom components and camera-attach components (for first-person / third-person cameras).
