@@ -295,6 +295,115 @@ impl Actor {
             .unwrap_or_default()
     }
 
+    /// This actor's own id - what every call below takes, and the one way to
+    /// name a particular clone, since clones share their template's name.
+    pub fn id(&self) -> String {
+        self.text(TEXT_ACTOR_ID, Str::EMPTY, Str::EMPTY)
+            .unwrap_or_default()
+    }
+
+    // ─── Actors and the hierarchy ──────────────────────────────────────────
+
+    /// True for an actor a clone made rather than one the editor authored.
+    pub fn is_clone(&self) -> bool {
+        self.number(READ_IS_CLONE, Str::EMPTY, Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
+    /// How many actors answer to `name` right now, clones included. An empty
+    /// name counts every actor in the world.
+    pub fn actor_count(&self, name: &str) -> usize {
+        self.number(READ_ACTOR_COUNT, Str::borrow(name), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            .max(0.0) as usize
+    }
+
+    /// The id of the actor this one hangs off, or `None` when it is free.
+    pub fn parent(&self) -> Option<String> {
+        self.text(TEXT_PARENT, Str::EMPTY, Str::EMPTY)
+            .filter(|id| !id.is_empty())
+    }
+
+    /// The id of the last actor or clone this one made, or `None` before it
+    /// has made any. Hand it to [`Actor::set_parent`] or [`Actor::delete`].
+    pub fn new_actor(&self) -> Option<String> {
+        self.text(TEXT_NEW_ACTOR, Str::EMPTY, Str::EMPTY)
+            .filter(|id| !id.is_empty())
+    }
+
+    /// Hangs this actor off another, by id or name, so the two move
+    /// together. The actor keeps the place it is standing in.
+    pub fn set_parent(&self, actor: &str) {
+        self.act(
+            ACT_SET_PARENT,
+            Str::borrow(actor),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Takes this actor off whatever it was hanging from.
+    pub fn clear_parent(&self) {
+        self.set_parent("");
+    }
+
+    /// Makes a running copy of an actor, by id or name - its components as
+    /// they stand and its whole canvas, whose `when I start as a clone`
+    /// strands run next step. An empty name clones this actor.
+    /// [`Actor::new_actor`] answers with the copy's id afterwards.
+    pub fn create_clone(&self, actor: &str) {
+        self.act(
+            ACT_CREATE_CLONE,
+            Str::borrow(actor),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    pub fn clone_myself(&self) {
+        self.create_clone("");
+    }
+
+    /// Makes a brand-new actor with no blocks of its own, for this run only.
+    pub fn create_actor(&self, name: &str, x: f32, y: f32, z: f32) {
+        self.act(
+            ACT_CREATE_ACTOR,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::EMPTY,
+            x as f64,
+            y as f64,
+            z as f64,
+        );
+    }
+
+    /// Takes an actor out of the world for the rest of the run, by id or
+    /// name. The saved document is untouched.
+    pub fn delete(&self, actor: &str) {
+        self.act(
+            ACT_DELETE_ACTOR,
+            Str::borrow(actor),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Deletes this actor. Its blocks stop; this call returns as usual, so
+    /// there is nothing to do afterwards.
+    pub fn delete_myself(&self) {
+        self.delete("");
+    }
+
     // ─── Changing the world ────────────────────────────────────────────────
 
     /// Forward along the actor's own facing.

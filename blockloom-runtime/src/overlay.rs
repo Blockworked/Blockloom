@@ -97,7 +97,7 @@ pub fn update_speech_bubbles(
             node.display = Display::None;
             continue;
         };
-        let Some(actor) = engine.project.actor(&bubble.actor) else {
+        let Some(actor) = engine.actor(&bubble.actor) else {
             node.display = Display::None;
             continue;
         };

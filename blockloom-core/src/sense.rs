@@ -20,6 +20,13 @@ pub struct ActorSense {
     pub visible: bool,
     /// Ids of the actors this one is currently touching.
     pub touching: HashSet<String>,
+    /// The actor this one hangs off right now, by id, or empty for none.
+    pub parent: String,
+    /// True for an actor a `create clone` block made rather than the editor.
+    pub is_clone: bool,
+    /// The id of the last actor or clone this one made, so a block can move,
+    /// parent or delete what it just created. Empty until it makes one.
+    pub last_created: String,
     /// Which components the actor is carrying right now, which an `attach`
     /// or `detach` earlier in the run may have changed.
     pub attached: HashSet<String>,
@@ -50,6 +57,9 @@ impl Default for ActorSense {
             rotation: [0.0; 3],
             scale: 1.0,
             visible: true,
+            parent: String::new(),
+            is_clone: false,
+            last_created: String::new(),
             touching: HashSet::new(),
             attached: HashSet::new(),
             components: HashMap::new(),
@@ -58,6 +68,19 @@ impl Default for ActorSense {
 }
 
 impl Sensors {
+    /// How many actors answer to `name` right now - clones included, since
+    /// they share their template's. An empty name counts every actor.
+    pub fn count_named(&self, name: &str) -> usize {
+        let name = name.trim();
+        if name.is_empty() {
+            return self.actors.len();
+        }
+        self.actors
+            .values()
+            .filter(|actor| actor.name.eq_ignore_ascii_case(name))
+            .count()
+    }
+
     /// Looks an actor up by id first, then by name (case-insensitively), so a
     /// block can name either.
     pub fn find(&self, id_or_name: &str) -> Option<&ActorSense> {

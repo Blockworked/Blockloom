@@ -188,10 +188,11 @@ so removing `Body` really does leave it without a rigid body, and removing
 to be. `actor.visual()` is therefore an `Option`, while `placement()`,
 `physics()` and `visible()` fall back to a default.
 
-Three components have no fixed-field ancestor. `Camera` attaches the world
+Four components have no fixed-field ancestor. `Camera` attaches the world
 camera to that actor - follow, first person or third person - and one project
 has one of them, so adding it takes it off whoever had it. `Script` names a
-Rust file (see below). `Custom` is a named bag of values the project invented
+Rust file (see below). `Parent` names another actor this one hangs off (see
+Actors below). `Custom` is a named bag of values the project invented
 (`Health { hp, armour }`); the runtime carries it on the entity as
 `CustomComponents`, publishes it through `sense::ActorSense`, and
 `set <field> of <component> to` writes it back. Like a position and unlike a
@@ -209,6 +210,50 @@ Pre-component documents kept `visual`/`placement`/`physics`/`visible` flat on
 the actor, and the world camera named the actor it followed. Both still load:
 `Actor` deserializes through `ActorRepr`, and `Project::normalize` moves the
 old `follow` onto its actor as a camera component.
+
+### Actors that come and go
+
+An actor's id is what everything keys it by, and a run can mint ids the
+document never had. `engine.spawned` holds those runtime-only actors and
+`Engine::actor` looks there before the project, so one question finds any
+actor at all - a clone answers about its shape, its physics and its components
+exactly as the actor it was copied from does.
+
+`create a clone of` copies a running actor. The VM does the scheduling half:
+`register_clone` gives the copy the template's compiled `Program` (an `Rc`
+clone - one program, many actors), its name, its custom-block inputs, and its
+own copy of the template's variables as they stand. It then queues
+`Event::Cloned`, which starts the copy's `when I start as a clone` strands at
+the top of the next tick - by which time `apply_lifetimes` has built the
+entity those blocks read through. The host does the world half: the clone is
+the template as the editor authored it, standing where the template stands
+now, carrying its live custom-component values and hanging off whatever it
+hangs off. A clone shares its template's name, so `when I touch Ball`,
+`broadcast` and `how many Ball there are` all reach every copy; `the actor I
+made` reports an id, which is how a block means one clone in particular.
+
+`create actor` makes something the document never had: a `Place`, a plain
+`Look`, and no blocks at all. `delete` takes an actor out of the run - the
+document is untouched, so Play puts an authored one back - and stops its
+scripts. Deleting yourself ends the strand that asked where it stands, the
+way `stop all` ends everything. Both blocks name an actor through a value
+slot, so `the actor I made` can be dropped straight into one; `create a clone
+of` names an authored actor, so it stays a dropdown.
+
+The parent/child hierarchy is `engine.parents`, one entry per child, seeded
+from every `Parent` component on a rebuild and moved after that by `set my
+parent to` or a script. Rather than reparenting Bevy's transforms - which
+would make every position in the engine relative to somebody and leave rapier
+owning half of them - `world::apply_parenting` moves each child by exactly the
+change its parent underwent this step: `child = (parent now / parent then) *
+child`. A child that moved itself keeps that motion, a parent's turn swings
+its children around it, and parents are walked roots-first so one pass carries
+a move the whole way down a chain. It runs in `FixedPostUpdate` before
+`record_poses`, so the parent's change includes what physics wrote and the
+pose the renderer interpolates towards is where the child ended up. Loops are
+refused where they would be made - `Project::prune_parents` on load,
+`commands::check_parent` in the editor, `world::set_parent` at run time -
+because a cycle has no root to start the pass at.
 
 ### Scripts
 
@@ -257,14 +302,17 @@ the whole game window.
    per-frame `Update` publishes the sensor snapshot (`sense::publish`), turns input
    and rapier contacts into `vm::Event`s (at most once a frame, so a few sunk fixed
    steps never repeat a keypress), and reads `Vm::tick`'s results next step.
-4. The runtime applies those effects to the ECS - shared ones in
-   `world::apply_common`, physics and material ones in the dimension's own
-   module - and reports says, errors and a periodic status back to the editor.
+4. The runtime applies those effects to the ECS - actors made and unmade in
+   `world::apply_lifetimes`, shared ones in `world::apply_common`, physics and
+   material ones in the dimension's own module - and reports says, errors and a
+   periodic status back to the editor.
    Every actor carries a `PhysicsPose`/`PrevPose` pair, and `record_poses`
    (`FixedPostUpdate`) + `interpolate_poses` (`Update`) draw each between fixed
    steps so fast displays don't see them - physics bodies from the pose physics
    wrote, and a `move`/`glide` sprite from the pose its step's effects pushed
-   it to, both just as smooth as a rolling ball.
+   it to, both just as smooth as a rolling ball. `restore_poses` puts the
+   settled pose back at the head of every fixed step, so simulation builds on
+   where the actor actually is rather than on the frame the renderer drew.
 
 Scripts yield the way Scratch's do: at a `wait`, and once per loop iteration.
 That one rule is why `forever` costs one step per fixed tick instead of hanging
@@ -406,9 +454,14 @@ still runs, and still does whatever it does to the world.
 
 What it won't compile is a custom block that can reach itself through statement
 calls - its loops would share one set of counters where the VM gives every
-invocation a frame. `Unsupported` refuses the whole project rather than
-emitting half of one, so the Build dialog can disable native logic and name what
-sent it there.
+invocation a frame - or anything that makes or unmakes an actor:
+`create a clone of`, `create actor`, `delete`, and a `when I start as a clone`
+strand. A generated program has one fixed `Entry` table with one state per
+authored strand and no way to run one under a second actor id, so there would
+be nowhere to put a clone's scripts. `set my parent to` compiles like any other
+act, since the hierarchy is entirely the host's. `Unsupported` refuses the
+whole project rather than emitting half of one, so the Build dialog can disable
+native logic and name what sent it there.
 
 `vm::Variables` is the live variable home shared by either scheduler. Generated
 logic exports one runner behind the ABI in `codegen/runtime.rs`, and
@@ -461,7 +514,18 @@ lands.
 
 ### Known gaps
 
-- No clones (`create clone of myself`), no sounds, no lists.
+- No sounds, no lists.
+- A project that clones, creates or deletes actors can't ship compiled blocks:
+  the Build dialog offers it the VM instead and says why. A script in such a
+  build can still create and delete, but asking one for a clone is reported
+  rather than done, since only the VM can schedule the copy's strands.
+- A clone copies the template as the editor authored it, standing where the
+  template stands now. What `attach`/`detach` did to the template since Play
+  doesn't carry over - re-attaching a component has always meant the authored
+  one.
+- A child keeps its own world position when it is hung off a parent: a parent
+  moves a child from then on, it doesn't place it. There is no authored local
+  offset, and no way to ask for a child's position in its parent's frame.
 - Building for another platform needs its player staged by hand, and a scripted
   project also needs that target's `std` and a linker for it.
 - Recursive statement-shaped custom blocks fall back to the VM because their

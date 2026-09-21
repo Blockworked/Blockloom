@@ -272,12 +272,7 @@ pub fn apply_effects(
                 let Some(id) = engine.entities.get(actor).copied() else {
                     continue;
                 };
-                let Some(visual) = engine
-                    .project
-                    .actor(actor)
-                    .and_then(|a| a.visual())
-                    .cloned()
-                else {
+                let Some(visual) = engine.actor(actor).and_then(|a| a.visual()).cloned() else {
                     continue;
                 };
                 let mut entity = commands.entity(id);
@@ -305,18 +300,18 @@ pub fn apply_effects(
                 };
                 match component.as_str() {
                     "Body" => {
-                        if let Some(authored) = engine.project.actor(actor) {
+                        if let Some(authored) = engine.actor(actor) {
                             insert_body(&mut commands.entity(entity), authored);
                         }
                     }
                     "Look" => {
-                        let Some(sprite) = engine
-                            .project
-                            .actor(actor)
-                            .and_then(|a| a.visual())
-                            .and_then(|visual| {
-                                sprite_for(visual, dir.as_deref(), &assets, &mut textures)
-                            })
+                        let Some(sprite) =
+                            engine
+                                .actor(actor)
+                                .and_then(|a| a.visual())
+                                .and_then(|visual| {
+                                    sprite_for(visual, dir.as_deref(), &assets, &mut textures)
+                                })
                         else {
                             continue;
                         };

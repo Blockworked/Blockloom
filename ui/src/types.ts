@@ -19,6 +19,7 @@ export const INSTRUCTION_TYPES = [
   'WhenClicked',
   'WhenCollision',
   'WhenMessage',
+  'WhenCloned',
   'BlockHeader',
   'Move',
   'GoTo',
@@ -41,6 +42,10 @@ export const INSTRUCTION_TYPES = [
   'SetCameraView',
   'AttachComponent',
   'DetachComponent',
+  'SetParent',
+  'CreateClone',
+  'CreateActor',
+  'DeleteActor',
   'Wait',
   'WaitUntil',
   'If',
@@ -184,6 +189,8 @@ export type ActorComponentDto =
   | { component: 'Camera'; camera: CameraAttachDto }
   /** A Rust file under the project's assets/scripts, compiled on Play. */
   | { component: 'Script'; path: string }
+  /** The actor this one hangs off, by id, so the two move together. */
+  | { component: 'Parent'; parent: string }
   | { component: 'Custom'; name: string; fields: ComponentFieldDto[] };
 
 export type ComponentName = ActorComponentDto['component'];
@@ -196,6 +203,7 @@ export const ADDABLE_COMPONENTS: ComponentName[] = [
   'Body',
   'Camera',
   'Script',
+  'Parent',
   'Custom',
 ];
 
@@ -455,6 +463,12 @@ export function actorPhysics(actor: ActorDto | null): PhysicsDto {
   const body = findComponent(actor, 'Body');
   if (body?.component === 'Body') return body.physics;
   return { body: 'None', gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5, density: 1, mass: null };
+}
+
+/** The actor this one hangs off, by id, or null when it hangs off nothing. */
+export function actorParent(actor: ActorDto | null): string | null {
+  const parent = findComponent(actor, 'Parent');
+  return parent?.component === 'Parent' && parent.parent ? parent.parent : null;
 }
 
 /** The script file an actor runs, if it has a Script component. */

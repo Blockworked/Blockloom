@@ -88,6 +88,21 @@ impl Variables {
             .insert(name.to_string(), value);
     }
 
+    /// Gives `to` its own copy of `from`'s variables, as they stand. A clone
+    /// starts life with whatever its template had counted up to, and changes
+    /// either way after that.
+    pub fn copy_actor(&self, from: &str, to: &str) {
+        let mut state = self.0.borrow_mut();
+        let copied = state.actors.get(from).cloned().unwrap_or_default();
+        state.actors.insert(to.to_string(), copied);
+    }
+
+    /// Forgets an actor's own variables. A deleted actor is gone for the rest
+    /// of the run, and so is what it was remembering.
+    pub fn forget_actor(&self, actor: &str) {
+        self.0.borrow_mut().actors.remove(actor);
+    }
+
     pub fn snapshot(&self) -> VariableSnapshot {
         let state = self.0.borrow();
         VariableSnapshot {
@@ -120,6 +135,10 @@ pub enum Event {
         with: String,
     },
     Message(String),
+    /// A fresh clone is ready to run its own `when I start as a clone`.
+    Cloned {
+        actor: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -179,6 +198,12 @@ pub struct Vm {
     names: HashMap<String, String>,
     /// Actor id -> custom block id -> input names, in declaration order.
     block_inputs: HashMap<String, HashMap<String, Vec<String>>>,
+    /// Clone id -> the authored actor it is a copy of. Only runtime clones
+    /// are in here, which is what makes "am I a clone?" answerable.
+    clones: HashMap<String, String>,
+    /// Actors deleted during this tick. Their scripts are dropped at the end
+    /// of it, and the one that ran the block stops where it stands.
+    deleted: Vec<String>,
     variables: Variables,
     scripts: Vec<Script>,
     /// Events to start scripts for, drained at the top of the next tick.
@@ -205,6 +230,8 @@ impl Vm {
             programs: HashMap::new(),
             names: HashMap::new(),
             block_inputs: HashMap::new(),
+            clones: HashMap::new(),
+            deleted: Vec::new(),
             variables,
             scripts: Vec::new(),
             pending: Vec::new(),
@@ -220,6 +247,8 @@ impl Vm {
         self.programs.clear();
         self.names.clear();
         self.block_inputs.clear();
+        self.clones.clear();
+        self.deleted.clear();
         self.scripts.clear();
         self.pending.clear();
         self.stopping = false;
@@ -246,6 +275,41 @@ impl Vm {
     /// Queues an event. Its scripts start at the beginning of the next tick.
     pub fn fire(&mut self, event: Event) {
         self.pending.push(event);
+    }
+
+    /// Makes a clone on a script's behalf, answering `(clone id, template
+    /// id)` or `None` when nothing answers to `wanted`. A block reaches the
+    /// same code through `create a clone of`; this is the door for the
+    /// script ABI, which has no `Action` to run.
+    pub fn clone_actor(&mut self, running: &str, wanted: &str) -> Option<(String, String)> {
+        let template = self.find_actor(running, wanted)?;
+        let clone = self.register_clone(&template);
+        self.pending.push(Event::Cloned {
+            actor: clone.clone(),
+        });
+        Some((clone, template))
+    }
+
+    /// Registers a brand-new actor with no blocks and answers its id.
+    pub fn create_actor(&mut self, name: &str) -> String {
+        let id = new_actor_id();
+        self.programs
+            .insert(id.clone(), Rc::new(Program::default()));
+        self.names.insert(id.clone(), name.to_string());
+        id
+    }
+
+    /// Takes an actor out of the run, answering its id. Its scripts go at the
+    /// end of this tick.
+    pub fn delete_actor(&mut self, running: &str, wanted: &str) -> Option<String> {
+        let gone = self.find_actor(running, wanted)?;
+        self.forget_actor(&gone);
+        Some(gone)
+    }
+
+    /// Which actor a name or an id means, for a caller outside the VM.
+    pub fn actor_for(&self, running: &str, wanted: &str) -> Option<String> {
+        self.find_actor(running, wanted)
     }
 
     /// True while any script is still live.
@@ -299,6 +363,12 @@ impl Vm {
             index += 1;
         }
         self.scripts.retain(|script| script.status != Status::Done);
+        // A deleted actor's other strands go with it, wherever in the tick
+        // they were - the one that ran the block already stopped itself.
+        if !self.deleted.is_empty() {
+            let gone = std::mem::take(&mut self.deleted);
+            self.scripts.retain(|script| !gone.contains(&script.actor));
+        }
     }
 
     // ─── Starting scripts ───────────────────────────────────────────────────
@@ -341,6 +411,7 @@ impl Vm {
                             .is_some_and(|name| name.eq_ignore_ascii_case(with)))
             }
             (Trigger::Message(want), Event::Message(got)) => want == got,
+            (Trigger::Cloned, Event::Cloned { actor: fresh }) => fresh == actor,
             _ => false,
         }
     }
@@ -399,6 +470,12 @@ impl Vm {
                     script.pc = pc + 1;
                     let params = current_params(script);
                     self.perform(action, &script.actor, params.as_ref(), out);
+                    // `delete myself` ends the strand that ran it where it
+                    // stands, as `stop all` ends everything.
+                    if self.deleted.iter().any(|gone| gone == &script.actor) {
+                        script.status = Status::Done;
+                        return None;
+                    }
                 }
                 Step::JumpUnless { condition, to } => {
                     let params = current_params(script);
@@ -739,6 +816,52 @@ impl Vm {
                 actor: owner,
                 component: component.clone(),
             }),
+            // The name goes to the host as it was written, rather than being
+            // looked up here: the hierarchy is the host's, and a compiled
+            // program has no name table to look one up in. An empty slot
+            // takes the actor off whatever it hangs from, where an empty slot
+            // elsewhere means "myself".
+            Action::SetParent(target) => {
+                let parent = self.eval(target, actor, params, out).as_text();
+                out.push(Effect::SetParent {
+                    actor: owner,
+                    parent: parent.trim().to_string(),
+                });
+            }
+            Action::CreateClone(of) => match self.clone_actor(actor, of) {
+                Some((clone, template)) => out.push(Effect::CreateClone {
+                    actor: owner,
+                    clone,
+                    of: template,
+                }),
+                None => out.push(Effect::Error {
+                    actor: owner,
+                    message: format!("there's no actor named \"{of}\" to clone"),
+                }),
+            },
+            Action::CreateActor { name, position } => {
+                let name = self.eval(name, actor, params, out).as_text();
+                let position = self.eval_vec3(position, actor, params, out);
+                // No blocks of its own, but a name other actors can find it
+                // by and a program slot so deleting it is the same code path.
+                let id = self.create_actor(&name);
+                out.push(Effect::CreateActor {
+                    actor: owner,
+                    id,
+                    name,
+                    position,
+                });
+            }
+            Action::DeleteActor(target) => {
+                let wanted = self.eval(target, actor, params, out).as_text();
+                match self.delete_actor(actor, &wanted) {
+                    Some(gone) => out.push(Effect::DeleteActor { actor: gone }),
+                    None => out.push(Effect::Error {
+                        actor: owner,
+                        message: format!("there's no actor named \"{wanted}\" to delete"),
+                    }),
+                }
+            }
             Action::Broadcast(name) => self.pending.push(Event::Message(name.trim().to_string())),
             Action::SetVariable { name, value } => {
                 let value = self.eval(value, actor, params, out);
@@ -753,6 +876,72 @@ impl Vm {
                 let current = self.read_var(actor, name).as_number().unwrap_or(0.0);
                 self.write_var(actor, name, Evaluated::Number(current + delta));
             }
+        }
+    }
+
+    // ─── Actors that come and go ────────────────────────────────────────────
+
+    /// Which actor a block means by `wanted`: itself when the slot is empty
+    /// or says so, then an id, then a name - the same order
+    /// [`sense::Sensors::find`] uses, so a block and a reporter agree.
+    ///
+    /// Clones share their template's name, so a name picks whichever one the
+    /// map hands over first. Anything that has to mean one clone in
+    /// particular works from the id `the actor I made` reports.
+    fn find_actor(&self, running: &str, wanted: &str) -> Option<String> {
+        let wanted = wanted.trim();
+        if wanted.is_empty()
+            || wanted.eq_ignore_ascii_case("myself")
+            || wanted.eq_ignore_ascii_case("me")
+        {
+            return Some(running.to_string());
+        }
+        if self.programs.contains_key(wanted) {
+            return Some(wanted.to_string());
+        }
+        self.names
+            .iter()
+            .find(|(_, name)| name.eq_ignore_ascii_case(wanted))
+            .map(|(id, _)| id.clone())
+    }
+
+    /// Gives a fresh clone of `template` everything the scheduler needs: the
+    /// same compiled program, the same name, the same custom-block inputs,
+    /// and a copy of the template's variables as they stand.
+    fn register_clone(&mut self, template: &str) -> String {
+        let id = new_actor_id();
+        if let Some(program) = self.programs.get(template).map(Rc::clone) {
+            self.programs.insert(id.clone(), program);
+        }
+        if let Some(name) = self.names.get(template).cloned() {
+            self.names.insert(id.clone(), name);
+        }
+        if let Some(inputs) = self.block_inputs.get(template).cloned() {
+            self.block_inputs.insert(id.clone(), inputs);
+        }
+        self.variables.copy_actor(template, &id);
+        // A clone of a clone is a clone of the same authored actor.
+        let root = self
+            .clones
+            .get(template)
+            .cloned()
+            .unwrap_or_else(|| template.to_string());
+        self.clones.insert(id.clone(), root);
+        id
+    }
+
+    /// Takes an actor out of the run. Its scripts go at the end of the tick;
+    /// everything else about it goes now.
+    fn forget_actor(&mut self, actor: &str) {
+        self.programs.remove(actor);
+        self.names.remove(actor);
+        self.block_inputs.remove(actor);
+        self.clones.remove(actor);
+        self.variables.forget_actor(actor);
+        self.pending
+            .retain(|event| !matches!(event, Event::Cloned { actor: fresh } if fresh == actor));
+        if !self.deleted.iter().any(|gone| gone == actor) {
+            self.deleted.push(actor.to_string());
         }
     }
 
@@ -910,6 +1099,12 @@ impl Vm {
             .map(|(name, arg)| (name.clone(), self.eval(arg, actor, params, out)))
             .collect()
     }
+}
+
+/// A runtime actor's id. Clones and created actors get one the moment they
+/// are made, which is what everything else keys them by.
+fn new_actor_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
 }
 
 /// The parameters bound by the innermost custom-block call, if any.

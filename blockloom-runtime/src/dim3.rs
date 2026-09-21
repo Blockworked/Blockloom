@@ -231,12 +231,7 @@ pub fn apply_effects(
                 let Some(id) = engine.entities.get(actor).copied() else {
                     continue;
                 };
-                let Some(visual) = engine
-                    .project
-                    .actor(actor)
-                    .and_then(|a| a.visual())
-                    .cloned()
-                else {
+                let Some(visual) = engine.actor(actor).and_then(|a| a.visual()).cloned() else {
                     continue;
                 };
                 let mut entity = commands.entity(id);
@@ -262,7 +257,7 @@ pub fn apply_effects(
                 let Some(entity) = engine.entities.get(actor).copied() else {
                     continue;
                 };
-                let Some(authored) = engine.project.actor(actor) else {
+                let Some(authored) = engine.actor(actor) else {
                     continue;
                 };
                 match component.as_str() {

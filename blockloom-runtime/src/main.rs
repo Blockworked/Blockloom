@@ -96,8 +96,10 @@ fn main() {
                     (
                         dim2::sync_pause,
                         dim2::sync_timestep,
+                        world::restore_poses,
                         world::step_vm,
                         world::step_scripts,
+                        world::apply_lifetimes,
                         world::apply_common,
                         dim2::apply_effects,
                         world::apply_component_effects,
@@ -107,7 +109,10 @@ fn main() {
                         .chain()
                         .in_set(world::SimulationSet),
                 )
-                .add_systems(FixedPostUpdate, dim2::record_poses)
+                .add_systems(
+                    FixedPostUpdate,
+                    (world::apply_parenting, dim2::record_poses).chain(),
+                )
                 .add_systems(
                     Update,
                     (
@@ -144,8 +149,10 @@ fn main() {
                     (
                         dim3::sync_pause,
                         dim3::sync_timestep,
+                        world::restore_poses,
                         world::step_vm,
                         world::step_scripts,
+                        world::apply_lifetimes,
                         world::apply_common,
                         dim3::apply_effects,
                         world::apply_component_effects,
@@ -155,7 +162,10 @@ fn main() {
                         .chain()
                         .in_set(world::SimulationSet),
                 )
-                .add_systems(FixedPostUpdate, dim3::record_poses)
+                .add_systems(
+                    FixedPostUpdate,
+                    (world::apply_parenting, dim3::record_poses).chain(),
+                )
                 .add_systems(
                     Update,
                     (

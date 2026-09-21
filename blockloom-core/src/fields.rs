@@ -36,6 +36,12 @@ pub enum FieldId {
     SayText,
     ColorText,
     ComponentFieldValue,
+    ParentTarget,
+    NewActorName,
+    NewActorX,
+    NewActorY,
+    NewActorZ,
+    DeleteTarget,
     WaitDuration,
     WaitUntilCondition,
     Condition,
@@ -56,7 +62,14 @@ impl FieldId {
     /// Slots that hold text rather than a number, so a blank restores to an
     /// empty string instead of `0`.
     fn is_text(self) -> bool {
-        matches!(self, FieldId::SayText | FieldId::ColorText)
+        matches!(
+            self,
+            FieldId::SayText
+                | FieldId::ColorText
+                | FieldId::ParentTarget
+                | FieldId::NewActorName
+                | FieldId::DeleteTarget
+        )
     }
 
     /// Slots that hold a boolean, so a blank restores to the empty hexagon.
@@ -94,6 +107,12 @@ impl std::fmt::Display for FieldId {
             FieldId::SayText => write!(f, "SayText"),
             FieldId::ColorText => write!(f, "ColorText"),
             FieldId::ComponentFieldValue => write!(f, "ComponentFieldValue"),
+            FieldId::ParentTarget => write!(f, "ParentTarget"),
+            FieldId::NewActorName => write!(f, "NewActorName"),
+            FieldId::NewActorX => write!(f, "NewActorX"),
+            FieldId::NewActorY => write!(f, "NewActorY"),
+            FieldId::NewActorZ => write!(f, "NewActorZ"),
+            FieldId::DeleteTarget => write!(f, "DeleteTarget"),
             FieldId::WaitDuration => write!(f, "WaitDuration"),
             FieldId::WaitUntilCondition => write!(f, "WaitUntilCondition"),
             FieldId::Condition => write!(f, "Condition"),
@@ -140,6 +159,12 @@ impl FromStr for FieldId {
             "SayText" => FieldId::SayText,
             "ColorText" => FieldId::ColorText,
             "ComponentFieldValue" => FieldId::ComponentFieldValue,
+            "ParentTarget" => FieldId::ParentTarget,
+            "NewActorName" => FieldId::NewActorName,
+            "NewActorX" => FieldId::NewActorX,
+            "NewActorY" => FieldId::NewActorY,
+            "NewActorZ" => FieldId::NewActorZ,
+            "DeleteTarget" => FieldId::DeleteTarget,
             "WaitDuration" => FieldId::WaitDuration,
             "WaitUntilCondition" => FieldId::WaitUntilCondition,
             "Condition" => FieldId::Condition,
@@ -185,6 +210,12 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::Say { text }, F::SayText) => Some(text),
         (K::SetColor { color }, F::ColorText) => Some(color),
         (K::SetComponentField { value, .. }, F::ComponentFieldValue) => Some(value),
+        (K::SetParent { parent }, F::ParentTarget) => Some(parent),
+        (K::CreateActor { name, .. }, F::NewActorName) => Some(name),
+        (K::CreateActor { x, .. }, F::NewActorX) => Some(x),
+        (K::CreateActor { y, .. }, F::NewActorY) => Some(y),
+        (K::CreateActor { z, .. }, F::NewActorZ) => Some(z),
+        (K::DeleteActor { target }, F::DeleteTarget) => Some(target),
         (K::Wait { duration }, F::WaitDuration) => Some(duration),
         (K::WaitUntil { condition }, F::WaitUntilCondition) => Some(condition),
         (K::If { condition, .. }, F::Condition) => Some(condition),

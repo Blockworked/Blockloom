@@ -112,6 +112,15 @@ impl LoadedScript {
 pub struct Asked {
     pub effects: Vec<Effect>,
     pub messages: Vec<String>,
+    /// `(who asked, what to copy)`. Making a clone means registering a
+    /// scheduler slot for its strands, which is the VM's to do, so these are
+    /// handed to it rather than turned into effects here.
+    pub clones: Vec<(String, String)>,
+    /// `(who asked, name, position)` for a brand-new actor, for the same
+    /// reason: the VM mints its id.
+    pub created: Vec<(String, String, [f32; 3])>,
+    /// `(who asked, what to delete)`, so the VM stops its scripts too.
+    pub deleted: Vec<(String, String)>,
 }
 
 fn missing_export(relative: &str) -> String {
@@ -235,6 +244,8 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
             // way a text variable does in an arithmetic block.
             Evaluated::Text(text) => text.trim().parse().ok(),
         },
+        abi::READ_IS_CLONE => bool_as(me(actor)?.is_clone),
+        abi::READ_ACTOR_COUNT => Some(sense::read(|sensors| sensors.count_named(a)) as f64),
         abi::READ_POSITION_OF => {
             let axis = axis_of(arg).index();
             sense::read(|sensors| {
@@ -264,6 +275,15 @@ extern "C" fn read_text(
         abi::TEXT_FIELD => me(ctx.actor)
             .and_then(|me| me.components.get(a.trim())?.get(b.trim()).cloned())
             .map(|value| value.as_text()),
+        abi::TEXT_ACTOR_ID => Some(ctx.actor.to_string()),
+        // An actor with no parent and one that made nothing both answer
+        // `MISSING`, which the prelude turns into `None`.
+        abi::TEXT_PARENT => me(ctx.actor)
+            .map(|me| me.parent)
+            .filter(|id| !id.is_empty()),
+        abi::TEXT_NEW_ACTOR => me(ctx.actor)
+            .map(|me| me.last_created)
+            .filter(|id| !id.is_empty()),
         _ => None,
     };
     let Some(answer) = answer else {
@@ -372,6 +392,27 @@ extern "C" fn act(
             view: view_of(n0),
         },
         abi::ACT_STOP_ALL => Effect::Stopped,
+        abi::ACT_SET_PARENT => Effect::SetParent {
+            actor,
+            parent: a.trim().to_string(),
+        },
+        // The clone's own id isn't minted here: the VM registers it so the
+        // copy's `when I start as a clone` strands have a scheduler slot,
+        // and `the actor I made` answers with it next frame.
+        abi::ACT_CREATE_CLONE => {
+            ctx.asked.clones.push((actor, a.trim().to_string()));
+            return;
+        }
+        abi::ACT_CREATE_ACTOR => {
+            ctx.asked
+                .created
+                .push((actor, a.trim().to_string(), vector));
+            return;
+        }
+        abi::ACT_DELETE_ACTOR => {
+            ctx.asked.deleted.push((actor, a.trim().to_string()));
+            return;
+        }
         // A broadcast isn't a change to the world, so it isn't an effect:
         // the caller fires it at the VM once this run is over.
         abi::ACT_BROADCAST => {

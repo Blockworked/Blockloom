@@ -495,3 +495,273 @@ fn setting_a_camera_view_names_the_actor_asking() {
         }]
     );
 }
+
+// ─── Actors that come and go ───────────────────────────────────────────────
+
+/// A project with two actors, so a block can name one other than its own.
+fn project_with_two(first: Vec<Strand>, second: Vec<Strand>) -> Project {
+    let mut player = Actor::new("Player", rect());
+    player.id = "a1".to_string();
+    player.graph.strands = first;
+    let mut friend = Actor::new("Friend", rect());
+    friend.id = "a2".to_string();
+    friend.graph.strands = second;
+    Project {
+        id: "p".to_string(),
+        name: "test".to_string(),
+        icon: String::new(),
+        world: blockloom_core::scene::World {
+            mode: Mode::TwoD,
+            ..Default::default()
+        },
+        actors: vec![player, friend],
+        globals: Vec::new(),
+    }
+}
+
+fn cloned(body: Vec<InstructionKind>) -> Strand {
+    let mut instructions = vec![Instruction::new(InstructionKind::WhenCloned)];
+    instructions.extend(body.into_iter().map(Instruction::new));
+    Strand::with_instructions(400, 0, instructions)
+}
+
+fn clone_of(name: &str) -> InstructionKind {
+    InstructionKind::CreateClone {
+        of: name.to_string(),
+    }
+}
+
+fn delete(target: &str) -> InstructionKind {
+    InstructionKind::DeleteActor {
+        target: Value::text(target),
+    }
+}
+
+fn created(effects: &[Effect]) -> Vec<(String, String)> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::CreateClone { clone, of, .. } => Some((clone.clone(), of.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn errors(effects: &[Effect]) -> Vec<String> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Error { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_clone_is_made_now_and_runs_its_own_strands_next_frame() {
+    let project = project_with(vec![
+        started(vec![clone_of("")]),
+        cloned(vec![say("I am new")]),
+    ]);
+    let mut vm = Harness::started(&project);
+
+    // The clone effect lands on the frame the block ran; the clone's own
+    // strand is an event, and events start at the top of the next tick.
+    let first = vm.run(1);
+    let made = created(&first);
+    assert_eq!(made.len(), 1);
+    assert_eq!(made[0].1, project.actors[0].id);
+    assert!(says(&first).is_empty());
+
+    let second = vm.run(1);
+    assert_eq!(says(&second), vec!["I am new".to_string()]);
+    // The original's `when I start as a clone` never ran, only the copy's.
+    assert!(second.iter().all(
+        |effect| !matches!(effect, Effect::Say { actor, .. } if actor == &project.actors[0].id)
+    ));
+}
+
+#[test]
+fn a_clone_starts_from_a_copy_of_its_templates_variables_and_keeps_its_own() {
+    let mut project = project_with(vec![
+        started(vec![
+            InstructionKind::SetVariable {
+                name: "hits".to_string(),
+                value: Value::number(7.0),
+            },
+            clone_of(""),
+        ]),
+        cloned(vec![InstructionKind::ChangeVariable {
+            name: "hits".to_string(),
+            value: Value::number(1.0),
+        }]),
+    ]);
+    project.actors[0]
+        .graph
+        .variables
+        .push(blockloom_core::blocks::VariableDef {
+            name: "hits".to_string(),
+            value: Evaluated::Number(0.0),
+        });
+    let template = project.actors[0].id.clone();
+
+    let mut vm = Harness::started(&project);
+    let clone = created(&vm.run(1))[0].0.clone();
+    vm.run(1);
+
+    let variables = vm.vm.variables();
+    assert_eq!(
+        variables.actors[&template]["hits"],
+        Evaluated::Number(7.0),
+        "the template kept its own"
+    );
+    assert_eq!(
+        variables.actors[&clone]["hits"],
+        Evaluated::Number(8.0),
+        "the clone started from 7 and counted its own one on"
+    );
+}
+
+#[test]
+fn a_clone_answers_to_its_templates_name_so_broadcasts_reach_it() {
+    let project = project_with(vec![
+        started(vec![clone_of("Player")]),
+        cloned(vec![InstructionKind::WaitUntil {
+            condition: Value::Bool,
+        }]),
+        Strand::with_instructions(
+            800,
+            0,
+            vec![
+                Instruction::new(InstructionKind::WhenMessage {
+                    name: "go".to_string(),
+                }),
+                Instruction::new(say("heard it")),
+            ],
+        ),
+    ]);
+    let mut vm = Harness::started(&project);
+    vm.run(2);
+    vm.vm.fire(Event::Message("go".to_string()));
+
+    // The original and the copy both listen, so one broadcast says it twice.
+    assert_eq!(says(&vm.run(1)).len(), 2);
+}
+
+#[test]
+fn deleting_an_actor_stops_its_scripts_and_leaves_everyone_elses_alone() {
+    let project = project_with_two(
+        vec![started(vec![InstructionKind::Forever {
+            body: vec![ins(move_by(1.0))],
+        }])],
+        vec![started(vec![
+            InstructionKind::Wait {
+                duration: Value::number(0.25),
+            },
+            delete("Player"),
+            say("done"),
+        ])],
+    );
+    let mut vm = Harness::started(&project);
+
+    // Both run while the deleter waits.
+    assert_eq!(moves(&vm.run(2)).len(), 2);
+    let deleting = vm.run(2);
+    assert!(
+        deleting
+            .iter()
+            .any(|effect| matches!(effect, Effect::DeleteActor { actor } if actor == "a1"))
+    );
+    assert_eq!(says(&deleting), vec!["done".to_string()]);
+    // The forever loop is gone with its actor, and the deleter carried on.
+    assert!(moves(&vm.run(3)).is_empty());
+}
+
+#[test]
+fn deleting_myself_ends_the_strand_that_asked_where_it_stands() {
+    let project = project_with(vec![started(vec![
+        say("bye"),
+        delete(""),
+        say("still here"),
+    ])]);
+    let mut vm = Harness::started(&project);
+    let effects = vm.run(2);
+    assert_eq!(says(&effects), vec!["bye".to_string()]);
+    assert!(!vm.vm.is_running());
+}
+
+#[test]
+fn naming_nobody_reports_it_rather_than_deleting_the_wrong_actor() {
+    let project = project_with(vec![started(vec![delete("Nobody"), say("carried on")])]);
+    let mut vm = Harness::started(&project);
+    let effects = vm.run(1);
+    assert_eq!(errors(&effects).len(), 1);
+    assert!(errors(&effects)[0].contains("Nobody"));
+    // A bad slot never kills a run: the block after it still ran.
+    assert_eq!(says(&effects), vec!["carried on".to_string()]);
+}
+
+#[test]
+fn creating_an_actor_names_it_and_hands_back_somewhere_to_stand() {
+    let project = project_with(vec![started(vec![InstructionKind::CreateActor {
+        name: Value::text("Bullet"),
+        x: Value::number(3.0),
+        y: Value::number(4.0),
+        z: Value::number(0.0),
+    }])]);
+    let mut vm = Harness::started(&project);
+    let effects = vm.run(1);
+    let made: Vec<_> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::CreateActor {
+                id, name, position, ..
+            } => Some((id.clone(), name.clone(), *position)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(made.len(), 1);
+    assert_eq!(made[0].1, "Bullet");
+    assert_eq!(made[0].2, [3.0, 4.0, 0.0]);
+    // It is a real actor to everything else: naming it works straight away.
+    assert_eq!(
+        vm.vm.actor_for("a1", "Bullet").as_deref(),
+        Some(made[0].0.as_str())
+    );
+}
+
+#[test]
+fn setting_a_parent_hands_the_host_the_name_the_block_was_given() {
+    let project = project_with_two(
+        vec![started(vec![InstructionKind::SetParent {
+            parent: Value::text("  Friend "),
+        }])],
+        Vec::new(),
+    );
+    let mut vm = Harness::started(&project);
+    // The hierarchy is the host's, so it does the looking up - which is also
+    // what lets a compiled program, with no name table, mean the same thing.
+    assert_eq!(
+        vm.run(1),
+        vec![Effect::SetParent {
+            actor: "a1".to_string(),
+            parent: "Friend".to_string(),
+        }]
+    );
+}
+
+#[test]
+fn an_empty_parent_slot_is_how_a_block_hangs_an_actor_off_nothing() {
+    let project = project_with(vec![started(vec![InstructionKind::SetParent {
+        parent: Value::text(""),
+    }])]);
+    let mut vm = Harness::started(&project);
+    let effects = vm.run(1);
+    assert_eq!(
+        effects,
+        vec![Effect::SetParent {
+            actor: project.actors[0].id.clone(),
+            parent: String::new(),
+        }]
+    );
+}

@@ -261,10 +261,21 @@ pub fn rebuild_world(
     }
     engine.entities.clear();
     engine.touching.clear();
+    // Everything the last run made goes with it: Play starts from the
+    // document, which is the one thing a clone was never in.
+    engine.spawned.clear();
+    engine.clones.clear();
+    engine.last_created.clear();
+    engine.parents = engine
+        .project
+        .actors
+        .iter()
+        .filter_map(|actor| Some((actor.id.clone(), actor.parent()?.to_string())))
+        .collect();
     // Dropped here rather than left open: a rebuild follows a fresh build of
     // the libraries, and the old ones must be closed before the new ones open.
     engine.scripts.clear();
-    engine.scripts_started = false;
+    engine.scripts_started.clear();
     engine.attached = engine
         .project
         .actors
@@ -379,23 +390,30 @@ pub fn step_scripts(
         return;
     }
     let dt = time.delta_secs();
-    let first = !engine.scripts_started;
-    engine.scripts_started = true;
-
     let actors: Vec<String> = engine.scripts.keys().cloned().collect();
+    // `start` runs once per actor rather than once per run, so a clone made
+    // half way through gets its own, on the first step it exists for.
+    let fresh: Vec<String> = actors
+        .iter()
+        .filter(|actor| !engine.scripts_started.contains(*actor))
+        .cloned()
+        .collect();
+
     let mut asked = crate::script::Asked::default();
     for actor in &actors {
         let Some(script) = engine.scripts.get(actor) else {
             continue;
         };
-        if first {
+        if fresh.contains(actor) {
             script.start(actor, &mut asked);
         }
         script.tick(actor, &mut asked, dt);
     }
+    engine.scripts_started.extend(fresh);
     for message in asked.messages.drain(..) {
         engine.fire(Event::Message(message));
     }
+    script_lifetimes(&mut engine, &mut asked);
     for effect in &asked.effects {
         // Says and errors go to the editor the same way the VM's do.
         if let Effect::Say { actor, text } = effect {
@@ -407,6 +425,49 @@ pub fn step_scripts(
         }
     }
     effects.0.append(&mut asked.effects);
+}
+
+/// The actor a script asked to make or unmake. Clones and fresh actors need
+/// a scheduler slot before they need an entity, so they go through the VM the
+/// same way a block's do, and come back out as the same effects.
+fn script_lifetimes(engine: &mut Engine, asked: &mut crate::script::Asked) {
+    for (actor, wanted) in asked.clones.drain(..) {
+        // A fast build's scheduler is the compiled program, which has no room
+        // for a strand it wasn't built with - `codegen` refuses a project
+        // whose blocks clone, and a script's ask lands in the same place.
+        if engine.logic.is_some() {
+            bridge::send(&RuntimeMessage::Error {
+                actor,
+                message: "a script can't make clones in a build with compiled blocks".to_string(),
+            });
+            continue;
+        }
+        match engine.vm.clone_actor(&actor, &wanted) {
+            Some((clone, of)) => asked.effects.push(Effect::CreateClone { actor, clone, of }),
+            None => bridge::send(&RuntimeMessage::Error {
+                actor,
+                message: format!("there's no actor named \"{wanted}\" to clone"),
+            }),
+        }
+    }
+    for (actor, name, position) in asked.created.drain(..) {
+        let id = engine.vm.create_actor(&name);
+        asked.effects.push(Effect::CreateActor {
+            actor,
+            id,
+            name,
+            position,
+        });
+    }
+    for (actor, wanted) in asked.deleted.drain(..) {
+        match engine.vm.delete_actor(&actor, &wanted) {
+            Some(gone) => asked.effects.push(Effect::DeleteActor { actor: gone }),
+            None => bridge::send(&RuntimeMessage::Error {
+                actor,
+                message: format!("there's no actor named \"{wanted}\" to delete"),
+            }),
+        }
+    }
 }
 
 /// An actor with nothing to draw: it has no `Look` component, or one for the
@@ -455,7 +516,6 @@ pub fn publish_sensors(
             id.0.clone(),
             ActorSense {
                 name: engine
-                    .project
                     .actor(&id.0)
                     .map(|actor| actor.name.clone())
                     .unwrap_or_default(),
@@ -463,6 +523,9 @@ pub fn publish_sensors(
                 rotation: [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()],
                 scale: transform.scale.x,
                 visible: *visibility != Visibility::Hidden,
+                parent: engine.parents.get(&id.0).cloned().unwrap_or_default(),
+                is_clone: engine.clones.contains_key(&id.0),
+                last_created: engine.last_created.get(&id.0).cloned().unwrap_or_default(),
                 touching: engine.touching.get(&id.0).cloned().unwrap_or_default(),
                 attached: engine.attached.get(&id.0).cloned().unwrap_or_default(),
                 components: custom.map(|custom| custom.0.clone()).unwrap_or_default(),
@@ -539,12 +602,7 @@ pub fn detect_clicks(
                 return;
             };
             for (id, transform) in &actors {
-                let Some(visual) = engine
-                    .project
-                    .actor(&id.0)
-                    .and_then(|a| a.visual())
-                    .cloned()
-                else {
+                let Some(visual) = engine.actor(&id.0).and_then(|a| a.visual()).cloned() else {
                     continue;
                 };
                 let delta = point - transform.translation.truncate();
@@ -568,12 +626,7 @@ pub fn detect_clicks(
                 return;
             };
             for (id, transform) in &actors {
-                let Some(visual) = engine
-                    .project
-                    .actor(&id.0)
-                    .and_then(|a| a.visual())
-                    .cloned()
-                else {
+                let Some(visual) = engine.actor(&id.0).and_then(|a| a.visual()).cloned() else {
                     continue;
                 };
                 // A bounding sphere is close enough to pick with, and needs no
@@ -877,6 +930,26 @@ pub fn drive_camera(
     }
 }
 
+/// Puts every actor back at the pose its last fixed step left it at, before
+/// this one starts.
+///
+/// [`interpolate_poses`] writes a transform part-way between two steps so the
+/// display is smooth, and that drawn pose is what a fixed step would
+/// otherwise find in `Transform` and build on: a `move` would add to it, and
+/// `apply_parenting` would read the difference as motion the parent never
+/// made. Simulation starts from the settled pose; the renderer's is only for
+/// the frames in between.
+pub fn restore_poses(engine: NonSend<Engine>, mut posed: Query<(&mut Transform, &PhysicsPose)>) {
+    if !engine.running || engine.paused {
+        return;
+    }
+    for (mut transform, pose) in &mut posed {
+        if *transform != pose.0 {
+            *transform = pose.0;
+        }
+    }
+}
+
 /// Renders actors between the poses they settled at, so nothing on screen
 /// marches along at the fixed step rate - whether physics wrote the pose or a
 /// step's effects did. On a high-refresh display that step pattern would
@@ -979,7 +1052,6 @@ fn camera_of(engine: &Engine, actor: &str) -> Option<blockloom_core::components:
     }
     Some(
         engine
-            .project
             .actor(actor)
             .and_then(|actor| actor.camera())
             .copied()
@@ -1029,7 +1101,6 @@ fn attach(
         "Render" => {
             // The project's own answer if it has one; a fresh Render shows.
             let visible = engine
-                .project
                 .actor(actor)
                 .map(|actor| actor.visible())
                 .unwrap_or(true);
@@ -1060,7 +1131,6 @@ fn attach(
         // the editor gave it, or empty if the project never had one.
         name => {
             let fields = engine
-                .project
                 .actor(actor)
                 .and_then(|actor| match actor.components.get(name) {
                     Some(blockloom_core::components::ActorComponent::Custom { fields, .. }) => {
@@ -1123,6 +1193,354 @@ fn detach(
             }
         }
     }
+}
+
+// ─── Actors that come and go ───────────────────────────────────────────────
+
+/// Making, deleting and re-parenting actors, before anything else this step
+/// is applied - so a clone made now is already somewhere for the rest of the
+/// step's effects to land.
+///
+/// A clone is the actor it was copied from as the editor authored it,
+/// standing where that actor stands at this moment, carrying its live custom
+/// component values. What `attach`/`detach` did to the template since Play
+/// doesn't carry over: re-attaching a component has always meant the
+/// authored one, and a clone is no different.
+pub fn apply_lifetimes(
+    mut commands: Commands,
+    effects: Res<PendingEffects>,
+    mut engine: NonSendMut<Engine>,
+    dimension: Res<Dimension>,
+    assets: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut textures: ResMut<Assets<Image>>,
+    live: Query<(&Transform, &Visibility, Option<&CustomComponents>)>,
+) {
+    if !engine.running || engine.paused {
+        return;
+    }
+    for effect in &effects.0 {
+        match effect {
+            Effect::CreateClone { actor, clone, of } => {
+                let Some(mut copy) = engine.actor(of).cloned() else {
+                    continue;
+                };
+                copy.id = clone.clone();
+                if let Some(entity) = engine.entities.get(of).copied()
+                    && let Ok((transform, visibility, custom)) = live.get(entity)
+                {
+                    copy.components.set_placement(placement_of(transform));
+                    copy.components
+                        .set_visible(*visibility != Visibility::Hidden);
+                    if let Some(custom) = custom {
+                        carry_custom(&mut copy, custom);
+                    }
+                }
+                // A clone hangs where its template hangs. Its own blocks can
+                // move it off, the same as anything else about it.
+                let parent = engine.parents.get(of).cloned();
+                copy.components.set_parent(parent.as_deref().unwrap_or(""));
+                engine.clones.insert(clone.clone(), of.clone());
+                engine.last_created.insert(actor.clone(), clone.clone());
+                spawn_runtime_actor(
+                    &mut commands,
+                    &mut engine,
+                    dimension.0,
+                    &assets,
+                    &mut meshes,
+                    &mut materials,
+                    &mut textures,
+                    copy,
+                );
+            }
+            Effect::CreateActor {
+                actor,
+                id,
+                name,
+                position,
+            } => {
+                let mut made = Actor::blank(name.clone(), dimension.0);
+                made.id = id.clone();
+                made.components.placement_mut().position = *position;
+                engine.last_created.insert(actor.clone(), id.clone());
+                spawn_runtime_actor(
+                    &mut commands,
+                    &mut engine,
+                    dimension.0,
+                    &assets,
+                    &mut meshes,
+                    &mut materials,
+                    &mut textures,
+                    made,
+                );
+            }
+            Effect::DeleteActor { actor } => delete_actor(&mut commands, &mut engine, actor),
+            Effect::SetParent { actor, parent } => set_parent(&mut engine, actor, parent),
+            _ => {}
+        }
+    }
+}
+
+/// A transform, as the `Place` component spells one.
+fn placement_of(transform: &Transform) -> blockloom_core::scene::Placement {
+    let (rx, ry, rz) = transform.rotation.to_euler(EulerRot::XYZ);
+    blockloom_core::scene::Placement {
+        position: transform.translation.to_array(),
+        rotation: [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()],
+        scale: transform.scale.x,
+    }
+}
+
+/// Writes the template's live custom-component values onto the copy, so a
+/// clone starts with the numbers its template is carrying rather than the
+/// ones the editor typed.
+fn carry_custom(copy: &mut Actor, custom: &CustomComponents) {
+    for (name, fields) in &custom.0 {
+        for (field, value) in fields {
+            copy.components.set_field(name, field, value.clone());
+        }
+    }
+}
+
+/// Puts an actor the run made into the world and into every map that answers
+/// a question about it.
+#[allow(clippy::too_many_arguments)]
+fn spawn_runtime_actor(
+    commands: &mut Commands,
+    engine: &mut Engine,
+    mode: Mode,
+    assets: &AssetServer,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    textures: &mut Assets<Image>,
+    actor: Actor,
+) {
+    let dir = engine.project_dir.clone();
+    let entity = match mode {
+        Mode::TwoD => dim2::spawn_actor(commands, &actor, dir.as_deref(), assets, textures),
+        Mode::ThreeD => dim3::spawn_actor(commands, &actor, meshes, materials),
+    }
+    .unwrap_or_else(|| spawn_unseen(commands, &actor, mode));
+    attach_camera(commands, &actor, entity);
+    // One camera in the world: a clone of the actor holding it takes it.
+    if actor.camera().is_some() {
+        claim_camera(commands, engine, &actor.id);
+    }
+    let held = actor
+        .components
+        .iter()
+        .map(|component| component.name().to_string())
+        .collect();
+    engine.attached.insert(actor.id.clone(), held);
+    if let Some(parent) = actor.parent() {
+        engine.parents.insert(actor.id.clone(), parent.to_string());
+    }
+    engine.entities.insert(actor.id.clone(), entity);
+    // A scripted actor's library is opened here rather than when the world
+    // was built, because this one didn't exist then.
+    open_script_for(engine, &actor);
+    engine.spawned.insert(actor.id.clone(), actor);
+}
+
+/// Takes the camera off everyone but `actor`.
+fn claim_camera(commands: &mut Commands, engine: &mut Engine, actor: &str) {
+    for (other, held) in engine.attached.iter_mut() {
+        if other != actor {
+            held.remove("Camera");
+        }
+    }
+    for (id, entity) in &engine.entities {
+        if id != actor {
+            commands.entity(*entity).remove::<CameraRig>();
+        }
+    }
+}
+
+/// Opens one actor's compiled script, if it has one and the editor has built
+/// it. Silent otherwise, the same bargain `open_scripts` makes.
+fn open_script_for(engine: &mut Engine, actor: &Actor) {
+    let Some(dir) = engine.project_dir.clone() else {
+        return;
+    };
+    let Some(path) = actor.components.script() else {
+        return;
+    };
+    if !crate::script::LoadedScript::is_built(&dir, path) {
+        return;
+    }
+    match crate::script::LoadedScript::load(&dir, path) {
+        Ok(script) => {
+            engine.scripts.insert(actor.id.clone(), script);
+        }
+        Err(message) => bridge::send(&RuntimeMessage::Error {
+            actor: actor.id.clone(),
+            message,
+        }),
+    }
+}
+
+/// Takes an actor out of the world for the rest of the run. An authored one
+/// comes back on the next Play: the document was never touched.
+fn delete_actor(commands: &mut Commands, engine: &mut Engine, actor: &str) {
+    let Some(entity) = engine.entities.remove(actor) else {
+        return;
+    };
+    commands.entity(entity).despawn();
+    engine.spawned.remove(actor);
+    engine.clones.remove(actor);
+    engine.attached.remove(actor);
+    engine.touching.remove(actor);
+    engine.speech.remove(actor);
+    engine.scripts.remove(actor);
+    engine.scripts_started.remove(actor);
+    engine.parents.remove(actor);
+    // Its children are let go rather than deleted with it, and nobody is
+    // left pointing at it as the actor they just made.
+    engine.parents.retain(|_, parent| parent != actor);
+    engine.last_created.retain(|_, made| made != actor);
+    for touching in engine.touching.values_mut() {
+        touching.remove(actor);
+    }
+}
+
+/// Hangs `actor` off `wanted`, or takes it off when that names nothing. The
+/// actor stays exactly where it is: a parent moves a child from here on, it
+/// doesn't place it.
+fn set_parent(engine: &mut Engine, actor: &str, wanted: &str) {
+    if !engine.entities.contains_key(actor) {
+        return;
+    }
+    if wanted.trim().is_empty() {
+        engine.parents.remove(actor);
+        return;
+    }
+    let Some(parent) = resolve_actor(engine, actor, wanted) else {
+        bridge::send(&RuntimeMessage::Error {
+            actor: actor.to_string(),
+            message: format!("there's no actor named \"{wanted}\" to hang off"),
+        });
+        return;
+    };
+    if parent == actor {
+        engine.parents.remove(actor);
+        return;
+    }
+    if engine.would_loop(actor, &parent) {
+        let name = engine
+            .actor(&parent)
+            .map(|other| other.name.clone())
+            .unwrap_or_else(|| parent.clone());
+        bridge::send(&RuntimeMessage::Error {
+            actor: actor.to_string(),
+            message: format!("{name} already hangs off this actor, so it can't be its parent"),
+        });
+        return;
+    }
+    engine.parents.insert(actor.to_string(), parent);
+}
+
+/// Which actor a name or an id means right now. Clones share their
+/// template's name, so a name answers with whichever one comes to hand -
+/// `the actor I made` is how a block names one in particular.
+pub fn resolve_actor(engine: &Engine, running: &str, wanted: &str) -> Option<String> {
+    let wanted = wanted.trim();
+    if wanted.is_empty() {
+        return None;
+    }
+    if wanted.eq_ignore_ascii_case("myself") || wanted.eq_ignore_ascii_case("me") {
+        return Some(running.to_string());
+    }
+    if engine.entities.contains_key(wanted) {
+        return Some(wanted.to_string());
+    }
+    engine
+        .actor_ids()
+        .find(|id| {
+            engine
+                .actor(id)
+                .is_some_and(|actor| actor.name.eq_ignore_ascii_case(wanted))
+        })
+        .cloned()
+}
+
+/// Carries every parent's motion this step onto everything hanging off it.
+///
+/// Rather than reparenting Bevy's own transforms - which would make every
+/// position in the engine relative to somebody and leave rapier owning half
+/// of them - a child is moved by exactly the change its parent underwent
+/// since the last step: `child = (parent now / parent then) * child`. A child
+/// that moved itself this step keeps that motion, and one that is a parent in
+/// turn passes the whole of it on, which is what the root-first order is for.
+///
+/// It runs in `FixedPostUpdate` before `record_poses`, so the parent's change
+/// includes whatever physics wrote this step, and the pose the renderer
+/// interpolates towards is the one the child ends up at.
+pub fn apply_parenting(engine: NonSend<Engine>, mut posed: Query<(&mut Transform, &PhysicsPose)>) {
+    if !engine.running || engine.paused || engine.parents.is_empty() {
+        return;
+    }
+    let mut children: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (child, parent) in &engine.parents {
+        children
+            .entry(parent.as_str())
+            .or_default()
+            .push(child.as_str());
+    }
+    for parent in roots_first(&engine.parents) {
+        let Some(mine) = children.get(parent.as_str()) else {
+            continue;
+        };
+        let Some(entity) = engine.entities.get(&parent).copied() else {
+            continue;
+        };
+        let Ok((transform, pose)) = posed.get(entity) else {
+            continue;
+        };
+        if transform.translation.abs_diff_eq(pose.0.translation, 1e-6)
+            && transform.rotation.abs_diff_eq(pose.0.rotation, 1e-6)
+            && transform.scale.abs_diff_eq(pose.0.scale, 1e-6)
+        {
+            continue;
+        }
+        let delta = transform.compute_affine() * pose.0.compute_affine().inverse();
+        for child in mine {
+            let Some(entity) = engine.entities.get(*child).copied() else {
+                continue;
+            };
+            if let Ok((mut transform, _)) = posed.get_mut(entity) {
+                *transform = Transform::from_matrix(Mat4::from(delta * transform.compute_affine()));
+            }
+        }
+    }
+}
+
+/// Every actor that is somebody's parent, parents before their own children,
+/// so one pass carries a move all the way down a chain. `prune_parents` and
+/// `set_parent` between them rule loops out, and the depth cap is what keeps
+/// a hand-made one from hanging this.
+fn roots_first(parents: &HashMap<String, String>) -> Vec<String> {
+    let mut depths: Vec<(usize, &String)> = parents
+        .values()
+        .collect::<HashSet<&String>>()
+        .into_iter()
+        .map(|id| (depth_of(parents, id), id))
+        .collect();
+    depths.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+    depths.into_iter().map(|(_, id)| id.clone()).collect()
+}
+
+/// How many parents deep `id` sits. The cap is the whole map, so a loop that
+/// somehow got in answers rather than spinning.
+fn depth_of(parents: &HashMap<String, String>, id: &str) -> usize {
+    let mut at = id;
+    for depth in 0..parents.len() {
+        match parents.get(at) {
+            Some(parent) => at = parent.as_str(),
+            None => return depth,
+        }
+    }
+    parents.len()
 }
 
 /// Tells the editor where everything is, a few times a second.
@@ -1197,7 +1615,14 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::AttachComponent { actor, .. }
         | Effect::DetachComponent { actor, .. }
         | Effect::Error { actor, .. } => Some(actor),
-        Effect::SetGravity { .. } | Effect::Stopped => None,
+        // Making, deleting and re-parenting an actor are `apply_lifetimes`'s
+        // to carry out, and none of them is a change to a transform.
+        Effect::SetGravity { .. }
+        | Effect::Stopped
+        | Effect::SetParent { .. }
+        | Effect::CreateClone { .. }
+        | Effect::CreateActor { .. }
+        | Effect::DeleteActor { .. } => None,
     }
 }
 
@@ -1224,7 +1649,6 @@ pub fn forward_of(transform: &Transform, mode: Mode) -> Vec3 {
 /// True when the physics engine owns this actor's movement.
 pub fn is_dynamic(engine: &Engine, actor: &str) -> bool {
     engine
-        .project
         .actor(actor)
         .is_some_and(|actor| actor.physics().body == BodyKind::Dynamic)
 }
@@ -1269,12 +1693,7 @@ fn target_position(
             Some(Vec3::new(sensors.mouse[0], sensors.mouse[1], here.z))
         });
     }
-    let id = engine
-        .project
-        .actors
-        .iter()
-        .find(|actor| actor.id == target || actor.name.eq_ignore_ascii_case(target))
-        .map(|actor| actor.id.clone())?;
+    let id = resolve_actor(engine, target, target)?;
     positions.get(&id).copied()
 }
 
@@ -1499,5 +1918,139 @@ mod tests {
         app.update();
 
         assert!(app.world().resource::<PendingEffects>().0.is_empty());
+    }
+
+    /// A world of loose actors with poses, and the parenting pass run once
+    /// over it. Each actor is `(id, pose at the start of the step, where it
+    /// is now)`, and the answer is where each one ends up.
+    fn after_parenting(
+        actors: &[(&str, Transform, Transform)],
+        parents: &[(&str, &str)],
+    ) -> HashMap<String, Transform> {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.running = true;
+
+        let mut app = App::new();
+        let mut ids = Vec::new();
+        for (id, pose, now) in actors {
+            let entity = app
+                .world_mut()
+                .spawn((*now, PhysicsPose(*pose), PrevPose(*pose)))
+                .id();
+            engine.entities.insert((*id).to_string(), entity);
+            ids.push(((*id).to_string(), entity));
+        }
+        for (child, parent) in parents {
+            engine
+                .parents
+                .insert((*child).to_string(), (*parent).to_string());
+        }
+        app.insert_non_send(engine);
+        app.add_systems(Update, apply_parenting);
+        app.update();
+
+        ids.into_iter()
+            .map(|(id, entity)| (id, *app.world().entity(entity).get::<Transform>().unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn a_child_is_carried_by_exactly_what_its_parent_moved() {
+        let was = Transform::from_xyz(0.0, 0.0, 0.0);
+        let now = Transform::from_xyz(10.0, 4.0, 0.0);
+        let child = Transform::from_xyz(100.0, 0.0, 0.0);
+        let after = after_parenting(
+            &[("parent", was, now), ("child", child, child)],
+            &[("child", "parent")],
+        );
+
+        assert!(
+            after["child"]
+                .translation
+                .abs_diff_eq(Vec3::new(110.0, 4.0, 0.0), 0.001)
+        );
+        // The parent itself is left exactly where it got to.
+        assert!(
+            after["parent"]
+                .translation
+                .abs_diff_eq(now.translation, 0.001)
+        );
+    }
+
+    #[test]
+    fn a_turning_parent_swings_its_child_around_rather_than_sliding_it() {
+        let was = Transform::IDENTITY;
+        let now = Transform::from_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2));
+        let child = Transform::from_xyz(10.0, 0.0, 0.0);
+        let after = after_parenting(
+            &[("parent", was, now), ("child", child, child)],
+            &[("child", "parent")],
+        );
+
+        // A quarter turn about the origin takes (10, 0) to (0, 10)...
+        assert!(
+            after["child"]
+                .translation
+                .abs_diff_eq(Vec3::new(0.0, 10.0, 0.0), 0.001)
+        );
+        // ...and turns the child with it.
+        assert!(after["child"].rotation.abs_diff_eq(now.rotation, 0.001));
+    }
+
+    #[test]
+    fn a_chain_carries_the_whole_way_down_in_one_pass() {
+        let was = Transform::from_xyz(0.0, 0.0, 0.0);
+        let now = Transform::from_xyz(5.0, 0.0, 0.0);
+        let middle = Transform::from_xyz(20.0, 0.0, 0.0);
+        let leaf = Transform::from_xyz(30.0, 0.0, 0.0);
+        let after = after_parenting(
+            &[
+                ("root", was, now),
+                ("middle", middle, middle),
+                ("leaf", leaf, leaf),
+            ],
+            &[("middle", "root"), ("leaf", "middle")],
+        );
+
+        assert!((after["middle"].translation.x - 25.0).abs() < 0.001);
+        // The leaf gets the root's five once, not twice: the middle is done
+        // before it is, and the delta it passes on is measured from its own
+        // start-of-step pose.
+        assert!((after["leaf"].translation.x - 35.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn a_child_that_moved_itself_keeps_that_move_and_its_parents() {
+        let was = Transform::from_xyz(0.0, 0.0, 0.0);
+        let now = Transform::from_xyz(5.0, 0.0, 0.0);
+        let child_was = Transform::from_xyz(0.0, 0.0, 0.0);
+        let child_now = Transform::from_xyz(0.0, 7.0, 0.0);
+        let after = after_parenting(
+            &[("parent", was, now), ("child", child_was, child_now)],
+            &[("child", "parent")],
+        );
+
+        assert!(
+            after["child"]
+                .translation
+                .abs_diff_eq(Vec3::new(5.0, 7.0, 0.0), 0.001)
+        );
+    }
+
+    #[test]
+    fn a_parent_that_did_not_move_leaves_its_child_alone() {
+        let still = Transform::from_xyz(3.0, 3.0, 0.0);
+        let child = Transform::from_xyz(9.0, 0.0, 0.0);
+        let after = after_parenting(
+            &[("parent", still, still), ("child", child, child)],
+            &[("child", "parent")],
+        );
+
+        assert!(
+            after["child"]
+                .translation
+                .abs_diff_eq(child.translation, 0.001)
+        );
     }
 }

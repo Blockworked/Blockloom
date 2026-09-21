@@ -29,6 +29,7 @@ import ScriptDialog from './ScriptDialog.vue';
 import { BODY_OPTIONS, CAMERA_VIEW_OPTIONS } from '../constants';
 import {
   ADDABLE_COMPONENTS,
+  actorParent,
   actorPhysics,
   actorPlacement,
   actorVisual,
@@ -164,6 +165,34 @@ function scriptPathOf(component: ActorComponentDto): string {
 
 function visibleOf(component: ActorComponentDto): boolean {
   return component.component === 'Render' ? component.visible : true;
+}
+
+function parentOf(component: ActorComponentDto): string {
+  return component.component === 'Parent' ? component.parent : '';
+}
+
+/** Every other actor, as a parent to hang this one off. Stored by id so a
+ * rename doesn't break the link; "nothing" clears it. */
+const parentOptions = computed(() => [
+  { value: '', label: 'nothing' },
+  ...(state.project?.actors ?? [])
+    .filter(candidate => candidate.id !== actor.value?.id && !hangsOffMe(candidate.id))
+    .map(candidate => ({ value: candidate.id, label: candidate.name })),
+]);
+
+/** Whether `id` already hangs off the open actor, directly or further down -
+ * offering it as a parent would make a loop. */
+function hangsOffMe(id: string): boolean {
+  const me = actor.value?.id;
+  if (!me) return false;
+  const seen = new Set<string>();
+  let at: string | null = id;
+  while (at && !seen.has(at)) {
+    seen.add(at);
+    at = actorParent(state.project?.actors.find(candidate => candidate.id === at) ?? null);
+    if (at === me) return true;
+  }
+  return false;
 }
 
 function sizeOf(component: ActorComponentDto): number[] {
@@ -365,6 +394,8 @@ function blankComponent(name: ComponentName): ActorComponentDto | null {
         component: 'Camera',
         camera: { view: 'ThirdPerson', offset: [0, 0.6, 0], distance: 6, pitch: 15 },
       };
+    case 'Parent':
+      return { component: 'Parent', parent: '' };
     case 'Custom':
       return {
         component: 'Custom',
@@ -521,6 +552,21 @@ function remove(name: string) {
               @change="e => writeSize(component, i, num(e, dimension))"
             >
           </div>
+        </template>
+
+        <template v-else-if="component.component === 'Parent'">
+          <div class="panel-row">
+            <label>Hangs off</label>
+            <AppDropdown
+              :options="parentOptions"
+              :model-value="parentOf(component)"
+              placeholder="nothing"
+              @update:model-value="id => write('Parent', { component: 'Parent', parent: id })"
+            />
+          </div>
+          <p class="panel-note">
+            This actor keeps its own place, and every move its parent makes is made to it too.
+          </p>
         </template>
 
         <template v-else-if="component.component === 'Render'">

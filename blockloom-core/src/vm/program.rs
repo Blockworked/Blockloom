@@ -24,6 +24,8 @@ pub enum Trigger {
         with: String,
     },
     Message(String),
+    /// A fresh clone starting up, in the clone itself.
+    Cloned,
 }
 
 /// One entry point: a header strand's trigger and where its body starts.
@@ -80,6 +82,16 @@ pub enum Action {
     SetCameraView(CameraView),
     AttachComponent(String),
     DetachComponent(String),
+    /// An empty target takes the actor off whatever it was hanging from.
+    SetParent(Value),
+    /// An empty `of` clones the running actor.
+    CreateClone(String),
+    CreateActor {
+        name: Value,
+        position: [Value; 3],
+    },
+    /// An empty target deletes the running actor.
+    DeleteActor(Value),
     Broadcast(String),
     SetVariable {
         name: String,
@@ -166,6 +178,7 @@ pub fn compile(graph: &ActorGraph) -> Program {
             InstructionKind::WhenMessage { name } => {
                 Some(Trigger::Message(name.trim().to_string()))
             }
+            InstructionKind::WhenCloned => Some(Trigger::Cloned),
             InstructionKind::BlockHeader { .. } => None,
             // Not a header at all: a loose stack nothing can start.
             _ => continue,
@@ -204,6 +217,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenClicked
         | K::WhenCollision { .. }
         | K::WhenMessage { .. }
+        | K::WhenCloned
         | K::BlockHeader { .. } => {}
 
         K::Move { steps: amount } => steps.push(Step::Action(Action::Move(amount.clone()))),
@@ -269,6 +283,15 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::DetachComponent { component } => steps.push(Step::Action(Action::DetachComponent(
             component.trim().to_string(),
         ))),
+        K::SetParent { parent } => steps.push(Step::Action(Action::SetParent(parent.clone()))),
+        K::CreateClone { of } => {
+            steps.push(Step::Action(Action::CreateClone(of.trim().to_string())))
+        }
+        K::CreateActor { name, x, y, z } => steps.push(Step::Action(Action::CreateActor {
+            name: name.clone(),
+            position: [x.clone(), y.clone(), z.clone()],
+        })),
+        K::DeleteActor { target } => steps.push(Step::Action(Action::DeleteActor(target.clone()))),
         K::Broadcast { name } => steps.push(Step::Action(Action::Broadcast(name.clone()))),
         K::SetVariable { name, value } => steps.push(Step::Action(Action::SetVariable {
             name: name.clone(),

@@ -41,6 +41,21 @@ fn default_visual() -> Visual {
     }
 }
 
+/// What an actor created mid-run looks like until something says otherwise.
+fn blank_visual(mode: Mode) -> Visual {
+    if mode.is_3d() {
+        Visual::Cuboid {
+            color: "#4C97FF".to_string(),
+            size: [1.0, 1.0, 1.0],
+        }
+    } else {
+        Visual::Rect {
+            color: "#4C97FF".to_string(),
+            size: [60.0, 60.0],
+        }
+    }
+}
+
 /// One thing in the world, with its own canvas. What the actor *is* lives in
 /// [`Actor::components`]; its `BlockGraph` is flattened into the same JSON
 /// object, so an actor still reads as one record.
@@ -147,9 +162,21 @@ impl Actor {
         }
     }
 
+    /// A brand-new actor made mid-run by a `create actor` block or a script:
+    /// somewhere to stand, something plain to see, and no blocks at all. What
+    /// it does next is whatever another actor's blocks do to it.
+    pub fn blank(name: impl Into<String>, mode: Mode) -> Self {
+        Self::new(name, blank_visual(mode))
+    }
+
     /// What the actor looks like, or `None` when it has no `Look` component.
     pub fn visual(&self) -> Option<&Visual> {
         self.components.visual()
+    }
+
+    /// The actor this one hangs off, by id.
+    pub fn parent(&self) -> Option<&str> {
+        self.components.parent()
     }
 
     pub fn placement(&self) -> Placement {
@@ -321,6 +348,13 @@ impl Project {
             return false;
         };
         self.actors.remove(index);
+        // Its children are left where they are rather than going with it -
+        // a parent is an attachment, not an owner.
+        for actor in &mut self.actors {
+            if actor.components.parent() == Some(id) {
+                actor.components.remove("Parent");
+            }
+        }
         true
     }
 
@@ -444,6 +478,7 @@ impl Project {
     /// Repairs and canonicalizes a just-loaded document, once.
     pub fn normalize(&mut self) {
         self.migrate_camera_follow();
+        self.prune_parents();
         for actor in &mut self.actors {
             actor.graph.migrate_bool_slots();
             actor.graph.normalize_block_colors();
@@ -464,6 +499,31 @@ impl Project {
                     ..CameraAttach::default()
                 },
             });
+        }
+    }
+
+    /// Drops a `Parent` naming an actor that isn't here any more, or one that
+    /// would put an actor in a loop - a hand-edited document could say either,
+    /// and both would leave `apply_parenting` with nowhere to start.
+    fn prune_parents(&mut self) {
+        let parents: HashMap<String, String> = self
+            .actors
+            .iter()
+            .filter_map(|actor| Some((actor.id.clone(), actor.parent()?.to_string())))
+            .collect();
+        let known: std::collections::HashSet<&str> =
+            self.actors.iter().map(|actor| actor.id.as_str()).collect();
+        let drop: Vec<String> = parents
+            .iter()
+            .filter(|(id, parent)| {
+                !known.contains(parent.as_str()) || reaches(&parents, parent, id)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in drop {
+            if let Some(actor) = self.actor_mut(&id) {
+                actor.components.remove("Parent");
+            }
         }
     }
 
@@ -510,6 +570,26 @@ impl Project {
             }
         }
         changed
+    }
+}
+
+/// Whether following `start`'s parents ever arrives at `target` - which is
+/// what makes attaching `target` to `start` a loop. The visited set is what
+/// ends the walk when the chain is already one.
+pub fn reaches(parents: &HashMap<String, String>, start: &str, target: &str) -> bool {
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut at = start;
+    loop {
+        if at == target {
+            return true;
+        }
+        if !seen.insert(at) {
+            return false;
+        }
+        match parents.get(at) {
+            Some(next) => at = next.as_str(),
+            None => return false,
+        }
     }
 }
 
@@ -1035,5 +1115,60 @@ mod tests {
             Some(Visual::Image { path, .. }) if path == "art/hero.png"
         ));
         assert_eq!(actor.components.script(), Some("assets/scripts/player.rs"));
+    }
+
+    #[test]
+    fn a_dangling_or_looping_parent_is_dropped_when_the_document_loads() {
+        let mut project = Project::starter("Parents", Mode::TwoD);
+        let player = project.actors[0].id.clone();
+        let ground = project.actors[1].id.clone();
+
+        // A good one survives.
+        project.actors[0].components.set_parent(&ground);
+        project.normalize();
+        assert_eq!(
+            project.actor(&player).unwrap().parent(),
+            Some(ground.as_str())
+        );
+
+        // One that names nobody doesn't.
+        project.actors[0].components.set_parent("nobody");
+        project.normalize();
+        assert_eq!(project.actor(&player).unwrap().parent(), None);
+
+        // Nor does a loop: one of the two ends up free rather than both
+        // waiting on each other.
+        project.actors[0].components.set_parent(&ground);
+        project.actors[1].components.set_parent(&player);
+        project.normalize();
+        let still_hanging = project
+            .actors
+            .iter()
+            .filter(|a| a.parent().is_some())
+            .count();
+        assert!(still_hanging <= 1);
+    }
+
+    #[test]
+    fn removing_an_actor_lets_go_of_whatever_hung_off_it() {
+        let mut project = Project::starter("Parents", Mode::TwoD);
+        let player = project.actors[0].id.clone();
+        let ground = project.actors[1].id.clone();
+        project.actors[0].components.set_parent(&ground);
+
+        assert!(project.remove_actor(&ground));
+        // The child stays in the world; it just isn't hanging off anything.
+        assert_eq!(project.actor(&player).unwrap().parent(), None);
+    }
+
+    #[test]
+    fn an_actor_made_mid_run_has_somewhere_to_stand_and_something_to_see() {
+        let flat = Actor::blank("Bullet", Mode::TwoD);
+        assert!(matches!(flat.visual(), Some(Visual::Rect { .. })));
+        assert!(flat.components.contains("Place"));
+        assert!(flat.graph.strands.is_empty());
+
+        let solid = Actor::blank("Bullet", Mode::ThreeD);
+        assert!(matches!(solid.visual(), Some(Visual::Cuboid { .. })));
     }
 }

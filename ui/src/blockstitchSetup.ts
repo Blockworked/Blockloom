@@ -51,6 +51,7 @@ const HEADER_TYPES: InstructionType[] = [
   'WhenClicked',
   'WhenCollision',
   'WhenMessage',
+  'WhenCloned',
   'BlockHeader',
 ];
 const CAP_TYPES: InstructionType[] = ['Return', 'EscapeLoop', 'ContinueLoop', 'StopAll'];

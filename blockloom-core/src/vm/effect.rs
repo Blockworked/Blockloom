@@ -112,6 +112,32 @@ pub enum Effect {
         actor: String,
         component: String,
     },
+    /// Hangs `actor` off `parent`, so the two move together. An empty
+    /// `parent` takes it off whatever it was on. `parent` is whatever the
+    /// block said - an id or a name - which the host resolves.
+    SetParent {
+        actor: String,
+        parent: String,
+    },
+    /// A running copy of `of`, already registered with the scheduler under
+    /// `clone`: the host's job is the entity. `actor` is whoever asked, so
+    /// "the actor I just made" can answer.
+    CreateClone {
+        actor: String,
+        clone: String,
+        of: String,
+    },
+    /// A brand-new actor the document never had, at `position`.
+    CreateActor {
+        actor: String,
+        id: String,
+        name: String,
+        position: [f32; 3],
+    },
+    /// Takes an actor out of the world for the rest of the run.
+    DeleteActor {
+        actor: String,
+    },
     /// Every script stopped, by a `stop all` block.
     Stopped,
     /// A block couldn't be evaluated. The script carries on with a zero, and

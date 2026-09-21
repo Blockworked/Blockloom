@@ -4,7 +4,7 @@ use blockloom_core::codegen::{
     self, ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH,
     ACT_BROADCAST, ACT_CHANGE_POSITION, ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_MOVE,
     ACT_POINT_TOWARDS, ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY,
-    ACT_SET_FIELD, ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_ROTATION, ACT_SET_SCALE,
+    ACT_SET_FIELD, ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_PARENT, ACT_SET_ROTATION, ACT_SET_SCALE,
     ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_TURN, AbiStr, AbiValue, LOGIC_ABI_VERSION, LogicHostApi,
     READ_SENSE, READ_VARIABLE, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW,
     SYM_LOGIC_RESET, SYM_LOGIC_TICK, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER,
@@ -109,6 +109,10 @@ impl LoadedLogic {
                     .unwrap_or("");
                 self.fire_raw("Collision", &actor, &with, other_name);
             }
+            // A compiled program has one state per authored strand and no way
+            // to run one under a second actor id, so `codegen` refuses a
+            // project with clones in it and this can't arrive.
+            Event::Cloned { .. } => {}
         }
     }
 
@@ -364,6 +368,10 @@ extern "C" fn act(
         ACT_DETACH => Effect::DetachComponent {
             actor,
             component: a.to_string(),
+        },
+        ACT_SET_PARENT => Effect::SetParent {
+            actor,
+            parent: a.trim().to_string(),
         },
         ACT_BROADCAST => {
             context.messages.push(a.to_string());

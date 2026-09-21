@@ -128,6 +128,11 @@ pub enum Act {
     DetachComponent {
         component: &'static str,
     },
+    /// Hangs the actor off another one, by id or name; empty takes it off.
+    /// A slot rather than a fixed name, so it travels as a `String`.
+    SetParent {
+        target: String,
+    },
     Broadcast {
         name: &'static str,
     },
@@ -379,7 +384,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 1;
+pub const LOGIC_ABI_VERSION: u32 = 2;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -417,6 +422,7 @@ pub const ACT_ATTACH: u32 = 20;
 pub const ACT_DETACH: u32 = 21;
 pub const ACT_BROADCAST: u32 = 22;
 pub const ACT_ERROR: u32 = 23;
+pub const ACT_SET_PARENT: u32 = 24;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -697,6 +703,9 @@ impl Host for AbiHost {
             }
             Act::DetachComponent { component } => {
                 self.act_wire(actor, ACT_DETACH, component, "", [0.0; 3], &zero)
+            }
+            Act::SetParent { target } => {
+                self.act_wire(actor, ACT_SET_PARENT, &target, "", [0.0; 3], &zero)
             }
             Act::Broadcast { name } => {
                 self.act_wire(actor, ACT_BROADCAST, name, "", [0.0; 3], &zero)

@@ -53,11 +53,11 @@ pub use runtime::{
     ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH, ACT_BROADCAST,
     ACT_CHANGE_POSITION, ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_MOVE, ACT_POINT_TOWARDS,
     ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD,
-    ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_VELOCITY,
-    ACT_SET_VISIBLE, ACT_TURN, AbiStr, AbiValue, Act, Entry, Host, LOGIC_ABI_VERSION, LogicHostApi,
-    R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE,
-    SYM_LOGIC_NEW, SYM_LOGIC_RESET, SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL,
-    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
+    ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_PARENT, ACT_SET_ROTATION, ACT_SET_SCALE,
+    ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_TURN, AbiStr, AbiValue, Act, Entry, Host,
+    LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI,
+    SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_RESET, SYM_LOGIC_TICK, State, Status,
+    TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
 };
 
 use crate::project::Project;
@@ -260,12 +260,15 @@ pub fn compile(project: &Project) -> Emit<String> {
 
         let counters = canvas.plan.counters.len();
         for entry in &program.entries {
+            let trigger = trigger_name(&entry.trigger).ok_or_else(|| {
+                Unsupported::new("`when I start as a clone`, which needs a scheduler per clone")
+            })?;
             entries.push(format!(
                 "    Entry {{ actor: {}, strand: {}, trigger: {}, detail: {}, \
                  start: {}, counters: {counters}, run: actor_{index} }},",
                 literal(&actor.id),
                 literal(&entry.strand_id),
-                literal(trigger_name(&entry.trigger)),
+                literal(trigger),
                 literal(&trigger_detail(&entry.trigger)),
                 entry.pc,
             ));
@@ -283,15 +286,19 @@ pub fn compile(project: &Project) -> Emit<String> {
 }
 
 /// What `trigger`'s [`Entry`] says, in the two halves the runtime matches on.
-fn trigger_name(trigger: &crate::vm::Trigger) -> &'static str {
+/// `None` for a trigger a compiled program can't carry: a clone's strands
+/// need a scheduler that can run one program under many actor ids, which the
+/// generated `Runner` deliberately isn't.
+fn trigger_name(trigger: &crate::vm::Trigger) -> Option<&'static str> {
     use crate::vm::Trigger;
-    match trigger {
+    Some(match trigger {
         Trigger::Started => "Started",
         Trigger::KeyPressed(_) => "Key",
         Trigger::Clicked => "Clicked",
         Trigger::Collision { .. } => "Collision",
         Trigger::Message(_) => "Message",
-    }
+        Trigger::Cloned => return None,
+    })
 }
 
 fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
@@ -300,7 +307,7 @@ fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
         Trigger::KeyPressed(key) => key.clone(),
         Trigger::Collision { with } => with.clone(),
         Trigger::Message(name) => name.clone(),
-        Trigger::Started | Trigger::Clicked => String::new(),
+        Trigger::Started | Trigger::Clicked | Trigger::Cloned => String::new(),
     }
 }
 
@@ -819,6 +826,23 @@ impl<'a> Pass<'a> {
                 "Act::DetachComponent {{ component: {} }}",
                 literal(component)
             )),
+            Action::SetParent(target) => {
+                reading(self.text(target)?, "Act::SetParent { target: slot }")
+            }
+            // Every one of these makes or unmakes an actor mid-run, and a
+            // generated program has one fixed `Entry` table with one state
+            // per strand: there is nowhere to put a clone's own scripts, and
+            // nothing to take a deleted actor's out of. The VM stays the
+            // scheduler for a project that uses them.
+            Action::CreateClone(_) => {
+                return Err(Unsupported::new("`create a clone`"));
+            }
+            Action::CreateActor { .. } => {
+                return Err(Unsupported::new("`create an actor`"));
+            }
+            Action::DeleteActor(_) => {
+                return Err(Unsupported::new("`delete an actor`"));
+            }
             Action::Broadcast(name) => act(format!(
                 "Act::Broadcast {{ name: {} }}",
                 literal(name.trim())

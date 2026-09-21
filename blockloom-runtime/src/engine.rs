@@ -7,7 +7,7 @@
 
 use bevy::prelude::*;
 use blockloom_core::components::CameraAttach;
-use blockloom_core::project::Project;
+use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::Mode;
 use blockloom_core::value::Evaluated;
 use blockloom_core::vm::{Variables, Vm};
@@ -96,12 +96,26 @@ pub struct Engine {
     /// Each actor's loaded script, by actor id. Reopened on every rebuild, so
     /// a script edited and rebuilt between runs takes effect on the next Play.
     pub scripts: HashMap<String, crate::script::LoadedScript>,
-    /// Whether this run has called every script's `start` yet.
-    pub scripts_started: bool,
+    /// Which actors' scripts have had their `start` called. Per actor rather
+    /// than one flag for the run, since a clone made half way through still
+    /// needs its own.
+    pub scripts_started: HashSet<String>,
     /// Which components each actor is carrying right now. Seeded from the
     /// project on every rebuild and moved by `attach`/`detach`, so it - not
     /// the document - is what a mid-run question about a component answers.
     pub attached: HashMap<String, HashSet<String>>,
+    /// Actors the run made that the document never had: clones, and actors a
+    /// `create actor` block conjured. Looked up before the project, so the
+    /// rest of the runtime asks one question to find any actor at all.
+    pub spawned: HashMap<String, Actor>,
+    /// Clone id -> the authored actor it was copied from. Only clones are in
+    /// here, which is what "am I a clone?" reads.
+    pub clones: HashMap<String, String>,
+    /// Child actor id -> the actor it hangs off. Seeded from every `Parent`
+    /// component on a rebuild and moved by `set my parent to` after that.
+    pub parents: HashMap<String, String>,
+    /// Actor id -> the last actor or clone it made, for "the actor I made".
+    pub last_created: HashMap<String, String>,
 }
 
 impl Engine {
@@ -125,9 +139,32 @@ impl Engine {
             rebuild: true,
             project_dir: None,
             scripts: HashMap::new(),
-            scripts_started: false,
+            scripts_started: HashSet::new(),
             attached: HashMap::new(),
+            spawned: HashMap::new(),
+            clones: HashMap::new(),
+            parents: HashMap::new(),
+            last_created: HashMap::new(),
         }
+    }
+
+    /// Any actor in the running world: one the run made first, then one the
+    /// document authored. Everything that needs an actor's authored shape,
+    /// physics or components goes through here, so a clone answers the same
+    /// questions the actor it was copied from does.
+    pub fn actor(&self, id: &str) -> Option<&Actor> {
+        self.spawned.get(id).or_else(|| self.project.actor(id))
+    }
+
+    /// Every actor in the world, authored and made, by id.
+    pub fn actor_ids(&self) -> impl Iterator<Item = &String> {
+        self.entities.keys()
+    }
+
+    /// Whether hanging `child` off `parent` would make a loop - following
+    /// `parent` upwards eventually arrives back at `child`.
+    pub fn would_loop(&self, child: &str, parent: &str) -> bool {
+        blockloom_core::project::reaches(&self.parents, parent, child)
     }
 
     /// Whether `actor` is carrying `component` at this moment in the run.

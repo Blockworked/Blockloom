@@ -647,6 +647,7 @@ pub(crate) fn add_actor_component(
     mut component: ActorComponent,
 ) -> Result<String, String> {
     let mut s = lock(state)?;
+    check_parent(s.project(), &actor_id, &component)?;
     push_undo(&mut s);
     let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
         return Err("Actor not found".to_string());
@@ -677,6 +678,7 @@ pub(crate) fn set_actor_component(
     component: ActorComponent,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
+    check_parent(s.project(), &actor_id, &component)?;
     push_undo_for(
         &mut s,
         Some(EditSession::Comment {
@@ -691,6 +693,43 @@ pub(crate) fn set_actor_component(
     sync_runtime(&mut s);
     emit(app, &s);
     result
+}
+
+/// A `Parent` has to name another actor that isn't already hanging off this
+/// one. `apply_parenting` walks the chain once a step from the roots down,
+/// and a loop has no root to start at.
+fn check_parent(
+    project: Option<&Project>,
+    actor_id: &str,
+    component: &ActorComponent,
+) -> Result<(), String> {
+    let ActorComponent::Parent { parent } = component else {
+        return Ok(());
+    };
+    if parent.is_empty() {
+        return Ok(());
+    }
+    let Some(project) = project else {
+        return Ok(());
+    };
+    if parent == actor_id {
+        return Err("An actor can't hang off itself".to_string());
+    }
+    let Some(other) = project.actor(parent) else {
+        return Err("No such actor to hang off".to_string());
+    };
+    let parents: HashMap<String, String> = project
+        .actors
+        .iter()
+        .filter_map(|actor| Some((actor.id.clone(), actor.parent()?.to_string())))
+        .collect();
+    if project::reaches(&parents, parent, actor_id) {
+        return Err(format!(
+            "\"{}\" already hangs off this actor, so it can't be its parent",
+            other.name
+        ));
+    }
+    Ok(())
 }
 
 /// Writes `component` over the one called `name`. A custom component that

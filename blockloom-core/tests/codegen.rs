@@ -134,6 +134,7 @@ fn line_of(act: &Act) -> String {
             format!("SetComponentField {component} {field} {}", shown(value))
         }
         Act::AttachComponent { component } => format!("AttachComponent {component}"),
+        Act::SetParent { target } => format!("SetParent {target}"),
         Act::SetBody { body } => format!("SetBody {body}"),
         other => format!("{other:?}"),
     }
@@ -228,6 +229,7 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::AttachComponent { actor, component } => {
             format!("{actor}|AttachComponent {component}")
         }
+        Effect::SetParent { actor, parent } => format!("{actor}|SetParent {parent}"),
         Effect::SetBody { actor, body } => format!("{actor}|SetBody {body:?}"),
         Effect::Error { actor, message } => format!("{actor}|Error {message}"),
         // The world's own doing rather than the program's, and nothing the
@@ -718,9 +720,54 @@ fn the_rest_of_the_leaf_blocks_land_the_same() {
             K::AttachComponent {
                 component: "Body".to_string(),
             },
+            // The VM resolves the name to an id before the effect leaves it,
+            // so the compiled half has to ask the host the same thing.
+            K::SetParent {
+                parent: Value::text("Friend"),
+            },
         ],
         &[],
     );
+}
+
+#[test]
+fn making_and_unmaking_actors_is_refused_rather_than_half_compiled() {
+    for (what, block) in [
+        ("a clone", K::CreateClone { of: String::new() }),
+        (
+            "a fresh actor",
+            K::CreateActor {
+                name: Value::text("Bullet"),
+                x: number(0.0),
+                y: number(0.0),
+                z: number(0.0),
+            },
+        ),
+        (
+            "a delete",
+            K::DeleteActor {
+                target: Value::text("myself"),
+            },
+        ),
+    ] {
+        let project = project_with_blocks(vec![vec![block]], Vec::new(), &[]);
+        assert!(
+            blockloom_core::codegen::compile(&project).is_err(),
+            "{what} should send the whole project back to the VM"
+        );
+    }
+
+    // And so is a strand a clone would start, since one program can't be run
+    // under a second actor id.
+    let mut project = project_with_blocks(
+        vec![vec![K::Say {
+            text: Value::text("hi"),
+        }]],
+        Vec::new(),
+        &[],
+    );
+    project.actors[0].graph.strands[0].instructions[0] = Instruction::new(K::WhenCloned);
+    assert!(blockloom_core::codegen::compile(&project).is_err());
 }
 
 fn body(kinds: Vec<K>) -> Vec<Instruction> {

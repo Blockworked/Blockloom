@@ -7,7 +7,7 @@
 //! the actor without a rigid body; removing `Look` leaves a positioned,
 //! scriptable actor with nothing to draw.
 //!
-//! Three components have no fixed-field ancestor. [`ActorComponent::Camera`]
+//! Four components have no fixed-field ancestor. [`ActorComponent::Camera`]
 //! attaches the world camera to the actor, in first person, third person or
 //! plain follow. [`ActorComponent::Script`] names a Rust file in the project's
 //! `assets/scripts`, compiled and loaded by the runtime (see
@@ -21,7 +21,9 @@ use serde::{Deserialize, Serialize};
 
 /// The components every project knows about by name. A custom component
 /// can't take one of these names.
-pub const BUILT_IN_NAMES: &[&str] = &["Place", "Look", "Render", "Body", "Camera", "Script"];
+pub const BUILT_IN_NAMES: &[&str] = &[
+    "Place", "Look", "Render", "Body", "Camera", "Script", "Parent",
+];
 
 /// One component on an actor. Serialized internally-tagged, so a component
 /// reads as `{"component": "Body", "physics": {...}}`.
@@ -44,6 +46,10 @@ pub enum ActorComponent {
     /// library the runtime loads and ticks. `path` is relative to the project
     /// folder - see [`crate::script`].
     Script { path: String },
+    /// Hangs this actor off another one: it keeps its own world position,
+    /// and every move the parent makes is made to it too. `parent` is the
+    /// other actor's id.
+    Parent { parent: String },
     /// A named set of values this project invented, readable and writable
     /// from blocks.
     Custom {
@@ -63,6 +69,7 @@ impl ActorComponent {
             ActorComponent::Body { .. } => "Body",
             ActorComponent::Camera { .. } => "Camera",
             ActorComponent::Script { .. } => "Script",
+            ActorComponent::Parent { .. } => "Parent",
             ActorComponent::Custom { name, .. } => name,
         }
     }
@@ -293,6 +300,26 @@ impl Components {
             Some(ActorComponent::Script { path }) => Some(path),
             _ => None,
         }
+    }
+
+    /// The actor this one hangs off, by id, if any.
+    pub fn parent(&self) -> Option<&str> {
+        match self.get("Parent") {
+            Some(ActorComponent::Parent { parent }) if !parent.is_empty() => Some(parent),
+            _ => None,
+        }
+    }
+
+    /// Hangs the actor off `parent`, or takes it off whatever it was on when
+    /// `parent` is empty.
+    pub fn set_parent(&mut self, parent: &str) {
+        if parent.is_empty() {
+            self.remove("Parent");
+            return;
+        }
+        self.insert(ActorComponent::Parent {
+            parent: parent.to_string(),
+        });
     }
 
     // ─── Custom components ─────────────────────────────────────────────────

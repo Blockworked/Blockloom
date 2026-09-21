@@ -27,7 +27,15 @@ import PaletteCallValueBlock from './PaletteCallValueBlock.vue';
 const BLOCK_GROUPS: { label: string; types: InstructionType[] }[] = [
   {
     label: 'Events',
-    types: ['WhenStarted', 'WhenKeyPressed', 'WhenClicked', 'WhenCollision', 'WhenMessage', 'Broadcast'],
+    types: [
+      'WhenStarted',
+      'WhenKeyPressed',
+      'WhenClicked',
+      'WhenCollision',
+      'WhenMessage',
+      'WhenCloned',
+      'Broadcast',
+    ],
   },
   {
     label: 'Motion',
@@ -37,8 +45,9 @@ const BLOCK_GROUPS: { label: string; types: InstructionType[] }[] = [
   { label: 'Looks', types: ['Say', 'SetVisible', 'SetColor'] },
   {
     label: 'Components',
-    types: ['SetComponentField', 'SetCameraView', 'AttachComponent', 'DetachComponent'],
+    types: ['SetComponentField', 'SetCameraView', 'AttachComponent', 'DetachComponent', 'SetParent'],
   },
+  { label: 'Actors', types: ['CreateClone', 'CreateActor', 'DeleteActor'] },
   {
     label: 'Control',
     types: ['Wait', 'WaitUntil', 'If', 'IfElse', 'Repeat', 'Forever', 'While', 'EscapeLoop', 'ContinueLoop', 'StopAll'],

@@ -48,6 +48,8 @@ pub enum InstructionKind {
     WhenMessage {
         name: String,
     },
+    /// Runs on a fresh clone, in the clone itself, the moment it is made.
+    WhenCloned,
     /// Marks a strand as a custom block's body; `block_id` is its
     /// [`BlockDef::id`]. Never runs on its own.
     BlockHeader {
@@ -160,6 +162,34 @@ pub enum InstructionKind {
     DetachComponent {
         component: String,
     },
+    /// Hangs this actor off another one, so the two move together. An empty
+    /// target takes it off whatever it was on. Names an actor or an id.
+    SetParent {
+        parent: Value,
+    },
+
+    // ─── Actors ─────────────────────────────────────────────────────────────
+    /// Makes a running copy of an actor - its components as they stand, its
+    /// canvas, and its own variables - and starts its `when I start as a
+    /// clone` strands. An empty `of` clones whoever ran the block.
+    CreateClone {
+        of: String,
+    },
+    /// Makes a brand-new actor the project never authored: somewhere to
+    /// stand, something plain to see, and no blocks. It lasts as long as the
+    /// run does.
+    CreateActor {
+        name: Value,
+        x: Value,
+        y: Value,
+        z: Value,
+    },
+    /// Takes an actor out of the running world and stops its scripts. The
+    /// document is untouched, so Play puts an authored one back. An empty
+    /// target deletes whoever ran the block.
+    DeleteActor {
+        target: Value,
+    },
 
     // ─── Control ────────────────────────────────────────────────────────────
     /// Suspends this script for `duration` seconds.
@@ -247,6 +277,8 @@ impl BlockKind for InstructionKind {
             | K::ChangeVariable { value: v, .. }
             | K::Return { value: v }
             | K::SetComponentField { value: v, .. }
+            | K::SetParent { parent: v }
+            | K::DeleteActor { target: v }
             | K::Repeat { count: v, .. } => f(v, InputValueType::Any),
             K::GoTo { x, y, z }
             | K::ApplyImpulse { x, y, z }
@@ -258,6 +290,12 @@ impl BlockKind for InstructionKind {
             }
             K::Glide { seconds, x, y, z } => {
                 f(seconds, InputValueType::Any);
+                f(x, InputValueType::Any);
+                f(y, InputValueType::Any);
+                f(z, InputValueType::Any);
+            }
+            K::CreateActor { name, x, y, z } => {
+                f(name, InputValueType::Any);
                 f(x, InputValueType::Any);
                 f(y, InputValueType::Any);
                 f(z, InputValueType::Any);
@@ -278,7 +316,9 @@ impl BlockKind for InstructionKind {
             | K::WhenClicked
             | K::WhenCollision { .. }
             | K::WhenMessage { .. }
+            | K::WhenCloned
             | K::BlockHeader { .. }
+            | K::CreateClone { .. }
             | K::PointTowards { .. }
             | K::SetBody { .. }
             | K::SetCameraView { .. }
@@ -301,6 +341,7 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenClicked
                 | InstructionKind::WhenCollision { .. }
                 | InstructionKind::WhenMessage { .. }
+                | InstructionKind::WhenCloned
                 | InstructionKind::BlockHeader { .. }
         )
     }

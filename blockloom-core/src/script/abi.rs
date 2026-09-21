@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -75,12 +75,22 @@ pub const READ_HAS_COMPONENT: u32 = 11;
 pub const READ_FIELD: u32 = 12;
 /// `a` = another actor's name, `arg` = axis.
 pub const READ_POSITION_OF: u32 = 13;
+/// Whether this actor is a clone rather than one the editor authored.
+pub const READ_IS_CLONE: u32 = 14;
+/// `a` = actor name, or empty for every actor; counts clones too.
+pub const READ_ACTOR_COUNT: u32 = 15;
 
 // ─── What a script can read as text ────────────────────────────────────────
 
 pub const TEXT_ACTOR_NAME: u32 = 1;
 /// `a` = component, `b` = field.
 pub const TEXT_FIELD: u32 = 2;
+/// This actor's own id, which is what the acts below take.
+pub const TEXT_ACTOR_ID: u32 = 3;
+/// The id of the actor this one hangs off, or [`MISSING`] for none.
+pub const TEXT_PARENT: u32 = 4;
+/// The id of the last actor or clone this one made.
+pub const TEXT_NEW_ACTOR: u32 = 5;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -126,6 +136,14 @@ pub const ACT_SET_CAMERA_VIEW: u32 = 18;
 /// `a` = message for the editor's run log.
 pub const ACT_LOG: u32 = 19;
 pub const ACT_STOP_ALL: u32 = 20;
+/// `a` = the actor to hang off, by id or name; empty takes it off.
+pub const ACT_SET_PARENT: u32 = 21;
+/// `a` = the actor to copy, by id or name; empty clones this one.
+pub const ACT_CREATE_CLONE: u32 = 22;
+/// `a` = name, `n0`, `n1`, `n2` = position.
+pub const ACT_CREATE_ACTOR: u32 = 23;
+/// `a` = the actor to delete, by id or name; empty deletes this one.
+pub const ACT_DELETE_ACTOR: u32 = 24;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

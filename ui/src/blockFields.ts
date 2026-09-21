@@ -94,6 +94,11 @@ function actorOptions(withMouse: boolean): Option[] {
   return withMouse ? [...actors, { value: MOUSE_TARGET, label: 'the mouse' }] : actors;
 }
 
+/** Actor names, plus "myself" - an empty `of` clones whoever ran the block. */
+function cloneOptions(): Option[] {
+  return [{ value: '', label: 'myself' }, ...actorOptions(false)];
+}
+
 /** Actor names, plus "anything" - an empty target means any collision at all. */
 function collisionOptions(): Option[] {
   return [{ value: '', label: 'anything' }, ...actorOptions(false)];
@@ -175,6 +180,7 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
   WhenMessage: {
     head: [label('when I get'), { kind: 'text', key: 'name', placeholder: 'message' }],
   },
+  WhenCloned: { head: [label('when I start as a clone')] },
   Broadcast: { head: [label('broadcast'), { kind: 'text', key: 'name', placeholder: 'message' }] },
   BlockHeader: { head: [] },
 
@@ -276,6 +282,25 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
       { kind: 'dropdown', key: 'component', options: detachableOptions, placeholder: 'component' },
     ],
   },
+  SetParent: { head: [label('attach me to'), value('ParentTarget', 'parent')] },
+
+  // ── Actors ───────────────────────────────────────────────────────────────
+  CreateClone: {
+    head: [label('create a clone of'), { kind: 'dropdown', key: 'of', options: cloneOptions, placeholder: 'myself' }],
+  },
+  CreateActor: {
+    head: [
+      label('create actor'),
+      value('NewActorName', 'name'),
+      label('at x:'),
+      value('NewActorX', 'x'),
+      label('y:'),
+      value('NewActorY', 'y'),
+      label('z:', { mode: 'ThreeD' }),
+      value('NewActorZ', 'z', { mode: 'ThreeD' }),
+    ],
+  },
+  DeleteActor: { head: [label('delete'), value('DeleteTarget', 'target')] },
 
   // ── Control ──────────────────────────────────────────────────────────────
   Wait: { head: [label('wait'), value('WaitDuration', 'duration'), label('seconds')] },

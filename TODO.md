@@ -2,9 +2,18 @@
 
 Obvious gaps already identified in the project notes:
 
-- [ ] Add clones so blocks can create and manage copies of an actor.
-- [ ] Let blocks and scripts create brand-new actors from scratch and delete existing actors during runtime, not just clone what the editor authored.
-- [ ] Implement child actors: the parent/child hierarchy most game engines have, so actors can be attached to each other and move together.
+- [x] Add clones so blocks can create and manage copies of an actor.
+- [x] Let blocks and scripts create brand-new actors from scratch and delete existing actors during runtime, not just clone what the editor authored.
+- [x] Implement child actors: the parent/child hierarchy most game engines have, so actors can be attached to each other and move together.
+- [ ] Compile the actor-lifetime blocks. `create a clone of`, `create actor`,
+      `delete` and `when I start as a clone` are refused by `codegen`, so a
+      project using any of them falls back to the VM for the whole build. A
+      clone needs the generated `Runner` to hold one program's state per
+      actor id rather than one per authored strand, which means an `Entry`
+      table the host can add to and a `fire` that knows which template a
+      runtime actor came from.
+- [ ] Give a child actor an authored local offset, so the inspector can place
+      one relative to its parent rather than in world coordinates.
 - [ ] Add sound playback and sound-related blocks.
 - [ ] Add lists and blocks for creating, reading, and changing list items.
 - [x] Add asset management UI for importing, organizing, previewing, replacing, and removing project assets.

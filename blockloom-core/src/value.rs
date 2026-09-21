@@ -169,6 +169,41 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "IsClone",
+        op: "IsClone",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| Ok(Evaluated::Bool(me()?.is_clone)),
+    },
+    ExtOperator {
+        kind: "MyParent",
+        op: "MyParent",
+        arity: 0,
+        default_args: Vec::new,
+        // The id rather than the name: clones share a name, and this is what
+        // `set my parent to` and `delete` want handed back to them.
+        eval: |_| Ok(Evaluated::Text(me()?.parent)),
+    },
+    ExtOperator {
+        kind: "NewActor",
+        op: "NewActor",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| Ok(Evaluated::Text(me()?.last_created)),
+    },
+    ExtOperator {
+        kind: "ActorCount",
+        op: "ActorCount",
+        arity: 1,
+        default_args: || vec![text("")],
+        eval: |args| {
+            let name = args[0].as_text();
+            Ok(Evaluated::Number(
+                sense::read(|sensors| sensors.count_named(&name)) as f64,
+            ))
+        },
+    },
+    ExtOperator {
         kind: "ActorPosition",
         op: "ActorPosition",
         arity: 2,

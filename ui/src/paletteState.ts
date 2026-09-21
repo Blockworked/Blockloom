@@ -63,6 +63,14 @@ function defaults(type: InstructionType): Record<string, unknown> {
     case 'AttachComponent':
     case 'DetachComponent':
       return { component: '' };
+    case 'SetParent':
+      return { parent: textValue('') };
+    case 'CreateClone':
+      return { of: '' };
+    case 'CreateActor':
+      return { name: textValue('Actor'), x: numberValue(0), y: numberValue(0), z: numberValue(0) };
+    case 'DeleteActor':
+      return { target: textValue('myself') };
     case 'Wait':
       return { duration: numberValue(1) };
     case 'WaitUntil':
@@ -85,7 +93,8 @@ function defaults(type: InstructionType): Record<string, unknown> {
       return { block_id: '', args: [] };
     case 'Return':
       return { value: numberValue(0) };
-    // WhenStarted, WhenClicked, EscapeLoop, ContinueLoop, StopAll: no fields.
+    // WhenStarted, WhenClicked, WhenCloned, EscapeLoop, ContinueLoop,
+    // StopAll: no fields.
     default:
       return {};
   }
