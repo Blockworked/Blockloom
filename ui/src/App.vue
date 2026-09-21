@@ -1,10 +1,12 @@
 <script setup lang="ts">
-// The whole editor: a top bar, the actor list, the block palette and canvas,
-// the inspector, and the run log.
+// Two pages: the Dashboard the app starts on, and the editor a project opens
+// into - a top bar, the actor list, the block palette and canvas, the
+// inspector, and the run log.
 import { onMounted, onUnmounted } from 'vue';
 import { Canvas } from 'blockstitch';
 import { initState, state } from './store';
 import { redo, resetZoom, undo } from './tauri';
+import Dashboard from './components/Dashboard.vue';
 import TopBar from './components/TopBar.vue';
 import ActorList from './components/ActorList.vue';
 import BlockSidebar from './components/BlockSidebar.vue';
@@ -41,16 +43,13 @@ async function onKeydown(e: KeyboardEvent) {
 </script>
 
 <template>
-  <TopBar />
-  <div v-if="!state.runtime_available" class="warning-banner">
-    The game runtime is missing, so Play has nothing to open. Build the whole
-    workspace (<code>just build</code>), not only the editor.
-  </div>
-  <div v-if="!state.project" class="empty-state">
-    <p>No project open.</p>
-    <p>Make one from the top bar to get started.</p>
-  </div>
+  <Dashboard v-if="!state.project" />
   <template v-else>
+    <TopBar />
+    <div v-if="!state.runtime_available" class="warning-banner">
+      The game runtime is missing, so Play has nothing to open. Build the whole
+      workspace (<code>just build</code>), not only the editor.
+    </div>
     <div class="editor-body">
       <ActorList />
       <div class="editor-middle">

@@ -1,23 +1,21 @@
 <script setup lang="ts">
-// Project selection, the 2D/3D switch, and the run controls.
+// The open project's name, the way back to the Dashboard, the 2D/3D switch,
+// and the run controls.
 import { computed, onMounted, onUnmounted } from 'vue';
-import { AppDropdown } from 'blockstitch';
 import { useTheme } from 'blockstitch';
-import { Download, Moon, MonitorX, Pause, Play, Plus, Redo2, Save, Square, Sun, Trash2, Undo2, Upload } from 'lucide-vue-next';
+import { Download, LayoutGrid, Moon, MonitorX, Pause, Play, Redo2, Save, Square, Sun, Undo2, Upload } from 'lucide-vue-next';
 import { mode, state } from '../store';
 import {
+  closeProject,
   closeRuntime,
   exportProject,
   getState,
   importProject,
   pushLog,
-  newProject,
   pauseProject,
   redo,
-  removeProject,
   runProject,
   saveProject,
-  selectProject,
   setMode,
   setProjectName,
   stopProject,
@@ -26,10 +24,6 @@ import {
 
 const { currentTheme, toggleTheme } = useTheme();
 
-const projectOptions = computed(() =>
-  state.project_names.map((name, index) => ({ value: String(index), label: name })),
-);
-const selected = computed(() => (state.selected === null ? '' : String(state.selected)));
 const fps = computed(() => (state.status ? Math.round(state.status.fps) : 0));
 
 // `state-updated` events can be delayed, so without this the fps badge sits
@@ -48,16 +42,12 @@ onUnmounted(() => {
   if (pollTimer !== undefined) window.clearInterval(pollTimer);
 });
 
-function onSelect(value: string) {
-  void selectProject(Number(value));
-}
-
 function onName(e: Event) {
-  void setProjectName((e.target as HTMLInputElement).value);
+  void report(() => setProjectName((e.target as HTMLInputElement).value));
 }
 
-// An import or export that fails has nowhere else to say so - the run log is
-// where the user is already looking for what went wrong.
+// A command that fails has nowhere else to say so - the run log is where the
+// user is already looking for what went wrong.
 async function report(action: () => Promise<void>) {
   try {
     await action();
@@ -65,39 +55,20 @@ async function report(action: () => Promise<void>) {
     await pushLog('error', String(e));
   }
 }
-
-function onRemove() {
-  if (!state.project) return;
-  if (window.confirm(`Delete project "${state.project.name}"? This cannot be undone.`)) void removeProject();
-}
 </script>
 
 <template>
   <header class="top-bar">
-    <AppDropdown
-      v-if="projectOptions.length"
-      :options="projectOptions"
-      :model-value="selected"
-      placeholder="Project"
-      @update:model-value="onSelect"
-    />
+    <button class="icon-button" title="All projects" @click="report(closeProject)"><LayoutGrid /></button>
     <input
       v-if="state.project"
       class="project-name"
       type="text"
       :value="state.project.name"
+      :title="state.project_path ?? ''"
       placeholder="Project name"
       @change="onName"
     >
-    <button class="icon-button" title="New project" @click="newProject('Untitled', mode)"><Plus /></button>
-    <button
-      class="icon-button"
-      title="Delete this project"
-      :disabled="!state.project"
-      @click="onRemove"
-    >
-      <Trash2 />
-    </button>
     <button class="icon-button" title="Save now" :disabled="!state.project" @click="saveProject()"><Save /></button>
     <button class="icon-button" title="Import a project" @click="report(importProject)"><Upload /></button>
     <button class="icon-button" title="Export this project" :disabled="!state.project" @click="report(exportProject)">

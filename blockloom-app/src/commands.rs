@@ -5,12 +5,14 @@
 
 use crate::runtime::RuntimeHandle;
 use crate::state::{
-    AppState, EditSession, InstrPath, LogLine, SharedState, StateDto, ValueLocation, state_dto,
+    AppState, EditSession, InstrPath, LogLine, OpenProject, SharedState, StateDto, ValueLocation,
+    state_dto,
 };
 use crate::{AppHandle, Backend};
 use blockloom_core::blocks::{
     ActorGraph, BlockPiece, BlockShape, Instruction, InstructionKind, normalize_block_color,
 };
+use blockloom_core::library;
 use blockloom_core::project::{self, Actor, Project};
 use blockloom_core::scene::{Camera, Mode, Physics, Placement, Visual};
 use blockloom_core::value::{Evaluated, Value};
@@ -43,11 +45,11 @@ fn push_undo_for(s: &mut AppState, session: Option<EditSession>) {
     }
 }
 
-/// Writes the open project to disk. Failures are logged, not surfaced: an
-/// unwritable data directory shouldn't stop the editor working.
+/// Writes the open project to its folder. Failures are logged, not surfaced:
+/// an unwritable folder shouldn't stop the editor working.
 fn auto_save(s: &AppState) {
-    if let Some(project) = s.project()
-        && let Err(e) = project::save_project(project)
+    if let Some(open) = &s.open
+        && let Err(e) = project::save_project(&open.project, &open.dir)
     {
         tracing::warn!("Couldn't save the project: {e}");
     }
@@ -81,76 +83,141 @@ pub(crate) fn get_state(state: &SharedState) -> Result<StateDto, String> {
 
 // ─── Projects ──────────────────────────────────────────────────────────────
 
-pub(crate) fn select_project(
+/// Opens the project in `dir`, replacing whatever was open. The Dashboard's
+/// cards and its "Open a folder" both land here.
+pub(crate) fn open_project(
     state: &SharedState,
     app: &AppHandle,
-    index: usize,
+    path: String,
 ) -> Result<(), String> {
+    let dir = std::path::PathBuf::from(path);
+    let project = project::read_project_dir(&dir)?;
     let mut s = lock(state)?;
-    if index >= s.projects.len() {
-        return Err("No such project".to_string());
-    }
-    s.selected = Some(index);
-    s.selected_actor = None;
-    s.history.clear();
-    s.invalid_field_buffers.clear();
+    close_open_project(&mut s, true);
+    library::remember(&dir);
+    s.open = Some(OpenProject { project, dir });
+    s.library = library::list();
     emit(app, &s);
     Ok(())
 }
 
-pub(crate) fn new_project(
+/// Makes a project folder under `location` - named after the project, since
+/// the app owns the folder name - and opens it.
+pub(crate) fn create_project(
     state: &SharedState,
     app: &AppHandle,
-    name: Option<String>,
+    name: String,
+    location: Option<String>,
     mode: Mode,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    let name = name.unwrap_or_else(|| "Untitled".to_string());
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Give the project a name".to_string());
+    }
+    let parent = location
+        .map(|location| std::path::PathBuf::from(location.trim()))
+        .filter(|location| !location.as_os_str().is_empty())
+        .unwrap_or_else(project::default_projects_dir);
+
     let project = Project::starter(name, mode);
-    project::save_project(&project)?;
-    s.projects.push(project);
-    s.projects
-        .sort_by_key(|project| project.name.to_lowercase());
-    let id = s.projects.last().map(|p| p.id.clone());
-    s.selected = s.projects.iter().position(|p| Some(&p.id) == id.as_ref());
-    s.selected_actor = None;
-    s.history.clear();
-    emit(app, &s);
-    Ok(())
-}
+    let dir = project::create_project(&project, &parent)?;
 
-pub(crate) fn remove_project(state: &SharedState, app: &AppHandle) -> Result<(), String> {
     let mut s = lock(state)?;
-    let Some(index) = s.selected else {
-        return Ok(());
-    };
-    let project = s.projects.remove(index);
-    project::delete_project(&project.id)?;
-    s.selected = (!s.projects.is_empty()).then(|| index.min(s.projects.len() - 1));
-    s.selected_actor = None;
-    s.history.clear();
+    close_open_project(&mut s, true);
+    library::remember(&dir);
+    s.open = Some(OpenProject { project, dir });
+    s.library = library::list();
     emit(app, &s);
     Ok(())
 }
 
+/// Saves the open project and goes back to the Dashboard.
+pub(crate) fn close_project(state: &SharedState, app: &AppHandle) -> Result<(), String> {
+    let mut s = lock(state)?;
+    close_open_project(&mut s, true);
+    s.library = library::list();
+    emit(app, &s);
+    Ok(())
+}
+
+/// Drops a project from the Dashboard without touching the folder, so it can
+/// be opened again later from wherever it is.
+pub(crate) fn forget_project(
+    state: &SharedState,
+    app: &AppHandle,
+    path: String,
+) -> Result<(), String> {
+    let dir = std::path::PathBuf::from(path);
+    let mut s = lock(state)?;
+    if s.project_dir() == Some(dir.as_path()) {
+        close_open_project(&mut s, true);
+    }
+    library::forget(&dir);
+    s.library = library::list();
+    emit(app, &s);
+    Ok(())
+}
+
+/// Deletes a project folder outright. Refuses a folder that isn't one, so a
+/// stale entry can't take something else with it.
+pub(crate) fn delete_project(
+    state: &SharedState,
+    app: &AppHandle,
+    path: String,
+) -> Result<(), String> {
+    let dir = std::path::PathBuf::from(path);
+    let mut s = lock(state)?;
+    // Discard rather than save: the folder is about to go.
+    if s.project_dir() == Some(dir.as_path()) {
+        close_open_project(&mut s, false);
+    }
+    project::delete_project_dir(&dir)?;
+    library::forget(&dir);
+    s.library = library::list();
+    emit(app, &s);
+    Ok(())
+}
+
+/// Renames the open project, and its folder with it.
 pub(crate) fn set_project_name(
     state: &SharedState,
     app: &AppHandle,
     name: String,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    if let Some(project) = s.project_mut() {
-        project.name = name;
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Give the project a name".to_string());
     }
-    auto_save(&s);
+    let mut s = lock(state)?;
+    let Some(open) = &mut s.open else {
+        return Ok(());
+    };
+    open.project.name = name.clone();
+    let from = open.dir.clone();
+    // Save first, so the rename moves a folder that already says the new name.
+    if let Err(e) = project::save_project(&open.project, &from) {
+        tracing::warn!("Couldn't save the project: {e}");
+    }
+    match project::rename_project_dir(&from, &name) {
+        Ok(to) => {
+            if to != from {
+                library::moved(&from, &to);
+                open.dir = to;
+            }
+        }
+        // A folder that won't move isn't worth refusing the rename over - the
+        // project is saved either way.
+        Err(e) => tracing::warn!("Couldn't rename the project folder: {e}"),
+    }
+    s.library = library::list();
     emit(app, &s);
     Ok(())
 }
 
 pub(crate) fn save_open_project(state: &SharedState, app: &AppHandle) -> Result<(), String> {
     let s = lock(state)?;
-    if let Some(project) = s.project() {
-        project::save_project(project)?;
+    if let Some(open) = &s.open {
+        project::save_project(&open.project, &open.dir)?;
     }
     emit(app, &s);
     Ok(())
@@ -173,29 +240,44 @@ pub(crate) fn export_project(state: &SharedState, path: String) -> Result<(), St
     project::export_project(project, std::path::Path::new(&path))
 }
 
+/// Reads an exported `.blockloom` file into a folder of its own under the
+/// default location, and opens it.
 pub(crate) fn import_project(
     state: &SharedState,
     app: &AppHandle,
     path: String,
 ) -> Result<(), String> {
     let mut project = project::read_project(std::path::Path::new(&path))?;
-    let mut s = lock(state)?;
     // A fresh id, so importing the same file twice gives two projects rather
-    // than silently overwriting the first.
+    // than two folders claiming to be one.
     project.id = uuid::Uuid::new_v4().simple().to_string();
-    if s.projects.iter().any(|p| p.name == project.name) {
-        project.name = format!("{} (imported)", project.name);
-    }
-    project::save_project(&project)?;
-    let id = project.id.clone();
-    s.projects.push(project);
-    s.projects
-        .sort_by_key(|project| project.name.to_lowercase());
-    s.selected = s.projects.iter().position(|p| p.id == id);
-    s.selected_actor = None;
-    s.history.clear();
+    let dir = project::create_project(&project, &project::default_projects_dir())?;
+
+    let mut s = lock(state)?;
+    close_open_project(&mut s, true);
+    library::remember(&dir);
+    s.open = Some(OpenProject { project, dir });
+    s.library = library::list();
     emit(app, &s);
     Ok(())
+}
+
+/// Lets go of whatever is open, leaving the editor on the Dashboard. The game
+/// window and the run log belong to the project, so they go too. `save` is
+/// false only when the project is on its way to being deleted.
+fn close_open_project(s: &mut AppState, save: bool) {
+    if save {
+        auto_save(s);
+    }
+    s.open = None;
+    s.selected_actor = None;
+    s.history.clear();
+    s.invalid_field_buffers.clear();
+    s.runtime = None;
+    s.running = false;
+    s.paused = false;
+    s.status = None;
+    s.log.clear();
 }
 
 // ─── The world ─────────────────────────────────────────────────────────────
@@ -1229,8 +1311,8 @@ fn step_history(
         return Ok(());
     };
     if let Some(previous) = step(&mut s.history, current) {
-        let index = s.selected.ok_or("No project is open")?;
-        s.projects[index] = previous;
+        let open = s.open.as_mut().ok_or("No project is open")?;
+        open.project = previous;
         s.invalid_field_buffers.clear();
         auto_save(&s);
         sync_runtime(&mut s);

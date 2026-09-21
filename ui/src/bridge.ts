@@ -17,7 +17,12 @@ const BRIDGE_ORIGIN = 'http://127.0.0.1:4128';
 const BRIDGE_WS = 'ws://127.0.0.1:4128/events';
 
 /** Commands the window process handles itself; everything else is backend. */
-const WINDOW_COMMANDS = new Set(['reset_zoom', 'pick_project_file', 'set_theme_background']);
+const WINDOW_COMMANDS = new Set([
+  'reset_zoom',
+  'pick_project_file',
+  'pick_folder',
+  'set_theme_background',
+]);
 
 type StateListener = (payload: unknown) => void;
 const stateListeners = new Set<StateListener>();
@@ -42,6 +47,9 @@ async function bridgeInvoke<T>(cmd: string, args: Record<string, unknown> = {}):
   // No native dialogs in a browser tab - ask for the path instead.
   if (cmd === 'pick_project_file') {
     return (window.prompt('Path to the .blockloom file', (args.defaultName as string) ?? '') || null) as T;
+  }
+  if (cmd === 'pick_folder') {
+    return (window.prompt((args.title as string) ?? 'Folder', (args.start as string) ?? '') || null) as T;
   }
   if (cmd === 'reset_zoom' || cmd === 'set_theme_background') return undefined as T;
   const res = await fetch(`${BRIDGE_ORIGIN}/invoke/${cmd}`, {

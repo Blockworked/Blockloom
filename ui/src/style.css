@@ -467,3 +467,188 @@ body {
   background: var(--blockstitch-red);
   color: #fff;
 }
+
+/* ── Dashboard ───────────────────────────────────────────────────────────── */
+
+.dashboard {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--blockstitch-spacing-md);
+  padding: 24px 32px 32px;
+  overflow-y: auto;
+}
+
+.dashboard-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--blockstitch-spacing-sm);
+}
+
+.dashboard-head h1 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: -0.01em;
+}
+
+.dashboard-head .spacer {
+  flex: 1 1 auto;
+}
+
+.dashboard-tagline,
+.dashboard-version {
+  margin: 4px 0 0;
+  color: var(--blockstitch-text-dim);
+}
+
+.dashboard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dashboard-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dashboard-actions .btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.dashboard-error {
+  margin: 0;
+}
+
+.dashboard-empty {
+  flex: 0 0 auto;
+  padding: 48px 0;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The card is the button; its tools sit on top so a click on them isn't a
+   click on the card. `min-width` so a long path truncates instead of
+   stretching the track. */
+.project-grid li {
+  position: relative;
+  min-width: 0;
+}
+
+.project-card {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  /* A button's own `align-items: center` would centre every line. */
+  align-items: stretch;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--blockstitch-border);
+  border-radius: var(--blockstitch-radius-lg);
+  background: var(--blockstitch-bg2);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-card:hover {
+  border-color: var(--blockstitch-accent);
+}
+
+.project-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Room for the tools, which only show on hover. */
+  padding-right: 56px;
+}
+
+.project-card-name {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-card-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--blockstitch-border);
+  border-radius: 999px;
+  color: var(--blockstitch-text-dim);
+  font-size: 11px;
+}
+
+.project-card-mode svg {
+  width: 12px;
+  height: 12px;
+}
+
+.project-card-path {
+  overflow: hidden;
+  color: var(--blockstitch-text-dim);
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-card-when {
+  color: var(--blockstitch-text-dim);
+  font-size: 11px;
+}
+
+.project-card-tools {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+}
+
+.project-grid li:hover .project-card-tools,
+.project-card-tools:focus-within {
+  opacity: 1;
+}
+
+/* ── New project dialog ──────────────────────────────────────────────────── */
+
+.dialog-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--blockstitch-text-dim);
+}
+
+.dialog .mode-switch.dialog-mode {
+  width: fit-content;
+  margin-bottom: 8px;
+}
+
+.dialog-row .btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+}
+
+.dialog-row .btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.path-preview code {
+  word-break: break-all;
+}

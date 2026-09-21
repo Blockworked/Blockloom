@@ -6,7 +6,8 @@
 //! - [`blocks`] is the block vocabulary ([`blocks::InstructionKind`]) and its
 //!   `BlockKind` impl, the hinge onto `blockstitch-core`'s document model.
 //! - [`project`] is the saved document: a [`scene::World`] plus one canvas
-//!   per actor.
+//!   per actor, and the folder it is saved in.
+//! - [`library`] is the set of project folders the Dashboard lists.
 //! - [`vm`] compiles those canvases into a flat program and runs every script
 //!   cooperatively, one slice per rendered frame, emitting [`vm::Effect`]s for
 //!   a host to apply. `blockloom-runtime` is that host.
@@ -17,6 +18,7 @@
 
 pub mod blocks;
 pub mod fields;
+pub mod library;
 pub mod project;
 pub mod scene;
 pub mod sense;

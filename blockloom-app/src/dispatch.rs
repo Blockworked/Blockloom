@@ -44,16 +44,17 @@ impl Backend {
             "get_state" => to_json(commands::get_state(state)?),
 
             // ── Projects ───────────────────────────────────────────────────
-            "select_project" => {
-                to_json(commands::select_project(state, app, arg(&args, "index")?)?)
-            }
-            "new_project" => to_json(commands::new_project(
+            "open_project" => to_json(commands::open_project(state, app, arg(&args, "path")?)?),
+            "create_project" => to_json(commands::create_project(
                 state,
                 app,
-                arg(&args, "name").ok(),
+                arg(&args, "name")?,
+                arg(&args, "location").ok().flatten(),
                 arg(&args, "mode").unwrap_or_default(),
             )?),
-            "remove_project" => to_json(commands::remove_project(state, app)?),
+            "close_project" => to_json(commands::close_project(state, app)?),
+            "forget_project" => to_json(commands::forget_project(state, app, arg(&args, "path")?)?),
+            "delete_project" => to_json(commands::delete_project(state, app, arg(&args, "path")?)?),
             "set_project_name" => {
                 to_json(commands::set_project_name(state, app, arg(&args, "name")?)?)
             }

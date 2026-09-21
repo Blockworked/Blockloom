@@ -256,9 +256,21 @@ export interface InvalidFieldDto {
   text: string;
 }
 
+/** One card on the Dashboard: a project folder Blockloom remembers. */
+export interface ProjectEntryDto {
+  path: string;
+  name: string;
+  mode: Mode;
+  /** Unix seconds, 0 if it has never been opened. */
+  opened_at: number;
+}
+
 export interface StateDto {
-  project_names: string[];
-  selected: number | null;
+  library: ProjectEntryDto[];
+  /** Where the New Project dialog points unless the user picks elsewhere. */
+  default_project_location: string;
+  /** The open project's folder. */
+  project_path: string | null;
   project: ProjectDto | null;
   selected_actor: string | null;
   can_undo: boolean;
@@ -274,8 +286,9 @@ export interface StateDto {
 
 export function emptyState(): StateDto {
   return {
-    project_names: [],
-    selected: null,
+    library: [],
+    default_project_location: '',
+    project_path: null,
     project: null,
     selected_actor: null,
     can_undo: false,

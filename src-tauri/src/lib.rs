@@ -69,6 +69,7 @@ pub fn run() {
             call,
             reset_zoom,
             pick_project_file,
+            pick_folder,
             theme::set_theme_background
         ])
         .build(tauri::generate_context!())
@@ -133,6 +134,21 @@ async fn pick_project_file(save: bool, default_name: Option<String>) -> Option<S
         dialog.set_title("Import project").pick_file().await
     };
     file.map(|file| file.path().to_string_lossy().into_owned())
+}
+
+/// Shows a folder dialog - where a new project should go, or which project
+/// folder to open. Starts at `start` when that folder exists. Returns `None`
+/// if the user cancelled.
+#[tauri::command]
+async fn pick_folder(title: Option<String>, start: Option<String>) -> Option<String> {
+    let mut dialog = rfd::AsyncFileDialog::new().set_title(title.unwrap_or_default());
+    if let Some(start) = start.filter(|start| std::path::Path::new(start).is_dir()) {
+        dialog = dialog.set_directory(start);
+    }
+    dialog
+        .pick_folder()
+        .await
+        .map(|folder| folder.path().to_string_lossy().into_owned())
 }
 
 /// This process's `--ozone-platform` choice, if it was given one.

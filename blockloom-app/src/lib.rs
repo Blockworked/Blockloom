@@ -8,7 +8,7 @@ mod runtime;
 mod state;
 
 use crate::state::{AppState, SharedState, UNDO_STACK_LIMIT, state_dto};
-use blockloom_core::project;
+use blockloom_core::library;
 use std::sync::{Arc, Mutex};
 
 /// Something the backend tells whoever is hosting it.
@@ -54,23 +54,16 @@ pub struct Backend {
 }
 
 impl Backend {
-    /// Loads every saved project (creating a starter one on a first run) and
-    /// opens the first of them.
+    /// Lists the projects the Dashboard offers and opens none of them - the
+    /// editor starts on the Dashboard.
     pub fn start(app: AppHandle) -> Backend {
         // Registers Blockloom's reporter blocks before any project loads.
         blockloom_core::init();
 
-        let mut projects = project::load_projects();
-        if projects.is_empty() {
-            let starter = project::Project::starter("My First Game", Default::default());
-            if let Err(e) = project::save_project(&starter) {
-                tracing::warn!("Couldn't save the starter project: {e}");
-            }
-            projects.push(starter);
-        }
+        library::migrate_legacy_projects();
         let state = AppState {
-            selected: (!projects.is_empty()).then_some(0),
-            projects,
+            library: library::list(),
+            open: None,
             selected_actor: None,
             history: state::History::new(UNDO_STACK_LIMIT),
             invalid_field_buffers: Default::default(),

@@ -10,5 +10,5 @@ Obvious gaps already identified in the project notes:
 - [ ] Let reporter-shaped custom blocks suspend and resume when they contain `wait`.
 - [x] Handle actors whose visual shape does not match the project's dimension, including a way to convert or replace the shape.
 - [ ] Add project packaging so a finished game can be shared and run independently.
-- [ ] Redesign projects as folders: the app always starts on a Dashboard page for creating new projects and opening existing ones, with each project stored as a folder so it can hold assets.
+- [x] Redesign projects as folders: the app always starts on a Dashboard page for creating new projects and opening existing ones, with each project stored as a folder so it can hold assets.
 - [ ] Add a component system built on Bevy's ECS components that turns all properties into components, with support for custom components such as scripts (possibly in Rust) and camera-attach components (for first-person / third-person cameras).

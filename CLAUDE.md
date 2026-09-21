@@ -110,7 +110,8 @@ Two processes: the editor window, and the game world.
 - **`blockloom-core`** - the engine library both processes share: `scene.rs`
   (actors, looks, bodies, camera, 2D or 3D), `blocks.rs` (the block vocabulary
   and its `BlockKind` impl), `fields.rs` (what the frontend calls each value
-  slot), `project.rs` (the saved document and its `.blockloom` files), `vm/`
+  slot), `project.rs` (the saved document and the folder it lives in),
+  `library.rs` (the project folders the Dashboard lists), `vm/`
   (the block VM), `sense.rs` (the world state reporter blocks read), and
   `wire.rs` (the one shape difference between documents and the frontend).
 - **`blockstitch-core`** (sibling repo, see above) - the shared block-editor
@@ -162,9 +163,20 @@ a `Step`/`Effect` if it does something new** - not a pair of `.vue` files. The
 two blocks whose row comes from a `BlockDef` rather than their type
 (`BlockHeader`, `CallBlock`) are still hand-written, in `components/fields/`.
 
-Projects are saved as `.blockloom` JSON in `<data dir>/blockloom/projects`
-(override with `BLOCKLOOM_DATA_DIR`), one file per project, written after every
-edit.
+A project is a folder, not a file: `<name>/project.blockloom` beside an
+`assets/`. The folder sits wherever the New Project dialog was pointed
+(`~/Blockloom/projects` by default), and the app owns the folder's name - it
+follows the project's, so renaming a project moves its folder.
+`<data dir>/blockloom/projects.json` remembers which folders the Dashboard
+lists; names and dimensions are read back off disk, never cached there. With
+`BLOCKLOOM_DATA_DIR` set, both that file and the default project location move
+under it. `blockloom-core/src/library.rs` is that list, including the one-time
+migration of pre-folder `<id>.blockloom` files.
+
+The app opens on the Dashboard (`ui/src/components/Dashboard.vue`); the editor
+appears once a project is open, and `state.project` being null is what decides
+which of the two shows. Every edit is still written to disk right after it
+lands.
 
 ### Known gaps
 

@@ -5,6 +5,11 @@
 //! canvas the way switching macros does in Blockwork. Variables come in two
 //! scopes: an actor's own (on its graph, private to it) and the project's
 //! ([`Project::globals`], shared by every actor - a score, a level number).
+//!
+//! On disk a project is a folder, not a file: `<name>/project.blockloom` next
+//! to an `assets/` the project's own files live in. The app owns the folder
+//! name and keeps it matched to the project's; where the folder sits is the
+//! user's choice, so [`crate::library`] remembers the ones it has opened.
 
 use crate::blocks::{ActorGraph, InstructionKind, VariableDef};
 use crate::scene::{Mode, Physics, Placement, Visual, World};
@@ -16,6 +21,13 @@ use std::path::{Path, PathBuf};
 
 /// File extension of a saved project.
 pub const PROJECT_EXTENSION: &str = "blockloom";
+
+/// The document inside a project folder. A project is a folder so it has
+/// somewhere to keep its assets; this is the part that holds the blocks.
+pub const PROJECT_FILE: &str = "project.blockloom";
+
+/// Where a project folder keeps its assets.
+pub const ASSETS_DIR: &str = "assets";
 
 fn new_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
@@ -395,17 +407,95 @@ fn visual_for_mode(visual: &Visual, mode: Mode) -> Visual {
 
 // ─── On-disk storage ───────────────────────────────────────────────────────
 
-/// Where projects live: `<data dir>/blockloom/projects`.
-pub fn projects_dir() -> PathBuf {
+/// Blockloom's own data directory - the project registry lives here, not the
+/// projects themselves.
+pub fn data_dir() -> PathBuf {
     let base = std::env::var_os("BLOCKLOOM_DATA_DIR")
         .map(PathBuf::from)
         .or_else(dirs::data_dir)
         .unwrap_or_else(|| PathBuf::from("."));
-    base.join("blockloom").join("projects")
+    base.join("blockloom")
 }
 
-fn project_path(id: &str) -> PathBuf {
-    projects_dir().join(format!("{id}.{PROJECT_EXTENSION}"))
+/// Where the New Project dialog points unless the user picks somewhere else:
+/// `~/Blockloom/projects`, or under `BLOCKLOOM_DATA_DIR` when that is set, so
+/// a test run never touches the real one.
+pub fn default_projects_dir() -> PathBuf {
+    if std::env::var_os("BLOCKLOOM_DATA_DIR").is_some() {
+        return data_dir().join("projects");
+    }
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Blockloom")
+        .join("projects")
+}
+
+/// Where flat `<id>.blockloom` files used to live, before projects became
+/// folders. Read once at startup and migrated.
+pub fn legacy_projects_dir() -> PathBuf {
+    data_dir().join("projects")
+}
+
+/// The document inside a project folder.
+pub fn project_file(dir: &Path) -> PathBuf {
+    dir.join(PROJECT_FILE)
+}
+
+/// A project folder's assets, made on creation so there is somewhere to put
+/// them.
+pub fn assets_dir(dir: &Path) -> PathBuf {
+    dir.join(ASSETS_DIR)
+}
+
+/// Whether `dir` is a project folder.
+pub fn is_project_dir(dir: &Path) -> bool {
+    project_file(dir).is_file()
+}
+
+/// A folder name for a project called `name`. The app owns the folder name,
+/// so anything a path can't hold becomes `-`.
+pub fn folder_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            c if c.is_control() => '-',
+            c => c,
+        })
+        .collect();
+    // Trailing dots and spaces are legal here but not on Windows, and a
+    // leading dot would hide the folder.
+    let trimmed = cleaned.trim().trim_end_matches('.').trim_start_matches('.');
+    let trimmed = trimmed.trim();
+    if trimmed.is_empty() {
+        "Project".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// A folder under `parent` for a project called `name`, skipping past any
+/// that is already taken - `Pong`, then `Pong 2`.
+pub fn unused_project_dir(parent: &Path, name: &str) -> PathBuf {
+    let base = folder_name(name);
+    let first = parent.join(&base);
+    if !first.exists() {
+        return first;
+    }
+    (2..)
+        .map(|n| parent.join(format!("{base} {n}")))
+        .find(|candidate| !candidate.exists())
+        .expect("an unused folder always exists")
+}
+
+/// Makes a folder for `project` under `parent` and writes it there, returning
+/// the folder. The project keeps its name; only the folder is deduplicated.
+pub fn create_project(project: &Project, parent: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    let dir = unused_project_dir(parent, &project.name);
+    std::fs::create_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    save_project(project, &dir)?;
+    Ok(dir)
 }
 
 /// Reads one project file.
@@ -417,12 +507,23 @@ pub fn read_project(path: &Path) -> Result<Project, String> {
     Ok(project)
 }
 
-/// Writes a project to its own file in [`projects_dir`].
-pub fn save_project(project: &Project) -> Result<(), String> {
-    let path = project_path(&project.id);
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+/// Reads the project a folder holds.
+pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
+    let path = project_file(dir);
+    if !path.is_file() {
+        return Err(format!(
+            "{} isn't a Blockloom project folder",
+            dir.display()
+        ));
     }
+    read_project(&path)
+}
+
+/// Writes `project` into its folder, making the folder and its `assets` if
+/// they aren't there.
+pub fn save_project(project: &Project, dir: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(assets_dir(dir)).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let path = project_file(dir);
     let json = serde_json::to_string_pretty(project).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| format!("{}: {e}", path.display()))
 }
@@ -433,42 +534,129 @@ pub fn export_project(project: &Project, path: &Path) -> Result<(), String> {
     std::fs::write(path, json).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-pub fn delete_project(id: &str) -> Result<(), String> {
-    let path = project_path(id);
-    match std::fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("{}: {e}", path.display())),
+/// Moves a project folder so its name matches `name` again, returning where it
+/// now is. A folder already named that - including this one - is left alone.
+pub fn rename_project_dir(dir: &Path, name: &str) -> Result<PathBuf, String> {
+    let parent = dir.parent().ok_or("A project folder needs a parent")?;
+    let wanted = folder_name(name);
+    if dir
+        .file_name()
+        .is_some_and(|current| current == wanted.as_str())
+    {
+        return Ok(dir.to_path_buf());
     }
+    let target = unused_project_dir(parent, &wanted);
+    std::fs::rename(dir, &target)
+        .map_err(|e| format!("{} -> {}: {e}", dir.display(), target.display()))?;
+    Ok(target)
 }
 
-/// Every saved project, name-sorted. Unreadable files are skipped with a
-/// warning rather than failing the whole load.
-pub fn load_projects() -> Vec<Project> {
-    let dir = projects_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    let mut projects: Vec<Project> = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == PROJECT_EXTENSION))
-        .filter_map(|path| match read_project(&path) {
-            Ok(project) => Some(project),
-            Err(e) => {
-                tracing::warn!("Skipping unreadable project: {e}");
-                None
-            }
-        })
-        .collect();
-    projects.sort_by_key(|project| project.name.to_lowercase());
-    projects
+/// Deletes a project folder and everything in it. Refuses anything that isn't
+/// one, so a mistyped path can't take a home directory with it.
+pub fn delete_project_dir(dir: &Path) -> Result<(), String> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    if !is_project_dir(dir) {
+        return Err(format!(
+            "{} isn't a Blockloom project folder, so it wasn't deleted",
+            dir.display()
+        ));
+    }
+    std::fs::remove_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::blocks::Instruction;
+
+    /// An empty directory of its own, removed when the test ends.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("blockloom-{}", new_id()));
+            std::fs::create_dir_all(&path).expect("a temp dir");
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_folder_name_holds_nothing_a_path_cant() {
+        assert_eq!(folder_name("Pong"), "Pong");
+        assert_eq!(folder_name("  Pong 2  "), "Pong 2");
+        assert_eq!(folder_name("a/b:c*d?"), "a-b-c-d-");
+        assert_eq!(folder_name(".hidden."), "hidden");
+        assert_eq!(folder_name("   "), "Project");
+        // Slashes become dashes, which is already a usable folder name.
+        assert_eq!(folder_name("///"), "---");
+    }
+
+    #[test]
+    fn a_second_project_of_the_same_name_gets_a_folder_of_its_own() {
+        let temp = TempDir::new();
+        let project = Project::starter("Pong", Mode::TwoD);
+
+        let first = create_project(&project, &temp.0).unwrap();
+        let second = create_project(&project, &temp.0).unwrap();
+
+        assert_eq!(first.file_name().unwrap(), "Pong");
+        assert_eq!(second.file_name().unwrap(), "Pong 2");
+        // Both are projects, and both have somewhere to put assets.
+        assert!(is_project_dir(&first) && is_project_dir(&second));
+        assert!(assets_dir(&first).is_dir());
+        assert_eq!(read_project_dir(&second).unwrap().name, "Pong");
+    }
+
+    #[test]
+    fn saving_and_reading_a_folder_round_trips() {
+        let temp = TempDir::new();
+        let mut project = Project::starter("Pong", Mode::ThreeD);
+        let dir = create_project(&project, &temp.0).unwrap();
+
+        project.create_global("score").unwrap();
+        save_project(&project, &dir).unwrap();
+
+        assert_eq!(read_project_dir(&dir).unwrap(), project);
+    }
+
+    #[test]
+    fn renaming_a_project_moves_its_folder() {
+        let temp = TempDir::new();
+        let project = Project::starter("Pong", Mode::TwoD);
+        let dir = create_project(&project, &temp.0).unwrap();
+
+        let same = rename_project_dir(&dir, "Pong").unwrap();
+        assert_eq!(same, dir);
+
+        let moved = rename_project_dir(&dir, "Breakout: the sequel").unwrap();
+        assert_eq!(moved.file_name().unwrap(), "Breakout- the sequel");
+        assert!(!dir.exists());
+        assert!(is_project_dir(&moved));
+    }
+
+    #[test]
+    fn deleting_refuses_a_folder_that_isnt_a_project() {
+        let temp = TempDir::new();
+        let innocent = temp.0.join("not-a-project");
+        std::fs::create_dir(&innocent).unwrap();
+
+        assert!(delete_project_dir(&innocent).is_err());
+        assert!(innocent.exists());
+
+        let dir = create_project(&Project::starter("Pong", Mode::TwoD), &temp.0).unwrap();
+        delete_project_dir(&dir).unwrap();
+        assert!(!dir.exists());
+        // Deleting what is already gone is not an error.
+        delete_project_dir(&dir).unwrap();
+    }
 
     #[test]
     fn a_starter_project_has_something_to_drop_and_something_to_land_on() {

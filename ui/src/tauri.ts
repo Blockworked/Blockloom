@@ -30,11 +30,26 @@ export function getAppVersion(): Promise<string> {
 }
 
 // ─── Projects ───────────────────────────────────────────────────────────────
-export const selectProject = (index: number) => invoke<void>('select_project', { index });
-export const newProject = (name: string, mode: Mode) => invoke<void>('new_project', { name, mode });
-export const removeProject = () => invoke<void>('remove_project');
+export const openProject = (path: string) => invoke<void>('open_project', { path });
+export const createProject = (name: string, location: string, mode: Mode) =>
+  invoke<void>('create_project', { name, location, mode });
+export const closeProject = () => invoke<void>('close_project');
+/** Drops a project from the Dashboard, leaving its folder alone. */
+export const forgetProject = (path: string) => invoke<void>('forget_project', { path });
+/** Deletes a project's folder and everything in it. */
+export const deleteProject = (path: string) => invoke<void>('delete_project', { path });
 export const setProjectName = (name: string) => invoke<void>('set_project_name', { name });
 export const saveProject = () => invoke<void>('save_project');
+
+/** Asks for a folder. Resolves to `null` if the dialog was cancelled. */
+export const pickFolder = (title: string, start: string) =>
+  invoke<string | null>('pick_folder', { title, start });
+
+/** Asks which project folder to open, then opens it. */
+export async function openProjectFolder(start: string): Promise<void> {
+  const path = await pickFolder('Open project', start);
+  if (path) await openProject(path);
+}
 
 /** Asks where to save, then exports. Resolves quietly if the dialog was
  * cancelled. */
