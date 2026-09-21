@@ -66,8 +66,9 @@ fn main() {
                         dim2::apply_effects,
                         world::step_glides,
                         world::follow_camera,
+                        overlay::update_speech_bubbles,
                         world::report_status,
-                        overlay::update,
+                        overlay::update_status,
                         world::clear_effects,
                     )
                         .chain(),
@@ -90,8 +91,9 @@ fn main() {
                         dim3::apply_effects,
                         world::step_glides,
                         world::follow_camera,
+                        overlay::update_speech_bubbles,
                         world::report_status,
-                        overlay::update,
+                        overlay::update_status,
                         world::clear_effects,
                     )
                         .chain(),

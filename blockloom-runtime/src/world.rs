@@ -107,6 +107,7 @@ pub fn pump_editor(
                 engine.project = *project;
                 let loaded = engine.project.clone();
                 engine.vm.load(&loaded);
+                engine.speech.clear();
                 engine.running = false;
                 engine.rebuild = true;
             }
@@ -114,7 +115,7 @@ pub fn pump_editor(
                 let project = engine.project.clone();
                 engine.vm.load(&project);
                 engine.touching.clear();
-                engine.says.clear();
+                engine.speech.clear();
                 engine.rebuild = true;
                 engine.running = true;
                 engine.paused = false;
@@ -123,6 +124,7 @@ pub fn pump_editor(
             }
             EditorMessage::Stop => {
                 engine.vm.stop_all();
+                engine.speech.clear();
                 engine.running = false;
                 engine.rebuild = true;
                 bridge::send(&RuntimeMessage::Stopped);
@@ -372,6 +374,17 @@ fn half_extents3(visual: &Visual) -> Vec3 {
     }
 }
 
+/// The world-space point a speech bubble should sit over. The bubble itself is
+/// screen-space UI, but measuring the visual here keeps it attached to the top
+/// of both 2D and 3D actors as they move and scale.
+pub fn actor_top(actor: &Actor, transform: &Transform, mode: Mode) -> Vec3 {
+    let half_height = match mode {
+        Mode::TwoD => half_extents(&actor.visual).y,
+        Mode::ThreeD => half_extents3(&actor.visual).y,
+    } * transform.scale.y.abs();
+    transform.translation + Vec3::Y * half_height
+}
+
 // ─── Running blocks ────────────────────────────────────────────────────────
 
 /// One VM tick per rendered frame. Says and errors go straight to the editor;
@@ -405,12 +418,8 @@ pub fn step_vm(
     }
     effects.0.extend(produced);
 
-    // A run that has nothing left to do is over, and the editor's Play button
-    // should go back to normal.
-    if !engine.vm.is_running() {
-        engine.running = false;
-        bridge::send(&RuntimeMessage::Stopped);
-    }
+    // An idle VM is still a live play session. It must keep accepting key,
+    // click, collision, and broadcast events until Stop or `stop all` ends it.
 }
 
 /// The dimension-agnostic effects: anything that's a transform, a scale or a
@@ -437,6 +446,7 @@ pub fn apply_common(
         let Some(actor) = effect_actor(effect) else {
             if let Effect::Stopped = effect {
                 engine.running = false;
+                engine.speech.clear();
                 bridge::send(&RuntimeMessage::Stopped);
             }
             continue;
@@ -777,4 +787,25 @@ fn key_name(code: &KeyCode) -> Option<String> {
         _ => return None,
     };
     Some(normalize_key(name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_idle_vm_keeps_the_play_session_running() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.running = true;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.init_resource::<PendingEffects>();
+        app.insert_non_send(engine);
+        app.add_systems(Update, step_vm);
+        app.update();
+
+        assert!(app.world().non_send::<Engine>().running);
+    }
 }

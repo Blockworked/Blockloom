@@ -140,11 +140,26 @@ export interface CameraDto {
   follow: string | null;
 }
 
+/** Saved presentation settings for runtime speech bubbles. `font_asset` is a
+ * stable handoff point for the planned asset manager; null uses the runtime's
+ * built-in sans-serif font. */
+export interface SpeechBubbleStyleDto {
+  background: string;
+  border: string;
+  text: string;
+  font_size: number;
+  max_width: number;
+  padding: [number, number];
+  offset: [number, number];
+  font_asset: string | null;
+}
+
 export interface WorldDto {
   mode: Mode;
   background: string;
   gravity: [number, number, number];
   camera: CameraDto;
+  speech_bubble: SpeechBubbleStyleDto;
 }
 
 export interface StrandDto {

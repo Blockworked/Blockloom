@@ -231,6 +231,75 @@ impl Default for Camera {
     }
 }
 
+/// The project-wide presentation of an actor's `say` bubble. Keeping this in
+/// the saved scene, rather than in the VM or renderer, lets a future asset UI
+/// expose themes and imported fonts without changing how the block executes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SpeechBubbleStyle {
+    #[serde(default = "default_bubble_background")]
+    pub background: String,
+    #[serde(default = "default_bubble_border")]
+    pub border: String,
+    #[serde(default = "default_bubble_text")]
+    pub text: String,
+    #[serde(default = "default_bubble_font_size")]
+    pub font_size: f32,
+    #[serde(default = "default_bubble_max_width")]
+    pub max_width: f32,
+    #[serde(default = "default_bubble_padding")]
+    pub padding: [f32; 2],
+    /// Screen-space offset from the top of the speaking actor.
+    #[serde(default = "default_bubble_offset")]
+    pub offset: [f32; 2],
+    /// Optional font asset path. The future asset manager can own and update
+    /// this reference; an absent value uses Bevy's built-in sans-serif font.
+    #[serde(default)]
+    pub font_asset: Option<String>,
+}
+
+fn default_bubble_background() -> String {
+    "#FFFFFF".to_string()
+}
+
+fn default_bubble_border() -> String {
+    "#B8C0CC".to_string()
+}
+
+fn default_bubble_text() -> String {
+    "#172033".to_string()
+}
+
+fn default_bubble_font_size() -> f32 {
+    18.0
+}
+
+fn default_bubble_max_width() -> f32 {
+    260.0
+}
+
+fn default_bubble_padding() -> [f32; 2] {
+    [12.0, 8.0]
+}
+
+fn default_bubble_offset() -> [f32; 2] {
+    [0.0, -12.0]
+}
+
+impl Default for SpeechBubbleStyle {
+    fn default() -> Self {
+        Self {
+            background: default_bubble_background(),
+            border: default_bubble_border(),
+            text: default_bubble_text(),
+            font_size: default_bubble_font_size(),
+            max_width: default_bubble_max_width(),
+            padding: default_bubble_padding(),
+            offset: default_bubble_offset(),
+            font_asset: None,
+        }
+    }
+}
+
 /// Everything about the world that isn't an actor.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct World {
@@ -244,6 +313,8 @@ pub struct World {
     pub gravity: [f32; 3],
     #[serde(default)]
     pub camera: Camera,
+    #[serde(default)]
+    pub speech_bubble: SpeechBubbleStyle,
 }
 
 fn default_background() -> String {
@@ -261,6 +332,7 @@ impl Default for World {
             background: default_background(),
             gravity: default_gravity_2d(),
             camera: Camera::default(),
+            speech_bubble: SpeechBubbleStyle::default(),
         }
     }
 }
@@ -273,5 +345,26 @@ impl World {
             Mode::TwoD => default_gravity_2d(),
             Mode::ThreeD => [0.0, -9.81, 0.0],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_older_world_gets_the_default_speech_bubble_style() {
+        let world: World = serde_json::from_str("{}").unwrap();
+        assert_eq!(world.speech_bubble, SpeechBubbleStyle::default());
+    }
+
+    #[test]
+    fn speech_bubble_asset_and_style_round_trip() {
+        let mut world = World::default();
+        world.speech_bubble.background = "#102030".to_string();
+        world.speech_bubble.font_asset = Some("fonts/dialogue.ttf".to_string());
+
+        let json = serde_json::to_string(&world).unwrap();
+        assert_eq!(serde_json::from_str::<World>(&json).unwrap(), world);
     }
 }

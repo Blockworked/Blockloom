@@ -169,7 +169,8 @@ edit.
 ### Known gaps
 
 - No clones (`create clone of myself`), no sounds, no lists.
-- `say` shows in the runtime's corner overlay and the editor's log rather than
-  as a per-actor speech bubble.
+- `say` shows as a camera-projected speech bubble over its actor in both 2D and
+  3D, and is also recorded in the editor log. Bubble styling is saved on the
+  world with an optional font asset path for the planned asset manager.
 - A reporter-shaped custom block runs to completion in place, so a `wait` inside
   one passes straight through.

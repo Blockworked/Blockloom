@@ -47,8 +47,9 @@ pub struct Engine {
     pub started_at: f64,
     /// Who is touching whom, from collision messages, by actor id.
     pub touching: HashMap<String, HashSet<String>>,
-    /// The last few `say`s, for the on-screen overlay.
-    pub says: Vec<String>,
+    /// The current speech bubble for each actor. A later `say` replaces the
+    /// earlier one, and an empty `say` clears it.
+    pub speech: HashMap<String, String>,
     /// When the next status report is due, in elapsed seconds.
     pub next_report: f64,
     /// Set when the world needs rebuilding from `project` before the next tick.
@@ -66,7 +67,7 @@ impl Engine {
             paused: false,
             started_at: 0.0,
             touching: HashMap::new(),
-            says: Vec::new(),
+            speech: HashMap::new(),
             next_report: 0.0,
             rebuild: true,
         }
@@ -85,13 +86,31 @@ impl Engine {
     }
 
     pub fn note_say(&mut self, actor: &str, text: &str) {
-        let name = self
-            .project
-            .actor(actor)
-            .map(|a| a.name.clone())
-            .unwrap_or_else(|| actor.to_string());
-        self.says.push(format!("{name}: {text}"));
-        let overflow = self.says.len().saturating_sub(6);
-        self.says.drain(..overflow);
+        if text.is_empty() {
+            self.speech.remove(actor);
+        } else {
+            self.speech.insert(actor.to_string(), text.to_string());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn say_replaces_and_empty_say_clears_an_actors_bubble() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+
+        engine.note_say("player", "Hello");
+        engine.note_say("player", "Still here");
+        assert_eq!(
+            engine.speech.get("player").map(String::as_str),
+            Some("Still here")
+        );
+
+        engine.note_say("player", "");
+        assert!(!engine.speech.contains_key("player"));
     }
 }

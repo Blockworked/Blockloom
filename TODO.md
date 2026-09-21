@@ -6,7 +6,7 @@ Obvious gaps already identified in the project notes:
 - [ ] Add sound playback and sound-related blocks.
 - [ ] Add lists and blocks for creating, reading, and changing list items.
 - [ ] Add asset management UI for importing, organizing, previewing, replacing, and removing project assets.
-- [ ] Show `say` as a speech bubble over its actor in the game world.
+- [x] Show `say` as a speech bubble over its actor in the game world.
 - [ ] Let reporter-shaped custom blocks suspend and resume when they contain `wait`.
 - [x] Handle actors whose visual shape does not match the project's dimension, including a way to convert or replace the shape.
 - [ ] Add project packaging so a finished game can be shared and run independently.

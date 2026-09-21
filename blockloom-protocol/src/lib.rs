@@ -48,7 +48,7 @@ pub enum RuntimeMessage {
     /// Where everything is, a few times a second - what the editor's actor
     /// inspector and variable watchers display while a project runs.
     Status(Status),
-    /// Every script finished, or `stop all` ran.
+    /// The play session ended through Stop or a `stop all` block.
     Stopped,
     /// The runtime is giving up (a fatal renderer or physics error).
     Fatal { message: String },
