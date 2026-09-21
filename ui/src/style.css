@@ -456,18 +456,6 @@ body {
   flex: 1 1 auto;
 }
 
-/* TEMP: drag trace display, remove with the tracer. */
-.drag-trace {
-  font-family: monospace;
-  font-size: 11px;
-  color: var(--blockstitch-accent);
-  background: var(--blockstitch-bg);
-  border: 1px solid var(--blockstitch-border);
-  border-radius: 4px;
-  padding: 1px 6px;
-  white-space: nowrap;
-}
-
 .asset-toggle {
   display: flex;
   align-items: center;

@@ -58,12 +58,17 @@ pub fn update_status(engine: NonSend<Engine>, mut overlay: Query<&mut Text, With
 
 /// Reconciles the actor-to-bubble map, updates text immediately when another
 /// `say` runs, and projects every bubble's actor anchor each frame.
+///
+/// The camera's own transform is up to date in `Update`; its `GlobalTransform`
+/// only re-propagates in `PostUpdate`, so it would be the previous frame's.
+/// The world camera is always spawned parentless, so the local transform is
+/// the global one and can be read fresh.
 pub fn update_speech_bubbles(
     mut commands: Commands,
     engine: NonSend<Engine>,
     dimension: Res<Dimension>,
     assets: Res<AssetServer>,
-    cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
+    cameras: Query<(&Camera, &Transform), With<WorldCamera>>,
     actors: Query<(&ActorId, &Transform, &Visibility)>,
     mut bubbles: Query<(Entity, &SpeechBubble, &mut Node)>,
     mut labels: Query<(&SpeechBubbleText, &mut Text)>,
@@ -100,8 +105,9 @@ pub fn update_speech_bubbles(
             node.display = Display::None;
             continue;
         };
+        let camera_global = GlobalTransform::from(*camera_transform);
         let Ok(viewport) = camera.world_to_viewport(
-            camera_transform,
+            &camera_global,
             world::actor_top(actor, transform, dimension.0),
         ) else {
             node.display = Display::None;
@@ -113,9 +119,11 @@ pub fn update_speech_bubbles(
         }
 
         let offset = engine.project.world.speech_bubble.offset;
+        // Whole pixels keep the glyphs put instead of re-blitting them at a
+        // new sub-pixel offset every frame while the bubble follows the actor.
         node.display = Display::Flex;
-        node.left = Val::Px(viewport.x + offset[0]);
-        node.top = Val::Px(viewport.y + offset[1]);
+        node.left = Val::Px((viewport.x + offset[0]).round());
+        node.top = Val::Px((viewport.y + offset[1]).round());
     }
 
     for (actor, text) in &engine.speech {

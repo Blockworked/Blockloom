@@ -89,10 +89,6 @@ fn insert_body(entity: &mut EntityCommands, actor: &Actor) {
         rp::Restitution::coefficient(physics.restitution),
         rp::Friction::coefficient(physics.friction),
     ));
-    // Bodies also carry the poses the renderer lerps between fixed steps.
-    // A fresh spawn and its poses all start at the authored transform.
-    let pose = crate::world::transform_for(actor);
-    entity.insert((PhysicsPose(pose), PrevPose(pose)));
     if physics.lock_rotation {
         entity.insert(rp::LockedAxes::ROTATION_LOCKED);
     }
@@ -221,6 +217,8 @@ pub fn apply_effects(
                 match (body_for(*body), collider_for(&visual)) {
                     (Some(rigid_body), Some(collider)) => {
                         entity.insert((rigid_body, collider, rp::ActiveEvents::COLLISION_EVENTS));
+                        // Rebase the pose slider so a fresh body starts
+                        // interpolating from where it actually is.
                         if let Ok(transform) = transforms.get(id) {
                             entity.insert((PhysicsPose(*transform), PrevPose(*transform)));
                         }
@@ -228,8 +226,6 @@ pub fn apply_effects(
                     _ => {
                         entity.remove::<rp::RigidBody>();
                         entity.remove::<rp::Collider>();
-                        entity.remove::<PhysicsPose>();
-                        entity.remove::<PrevPose>();
                     }
                 }
             }
@@ -277,8 +273,6 @@ pub fn apply_effects(
                     "Body" => {
                         entity.remove::<rp::RigidBody>();
                         entity.remove::<rp::Collider>();
-                        entity.remove::<PhysicsPose>();
-                        entity.remove::<PrevPose>();
                     }
                     // Nothing to draw, but the actor is still there to be
                     // moved, sensed and given a look again.
@@ -337,10 +331,10 @@ pub fn sync_timestep(
     };
 }
 
-/// Copies each body's transform at the end of a fixed step into the pose the
-/// renderer interpolates between the next step's. Runs in `FixedPostUpdate`,
-/// just after rapier's own writeback, so `PhysicsPose` is exactly where
-/// physics settled.
+/// Shifts each actor's pose slider forward at the end of a fixed step. Runs in
+/// `FixedPostUpdate`, just after rapier's own writeback, so `PhysicsPose` is
+/// exactly where the actor settled - physics bodies at the pose physics wrote,
+/// and everyone else at the pose the step's effects pushed it to.
 pub fn record_poses(mut posed: Query<(&Transform, &mut PhysicsPose, &mut PrevPose)>) {
     for (transform, mut current, mut previous) in &mut posed {
         previous.0 = current.0;

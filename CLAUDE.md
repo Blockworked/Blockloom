@@ -212,9 +212,11 @@ the whole game window.
 4. The runtime applies those effects to the ECS - shared ones in
    `world::apply_common`, physics and material ones in the dimension's own
    module - and reports says, errors and a periodic status back to the editor.
-   Physics bodies carry `PhysicsPose`/`PrevPose`, and `record_poses`
-   (`FixedPostUpdate`) + `interpolate_poses` (`Update`) draw them between fixed
-   steps so fast displays don't see the steps.
+   Every actor carries a `PhysicsPose`/`PrevPose` pair, and `record_poses`
+   (`FixedPostUpdate`) + `interpolate_poses` (`Update`) draw each between fixed
+   steps so fast displays don't see them - physics bodies from the pose physics
+   wrote, and a `move`/`glide` sprite from the pose its step's effects pushed
+   it to, both just as smooth as a rolling ball.
 
 Scripts yield the way Scratch's do: at a `wait`, and once per loop iteration.
 That one rule is why `forever` costs one step per fixed tick instead of hanging

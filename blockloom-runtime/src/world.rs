@@ -100,13 +100,21 @@ pub fn custom_for(actor: &Actor) -> CustomComponents {
 /// What every actor entity gets whatever it looks like: who it is, where it
 /// stands, whether it's drawn, and its custom components. The dimension's own
 /// spawner adds the sprite or mesh on top.
+///
+/// The pose pair every actor carries is what lets the renderer draw it between
+/// fixed steps - for physics bodies the step overwrites it again (`record_poses`
+/// after rapier's writeback), and for actors moved straight by step effects it
+/// is captured the same way.
 pub fn actor_bundle(actor: &Actor) -> impl Bundle {
+    let transform = transform_for(actor);
     (
         Name::new(actor.name.clone()),
         ActorId(actor.id.clone()),
-        transform_for(actor),
+        transform,
         visibility_for(actor),
         custom_for(actor),
+        PhysicsPose(transform),
+        PrevPose(transform),
     )
 }
 
@@ -823,16 +831,17 @@ pub fn drive_camera(
     }
 }
 
-/// Renders body actors between the physics poses they settled at. Without
-/// this, a body's position would only change on the fixed step it lands on,
-/// and on a high-refresh display it would visibly march along in steps.
+/// Renders actors between the poses they settled at, so nothing on screen
+/// marches along at the fixed step rate - whether physics wrote the pose or a
+/// step's effects did. On a high-refresh display that step pattern would
+/// otherwise be visible as stutter.
 pub fn interpolate_poses(
     engine: NonSend<Engine>,
     fixed: Res<Time<Fixed>>,
     mut posed: Query<(&mut Transform, &PhysicsPose, &PrevPose)>,
 ) {
     if !engine.running || engine.paused {
-        // Frozen: put each body back exactly where physics left it.
+        // Frozen: put each actor back exactly where its last step left it.
         for (mut transform, current, _) in &mut posed {
             *transform = current.0;
         }

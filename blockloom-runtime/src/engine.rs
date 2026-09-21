@@ -41,12 +41,13 @@ pub struct Gliding {
     pub duration: f32,
 }
 
-/// The physics pose settled at the end of a fixed step. The renderer lerps
-/// between this and [`PrevPose`] to smooth the gaps between fixed steps.
+/// The pose an actor settled at the end of a fixed step - physically, or from
+/// that step's own effects. The renderer lerps between this and [`PrevPose`]
+/// to smooth the gaps between fixed steps.
 #[derive(Component, Debug, Clone)]
 pub struct PhysicsPose(pub Transform);
 
-/// The physics pose one fixed step older than [`PhysicsPose`].
+/// The pose one fixed step older than [`PhysicsPose`].
 #[derive(Component, Debug, Clone)]
 pub struct PrevPose(pub Transform);
 
