@@ -126,6 +126,19 @@ impl Backend {
                 arg(&args, "actorId")?,
                 arg(&args, "name")?,
             )?),
+            // ── Scripts ────────────────────────────────────────────────────
+            "create_script" => {
+                to_json(commands::create_script(state, app, arg(&args, "actorId")?)?)
+            }
+            "check_script" => to_json(commands::check_script(state, app, arg(&args, "actorId")?)?),
+            "read_script" => to_json(commands::read_script(state, arg(&args, "actorId")?)?),
+            "write_script" => to_json(commands::write_script(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "source")?,
+            )?),
+
             "set_actor_visual" => {
                 let visual: Visual = arg(&args, "visual")?;
                 to_json(commands::set_actor_visual(

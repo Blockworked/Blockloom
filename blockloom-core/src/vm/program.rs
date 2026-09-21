@@ -76,6 +76,8 @@ pub enum Action {
         value: Value,
     },
     SetCameraView(CameraView),
+    AttachComponent(String),
+    DetachComponent(String),
     Broadcast(String),
     SetVariable {
         name: String,
@@ -257,6 +259,12 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             value: value.clone(),
         })),
         K::SetCameraView { view } => steps.push(Step::Action(Action::SetCameraView(*view))),
+        K::AttachComponent { component } => steps.push(Step::Action(Action::AttachComponent(
+            component.trim().to_string(),
+        ))),
+        K::DetachComponent { component } => steps.push(Step::Action(Action::DetachComponent(
+            component.trim().to_string(),
+        ))),
         K::Broadcast { name } => steps.push(Step::Action(Action::Broadcast(name.clone()))),
         K::SetVariable { name, value } => steps.push(Step::Action(Action::SetVariable {
             name: name.clone(),

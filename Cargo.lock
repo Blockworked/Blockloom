@@ -2099,7 +2099,7 @@ dependencies = [
 
 [[package]]
 name = "blockloom"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "blockloom-app",
  "blockloom-core",
@@ -2117,7 +2117,7 @@ dependencies = [
 
 [[package]]
 name = "blockloom-app"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "axum",
  "blockloom-core",
@@ -2135,7 +2135,7 @@ dependencies = [
 
 [[package]]
 name = "blockloom-core"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "blockstitch-core",
  "dirs 7.0.0",
@@ -2147,7 +2147,7 @@ dependencies = [
 
 [[package]]
 name = "blockloom-protocol"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "blockloom-core",
  "serde",
@@ -2156,13 +2156,14 @@ dependencies = [
 
 [[package]]
 name = "blockloom-runtime"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "bevy",
  "bevy_rapier2d",
  "bevy_rapier3d",
  "blockloom-core",
  "blockloom-protocol",
+ "libloading 0.9.0",
  "serde",
  "serde_json",
  "tracing",

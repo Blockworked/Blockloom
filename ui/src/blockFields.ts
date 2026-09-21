@@ -35,6 +35,7 @@ import {
   asBody,
   asString,
   asValue,
+  componentNames,
   customComponents,
   fieldLocation,
   variableNames,
@@ -109,6 +110,26 @@ function componentOptions(): Option[] {
     value: component.name,
     label: component.name,
   }));
+}
+
+/** Everything an actor could be given: the built-ins that can come and go,
+ * plus its own components by name. A script can only be attached in the
+ * editor, so it isn't offered. */
+function attachableOptions(): Option[] {
+  const held = componentNames(openActor.value);
+  const names = ['Look', 'Render', 'Body', 'Camera'].filter(name => !held.includes(name));
+  return [...held.filter(name => name !== 'Place' && name !== 'Script'), ...names].map(name => ({
+    value: name,
+    label: name,
+  }));
+}
+
+/** Everything an actor is carrying that it could do without - `Place` can't
+ * go, since there would be nowhere left for the actor to be. */
+function detachableOptions(): Option[] {
+  return componentNames(openActor.value)
+    .filter(name => name !== 'Place')
+    .map(name => ({ value: name, label: name }));
 }
 
 /** The fields of whichever custom component the block currently names. */
@@ -239,6 +260,18 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
     head: [
       label('set my camera to'),
       { kind: 'dropdown', key: 'view', options: CAMERA_VIEW_OPTIONS },
+    ],
+  },
+  AttachComponent: {
+    head: [
+      label('attach'),
+      { kind: 'dropdown', key: 'component', options: attachableOptions, placeholder: 'component' },
+    ],
+  },
+  DetachComponent: {
+    head: [
+      label('detach'),
+      { kind: 'dropdown', key: 'component', options: detachableOptions, placeholder: 'component' },
     ],
   },
 

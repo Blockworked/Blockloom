@@ -142,6 +142,15 @@ pub enum InstructionKind {
     SetCameraView {
         view: CameraView,
     },
+    /// Gives this actor a component mid-run. One the editor authored comes
+    /// back as it was left; anything else arrives with its defaults.
+    AttachComponent {
+        component: String,
+    },
+    /// Takes a component away mid-run. `Place` can't go.
+    DetachComponent {
+        component: String,
+    },
 
     // ─── Control ────────────────────────────────────────────────────────────
     /// Suspends this script for `duration` seconds.
@@ -262,6 +271,8 @@ impl BlockKind for InstructionKind {
             | K::PointTowards { .. }
             | K::SetBody { .. }
             | K::SetCameraView { .. }
+            | K::AttachComponent { .. }
+            | K::DetachComponent { .. }
             | K::SetVisible { .. }
             | K::Forever { .. }
             | K::EscapeLoop

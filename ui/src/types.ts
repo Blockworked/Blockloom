@@ -37,6 +37,8 @@ export const INSTRUCTION_TYPES = [
   'SetColor',
   'SetComponentField',
   'SetCameraView',
+  'AttachComponent',
+  'DetachComponent',
   'Wait',
   'WaitUntil',
   'If',
@@ -174,13 +176,22 @@ export type ActorComponentDto =
   | { component: 'Render'; visible: boolean }
   | { component: 'Body'; physics: PhysicsDto }
   | { component: 'Camera'; camera: CameraAttachDto }
+  /** A Rust file under the project's assets/scripts, compiled on Play. */
+  | { component: 'Script'; path: string }
   | { component: 'Custom'; name: string; fields: ComponentFieldDto[] };
 
 export type ComponentName = ActorComponentDto['component'];
 
 /** Components an actor can be given, in the order the "add" menu offers them.
  * `Place` isn't here: every actor has one and it can't be removed. */
-export const ADDABLE_COMPONENTS: ComponentName[] = ['Look', 'Render', 'Body', 'Camera', 'Custom'];
+export const ADDABLE_COMPONENTS: ComponentName[] = [
+  'Look',
+  'Render',
+  'Body',
+  'Camera',
+  'Script',
+  'Custom',
+];
 
 /** What the editor calls a component - matches `ActorComponent::name()`. */
 export function componentName(component: ActorComponentDto): string {
@@ -381,6 +392,18 @@ export function actorPhysics(actor: ActorDto | null): PhysicsDto {
   const body = findComponent(actor, 'Body');
   if (body?.component === 'Body') return body.physics;
   return { body: 'None', gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5 };
+}
+
+/** The script file an actor runs, if it has a Script component. */
+export function actorScript(actor: ActorDto | null): string | null {
+  const script = findComponent(actor, 'Script');
+  return script?.component === 'Script' ? script.path : null;
+}
+
+/** Every component an actor is carrying, by name - what an attach or detach
+ * block can pick from, alongside the built-ins it hasn't got yet. */
+export function componentNames(actor: ActorDto | null): string[] {
+  return (actor?.components ?? []).map(componentName);
 }
 
 /** The custom components an actor carries, which is what the component blocks

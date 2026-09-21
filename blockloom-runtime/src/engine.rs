@@ -13,6 +13,7 @@ use blockloom_core::value::Evaluated;
 use blockloom_core::vm::Vm;
 use blockloom_protocol::EditorMessage;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
 /// Marks a spawned actor and ties it back to its id in the project.
@@ -71,6 +72,18 @@ pub struct Engine {
     pub next_report: f64,
     /// Set when the world needs rebuilding from `project` before the next tick.
     pub rebuild: bool,
+    /// The open project's folder, which is where its assets and its built
+    /// script libraries are. `None` until the editor says.
+    pub project_dir: Option<PathBuf>,
+    /// Each actor's loaded script, by actor id. Reopened on every rebuild, so
+    /// a script edited and rebuilt between runs takes effect on the next Play.
+    pub scripts: HashMap<String, crate::script::LoadedScript>,
+    /// Whether this run has called every script's `start` yet.
+    pub scripts_started: bool,
+    /// Which components each actor is carrying right now. Seeded from the
+    /// project on every rebuild and moved by `attach`/`detach`, so it - not
+    /// the document - is what a mid-run question about a component answers.
+    pub attached: HashMap<String, HashSet<String>>,
 }
 
 impl Engine {
@@ -88,7 +101,18 @@ impl Engine {
             speech: HashMap::new(),
             next_report: 0.0,
             rebuild: true,
+            project_dir: None,
+            scripts: HashMap::new(),
+            scripts_started: false,
+            attached: HashMap::new(),
         }
+    }
+
+    /// Whether `actor` is carrying `component` at this moment in the run.
+    pub fn has_component(&self, actor: &str, component: &str) -> bool {
+        self.attached
+            .get(actor)
+            .is_some_and(|held| held.contains(component))
     }
 
     /// Seconds since the green flag, which is what the `timer` reporter reads.

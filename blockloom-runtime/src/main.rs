@@ -18,6 +18,7 @@ mod dim2;
 mod dim3;
 mod engine;
 mod overlay;
+mod script;
 mod world;
 
 use bevy::prelude::*;
@@ -63,6 +64,7 @@ fn main() {
                         world::publish_sensors,
                         world::detect_clicks,
                         world::step_vm,
+                        world::step_scripts,
                         world::apply_common,
                         dim2::apply_effects,
                         world::apply_component_effects,
@@ -90,6 +92,7 @@ fn main() {
                         world::publish_sensors,
                         world::detect_clicks,
                         world::step_vm,
+                        world::step_scripts,
                         world::apply_common,
                         dim3::apply_effects,
                         world::apply_component_effects,

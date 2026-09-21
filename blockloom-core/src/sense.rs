@@ -10,15 +10,19 @@ use crate::value::Evaluated;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-/// One actor, as its own blocks and other actors' blocks can see it.
-#[derive(Debug, Clone, Default)]
+/// One actor, as its own blocks, its script, and other actors can see it.
+#[derive(Debug, Clone)]
 pub struct ActorSense {
     pub name: String,
     pub position: [f32; 3],
     pub rotation: [f32; 3],
+    pub scale: f32,
     pub visible: bool,
     /// Ids of the actors this one is currently touching.
     pub touching: HashSet<String>,
+    /// Which components the actor is carrying right now, which an `attach`
+    /// or `detach` earlier in the run may have changed.
+    pub attached: HashSet<String>,
     /// The actor's custom components as they stand this frame, by component
     /// name then field name. Live values, not the authored ones: a block that
     /// wrote a field last frame reads its own number back.
@@ -36,6 +40,21 @@ pub struct Sensors {
     pub mouse: [f32; 2],
     pub mouse_down: bool,
     pub actors: HashMap<String, ActorSense>,
+}
+
+impl Default for ActorSense {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            position: [0.0; 3],
+            rotation: [0.0; 3],
+            scale: 1.0,
+            visible: true,
+            touching: HashSet::new(),
+            attached: HashSet::new(),
+            components: HashMap::new(),
+        }
+    }
 }
 
 impl Sensors {

@@ -7,11 +7,13 @@
 //! the actor without a rigid body; removing `Look` leaves a positioned,
 //! scriptable actor with nothing to draw.
 //!
-//! Two components have no fixed-field ancestor. [`ActorComponent::Camera`]
+//! Three components have no fixed-field ancestor. [`ActorComponent::Camera`]
 //! attaches the world camera to the actor, in first person, third person or
-//! plain follow. [`ActorComponent::Custom`] is a named bag of values the
-//! project invents - `Health { hp, armour }` - which blocks read and write by
-//! name and which the runtime carries on the entity.
+//! plain follow. [`ActorComponent::Script`] names a Rust file in the project's
+//! `assets/scripts`, compiled and loaded by the runtime (see
+//! [`crate::script`]). [`ActorComponent::Custom`] is a named bag of values the
+//! project invents - `Health { hp, armour }` - which blocks, scripts and the
+//! inspector all read and write by name.
 
 use crate::scene::{Physics, Placement, Visual};
 use crate::value::Evaluated;
@@ -19,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 /// The components every project knows about by name. A custom component
 /// can't take one of these names.
-pub const BUILT_IN_NAMES: &[&str] = &["Place", "Look", "Render", "Body", "Camera"];
+pub const BUILT_IN_NAMES: &[&str] = &["Place", "Look", "Render", "Body", "Camera", "Script"];
 
 /// One component on an actor. Serialized internally-tagged, so a component
 /// reads as `{"component": "Body", "physics": {...}}`.
@@ -38,6 +40,10 @@ pub enum ActorComponent {
     Body { physics: Physics },
     /// Puts the world camera on this actor.
     Camera { camera: CameraAttach },
+    /// A Rust file under the project's `assets/scripts`, compiled to a shared
+    /// library the runtime loads and ticks. `path` is relative to the project
+    /// folder - see [`crate::script`].
+    Script { path: String },
     /// A named set of values this project invented, readable and writable
     /// from blocks.
     Custom {
@@ -56,6 +62,7 @@ impl ActorComponent {
             ActorComponent::Render { .. } => "Render",
             ActorComponent::Body { .. } => "Body",
             ActorComponent::Camera { .. } => "Camera",
+            ActorComponent::Script { .. } => "Script",
             ActorComponent::Custom { name, .. } => name,
         }
     }
@@ -272,6 +279,14 @@ impl Components {
     pub fn camera(&self) -> Option<&CameraAttach> {
         match self.get("Camera") {
             Some(ActorComponent::Camera { camera }) => Some(camera),
+            _ => None,
+        }
+    }
+
+    /// The script file this actor runs, if any.
+    pub fn script(&self) -> Option<&str> {
+        match self.get("Script") {
+            Some(ActorComponent::Script { path }) => Some(path),
             _ => None,
         }
     }

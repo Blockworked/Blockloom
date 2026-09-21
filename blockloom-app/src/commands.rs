@@ -16,10 +16,12 @@ use blockloom_core::components::{ActorComponent, Components};
 use blockloom_core::library;
 use blockloom_core::project::{self, Actor, Project};
 use blockloom_core::scene::{Camera, Mode, Physics, Placement, Visual};
+use blockloom_core::script;
 use blockloom_core::value::{Evaluated, Value};
 use blockstitch_core::editor::{ValueEdit, prune_value_buffers};
 use blockstitch_core::value::operator_kind;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::MutexGuard;
 
 type Guard<'a> = MutexGuard<'a, AppState>;
@@ -313,10 +315,14 @@ pub(crate) fn set_mode(
     let mut restart_error = None;
     if runtime_was_open {
         let project = s.project().cloned().expect("checked above");
+        let dir = s
+            .project_dir()
+            .map(|dir| dir.to_string_lossy().into_owned());
         match RuntimeHandle::spawn(mode, backend.clone()) {
             Ok(mut runtime) => {
                 let loaded = runtime.send(&blockloom_protocol::EditorMessage::Load {
                     project: Box::new(project),
+                    dir: dir.clone(),
                 });
                 let started = !was_running
                     || (runtime.send(&blockloom_protocol::EditorMessage::Start)
@@ -733,6 +739,12 @@ pub(crate) fn run_project(
         return Err("No project is open".to_string());
     };
     auto_save(&s);
+    // Built before the world is handed over, so a script that won't compile
+    // shows its errors in the log instead of silently doing nothing.
+    build_scripts(&mut s);
+    let dir = s
+        .project_dir()
+        .map(|dir| dir.to_string_lossy().into_owned());
 
     let wrong_dimension = s
         .runtime
@@ -750,6 +762,7 @@ pub(crate) fn run_project(
     };
     let alive = runtime.send(&blockloom_protocol::EditorMessage::Load {
         project: Box::new(project),
+        dir,
     }) && runtime.send(&blockloom_protocol::EditorMessage::Start);
     if !alive {
         s.runtime = None;
@@ -807,6 +820,157 @@ pub(crate) fn close_runtime(state: &SharedState, app: &AppHandle) -> Result<(), 
     Ok(())
 }
 
+/// Compiles every actor's script, logging whatever rustc has to say about
+/// the ones that fail. A failed script just doesn't load: the rest of the
+/// project still plays.
+fn build_scripts(s: &mut AppState) {
+    let Some(dir) = s.project_dir().map(Path::to_path_buf) else {
+        return;
+    };
+    let scripts: Vec<(String, String)> = s
+        .project()
+        .into_iter()
+        .flat_map(|project| project.actors.iter())
+        .filter_map(|actor| {
+            actor
+                .components
+                .script()
+                .map(|path| (actor.name.clone(), path.to_string()))
+        })
+        .collect();
+    for (actor, path) in scripts {
+        if let Err(error) = script::compile(&dir, &path) {
+            s.push_log(LogLine {
+                kind: "error".to_string(),
+                actor,
+                text: format!("{path} didn't compile:\n{error}"),
+            });
+        }
+    }
+}
+
+// ─── Scripts ───────────────────────────────────────────────────────────────
+
+/// Gives an actor a script: makes the file from the starter template if it
+/// isn't there, and attaches the component that names it.
+pub(crate) fn create_script(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or("No project is open")?;
+    push_undo(&mut s);
+    let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
+        return Err("Actor not found".to_string());
+    };
+    // An actor that already names a script keeps it, so this is also the
+    // "make the file I deleted" button.
+    let path = match actor.components.script() {
+        Some(path) => path.to_string(),
+        None => script::unused_path(&dir, &actor.name),
+    };
+    let name = actor.name.clone();
+    script::create(&dir, &path, &name)?;
+    actor
+        .components
+        .insert(ActorComponent::Script { path: path.clone() });
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(path)
+}
+
+/// Compiles one actor's script without playing, so the editor can show what
+/// rustc thinks of it. The message is the success line or the errors.
+pub(crate) fn check_script(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or("No project is open")?;
+    let Some(actor) = s.project().and_then(|p| p.actor(&actor_id)) else {
+        return Err("Actor not found".to_string());
+    };
+    let name = actor.name.clone();
+    let path = actor
+        .components
+        .script()
+        .ok_or("This actor has no script")?
+        .to_string();
+    let line = match script::compile(&dir, &path) {
+        Ok(_) => LogLine {
+            kind: "say".to_string(),
+            actor: name,
+            text: format!("{path} compiled"),
+        },
+        Err(error) => LogLine {
+            kind: "error".to_string(),
+            actor: name,
+            text: format!("{path} didn't compile:\n{error}"),
+        },
+    };
+    s.push_log(line);
+    emit(app, &s);
+    Ok(())
+}
+
+/// The script's source, for the editor to show. Missing is empty, not an
+/// error: a project can name a file somebody deleted.
+pub(crate) fn read_script(state: &SharedState, actor_id: String) -> Result<String, String> {
+    let s = lock(state)?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or("No project is open")?;
+    let Some(path) = s
+        .project()
+        .and_then(|p| p.actor(&actor_id))
+        .and_then(|actor| actor.components.script())
+    else {
+        return Ok(String::new());
+    };
+    Ok(std::fs::read_to_string(script::source_path(&dir, path)).unwrap_or_default())
+}
+
+/// Writes a script's source back. The file is the document here - it isn't
+/// part of the project JSON - so this doesn't touch undo.
+pub(crate) fn write_script(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    source: String,
+) -> Result<(), String> {
+    let s = lock(state)?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or("No project is open")?;
+    let path = s
+        .project()
+        .and_then(|p| p.actor(&actor_id))
+        .and_then(|actor| actor.components.script())
+        .ok_or("This actor has no script")?
+        .to_string();
+    if !script::is_valid_path(&path) {
+        return Err(format!("\"{path}\" isn't a script path"));
+    }
+    let file = script::source_path(&dir, &path);
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    std::fs::write(&file, source).map_err(|e| format!("{}: {e}", file.display()))?;
+    emit(app, &s);
+    Ok(())
+}
+
 /// Pushes the edited project to an idle runtime, so a scene edit shows in the
 /// game window straight away. While a run is going the edit waits for the next
 /// Play - reloading mid-run would throw the world away under the user.
@@ -817,9 +981,13 @@ fn sync_runtime(s: &mut AppState) {
     if s.running {
         return;
     }
+    let dir = s
+        .project_dir()
+        .map(|dir| dir.to_string_lossy().into_owned());
     if let Some(runtime) = s.runtime.as_mut()
         && !runtime.send(&blockloom_protocol::EditorMessage::Load {
             project: Box::new(project),
+            dir,
         })
     {
         s.runtime = None;

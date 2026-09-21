@@ -85,6 +85,14 @@ export const setActorComponent = (actorId: string, name: string, component: Acto
   invoke<void>('set_actor_component', { actorId, name, component });
 export const removeActorComponent = (actorId: string, name: string) =>
   invoke<void>('remove_actor_component', { actorId, name });
+/** Makes the actor's script file from the starter template if it isn't there
+ * and attaches the component naming it. Resolves to the path. */
+export const createScript = (actorId: string) => invoke<string>('create_script', { actorId });
+/** Compiles one actor's script and puts the result in the run log. */
+export const checkScript = (actorId: string) => invoke<void>('check_script', { actorId });
+export const readScript = (actorId: string) => invoke<string>('read_script', { actorId });
+export const writeScript = (actorId: string, source: string) =>
+  invoke<void>('write_script', { actorId, source });
 export const setActorVisual = (actorId: string, visual: VisualDto) =>
   invoke<void>('set_actor_visual', { actorId, visual });
 export const setActorPlacement = (actorId: string, placement: PlacementDto) =>

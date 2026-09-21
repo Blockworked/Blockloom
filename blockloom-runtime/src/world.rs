@@ -137,8 +137,9 @@ pub fn pump_editor(
             }
         };
         match message {
-            EditorMessage::Load { project } => {
+            EditorMessage::Load { project, dir } => {
                 engine.project = *project;
+                engine.project_dir = dir.map(std::path::PathBuf::from);
                 let loaded = engine.project.clone();
                 engine.vm.load(&loaded);
                 engine.speech.clear();
@@ -219,6 +220,23 @@ pub fn rebuild_world(
     }
     engine.entities.clear();
     engine.touching.clear();
+    // Dropped here rather than left open: a rebuild follows a fresh build of
+    // the libraries, and the old ones must be closed before the new ones open.
+    engine.scripts.clear();
+    engine.scripts_started = false;
+    engine.attached = engine
+        .project
+        .actors
+        .iter()
+        .map(|actor| {
+            let held = actor
+                .components
+                .iter()
+                .map(|component| component.name().to_string())
+                .collect();
+            (actor.id.clone(), held)
+        })
+        .collect();
 
     let project = engine.project.clone();
     clear_color.0 = parse_color(&project.world.background);
@@ -254,6 +272,76 @@ pub fn rebuild_world(
     effects.0.push(Effect::SetGravity {
         gravity: project.world.gravity,
     });
+    open_scripts(&mut engine, &project);
+}
+
+/// Opens every actor's compiled script. The editor builds them before Play,
+/// so a script with no library yet is simply one that hasn't been played -
+/// which happens on every edit and is nothing to report. Anything else here
+/// is a library that won't load, which the actor is told about.
+fn open_scripts(engine: &mut Engine, project: &blockloom_core::project::Project) {
+    let Some(dir) = engine.project_dir.clone() else {
+        return;
+    };
+    for actor in &project.actors {
+        let Some(path) = actor.components.script() else {
+            continue;
+        };
+        if !crate::script::LoadedScript::is_built(&dir, path) {
+            continue;
+        }
+        match crate::script::LoadedScript::load(&dir, path) {
+            Ok(script) => {
+                engine.scripts.insert(actor.id.clone(), script);
+            }
+            Err(message) => bridge::send(&RuntimeMessage::Error {
+                actor: actor.id.clone(),
+                message,
+            }),
+        }
+    }
+}
+
+/// Runs every loaded script for this frame: `start` once per run, then `tick`
+/// with the frame's delta. Their effects join the VM's in the same list, so a
+/// script and a canvas driving one actor are applied together, in order.
+pub fn step_scripts(
+    mut engine: NonSendMut<Engine>,
+    time: Res<Time>,
+    mut effects: ResMut<PendingEffects>,
+) {
+    if !engine.running || engine.paused || engine.scripts.is_empty() {
+        return;
+    }
+    let dt = time.delta_secs();
+    let first = !engine.scripts_started;
+    engine.scripts_started = true;
+
+    let actors: Vec<String> = engine.scripts.keys().cloned().collect();
+    let mut asked = crate::script::Asked::default();
+    for actor in &actors {
+        let Some(script) = engine.scripts.get(actor) else {
+            continue;
+        };
+        if first {
+            script.start(actor, &mut asked);
+        }
+        script.tick(actor, &mut asked, dt);
+    }
+    for message in asked.messages.drain(..) {
+        engine.vm.fire(Event::Message(message));
+    }
+    for effect in &asked.effects {
+        // Says and errors go to the editor the same way the VM's do.
+        if let Effect::Say { actor, text } = effect {
+            engine.note_say(actor, text);
+            bridge::send(&RuntimeMessage::Say {
+                actor: actor.clone(),
+                text: text.clone(),
+            });
+        }
+    }
+    effects.0.append(&mut asked.effects);
 }
 
 /// An actor with nothing to draw: it has no `Look` component, or one for the
@@ -308,8 +396,10 @@ pub fn publish_sensors(
                     .unwrap_or_default(),
                 position: transform.translation.to_array(),
                 rotation: [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()],
+                scale: transform.scale.x,
                 visible: *visibility != Visibility::Hidden,
                 touching: engine.touching.get(&id.0).cloned().unwrap_or_default(),
+                attached: engine.attached.get(&id.0).cloned().unwrap_or_default(),
                 components: custom.map(|custom| custom.0.clone()).unwrap_or_default(),
             },
         );
@@ -702,19 +792,41 @@ pub fn drive_camera(
     }
 }
 
-/// The two effects that are about components rather than the world: writing a
-/// custom component's field, and switching the camera's view.
+/// The effects that are about an actor's components rather than about the
+/// world: writing a custom component's field, switching the camera's view,
+/// and attaching or detaching a whole component mid-run.
+///
+/// The dimension-specific halves of attach/detach - the ones that need a
+/// sprite, a mesh or a physics body - are in `dim2`/`dim3`; this owns the
+/// bookkeeping, so `engine.attached` is written in exactly one place.
 pub fn apply_component_effects(
+    mut commands: Commands,
     effects: Res<PendingEffects>,
-    engine: NonSend<Engine>,
+    mut engine: NonSendMut<Engine>,
     mut customs: Query<&mut CustomComponents>,
-    mut rigs: Query<&mut CameraRig>,
+    mut visibilities: Query<&mut Visibility>,
 ) {
     if !engine.running || engine.paused {
         return;
     }
     for effect in &effects.0 {
         match effect {
+            Effect::AttachComponent { actor, component } => attach(
+                &mut commands,
+                &mut engine,
+                &mut customs,
+                &mut visibilities,
+                actor,
+                component,
+            ),
+            Effect::DetachComponent { actor, component } => detach(
+                &mut commands,
+                &mut engine,
+                &mut customs,
+                &mut visibilities,
+                actor,
+                component,
+            ),
             Effect::SetComponentField {
                 actor,
                 component,
@@ -735,15 +847,171 @@ pub fn apply_component_effects(
                 }
             }
             Effect::SetCameraView { actor, view } => {
-                if let Some(mut rig) = engine
-                    .entities
-                    .get(actor)
-                    .and_then(|entity| rigs.get_mut(*entity).ok())
-                {
-                    rig.0.view = *view;
-                }
+                let Some(entity) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                // Only an actor holding the camera has a view to change.
+                let Some(mut rig) = camera_of(&engine, actor) else {
+                    continue;
+                };
+                rig.view = *view;
+                commands.entity(entity).insert(CameraRig(rig));
             }
             _ => {}
+        }
+    }
+}
+
+/// The camera settings an actor is running with: whatever the project gave
+/// it, or the defaults if a script attached the camera mid-run.
+fn camera_of(engine: &Engine, actor: &str) -> Option<blockloom_core::components::CameraAttach> {
+    if !engine.has_component(actor, "Camera") {
+        return None;
+    }
+    Some(
+        engine
+            .project
+            .actor(actor)
+            .and_then(|actor| actor.camera())
+            .copied()
+            .unwrap_or_default(),
+    )
+}
+
+/// Components that aren't this module's to attach: a body and a look need the
+/// dimension's own pipeline, so `dim2`/`dim3` pick those up from the same
+/// effect list.
+fn is_dimensions_own(component: &str) -> bool {
+    matches!(component, "Body" | "Look")
+}
+
+fn attach(
+    commands: &mut Commands,
+    engine: &mut Engine,
+    customs: &mut Query<&mut CustomComponents>,
+    visibilities: &mut Query<&mut Visibility>,
+    actor: &str,
+    component: &str,
+) {
+    let Some(entity) = engine.entities.get(actor).copied() else {
+        return;
+    };
+    if engine.has_component(actor, component) {
+        return;
+    }
+    // A script can't be loaded mid-frame: its library is opened when the
+    // world is built, which is where a rebuilt one is picked up.
+    if component == "Script" {
+        bridge::send(&RuntimeMessage::Error {
+            actor: actor.to_string(),
+            message: "a script can only be attached in the editor, not mid-run".to_string(),
+        });
+        return;
+    }
+    engine
+        .attached
+        .entry(actor.to_string())
+        .or_default()
+        .insert(component.to_string());
+    if is_dimensions_own(component) {
+        return;
+    }
+    match component {
+        "Render" => {
+            // The project's own answer if it has one; a fresh Render shows.
+            let visible = engine
+                .project
+                .actor(actor)
+                .map(|actor| actor.visible())
+                .unwrap_or(true);
+            if let Ok(mut slot) = visibilities.get_mut(entity) {
+                *slot = if visible {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                };
+            }
+        }
+        "Camera" => {
+            // One camera: taking it means taking it off whoever had it.
+            for (other, held) in engine.attached.iter_mut() {
+                if other != actor {
+                    held.remove("Camera");
+                }
+            }
+            for (id, other) in &engine.entities {
+                if id != actor {
+                    commands.entity(*other).remove::<CameraRig>();
+                }
+            }
+            let rig = camera_of(engine, actor).unwrap_or_default();
+            commands.entity(entity).insert(CameraRig(rig));
+        }
+        // Anything else is a custom component: it comes back with the fields
+        // the editor gave it, or empty if the project never had one.
+        name => {
+            let fields = engine
+                .project
+                .actor(actor)
+                .and_then(|actor| match actor.components.get(name) {
+                    Some(blockloom_core::components::ActorComponent::Custom { fields, .. }) => {
+                        Some(fields.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+            if let Ok(mut custom) = customs.get_mut(entity) {
+                custom.0.insert(
+                    name.to_string(),
+                    fields
+                        .into_iter()
+                        .map(|field| (field.name, field.value))
+                        .collect(),
+                );
+            }
+        }
+    }
+}
+
+fn detach(
+    commands: &mut Commands,
+    engine: &mut Engine,
+    customs: &mut Query<&mut CustomComponents>,
+    visibilities: &mut Query<&mut Visibility>,
+    actor: &str,
+    component: &str,
+) {
+    let Some(entity) = engine.entities.get(actor).copied() else {
+        return;
+    };
+    // There would be nowhere left for the actor to be.
+    if component == "Place" || !engine.has_component(actor, component) {
+        return;
+    }
+    if let Some(held) = engine.attached.get_mut(actor) {
+        held.remove(component);
+    }
+    if is_dimensions_own(component) {
+        return;
+    }
+    match component {
+        // No Render component means visible, the same as it does in the
+        // document - hiding an actor is `hide`, not detaching anything.
+        "Render" => {
+            if let Ok(mut slot) = visibilities.get_mut(entity) {
+                *slot = Visibility::Inherited;
+            }
+        }
+        "Camera" => {
+            commands.entity(entity).remove::<CameraRig>();
+        }
+        "Script" => {
+            engine.scripts.remove(actor);
+        }
+        name => {
+            if let Ok(mut custom) = customs.get_mut(entity) {
+                custom.0.remove(name);
+            }
         }
     }
 }
@@ -816,6 +1084,8 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetColor { actor, .. }
         | Effect::SetComponentField { actor, .. }
         | Effect::SetCameraView { actor, .. }
+        | Effect::AttachComponent { actor, .. }
+        | Effect::DetachComponent { actor, .. }
         | Effect::Error { actor, .. } => Some(actor),
         Effect::SetGravity { .. } | Effect::Stopped => None,
     }

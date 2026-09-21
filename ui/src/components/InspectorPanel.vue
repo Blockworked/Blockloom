@@ -13,6 +13,8 @@ import { Plus, X } from 'lucide-vue-next';
 import { mode, openActor, state } from '../store';
 import {
   addActorComponent,
+  checkScript,
+  createScript,
   removeActorComponent,
   renameActor,
   setActorComponent,
@@ -20,6 +22,7 @@ import {
   setCamera,
   setGravity,
 } from '../tauri';
+import ScriptDialog from './ScriptDialog.vue';
 import { BODY_OPTIONS, CAMERA_VIEW_OPTIONS } from '../constants';
 import {
   ADDABLE_COMPONENTS,
@@ -57,6 +60,8 @@ const addableComponents = computed(() => {
 });
 
 const addOpen = ref(false);
+/** The script the editor dialog is open on, if any. */
+const editingScript = ref<{ actorId: string; actorName: string; path: string } | null>(null);
 
 function num(e: Event, fallback: number): number {
   const parsed = Number((e.target as HTMLInputElement).value);
@@ -91,6 +96,10 @@ function cameraOf(component: ActorComponentDto): CameraAttachDto {
 
 function fieldsOf(component: ActorComponentDto): ComponentFieldDto[] {
   return component.component === 'Custom' ? component.fields : [];
+}
+
+function scriptPathOf(component: ActorComponentDto): string {
+  return component.component === 'Script' ? component.path : '';
 }
 
 function visibleOf(component: ActorComponentDto): boolean {
@@ -222,6 +231,29 @@ function removeField(component: ActorComponentDto, index: number) {
   writeCustom(component, { fields: fieldsOf(component).filter((_, i) => i !== index) });
 }
 
+// ─── Scripts ───────────────────────────────────────────────────────────────
+
+function openScript(component: ActorComponentDto) {
+  if (!actor.value) return;
+  editingScript.value = {
+    actorId: actor.value.id,
+    actorName: actor.value.name,
+    path: scriptPathOf(component),
+  };
+}
+
+/** Attaching a Script makes the file too, so the button that adds it is the
+ * same one that writes the starter template. */
+function newScript() {
+  if (!actor.value) return;
+  void createScript(actor.value.id).catch((e: unknown) => console.error(e));
+}
+
+function check() {
+  if (!actor.value) return;
+  void checkScript(actor.value.id).catch((e: unknown) => console.error(e));
+}
+
 // ─── Adding and removing whole components ──────────────────────────────────
 
 /** A fresh component of each kind, with defaults that do something useful the
@@ -254,6 +286,9 @@ function blankComponent(name: ComponentName): ActorComponentDto | null {
         name: 'Component',
         fields: [{ name: 'value', value: { kind: 'Number', value: 0 } }],
       };
+    // A script needs a file on disk, so the backend makes both at once.
+    case 'Script':
+      return null;
     default:
       return null;
   }
@@ -261,6 +296,10 @@ function blankComponent(name: ComponentName): ActorComponentDto | null {
 
 function add(name: string) {
   addOpen.value = false;
+  if (name === 'Script') {
+    newScript();
+    return;
+  }
   const component = blankComponent(name as ComponentName);
   if (!component || !actor.value) return;
   void addActorComponent(actor.value.id, component).catch((e: unknown) => console.error(e));
@@ -453,6 +492,20 @@ function writeGravity(index: number, value: number) {
           </p>
         </template>
 
+        <template v-else-if="component.component === 'Script'">
+          <div class="panel-row">
+            <span class="script-path" :title="scriptPathOf(component)">{{ scriptPathOf(component) }}</span>
+          </div>
+          <div class="panel-row">
+            <button class="btn-small" @click="openScript(component)">Edit</button>
+            <button class="btn-small" @click="check">Check</button>
+          </div>
+          <p class="panel-note">
+            Real Rust, compiled when you press Play. It runs alongside this
+            actor's blocks, not instead of them.
+          </p>
+        </template>
+
         <!-- A custom component: a name, and the values the blocks read. -->
         <template v-else-if="component.component === 'Custom'">
           <div class="panel-row">
@@ -521,5 +574,13 @@ function writeGravity(index: number, value: number) {
         you switch dimensions.
       </p>
     </template>
+
+    <ScriptDialog
+      v-if="editingScript"
+      :actor-id="editingScript.actorId"
+      :actor-name="editingScript.actorName"
+      :path="editingScript.path"
+      @close="editingScript = null"
+    />
   </aside>
 </template>

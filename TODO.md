@@ -12,5 +12,7 @@ Obvious gaps already identified in the project notes:
 - [ ] Add project packaging so a finished game can be shared and run independently.
 - [x] Redesign projects as folders: the app always starts on a Dashboard page for creating new projects and opening existing ones, with each project stored as a folder so it can hold assets.
 - [x] Add a component system built on Bevy's ECS components that turns all properties into components, with support for custom components and camera-attach components (for first-person / third-person cameras).
-- [ ] Add a script component that runs Rust, so a project can drop out of blocks where it needs to. Needs a compiler or plugin story of its own; `ActorComponent` is where it would slot in.
-- [ ] Let blocks attach and detach whole components at runtime, not just write their fields.
+- [x] Add a script component that runs Rust, so a project can drop out of blocks where it needs to.
+- [x] Let blocks attach and detach whole components at runtime, not just write their fields.
+- [ ] Ship the script toolchain, or degrade well without one: a script needs `rustc` on the machine that presses Play, and a packaged install can't assume it.
+- [ ] Give the script editor real Rust editing - highlighting, and errors shown against the line they're on rather than only in the run log.

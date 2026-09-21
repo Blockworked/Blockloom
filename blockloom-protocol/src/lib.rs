@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Editor -> runtime.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -23,6 +23,10 @@ pub enum EditorMessage {
     /// are dropped.
     Load {
         project: Box<Project>,
+        /// The project's folder, so the runtime can find its assets and the
+        /// script libraries the editor built into `.blockloom/build`.
+        #[serde(default)]
+        dir: Option<String>,
     },
     /// The green flag.
     Start,

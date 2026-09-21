@@ -25,6 +25,7 @@ pub mod fields;
 pub mod library;
 pub mod project;
 pub mod scene;
+pub mod script;
 pub mod sense;
 pub mod value;
 pub mod vm;

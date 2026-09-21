@@ -2,6 +2,7 @@
 //! the effects that need a 3D physics engine attached. A 3D unit is a metre.
 
 use crate::engine::{Engine, PendingEffects};
+use bevy::ecs::system::EntityCommands;
 use bevy::prelude::*;
 use bevy_rapier3d::prelude as rp;
 use blockloom_core::project::Actor;
@@ -55,7 +56,6 @@ pub fn spawn_actor(
         .color()
         .map(crate::world::parse_color)
         .unwrap_or(Color::WHITE);
-    let physics = actor.physics();
     let mut entity = commands.spawn((
         crate::world::actor_bundle(actor),
         Mesh3d(meshes.add(mesh)),
@@ -65,22 +65,33 @@ pub fn spawn_actor(
             ..default()
         })),
     ));
-    if let (Some(body), Some(collider)) = (body_for(physics.body), collider_for(visual)) {
-        entity.insert((
-            body,
-            collider,
-            rp::ActiveEvents::COLLISION_EVENTS,
-            rp::Velocity::zero(),
-            rp::ExternalImpulse::default(),
-            rp::GravityScale(physics.gravity_scale),
-            rp::Restitution::coefficient(physics.restitution),
-            rp::Friction::coefficient(physics.friction),
-        ));
-        if physics.lock_rotation {
-            entity.insert(rp::LockedAxes::ROTATION_LOCKED);
-        }
-    }
+    insert_body(&mut entity, actor);
     Some(entity.id())
+}
+
+/// Gives an actor the rigid body its `Body` component asks for, with the
+/// collider its look implies. Nothing happens without both.
+fn insert_body(entity: &mut EntityCommands, actor: &Actor) {
+    let physics = actor.physics();
+    let Some(collider) = actor.visual().and_then(collider_for) else {
+        return;
+    };
+    let Some(body) = body_for(physics.body) else {
+        return;
+    };
+    entity.insert((
+        body,
+        collider,
+        rp::ActiveEvents::COLLISION_EVENTS,
+        rp::Velocity::zero(),
+        rp::ExternalImpulse::default(),
+        rp::GravityScale(physics.gravity_scale),
+        rp::Restitution::coefficient(physics.restitution),
+        rp::Friction::coefficient(physics.friction),
+    ));
+    if physics.lock_rotation {
+        entity.insert(rp::LockedAxes::ROTATION_LOCKED);
+    }
 }
 
 fn body_for(body: BodyKind) -> Option<rp::RigidBody> {
@@ -108,6 +119,7 @@ pub fn apply_effects(
     mut config: Query<&mut rp::RapierConfiguration>,
     surfaces: Query<&MeshMaterial3d<StandardMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
 ) {
     if !engine.running || engine.paused {
         // Still apply gravity while idle so the config is correct on Play.
@@ -210,6 +222,60 @@ pub fn apply_effects(
                         entity.remove::<rp::RigidBody>();
                         entity.remove::<rp::Collider>();
                     }
+                }
+            }
+            // A body or a look arriving or leaving mid-run needs this
+            // dimension's own pipeline; `world::apply_component_effects`
+            // owns everything else about the same effect.
+            Effect::AttachComponent { actor, component } => {
+                let Some(entity) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                let Some(authored) = engine.project.actor(actor) else {
+                    continue;
+                };
+                match component.as_str() {
+                    "Body" => insert_body(&mut commands.entity(entity), authored),
+                    "Look" => {
+                        let Some(visual) = authored.visual() else {
+                            continue;
+                        };
+                        let Some(mesh) = mesh_for(visual) else {
+                            continue;
+                        };
+                        let color = visual
+                            .color()
+                            .map(crate::world::parse_color)
+                            .unwrap_or(Color::WHITE);
+                        commands.entity(entity).insert((
+                            Mesh3d(meshes.add(mesh)),
+                            MeshMaterial3d(materials.add(StandardMaterial {
+                                base_color: color,
+                                perceptual_roughness: 0.6,
+                                ..default()
+                            })),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            Effect::DetachComponent { actor, component } => {
+                let Some(entity) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                let mut entity = commands.entity(entity);
+                match component.as_str() {
+                    "Body" => {
+                        entity.remove::<rp::RigidBody>();
+                        entity.remove::<rp::Collider>();
+                    }
+                    // Nothing to draw, but the actor is still there to be
+                    // moved, sensed and given a look again.
+                    "Look" => {
+                        entity.remove::<Mesh3d>();
+                        entity.remove::<MeshMaterial3d<StandardMaterial>>();
+                    }
+                    _ => {}
                 }
             }
             _ => {}

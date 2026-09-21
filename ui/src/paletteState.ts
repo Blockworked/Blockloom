@@ -56,6 +56,9 @@ function defaults(type: InstructionType): Record<string, unknown> {
       return { component: '', field: '', value: numberValue(0) };
     case 'SetCameraView':
       return { view: 'ThirdPerson' };
+    case 'AttachComponent':
+    case 'DetachComponent':
+      return { component: '' };
     case 'Wait':
       return { duration: numberValue(1) };
     case 'WaitUntil':

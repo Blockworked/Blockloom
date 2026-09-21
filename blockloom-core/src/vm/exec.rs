@@ -653,6 +653,14 @@ impl Vm {
                 actor: owner,
                 view: *view,
             }),
+            Action::AttachComponent(component) => out.push(Effect::AttachComponent {
+                actor: owner,
+                component: component.clone(),
+            }),
+            Action::DetachComponent(component) => out.push(Effect::DetachComponent {
+                actor: owner,
+                component: component.clone(),
+            }),
             Action::Broadcast(name) => self.pending.push(Event::Message(name.trim().to_string())),
             Action::SetVariable { name, value } => {
                 let value = self.eval(value, actor, params, out);

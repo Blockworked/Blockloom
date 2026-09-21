@@ -314,6 +314,41 @@ body {
   padding-bottom: 12px;
 }
 
+/* The script editor is as big as the window sensibly allows: a code box the
+   size of a form field isn't one. */
+.script-dialog {
+  width: min(880px, 92vw);
+  max-width: none;
+}
+
+.script-source {
+  width: 100%;
+  height: min(60vh, 560px);
+  padding: 10px 12px;
+  border: 1px solid var(--blockstitch-border);
+  border-radius: var(--blockstitch-radius);
+  background: var(--blockstitch-bg);
+  color: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  tab-size: 2;
+  resize: vertical;
+  white-space: pre;
+  overflow: auto;
+}
+
+.script-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--blockstitch-text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* A custom component's field row: its name, its value, and a way out. */
 .panel-row.field-row .field-name {
   flex: 0 0 96px;

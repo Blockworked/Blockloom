@@ -142,6 +142,8 @@ pub fn apply_effects(
     transforms: Query<&Transform>,
     mut config: Query<&mut rp::RapierConfiguration>,
     mut sprites: Query<&mut Sprite>,
+    assets: Res<AssetServer>,
+    mut textures: ResMut<Assets<Image>>,
 ) {
     if !engine.running || engine.paused {
         // Still apply gravity while idle so the config is correct on Play.
@@ -257,6 +259,51 @@ pub fn apply_effects(
                         entity.remove::<rp::RigidBody>();
                         entity.remove::<rp::Collider>();
                     }
+                }
+            }
+            // A body or a look arriving or leaving mid-run needs this
+            // dimension's own pipeline; `world::apply_component_effects`
+            // owns everything else about the same effect.
+            Effect::AttachComponent { actor, component } => {
+                let Some(entity) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                match component.as_str() {
+                    "Body" => {
+                        if let Some(authored) = engine.project.actor(actor) {
+                            insert_body(&mut commands.entity(entity), authored);
+                        }
+                    }
+                    "Look" => {
+                        let Some(sprite) = engine
+                            .project
+                            .actor(actor)
+                            .and_then(|a| a.visual())
+                            .and_then(|visual| sprite_for(visual, &assets, &mut textures))
+                        else {
+                            continue;
+                        };
+                        commands.entity(entity).insert(sprite);
+                    }
+                    _ => {}
+                }
+            }
+            Effect::DetachComponent { actor, component } => {
+                let Some(entity) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                let mut entity = commands.entity(entity);
+                match component.as_str() {
+                    "Body" => {
+                        entity.remove::<rp::RigidBody>();
+                        entity.remove::<rp::Collider>();
+                    }
+                    // Nothing to draw, but the actor is still there to be
+                    // moved, sensed and given a look again.
+                    "Look" => {
+                        entity.remove::<Sprite>();
+                    }
+                    _ => {}
                 }
             }
             _ => {}

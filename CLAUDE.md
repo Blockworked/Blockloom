@@ -113,7 +113,8 @@ Two processes: the editor window, and the game world.
   block vocabulary and its `BlockKind` impl), `fields.rs` (what the frontend
   calls each value slot), `project.rs` (the saved document and the folder it
   lives in), `library.rs` (the project folders the Dashboard lists), `vm/`
-  (the block VM), `sense.rs` (the world state reporter blocks read), and
+  (the block VM), `script/` (compiling a project's Rust scripts, and the ABI
+  they talk over), `sense.rs` (the world state reporter blocks read), and
   `wire.rs` (the one shape difference between documents and the frontend).
 - **`blockstitch-core`** (sibling repo, see above) - the shared block-editor
   backend. `value` is the `Value`/`Op` expression system, extended by an app
@@ -137,18 +138,59 @@ so removing `Body` really does leave it without a rigid body, and removing
 to be. `actor.visual()` is therefore an `Option`, while `placement()`,
 `physics()` and `visible()` fall back to a default.
 
-Two components have no fixed-field ancestor. `Camera` attaches the world
+Three components have no fixed-field ancestor. `Camera` attaches the world
 camera to that actor - follow, first person or third person - and one project
-has one of them, so adding it takes it off whoever had it. `Custom` is a named
-bag of values the project invented (`Health { hp, armour }`); the runtime
-carries it on the entity as `CustomComponents`, publishes it through
-`sense::ActorSense`, and `set <field> of <component> to` writes it back. Like
-a position and unlike a variable, those writes last exactly as long as the run.
+has one of them, so adding it takes it off whoever had it. `Script` names a
+Rust file (see below). `Custom` is a named bag of values the project invented
+(`Health { hp, armour }`); the runtime carries it on the entity as
+`CustomComponents`, publishes it through `sense::ActorSense`, and
+`set <field> of <component> to` writes it back. Like a position and unlike a
+variable, those writes last exactly as long as the run.
+
+Components come and go mid-run, from a block (`attach`/`detach`) or from a
+script. `engine.attached` is the one record of what an actor is carrying right
+now - the document says what it *started* with - and
+`world::apply_component_effects` is the only place that writes it. A `Body` or
+a `Look` needs the dimension's own pipeline, so `dim2`/`dim3` pick those two
+out of the same effect list and do the ECS half. Re-attaching brings back what
+the editor authored, or that component's defaults if the project never had one.
 
 Pre-component documents kept `visual`/`placement`/`physics`/`visible` flat on
 the actor, and the world camera named the actor it followed. Both still load:
 `Actor` deserializes through `ActorRepr`, and `Project::normalize` moves the
 old `follow` onto its actor as a camera component.
+
+### Scripts
+
+An actor's `Script` component names a real `.rs` file under the project's
+`assets/scripts`. It is a normal crate root: it links against one generated
+crate, `blockloom`, and names its entry points with `blockloom::export!`.
+
+`blockloom-core/src/script/` owns the build. `abi.rs` is the C boundary and is
+compiled *twice* - once into `blockloom-core` as the host's view, and once, as
+text, into the `blockloom` crate the script links against - so editing it
+changes both halves at once. `ABI_VERSION` must go up whenever it does, since
+a script built against an older one is still sitting in somebody's project
+folder; the runtime checks it before calling in. `prelude.rs` is the API over
+that boundary and is script-side only. Building is two `rustc` runs and no
+network - the `blockloom` rlib, then the script as a `cdylib` - cached in the
+project's `.blockloom/build` against the source, the toolchain and the ABI.
+There is no Cargo, so a script gets `std` and nothing else.
+
+The editor compiles scripts on Play (`commands::build_scripts`) so rustc's
+errors land in the run log against the script's own line numbers; the runtime
+only ever loads what it finds. **Scripts therefore need `rustc` on the machine
+that presses Play.** The boundary is three calls, not one per verb, so adding
+something a script can do is a new constant in `abi.rs` rather than a new
+field in `HostApi` - which would break every script already built.
+
+A script reads the world through the same frame snapshot the reporter blocks
+read (`sense`) and everything it does comes back as a `vm::Effect`, applied by
+the same systems. So a script and a canvas can drive one actor between them,
+and reading straight back after a write gives the old value, exactly as it
+does in the block editor. A panic inside a script is caught by `export!` and
+logged rather than being allowed to cross the C boundary, which would abort
+the whole game window.
 
 ### How a project runs
 
@@ -207,9 +249,11 @@ lands.
 ### Known gaps
 
 - No clones (`create clone of myself`), no sounds, no lists.
-- Blocks can write a custom component's fields but can't attach or detach a
-  whole component at runtime, and there is no script component: running Rust
-  from a project needs a compiler story of its own.
+- A script needs a Rust toolchain on the machine that presses Play, which a
+  packaged install can't assume. The script editor is a plain textarea, and a
+  script's errors only show in the run log.
+- A script can't be attached mid-run: its library is opened when the world is
+  built.
 - `say` shows as a camera-projected speech bubble over its actor in both 2D and
   3D, and is also recorded in the editor log. Bubble styling is saved on the
   world with an optional font asset path for the planned asset manager.

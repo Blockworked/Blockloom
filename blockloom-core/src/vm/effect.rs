@@ -90,6 +90,17 @@ pub enum Effect {
         actor: String,
         view: CameraView,
     },
+    /// Gives the actor a component mid-run, with whatever the project
+    /// authored for it or that component's defaults.
+    AttachComponent {
+        actor: String,
+        component: String,
+    },
+    /// Takes a component off the actor mid-run.
+    DetachComponent {
+        actor: String,
+        component: String,
+    },
     /// Every script stopped, by a `stop all` block.
     Stopped,
     /// A block couldn't be evaluated. The script carries on with a zero, and
