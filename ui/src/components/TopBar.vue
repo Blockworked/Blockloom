@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Project selection, the 2D/3D switch, and the run controls.
-import { computed } from 'vue';
+import { computed, onMounted, onUnmounted } from 'vue';
 import { AppDropdown } from 'blockstitch';
 import { useTheme } from 'blockstitch';
 import { Download, Moon, MonitorX, Pause, Play, Plus, Redo2, Save, Square, Sun, Trash2, Undo2, Upload } from 'lucide-vue-next';
@@ -8,6 +8,7 @@ import { mode, state } from '../store';
 import {
   closeRuntime,
   exportProject,
+  getState,
   importProject,
   pushLog,
   newProject,
@@ -30,6 +31,22 @@ const projectOptions = computed(() =>
 );
 const selected = computed(() => (state.selected === null ? '' : String(state.selected)));
 const fps = computed(() => (state.status ? Math.round(state.status.fps) : 0));
+
+// `state-updated` events can be delayed, so without this the fps badge sits
+// still until the next command answers (e.g. clicking pause). Refresh twice
+// a second while a run is going instead.
+let pollTimer: number | undefined;
+onMounted(() => {
+  pollTimer = window.setInterval(() => {
+    if (!state.running) return;
+    void getState()
+      .then(next => Object.assign(state, next))
+      .catch(() => {});
+  }, 500);
+});
+onUnmounted(() => {
+  if (pollTimer !== undefined) window.clearInterval(pollTimer);
+});
 
 function onSelect(value: string) {
   void selectProject(Number(value));
