@@ -1,8 +1,8 @@
 <script setup lang="ts">
-// The right-hand panel: the selected actor as a list of components, then the
-// world's own settings. Each component is a card with a way to remove it, and
-// "Add component" gives the actor one it hasn't got - including a custom one,
-// a named bag of values the blocks read and write.
+// The right-hand panel: the selected actor as a list of components. Each
+// component is a card with a way to remove it, and "Add component" gives the
+// actor one it hasn't got - including a custom one, a named bag of values the
+// blocks read and write.
 //
 // Every field writes straight through to the backend, and a running world
 // picks the change up as soon as it stops. The `*Of` helpers narrow the
@@ -22,9 +22,6 @@ import {
   removeActorComponent,
   renameActor,
   setActorComponent,
-  setBackground,
-  setCamera,
-  setGravity,
 } from '../tauri';
 import AssetDrop from './AssetDrop.vue';
 import ScriptDialog from './ScriptDialog.vue';
@@ -38,7 +35,6 @@ import {
   shapesFor,
   type ActorComponentDto,
   type CameraAttachDto,
-  type CameraDto,
   type ComponentFieldDto,
   type ComponentName,
   type EvaluatedDto,
@@ -48,7 +44,6 @@ import {
 } from '../types';
 
 const actor = computed(() => openActor.value);
-const world = computed(() => state.project?.world ?? null);
 /** Where the actor is right now, while a run is going - the project's own
  * numbers are where it will start from again. */
 const live = computed(() => state.status?.actors.find(a => a.id === actor.value?.id) ?? null);
@@ -387,20 +382,6 @@ function remove(name: string) {
   if (!actor.value) return;
   void removeActorComponent(actor.value.id, name).catch((e: unknown) => console.error(e));
 }
-
-// ─── The world ─────────────────────────────────────────────────────────────
-
-function writeCamera(next: Partial<CameraDto>) {
-  if (!world.value) return;
-  void setCamera({ ...world.value.camera, ...next });
-}
-
-function writeGravity(index: number, value: number) {
-  if (!world.value) return;
-  const gravity: [number, number, number] = [...world.value.gravity];
-  gravity[index] = value;
-  void setGravity(gravity);
-}
 </script>
 
 <template>
@@ -650,40 +631,6 @@ function writeGravity(index: number, value: number) {
           <Plus :size="13" /> Add component
         </button>
       </div>
-    </template>
-
-    <template v-if="world">
-      <div class="panel-heading"><span>World</span></div>
-      <div class="panel-row">
-        <label>Background</label>
-        <input type="color" :value="world.background" @change="e => setBackground(text(e).toUpperCase())">
-      </div>
-      <div class="panel-row triple">
-        <label>Gravity</label>
-        <input type="number" step="any" :value="world.gravity[0]" @change="e => writeGravity(0, num(e, 0))">
-        <input type="number" step="any" :value="world.gravity[1]" @change="e => writeGravity(1, num(e, 0))">
-        <input v-if="mode === 'ThreeD'" type="number" step="any" :value="world.gravity[2]" @change="e => writeGravity(2, num(e, 0))">
-      </div>
-      <div class="panel-row" v-if="mode === 'TwoD'">
-        <label>Zoom</label>
-        <input type="number" step="any" :value="world.camera.zoom" @change="e => writeCamera({ zoom: num(e, 1) })">
-      </div>
-      <div class="panel-row triple" v-else>
-        <label>Camera at</label>
-        <input
-          v-for="(coordinate, i) in world.camera.position"
-          :key="i"
-          type="number"
-          step="any"
-          :value="coordinate"
-          @change="e => { const position = [...world!.camera.position] as [number, number, number]; position[i] = num(e, coordinate); writeCamera({ position }); }"
-        >
-      </div>
-      <p class="panel-note">
-        Where the camera stands when no actor has a Camera component. A 2D unit
-        is a pixel and a 3D unit is a metre, which is why the numbers jump when
-        you switch dimensions.
-      </p>
     </template>
 
     <ScriptDialog

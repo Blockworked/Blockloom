@@ -1,9 +1,26 @@
 name := "blockloom"
 appid := "com.blockworked.Blockloom"
 
+set allow-duplicate-variables
+
+[unix]
+set shell := ["sh", "-cu"]
+
+[windows]
+set shell := ["cmd.exe", "/Q", "/C"]
+
+[unix]
 TARGET := "target/release/blockloom"
+
+[windows]
+TARGET := "target/release/blockloom.exe"
+
 CEF_DIR := "target/release"
 LIBDIR := "/usr/lib/blockloom"
+
+mkdir-cargo := if os() == "windows" { 'if not exist .cargo mkdir .cargo' } else { 'mkdir -p .cargo' }
+
+rm-cargo-cfg := if os() == "windows" { 'if exist .cargo\config.toml (del /F /Q .cargo\config.toml)' } else { 'rm -f .cargo/config.toml' }
 
 default: build
 
@@ -35,18 +52,19 @@ clean:
 blockstitch-local path="../../blockstitch":
     cd ui && npm pkg set dependencies.blockstitch="link:{{path}}" && pnpm install
     git update-index --skip-worktree ui/package.json ui/pnpm-lock.yaml
-    mkdir -p .cargo
-    printf 'paths = ["%s/crates/blockstitch-core"]\n' "$(realpath ui/{{path}})" > .cargo/config.toml
+    {{mkdir-cargo}}
+    {{ if os() == "windows" { 'echo paths = ["' + replace(clean(justfile_directory() / "ui" / path), "\\", "/") + '/crates/blockstitch-core"] > .cargo\config.toml' } else { "printf 'paths = [\"" + "%s/crates/blockstitch-core" + "\"]\\n' \"$(realpath ui/" + path + ")\" > .cargo/config.toml" } }}
 
 blockstitch-published commit="":
-    rm -f .cargo/config.toml
+    {{rm-cargo-cfg}}
     git update-index --no-skip-worktree ui/package.json ui/pnpm-lock.yaml
     git checkout -- ui/package.json ui/pnpm-lock.yaml
-    if [ -n "{{commit}}" ]; then cd ui && npm pkg set dependencies.blockstitch="github:Blockworked/blockstitch#{{commit}}"; fi
+    {{ if os() == "windows" { 'if not "' + commit + '"=="" (cd ui && npm pkg set dependencies.blockstitch="github:Blockworked/blockstitch#' + commit + '")' } else { 'if [ -n "' + commit + '" ]; then cd ui && npm pkg set dependencies.blockstitch="github:Blockworked/blockstitch#' + commit + '"; fi' } }}
     cd ui && pnpm install
-    if [ -n "{{commit}}" ]; then sed -i 's|\(blockstitch-core = { git = "https://github.com/Blockworked/blockstitch", rev = "\)[^"]*\(" }\)|\1{{commit}}\2|' Cargo.toml; fi
+    {{ if os() == "windows" { 'if not "' + commit + '"=="" (node scripts/set-blockstitch-rev.js ' + commit + ')' } else { 'if [ -n "' + commit + '" ]; then node scripts/set-blockstitch-rev.js ' + commit + '; fi' } }}
     cargo fetch
 
+[linux]
 install:
     # The binary's RUNPATH is `$ORIGIN`, so the CEF runtime payload (libcef.so,
     # the GL/Vulkan shims, *.pak, icudtl.dat, locales/, ...) has to live beside
@@ -71,8 +89,10 @@ install:
     sudo install -Dm0644 res/blockloom.desktop /usr/share/applications/blockloom.desktop
     sudo install -Dm0644 res/icons/blockloom.png /usr/share/icons/hicolor/256x256/apps/blockloom.png
 
+[linux]
 uninstall:
     sudo rm -rf {{LIBDIR}}
     sudo rm -f /usr/bin/blockloom /usr/share/applications/blockloom.desktop /usr/share/icons/hicolor/256x256/apps/blockloom.png
 
+[linux]
 replace: build uninstall install

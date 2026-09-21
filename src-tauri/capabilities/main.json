@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Editor window. App commands bypass the ACL (they go through `invoke_handler`), so the only core permissions needed are the event ones: `state-updated` for backend snapshots and `tauri://drag-*` for native file drops into the asset tray.",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:app:allow-version"
+  ]
+}

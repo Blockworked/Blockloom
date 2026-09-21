@@ -11,7 +11,8 @@
 // The listing isn't part of the app snapshot - a folder on disk changes for
 // reasons the editor never hears about - so the tray asks for it after every
 // change of its own, and has a refresh button for everyone else's.
-import { computed, ref, watch, type Component } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch, type Component } from 'vue';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { ContextMenuPanel, type ContextMenuItem } from 'blockstitch';
 import {
   Box,
@@ -19,6 +20,7 @@ import {
   ChevronRight,
   ChevronUp,
   Download,
+  ExternalLink,
   File as FileIcon,
   FileCode,
   FilePlus,
@@ -35,6 +37,7 @@ import {
   Upload,
 } from 'lucide-vue-next';
 import { state } from '../store';
+import { isTauri } from '../bridge';
 import {
   createAsset,
   createAssetFolder,
@@ -42,6 +45,7 @@ import {
   importAssets,
   listAssets,
   moveAsset,
+  openAssetLocation,
   pickFiles,
   readAsset,
   renameAsset,
@@ -70,9 +74,18 @@ const thumbnails = ref<Record<string, string>>({});
 const drafting = ref<{ mode: 'folder' | 'file' | 'rename'; path: string; name: string } | null>(null);
 const draftInput = ref<HTMLInputElement | null>(null);
 
-const menu = ref<{ x: number; y: number; entry: AssetEntry } | null>(null);
+const menu = ref<{ x: number; y: number; entry: AssetEntry | null } | null>(null);
 /** The folder a dragged asset is hovering over, for the drop highlight. */
 const dropTarget = ref<string | null>(null);
+
+/** A native OS drag over the window. The CEF runtime keeps the dragged paths
+ * for itself, so the DOM only sees an opaque `Files` drag until the tauri
+ * drag-drop event arrives with them. */
+const nativeDragActive = ref(false);
+/** The folder under a native drop, recorded by the DOM drop just before the
+ * tauri drag-drop event arrives with the actual paths. */
+const pendingDropParent = ref<string | null>(null);
+let offDragDrop: (() => void) | undefined;
 
 const ICONS: Record<AssetKind, Component> = {
   folder: Folder,
@@ -228,6 +241,17 @@ function moveUp(entry: AssetEntry) {
   void run(() => moveAsset(entry.path, parentOf(parentOf(entry.path))));
 }
 
+/** Opens the native file manager without refreshing the listing - nothing in
+ * the tray changed. `path` is relative to the project folder. */
+async function openLocation(path: string) {
+  error.value = '';
+  try {
+    await openAssetLocation(path);
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
 // ─── Dragging ──────────────────────────────────────────────────────────────
 
 function onDragStart(e: DragEvent, entry: AssetEntry) {
@@ -235,8 +259,18 @@ function onDragStart(e: DragEvent, entry: AssetEntry) {
   startAssetDrag(e, entry);
 }
 
-/** Whether the asset in flight could land in the folder at `path`. */
-function canDropIn(path: string): boolean {
+/** Whether the drag comes from outside the app - a native OS drag. The tray's
+ * own asset drag only carries its MIME type and a `text/plain` path, so never
+ * collides. The `Files` dataTransfer type covers the drag before the tauri
+ * events arrive and `nativeDragActive` reliably from then on. */
+function isNativeDrag(e: DragEvent): boolean {
+  return (e.dataTransfer?.types.includes('Files') ?? false) || nativeDragActive.value;
+}
+
+/** Whether the thing in flight could land in the folder at `path`. Native
+ * drops are always welcome; a tray asset must be movable there. */
+function canDropIn(e: DragEvent, path: string): boolean {
+  if (isNativeDrag(e)) return true;
   const moving = dragged.value;
   return (
     !!moving &&
@@ -248,10 +282,10 @@ function canDropIn(path: string): boolean {
 }
 
 function onDragOverFolder(e: DragEvent, path: string) {
-  if (!canDropIn(path)) return;
+  if (!canDropIn(e, path)) return;
   e.preventDefault();
   e.stopPropagation();
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  if (e.dataTransfer) e.dataTransfer.dropEffect = isNativeDrag(e) ? 'copy' : 'move';
   dropTarget.value = path;
 }
 
@@ -259,11 +293,76 @@ function onDropOn(e: DragEvent, parent: string) {
   e.preventDefault();
   e.stopPropagation();
   dropTarget.value = null;
+  if (isNativeDrag(e)) {
+    // The dropped paths come through the tauri drag-drop event, which lands
+    // on the webview a beat after the DOM drop. Remember the folder so it
+    // imports there.
+    pendingDropParent.value = parent;
+    return;
+  }
   const entry = droppedAsset(e);
   endAssetDrag();
   if (!entry || entry.protected || parentOf(entry.path) === parent) return;
   void run(() => moveAsset(entry.path, parent));
 }
+
+// ─── Importing a native drag ───────────────────────────────────────────────
+
+/** Files and folders dropped from the OS file manager, imported into `parent`
+ * whole - the same import behind the toolbar's button. A dropped folder is
+ * one such path, which the backend copies as a tree, so structure lands
+ * intact. */
+async function importNativePaths(paths: string[], parent: string) {
+  if (!paths.length) return;
+  await run(() => importAssets(parent, paths));
+}
+
+/** The folder to import into when no DOM drop handler recorded one. The tauri
+ * events know nothing of the tray's layout, so the drop's position hit-tests
+ * the page: anything landing inside `.asset-tray` goes into the folder being
+ * listed, anything outside it is the window ignoring the drop. */
+function parentAt(position: { x: number; y: number }): string | null {
+  const el = document.elementFromPoint(
+    position.x / window.devicePixelRatio,
+    position.y / window.devicePixelRatio,
+  );
+  return el?.closest('.asset-tray') ? tray.path : null;
+}
+
+// The CEF runtime intercepts native drags before the page sees them and
+// re-sends them as `tauri://drag-*` events carrying real paths, so the DOM
+// drop is only a where signal and this listener does the importing. Only the
+// Tauri window has them - the dev-bridge browser tab has no native drops.
+onMounted(async () => {
+  if (!isTauri) return;
+  offDragDrop = await getCurrentWebview().onDragDropEvent(({ payload }) => {
+    switch (payload.type) {
+      case 'enter':
+        nativeDragActive.value = true;
+        break;
+      case 'over':
+        nativeDragActive.value = true;
+        break;
+      case 'leave':
+        nativeDragActive.value = false;
+        pendingDropParent.value = null;
+        dropTarget.value = null;
+        break;
+      case 'drop':
+        nativeDragActive.value = false;
+        dropTarget.value = null;
+        // The DOM drop recorded the hovered folder first. If none did, the
+        // drop landed on a part of the tray with no handler of its own, so
+        // aim at the point it landed; outside the tray, import nothing.
+        const parent = pendingDropParent.value ?? parentAt(payload.position);
+        pendingDropParent.value = null;
+        if (parent !== null) void importNativePaths(payload.paths, parent);
+        break;
+    }
+  });
+});
+
+onUnmounted(() => offDragDrop?.());
 
 // ─── The right-click menu ──────────────────────────────────────────────────
 
@@ -272,21 +371,51 @@ function openMenu(e: MouseEvent, entry: AssetEntry) {
   menu.value = { x: e.clientX, y: e.clientY, entry };
 }
 
+/** Right-click on the empty tray: same folder actions, aimed at the folder
+ * being listed rather than one item. */
+function openBackgroundMenu(e: MouseEvent) {
+  tray.selected = '';
+  menu.value = { x: e.clientX, y: e.clientY, entry: null };
+}
+
 function closeMenu() {
   menu.value = null;
 }
 
-/** The project document is listed but can't be moved, renamed or deleted -
- * the app finds a project by that exact name - so it gets no menu at all.
- * The panel doesn't close itself on a choice, so each item does. */
+/** The project document is listed but can't be renamed, moved or deleted,
+ * and right-clicking it gets no menu at all - the app finds a project by
+ * that exact name. The panel doesn't close itself on a choice, so each item
+ * does. */
 const menuItems = computed<ContextMenuItem[]>(() => {
-  const entry = menu.value?.entry;
-  if (!entry || entry.protected) return [];
+  const entry = menu.value?.entry ?? null;
   const choose = (action: () => void) => () => {
     closeMenu();
     action();
   };
-  const items: ContextMenuItem[] = [];
+  // No entry is the background: actions for the folder being listed.
+  if (!entry) {
+    return [
+      {
+        key: 'location',
+        label: 'Open File Location',
+        icon: ExternalLink,
+        onSelect: choose(() => void openLocation(tray.path)),
+      },
+      { key: 'new-folder', label: 'New folder', icon: FolderPlus, onSelect: choose(() => startDraft('folder')) },
+      { key: 'new-file', label: 'New file', icon: FilePlus, onSelect: choose(() => startDraft('file')) },
+      { key: 'import', label: 'Import files here', icon: Download, onSelect: choose(() => void importHere()) },
+      { key: 'refresh', label: 'Re-read this folder', icon: RefreshCw, onSelect: choose(() => void refresh()) },
+    ];
+  }
+  if (entry.protected) return [];
+  const items: ContextMenuItem[] = [
+    {
+      key: 'location',
+      label: 'Open File Location',
+      icon: ExternalLink,
+      onSelect: choose(() => void openLocation(entry.path)),
+    },
+  ];
   if (entry.kind === 'folder') {
     items.push({ key: 'open', label: 'Open', icon: Folder, onSelect: choose(() => open(entry)) });
   }
@@ -327,7 +456,7 @@ function startResize(e: MouseEvent) {
 </script>
 
 <template>
-  <section class="asset-tray" :class="{ open: tray.open }">
+  <section class="asset-tray" :class="{ open: tray.open }" @dragover.prevent @drop="onDropOn($event, tray.path)">
     <div v-if="tray.open" class="asset-grip" title="Drag to resize" @mousedown="startResize" />
 
     <div class="asset-head">
@@ -398,6 +527,7 @@ function startResize(e: MouseEvent) {
       @click="tray.selected = ''"
       @dragover="onDragOverFolder($event, tray.path)"
       @drop="onDropOn($event, tray.path)"
+      @contextmenu.prevent.stop="openBackgroundMenu($event)"
     >
       <p v-if="error" class="dialog-error asset-error">{{ error }}</p>
 

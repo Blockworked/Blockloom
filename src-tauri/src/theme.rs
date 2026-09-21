@@ -8,6 +8,7 @@
 
 use tauri::webview::Color;
 use tauri::{AppHandle, Manager, WebviewWindowBuilder};
+use tauri_runtime_cef::{RuntimeStyle, WebviewWindowBuilderCefExt};
 
 /// `--blockstitch-bg` from blockstitch's theme CSS.
 const DARK: Color = Color(0x1c, 0x1c, 0x1e, 0xff);
@@ -37,6 +38,10 @@ pub(crate) fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
         .and_then(|path| std::fs::read_to_string(path).ok())
         .unwrap_or_default();
     WebviewWindowBuilder::from_config(app, &config)?
+        // Alloy is what keeps `CefDragHandler::OnDragEnter` live on Windows:
+        // under the default Chrome style, CEF never calls it (chromiumembed/cef
+        // #3970), which the native drag-drop pipeline depends on.
+        .browser_runtime_style(RuntimeStyle::Alloy)
         .background_color(color(theme.trim()))
         .build()?;
     Ok(())

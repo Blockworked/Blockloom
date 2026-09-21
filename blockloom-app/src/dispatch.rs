@@ -160,6 +160,9 @@ impl Backend {
             )?),
             "delete_asset" => to_json(commands::delete_asset(state, arg(&args, "path")?)?),
             "read_asset" => to_json(commands::read_asset(state, arg(&args, "path")?)?),
+            "open_asset_location" => {
+                to_json(commands::open_asset_location(state, arg(&args, "path")?)?)
+            }
 
             // ── Scripts ────────────────────────────────────────────────────
             "create_script" => {

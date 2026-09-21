@@ -993,3 +993,87 @@ body {
 .path-preview code {
   word-break: break-all;
 }
+
+/* ── Project settings dialog ─────────────────────────────────────────────── */
+
+.settings-dialog {
+  width: min(480px, calc(100vw - 32px));
+}
+
+.settings-section + .settings-section {
+  padding-top: 14px;
+  margin-top: 16px;
+  border-top: 1px solid var(--blockstitch-border);
+}
+
+.settings-section-title {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--blockstitch-text-dim);
+}
+
+.settings-section .mode-switch.settings-type {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.settings-type button {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.settings-type button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.settings-row label {
+  flex: 0 0 90px;
+  color: var(--blockstitch-text-dim);
+}
+
+.settings-row input[type='text'],
+.settings-row input[type='number'] {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--blockstitch-btn-h-md);
+  padding: 0 10px;
+  border: 1px solid var(--blockstitch-border);
+  border-radius: var(--blockstitch-radius);
+  background: var(--blockstitch-bg);
+  color: inherit;
+  font: inherit;
+}
+
+.settings-row input[type='color'] {
+  height: var(--blockstitch-btn-h-md);
+  width: 44px;
+  padding: 0;
+  border: 1px solid var(--blockstitch-border);
+  border-radius: var(--blockstitch-radius);
+  background: var(--blockstitch-bg);
+}
+
+.settings-row.triple input {
+  flex: 1 1 0;
+  width: 0;
+}
+
+.settings-note {
+  margin: 0 0 4px;
+  color: var(--blockstitch-text-dim);
+  line-height: 1.5;
+}

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-// The open project's name, the way back to the Dashboard, the 2D/3D switch,
-// and the run controls.
-import { computed, onMounted, onUnmounted } from 'vue';
+// The open project's name, the way back to the Dashboard, the door to the
+// project settings, and the run controls.
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useTheme } from 'blockstitch';
-import { Download, LayoutGrid, Moon, MonitorX, Pause, Play, Redo2, Save, Square, Sun, Undo2, Upload } from 'lucide-vue-next';
-import { mode, state } from '../store';
+import { Download, LayoutGrid, Moon, MonitorX, Pause, Play, Redo2, Save, Settings, Square, Sun, Undo2, Upload } from 'lucide-vue-next';
+import { state } from '../store';
 import {
   closeProject,
   closeRuntime,
@@ -16,11 +16,11 @@ import {
   redo,
   runProject,
   saveProject,
-  setMode,
   setProjectName,
   stopProject,
   undo,
 } from '../tauri';
+import ProjectSettingsDialog from './ProjectSettingsDialog.vue';
 
 const { currentTheme, toggleTheme } = useTheme();
 
@@ -45,6 +45,8 @@ onUnmounted(() => {
 function onName(e: Event) {
   void report(() => setProjectName((e.target as HTMLInputElement).value));
 }
+
+const settingsOpen = ref(false);
 
 // A command that fails has nowhere else to say so - the run log is where the
 // user is already looking for what went wrong.
@@ -74,11 +76,9 @@ async function report(action: () => Promise<void>) {
     <button class="icon-button" title="Export this project" :disabled="!state.project" @click="report(exportProject)">
       <Download />
     </button>
-
-    <div class="mode-switch" v-if="state.project" title="A project is either 2D or 3D; the blocks are the same either way">
-      <button :class="{ active: mode === 'TwoD' }" @click="setMode('TwoD')">2D</button>
-      <button :class="{ active: mode === 'ThreeD' }" @click="setMode('ThreeD')">3D</button>
-    </div>
+    <button class="icon-button" title="Project settings" :disabled="!state.project" @click="settingsOpen = true">
+      <Settings />
+    </button>
 
     <span class="spacer" />
 
@@ -117,5 +117,7 @@ async function report(action: () => Promise<void>) {
       <Play v-else />
       {{ state.running ? 'Stop' : 'Play' }}
     </button>
+
+    <ProjectSettingsDialog v-if="settingsOpen" @close="settingsOpen = false" />
   </header>
 </template>

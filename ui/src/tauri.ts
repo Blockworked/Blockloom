@@ -125,6 +125,8 @@ export const moveAsset = (path: string, parent: string) =>
 export const deleteAsset = (path: string) => invoke<void>('delete_asset', { path });
 /** A file's bytes as a `data:` URL - the only way the page can show one. */
 export const readAsset = (path: string) => invoke<string>('read_asset', { path });
+/** Pops the native file manager open on the folder this asset lives in. */
+export const openAssetLocation = (path: string) => invoke<void>('open_asset_location', { path });
 
 /** Asks which files to import. Resolves to `null` if the dialog was
  * cancelled. */

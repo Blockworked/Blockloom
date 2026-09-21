@@ -949,6 +949,52 @@ pub(crate) fn read_asset(state: &SharedState, path: String) -> Result<String, St
     assets::data_url(&project_dir(&s)?, &path)
 }
 
+/// Opens the native file manager to where this asset lives: a file gets
+/// spotlighted inside its parent folder, a folder opens itself.
+pub(crate) fn open_asset_location(state: &SharedState, path: String) -> Result<(), String> {
+    let s = lock(state)?;
+    let target = assets::resolve(&project_dir(&s)?, &path)
+        .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))?;
+    reveal_in_file_manager(&target)
+}
+
+/// Hand the OS a path: reveal a file inside its parent in the file manager,
+/// or open a directory in it. Spawned detached - the file manager is a GUI
+/// app that must outlive this process.
+fn reveal_in_file_manager(path: &Path) -> Result<(), String> {
+    let is_dir = path.is_dir();
+    let mut command = std::process::Command::new(if cfg!(target_os = "windows") {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    });
+    if cfg!(target_os = "windows") {
+        if is_dir {
+            command.arg(path);
+        } else {
+            // One token: `/select,<path>` is Explorer's contract; the split
+            // form opens the parent folder without highlighting anything.
+            command.arg(format!("/select,{}", path.display()));
+        }
+    } else if cfg!(target_os = "macos") {
+        if is_dir {
+            command.arg(path);
+        } else {
+            // -R selects the item instead of launching whatever claims it.
+            command.arg("-R").arg(path);
+        }
+    } else {
+        // No portable "select this file" on Linux - open its parent folder.
+        command.arg(path.parent().unwrap_or(path));
+    }
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Couldn't open the file manager: {e}"))
+}
+
 /// Follows a renamed or moved asset through the document, so an actor whose
 /// image or script just moved still points at it. Nothing to do in the usual
 /// case, and then nothing is saved or published either.
