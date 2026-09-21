@@ -14,7 +14,7 @@ use blockloom_core::vm::Vm;
 use blockloom_protocol::EditorMessage;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, Sender};
 
 /// Marks a spawned actor and ties it back to its id in the project.
 #[derive(Component, Debug, Clone)]
@@ -62,6 +62,10 @@ pub struct Dimension(pub Mode);
 
 pub struct Engine {
     pub incoming: Receiver<EditorMessage>,
+    /// A built game's own end of that channel. There is no editor to send it
+    /// Load and Start, so it sends them to itself and holds the sender for as
+    /// long as it runs - dropping it would read as the editor hanging up.
+    pub link: Option<Sender<EditorMessage>>,
     pub project: Project,
     pub vm: Vm,
     /// Actor id -> its entity, for as long as the world stands.
@@ -100,6 +104,7 @@ impl Engine {
     pub fn new(incoming: Receiver<EditorMessage>, mode: Mode) -> Self {
         Self {
             incoming,
+            link: None,
             project: Project::starter("Untitled", mode),
             vm: Vm::new(),
             entities: HashMap::new(),

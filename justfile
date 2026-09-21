@@ -20,6 +20,22 @@ LIBDIR := "/usr/lib/blockloom"
 
 mkdir-cargo := if os() == "windows" { 'if not exist .cargo mkdir .cargo' } else { 'mkdir -p .cargo' }
 
+# This machine's target triple, spelled the way `blockloom_core::build` spells
+# it - the two have to agree for the exporter to find a staged player.
+host-target := if os() == "windows" {
+    if arch() == "aarch64" { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
+} else if os() == "macos" {
+    if arch() == "aarch64" { "aarch64-apple-darwin" } else { "x86_64-apple-darwin" }
+} else {
+    if arch() == "aarch64" { "aarch64-unknown-linux-gnu" } else { "x86_64-unknown-linux-gnu" }
+}
+
+players-dir := if os() == "windows" { 'target\release\players\' + host-target } else { "target/release/players/" + host-target }
+
+mkdir-players := if os() == "windows" { 'if not exist "' + players-dir + '" mkdir "' + players-dir + '"' } else { 'mkdir -p "' + players-dir + '"' }
+
+copy-player := if os() == "windows" { 'copy /Y target\dist\blockloom-runtime.exe "' + players-dir + '"' } else { 'cp target/dist/blockloom-runtime "' + players-dir + '/"' }
+
 rm-cargo-cfg := if os() == "windows" { 'if exist .cargo\config.toml (del /F /Q .cargo\config.toml)' } else { 'rm -f .cargo/config.toml' }
 
 default: build
@@ -46,6 +62,14 @@ dev-ui:
 shell *args:
     just build
     cargo run -p blockloom-app --bin blockloom-shell -- {{args}}
+
+# The player a built game ships: the same runtime, compiled as hard as the
+# `dist` profile asks, staged where the exporter looks for it. `just build`
+# keeps its quicker link, so this is a deliberate step before shipping games.
+player:
+    cargo build --profile dist -p blockloom-runtime
+    {{mkdir-players}}
+    {{copy-player}}
 
 test:
     cargo test --workspace

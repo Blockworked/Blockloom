@@ -9,7 +9,15 @@ Obvious gaps already identified in the project notes:
 - [x] Show `say` as a speech bubble over its actor in the game world.
 - [ ] Let reporter-shaped custom blocks suspend and resume when they contain `wait`.
 - [x] Handle actors whose visual shape does not match the project's dimension, including a way to convert or replace the shape.
-- [ ] Add project packaging so a finished game can be shared and run independently.
+- [x] Add project packaging so a finished game can be shared and run independently.
+- [ ] Build for platforms other than the one doing the building: stage a player
+      payload per target under `players/<triple>/`, and let the Build dialog
+      pick between the targets an install actually has one for.
+- [ ] Compile a project's blocks instead of interpreting them in a build:
+      transpile each actor's flattened program into a Rust state machine, built
+      with the same no-Cargo `rustc` pipeline the scripts use and loaded over the
+      same C boundary. The yield rule has to survive exactly, so gate it on
+      running both against each other and comparing effect streams tick by tick.
 - [ ] Add a save-data system so a finished game can persist the player's progress across runs, with a block API and a matching Rust script API.
 - [x] Redesign projects as folders: the app always starts on a Dashboard page for creating new projects and opening existing ones, with each project stored as a folder so it can hold assets.
 - [x] Add a component system built on Bevy's ECS components that turns all properties into components, with support for custom components and camera-attach components (for first-person / third-person cameras).

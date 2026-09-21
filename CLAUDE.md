@@ -17,6 +17,7 @@ just build              # cargo build --release --workspace (the normal build)
 just run                # build, then launch target/release/blockloom
 cargo build --workspace && target/debug/blockloom   # debug build/run - faster iteration
 just test               # cargo test --workspace (blockloom-core has the bulk of them)
+just player             # stage the hard-optimized player a built game ships
 ```
 
 Build the whole workspace, not just `-p blockloom`: the editor starts the
@@ -129,7 +130,9 @@ Two processes: the editor window, and the game world.
   decides which physics/render pipeline is built, so the editor restarts it when
   a project switches dimension. `src/world.rs` holds the dimension-agnostic
   systems, `src/dim2.rs`/`src/dim3.rs` the sprite/`bevy_rapier2d` and
-  mesh/`bevy_rapier3d` halves.
+  mesh/`bevy_rapier3d` halves. The same binary is what a built game ships:
+  with a pack beside it, it loads that instead of waiting for an editor, and
+  `src/player.rs` is the whole of the difference (see Building a game below).
 - **`blockloom-protocol`** - the wire format between them: newline-delimited
   JSON over the child's stdin/stdout. No sockets, no ports; the pipe closing is
   the whole shutdown handshake.
@@ -140,7 +143,9 @@ Two processes: the editor window, and the game world.
   calls each value slot), `project.rs` (the saved document and the folder it
   lives in), `library.rs` (the project folders the Dashboard lists),
   `assets.rs` (the files inside one of those folders, which the asset tray
-  manages and the runtime loads images and fonts from), `vm/` (the block VM),
+  manages and the runtime loads images and fonts from), `pack.rs` (that
+  document again, as a built game carries it) with `build.rs` (what lays a
+  build out), `vm/` (the block VM),
   `script/` (compiling a project's Rust scripts, and the ABI they talk over),
   `sense.rs` (the world state reporter blocks read), and `wire.rs` (the one
   shape difference between documents and the frontend).
@@ -252,6 +257,45 @@ The VM holds `Rc`s, so it is a `!Send` Bevy resource - which is exactly right:
 every system touching it is therefore scheduled on the main thread, the same
 thread the thread-local sensor snapshot lives on. Keep it that way.
 
+### Building a game
+
+Build is not Export. Export writes a `.blockloom` file for somebody else's
+editor; Build makes a folder somebody can run without Blockloom at all:
+
+```text
+Pond Game/
+  Pond Game.exe        the player: `blockloom-runtime`, renamed
+  game/
+    game.pack          the document, and the format version it was written at
+    assets/...         the project's assets, minus the script sources
+    .blockloom/build/  the script libraries, where the runtime already looks
+```
+
+`blockloom-core/src/build.rs` lays that out and `commands::build_game` drives
+it. The player finds `game/game.pack` beside its own executable, so renaming
+the binary is the whole of the branding, and `game/` is handed to the runtime
+as the project folder - which is why the assets and the script libraries keep
+the spelling they have inside a project. Nothing in the runtime knows whether
+it is playing a folder or a build.
+
+`player::Launch` is the one fork: a pack beside the binary means player mode,
+which takes its dimension from the document rather than `--mode`, presses its
+own green flag, never reads stdin, reports nothing (`bridge::attached` is
+false, so the status corner and the editor handshake are skipped), and exits
+when the world stops, since nothing can press Play again - `stop all` is how a
+built game quits. `--play <folder>` runs a build without renaming anything.
+
+A build ships the blocks as the document and runs them on the same VM the
+editor plays with, so it needs no toolchain and costs a file copy. Scripts are
+the exception: they ship as the libraries the editor already compiled, and one
+that won't compile fails the build rather than shipping an actor that quietly
+does nothing. The target is whichever platform did the building;
+`build::player_binary` looks in `players/<target triple>/` beside the editor
+first, so another platform's payload can be staged there without moving
+anything else. `just player` builds the `dist` profile (fat LTO, one codegen
+unit, stripped) and stages it there, while `just build` keeps the release
+profile's quicker link for the edit-run loop.
+
 ### Frontend (`ui/`)
 
 Vue 3 + TypeScript + Vite, package-managed with pnpm. `src-tauri/tauri.conf.json`
@@ -297,6 +341,10 @@ lands.
 ### Known gaps
 
 - No clones (`create clone of myself`), no sounds, no lists.
+- A build only targets the platform that made it, carries no icon of its own,
+  and is a folder rather than an installer or one file.
+- A built game's blocks are interpreted, the same way the editor plays them.
+  Nothing compiles a project down.
 - A script needs a Rust toolchain on the machine that presses Play, which a
   packaged install can't assume. The script editor is a plain textarea, and a
   script's errors only show in the run log.

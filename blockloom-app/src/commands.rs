@@ -13,6 +13,7 @@ use blockloom_core::assets;
 use blockloom_core::blocks::{
     ActorGraph, BlockPiece, BlockShape, Instruction, InstructionKind, normalize_block_color,
 };
+use blockloom_core::build;
 use blockloom_core::components::{ActorComponent, Components};
 use blockloom_core::library;
 use blockloom_core::project::{self, Actor, Project};
@@ -758,7 +759,7 @@ pub(crate) fn run_project(
     auto_save(&s);
     // Built before the world is handed over, so a script that won't compile
     // shows its errors in the log instead of silently doing nothing.
-    build_scripts(&mut s);
+    let _ = build_scripts(&mut s);
     let dir = s
         .project_dir()
         .map(|dir| dir.to_string_lossy().into_owned());
@@ -838,11 +839,12 @@ pub(crate) fn close_runtime(state: &SharedState, app: &AppHandle) -> Result<(), 
 }
 
 /// Compiles every actor's script, logging whatever rustc has to say about
-/// the ones that fail. A failed script just doesn't load: the rest of the
-/// project still plays.
-fn build_scripts(s: &mut AppState) {
+/// the ones that fail, and answering how many did. A failed script just
+/// doesn't load, so Play carries on - a build can't, since the game would
+/// ship without it.
+fn build_scripts(s: &mut AppState) -> usize {
     let Some(dir) = s.project_dir().map(Path::to_path_buf) else {
-        return;
+        return 0;
     };
     let scripts: Vec<(String, String)> = s
         .project()
@@ -855,8 +857,10 @@ fn build_scripts(s: &mut AppState) {
                 .map(|path| (actor.name.clone(), path.to_string()))
         })
         .collect();
+    let mut failed = 0;
     for (actor, path) in scripts {
         if let Err(error) = script::compile(&dir, &path) {
+            failed += 1;
             s.push_log(LogLine {
                 kind: "error".to_string(),
                 actor,
@@ -864,6 +868,57 @@ fn build_scripts(s: &mut AppState) {
             });
         }
     }
+    failed
+}
+
+// ─── Building ──────────────────────────────────────────────────────────────
+
+/// Builds the open project into a folder under `path` that runs without the
+/// editor: the player binary, the project's pack, its assets and its compiled
+/// scripts (see `blockloom_core::build`). Returns where it landed.
+///
+/// Only this platform is a target: the player copied is the one this install
+/// plays with. Other platforms need their own player payload, which nothing
+/// stages yet.
+pub(crate) fn build_game(
+    state: &SharedState,
+    app: &AppHandle,
+    path: String,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    let Some(project) = s.project().cloned() else {
+        return Err("No project is open".to_string());
+    };
+    let Some(dir) = s.project_dir().map(Path::to_path_buf) else {
+        return Err("This project has no folder to build from".to_string());
+    };
+    auto_save(&s);
+
+    // A script that won't compile can't be shipped around: the built game
+    // would load an actor whose behaviour silently isn't there.
+    if build_scripts(&mut s) > 0 {
+        let dto = state_dto(&s);
+        drop(s);
+        app.emit_state(&dto);
+        return Err("A script didn't compile, so the game wasn't built - see the log".to_string());
+    }
+
+    let player = build::player_binary(&blockloom_protocol::runtime_path())?;
+    let built = build::build(&project, &dir, &player, Path::new(&path))?;
+    s.push_log(LogLine {
+        kind: "say".to_string(),
+        actor: "Blockloom".to_string(),
+        text: format!(
+            "Built {} for {}: {} asset(s), {} script(s) -> {}",
+            project.name,
+            build::host_target(),
+            built.assets,
+            built.scripts,
+            built.dir.display()
+        ),
+    });
+    emit(app, &s);
+    Ok(built.dir.to_string_lossy().into_owned())
 }
 
 // ─── Assets ────────────────────────────────────────────────────────────────

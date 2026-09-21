@@ -237,7 +237,11 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
         },
         abi::READ_POSITION_OF => {
             let axis = axis_of(arg).index();
-            sense::read(|sensors| sensors.find(a.trim()).map(|other| other.position[axis] as f64))
+            sense::read(|sensors| {
+                sensors
+                    .find(a.trim())
+                    .map(|other| other.position[axis] as f64)
+            })
         }
         _ => None,
     }

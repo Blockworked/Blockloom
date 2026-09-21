@@ -648,6 +648,7 @@ pub fn apply_common(
     effects: Res<PendingEffects>,
     mut engine: NonSendMut<Engine>,
     dimension: Res<Dimension>,
+    mut exit: MessageWriter<AppExit>,
     mut transforms: Query<(&mut Transform, &mut Visibility)>,
 ) {
     if !engine.running || engine.paused {
@@ -670,6 +671,11 @@ pub fn apply_common(
                 engine.running = false;
                 engine.speech.clear();
                 bridge::send(&RuntimeMessage::Stopped);
+                // Nothing can press Play again in a built game, so a stopped
+                // world is a finished one: `stop all` is how a game quits.
+                if !bridge::attached() {
+                    exit.write(AppExit::Success);
+                }
             }
             continue;
         };

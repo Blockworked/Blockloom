@@ -158,6 +158,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             required: true,
         }],
     },
+    CommandSpec {
+        name: "build-game",
+        cmd: "build_game",
+        aliases: &["build_game", "build"],
+        summary: "Build the open project into a folder under path that runs on its own.",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "folder path",
+            required: true,
+        }],
+    },
     // ── The world ─────────────────────────────────────────────────────────
     CommandSpec {
         name: "set-mode",

@@ -3,9 +3,10 @@
 // project settings, and the run controls.
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useTheme } from 'blockstitch';
-import { Download, LayoutGrid, Moon, MonitorX, Pause, Play, Redo2, Save, Settings, Square, Sun, Undo2, Upload } from 'lucide-vue-next';
+import { Download, LayoutGrid, Moon, MonitorX, Package, Pause, Play, Redo2, Save, Settings, Square, Sun, Undo2, Upload } from 'lucide-vue-next';
 import { state } from '../store';
 import {
+  buildGame,
   closeProject,
   closeRuntime,
   exportProject,
@@ -75,6 +76,14 @@ async function report(action: () => Promise<void>) {
     <button class="icon-button" title="Import a project" @click="report(importProject)"><Upload /></button>
     <button class="icon-button" title="Export this project" :disabled="!state.project" @click="report(exportProject)">
       <Download />
+    </button>
+    <button
+      class="icon-button"
+      title="Build a standalone game"
+      :disabled="!state.project"
+      @click="report(() => buildGame(state.default_project_location))"
+    >
+      <Package />
     </button>
     <button class="icon-button" title="Project settings" :disabled="!state.project" @click="settingsOpen = true">
       <Settings />

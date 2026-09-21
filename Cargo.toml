@@ -51,3 +51,13 @@ dpi = { git = "https://github.com/tauri-apps/winit-gtk4", branch = "master" }
 # unusable, so its dependencies stay optimized even in a debug build.
 [profile.dev.package."*"]
 opt-level = 3
+
+# The player a built game ships. It is compiled once and run for hours, so it
+# is worth the slow link that would make `just build`'s edit-run loop painful.
+# Panics stay unwound: `blockloom::export!` catches a script's panic rather
+# than letting it cross the C boundary and abort the window.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

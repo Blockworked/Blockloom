@@ -13,6 +13,9 @@
 //! - [`library`] is the set of project folders the Dashboard lists.
 //! - [`assets`] is the files inside one of those folders, which the editor's
 //!   asset tray lists and the runtime loads images and fonts from.
+//! - [`pack`] is that document again, as a built game carries it, and
+//!   [`build`] is what lays one out: the player binary, the pack, the assets
+//!   and the compiled scripts, in a folder that runs on its own.
 //! - [`vm`] compiles those canvases into a flat program and runs every script
 //!   cooperatively, one slice per rendered frame, emitting [`vm::Effect`]s for
 //!   a host to apply. `blockloom-runtime` is that host.
@@ -23,9 +26,11 @@
 
 pub mod assets;
 pub mod blocks;
+pub mod build;
 pub mod components;
 pub mod fields;
 pub mod library;
+pub mod pack;
 pub mod project;
 pub mod scene;
 pub mod script;

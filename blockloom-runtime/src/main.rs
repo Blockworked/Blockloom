@@ -7,7 +7,12 @@
 //! a launch argument, since the plugin set differs: the editor restarts the
 //! runtime when a project changes mode.
 //!
-//! Usage: `blockloom-runtime [--mode 2d|3d]`.
+//! The same binary is what a built game ships: with a pack beside it (see
+//! `blockloom_core::pack`) it loads that instead of waiting for an editor,
+//! takes its dimension from the document, and presses its own green flag.
+//! `player::Launch` is the whole of the difference.
+//!
+//! Usage: `blockloom-runtime [--mode 2d|3d] [--play <build or game folder>]`.
 
 // A Bevy system declares every query and resource it touches as an argument, so
 // the usual argument-count limit doesn't apply here.
@@ -18,6 +23,7 @@ mod dim2;
 mod dim3;
 mod engine;
 mod overlay;
+mod player;
 mod script;
 mod world;
 
@@ -26,13 +32,17 @@ use bevy::prelude::*;
 use bevy::window::WindowResolution;
 use blockloom_core::scene::Mode;
 use blockloom_protocol::{PROTOCOL_VERSION, RuntimeMessage};
-use engine::{Dimension, Engine, PendingEffects};
+use engine::{Dimension, PendingEffects};
+use player::Launch;
 
 fn main() {
-    let mode = mode_from_args(std::env::args().skip(1));
+    // Before the pack is read: a saved document names Blockloom's own
+    // reporter blocks, which have to be registered to evaluate.
     blockloom_core::init();
+    let launch = Launch::from_args(std::env::args().skip(1));
+    let mode = launch.mode();
+    let title = launch.title();
 
-    let incoming = bridge::listen();
     let mut app = App::new();
     // Project assets live in the project's own folder, anywhere on disk, and
     // are handed to the asset server as absolute paths. Those are unapproved
@@ -42,7 +52,7 @@ fn main() {
         DefaultPlugins
             .set(WindowPlugin {
                 primary_window: Some(Window {
-                    title: "Blockloom".to_string(),
+                    title,
                     resolution: WindowResolution::new(960, 720),
                     ..default()
                 }),
@@ -56,8 +66,13 @@ fn main() {
     .insert_resource(ClearColor(Color::srgb(0.11, 0.14, 0.19)))
     .insert_resource(Dimension(mode))
     .init_resource::<PendingEffects>()
-    .insert_non_send(Engine::new(incoming, mode))
-    .add_systems(Startup, (overlay::spawn, announce_ready));
+    .insert_non_send(launch.into_engine())
+    // Both of these only exist to talk to an editor, and a built game has
+    // none: no corner status, no handshake.
+    .add_systems(
+        Startup,
+        (overlay::spawn, announce_ready).run_if(bridge::editor_attached),
+    );
 
     // Only the dimension in use gets a physics pipeline: two would simulate
     // the same actors twice. Simulation runs on Bevy's `FixedUpdate` - a
@@ -103,8 +118,8 @@ fn main() {
                         world::interpolate_poses,
                         world::drive_camera,
                         overlay::update_speech_bubbles,
-                        world::report_status,
-                        overlay::update_status,
+                        world::report_status.run_if(bridge::editor_attached),
+                        overlay::update_status.run_if(bridge::editor_attached),
                     )
                         .chain(),
                 )
@@ -151,8 +166,8 @@ fn main() {
                         world::interpolate_poses,
                         world::drive_camera,
                         overlay::update_speech_bubbles,
-                        world::report_status,
-                        overlay::update_status,
+                        world::report_status.run_if(bridge::editor_attached),
+                        overlay::update_status.run_if(bridge::editor_attached),
                     )
                         .chain(),
                 )
@@ -171,27 +186,4 @@ fn announce_ready() {
     bridge::send(&RuntimeMessage::Ready {
         protocol: PROTOCOL_VERSION,
     });
-}
-
-/// `--mode 3d` (or `--mode=3d`) picks the 3D pipeline; 2D is the default.
-fn mode_from_args(args: impl Iterator<Item = String>) -> Mode {
-    let mut wants_value = false;
-    for arg in args {
-        if wants_value {
-            return parse_mode(&arg);
-        }
-        match arg.split_once('=') {
-            Some(("--mode", value)) => return parse_mode(value),
-            _ if arg == "--mode" => wants_value = true,
-            _ => {}
-        }
-    }
-    Mode::TwoD
-}
-
-fn parse_mode(value: &str) -> Mode {
-    match value.trim().to_lowercase().as_str() {
-        "3d" | "threed" | "3" => Mode::ThreeD,
-        _ => Mode::TwoD,
-    }
 }

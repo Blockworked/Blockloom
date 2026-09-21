@@ -66,6 +66,14 @@ export async function importProject(): Promise<void> {
   if (path) await invoke<void>('import_project', { path });
 }
 
+/** Asks where the built game should go, then builds it there - a folder with
+ *  the player, the project's pack and its assets in it, which runs without
+ *  Blockloom. Resolves quietly if the dialog was cancelled. */
+export async function buildGame(start: string): Promise<void> {
+  const path = await pickFolder('Where to put the built game', start);
+  if (path) await invoke<string>('build_game', { path });
+}
+
 // ─── The world ──────────────────────────────────────────────────────────────
 export const setMode = (mode: Mode) => invoke<void>('set_mode', { mode });
 export const setBackground = (color: string) => invoke<void>('set_background', { color });
