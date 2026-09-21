@@ -43,6 +43,9 @@ pub struct Engine {
     pub entities: HashMap<String, Entity>,
     pub running: bool,
     pub paused: bool,
+    /// `Time::elapsed_secs` when the current pause began, if paused. Used to
+    /// keep the `timer` reporter frozen while paused.
+    pub pause_began: Option<f64>,
     /// `Time::elapsed_secs` when the green flag was pressed.
     pub started_at: f64,
     /// Who is touching whom, from collision messages, by actor id.
@@ -65,6 +68,7 @@ impl Engine {
             entities: HashMap::new(),
             running: false,
             paused: false,
+            pause_began: None,
             started_at: 0.0,
             touching: HashMap::new(),
             speech: HashMap::new(),
@@ -74,8 +78,13 @@ impl Engine {
     }
 
     /// Seconds since the green flag, which is what the `timer` reporter reads.
+    /// Frozen while paused, so resuming doesn't jump the timer forward.
     pub fn run_time(&self, now: f64) -> f64 {
-        (now - self.started_at).max(0.0)
+        let end = match self.pause_began {
+            Some(began) => began.min(now),
+            None => now,
+        };
+        (end - self.started_at).max(0.0)
     }
 
     pub fn actor_id_of(&self, entity: Entity) -> Option<&str> {

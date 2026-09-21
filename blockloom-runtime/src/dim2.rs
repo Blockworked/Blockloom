@@ -103,6 +103,17 @@ pub fn apply_effects(
     mut config: Query<&mut rp::RapierConfiguration>,
     mut sprites: Query<&mut Sprite>,
 ) {
+    if !engine.running || engine.paused {
+        // Still apply gravity while idle so the config is correct on Play.
+        for effect in &effects.0 {
+            if let Effect::SetGravity { gravity } = effect
+                && let Ok(mut config) = config.single_mut()
+            {
+                set_gravity(&mut config, *gravity);
+            }
+        }
+        return;
+    }
     // Turning "this far this frame" into a velocity needs the frame's own
     // length; a stalled frame would otherwise read as an enormous speed.
     let dt = time.delta_secs().max(1.0 / 240.0);
@@ -209,16 +220,33 @@ pub fn apply_effects(
 }
 
 /// Turns rapier's contact messages into `when I touch` triggers, and keeps the
-/// `touching?` reporter's answer up to date.
+/// `touching?` reporter's answer up to date. Skipped while paused or stopped
+/// so a frozen world doesn't queue new collision strands.
 pub fn relay_collisions(
     mut messages: MessageReader<rp::CollisionEvent>,
     mut engine: NonSendMut<Engine>,
 ) {
+    if !engine.running || engine.paused {
+        messages.clear();
+        return;
+    }
     for message in messages.read() {
         let (a, b, started) = match message {
             rp::CollisionEvent::Started(a, b, _) => (*a, *b, true),
             rp::CollisionEvent::Stopped(a, b, _) => (*a, *b, false),
         };
         crate::world::note_contact(&mut engine, a, b, started);
+    }
+}
+
+/// Freezes the physics pipeline while paused or stopped so bodies stop falling
+/// and velocities don't integrate. Runs in `Update` before rapier's own
+/// `PostUpdate` step, so it takes effect the same frame.
+pub fn sync_pause(
+    engine: NonSend<Engine>,
+    mut configs: Query<&mut rp::RapierConfiguration>,
+) {
+    for mut config in &mut configs {
+        config.physics_pipeline_active = engine.running && !engine.paused;
     }
 }

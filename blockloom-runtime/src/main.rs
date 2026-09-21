@@ -57,6 +57,7 @@ fn main() {
                     Update,
                     (
                         world::pump_editor,
+                        dim2::sync_pause,
                         world::rebuild_world,
                         dim2::relay_collisions,
                         world::publish_sensors,
@@ -82,6 +83,7 @@ fn main() {
                     Update,
                     (
                         world::pump_editor,
+                        dim3::sync_pause,
                         world::rebuild_world,
                         dim3::relay_collisions,
                         world::publish_sensors,

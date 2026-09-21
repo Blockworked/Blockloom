@@ -109,6 +109,8 @@ pub fn pump_editor(
                 engine.vm.load(&loaded);
                 engine.speech.clear();
                 engine.running = false;
+                engine.paused = false;
+                engine.pause_began = None;
                 engine.rebuild = true;
             }
             EditorMessage::Start => {
@@ -119,6 +121,7 @@ pub fn pump_editor(
                 engine.rebuild = true;
                 engine.running = true;
                 engine.paused = false;
+                engine.pause_began = None;
                 engine.started_at = now;
                 engine.vm.fire(Event::Started);
             }
@@ -126,10 +129,24 @@ pub fn pump_editor(
                 engine.vm.stop_all();
                 engine.speech.clear();
                 engine.running = false;
+                engine.paused = false;
+                engine.pause_began = None;
                 engine.rebuild = true;
                 bridge::send(&RuntimeMessage::Stopped);
             }
-            EditorMessage::Pause { paused } => engine.paused = paused,
+            EditorMessage::Pause { paused } => {
+                if paused && !engine.paused {
+                    engine.paused = true;
+                    engine.pause_began = Some(now);
+                } else if !paused && engine.paused {
+                    engine.paused = false;
+                    if let Some(began) = engine.pause_began.take() {
+                        // Shift the start forward by the paused span so the
+                        // timer resumes where it froze instead of jumping.
+                        engine.started_at += now - began;
+                    }
+                }
+            }
             EditorMessage::Shutdown => {
                 exit.write(AppExit::Success);
                 return;
@@ -253,7 +270,7 @@ pub fn publish_sensors(
         actors: senses,
     });
 
-    if engine.running {
+    if engine.running && !engine.paused {
         for key in keys.get_just_pressed().filter_map(key_name) {
             engine.vm.fire(Event::Key(key));
         }
@@ -294,7 +311,7 @@ pub fn detect_clicks(
     cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     actors: Query<(&ActorId, &Transform)>,
 ) {
-    if !engine.running || !buttons.just_pressed(MouseButton::Left) {
+    if !engine.running || engine.paused || !buttons.just_pressed(MouseButton::Left) {
         return;
     }
     let Some(window) = windows.iter().next() else {
@@ -431,6 +448,9 @@ pub fn apply_common(
     dimension: Res<Dimension>,
     mut transforms: Query<(&mut Transform, &mut Visibility)>,
 ) {
+    if !engine.running || engine.paused {
+        return;
+    }
     let positions: HashMap<String, Vec3> = engine
         .entities
         .iter()
@@ -539,11 +559,16 @@ pub fn apply_common(
 }
 
 /// Advances every glide, and drops the component when it arrives.
+/// Frozen while paused or stopped, like the VM and physics.
 pub fn step_glides(
     mut commands: Commands,
     time: Res<Time>,
+    engine: NonSend<Engine>,
     mut gliding: Query<(Entity, &mut Transform, &mut Gliding)>,
 ) {
+    if !engine.running || engine.paused {
+        return;
+    }
     for (entity, mut transform, mut glide) in &mut gliding {
         glide.elapsed += time.delta_secs();
         let progress = (glide.elapsed / glide.duration).clamp(0.0, 1.0);
@@ -807,5 +832,64 @@ mod tests {
         app.update();
 
         assert!(app.world().non_send::<Engine>().running);
+    }
+
+    #[test]
+    fn pause_freezes_the_timer_and_unpause_resumes_it() {
+        let (sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.running = true;
+        engine.started_at = 10.0;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.init_resource::<PendingEffects>();
+        app.insert_non_send(engine);
+        app.add_systems(Update, pump_editor);
+        app.update();
+
+        // Pause at t=15: timer freezes at 5.
+        sender
+            .send(EditorMessage::Pause { paused: true })
+            .unwrap();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_to(std::time::Duration::from_secs(15));
+        app.update();
+        let engine = app.world().non_send::<Engine>();
+        assert!(engine.paused);
+        assert_eq!(engine.run_time(20.0), 5.0);
+        assert_eq!(engine.run_time(15.0), 5.0);
+
+        // Resume at t=25: timer continues from 5, not jumping to 15.
+        sender
+            .send(EditorMessage::Pause { paused: false })
+            .unwrap();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_to(std::time::Duration::from_secs(25));
+        app.update();
+        let engine = app.world().non_send::<Engine>();
+        assert!(!engine.paused);
+        assert_eq!(engine.run_time(25.0), 5.0);
+        assert_eq!(engine.run_time(30.0), 10.0);
+    }
+
+    #[test]
+    fn paused_vm_produces_no_effects() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.running = true;
+        engine.paused = true;
+        engine.pause_began = Some(0.0);
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.init_resource::<PendingEffects>();
+        app.insert_non_send(engine);
+        app.add_systems(Update, step_vm);
+        app.update();
+
+        assert!(app.world().resource::<PendingEffects>().0.is_empty());
     }
 }

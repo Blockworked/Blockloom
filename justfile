@@ -18,6 +18,7 @@ run: build
 # The browser dev loop: the real backend behind an HTTP bridge, plus Vite.
 # Run these in two terminals, then open http://localhost:1420.
 dev-backend:
+    cargo build -p blockloom-runtime
     cargo run -p blockloom-app --features dev-bridge --bin blockloom-devserver
 
 dev-ui:

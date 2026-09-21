@@ -598,9 +598,16 @@ pub(crate) fn pause_project(
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     if let Some(runtime) = s.runtime.as_mut() {
-        runtime.send(&blockloom_protocol::EditorMessage::Pause { paused });
+        if !runtime.send(&blockloom_protocol::EditorMessage::Pause { paused }) {
+            s.runtime = None;
+            s.running = false;
+            s.paused = false;
+            s.status = None;
+            emit(app, &s);
+            return Err("Lost the connection to the game runtime".to_string());
+        }
     }
-    s.paused = paused;
+    s.paused = paused && s.running;
     emit(app, &s);
     Ok(())
 }

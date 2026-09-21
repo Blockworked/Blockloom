@@ -113,6 +113,17 @@ pub fn apply_effects(
     surfaces: Query<&MeshMaterial3d<StandardMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    if !engine.running || engine.paused {
+        // Still apply gravity while idle so the config is correct on Play.
+        for effect in &effects.0 {
+            if let Effect::SetGravity { gravity } = effect
+                && let Ok(mut config) = config.single_mut()
+            {
+                set_gravity(&mut config, *gravity);
+            }
+        }
+        return;
+    }
     let dt = time.delta_secs().max(1.0 / 240.0);
     for effect in &effects.0 {
         match effect {
@@ -209,12 +220,28 @@ pub fn relay_collisions(
     mut messages: MessageReader<rp::CollisionEvent>,
     mut engine: NonSendMut<Engine>,
 ) {
+    if !engine.running || engine.paused {
+        messages.clear();
+        return;
+    }
     for message in messages.read() {
         let (a, b, started) = match message {
             rp::CollisionEvent::Started(a, b, _) => (*a, *b, true),
             rp::CollisionEvent::Stopped(a, b, _) => (*a, *b, false),
         };
         crate::world::note_contact(&mut engine, a, b, started);
+    }
+}
+
+/// Freezes the physics pipeline while paused or stopped so bodies stop falling
+/// and velocities don't integrate. Runs in `Update` before rapier's own
+/// `PostUpdate` step, so it takes effect the same frame.
+pub fn sync_pause(
+    engine: NonSend<Engine>,
+    mut configs: Query<&mut rp::RapierConfiguration>,
+) {
+    for mut config in &mut configs {
+        config.physics_pipeline_active = engine.running && !engine.paused;
     }
 }
 
