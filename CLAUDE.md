@@ -289,12 +289,25 @@ A build ships the blocks as the document and runs them on the same VM the
 editor plays with, so it needs no toolchain and costs a file copy. Scripts are
 the exception: they ship as the libraries the editor already compiled, and one
 that won't compile fails the build rather than shipping an actor that quietly
-does nothing. The target is whichever platform did the building;
-`build::player_binary` looks in `players/<target triple>/` beside the editor
-first, so another platform's payload can be staged there without moving
-anything else. `just player` builds the `dist` profile (fat LTO, one codegen
-unit, stripped) and stages it there, while `just build` keeps the release
-profile's quicker link for the edit-run loop.
+does nothing.
+
+Which platforms an install can build for is a question about what it has beside
+it. The player is a native binary Blockloom can't produce, so one per platform
+is staged under `players/<triple>/` next to the editor: `just player` puts this
+machine's there (the `dist` profile - fat LTO, one codegen unit, stripped -
+while `just build` keeps the release profile's quicker link for the edit-run
+loop), and `just stage-player <triple> <file>` takes one built elsewhere. The
+machine doing the building always has one, since the runtime the editor plays
+with is a player. Scripts are native too, so a project with one can only be
+built for a platform this machine's rustc can compile for; `script::compile_for`
+cross-builds them into `.blockloom/build/<triple>/`, leaving Play's own build
+where the runtime has always looked for it. `build::targets` answers both
+questions at once, which is what the Build dialog lists, with the reason
+attached to every platform it can't offer.
+
+A build folder is named for the project and the platform - `Pond Game (Linux
+x64)` - because one output folder holds a build per platform, and three folders
+called the same thing would be three chances to ship the wrong one.
 
 ### Frontend (`ui/`)
 
@@ -341,8 +354,10 @@ lands.
 ### Known gaps
 
 - No clones (`create clone of myself`), no sounds, no lists.
-- A build only targets the platform that made it, carries no icon of its own,
-  and is a folder rather than an installer or one file.
+- A build carries no icon of its own and is a folder rather than an installer
+  or one file; macOS gets that same folder rather than an `.app` bundle.
+- Building for another platform needs its player staged by hand, and a scripted
+  project also needs that target's `std` and a linker for it.
 - A built game's blocks are interpreted, the same way the editor plays them.
   Nothing compiles a project down.
 - A script needs a Rust toolchain on the machine that presses Play, which a

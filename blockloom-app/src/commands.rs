@@ -838,11 +838,16 @@ pub(crate) fn close_runtime(state: &SharedState, app: &AppHandle) -> Result<(), 
     Ok(())
 }
 
-/// Compiles every actor's script, logging whatever rustc has to say about
-/// the ones that fail, and answering how many did. A failed script just
-/// doesn't load, so Play carries on - a build can't, since the game would
-/// ship without it.
+/// [`build_scripts_for`] aimed at this machine, which is what Play needs.
 fn build_scripts(s: &mut AppState) -> usize {
+    build_scripts_for(s, None)
+}
+
+/// Compiles every actor's script for `target` (`None` being this machine),
+/// logging whatever rustc has to say about the ones that fail and answering
+/// how many did. A failed script just doesn't load, so Play carries on - a
+/// build can't, since the game would ship without it.
+fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
     let Some(dir) = s.project_dir().map(Path::to_path_buf) else {
         return 0;
     };
@@ -859,7 +864,7 @@ fn build_scripts(s: &mut AppState) -> usize {
         .collect();
     let mut failed = 0;
     for (actor, path) in scripts {
-        if let Err(error) = script::compile(&dir, &path) {
+        if let Err(error) = script::compile_for(&dir, &path, target) {
             failed += 1;
             s.push_log(LogLine {
                 kind: "error".to_string(),
@@ -873,17 +878,31 @@ fn build_scripts(s: &mut AppState) -> usize {
 
 // ─── Building ──────────────────────────────────────────────────────────────
 
-/// Builds the open project into a folder under `path` that runs without the
-/// editor: the player binary, the project's pack, its assets and its compiled
-/// scripts (see `blockloom_core::build`). Returns where it landed.
-///
-/// Only this platform is a target: the player copied is the one this install
-/// plays with. Other platforms need their own player payload, which nothing
-/// stages yet.
+/// Every platform the Build dialog offers, this machine's first, each with
+/// whether it could be built for right now and why not when it couldn't.
+pub(crate) fn list_build_targets(state: &SharedState) -> Result<Vec<build::TargetStatus>, String> {
+    let s = lock(state)?;
+    let has_scripts = s.project().is_some_and(|project| {
+        project
+            .actors
+            .iter()
+            .any(|actor| actor.components.script().is_some())
+    });
+    Ok(build::targets(
+        has_scripts,
+        &blockloom_protocol::runtime_path(),
+    ))
+}
+
+/// Builds the open project for `target` (this machine when it isn't given)
+/// into a folder under `path` that runs without the editor: the player
+/// binary, the project's pack, its assets and its compiled scripts (see
+/// `blockloom_core::build`). Returns where it landed.
 pub(crate) fn build_game(
     state: &SharedState,
     app: &AppHandle,
     path: String,
+    target: Option<String>,
 ) -> Result<String, String> {
     let mut s = lock(state)?;
     let Some(project) = s.project().cloned() else {
@@ -892,26 +911,39 @@ pub(crate) fn build_game(
     let Some(dir) = s.project_dir().map(Path::to_path_buf) else {
         return Err("This project has no folder to build from".to_string());
     };
+    let target = match target.as_deref() {
+        Some(triple) => build::target(triple)
+            .ok_or_else(|| format!("Blockloom doesn't know how to build for {triple}"))?,
+        None => build::host()
+            .ok_or("Blockloom has no name for this platform, so it can't build for it")?,
+    };
+    let player =
+        build::player_for(target, &blockloom_protocol::runtime_path()).ok_or_else(|| {
+            format!(
+                "There is no player for {}. Stage one in players/{}/ beside Blockloom.",
+                target.label, target.triple
+            )
+        })?;
     auto_save(&s);
 
     // A script that won't compile can't be shipped around: the built game
-    // would load an actor whose behaviour silently isn't there.
-    if build_scripts(&mut s) > 0 {
+    // would load an actor whose behaviour silently isn't there. Cross builds
+    // compile their own copy, since a script is native code like the player.
+    if build_scripts_for(&mut s, build::script_target(target)) > 0 {
         let dto = state_dto(&s);
         drop(s);
         app.emit_state(&dto);
         return Err("A script didn't compile, so the game wasn't built - see the log".to_string());
     }
 
-    let player = build::player_binary(&blockloom_protocol::runtime_path())?;
-    let built = build::build(&project, &dir, &player, Path::new(&path))?;
+    let built = build::build(&project, &dir, target, &player, Path::new(&path))?;
     s.push_log(LogLine {
         kind: "say".to_string(),
         actor: "Blockloom".to_string(),
         text: format!(
             "Built {} for {}: {} asset(s), {} script(s) -> {}",
             project.name,
-            build::host_target(),
+            target.label,
             built.assets,
             built.scripts,
             built.dir.display()

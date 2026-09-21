@@ -159,15 +159,29 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "list-build-targets",
+        cmd: "list_build_targets",
+        aliases: &["list_build_targets", "build-targets"],
+        summary: "Every platform a build can be made for, and whether it can be right now.",
+        args: &[],
+    },
+    CommandSpec {
         name: "build-game",
         cmd: "build_game",
         aliases: &["build_game", "build"],
         summary: "Build the open project into a folder under path that runs on its own.",
-        args: &[ArgSpec {
-            name: "path",
-            ty: "folder path",
-            required: true,
-        }],
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "folder path",
+                required: true,
+            },
+            ArgSpec {
+                name: "target",
+                ty: "target triple (default: this machine)",
+                required: false,
+            },
+        ],
     },
     // ── The world ─────────────────────────────────────────────────────────
     CommandSpec {

@@ -66,10 +66,25 @@ shell *args:
 # The player a built game ships: the same runtime, compiled as hard as the
 # `dist` profile asks, staged where the exporter looks for it. `just build`
 # keeps its quicker link, so this is a deliberate step before shipping games.
+# Other platforms' payloads come from running this there - see `stage-player`.
 player:
     cargo build --profile dist -p blockloom-runtime
     {{mkdir-players}}
     {{copy-player}}
+
+# Put a player built on another machine where the exporter will find it.
+# Blockloom can't cross-build a Bevy binary, so this is how another platform's
+# payload arrives: run `just player` there, bring the file here, name its
+# target triple.
+[windows]
+stage-player target file:
+    if not exist "target\release\players\{{target}}" mkdir "target\release\players\{{target}}"
+    copy /Y "{{ replace(file, '/', '\') }}" "target\release\players\{{target}}\{{ if target =~ 'windows' { 'blockloom-runtime.exe' } else { 'blockloom-runtime' } }}"
+
+[unix]
+stage-player target file:
+    mkdir -p "target/release/players/{{target}}"
+    cp "{{file}}" "target/release/players/{{target}}/{{ if target =~ 'windows' { 'blockloom-runtime.exe' } else { 'blockloom-runtime' } }}"
 
 test:
     cargo test --workspace

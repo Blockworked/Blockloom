@@ -10,7 +10,7 @@ Obvious gaps already identified in the project notes:
 - [ ] Let reporter-shaped custom blocks suspend and resume when they contain `wait`.
 - [x] Handle actors whose visual shape does not match the project's dimension, including a way to convert or replace the shape.
 - [x] Add project packaging so a finished game can be shared and run independently.
-- [ ] Build for platforms other than the one doing the building: stage a player
+- [x] Build for platforms other than the one doing the building: stage a player
       payload per target under `players/<triple>/`, and let the Build dialog
       pick between the targets an install actually has one for.
 - [ ] Compile a project's blocks instead of interpreting them in a build:

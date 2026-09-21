@@ -356,6 +356,19 @@ export interface ProjectEntryDto {
   opened_at: number;
 }
 
+/** One platform the Build dialog offers. */
+export interface BuildTarget {
+  /** The rustc target triple, which is also what `build_game` is given. */
+  triple: string;
+  label: string;
+  /** Whether this is the machine Blockloom is running on. */
+  host: boolean;
+  /** Whether a build for it would get anywhere right now. */
+  ready: boolean;
+  /** What it would build with, or what is missing. */
+  note: string;
+}
+
 export interface StateDto {
   library: ProjectEntryDto[];
   /** Where the New Project dialog points unless the user picks elsewhere. */

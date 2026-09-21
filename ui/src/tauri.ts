@@ -6,6 +6,7 @@ import type {
   AssetEntry,
   BlockPieceDto,
   BlockShapeDto,
+  BuildTarget,
   CameraDto,
   InstrPath,
   InstructionDto,
@@ -66,13 +67,14 @@ export async function importProject(): Promise<void> {
   if (path) await invoke<void>('import_project', { path });
 }
 
-/** Asks where the built game should go, then builds it there - a folder with
- *  the player, the project's pack and its assets in it, which runs without
- *  Blockloom. Resolves quietly if the dialog was cancelled. */
-export async function buildGame(start: string): Promise<void> {
-  const path = await pickFolder('Where to put the built game', start);
-  if (path) await invoke<string>('build_game', { path });
-}
+/** Every platform a build can be made for, this machine's first. */
+export const listBuildTargets = () => invoke<BuildTarget[]>('list_build_targets');
+
+/** Builds the open project for `target` into a folder under `path`: the
+ *  player, the project's pack and its assets, which runs without Blockloom.
+ *  Resolves to where it landed. */
+export const buildGame = (path: string, target: string) =>
+  invoke<string>('build_game', { path, target });
 
 // ─── The world ──────────────────────────────────────────────────────────────
 export const setMode = (mode: Mode) => invoke<void>('set_mode', { mode });

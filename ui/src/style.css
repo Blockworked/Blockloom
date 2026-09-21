@@ -870,7 +870,8 @@ body.asset-resizing {
   margin-bottom: 10px;
 }
 
-.dialog-row input[type='text'] {
+.dialog-row input[type='text'],
+.dialog-row select {
   flex: 1 1 auto;
   height: var(--blockstitch-btn-h-md);
   padding: 0 10px;

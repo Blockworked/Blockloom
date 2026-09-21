@@ -63,7 +63,13 @@ impl Backend {
             "export_file_name" => to_json(commands::export_file_name(state)?),
             "export_project" => to_json(commands::export_project(state, arg(&args, "path")?)?),
             "import_project" => to_json(commands::import_project(state, app, arg(&args, "path")?)?),
-            "build_game" => to_json(commands::build_game(state, app, arg(&args, "path")?)?),
+            "list_build_targets" => to_json(commands::list_build_targets(state)?),
+            "build_game" => to_json(commands::build_game(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg(&args, "target").ok().flatten(),
+            )?),
 
             // ── The world ──────────────────────────────────────────────────
             "set_mode" => {

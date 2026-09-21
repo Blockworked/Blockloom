@@ -6,7 +6,6 @@ import { useTheme } from 'blockstitch';
 import { Download, LayoutGrid, Moon, MonitorX, Package, Pause, Play, Redo2, Save, Settings, Square, Sun, Undo2, Upload } from 'lucide-vue-next';
 import { state } from '../store';
 import {
-  buildGame,
   closeProject,
   closeRuntime,
   exportProject,
@@ -21,6 +20,7 @@ import {
   stopProject,
   undo,
 } from '../tauri';
+import BuildDialog from './BuildDialog.vue';
 import ProjectSettingsDialog from './ProjectSettingsDialog.vue';
 
 const { currentTheme, toggleTheme } = useTheme();
@@ -48,6 +48,7 @@ function onName(e: Event) {
 }
 
 const settingsOpen = ref(false);
+const buildOpen = ref(false);
 
 // A command that fails has nowhere else to say so - the run log is where the
 // user is already looking for what went wrong.
@@ -81,7 +82,7 @@ async function report(action: () => Promise<void>) {
       class="icon-button"
       title="Build a standalone game"
       :disabled="!state.project"
-      @click="report(() => buildGame(state.default_project_location))"
+      @click="buildOpen = true"
     >
       <Package />
     </button>
@@ -127,6 +128,7 @@ async function report(action: () => Promise<void>) {
       {{ state.running ? 'Stop' : 'Play' }}
     </button>
 
+    <BuildDialog v-if="buildOpen" @close="buildOpen = false" />
     <ProjectSettingsDialog v-if="settingsOpen" @close="settingsOpen = false" />
   </header>
 </template>

@@ -92,6 +92,17 @@ pub fn build_dir(project_dir: &Path) -> PathBuf {
     project_dir.join(".blockloom").join("build")
 }
 
+/// Where a build for `target` goes. `None` is this machine, and stays at the
+/// top of the build folder where Play and the runtime have always looked;
+/// another platform gets a folder named after its triple, so building for
+/// three of them doesn't have them overwriting each other.
+pub fn build_dir_for(project_dir: &Path, target: Option<&str>) -> PathBuf {
+    match target {
+        Some(triple) => build_dir(project_dir).join(triple),
+        None => build_dir(project_dir),
+    }
+}
+
 /// Where a script's source sits on disk.
 pub fn source_path(project_dir: &Path, relative: &str) -> PathBuf {
     let mut path = project_dir.to_path_buf();
@@ -120,10 +131,20 @@ fn crate_name(relative: &str) -> String {
     }
 }
 
-fn dylib_name(stem: &str) -> String {
-    if cfg!(windows) {
+/// What a shared library is called on `target`, which is not always this
+/// machine: a build for another platform has to name the file that platform's
+/// way or nothing there will load it.
+fn dylib_name(stem: &str, target: Option<&str>) -> String {
+    let (windows, apple) = match target {
+        Some(triple) => (
+            triple.contains("windows"),
+            triple.contains("apple") || triple.contains("darwin"),
+        ),
+        None => (cfg!(windows), cfg!(target_os = "macos")),
+    };
+    if windows {
         format!("{stem}.dll")
-    } else if cfg!(target_os = "macos") {
+    } else if apple {
         format!("lib{stem}.dylib")
     } else {
         format!("lib{stem}.so")
@@ -133,11 +154,16 @@ fn dylib_name(stem: &str) -> String {
 /// Where a script's built library lands. The runtime looks here rather than
 /// compiling anything itself.
 pub fn library_path(project_dir: &Path, relative: &str) -> PathBuf {
-    build_dir(project_dir).join(dylib_name(&crate_name(relative)))
+    library_path_for(project_dir, relative, None)
 }
 
-fn stamp_path(project_dir: &Path, relative: &str) -> PathBuf {
-    build_dir(project_dir).join(format!("{}.stamp", crate_name(relative)))
+/// [`library_path`] for a build aimed at another platform.
+pub fn library_path_for(project_dir: &Path, relative: &str, target: Option<&str>) -> PathBuf {
+    build_dir_for(project_dir, target).join(dylib_name(&crate_name(relative), target))
+}
+
+fn stamp_path(project_dir: &Path, relative: &str, target: Option<&str>) -> PathBuf {
+    build_dir_for(project_dir, target).join(format!("{}.stamp", crate_name(relative)))
 }
 
 /// The rustc this machine has, or why there isn't one.
@@ -157,13 +183,38 @@ pub fn toolchain_version() -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Whether this machine can compile for `triple`: rustc has to know the
+/// target and its `std` has to be installed, which is a separate download.
+/// A linker for it is a third thing nothing here can check - that one shows
+/// up as rustc's own error when the build runs.
+pub fn target_installed(triple: &str) -> Result<(), String> {
+    let output = Command::new("rustc")
+        .arg("--print")
+        .arg("target-libdir")
+        .arg("--target")
+        .arg(triple)
+        .output()
+        .map_err(|e| format!("`rustc` couldn't be run ({e})"))?;
+    if !output.status.success() {
+        return Err(format!("rustc doesn't know the target {triple}"));
+    }
+    let libdir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !Path::new(&libdir).is_dir() {
+        return Err(format!(
+            "the standard library for {triple} isn't installed - `rustup target add {triple}`"
+        ));
+    }
+    Ok(())
+}
+
 /// What a built library has to match to be reused: change any of it and the
 /// script is compiled again.
-fn stamp_for(toolchain: &str, source: &str) -> String {
+fn stamp_for(toolchain: &str, target: Option<&str>, source: &str) -> String {
     format!(
-        "abi {}\n{}\nsource {} bytes\n",
+        "abi {}\n{}\ntarget {}\nsource {} bytes\n",
         abi::ABI_VERSION,
         toolchain,
+        target.unwrap_or("host"),
         source.len()
     )
 }
@@ -172,6 +223,17 @@ fn stamp_for(toolchain: &str, source: &str) -> String {
 /// Re-uses the last build when the source, the toolchain and the ABI are all
 /// unchanged, so pressing Play twice costs nothing the second time.
 pub fn compile(project_dir: &Path, relative: &str) -> Result<PathBuf, String> {
+    compile_for(project_dir, relative, None)
+}
+
+/// [`compile`] aimed at another platform, for a game being built for one.
+/// Nothing else changes: the same two rustc runs, the same cache, one folder
+/// down.
+pub fn compile_for(
+    project_dir: &Path,
+    relative: &str,
+    target: Option<&str>,
+) -> Result<PathBuf, String> {
     if !is_valid_path(relative) {
         return Err(format!(
             "\"{relative}\" isn't a script path - a script lives in {SCRIPTS_DIR}/ and ends in .rs"
@@ -181,13 +243,16 @@ pub fn compile(project_dir: &Path, relative: &str) -> Result<PathBuf, String> {
     let source = std::fs::read_to_string(&source_path)
         .map_err(|e| format!("{}: {e}", source_path.display()))?;
     let toolchain = toolchain_version()?;
+    if let Some(triple) = target {
+        target_installed(triple)?;
+    }
 
-    let build = build_dir(project_dir);
+    let build = build_dir_for(project_dir, target);
     std::fs::create_dir_all(&build).map_err(|e| format!("{}: {e}", build.display()))?;
 
-    let library = library_path(project_dir, relative);
-    let stamp = stamp_path(project_dir, relative);
-    let wanted = stamp_for(&toolchain, &source);
+    let library = library_path_for(project_dir, relative, target);
+    let stamp = stamp_path(project_dir, relative, target);
+    let wanted = stamp_for(&toolchain, target, &source);
     if library.is_file()
         && std::fs::read_to_string(&stamp).is_ok_and(|previous| previous == wanted)
         && is_newer(&library, &source_path)
@@ -195,8 +260,12 @@ pub fn compile(project_dir: &Path, relative: &str) -> Result<PathBuf, String> {
         return Ok(library);
     }
 
-    let rlib = build_prelude(&build, &toolchain)?;
-    let status = Command::new("rustc")
+    let rlib = build_prelude(&build, &toolchain, target)?;
+    let mut command = Command::new("rustc");
+    if let Some(triple) = target {
+        command.arg("--target").arg(triple);
+    }
+    let status = command
         .arg("--edition")
         .arg(EDITION)
         .arg("--crate-type")
@@ -225,18 +294,22 @@ pub fn compile(project_dir: &Path, relative: &str) -> Result<PathBuf, String> {
 /// Builds (or reuses) the `blockloom` crate every script links against. It
 /// depends only on this build of Blockloom and on the toolchain, so one copy
 /// per project folder is enough.
-fn build_prelude(build: &Path, toolchain: &str) -> Result<PathBuf, String> {
+fn build_prelude(build: &Path, toolchain: &str, target: Option<&str>) -> Result<PathBuf, String> {
     let source_path = build.join("blockloom.rs");
     let rlib = build.join("libblockloom.rlib");
     let stamp = build.join("blockloom.stamp");
-    let wanted = stamp_for(toolchain, PRELUDE_SOURCE);
+    let wanted = stamp_for(toolchain, target, PRELUDE_SOURCE);
     if rlib.is_file() && std::fs::read_to_string(&stamp).is_ok_and(|previous| previous == wanted) {
         return Ok(rlib);
     }
 
     std::fs::write(&source_path, PRELUDE_SOURCE)
         .map_err(|e| format!("{}: {e}", source_path.display()))?;
-    let status = Command::new("rustc")
+    let mut command = Command::new("rustc");
+    if let Some(triple) = target {
+        command.arg("--target").arg(triple);
+    }
+    let status = command
         .arg("--edition")
         .arg(EDITION)
         .arg("--crate-type")
@@ -338,9 +411,34 @@ mod tests {
     }
 
     #[test]
-    fn the_stamp_changes_with_the_abi_the_toolchain_or_the_source() {
-        let base = stamp_for("rustc 1.90.0", "fn main() {}");
-        assert_ne!(base, stamp_for("rustc 1.91.0", "fn main() {}"));
-        assert_ne!(base, stamp_for("rustc 1.90.0", "fn main() {} "));
+    fn the_stamp_changes_with_the_abi_the_toolchain_the_target_or_the_source() {
+        let base = stamp_for("rustc 1.90.0", None, "fn main() {}");
+        assert_ne!(base, stamp_for("rustc 1.91.0", None, "fn main() {}"));
+        assert_ne!(base, stamp_for("rustc 1.90.0", None, "fn main() {} "));
+        assert_ne!(
+            base,
+            stamp_for(
+                "rustc 1.90.0",
+                Some("x86_64-unknown-linux-gnu"),
+                "fn main() {}"
+            )
+        );
+    }
+
+    #[test]
+    fn a_library_is_named_and_placed_the_way_its_target_expects() {
+        let dir = Path::new("/project");
+        let of = |target| {
+            library_path_for(dir, "assets/scripts/player.rs", target)
+                .to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/")
+        };
+        assert!(of(Some("x86_64-pc-windows-msvc")).ends_with("x86_64-pc-windows-msvc/player.dll"));
+        assert!(
+            of(Some("x86_64-unknown-linux-gnu")).ends_with("x86_64-unknown-linux-gnu/libplayer.so")
+        );
+        assert!(of(Some("aarch64-apple-darwin")).ends_with("aarch64-apple-darwin/libplayer.dylib"));
+        // This machine's own build stays where Play and the runtime look.
+        assert!(!of(None).contains("x86_64"));
     }
 }
