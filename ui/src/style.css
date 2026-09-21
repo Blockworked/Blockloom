@@ -204,6 +204,130 @@ body {
   border-left: 1px solid var(--blockstitch-border);
 }
 
+/* ── Panel collapse and resize ──────────────────────────────────────────── */
+/* The actor list and the components inspector collapse to a rail, like the
+   block sidebar, and drag along their inner edge to resize. Widths and open
+   state live in `panels.ts`; only the chrome is styled here. */
+
+.side-panel {
+  position: relative;
+}
+
+.side-panel.collapsed > *:not(.panel-rail) {
+  display: none;
+}
+
+.panel-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.panel-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--blockstitch-text-dim);
+  cursor: pointer;
+}
+
+.panel-collapse:hover {
+  color: var(--blockstitch-text);
+}
+
+.panel-rail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  border: 0;
+  background: none;
+  color: var(--blockstitch-text-dim);
+  cursor: pointer;
+}
+
+.panel-rail:hover {
+  background: var(--blockstitch-hover-overlay);
+  color: var(--blockstitch-text);
+}
+
+.panel-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 2;
+}
+
+.side-panel .panel-resize-handle {
+  right: 0;
+}
+
+.side-panel.right .panel-resize-handle {
+  right: auto;
+  left: 0;
+}
+
+.panel-resize-handle:hover,
+body.panel-resizing .panel-resize-handle {
+  background: var(--blockstitch-accent);
+  opacity: 0.5;
+}
+
+body.panel-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* The block sidebar's own collapse toggle, and the rail it collapses to. Its
+   width resize stays blockstitch's `sidebar-resize-handle`. */
+
+.instruction-sidebar .sidebar-collapse {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--blockstitch-radius);
+  background: none;
+  color: var(--blockstitch-text-dim);
+  cursor: pointer;
+  z-index: 3;
+}
+
+.instruction-sidebar .sidebar-collapse:hover {
+  background: var(--blockstitch-hover-overlay);
+  color: var(--blockstitch-text);
+}
+
+.sidebar-rail {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  color: var(--blockstitch-text-dim);
+  cursor: pointer;
+}
+
+.sidebar-rail:hover {
+  background: var(--blockstitch-hover-overlay);
+  color: var(--blockstitch-text);
+}
+
 .panel-heading {
   display: flex;
   align-items: center;
@@ -435,9 +559,10 @@ body {
 }
 
 .asset-grip {
-  height: 4px;
-  margin-bottom: -4px;
+  height: 6px;
+  margin-bottom: -6px;
   cursor: ns-resize;
+  touch-action: none;
 }
 
 .asset-grip:hover {

@@ -12,7 +12,8 @@
 // so a file dragged out of the asset tray lands on them.
 import { computed, ref, watch } from 'vue';
 import { AppDropdown, SwitchControl } from 'blockstitch';
-import { Lock, LockOpen, Plus, X } from 'lucide-vue-next';
+import { ChevronLeft, ChevronRight, Lock, LockOpen, Plus, X } from 'lucide-vue-next';
+import { COLLAPSED_PANEL_WIDTH, beginPanelResize, panels, setPanelOpen } from '../panels';
 import { mode, openActor, state } from '../store';
 import {
   addActorComponent,
@@ -47,6 +48,11 @@ const actor = computed(() => openActor.value);
 /** Where the actor is right now, while a run is going - the project's own
  * numbers are where it will start from again. */
 const live = computed(() => state.status?.actors.find(a => a.id === actor.value?.id) ?? null);
+
+const panelStyle = computed(() => ({
+  width: `${panels.right.open ? panels.right.width : COLLAPSED_PANEL_WIDTH}px`,
+  flexBasis: `${panels.right.open ? panels.right.width : COLLAPSED_PANEL_WIDTH}px`,
+}));
 
 const shapeOptions = computed(() => shapesFor(mode.value).map(shape => ({ value: shape, label: shape })));
 
@@ -391,9 +397,16 @@ function remove(name: string) {
 </script>
 
 <template>
-  <aside class="side-panel right">
+  <aside class="side-panel right" :style="panelStyle" :class="{ collapsed: !panels.right.open }">
     <template v-if="actor">
-      <div class="panel-heading"><span>{{ actor.name }}</span></div>
+      <div class="panel-heading">
+        <span>{{ actor.name }}</span>
+        <div class="panel-heading-actions">
+          <button class="panel-collapse" title="Hide the components" @click="setPanelOpen('right', false)">
+            <ChevronRight :size="13" />
+          </button>
+        </div>
+      </div>
       <div class="panel-row">
         <label>Name</label>
         <input type="text" :value="actor.name" @change="e => renameActor(actor!.id, text(e))">
@@ -647,6 +660,8 @@ function remove(name: string) {
       </div>
     </template>
 
+    <div class="panel-resize-handle" @pointerdown="e => beginPanelResize('right', e)" />
+
     <ScriptDialog
       v-if="editingScript"
       :actor-id="editingScript.actorId"
@@ -654,5 +669,9 @@ function remove(name: string) {
       :path="editingScript.path"
       @close="editingScript = null"
     />
+
+    <button v-if="!panels.right.open" class="panel-rail" title="Show the components" @click="setPanelOpen('right', true)">
+      <ChevronLeft :size="16" />
+    </button>
   </aside>
 </template>

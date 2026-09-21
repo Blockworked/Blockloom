@@ -2,7 +2,7 @@
 // The palette: every block, grouped, plus the value blocks, the variables and
 // "My Blocks". Dragging anything out of here drops a copy of it onto the canvas.
 import { computed } from 'vue';
-import { Trash2 } from 'lucide-vue-next';
+import { ChevronLeft, ChevronRight, Trash2 } from 'lucide-vue-next';
 import {
   PaletteInstructionBlock,
   PaletteValueBlock,
@@ -10,6 +10,7 @@ import {
   sidebarWidth,
   type ValueNode,
 } from 'blockstitch';
+import { COLLAPSED_PANEL_WIDTH, panels, setBlocksOpen } from '../panels';
 import { mode, openActor, state } from '../store';
 import { paletteInstructions, paletteValueFor, applyPaletteValueEdit } from '../paletteState';
 import { OPERATOR_GROUPS, specForKind } from '../valueOps';
@@ -87,83 +88,98 @@ function onContextMenu(event: MouseEvent) {
 </script>
 
 <template>
-  <div class="instruction-sidebar" id="instruction-sidebar" :style="{ width: sidebarWidth + 'px' }" @contextmenu="onContextMenu">
-    <div class="sidebar-trash-hint">
-      <Trash2 />
-      <span>Drag a block here to delete it</span>
-    </div>
-    <div class="sidebar-scroll">
-      <template v-for="group in BLOCK_GROUPS" :key="group.label">
-        <div class="sidebar-section-label">{{ group.label }}</div>
-        <div class="sidebar-palette">
-          <PaletteInstructionBlock
-            v-for="type in group.types"
-            :key="type"
-            :type="type"
-            :instruction="paletteInstructions[type]"
-            :title="dimensionNote(type)"
-          />
-        </div>
-      </template>
+  <div
+    class="instruction-sidebar"
+    id="instruction-sidebar"
+    :style="{ width: (panels.blocks.open ? sidebarWidth : COLLAPSED_PANEL_WIDTH) + 'px' }"
+    @contextmenu="onContextMenu"
+  >
+    <template v-if="panels.blocks.open">
+      <div class="sidebar-trash-hint">
+        <Trash2 />
+        <span>Drag a block here to delete it</span>
+      </div>
+      <div class="sidebar-scroll">
+        <template v-for="group in BLOCK_GROUPS" :key="group.label">
+          <div class="sidebar-section-label">{{ group.label }}</div>
+          <div class="sidebar-palette">
+            <PaletteInstructionBlock
+              v-for="type in group.types"
+              :key="type"
+              :type="type"
+              :instruction="paletteInstructions[type]"
+              :title="dimensionNote(type)"
+            />
+          </div>
+        </template>
 
-      <template v-for="group in OPERATOR_GROUPS" :key="group.label">
-        <div class="sidebar-section-label">{{ group.label }}</div>
+        <template v-for="group in OPERATOR_GROUPS" :key="group.label">
+          <div class="sidebar-section-label">{{ group.label }}</div>
+          <div class="sidebar-palette sidebar-palette-values">
+            <PaletteValueBlock
+              v-for="kind in group.kinds"
+              :key="kind"
+              :kind="kind"
+              :value="paletteValueFor(kind)"
+              :bool-override="isBool(kind)"
+              @update:value="v => onValueEdit(kind, v)"
+            />
+          </div>
+        </template>
+
+        <div class="sidebar-section-label">Values</div>
         <div class="sidebar-palette sidebar-palette-values">
           <PaletteValueBlock
-            v-for="kind in group.kinds"
+            v-for="kind in ['Number', 'Text']"
             :key="kind"
             :kind="kind"
             :value="paletteValueFor(kind)"
-            :bool-override="isBool(kind)"
             @update:value="v => onValueEdit(kind, v)"
           />
         </div>
-      </template>
 
-      <div class="sidebar-section-label">Values</div>
-      <div class="sidebar-palette sidebar-palette-values">
-        <PaletteValueBlock
-          v-for="kind in ['Number', 'Text']"
-          :key="kind"
-          :kind="kind"
-          :value="paletteValueFor(kind)"
-          @update:value="v => onValueEdit(kind, v)"
-        />
-      </div>
+        <div class="panel-heading">
+          <span>This actor's variables</span>
+          <button type="button" class="btn-small" @click="openCreateVariableDialog('actor')">New</button>
+        </div>
+        <div class="sidebar-palette sidebar-palette-values" v-if="actorVariables.length">
+          <PaletteValueBlock v-for="name in actorVariables" :key="name" :kind="`Var:${name}`" />
+        </div>
+        <div class="panel-heading">
+          <span>Shared variables</span>
+          <button type="button" class="btn-small" @click="openCreateVariableDialog('global')">New</button>
+        </div>
+        <div class="sidebar-palette sidebar-palette-values" v-if="globalVariables.length">
+          <PaletteValueBlock v-for="name in globalVariables" :key="name" :kind="`Var:${name}`" />
+        </div>
+        <div class="sidebar-palette" v-if="hasVariables">
+          <PaletteInstructionBlock type="SetVariable" :instruction="paletteInstructions.SetVariable" />
+          <PaletteInstructionBlock type="ChangeVariable" :instruction="paletteInstructions.ChangeVariable" />
+        </div>
+        <p v-else class="panel-note">A variable remembers a number or some text - a score, a level, a name.</p>
 
-      <div class="panel-heading">
-        <span>This actor's variables</span>
-        <button type="button" class="btn-small" @click="openCreateVariableDialog('actor')">New</button>
+        <div class="panel-heading">
+          <span>My Blocks</span>
+          <button type="button" class="btn-small" @click="openCreateBlockDialog()">Make a Block</button>
+        </div>
+        <div class="sidebar-palette sidebar-palette-values" v-if="reporterBlocks.length">
+          <PaletteCallValueBlock v-for="def in reporterBlocks" :key="def.id" :def="def" />
+        </div>
+        <div class="sidebar-palette">
+          <PaletteCallBlock v-for="def in commandBlocks" :key="def.id" :def="def" />
+          <PaletteInstructionBlock type="Return" :instruction="paletteInstructions.Return" />
+        </div>
       </div>
-      <div class="sidebar-palette sidebar-palette-values" v-if="actorVariables.length">
-        <PaletteValueBlock v-for="name in actorVariables" :key="name" :kind="`Var:${name}`" />
-      </div>
-      <div class="panel-heading">
-        <span>Shared variables</span>
-        <button type="button" class="btn-small" @click="openCreateVariableDialog('global')">New</button>
-      </div>
-      <div class="sidebar-palette sidebar-palette-values" v-if="globalVariables.length">
-        <PaletteValueBlock v-for="name in globalVariables" :key="name" :kind="`Var:${name}`" />
-      </div>
-      <div class="sidebar-palette" v-if="hasVariables">
-        <PaletteInstructionBlock type="SetVariable" :instruction="paletteInstructions.SetVariable" />
-        <PaletteInstructionBlock type="ChangeVariable" :instruction="paletteInstructions.ChangeVariable" />
-      </div>
-      <p v-else class="panel-note">A variable remembers a number or some text - a score, a level, a name.</p>
-
-      <div class="panel-heading">
-        <span>My Blocks</span>
-        <button type="button" class="btn-small" @click="openCreateBlockDialog()">Make a Block</button>
-      </div>
-      <div class="sidebar-palette sidebar-palette-values" v-if="reporterBlocks.length">
-        <PaletteCallValueBlock v-for="def in reporterBlocks" :key="def.id" :def="def" />
-      </div>
-      <div class="sidebar-palette">
-        <PaletteCallBlock v-for="def in commandBlocks" :key="def.id" :def="def" />
-        <PaletteInstructionBlock type="Return" :instruction="paletteInstructions.Return" />
-      </div>
-    </div>
-    <div class="sidebar-resize-handle" @pointerdown="beginSidebarResize" />
+      <button class="sidebar-collapse" title="Hide the blocks" @click="setBlocksOpen(false)">
+        <ChevronLeft :size="14" />
+      </button>
+      <div class="sidebar-resize-handle" @pointerdown="beginSidebarResize" />
+    </template>
+    <template v-else>
+      <button class="sidebar-rail" title="Show the blocks" @click="setBlocksOpen(true)">
+        <ChevronRight :size="16" />
+      </button>
+    </template>
   </div>
   <MakeVariableDialog
     v-if="variableDialog.mode"
