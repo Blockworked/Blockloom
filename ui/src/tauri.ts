@@ -6,6 +6,7 @@ import type {
   AssetEntry,
   BlockPieceDto,
   BlockShapeDto,
+  BuildResult,
   BuildTarget,
   CameraDto,
   InstrPath,
@@ -42,6 +43,7 @@ export const forgetProject = (path: string) => invoke<void>('forget_project', { 
 /** Deletes a project's folder and everything in it. */
 export const deleteProject = (path: string) => invoke<void>('delete_project', { path });
 export const setProjectName = (name: string) => invoke<void>('set_project_name', { name });
+export const setProjectIcon = (path: string) => invoke<void>('set_project_icon', { path });
 export const saveProject = () => invoke<void>('save_project');
 
 /** Asks for a folder. Resolves to `null` if the dialog was cancelled. */
@@ -72,9 +74,9 @@ export const listBuildTargets = () => invoke<BuildTarget[]>('list_build_targets'
 
 /** Builds the open project for `target` into a folder under `path`: the
  *  player, the project's pack and its assets, which runs without Blockloom.
- *  Resolves to where it landed. */
+ *  Resolves to the runnable folder and shareable archive. */
 export const buildGame = (path: string, target: string, fast: boolean) =>
-  invoke<string>('build_game', { path, target, fast });
+  invoke<BuildResult>('build_game', { path, target, fast });
 
 // ─── The world ──────────────────────────────────────────────────────────────
 export const setMode = (mode: Mode) => invoke<void>('set_mode', { mode });

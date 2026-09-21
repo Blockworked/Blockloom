@@ -1238,3 +1238,47 @@ body.asset-resizing {
   color: var(--blockstitch-text-dim);
   line-height: 1.5;
 }
+
+.project-icon-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-icon-preview {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--blockstitch-border);
+  border-radius: 9px;
+  background: var(--blockstitch-bg);
+  color: var(--blockstitch-muted);
+}
+
+.project-icon-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.project-icon-input {
+  flex: 1 1 auto;
+}
+
+.project-icon-input input {
+  width: 100%;
+  height: var(--blockstitch-btn-h-md);
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--blockstitch-border);
+  border-radius: var(--blockstitch-radius);
+  background: var(--blockstitch-bg);
+  color: inherit;
+}
+
+.build-result {
+  margin-top: 12px;
+}

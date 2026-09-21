@@ -176,6 +176,10 @@ pub struct Project {
     #[serde(default = "new_id")]
     pub id: String,
     pub name: String,
+    /// An image asset used to brand packaged builds. Empty uses Blockloom's
+    /// bundled icon.
+    #[serde(default)]
+    pub icon: String,
     #[serde(default)]
     pub world: World,
     #[serde(default)]
@@ -245,6 +249,7 @@ impl Project {
         Self {
             id: new_id(),
             name: name.into(),
+            icon: String::new(),
             world,
             actors: vec![player, ground],
             globals: Vec::new(),
@@ -489,6 +494,7 @@ impl Project {
                 changed = true;
             }
         };
+        repoint(&mut self.icon);
         if let Some(font) = self.world.speech_bubble.font_asset.as_mut() {
             repoint(font);
         }
@@ -1002,6 +1008,7 @@ mod tests {
     #[test]
     fn a_renamed_asset_is_followed_through_the_document() {
         let mut project = Project::starter("p", Mode::TwoD);
+        project.icon = "assets/sprites/player.png".to_string();
         let id = project.actors[0].id.clone();
         let actor = project.actor_mut(&id).unwrap();
         actor.components.insert(ActorComponent::Look {
@@ -1022,6 +1029,7 @@ mod tests {
         assert!(!project.repoint_asset("assets/nothing.png", "assets/still-nothing.png"));
 
         let actor = project.actor(&id).unwrap();
+        assert_eq!(project.icon, "art/hero.png");
         assert!(matches!(
             actor.visual(),
             Some(Visual::Image { path, .. }) if path == "art/hero.png"

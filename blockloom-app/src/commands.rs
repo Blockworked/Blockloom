@@ -220,6 +220,41 @@ pub(crate) fn set_project_name(
     Ok(())
 }
 
+pub(crate) fn set_project_icon(
+    state: &SharedState,
+    app: &AppHandle,
+    path: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let normalized = if path.trim().is_empty() {
+        String::new()
+    } else {
+        let path = assets::normalize(&path)
+            .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))?;
+        if assets::kind_of(&path) != assets::AssetKind::Image {
+            return Err("The game icon must be an image asset".to_string());
+        }
+        let file = assets::resolve(&project_dir(&s)?, &path)
+            .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))?;
+        if !file.is_file() {
+            return Err(format!("{} does not exist", file.display()));
+        }
+        path
+    };
+    if s.project()
+        .is_some_and(|project| project.icon == normalized)
+    {
+        return Ok(());
+    }
+    push_undo(&mut s);
+    if let Some(project) = s.project_mut() {
+        project.icon = normalized;
+    }
+    auto_save(&s);
+    emit(app, &s);
+    Ok(())
+}
+
 pub(crate) fn save_open_project(state: &SharedState, app: &AppHandle) -> Result<(), String> {
     let s = lock(state)?;
     if let Some(open) = &s.open {
@@ -914,7 +949,7 @@ pub(crate) fn build_game(
     path: String,
     target: Option<String>,
     fast: Option<bool>,
-) -> Result<String, String> {
+) -> Result<build::Build, String> {
     let mut s = lock(state)?;
     let Some(project) = s.project().cloned() else {
         return Err("No project is open".to_string());
@@ -973,17 +1008,18 @@ pub(crate) fn build_game(
         kind: "say".to_string(),
         actor: "Blockloom".to_string(),
         text: format!(
-            "Built {} for {}: {} asset(s), {} script(s), {} blocks -> {}",
+            "Built {} for {}: {} asset(s), {} script(s), {} blocks -> {} and {}",
             project.name,
             target.label,
             built.assets,
             built.scripts,
             if built.compiled { "native" } else { "VM" },
-            built.dir.display()
+            built.dir.display(),
+            built.archive.display()
         ),
     });
     emit(app, &s);
-    Ok(built.dir.to_string_lossy().into_owned())
+    Ok(built)
 }
 
 // ─── Assets ────────────────────────────────────────────────────────────────

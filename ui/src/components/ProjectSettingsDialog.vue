@@ -5,13 +5,60 @@
 //
 // Swapping dimensions converts the scene and restarts a running game, so it
 // asks before throwing a project at the other world.
-import { onMounted, onUnmounted } from 'vue';
-import { Box, Square } from 'lucide-vue-next';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
+import { Box, FolderOpen, ImageIcon, Square, X } from 'lucide-vue-next';
+import AssetDrop from './AssetDrop.vue';
 import { mode, state } from '../store';
-import { setBackground, setCamera, setFixedRate, setGravity, setMode } from '../tauri';
+import {
+  importAssets,
+  pickFiles,
+  readAsset,
+  setBackground,
+  setCamera,
+  setFixedRate,
+  setGravity,
+  setMode,
+  setProjectIcon,
+} from '../tauri';
 import type { CameraDto, Mode } from '../types';
 
 const emit = defineEmits<{ close: [] }>();
+const iconPreview = ref('');
+
+watch(
+  () => state.project?.icon,
+  async path => {
+    if (!path) {
+      iconPreview.value = '';
+      return;
+    }
+    try {
+      iconPreview.value = await readAsset(path);
+    } catch {
+      iconPreview.value = '';
+    }
+  },
+  { immediate: true },
+);
+
+async function chooseIcon() {
+  try {
+    const files = await pickFiles('Choose a game icon');
+    if (!files?.length) return;
+    const imported = await importAssets('assets', [files[0]]);
+    if (imported[0]) await setProjectIcon(imported[0]);
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function applyIcon(path: string) {
+  void setProjectIcon(path).catch((err: unknown) => console.error(err));
+}
+
+function writeIcon(e: Event) {
+  applyIcon((e.target as HTMLInputElement).value);
+}
 
 function applyMode(target: Mode) {
   if (target === mode.value) return;
@@ -79,6 +126,31 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown));
             ? 'Sprites and flat physics, measured in pixels.'
             : 'Meshes and 3D physics, measured in metres.' }}
           Switching converts the scene and restarts a running game.
+        </p>
+        <label class="dialog-label">Game icon</label>
+        <div class="project-icon-row">
+          <div class="project-icon-preview">
+            <img v-if="iconPreview" :src="iconPreview" alt="Game icon">
+            <ImageIcon v-else :size="28" />
+          </div>
+          <AssetDrop class="project-icon-input" :accept="['image']" @asset="applyIcon">
+            <input
+              type="text"
+              :value="state.project?.icon ?? ''"
+              placeholder="Blockloom default"
+              @change="writeIcon"
+            >
+          </AssetDrop>
+          <button class="btn" title="Choose an image" @click="chooseIcon"><FolderOpen :size="14" /></button>
+          <button
+            class="btn"
+            title="Use the Blockloom default"
+            :disabled="!state.project?.icon"
+            @click="applyIcon('')"
+          ><X :size="14" /></button>
+        </div>
+        <p class="settings-note">
+          Used for the packaged executable or platform launcher. Square PNG images work best.
         </p>
       </section>
 

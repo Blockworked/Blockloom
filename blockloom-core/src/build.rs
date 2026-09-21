@@ -1,8 +1,8 @@
 //! Building a project into a game that runs on its own.
 //!
 //! A build is the player binary, the project's [`crate::pack::GamePack`], its
-//! assets, compiled scripts, and optional native block logic, laid out in one
-//! folder (see [`crate::pack`] for the shape).
+//! assets, compiled scripts, optional native block logic, platform wrapper,
+//! icons and shareable ZIP (see [`crate::pack`] for the shape).
 //!
 //! Which platforms an install can build for is a question about what it has
 //! beside it. The player is a native binary that nothing here can produce, so
@@ -14,6 +14,7 @@
 //! shows.
 
 use crate::codegen;
+use crate::distribution;
 use crate::pack::{self, GamePack};
 use crate::project::{self, Project};
 use crate::script;
@@ -29,6 +30,16 @@ pub struct Target {
     pub label: &'static str,
     /// Whether an executable there wants `.exe` on the end.
     pub windows: bool,
+}
+
+impl Target {
+    pub fn is_macos(self) -> bool {
+        self.triple.ends_with("apple-darwin")
+    }
+
+    pub fn is_linux(self) -> bool {
+        self.triple.ends_with("linux-gnu")
+    }
 }
 
 /// Every platform Blockloom knows how to lay a build out for. Whether one is
@@ -230,12 +241,14 @@ fn staged_player(target: &Target, fallback: &Path) -> Option<PathBuf> {
 }
 
 /// Where a build landed, and what went into it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Build {
     /// The build folder itself.
     pub dir: PathBuf,
-    /// The renamed player, which is what somebody double-clicks.
+    /// What somebody launches: the executable, wrapper, or app binary.
     pub binary: PathBuf,
+    /// The ZIP somebody can send to another machine.
+    pub archive: PathBuf,
     pub target: &'static str,
     pub assets: usize,
     pub scripts: usize,
@@ -267,20 +280,23 @@ pub fn build(
     let dir = parent.join(build_name(project, target));
     clear_build_dir(&dir)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    std::fs::write(dir.join(BUILD_MARKER), target.triple)
+        .map_err(|error| format!("{}: {error}", dir.display()))?;
 
-    let binary = dir.join(binary_name(&project::folder_name(&project.name), target));
-    std::fs::copy(player, &binary).map_err(|e| {
+    let name = project::folder_name(&project.name);
+    let layout = layout(&dir, &name, target)?;
+    std::fs::copy(player, &layout.player).map_err(|e| {
         format!(
             "couldn't copy the player {} -> {}: {e}",
             player.display(),
-            binary.display()
+            layout.player.display()
         )
     })?;
     // Copying a file doesn't carry its mode everywhere, and a game nobody can
     // execute isn't one.
-    make_executable(&binary)?;
+    make_executable(&layout.player)?;
 
-    let game = pack::game_dir(&dir);
+    let game = layout.game.clone();
     std::fs::create_dir_all(&game).map_err(|e| format!("{}: {e}", game.display()))?;
     GamePack::new(project.clone()).write(&pack::pack_path(&game))?;
 
@@ -293,14 +309,151 @@ pub fn build(
         false
     };
 
+    let icons = distribution::Icons::load(project_dir, &project.icon)?;
+    decorate(project, target, &layout, &icons)?;
+    let archive = parent.join(format!("{}.zip", build_name(project, target)));
+    distribution::archive(&dir, &archive, &layout.executables)?;
+
     Ok(Build {
         dir,
-        binary,
+        binary: layout.binary,
+        archive,
         target: target.triple,
         assets,
         scripts,
         compiled,
     })
+}
+
+const BUILD_MARKER: &str = ".blockloom-build";
+
+struct Layout {
+    /// What the user launches: an executable, a Linux wrapper, or the binary
+    /// inside a macOS app.
+    binary: PathBuf,
+    /// The native player copied from the payload.
+    player: PathBuf,
+    game: PathBuf,
+    resources: PathBuf,
+    executables: Vec<PathBuf>,
+}
+
+fn layout(dir: &Path, name: &str, target: &Target) -> Result<Layout, String> {
+    if target.is_macos() {
+        let contents = dir.join(format!("{name}.app")).join("Contents");
+        let macos = contents.join("MacOS");
+        let resources = contents.join("Resources");
+        std::fs::create_dir_all(&macos).map_err(|e| format!("{}: {e}", macos.display()))?;
+        std::fs::create_dir_all(&resources).map_err(|e| format!("{}: {e}", resources.display()))?;
+        let player = macos.join(name);
+        return Ok(Layout {
+            binary: player.clone(),
+            player: player.clone(),
+            game: pack::game_dir(&resources),
+            resources,
+            executables: vec![player],
+        });
+    }
+    if target.is_linux() {
+        let wrapper = dir.join(name);
+        let player = dir.join(".blockloom-player");
+        return Ok(Layout {
+            binary: wrapper.clone(),
+            player: player.clone(),
+            game: pack::game_dir(dir),
+            resources: dir.to_path_buf(),
+            executables: vec![wrapper, player],
+        });
+    }
+    let player = dir.join(binary_name(name, target));
+    Ok(Layout {
+        binary: player.clone(),
+        player: player.clone(),
+        game: pack::game_dir(dir),
+        resources: dir.to_path_buf(),
+        executables: vec![player],
+    })
+}
+
+fn decorate(
+    project: &Project,
+    target: &Target,
+    layout: &Layout,
+    icons: &distribution::Icons,
+) -> Result<(), String> {
+    let name = project::folder_name(&project.name);
+    if target.windows {
+        std::fs::write(layout.resources.join(format!("{name}.ico")), &icons.ico)
+            .map_err(|error| format!("couldn't write the Windows icon: {error}"))?;
+        return distribution::apply_windows_icon(&layout.player, &icons.ico);
+    }
+    if target.is_macos() {
+        std::fs::write(layout.resources.join("GameIcon.icns"), &icons.icns)
+            .map_err(|error| format!("couldn't write the macOS icon: {error}"))?;
+        let contents = layout
+            .resources
+            .parent()
+            .ok_or("the macOS app has no Contents folder")?;
+        std::fs::write(contents.join("Info.plist"), info_plist(project, &name))
+            .map_err(|error| format!("couldn't write Info.plist: {error}"))?;
+        return std::fs::write(contents.join("PkgInfo"), "APPL????")
+            .map_err(|error| format!("couldn't write PkgInfo: {error}"));
+    }
+    if target.is_linux() {
+        std::fs::write(layout.resources.join(format!("{name}.png")), &icons.png)
+            .map_err(|error| format!("couldn't write the Linux icon: {error}"))?;
+        std::fs::write(
+            &layout.binary,
+            "#!/bin/sh\nHERE=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\nexec \"$HERE/.blockloom-player\" \"$@\"\n",
+        )
+        .map_err(|error| format!("couldn't write the Linux launcher: {error}"))?;
+        make_executable(&layout.binary)?;
+        let desktop = layout.resources.join(format!("{name}.desktop"));
+        std::fs::write(&desktop, desktop_entry(&name))
+            .map_err(|error| format!("couldn't write the Linux desktop launcher: {error}"))?;
+        make_executable(&desktop)?;
+    }
+    Ok(())
+}
+
+fn info_plist(project: &Project, executable: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"https://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+<plist version=\"1.0\"><dict>\n\
+<key>CFBundleDisplayName</key><string>{}</string>\n\
+<key>CFBundleExecutable</key><string>{}</string>\n\
+<key>CFBundleIconFile</key><string>GameIcon</string>\n\
+<key>CFBundleIdentifier</key><string>com.blockloom.game.{}</string>\n\
+<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>\n\
+<key>CFBundleName</key><string>{}</string>\n\
+<key>CFBundlePackageType</key><string>APPL</string>\n\
+<key>CFBundleShortVersionString</key><string>1.0</string>\n\
+<key>CFBundleVersion</key><string>1</string>\n\
+<key>NSHighResolutionCapable</key><true/>\n\
+</dict></plist>\n",
+        xml(&project.name),
+        xml(executable),
+        xml(&project.id),
+        xml(&project.name),
+    )
+}
+
+fn xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn desktop_entry(name: &str) -> String {
+    format!(
+        "[Desktop Entry]\nType=Application\nName={name}\nComment=Built with Blockloom\n\
+Exec=sh -c 'cd \"$(dirname \"$1\")\" && exec \"./$(basename \"${{1%.desktop}}\")\"' sh %k\n\
+Icon=./{name}.png\nTerminal=false\nCategories=Game;\n"
+    )
 }
 
 fn copy_logic(project_dir: &Path, game: &Path, target: &Target) -> Result<(), String> {
@@ -337,7 +490,7 @@ fn clear_build_dir(dir: &Path) -> Result<(), String> {
     if !dir.exists() {
         return Ok(());
     }
-    if !pack::pack_path(&pack::game_dir(dir)).is_file() {
+    if !dir.join(BUILD_MARKER).is_file() && !pack::pack_path(&pack::game_dir(dir)).is_file() {
         return Err(format!(
             "{} is already there and isn't a built game, so it won't be replaced",
             dir.display()
@@ -467,8 +620,12 @@ mod tests {
         std::fs::write(project_dir.join("assets/sprites/ball.png"), b"png").unwrap();
         std::fs::write(project_dir.join("assets/scripts/player.rs"), b"// rust").unwrap();
 
-        let player = root.join("player-binary");
-        std::fs::write(&player, b"MZ").unwrap();
+        let player = root.join(if cfg!(windows) {
+            "player-binary.exe"
+        } else {
+            "player-binary"
+        });
+        std::fs::copy(std::env::current_exe().unwrap(), &player).unwrap();
 
         (
             Project::starter("Pond Game", Mode::TwoD),
@@ -494,6 +651,8 @@ mod tests {
 
         assert_eq!(built.dir, out.join(format!("Pond Game ({})", target.label)));
         assert!(built.binary.is_file());
+        assert!(built.archive.is_file());
+        assert_eq!(&std::fs::read(&built.archive).unwrap()[..2], b"PK");
         assert!(
             built
                 .binary
@@ -552,6 +711,63 @@ mod tests {
             codegen::library_path(&pack::game_dir(&built.dir)).is_file(),
             "the player must find native logic in its normal build folder"
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn macos_is_a_real_app_bundle() {
+        let root = temp("mac-app");
+        let (project, project_dir, player) = a_project(&root);
+        let target = target("aarch64-apple-darwin").unwrap();
+
+        let built = build(
+            &project,
+            &project_dir,
+            target,
+            &player,
+            &root.join("out"),
+            false,
+        )
+        .unwrap();
+
+        let contents = built.dir.join("Pond Game.app/Contents");
+        assert_eq!(built.binary, contents.join("MacOS/Pond Game"));
+        assert!(contents.join("Info.plist").is_file());
+        assert_eq!(
+            std::fs::read(contents.join("PkgInfo")).unwrap(),
+            b"APPL????"
+        );
+        assert!(contents.join("Resources/GameIcon.icns").is_file());
+        assert!(
+            pack::pack_path(&contents.join("Resources/game")).is_file(),
+            "the app keeps game data in Resources"
+        );
+        assert!(built.archive.is_file());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn linux_gets_a_portable_launcher_and_desktop_entry() {
+        let root = temp("linux-wrapper");
+        let (project, project_dir, player) = a_project(&root);
+        let target = target("x86_64-unknown-linux-gnu").unwrap();
+
+        let built = build(
+            &project,
+            &project_dir,
+            target,
+            &player,
+            &root.join("out"),
+            false,
+        )
+        .unwrap();
+
+        assert!(built.binary.is_file());
+        assert!(built.dir.join(".blockloom-player").is_file());
+        assert!(built.dir.join("Pond Game.desktop").is_file());
+        assert!(built.dir.join("Pond Game.png").is_file());
+        let launcher = std::fs::read_to_string(&built.binary).unwrap();
+        assert!(launcher.contains(".blockloom-player"), "{launcher}");
         let _ = std::fs::remove_dir_all(root);
     }
 

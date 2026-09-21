@@ -130,6 +130,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-project-icon",
+        cmd: "set_project_icon",
+        aliases: &["set_project_icon"],
+        summary: "Choose an image asset to brand packaged builds.",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "image asset path (blank clears)",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "save-project",
         cmd: "save_project",
         aliases: &["save_project"],

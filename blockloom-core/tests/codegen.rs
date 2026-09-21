@@ -335,6 +335,7 @@ fn project_with_blocks(
     Project {
         id: "p".to_string(),
         name: "differential".to_string(),
+        icon: String::new(),
         world: blockloom_core::scene::World {
             mode: Mode::TwoD,
             ..Default::default()

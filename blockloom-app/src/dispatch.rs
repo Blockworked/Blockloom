@@ -59,6 +59,9 @@ impl Backend {
             "set_project_name" => {
                 to_json(commands::set_project_name(state, app, arg(&args, "name")?)?)
             }
+            "set_project_icon" => {
+                to_json(commands::set_project_icon(state, app, arg(&args, "path")?)?)
+            }
             "save_project" => to_json(commands::save_open_project(state, app)?),
             "export_file_name" => to_json(commands::export_file_name(state)?),
             "export_project" => to_json(commands::export_project(state, arg(&args, "path")?)?),

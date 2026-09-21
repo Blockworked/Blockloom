@@ -261,23 +261,41 @@ thread the thread-local sensor snapshot lives on. Keep it that way.
 ### Building a game
 
 Build is not Export. Export writes a `.blockloom` file for somebody else's
-editor; Build makes a folder somebody can run without Blockloom at all:
+editor; Build makes a runnable folder and a ZIP somebody can share without
+Blockloom at all. Windows keeps the player and `game/` together. Linux adds a
+portable shell launcher, a `.desktop` entry and a PNG icon. macOS uses the
+native bundle layout:
 
 ```text
 Pond Game/
   Pond Game.exe        the player: `blockloom-runtime`, renamed
+  Pond Game.ico        the project icon, also embedded in the executable
   game/
     game.pack          the document, and the format version it was written at
     assets/...         the project's assets, minus the script sources
     .blockloom/build/  native blocks and script libraries
 ```
 
+```text
+Pond Game.app/
+  Contents/
+    Info.plist
+    MacOS/Pond Game
+    Resources/
+      GameIcon.icns
+      game/...
+```
+
 `blockloom-core/src/build.rs` lays that out and `commands::build_game` drives
-it. The player finds `game/game.pack` beside its own executable, so renaming
-the binary is the whole of the branding, and `game/` is handed to the runtime
-as the project folder - which is why the assets and native libraries keep
-the spelling they have inside a project. Nothing in the runtime knows whether
-it is playing a folder or a build.
+it. The player finds `game/game.pack` beside its own executable, or under the
+app's `Contents/Resources` on macOS. That `game/` is handed to the runtime as
+the project folder, which is why assets and native libraries keep the spelling
+they have inside a project.
+
+Project Settings holds one image asset for build branding. Packaging converts
+it into a multi-size Windows ICO, a macOS ICNS and a Linux PNG; an empty setting
+uses Blockloom's bundled icon. The ZIP contains the platform-named build folder
+as its top-level entry and preserves executable bits for Linux and macOS.
 
 `player::Launch` is the one fork: a pack beside the binary means player mode,
 which takes its dimension from the document rather than `--mode`, presses its
@@ -428,8 +446,6 @@ lands.
 ### Known gaps
 
 - No clones (`create clone of myself`), no sounds, no lists.
-- A build carries no icon of its own and is a folder rather than an installer
-  or one file; macOS gets that same folder rather than an `.app` bundle.
 - Building for another platform needs its player staged by hand, and a scripted
   project also needs that target's `std` and a linker for it.
 - Recursive statement-shaped custom blocks fall back to the VM because their

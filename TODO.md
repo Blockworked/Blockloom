@@ -10,6 +10,8 @@ Obvious gaps already identified in the project notes:
 - [ ] Let reporter-shaped custom blocks suspend and resume when they contain `wait`.
 - [x] Handle actors whose visual shape does not match the project's dimension, including a way to convert or replace the shape.
 - [x] Add project packaging so a finished game can be shared and run independently.
+- [x] Finish platform packaging with Windows executable icons, Linux launchers,
+      macOS `.app` bundles, project-selected icon assets, and shareable ZIPs.
 - [x] Build for platforms other than the one doing the building: stage a player
       payload per target under `players/<triple>/`, and let the Build dialog
       pick between the targets an install actually has one for.
@@ -31,3 +33,4 @@ Obvious gaps already identified in the project notes:
       - The root `Cargo.toml` declares one target per script in `assets/scripts/*.rs`, plus a path dependency on the assembled `abi.rs` + `prelude.rs` kept as a `blockloom` crate under `.blockloom/`, so `use blockloom::*` and `export!` resolve against real source. Play keeps the fast direct-`rustc` compile, so Cargo is analysis-only; regenerate the root `Cargo.toml` whenever scripts or the ABI change to keep it in sync.
       - Later: feed `cargo check` output back into the editor so errors also show inline in Blockloom's own script editor, reusing the same project.
 - [x] Add a shell command system with full control over the app, so an AI agent can create and edit projects in any way a user can, at the user's request.
+- [ ] Add a Model Context Protocol (MCP) server so AI agents can use blockloom directly instead of shelling out through `blockloom-shell`. The shell's command registry is the natural surface to expose: each dispatch command becomes an MCP tool, so an agent can inspect, create, and edit a project to match a user's request. Probably a pnpm/Node-based `mcp` host running the existing `blockloom-shell` binary via stdio, or a Rust stdio server implementing the MCP protocol against the same `Backend::dispatch`. Needs: an initial `list projects`/`read project` tool for context, tool schemas derived from each `CommandSpec`'s known keys, per-command JSON responses that already come out of the shell, and coexistence rules so an MCP session and the editor window don't fight over one in-memory project (the same warning the shell already carries).

@@ -31,6 +31,7 @@ pub mod blocks;
 pub mod build;
 pub mod codegen;
 pub mod components;
+mod distribution;
 pub mod fields;
 pub mod library;
 pub mod pack;

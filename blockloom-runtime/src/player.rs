@@ -116,7 +116,20 @@ fn locate_pack(path: &Path) -> Option<PathBuf> {
         return Some(inside);
     }
     let nested = pack::pack_path(&pack::game_dir(path));
-    nested.is_file().then_some(nested)
+    if nested.is_file() {
+        return Some(nested);
+    }
+    let bundled = pack::pack_path(&pack::game_dir(&path.join("Contents/Resources")));
+    if bundled.is_file() {
+        return Some(bundled);
+    }
+    std::fs::read_dir(path)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|candidate| candidate.extension().is_some_and(|ext| ext == "app"))
+        .map(|app| pack::pack_path(&pack::game_dir(&app.join("Contents/Resources"))))
+        .find(|candidate| candidate.is_file())
 }
 
 fn fatal(message: &str) -> ! {
@@ -181,8 +194,17 @@ mod tests {
 
         assert_eq!(locate_pack(&file), Some(file.clone()));
         assert_eq!(locate_pack(&game), Some(file.clone()));
-        assert_eq!(locate_pack(&root), Some(file));
+        assert_eq!(locate_pack(&root), Some(file.clone()));
         assert_eq!(locate_pack(&root.join("nowhere")), None);
+
+        let app = root.join("Pond.app");
+        let bundled_game = app.join("Contents/Resources/game");
+        std::fs::create_dir_all(&bundled_game).unwrap();
+        let bundled = pack::pack_path(&bundled_game);
+        std::fs::write(&bundled, b"{}").unwrap();
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(locate_pack(&app), Some(bundled.clone()));
+        assert_eq!(locate_pack(&root), Some(bundled));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

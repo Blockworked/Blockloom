@@ -1,6 +1,7 @@
 //! What a built game carries: the document, packed beside the player binary.
 //!
-//! A built game is a folder, like a project is:
+//! A Windows build is a folder like this; Linux adds launchers, while macOS
+//! places the same `game/` under `Pond Game.app/Contents/Resources`:
 //!
 //! ```text
 //! Pond Game/
@@ -11,11 +12,9 @@
 //!     .blockloom/build/  native blocks and script libraries
 //! ```
 //!
-//! The player finds `game/game.pack` next to its own executable, so renaming
-//! the binary is all the branding a build needs. `game/` is handed to the
-//! runtime as the project folder, which is why the assets and built libraries
-//! keep the spelling they have in a project - nothing in the runtime has to
-//! know whether it is playing a folder or a build.
+//! The player finds `game/game.pack` next to its executable, or in the app's
+//! Resources folder on macOS. `game/` is handed to the runtime as the project
+//! folder, so assets and built libraries keep their project spelling.
 
 use crate::project::Project;
 use serde::{Deserialize, Serialize};
@@ -97,8 +96,13 @@ pub fn pack_path(game_dir: &Path) -> PathBuf {
 /// question "am I a built game?" is this returning `Some`.
 pub fn beside_exe() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let path = pack_path(&game_dir(exe.parent()?));
-    path.is_file().then_some(path)
+    let parent = exe.parent()?;
+    let direct = pack_path(&game_dir(parent));
+    if direct.is_file() {
+        return Some(direct);
+    }
+    let bundled = pack_path(&game_dir(&parent.parent()?.join("Resources")));
+    bundled.is_file().then_some(bundled)
 }
 
 #[cfg(test)]

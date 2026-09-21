@@ -287,6 +287,7 @@ export interface ActorDto {
 export interface ProjectDto {
   id: string;
   name: string;
+  icon: string;
   world: WorldDto;
   actors: ActorDto[];
   globals: VariableDto[];
@@ -371,6 +372,16 @@ export interface BuildTarget {
   fast_ready: boolean;
   /** Why native blocks are or are not available. */
   fast_note: string;
+}
+
+export interface BuildResult {
+  dir: string;
+  binary: string;
+  archive: string;
+  target: string;
+  assets: number;
+  scripts: number;
+  compiled: boolean;
 }
 
 export interface StateDto {

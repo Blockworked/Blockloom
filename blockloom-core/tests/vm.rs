@@ -24,6 +24,7 @@ fn project_with(strands: Vec<Strand>) -> Project {
     Project {
         id: "p".to_string(),
         name: "test".to_string(),
+        icon: String::new(),
         world: blockloom_core::scene::World {
             mode: Mode::TwoD,
             ..Default::default()

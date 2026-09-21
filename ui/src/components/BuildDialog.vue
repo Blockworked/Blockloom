@@ -7,7 +7,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { FolderOpen } from 'lucide-vue-next';
 import { state } from '../store';
 import { buildGame, listBuildTargets, pickFolder } from '../tauri';
-import type { BuildTarget } from '../types';
+import type { BuildResult, BuildTarget } from '../types';
 
 const emit = defineEmits<{ close: [] }>();
 
@@ -15,7 +15,7 @@ const targets = ref<BuildTarget[]>([]);
 const triple = ref('');
 const location = ref(state.default_project_location);
 const error = ref('');
-const built = ref('');
+const built = ref<BuildResult | null>(null);
 const busy = ref(false);
 const fast = ref(false);
 
@@ -43,7 +43,7 @@ async function submit() {
   if (busy.value || !chosen.value?.ready) return;
   busy.value = true;
   error.value = '';
-  built.value = '';
+  built.value = null;
   try {
     built.value = await buildGame(location.value.trim(), triple.value, fast.value);
   } catch (e) {
@@ -87,7 +87,10 @@ async function submit() {
         Blockloom.
       </p>
 
-      <p v-if="built" class="panel-note path-preview">Built: <code>{{ built }}</code></p>
+      <div v-if="built" class="build-result">
+        <p class="panel-note path-preview">Runnable folder: <code>{{ built.dir }}</code></p>
+        <p class="panel-note path-preview">Shareable ZIP: <code>{{ built.archive }}</code></p>
+      </div>
 
       <div class="dialog-actions">
         <button class="btn" @click="emit('close')">{{ built ? 'Done' : 'Cancel' }}</button>
