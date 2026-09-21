@@ -445,6 +445,8 @@ pub(crate) fn duplicate_actor(
         }
     }
     copy.graph.comments.clear();
+    // There is one camera, so the copy doesn't get to keep it.
+    copy.components.remove("Camera");
     let id = project.add_actor(copy);
     s.selected_actor = Some(id.clone());
     auto_save(&s);

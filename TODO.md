@@ -11,4 +11,6 @@ Obvious gaps already identified in the project notes:
 - [x] Handle actors whose visual shape does not match the project's dimension, including a way to convert or replace the shape.
 - [ ] Add project packaging so a finished game can be shared and run independently.
 - [x] Redesign projects as folders: the app always starts on a Dashboard page for creating new projects and opening existing ones, with each project stored as a folder so it can hold assets.
-- [ ] Add a component system built on Bevy's ECS components that turns all properties into components, with support for custom components such as scripts (possibly in Rust) and camera-attach components (for first-person / third-person cameras).
+- [x] Add a component system built on Bevy's ECS components that turns all properties into components, with support for custom components and camera-attach components (for first-person / third-person cameras).
+- [ ] Add a script component that runs Rust, so a project can drop out of blocks where it needs to. Needs a compiler or plugin story of its own; `ActorComponent` is where it would slot in.
+- [ ] Let blocks attach and detach whole components at runtime, not just write their fields.

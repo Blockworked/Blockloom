@@ -108,10 +108,11 @@ Two processes: the editor window, and the game world.
   JSON over the child's stdin/stdout. No sockets, no ports; the pipe closing is
   the whole shutdown handshake.
 - **`blockloom-core`** - the engine library both processes share: `scene.rs`
-  (actors, looks, bodies, camera, 2D or 3D), `blocks.rs` (the block vocabulary
-  and its `BlockKind` impl), `fields.rs` (what the frontend calls each value
-  slot), `project.rs` (the saved document and the folder it lives in),
-  `library.rs` (the project folders the Dashboard lists), `vm/`
+  (the value types a world is built from - looks, bodies, placements, camera),
+  `components.rs` (what an actor is made of - see below), `blocks.rs` (the
+  block vocabulary and its `BlockKind` impl), `fields.rs` (what the frontend
+  calls each value slot), `project.rs` (the saved document and the folder it
+  lives in), `library.rs` (the project folders the Dashboard lists), `vm/`
   (the block VM), `sense.rs` (the world state reporter blocks read), and
   `wire.rs` (the one shape difference between documents and the frontend).
 - **`blockstitch-core`** (sibling repo, see above) - the shared block-editor
@@ -124,6 +125,30 @@ Two processes: the editor window, and the game world.
   edit a drag/drop/typed character performs. Blockloom implements `BlockKind`
   for `InstructionKind` (`blocks.rs`), names its value slots in `fields.rs`, and
   gives every actor a `BlockGraph` of its own.
+
+### Components
+
+An actor is a list of components, not a fixed set of fields
+(`blockloom-core/src/components.rs`). `Place`, `Look`, `Render` and `Body`
+each become the Bevy component they name when the runtime spawns the actor,
+so removing `Body` really does leave it without a rigid body, and removing
+`Look` leaves a positioned, scriptable actor with nothing to draw. Only
+`Place` can't be removed: there is nowhere for an entity without a transform
+to be. `actor.visual()` is therefore an `Option`, while `placement()`,
+`physics()` and `visible()` fall back to a default.
+
+Two components have no fixed-field ancestor. `Camera` attaches the world
+camera to that actor - follow, first person or third person - and one project
+has one of them, so adding it takes it off whoever had it. `Custom` is a named
+bag of values the project invented (`Health { hp, armour }`); the runtime
+carries it on the entity as `CustomComponents`, publishes it through
+`sense::ActorSense`, and `set <field> of <component> to` writes it back. Like
+a position and unlike a variable, those writes last exactly as long as the run.
+
+Pre-component documents kept `visual`/`placement`/`physics`/`visible` flat on
+the actor, and the world camera named the actor it followed. Both still load:
+`Actor` deserializes through `ActorRepr`, and `Project::normalize` moves the
+old `follow` onto its actor as a camera component.
 
 ### How a project runs
 
@@ -158,8 +183,9 @@ blockstitch), and `blockFields.ts`, which is where a block's row comes from:
 every block is described once as a list of pieces (a label, a value slot, a
 dropdown, a nested body) and two factories turn that into the canvas component
 and the sidebar-prefab component. **Adding a block means adding a variant to
-`InstructionKind`, a row to `BLOCK_SPECS`, a field id if it has value slots, and
-a `Step`/`Effect` if it does something new** - not a pair of `.vue` files. The
+`InstructionKind`, a row to `BLOCK_SPECS`, an icon and label in `icons.ts`, a
+field id if it has value slots, and a `Step`/`Effect` if it does something
+new** - not a pair of `.vue` files. The
 two blocks whose row comes from a `BlockDef` rather than their type
 (`BlockHeader`, `CallBlock`) are still hand-written, in `components/fields/`.
 
@@ -181,6 +207,9 @@ lands.
 ### Known gaps
 
 - No clones (`create clone of myself`), no sounds, no lists.
+- Blocks can write a custom component's fields but can't attach or detach a
+  whole component at runtime, and there is no script component: running Rust
+  from a project needs a compiler story of its own.
 - `say` shows as a camera-projected speech bubble over its actor in both 2D and
   3D, and is also recorded in the editor log. Bubble styling is saved on the
   world with an optional font asset path for the planned asset manager.
