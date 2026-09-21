@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Project selection, the 2D/3D switch, and the run controls.
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { AppDropdown } from 'blockstitch';
 import { useTheme } from 'blockstitch';
 import { Download, Moon, MonitorX, Pause, Play, Plus, Redo2, Save, Square, Sun, Trash2, Undo2, Upload } from 'lucide-vue-next';
@@ -49,20 +49,9 @@ async function report(action: () => Promise<void>) {
   }
 }
 
-// Deleting is two clicks rather than a dialog: the button arms itself, and
-// disarms again if it isn't confirmed.
-const armed = ref(false);
-let disarm: number | undefined;
-
 function onRemove() {
-  if (!armed.value) {
-    armed.value = true;
-    disarm = window.setTimeout(() => (armed.value = false), 3000);
-    return;
-  }
-  window.clearTimeout(disarm);
-  armed.value = false;
-  void removeProject();
+  if (!state.project) return;
+  if (window.confirm(`Delete project "${state.project.name}"? This cannot be undone.`)) void removeProject();
 }
 </script>
 
@@ -86,8 +75,7 @@ function onRemove() {
     <button class="icon-button" title="New project" @click="newProject('Untitled', mode)"><Plus /></button>
     <button
       class="icon-button"
-      :class="{ danger: armed }"
-      :title="armed ? 'Click again to delete this project' : 'Delete this project'"
+      title="Delete this project"
       :disabled="!state.project"
       @click="onRemove"
     >

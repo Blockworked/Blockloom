@@ -1,7 +1,8 @@
 // The two ways the frontend reaches the backend.
 //
-// Inside the Tauri window, commands go through the `call` command and state
-// arrives as the `state-updated` event. Opened as a plain browser tab (with
+// Inside the Tauri window, commands go through the `call` command and return
+// their resulting state directly; runtime-only changes also arrive through a
+// `state-updated` event. Opened as a plain browser tab (with
 // `pnpm run dev`), `window.__TAURI_INTERNALS__` doesn't exist, so the same
 // calls go to the dev bridge instead - the real backend behind an HTTP +
 // WebSocket server (`blockloom-app --features dev-bridge`). Both paths end in
@@ -18,9 +19,23 @@ const BRIDGE_WS = 'ws://127.0.0.1:4128/events';
 /** Commands the window process handles itself; everything else is backend. */
 const WINDOW_COMMANDS = new Set(['reset_zoom', 'pick_project_file', 'set_theme_background']);
 
-function windowInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
+type StateListener = (payload: unknown) => void;
+const stateListeners = new Set<StateListener>();
+
+function publishState(payload: unknown) {
+  stateListeners.forEach(cb => cb(payload));
+}
+
+interface WindowResponse<T> {
+  result: T;
+  state: unknown;
+}
+
+async function windowInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
   if (WINDOW_COMMANDS.has(cmd)) return tauriInvoke<T>(cmd, args);
-  return tauriInvoke<T>('call', { cmd, args });
+  const response = await tauriInvoke<WindowResponse<T>>('call', { cmd, args });
+  publishState(response.state);
+  return response.result;
 }
 
 async function bridgeInvoke<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
@@ -39,22 +54,37 @@ async function bridgeInvoke<T>(cmd: string, args: Record<string, unknown> = {}):
   return body.data as T;
 }
 
-type StateListener = (payload: unknown) => void;
-const stateListeners = new Set<StateListener>();
 let socket: WebSocket | null = null;
 
 function ensureSocket() {
   if (socket) return;
   socket = new WebSocket(BRIDGE_WS);
   socket.onmessage = evt => {
-    const payload = JSON.parse(evt.data);
-    stateListeners.forEach(cb => cb(payload));
+    publishState(JSON.parse(evt.data));
   };
   socket.onclose = () => {
     socket = null;
     if (stateListeners.size > 0) setTimeout(ensureSocket, 1000);
   };
   socket.onerror = () => socket?.close();
+}
+
+async function windowListen<T>(event: string, cb: (evt: Event<T>) => void): Promise<() => void> {
+  if (event !== 'state-updated') return tauriListen<T>(event, cb);
+  const wrapped: StateListener = payload => cb({ event, id: 0, payload: payload as T });
+  stateListeners.add(wrapped);
+  // Pull the latest snapshot instead of trusting event arrival order. Command
+  // responses already update immediately; this path mainly covers runtime
+  // status messages that have no command response of their own.
+  const unlisten = await tauriListen(event, () => {
+    void tauriInvoke<WindowResponse<T>>('call', { cmd: 'get_state', args: {} })
+      .then(response => publishState(response.result))
+      .catch(error => console.error('Failed to refresh native state:', error));
+  });
+  return () => {
+    stateListeners.delete(wrapped);
+    unlisten();
+  };
 }
 
 async function bridgeListen<T>(event: string, cb: (evt: Event<T>) => void): Promise<() => void> {
@@ -69,5 +99,5 @@ async function bridgeListen<T>(event: string, cb: (evt: Event<T>) => void): Prom
 }
 
 export const invoke = isTauri ? windowInvoke : bridgeInvoke;
-export const listen = isTauri ? tauriListen : bridgeListen;
+export const listen = isTauri ? windowListen : bridgeListen;
 export const getVersion = isTauri ? tauriGetVersion : async () => 'dev-bridge';

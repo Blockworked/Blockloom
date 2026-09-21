@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // The actors in the world. Selecting one swaps the canvas to its own blocks,
 // the way switching sprites does in Scratch.
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { AppDropdown } from 'blockstitch';
 import { Copy, Trash2 } from 'lucide-vue-next';
 import { mode, state } from '../store';
@@ -40,19 +40,9 @@ function isRound(actor: ActorDto): boolean {
   return actor.visual.shape === 'Circle' || actor.visual.shape === 'Sphere';
 }
 
-// Two clicks instead of a dialog - see TopBar.vue.
-const armed = ref(false);
-let disarm: number | undefined;
-
 function onRemove(actorId: string) {
-  if (!armed.value) {
-    armed.value = true;
-    disarm = window.setTimeout(() => (armed.value = false), 3000);
-    return;
-  }
-  window.clearTimeout(disarm);
-  armed.value = false;
-  void removeActor(actorId);
+  const actor = actors.value.find(candidate => candidate.id === actorId);
+  if (actor && window.confirm(`Delete actor "${actor.name}"? This cannot be undone.`)) void removeActor(actorId);
 }
 </script>
 
@@ -87,8 +77,7 @@ function onRemove(actorId: string) {
       </button>
       <button
         class="btn-small"
-        :class="{ danger: armed }"
-        :title="armed ? 'Click again to delete this actor' : 'Delete this actor'"
+        title="Delete this actor"
         @click="onRemove(state.selected_actor)"
       >
         <Trash2 />

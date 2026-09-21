@@ -65,7 +65,7 @@ impl Backend {
             // ── The world ──────────────────────────────────────────────────
             "set_mode" => {
                 let mode: Mode = arg(&args, "mode")?;
-                to_json(commands::set_mode(state, app, mode)?)
+                to_json(commands::set_mode(self, state, app, mode)?)
             }
             "set_background" => {
                 to_json(commands::set_background(state, app, arg(&args, "color")?)?)

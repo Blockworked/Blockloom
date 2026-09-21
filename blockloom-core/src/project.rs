@@ -7,7 +7,7 @@
 //! ([`Project::globals`], shared by every actor - a score, a level number).
 
 use crate::blocks::{ActorGraph, InstructionKind, VariableDef};
-use crate::scene::{Physics, Placement, Visual, World};
+use crate::scene::{Mode, Physics, Placement, Visual, World};
 use crate::value::Evaluated;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -152,6 +152,31 @@ impl Project {
             actors: vec![player, ground],
             globals: Vec::new(),
         }
+    }
+
+    /// Converts the scene to the target dimension. Actors keep their color and
+    /// approximate size, while positions move between pixels and metres.
+    pub fn switch_mode(&mut self, mode: Mode) {
+        let previous = self.world.mode;
+        if previous == mode {
+            return;
+        }
+
+        if self.world.gravity == World::default_gravity(previous) {
+            self.world.gravity = World::default_gravity(mode);
+        }
+        let scale = if mode.is_3d() { 0.01 } else { 100.0 };
+        for actor in &mut self.actors {
+            actor.placement.position[0] *= scale;
+            actor.placement.position[1] *= scale;
+            actor.placement.position[2] = if mode.is_3d() {
+                actor.placement.position[2] * scale
+            } else {
+                0.0
+            };
+            actor.visual = visual_for_mode(&actor.visual, mode);
+        }
+        self.world.mode = mode;
     }
 
     pub fn actor(&self, id: &str) -> Option<&Actor> {
@@ -323,6 +348,51 @@ impl Project {
     }
 }
 
+fn visual_for_mode(visual: &Visual, mode: Mode) -> Visual {
+    const PIXELS_PER_METRE: f32 = 100.0;
+
+    if visual.is_3d() == mode.is_3d() {
+        return visual.clone();
+    }
+    match visual {
+        Visual::Rect { color, size } => Visual::Cuboid {
+            color: color.clone(),
+            size: [size[0] / PIXELS_PER_METRE, size[1] / PIXELS_PER_METRE, 1.0],
+        },
+        Visual::Circle { color, radius } => Visual::Sphere {
+            color: color.clone(),
+            radius: radius / PIXELS_PER_METRE,
+        },
+        Visual::Image { size, .. } => Visual::Cuboid {
+            color: "#FFFFFF".to_string(),
+            size: [size[0] / PIXELS_PER_METRE, size[1] / PIXELS_PER_METRE, 0.1],
+        },
+        Visual::Cuboid { color, size } => Visual::Rect {
+            color: color.clone(),
+            size: [size[0] * PIXELS_PER_METRE, size[1] * PIXELS_PER_METRE],
+        },
+        Visual::Sphere { color, radius } => Visual::Circle {
+            color: color.clone(),
+            radius: radius * PIXELS_PER_METRE,
+        },
+        Visual::Capsule {
+            color,
+            radius,
+            height,
+        } => Visual::Rect {
+            color: color.clone(),
+            size: [
+                radius * 2.0 * PIXELS_PER_METRE,
+                (height + radius * 2.0) * PIXELS_PER_METRE,
+            ],
+        },
+        Visual::Plane { color, size } => Visual::Rect {
+            color: color.clone(),
+            size: [size[0] * PIXELS_PER_METRE, 40.0],
+        },
+    }
+}
+
 // ─── On-disk storage ───────────────────────────────────────────────────────
 
 /// Where projects live: `<data dir>/blockloom/projects`.
@@ -399,7 +469,6 @@ pub fn load_projects() -> Vec<Project> {
 mod tests {
     use super::*;
     use crate::blocks::Instruction;
-    use crate::scene::Mode;
 
     #[test]
     fn a_starter_project_has_something_to_drop_and_something_to_land_on() {
@@ -413,6 +482,22 @@ mod tests {
             project.actors[1].physics.body,
             crate::scene::BodyKind::Static
         );
+    }
+
+    #[test]
+    fn switching_dimensions_converts_actor_visuals_and_units() {
+        let mut project = Project::starter("Untitled", Mode::TwoD);
+        project.switch_mode(Mode::ThreeD);
+
+        assert_eq!(project.world.mode, Mode::ThreeD);
+        assert_eq!(project.world.gravity, World::default_gravity(Mode::ThreeD));
+        assert!((project.actors[0].placement.position[1] - 1.6).abs() < 0.001);
+        assert!(project.actors.iter().all(|actor| actor.visual.is_3d()));
+
+        project.switch_mode(Mode::TwoD);
+        assert_eq!(project.world.mode, Mode::TwoD);
+        assert!((project.actors[0].placement.position[1] - 160.0).abs() < 0.001);
+        assert!(project.actors.iter().all(|actor| !actor.visual.is_3d()));
     }
 
     #[test]

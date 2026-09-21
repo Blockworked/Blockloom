@@ -12,7 +12,7 @@ use blockloom_core::blocks::{
     ActorGraph, BlockPiece, BlockShape, Instruction, InstructionKind, normalize_block_color,
 };
 use blockloom_core::project::{self, Actor, Project};
-use blockloom_core::scene::{Camera, Mode, Physics, Placement, Visual, World};
+use blockloom_core::scene::{Camera, Mode, Physics, Placement, Visual};
 use blockloom_core::value::{Evaluated, Value};
 use blockstitch_core::editor::{ValueEdit, prune_value_buffers};
 use blockstitch_core::value::operator_kind;
@@ -203,26 +203,56 @@ pub(crate) fn import_project(
 /// Switches a project between 2D and 3D. Gravity follows the mode unless the
 /// project set its own, and a running world is restarted, since the two
 /// dimensions are different processes.
-pub(crate) fn set_mode(state: &SharedState, app: &AppHandle, mode: Mode) -> Result<(), String> {
+pub(crate) fn set_mode(
+    backend: &Backend,
+    state: &SharedState,
+    app: &AppHandle,
+    mode: Mode,
+) -> Result<(), String> {
     let mut s = lock(state)?;
     if s.project().is_none_or(|project| project.world.mode == mode) {
         return Ok(());
     }
     push_undo(&mut s);
+    let runtime_was_open = s.runtime.is_some();
+    let was_running = s.running;
+    let was_paused = s.paused;
     let Some(project) = s.project_mut() else {
         return Ok(());
     };
-    let previous = project.world.mode;
-    if project.world.gravity == World::default_gravity(previous) {
-        project.world.gravity = World::default_gravity(mode);
-    }
-    project.world.mode = mode;
+    project.switch_mode(mode);
     auto_save(&s);
-    // Drop the old-dimension runtime; the next Play brings up the right one.
+
+    // A dimension uses a different Bevy plugin set, so replace the process
+    // and restore whether it was idle, running, or paused.
     s.runtime = None;
-    s.running = false;
+    s.status = None;
+    let mut restart_error = None;
+    if runtime_was_open {
+        let project = s.project().cloned().expect("checked above");
+        match RuntimeHandle::spawn(mode, backend.clone()) {
+            Ok(mut runtime) => {
+                let loaded = runtime.send(&blockloom_protocol::EditorMessage::Load {
+                    project: Box::new(project),
+                });
+                let started = !was_running
+                    || (runtime.send(&blockloom_protocol::EditorMessage::Start)
+                        && (!was_paused
+                            || runtime
+                                .send(&blockloom_protocol::EditorMessage::Pause { paused: true })));
+                if loaded && started {
+                    s.runtime = Some(runtime);
+                } else {
+                    restart_error = Some("Lost the connection to the game runtime".to_string());
+                }
+            }
+            Err(error) => restart_error = Some(error),
+        }
+    }
+    s.running = runtime_was_open && was_running && s.runtime.is_some();
+    s.paused = s.running && was_paused;
     emit(app, &s);
-    Ok(())
+    restart_error.map_or(Ok(()), Err)
 }
 
 pub(crate) fn set_background(

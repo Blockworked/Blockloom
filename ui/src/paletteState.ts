@@ -94,7 +94,7 @@ export const paletteInstructions: Record<InstructionType, InstructionDto> = reac
 /** The instruction a palette drag drops onto the canvas: the prefab as it
  * currently reads, with fresh ids. */
 export function clonePaletteInstruction(type: InstructionType): InstructionDto {
-  return { ...structuredClone(paletteInstructions[type]), id: newId() };
+  return { ...cloneDto(paletteInstructions[type]), id: newId() };
 }
 
 // ─── Value prefabs ─────────────────────────────────────────────────────────
@@ -134,7 +134,13 @@ export function paletteValueFor(kind: ValueKind): ValueDto {
   if (kind.startsWith('Var:')) return { kind: 'Var', name: kind.slice('Var:'.length) };
   if (kind.startsWith('Param:')) return { kind: 'Param', name: parseParamKind(kind).name };
   const held = paletteValues[kind];
-  return held ? structuredClone(held) : numberValue(0);
+  return held ? cloneDto(held) : numberValue(0);
+}
+
+/** Palette prefabs are Vue proxies. JSON is also their wire format, so this
+ * makes a plain deep copy without asking structuredClone to clone a proxy. */
+function cloneDto<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 /** Writes an edit blockstitch's generic palette block made back onto the

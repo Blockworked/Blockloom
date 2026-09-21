@@ -1,6 +1,5 @@
 // One function per backend command. Everything the UI does to the document
-// goes through here, and every result comes back as a fresh state snapshot on
-// the `state-updated` event rather than as a return value.
+// goes through here; bridge.ts applies the fresh state returned with it.
 import { invoke, listen, getVersion } from './bridge';
 import type {
   BlockPieceDto,

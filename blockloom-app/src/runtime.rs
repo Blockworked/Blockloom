@@ -11,10 +11,14 @@ use blockloom_core::scene::Mode;
 use blockloom_protocol::{EditorMessage, RuntimeMessage, decode, encode, runtime_path};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_RUNTIME_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct RuntimeHandle {
     child: Child,
     stdin: ChildStdin,
+    pub(crate) id: u64,
     /// Which dimension this process was started for.
     pub(crate) mode: Mode,
 }
@@ -23,6 +27,7 @@ impl RuntimeHandle {
     /// Starts the runtime binary sitting next to this one and begins reading
     /// its messages into `backend`'s state.
     pub(crate) fn spawn(mode: Mode, backend: Backend) -> Result<Self, String> {
+        let id = NEXT_RUNTIME_ID.fetch_add(1, Ordering::Relaxed);
         let path = runtime_path();
         if !path.exists() {
             return Err(format!(
@@ -48,18 +53,23 @@ impl RuntimeHandle {
                 for line in BufReader::new(stdout).lines() {
                     let Ok(line) = line else { break };
                     match decode::<RuntimeMessage>(&line) {
-                        Some(Ok(message)) => backend.on_runtime_message(message),
+                        Some(Ok(message)) => backend.on_runtime_message(id, message),
                         Some(Err(e)) => tracing::warn!("Bad message from the runtime: {e}"),
                         None => {}
                     }
                 }
                 // The pipe closed: the window is gone, whether it was asked to
                 // go or crashed.
-                backend.on_runtime_exit();
+                backend.on_runtime_exit(id);
             })
             .map_err(|e| e.to_string())?;
 
-        Ok(Self { child, stdin, mode })
+        Ok(Self {
+            child,
+            stdin,
+            id,
+            mode,
+        })
     }
 
     /// Sends a message. `false` means the pipe is gone and the handle should
@@ -82,10 +92,16 @@ impl Drop for RuntimeHandle {
 
 impl Backend {
     /// Folds one runtime message into app state and tells the frontend.
-    pub(crate) fn on_runtime_message(&self, message: RuntimeMessage) {
+    pub(crate) fn on_runtime_message(&self, runtime_id: u64, message: RuntimeMessage) {
         let Ok(mut s) = self.state.lock() else {
             return;
         };
+        if s.runtime
+            .as_ref()
+            .is_none_or(|runtime| runtime.id != runtime_id)
+        {
+            return;
+        }
         let name_of = |id: &str| {
             s.project()
                 .and_then(|project| project.actor(id))
@@ -146,10 +162,16 @@ impl Backend {
 
     /// The runtime's window closed. Its handle is dropped so the next Play
     /// starts a fresh one.
-    pub(crate) fn on_runtime_exit(&self) {
+    pub(crate) fn on_runtime_exit(&self, runtime_id: u64) {
         let Ok(mut s) = self.state.lock() else {
             return;
         };
+        if s.runtime
+            .as_ref()
+            .is_none_or(|runtime| runtime.id != runtime_id)
+        {
+            return;
+        }
         s.running = false;
         s.paused = false;
         s.status = None;

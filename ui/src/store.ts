@@ -1,6 +1,5 @@
-// The frontend's one copy of backend state, replaced wholesale on every
-// `state-updated` event. Nothing here is edited locally: a command runs, the
-// backend publishes a new snapshot, and this object catches up.
+// The frontend's one copy of backend state, replaced wholesale after commands
+// and on runtime state events. Nothing here is edited locally.
 import { computed, reactive, ref } from 'vue';
 import { emptyState, findActor, type StateDto } from './types';
 import { getAppVersion, getState, onStateUpdated } from './tauri';

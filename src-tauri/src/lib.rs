@@ -55,7 +55,7 @@ pub fn run() {
             // frontend keeps no other copy of the truth.
             let backend = Backend::start(BackendHandle::new(move |event| {
                 if let Event::State(json) = event {
-                    let _ = handle.emit(STATE_EVENT, RawJson(json.to_string()));
+                    let _ = handle.emit_str(STATE_EVENT, json.to_string());
                 }
             }));
             app.manage(backend);
@@ -83,24 +83,19 @@ pub fn run() {
         });
 }
 
-/// A JSON string forwarded to the webview verbatim, so the state snapshot isn't
-/// parsed and re-serialized on the way through. `Clone` is Tauri's requirement
-/// for an event payload.
-#[derive(Clone)]
-struct RawJson(String);
-
-impl serde::Serialize for RawJson {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serde_json::value::RawValue::from_string(self.0.clone())
-            .map_err(serde::ser::Error::custom)?
-            .serialize(serializer)
-    }
+#[derive(serde::Serialize)]
+struct CallResponse {
+    result: Value,
+    state: Value,
 }
 
-/// Runs a backend command (see `ui/src/bridge.ts`).
+/// Runs a backend command and returns the resulting state with it. The direct
+/// snapshot keeps CEF command updates reliable even if an event is delayed.
 #[tauri::command]
-fn call(backend: State<'_, Backend>, cmd: String, args: Value) -> Result<Value, String> {
-    backend.dispatch(&cmd, args)
+fn call(backend: State<'_, Backend>, cmd: String, args: Value) -> Result<CallResponse, String> {
+    let result = backend.dispatch(&cmd, args)?;
+    let state = backend.dispatch("get_state", serde_json::json!({}))?;
+    Ok(CallResponse { result, state })
 }
 
 /// Resets Chromium page zoom to 100%. Handled here rather than by the browser's

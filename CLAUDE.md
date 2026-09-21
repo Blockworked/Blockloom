@@ -86,7 +86,8 @@ Two processes: the editor window, and the game world.
   forks pinned via git `rev`/`[patch.crates-io]` in the root `Cargo.toml`)
   instead of Tauri's default wry/webview. It owns `blockloom-app` directly -
   there is no daemon - and forwards every frontend command through its one
-  `call` command, re-emitting backend state as the `state-updated` event. Only
+  `call` command. Command responses include the resulting state directly;
+  runtime-only changes are also sent through the `state-updated` event. Only
   window-local things live here (`reset_zoom`, the `.blockloom` file dialogs,
   the pre-paint background color in `theme.rs`).
 - **`blockloom-app`** - the backend: `src/commands.rs` holds every command,
@@ -172,5 +173,3 @@ edit.
   as a per-actor speech bubble.
 - A reporter-shaped custom block runs to completion in place, so a `wait` inside
   one passes straight through.
-- An actor whose shape belongs to the other dimension isn't drawn; the editor
-  marks it in the actor list rather than converting it.

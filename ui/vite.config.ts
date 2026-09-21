@@ -6,6 +6,14 @@ import vue from '@vitejs/plugin-vue';
 export default defineConfig({
   plugins: [vue()],
   clearScreen: false,
+  resolve: {
+    dedupe: ['vue', 'blockstitch'],
+  },
+  optimizeDeps: {
+    // blockstitch keeps its canvas host in module-level state. Prebundling it
+    // beside its source modules creates two hosts during the dev loop.
+    exclude: ['blockstitch'],
+  },
   server: {
     port: 1420,
     strictPort: true,
