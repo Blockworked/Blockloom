@@ -20,3 +20,4 @@ dist/
 mcp/node_modules/
 mcp/dist-test/
 opencode.json
+.mcp.json
