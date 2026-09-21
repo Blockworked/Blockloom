@@ -8,7 +8,7 @@
 import { onMounted, onUnmounted } from 'vue';
 import { Box, Square } from 'lucide-vue-next';
 import { mode, state } from '../store';
-import { setBackground, setCamera, setGravity, setMode } from '../tauri';
+import { setBackground, setCamera, setFixedRate, setGravity, setMode } from '../tauri';
 import type { CameraDto, Mode } from '../types';
 
 const emit = defineEmits<{ close: [] }>();
@@ -40,6 +40,12 @@ function writeGravity(index: number, value: number) {
 function writeCamera(next: Partial<CameraDto>) {
   if (!state.project) return;
   void setCamera({ ...state.project.world.camera, ...next }).catch((err: unknown) => console.error(err));
+}
+
+function writeFixedRate(e: Event) {
+  if (!state.project) return;
+  const rate = num(e, 60);
+  void setFixedRate(Math.min(Math.max(rate, 1), 1000)).catch((err: unknown) => console.error(err));
 }
 
 // Esc closes the dialog like any other modal.
@@ -88,6 +94,15 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown));
           <input type="number" step="any" :value="state.project.world.gravity[1]" @change="e => writeGravity(1, num(e, 0))">
           <input v-if="mode === 'ThreeD'" type="number" step="any" :value="state.project.world.gravity[2]" @change="e => writeGravity(2, num(e, 0))">
         </div>
+        <div class="settings-row">
+          <label>Tick rate</label>
+          <input type="number" min="1" max="1000" step="any" :value="state.project.world.fixed_rate" @change="writeFixedRate">
+        </div>
+        <p class="settings-note">
+          How many times a second the world's blocks and physics advance, whatever
+          the display rate is. Higher is smoother but heavier. Applies on the
+          next run of the game.
+        </p>
         <div class="settings-row" v-if="mode === 'TwoD'">
           <label>Zoom</label>
           <input type="number" step="any" :value="state.project.world.camera.zoom" @change="e => writeCamera({ zoom: num(e, 1) })">

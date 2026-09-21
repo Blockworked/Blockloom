@@ -216,6 +216,9 @@ export interface WorldDto {
   mode: Mode;
   background: string;
   gravity: [number, number, number];
+  /** How many simulation steps a second the world advances at, whatever the
+   * display rate. The runtime interpolates between them. */
+  fixed_rate: number;
   camera: CameraDto;
   speech_bubble: SpeechBubbleStyleDto;
 }

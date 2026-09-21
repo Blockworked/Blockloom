@@ -82,6 +82,34 @@ export function endAssetDrag(): void {
   dragged.value = null;
 }
 
+// CEF's windowed browsers never deliver the `drop` half of an in-page drag:
+// `dragstart`, `dragover` and `dragend` fire, but releasing over a target
+// leaves no `drop` event (external OS drags are unaffected - they come through
+// the runtime's own bridge). When the release point sits on an `AssetDrop`
+// target and nothing else consumed the drag, this re-runs the target's drop
+// from the `dragend`'s position instead.
+window.addEventListener(
+  'dragend',
+  (e) => {
+    // A drop that landed cleared `dragged`; this drag ended unconsumed.
+    if (!dragged.value) return;
+    const el = document
+      .elementFromPoint(e.clientX, e.clientY)
+      ?.closest('.asset-drop');
+    if (!el) return;
+    el.dispatchEvent(
+      new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        dataTransfer: e.dataTransfer ?? null,
+      }),
+    );
+  },
+  true,
+);
+
 /** The asset a drop is carrying, or null if it isn't carrying one. */
 export function droppedAsset(e: DragEvent): AssetEntry | null {
   const raw = e.dataTransfer?.getData(ASSET_MIME);

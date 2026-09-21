@@ -6,9 +6,16 @@
 //! Every system here touches the `!Send` [`Engine`], which is what pins them
 //! all to the main thread - the same thread the VM's thread-local sensor
 //! snapshot lives on.
+//!
+//! Simulation runs on `FixedUpdate`, Bevy's constant-rate step that catches up
+//! whatever the display does, so blocks and physics advance in step with each
+//! other at the project's own rate. Input, sensing and rendering stay on the
+//! per-frame `Update`: events fire at most once there, so a slow machine that
+//! sinks several fixed steps into one frame doesn't triple a keypress.
 
 use crate::engine::{
-    ActorId, CameraRig, CustomComponents, Dimension, Engine, Gliding, PendingEffects,
+    ActorId, CameraRig, CustomComponents, Dimension, Engine, Gliding, PendingEffects, PhysicsPose,
+    PrevPose,
 };
 use crate::{bridge, dim2, dim3};
 use bevy::prelude::*;
@@ -24,6 +31,12 @@ use std::collections::{HashMap, HashSet};
 /// The one camera the project controls.
 #[derive(Component)]
 pub struct WorldCamera;
+
+/// The systems that advance the simulation itself, kept apart from the input
+/// and rendering systems in `Update` so the runtime can order them before the
+/// physics pipeline's own fixed systems.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SimulationSet;
 
 /// `#RRGGBB` as the renderer wants it. An unparseable color reads as magenta,
 /// which is easier to notice than a silent black.
@@ -132,8 +145,15 @@ pub fn note_contact(engine: &mut Engine, a: Entity, b: Entity, started: bool) {
 pub fn pump_editor(
     mut engine: NonSendMut<Engine>,
     time: Res<Time>,
+    mut fixed: ResMut<Time<Fixed>>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    // The project names its own fixed rate. Step-sized here, once a frame, so
+    // the next FixedUpdate runs at whatever the loaded project asked for.
+    let rate = engine.project.world.fixed_rate;
+    if rate.is_finite() {
+        fixed.set_timestep_hz(rate.clamp(1.0, 1000.0) as f64);
+    }
     let now = time.elapsed_secs() as f64;
     loop {
         let message = match engine.incoming.try_recv() {
@@ -313,8 +333,8 @@ fn open_scripts(engine: &mut Engine, project: &blockloom_core::project::Project)
     }
 }
 
-/// Runs every loaded script for this frame: `start` once per run, then `tick`
-/// with the frame's delta. Their effects join the VM's in the same list, so a
+/// Runs every scripted for this fixed step: `start` once per run, then `tick`
+/// with the step's delta. Their effects join the VM's in the same list, so a
 /// script and a canvas driving one actor are applied together, in order.
 pub fn step_scripts(
     mut engine: NonSendMut<Engine>,
@@ -578,7 +598,7 @@ pub fn actor_top(actor: &Actor, transform: &Transform, mode: Mode) -> Vec3 {
 
 // ─── Running blocks ────────────────────────────────────────────────────────
 
-/// One VM tick per rendered frame. Says and errors go straight to the editor;
+/// One VM tick per fixed step. Says and errors go straight to the editor;
 /// everything else is left in [`PendingEffects`] for the apply systems.
 pub fn step_vm(
     mut engine: NonSendMut<Engine>,
@@ -800,6 +820,29 @@ pub fn drive_camera(
             camera.translation = target.translation + boom;
             camera.look_at(target.translation, Vec3::Y);
         }
+    }
+}
+
+/// Renders body actors between the physics poses they settled at. Without
+/// this, a body's position would only change on the fixed step it lands on,
+/// and on a high-refresh display it would visibly march along in steps.
+pub fn interpolate_poses(
+    engine: NonSend<Engine>,
+    fixed: Res<Time<Fixed>>,
+    mut posed: Query<(&mut Transform, &PhysicsPose, &PrevPose)>,
+) {
+    if !engine.running || engine.paused {
+        // Frozen: put each body back exactly where physics left it.
+        for (mut transform, current, _) in &mut posed {
+            *transform = current.0;
+        }
+        return;
+    }
+    let alpha = fixed.overstep_fraction();
+    for (mut transform, current, previous) in &mut posed {
+        transform.translation = previous.0.translation.lerp(current.0.translation, alpha);
+        transform.rotation = previous.0.rotation.slerp(current.0.rotation, alpha);
+        transform.scale = previous.0.scale.lerp(current.0.scale, alpha);
     }
 }
 
@@ -1238,6 +1281,7 @@ fn key_name(code: &KeyCode) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::time::{TimePlugin, TimeUpdateStrategy};
 
     #[test]
     fn an_idle_vm_keeps_the_play_session_running() {
@@ -1245,14 +1289,25 @@ mod tests {
         let mut engine = Engine::new(incoming, Mode::TwoD);
         engine.running = true;
 
-        let mut app = App::new();
-        app.insert_resource(Time::<()>::default());
-        app.init_resource::<PendingEffects>();
-        app.insert_non_send(engine);
-        app.add_systems(Update, step_vm);
+        let mut app = fixed_step_app(engine);
         app.update();
 
         assert!(app.world().non_send::<Engine>().running);
+    }
+
+    /// An app that drives the fixed schedule deterministically: one
+    /// `app.update()` is exactly one fixed step at 60 Hz.
+    fn fixed_step_app(engine: Engine) -> App {
+        let mut app = App::new();
+        app.add_plugins(TimePlugin);
+        app.insert_resource(Time::<Fixed>::from_hz(60.0));
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs_f64(
+            1.0 / 60.0,
+        )));
+        app.init_resource::<PendingEffects>();
+        app.insert_non_send(engine);
+        app.add_systems(FixedUpdate, step_vm);
+        app
     }
 
     #[test]
@@ -1264,6 +1319,7 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(Time::<()>::default());
+        app.insert_resource(Time::<Fixed>::from_hz(60.0));
         app.init_resource::<PendingEffects>();
         app.insert_non_send(engine);
         app.add_systems(Update, pump_editor);
@@ -1383,11 +1439,7 @@ mod tests {
         engine.paused = true;
         engine.pause_began = Some(0.0);
 
-        let mut app = App::new();
-        app.insert_resource(Time::<()>::default());
-        app.init_resource::<PendingEffects>();
-        app.insert_non_send(engine);
-        app.add_systems(Update, step_vm);
+        let mut app = fixed_step_app(engine);
         app.update();
 
         assert!(app.world().resource::<PendingEffects>().0.is_empty());

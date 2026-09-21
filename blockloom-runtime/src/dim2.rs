@@ -2,7 +2,7 @@
 //! that only make sense with a 2D physics engine attached. A 2D unit is a
 //! pixel, which is why gravity defaults to a few hundred of them.
 
-use crate::engine::{Engine, PendingEffects};
+use crate::engine::{Engine, PendingEffects, PhysicsPose, PrevPose};
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -114,6 +114,10 @@ fn insert_body(entity: &mut EntityCommands, actor: &Actor) {
             rp::Restitution::coefficient(physics.restitution),
             rp::Friction::coefficient(physics.friction),
         ));
+        // Bodies also carry the poses the renderer lerps between fixed steps.
+        // A fresh spawn and its poses all start at the authored transform.
+        let pose = crate::world::transform_for(actor);
+        entity.insert((PhysicsPose(pose), PrevPose(pose)));
         if physics.lock_rotation {
             entity.insert(rp::LockedAxes::ROTATION_LOCKED);
         }
@@ -159,9 +163,9 @@ pub fn apply_effects(
         }
         return;
     }
-    // Turning "this far this frame" into a velocity needs the frame's own
-    // length; a stalled frame would otherwise read as an enormous speed.
-    let dt = time.delta_secs().max(1.0 / 240.0);
+    // Turning "this far this step" into a velocity needs the step's length -
+    // a fixed rate keeps it constant, whatever the display does.
+    let dt = time.delta_secs().max(1.0 / 1000.0);
     let dir = engine.project_dir.clone();
     for effect in &effects.0 {
         match effect {
@@ -243,7 +247,7 @@ pub fn apply_effects(
                 }
             }
             Effect::SetBody { actor, body } => {
-                let Some(entity) = engine.entities.get(actor) else {
+                let Some(id) = engine.entities.get(actor).copied() else {
                     continue;
                 };
                 let Some(visual) = engine
@@ -254,14 +258,19 @@ pub fn apply_effects(
                 else {
                     continue;
                 };
-                let mut entity = commands.entity(*entity);
+                let mut entity = commands.entity(id);
                 match (body_for(*body), collider_for(&visual)) {
                     (Some(rigid_body), Some(collider)) => {
                         entity.insert((rigid_body, collider, rp::ActiveEvents::COLLISION_EVENTS));
+                        if let Ok(transform) = transforms.get(id) {
+                            entity.insert((PhysicsPose(*transform), PrevPose(*transform)));
+                        }
                     }
                     _ => {
                         entity.remove::<rp::RigidBody>();
                         entity.remove::<rp::Collider>();
+                        entity.remove::<PhysicsPose>();
+                        entity.remove::<PrevPose>();
                     }
                 }
             }
@@ -303,6 +312,8 @@ pub fn apply_effects(
                     "Body" => {
                         entity.remove::<rp::RigidBody>();
                         entity.remove::<rp::Collider>();
+                        entity.remove::<PhysicsPose>();
+                        entity.remove::<PrevPose>();
                     }
                     // Nothing to draw, but the actor is still there to be
                     // moved, sensed and given a look again.
@@ -338,11 +349,39 @@ pub fn relay_collisions(
 }
 
 /// Freezes the physics pipeline while paused or stopped so bodies stop falling
-/// and velocities don't integrate. Runs in `Update` before rapier's own
-/// `PostUpdate` step, so it takes effect the same frame.
+/// and velocities don't integrate. Runs before the rapier systems of the same
+/// `FixedUpdate` pass, so it takes effect the same step.
 pub fn sync_pause(engine: NonSend<Engine>, mut configs: Query<&mut rp::RapierConfiguration>) {
     for mut config in &mut configs {
         config.physics_pipeline_active = engine.running && !engine.paused;
+    }
+}
+
+/// Steps the physics pipeline at the project's own fixed rate, the same rate
+/// the blocks run at, so a body and a `move` never fight over time.
+pub fn sync_timestep(
+    engine: NonSend<Engine>,
+    mut timestep: ResMut<rp::TimestepMode>,
+) {
+    let rate = engine.project.world.fixed_rate;
+    if !rate.is_finite() {
+        return;
+    }
+    let rate = rate.clamp(1.0, 1000.0);
+    *timestep = rp::TimestepMode::Fixed {
+        dt: 1.0 / rate,
+        substeps: 1,
+    };
+}
+
+/// Copies each body's transform at the end of a fixed step into the pose the
+/// renderer interpolates between the next step's. Runs in `FixedPostUpdate`,
+/// just after rapier's own writeback, so `PhysicsPose` is exactly where
+/// physics settled.
+pub fn record_poses(mut posed: Query<(&Transform, &mut PhysicsPose, &mut PrevPose)>) {
+    for (transform, mut current, mut previous) in &mut posed {
+        previous.0 = current.0;
+        current.0 = *transform;
     }
 }
 

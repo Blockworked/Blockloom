@@ -56,62 +56,106 @@ fn main() {
     .add_systems(Startup, (overlay::spawn, announce_ready));
 
     // Only the dimension in use gets a physics pipeline: two would simulate
-    // the same actors twice.
+    // the same actors twice. Simulation runs on Bevy's `FixedUpdate` - a
+    // constant-rate step whatever the display does - while input, sensors and
+    // rendering stay on the per-frame `Update`.
     match mode {
         Mode::TwoD => {
+            // The plugin starts its timestep mode at a fixed 60Hz; the loaded
+            // project's own rate takes over on the first step.
+            app.insert_resource(bevy_rapier2d::prelude::TimestepMode::Fixed {
+                dt: 1.0 / 60.0,
+                substeps: 1,
+            });
             app.add_plugins(bevy_rapier2d::prelude::RapierPhysicsPlugin::<
                 bevy_rapier2d::prelude::NoUserData,
-            >::pixels_per_meter(dim2::PIXELS_PER_METER))
+            >::pixels_per_meter(dim2::PIXELS_PER_METER)
+            .in_fixed_schedule())
                 .add_systems(
-                    Update,
+                    FixedUpdate,
                     (
-                        world::pump_editor,
                         dim2::sync_pause,
-                        world::rebuild_world,
-                        dim2::relay_collisions,
-                        world::publish_sensors,
-                        world::detect_clicks,
+                        dim2::sync_timestep,
                         world::step_vm,
                         world::step_scripts,
                         world::apply_common,
                         dim2::apply_effects,
                         world::apply_component_effects,
                         world::step_glides,
-                        world::drive_camera,
-                        overlay::update_speech_bubbles,
-                        world::report_status,
-                        overlay::update_status,
                         world::clear_effects,
                     )
-                        .chain(),
-                );
-        }
-        Mode::ThreeD => {
-            app.add_plugins(bevy_rapier3d::prelude::RapierPhysicsPlugin::<
-                bevy_rapier3d::prelude::NoUserData,
-            >::default())
+                        .chain()
+                        .in_set(world::SimulationSet),
+                )
+                .add_systems(FixedPostUpdate, dim2::record_poses)
                 .add_systems(
                     Update,
                     (
                         world::pump_editor,
-                        dim3::sync_pause,
                         world::rebuild_world,
-                        dim3::relay_collisions,
+                        dim2::relay_collisions,
                         world::publish_sensors,
                         world::detect_clicks,
+                        world::interpolate_poses,
+                        world::drive_camera,
+                        overlay::update_speech_bubbles,
+                        world::report_status,
+                        overlay::update_status,
+                    )
+                        .chain(),
+                )
+                .configure_sets(
+                    FixedUpdate,
+                    world::SimulationSet
+                        .before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend),
+                );
+        }
+        Mode::ThreeD => {
+            app.insert_resource(bevy_rapier3d::prelude::TimestepMode::Fixed {
+                dt: 1.0 / 60.0,
+                substeps: 1,
+            });
+            app.add_plugins(bevy_rapier3d::prelude::RapierPhysicsPlugin::<
+                bevy_rapier3d::prelude::NoUserData,
+            >::default()
+            .in_fixed_schedule())
+                .add_systems(
+                    FixedUpdate,
+                    (
+                        dim3::sync_pause,
+                        dim3::sync_timestep,
                         world::step_vm,
                         world::step_scripts,
                         world::apply_common,
                         dim3::apply_effects,
                         world::apply_component_effects,
                         world::step_glides,
+                        world::clear_effects,
+                    )
+                        .chain()
+                        .in_set(world::SimulationSet),
+                )
+                .add_systems(FixedPostUpdate, dim3::record_poses)
+                .add_systems(
+                    Update,
+                    (
+                        world::pump_editor,
+                        world::rebuild_world,
+                        dim3::relay_collisions,
+                        world::publish_sensors,
+                        world::detect_clicks,
+                        world::interpolate_poses,
                         world::drive_camera,
                         overlay::update_speech_bubbles,
                         world::report_status,
                         overlay::update_status,
-                        world::clear_effects,
                     )
                         .chain(),
+                )
+                .configure_sets(
+                    FixedUpdate,
+                    world::SimulationSet
+                        .before(bevy_rapier3d::prelude::PhysicsSet::SyncBackend),
                 );
         }
     }

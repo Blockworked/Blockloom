@@ -378,6 +378,22 @@ pub(crate) fn set_gravity(
     Ok(())
 }
 
+pub(crate) fn set_fixed_rate(
+    state: &SharedState,
+    app: &AppHandle,
+    fixed_rate: f32,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    if let Some(project) = s.project_mut() {
+        project.world.fixed_rate = fixed_rate.clamp(1.0, 1000.0);
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
 pub(crate) fn set_camera(
     state: &SharedState,
     app: &AppHandle,

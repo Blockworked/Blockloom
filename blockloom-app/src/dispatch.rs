@@ -76,6 +76,10 @@ impl Backend {
                 let gravity: [f32; 3] = arg(&args, "gravity")?;
                 to_json(commands::set_gravity(state, app, gravity)?)
             }
+            "set_fixed_rate" => {
+                let fixed_rate: f32 = arg(&args, "fixedRate")?;
+                to_json(commands::set_fixed_rate(state, app, fixed_rate)?)
+            }
             "set_camera" => {
                 let camera: Camera = arg(&args, "camera")?;
                 to_json(commands::set_camera(state, app, camera)?)

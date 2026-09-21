@@ -70,6 +70,7 @@ export async function importProject(): Promise<void> {
 export const setMode = (mode: Mode) => invoke<void>('set_mode', { mode });
 export const setBackground = (color: string) => invoke<void>('set_background', { color });
 export const setGravity = (gravity: [number, number, number]) => invoke<void>('set_gravity', { gravity });
+export const setFixedRate = (fixedRate: number) => invoke<void>('set_fixed_rate', { fixedRate });
 export const setCamera = (camera: CameraDto) => invoke<void>('set_camera', { camera });
 
 // ─── Actors ─────────────────────────────────────────────────────────────────

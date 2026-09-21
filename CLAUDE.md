@@ -202,16 +202,23 @@ the whole game window.
 2. `vm::compile` flattens each actor's canvas into a `Vec<Step>` with jumps -
    a nested tree can't be suspended mid-body, but a program counter can. Header
    strands become entry points keyed by their trigger.
-3. Each frame the runtime publishes a sensor snapshot (`sense::publish`), turns
-   input and rapier contacts into `vm::Event`s, and calls `Vm::tick`, which runs
-   every live script until it yields and returns a list of `vm::Effect`s.
+3. Simulation runs on Bevy's `FixedUpdate`: a constant-rate step (`FixedMain`
+   catches up whatever the display does) that pulls the project's `world.fixed_rate`
+   - set in Project Settings and applied by `pump_editor`/`dim2|dim3::sync_timestep` -
+   so blocks and physics advance on the same tick whatever the frame rate. The
+   per-frame `Update` publishes the sensor snapshot (`sense::publish`), turns input
+   and rapier contacts into `vm::Event`s (at most once a frame, so a few sunk fixed
+   steps never repeat a keypress), and reads `Vm::tick`'s results next step.
 4. The runtime applies those effects to the ECS - shared ones in
    `world::apply_common`, physics and material ones in the dimension's own
    module - and reports says, errors and a periodic status back to the editor.
+   Physics bodies carry `PhysicsPose`/`PrevPose`, and `record_poses`
+   (`FixedPostUpdate`) + `interpolate_poses` (`Update`) draw them between fixed
+   steps so fast displays don't see the steps.
 
 Scripts yield the way Scratch's do: at a `wait`, and once per loop iteration.
-That one rule is why `forever` costs one step per frame instead of hanging the
-process, and it's checked directly in `blockloom-core/tests/vm.rs`.
+That one rule is why `forever` costs one step per fixed tick instead of hanging
+the process, and it's checked directly in `blockloom-core/tests/vm.rs`.
 
 The VM holds `Rc`s, so it is a `!Send` Bevy resource - which is exactly right:
 every system touching it is therefore scheduled on the main thread, the same

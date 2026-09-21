@@ -87,6 +87,16 @@ const nativeDragActive = ref(false);
 const pendingDropParent = ref<string | null>(null);
 let offDragDrop: (() => void) | undefined;
 
+// TEMP: on-screen drag trace, no DevTools needed. Remove once in-app drags work.
+const trace = ref<string[]>([]);
+const TRACE_EVENTS = ['dragstart', 'dragenter', 'dragover', 'drop', 'dragend'] as const;
+function traceDrag(t: string, e: Event) {
+  const target = e.target as Element | null;
+  const who = `${(target?.tagName || '').toLowerCase()}${target?.className ? '.' + String(target.className).replaceAll(' ', '.') : ''}`;
+  trace.value.push(`${t}@${who}`);
+  if (trace.value.length > 6) trace.value.shift();
+}
+
 const ICONS: Record<AssetKind, Component> = {
   folder: Folder,
   image: ImageIcon,
@@ -335,6 +345,7 @@ function parentAt(position: { x: number; y: number }): string | null {
 // Tauri window has them - the dev-bridge browser tab has no native drops.
 onMounted(async () => {
   if (!isTauri) return;
+  for (const t of TRACE_EVENTS) window.addEventListener(t, e => traceDrag(t, e), true);
   offDragDrop = await getCurrentWebview().onDragDropEvent(({ payload }) => {
     switch (payload.type) {
       case 'enter':
@@ -460,6 +471,7 @@ function startResize(e: MouseEvent) {
     <div v-if="tray.open" class="asset-grip" title="Drag to resize" @mousedown="startResize" />
 
     <div class="asset-head">
+      <span class="drag-trace" :title="trace.join(' ')" v-if="trace.length">{{ trace.join(' ') }}</span>
       <button
         class="asset-toggle"
         :title="tray.open ? 'Hide the assets' : 'Show the assets'"

@@ -314,6 +314,10 @@ pub struct World {
     /// since a 2D unit is a pixel.
     #[serde(default = "default_gravity_2d")]
     pub gravity: [f32; 3],
+    /// How many times a second the world's physics and blocks advance,
+    /// whatever the display rate is. 2D and 3D share it.
+    #[serde(default = "default_fixed_rate")]
+    pub fixed_rate: f32,
     #[serde(default)]
     pub camera: Camera,
     #[serde(default)]
@@ -328,12 +332,20 @@ fn default_gravity_2d() -> [f32; 3] {
     [0.0, -981.0, 0.0]
 }
 
+/// The project's default fixed step rate - the same 60 as the runtime's.
+pub const DEFAULT_FIXED_RATE: f32 = 60.0;
+
+fn default_fixed_rate() -> f32 {
+    DEFAULT_FIXED_RATE
+}
+
 impl Default for World {
     fn default() -> Self {
         Self {
             mode: Mode::TwoD,
             background: default_background(),
             gravity: default_gravity_2d(),
+            fixed_rate: default_fixed_rate(),
             camera: Camera::default(),
             speech_bubble: SpeechBubbleStyle::default(),
         }

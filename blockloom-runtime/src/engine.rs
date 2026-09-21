@@ -41,6 +41,15 @@ pub struct Gliding {
     pub duration: f32,
 }
 
+/// The physics pose settled at the end of a fixed step. The renderer lerps
+/// between this and [`PrevPose`] to smooth the gaps between fixed steps.
+#[derive(Component, Debug, Clone)]
+pub struct PhysicsPose(pub Transform);
+
+/// The physics pose one fixed step older than [`PhysicsPose`].
+#[derive(Component, Debug, Clone)]
+pub struct PrevPose(pub Transform);
+
 /// Effects produced by this frame's VM tick, waiting to be applied.
 #[derive(Resource, Default)]
 pub struct PendingEffects(pub Vec<blockloom_core::vm::Effect>);
