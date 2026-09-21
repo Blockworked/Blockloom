@@ -20,6 +20,7 @@ const BRIDGE_WS = 'ws://127.0.0.1:4128/events';
 const WINDOW_COMMANDS = new Set([
   'reset_zoom',
   'pick_project_file',
+  'pick_files',
   'pick_folder',
   'set_theme_background',
 ]);
@@ -47,6 +48,11 @@ async function bridgeInvoke<T>(cmd: string, args: Record<string, unknown> = {}):
   // No native dialogs in a browser tab - ask for the path instead.
   if (cmd === 'pick_project_file') {
     return (window.prompt('Path to the .blockloom file', (args.defaultName as string) ?? '') || null) as T;
+  }
+  if (cmd === 'pick_files') {
+    const typed = window.prompt('Paths to import, one per line');
+    const paths = (typed ?? '').split('\n').map(line => line.trim()).filter(Boolean);
+    return (paths.length ? paths : null) as T;
   }
   if (cmd === 'pick_folder') {
     return (window.prompt((args.title as string) ?? 'Folder', (args.start as string) ?? '') || null) as T;

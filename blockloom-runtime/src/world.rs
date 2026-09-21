@@ -34,6 +34,15 @@ pub fn parse_color(hex: &str) -> Color {
     }
 }
 
+/// Where an asset the project names - an image, a font - actually sits. Bevy's
+/// asset root is this process's own folder, not the project's, so a path the
+/// editor stores (`assets/player.png`) is resolved against the project folder
+/// and handed to the asset server whole.
+pub fn asset_path(dir: Option<&std::path::Path>, relative: &str) -> std::path::PathBuf {
+    dir.and_then(|dir| blockloom_core::assets::resolve(dir, relative))
+        .unwrap_or_else(|| std::path::PathBuf::from(relative))
+}
+
 pub fn transform_for(actor: &Actor) -> Transform {
     let placement = actor.placement();
     let [x, y, z] = placement.position;
@@ -239,6 +248,7 @@ pub fn rebuild_world(
         .collect();
 
     let project = engine.project.clone();
+    let dir = engine.project_dir.clone();
     clear_color.0 = parse_color(&project.world.background);
     match dimension.0 {
         Mode::TwoD => {
@@ -251,8 +261,9 @@ pub fn rebuild_world(
                 WorldCamera,
             ));
             for actor in &project.actors {
-                let entity = dim2::spawn_actor(&mut commands, actor, &assets, &mut textures)
-                    .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::TwoD));
+                let entity =
+                    dim2::spawn_actor(&mut commands, actor, dir.as_deref(), &assets, &mut textures)
+                        .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::TwoD));
                 attach_camera(&mut commands, actor, entity);
                 engine.entities.insert(actor.id.clone(), entity);
             }

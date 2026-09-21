@@ -69,6 +69,7 @@ pub fn run() {
             call,
             reset_zoom,
             pick_project_file,
+            pick_files,
             pick_folder,
             theme::set_theme_background
         ])
@@ -134,6 +135,22 @@ async fn pick_project_file(save: bool, default_name: Option<String>) -> Option<S
         dialog.set_title("Import project").pick_file().await
     };
     file.map(|file| file.path().to_string_lossy().into_owned())
+}
+
+/// Shows a file dialog for importing assets, which can take several at once.
+/// Returns `None` if the user cancelled.
+#[tauri::command]
+async fn pick_files(title: Option<String>) -> Option<Vec<String>> {
+    let files = rfd::AsyncFileDialog::new()
+        .set_title(title.unwrap_or_else(|| "Import assets".to_string()))
+        .pick_files()
+        .await?;
+    Some(
+        files
+            .into_iter()
+            .map(|file| file.path().to_string_lossy().into_owned())
+            .collect(),
+    )
 }
 
 /// Shows a folder dialog - where a new project should go, or which project

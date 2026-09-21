@@ -10,6 +10,7 @@ use bevy_rapier2d::prelude as rp;
 use blockloom_core::project::Actor;
 use blockloom_core::scene::{BodyKind, Visual};
 use blockloom_core::vm::Effect;
+use std::path::Path;
 
 /// How many pixels make a physics metre - the scale rapier reasons about
 /// masses and forces in.
@@ -58,6 +59,7 @@ fn circle_image(radius: f32) -> Image {
 
 fn sprite_for(
     visual: &Visual,
+    dir: Option<&Path>,
     assets: &AssetServer,
     textures: &mut Assets<Image>,
 ) -> Option<Sprite> {
@@ -74,7 +76,7 @@ fn sprite_for(
             ..default()
         }),
         Visual::Image { path, size } => Some(Sprite {
-            image: assets.load(path.clone()),
+            image: assets.load(crate::world::asset_path(dir, path)),
             custom_size: Some(Vec2::new(size[0], size[1])),
             ..default()
         }),
@@ -86,10 +88,11 @@ fn sprite_for(
 pub fn spawn_actor(
     commands: &mut Commands,
     actor: &Actor,
+    dir: Option<&Path>,
     assets: &AssetServer,
     textures: &mut Assets<Image>,
 ) -> Option<Entity> {
-    let sprite = sprite_for(actor.visual()?, assets, textures)?;
+    let sprite = sprite_for(actor.visual()?, dir, assets, textures)?;
     let mut entity = commands.spawn((crate::world::actor_bundle(actor), sprite));
     insert_body(&mut entity, actor);
     Some(entity.id())
@@ -159,6 +162,7 @@ pub fn apply_effects(
     // Turning "this far this frame" into a velocity needs the frame's own
     // length; a stalled frame would otherwise read as an enormous speed.
     let dt = time.delta_secs().max(1.0 / 240.0);
+    let dir = engine.project_dir.clone();
     for effect in &effects.0 {
         match effect {
             // A dynamic body walks by velocity, not by teleporting: that keeps
@@ -279,7 +283,9 @@ pub fn apply_effects(
                             .project
                             .actor(actor)
                             .and_then(|a| a.visual())
-                            .and_then(|visual| sprite_for(visual, &assets, &mut textures))
+                            .and_then(|visual| {
+                                sprite_for(visual, dir.as_deref(), &assets, &mut textures)
+                            })
                         else {
                             continue;
                         };

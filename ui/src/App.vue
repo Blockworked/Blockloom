@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Two pages: the Dashboard the app starts on, and the editor a project opens
 // into - a top bar, the actor list, the block palette and canvas, the
-// inspector, and the run log.
+// inspector, the asset tray and the run log.
 import { onMounted, onUnmounted } from 'vue';
 import { Canvas } from 'blockstitch';
 import { initState, state } from './store';
@@ -11,6 +11,7 @@ import TopBar from './components/TopBar.vue';
 import ActorList from './components/ActorList.vue';
 import BlockSidebar from './components/BlockSidebar.vue';
 import InspectorPanel from './components/InspectorPanel.vue';
+import AssetTray from './components/AssetTray.vue';
 import RunLog from './components/RunLog.vue';
 import ContextMenu from './components/ContextMenu.vue';
 
@@ -64,6 +65,7 @@ async function onKeydown(e: KeyboardEvent) {
       </div>
       <InspectorPanel />
     </div>
+    <AssetTray />
     <RunLog />
   </template>
 </template>

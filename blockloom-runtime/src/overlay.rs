@@ -123,6 +123,7 @@ pub fn update_speech_bubbles(
             spawn_speech_bubble(
                 &mut commands,
                 &assets,
+                engine.project_dir.as_deref(),
                 actor,
                 text,
                 &engine.project.world.speech_bubble,
@@ -134,6 +135,7 @@ pub fn update_speech_bubbles(
 fn spawn_speech_bubble(
     commands: &mut Commands,
     assets: &AssetServer,
+    dir: Option<&std::path::Path>,
     actor: &str,
     text: &str,
     style: &blockloom_core::scene::SpeechBubbleStyle,
@@ -144,7 +146,7 @@ fn spawn_speech_bubble(
     let border = world::parse_color(&style.border);
     let mut font = TextFont::from_font_size(FontSize::Px(style.font_size.max(1.0)));
     if let Some(path) = style.font_asset.as_ref().filter(|path| !path.is_empty()) {
-        font = font.with_font(assets.load(path.clone()));
+        font = font.with_font(assets.load(world::asset_path(dir, path)));
     }
 
     let actor_id = actor.to_string();

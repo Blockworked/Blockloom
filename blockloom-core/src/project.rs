@@ -476,6 +476,45 @@ impl Project {
             }
         }
     }
+
+    /// Points every asset path that named `from` at `to` instead, so renaming
+    /// a sprite in the asset tray doesn't leave the actor using it blank.
+    /// `from` may be a folder, in which case everything under it follows.
+    /// True if anything changed.
+    pub fn repoint_asset(&mut self, from: &str, to: &str) -> bool {
+        let mut changed = false;
+        let mut repoint = |path: &mut String| {
+            if let Some(next) = moved_path(path, from, to) {
+                *path = next;
+                changed = true;
+            }
+        };
+        if let Some(font) = self.world.speech_bubble.font_asset.as_mut() {
+            repoint(font);
+        }
+        for actor in &mut self.actors {
+            for component in actor.components.iter_mut() {
+                match component {
+                    ActorComponent::Look {
+                        visual: Visual::Image { path, .. },
+                    } => repoint(path),
+                    ActorComponent::Script { path } => repoint(path),
+                    _ => {}
+                }
+            }
+        }
+        changed
+    }
+}
+
+/// Where `path` ends up when `from` is renamed to `to` - the path itself, or
+/// anything inside it when `from` is a folder. `None` when it isn't affected.
+fn moved_path(path: &str, from: &str, to: &str) -> Option<String> {
+    if path == from {
+        return Some(to.to_string());
+    }
+    path.strip_prefix(&format!("{from}/"))
+        .map(|rest| format!("{to}/{rest}"))
 }
 
 fn visual_for_mode(visual: &Visual, mode: Mode) -> Visual {

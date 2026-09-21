@@ -283,6 +283,32 @@ export interface ProjectDto {
   globals: VariableDto[];
 }
 
+// ─── Assets ────────────────────────────────────────────────────────────────
+
+/** What a file is, from its extension - what the tray draws and what an input
+ * checks a dropped asset against. Matches `blockloom_core::assets::AssetKind`. */
+export type AssetKind =
+  | 'folder'
+  | 'image'
+  | 'audio'
+  | 'font'
+  | 'model'
+  | 'script'
+  | 'text'
+  | 'other';
+
+/** One row in the asset tray. `path` is relative to the project folder. */
+export interface AssetEntry {
+  name: string;
+  path: string;
+  kind: AssetKind;
+  size: number;
+  /** Unix seconds, 0 if the filesystem wouldn't say. */
+  modified: number;
+  /** The project document itself, which can't be renamed, moved or deleted. */
+  protected: boolean;
+}
+
 // ─── Run state ─────────────────────────────────────────────────────────────
 
 export interface ActorStatusDto {

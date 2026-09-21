@@ -11,6 +11,8 @@
 //! - [`project`] is the saved document: a [`scene::World`] plus one canvas
 //!   per actor, and the folder it is saved in.
 //! - [`library`] is the set of project folders the Dashboard lists.
+//! - [`assets`] is the files inside one of those folders, which the editor's
+//!   asset tray lists and the runtime loads images and fonts from.
 //! - [`vm`] compiles those canvases into a flat program and runs every script
 //!   cooperatively, one slice per rendered frame, emitting [`vm::Effect`]s for
 //!   a host to apply. `blockloom-runtime` is that host.
@@ -19,6 +21,7 @@
 //! - [`wire`] converts documents to and from the flat JSON shape the
 //!   blockstitch frontend speaks.
 
+pub mod assets;
 pub mod blocks;
 pub mod components;
 pub mod fields;

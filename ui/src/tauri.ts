@@ -3,6 +3,7 @@
 import { invoke, listen, getVersion } from './bridge';
 import type {
   ActorComponentDto,
+  AssetEntry,
   BlockPieceDto,
   BlockShapeDto,
   CameraDto,
@@ -101,6 +102,33 @@ export const setActorPhysics = (actorId: string, physics: PhysicsDto) =>
   invoke<void>('set_actor_physics', { actorId, physics });
 export const setActorVisible = (actorId: string, visible: boolean) =>
   invoke<void>('set_actor_visible', { actorId, visible });
+
+// ─── Assets ─────────────────────────────────────────────────────────────────
+// A project folder's files, which the asset tray manages. None of these touch
+// the document, so none of them are undoable; the tray re-lists after each.
+
+/** What one folder of the project holds. `path` is `''` for the top. */
+export const listAssets = (path: string) => invoke<AssetEntry[]>('list_assets', { path });
+export const createAssetFolder = (parent: string, name: string) =>
+  invoke<string>('create_asset_folder', { parent, name });
+/** Makes an empty file - a script gets the starter template. */
+export const createAsset = (parent: string, name: string) =>
+  invoke<string>('create_asset', { parent, name });
+export const importAssets = (parent: string, paths: string[]) =>
+  invoke<string[]>('import_assets', { parent, paths });
+/** Renaming and moving both follow the asset through the document, so an
+ * actor using it doesn't end up pointing at nothing. */
+export const renameAsset = (path: string, name: string) =>
+  invoke<string>('rename_asset', { path, name });
+export const moveAsset = (path: string, parent: string) =>
+  invoke<string>('move_asset', { path, parent });
+export const deleteAsset = (path: string) => invoke<void>('delete_asset', { path });
+/** A file's bytes as a `data:` URL - the only way the page can show one. */
+export const readAsset = (path: string) => invoke<string>('read_asset', { path });
+
+/** Asks which files to import. Resolves to `null` if the dialog was
+ * cancelled. */
+export const pickFiles = (title: string) => invoke<string[] | null>('pick_files', { title });
 
 // ─── Running ────────────────────────────────────────────────────────────────
 export const runProject = () => invoke<void>('run_project');

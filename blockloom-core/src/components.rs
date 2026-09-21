@@ -168,6 +168,10 @@ impl Components {
         self.0.iter()
     }
 
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut ActorComponent> {
+        self.0.iter_mut()
+    }
+
     pub fn get(&self, name: &str) -> Option<&ActorComponent> {
         self.0.iter().find(|component| component.name() == name)
     }

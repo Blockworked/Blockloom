@@ -7,7 +7,10 @@
 // Every field writes straight through to the backend, and a running world
 // picks the change up as soon as it stops. The `*Of` helpers narrow the
 // component union in one place, so the template stays free of casts.
-import { computed, ref } from 'vue';
+//
+// The rows naming a file - an image, a script - are wrapped in `AssetDrop`,
+// so a file dragged out of the asset tray lands on them.
+import { computed, ref, watch } from 'vue';
 import { AppDropdown, SwitchControl } from 'blockstitch';
 import { Plus, X } from 'lucide-vue-next';
 import { mode, openActor, state } from '../store';
@@ -15,6 +18,7 @@ import {
   addActorComponent,
   checkScript,
   createScript,
+  readAsset,
   removeActorComponent,
   renameActor,
   setActorComponent,
@@ -22,12 +26,14 @@ import {
   setCamera,
   setGravity,
 } from '../tauri';
+import AssetDrop from './AssetDrop.vue';
 import ScriptDialog from './ScriptDialog.vue';
 import { BODY_OPTIONS, CAMERA_VIEW_OPTIONS } from '../constants';
 import {
   ADDABLE_COMPONENTS,
   actorPhysics,
   actorPlacement,
+  actorVisual,
   componentName,
   shapesFor,
   type ActorComponentDto,
@@ -62,6 +68,29 @@ const addableComponents = computed(() => {
 const addOpen = ref(false);
 /** The script the editor dialog is open on, if any. */
 const editingScript = ref<{ actorId: string; actorName: string; path: string } | null>(null);
+
+/** The open actor's image, read back as a data URL - the page can't see a
+ * file on disk any other way. Empty when it has none, or when the path names
+ * something that isn't there. */
+const preview = ref('');
+const imagePath = computed(() => {
+  const visual = actorVisual(actor.value);
+  return visual?.shape === 'Image' ? visual.path : '';
+});
+
+watch(
+  imagePath,
+  async path => {
+    preview.value = '';
+    if (!path) return;
+    try {
+      preview.value = await readAsset(path);
+    } catch {
+      // A path naming nothing shows as the empty row it is.
+    }
+  },
+  { immediate: true },
+);
 
 function num(e: Event, fallback: number): number {
   const parsed = Number((e.target as HTMLInputElement).value);
@@ -386,12 +415,18 @@ function writeGravity(index: number, value: number) {
           </div>
           <div class="panel-row" v-if="visualOf(component).shape === 'Image'">
             <label>Image</label>
-            <input
-              type="text"
-              :value="imagePathOf(component)"
-              placeholder="assets/player.png"
-              @change="e => writeVisual(component, { path: text(e) } as Partial<VisualDto>)"
-            >
+            <AssetDrop :accept="['image']" @asset="path => writeVisual(component, { path } as Partial<VisualDto>)">
+              <input
+                type="text"
+                :value="imagePathOf(component)"
+                placeholder="Drag an image here"
+                @change="e => writeVisual(component, { path: text(e) } as Partial<VisualDto>)"
+              >
+            </AssetDrop>
+          </div>
+          <div class="panel-row image-preview" v-if="visualOf(component).shape === 'Image' && preview">
+            <label />
+            <img :src="preview" :alt="imagePathOf(component)">
           </div>
           <div class="panel-row" v-if="'radius' in visualOf(component)">
             <label>Radius</label>
@@ -494,7 +529,9 @@ function writeGravity(index: number, value: number) {
 
         <template v-else-if="component.component === 'Script'">
           <div class="panel-row">
-            <span class="script-path" :title="scriptPathOf(component)">{{ scriptPathOf(component) }}</span>
+            <AssetDrop :accept="['script']" @asset="path => write('Script', { component: 'Script', path })">
+              <span class="script-path" :title="scriptPathOf(component)">{{ scriptPathOf(component) }}</span>
+            </AssetDrop>
           </div>
           <div class="panel-row">
             <button class="btn-small" @click="openScript(component)">Edit</button>

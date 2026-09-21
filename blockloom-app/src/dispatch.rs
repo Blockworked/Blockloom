@@ -126,6 +126,41 @@ impl Backend {
                 arg(&args, "actorId")?,
                 arg(&args, "name")?,
             )?),
+            // ── Assets ─────────────────────────────────────────────────────
+            "list_assets" => to_json(commands::list_assets(
+                state,
+                arg(&args, "path").unwrap_or_default(),
+            )?),
+            "create_asset_folder" => to_json(commands::create_asset_folder(
+                state,
+                arg(&args, "parent").unwrap_or_default(),
+                arg(&args, "name")?,
+            )?),
+            "create_asset" => to_json(commands::create_asset(
+                state,
+                arg(&args, "parent").unwrap_or_default(),
+                arg(&args, "name")?,
+            )?),
+            "import_assets" => to_json(commands::import_assets(
+                state,
+                arg(&args, "parent").unwrap_or_default(),
+                arg(&args, "paths")?,
+            )?),
+            "rename_asset" => to_json(commands::rename_asset(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg(&args, "name")?,
+            )?),
+            "move_asset" => to_json(commands::move_asset(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg(&args, "parent").unwrap_or_default(),
+            )?),
+            "delete_asset" => to_json(commands::delete_asset(state, arg(&args, "path")?)?),
+            "read_asset" => to_json(commands::read_asset(state, arg(&args, "path")?)?),
+
             // ── Scripts ────────────────────────────────────────────────────
             "create_script" => {
                 to_json(commands::create_script(state, app, arg(&args, "actorId")?)?)

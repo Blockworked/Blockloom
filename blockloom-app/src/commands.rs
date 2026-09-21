@@ -9,6 +9,7 @@ use crate::state::{
     state_dto,
 };
 use crate::{AppHandle, Backend};
+use blockloom_core::assets;
 use blockloom_core::blocks::{
     ActorGraph, BlockPiece, BlockShape, Instruction, InstructionKind, normalize_block_color,
 };
@@ -847,6 +848,123 @@ fn build_scripts(s: &mut AppState) {
             });
         }
     }
+}
+
+// ─── Assets ────────────────────────────────────────────────────────────────
+//
+// A project is a folder, so its assets are files in it and the asset tray is a
+// small file manager over that folder. None of this touches the document, so
+// none of it checkpoints undo; the tray asks for a fresh listing after every
+// change instead of waiting for a state snapshot.
+
+/// What a new file of each kind starts out holding. A script gets the same
+/// starter template the Script component makes, so one dragged onto an actor
+/// compiles as it is.
+fn asset_template(name: &str) -> String {
+    match assets::kind_of(name) {
+        assets::AssetKind::Script => script::starter("this actor"),
+        _ => String::new(),
+    }
+}
+
+fn project_dir(s: &Guard<'_>) -> Result<std::path::PathBuf, String> {
+    s.project_dir()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "No project is open".to_string())
+}
+
+/// What one folder of the project holds.
+pub(crate) fn list_assets(
+    state: &SharedState,
+    path: String,
+) -> Result<Vec<assets::AssetEntry>, String> {
+    let s = lock(state)?;
+    assets::list(&project_dir(&s)?, &path)
+}
+
+pub(crate) fn create_asset_folder(
+    state: &SharedState,
+    parent: String,
+    name: String,
+) -> Result<String, String> {
+    let s = lock(state)?;
+    assets::create_folder(&project_dir(&s)?, &parent, &name)
+}
+
+/// Makes an empty asset - a text file, or a script with the starter template.
+pub(crate) fn create_asset(
+    state: &SharedState,
+    parent: String,
+    name: String,
+) -> Result<String, String> {
+    let s = lock(state)?;
+    assets::create_file(&project_dir(&s)?, &parent, &name, &asset_template(&name))
+}
+
+/// Copies files from anywhere on the machine into the project folder.
+pub(crate) fn import_assets(
+    state: &SharedState,
+    parent: String,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let s = lock(state)?;
+    let sources: Vec<std::path::PathBuf> =
+        paths.into_iter().map(std::path::PathBuf::from).collect();
+    assets::import(&project_dir(&s)?, &parent, &sources)
+}
+
+pub(crate) fn rename_asset(
+    state: &SharedState,
+    app: &AppHandle,
+    path: String,
+    name: String,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    let moved = assets::rename(&project_dir(&s)?, &path, &name)?;
+    repoint_assets(&mut s, app, &path, &moved);
+    Ok(moved)
+}
+
+pub(crate) fn move_asset(
+    state: &SharedState,
+    app: &AppHandle,
+    path: String,
+    parent: String,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    let moved = assets::move_to(&project_dir(&s)?, &path, &parent)?;
+    repoint_assets(&mut s, app, &path, &moved);
+    Ok(moved)
+}
+
+pub(crate) fn delete_asset(state: &SharedState, path: String) -> Result<(), String> {
+    let s = lock(state)?;
+    assets::delete(&project_dir(&s)?, &path)
+}
+
+/// A file's bytes as a `data:` URL - the only way a web page can show a
+/// thumbnail of a file on disk.
+pub(crate) fn read_asset(state: &SharedState, path: String) -> Result<String, String> {
+    let s = lock(state)?;
+    assets::data_url(&project_dir(&s)?, &path)
+}
+
+/// Follows a renamed or moved asset through the document, so an actor whose
+/// image or script just moved still points at it. Nothing to do in the usual
+/// case, and then nothing is saved or published either.
+fn repoint_assets(s: &mut AppState, app: &AppHandle, from: &str, to: &str) {
+    if from == to {
+        return;
+    }
+    let changed = s
+        .project_mut()
+        .is_some_and(|project| project.repoint_asset(from, to));
+    if !changed {
+        return;
+    }
+    auto_save(s);
+    sync_runtime(s);
+    emit(app, s);
 }
 
 // ─── Scripts ───────────────────────────────────────────────────────────────
