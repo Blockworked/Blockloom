@@ -113,10 +113,20 @@ fn insert_body(entity: &mut EntityCommands, actor: &Actor) {
             rp::GravityScale(physics.gravity_scale),
             rp::Restitution::coefficient(physics.restitution),
             rp::Friction::coefficient(physics.friction),
+            mass_properties(physics),
         ));
         if physics.lock_rotation {
             entity.insert(rp::LockedAxes::ROTATION_LOCKED);
         }
+    }
+}
+
+/// How heavy the collider is: an explicit mass wins over the density its
+/// shape would otherwise imply.
+fn mass_properties(physics: blockloom_core::scene::Physics) -> rp::ColliderMassProperties {
+    match physics.mass {
+        Some(mass) => rp::ColliderMassProperties::Mass(mass),
+        None => rp::ColliderMassProperties::Density(physics.density),
     }
 }
 
@@ -231,6 +241,22 @@ pub fn apply_effects(
             Effect::SetGravity { gravity } => {
                 if let Ok(mut config) = config.single_mut() {
                     set_gravity(&mut config, *gravity);
+                }
+            }
+            // `bevy_rapier` watches this component: a change recomputes the
+            // rigid body's mass.
+            Effect::SetDensity { actor, density } => {
+                if let Some(entity) = engine.entities.get(actor).copied() {
+                    commands
+                        .entity(entity)
+                        .insert(rp::ColliderMassProperties::Density(*density));
+                }
+            }
+            Effect::SetMass { actor, mass } => {
+                if let Some(entity) = engine.entities.get(actor).copied() {
+                    commands
+                        .entity(entity)
+                        .insert(rp::ColliderMassProperties::Mass(*mass));
                 }
             }
             Effect::SetColor { actor, color } => {
@@ -353,10 +379,7 @@ pub fn sync_pause(engine: NonSend<Engine>, mut configs: Query<&mut rp::RapierCon
 
 /// Steps the physics pipeline at the project's own fixed rate, the same rate
 /// the blocks run at, so a body and a `move` never fight over time.
-pub fn sync_timestep(
-    engine: NonSend<Engine>,
-    mut timestep: ResMut<rp::TimestepMode>,
-) {
+pub fn sync_timestep(engine: NonSend<Engine>, mut timestep: ResMut<rp::TimestepMode>) {
     let rate = engine.project.world.fixed_rate;
     if !rate.is_finite() {
         return;

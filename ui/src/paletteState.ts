@@ -46,6 +46,10 @@ function defaults(type: InstructionType): Record<string, unknown> {
       return { x: numberValue(0), y: numberValue(0), z: numberValue(0) };
     case 'SetGravity':
       return { x: numberValue(0), y: numberValue(-9.81), z: numberValue(0) };
+    case 'SetDensity':
+      return { density: numberValue(1) };
+    case 'SetMass':
+      return { mass: numberValue(1) };
     case 'Say':
       return { text: textValue('Hello!') };
     case 'SetVisible':

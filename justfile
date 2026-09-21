@@ -41,6 +41,12 @@ dev-backend:
 dev-ui:
     cd ui && pnpm run dev
 
+# A shell onto the backend: each line is a command, each answer is JSON.
+# Builds the whole workspace first so Play has `blockloom-runtime` beside it.
+shell *args:
+    just build
+    cargo run -p blockloom-app --bin blockloom-shell -- {{args}}
+
 test:
     cargo test --workspace
 

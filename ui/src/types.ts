@@ -32,6 +32,8 @@ export const INSTRUCTION_TYPES = [
   'ApplyImpulse',
   'SetVelocity',
   'SetGravity',
+  'SetDensity',
+  'SetMass',
   'Say',
   'SetVisible',
   'SetColor',
@@ -135,6 +137,10 @@ export interface PhysicsDto {
   lock_rotation: boolean;
   restitution: number;
   friction: number;
+  /** Mass per unit of collider area/volume - how heavy the actor is for its size. */
+  density: number;
+  /** An explicit body mass; null lets the shape and `density` decide. */
+  mass: number | null;
 }
 
 /** Where the camera stands when no actor is holding it. An actor's `Camera`
@@ -420,7 +426,7 @@ export function actorPlacement(actor: ActorDto | null): PlacementDto {
 export function actorPhysics(actor: ActorDto | null): PhysicsDto {
   const body = findComponent(actor, 'Body');
   if (body?.component === 'Body') return body.physics;
-  return { body: 'None', gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5 };
+  return { body: 'None', gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5, density: 1, mass: null };
 }
 
 /** The script file an actor runs, if it has a Script component. */

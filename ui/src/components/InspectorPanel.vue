@@ -116,6 +116,12 @@ function num(e: Event, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+/** An empty mass input means "no explicit mass" - let density decide. */
+function numOrNull(e: Event): number | null {
+  const raw = (e.target as HTMLInputElement).value;
+  return raw.trim() === '' ? null : num(e, 1);
+}
+
 function text(e: Event): string {
   return (e.target as HTMLInputElement).value;
 }
@@ -346,7 +352,7 @@ function blankComponent(name: ComponentName): ActorComponentDto | null {
     case 'Body':
       return {
         component: 'Body',
-        physics: { body: 'Dynamic', gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5 },
+        physics: { body: 'Dynamic', gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5, density: 1, mass: null },
       };
     case 'Camera':
       return {
@@ -535,6 +541,14 @@ function remove(name: string) {
             <div class="panel-row">
               <label>Friction</label>
               <input type="number" step="any" :value="physicsOf(component).friction" @change="e => writePhysics(component, { friction: num(e, 0.5) })">
+            </div>
+            <div class="panel-row">
+              <label>Density</label>
+              <input type="number" step="any" :value="physicsOf(component).density" @change="e => writePhysics(component, { density: num(e, 1) })">
+            </div>
+            <div class="panel-row">
+              <label>Mass (optional)</label>
+              <input type="number" step="any" :value="physicsOf(component).mass ?? ''" placeholder="density decides" @change="e => writePhysics(component, { mass: numOrNull(e) })">
             </div>
             <div class="panel-row">
               <label>Upright</label>

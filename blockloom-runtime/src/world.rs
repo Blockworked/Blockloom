@@ -1142,6 +1142,8 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetBody { actor, .. }
         | Effect::ApplyImpulse { actor, .. }
         | Effect::SetVelocity { actor, .. }
+        | Effect::SetDensity { actor, .. }
+        | Effect::SetMass { actor, .. }
         | Effect::Say { actor, .. }
         | Effect::SetVisible { actor, .. }
         | Effect::SetColor { actor, .. }
@@ -1310,9 +1312,9 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(TimePlugin);
         app.insert_resource(Time::<Fixed>::from_hz(60.0));
-        app.insert_resource(TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs_f64(
-            1.0 / 60.0,
-        )));
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_secs_f64(1.0 / 60.0),
+        ));
         app.init_resource::<PendingEffects>();
         app.insert_non_send(engine);
         app.add_systems(FixedUpdate, step_vm);

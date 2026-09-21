@@ -148,6 +148,14 @@ pub struct Physics {
     pub restitution: f32,
     #[serde(default = "default_friction")]
     pub friction: f32,
+    /// Mass per unit of collider area (2D) or volume (3D): the dial between a
+    /// balloon and a lead ball of the same size.
+    #[serde(default = "one")]
+    pub density: f32,
+    /// An explicit body mass, beating `density` when set - the collider
+    /// weighs this however big it is. `None` lets shape and density decide.
+    #[serde(default)]
+    pub mass: Option<f32>,
 }
 
 fn one() -> f32 {
@@ -170,6 +178,8 @@ impl Default for Physics {
             lock_rotation: false,
             restitution: 0.0,
             friction: 0.5,
+            density: 1.0,
+            mass: None,
         }
     }
 }
@@ -381,5 +391,25 @@ mod tests {
 
         let json = serde_json::to_string(&world).unwrap();
         assert_eq!(serde_json::from_str::<World>(&json).unwrap(), world);
+    }
+
+    #[test]
+    fn an_old_physics_defaults_its_mass_and_density() {
+        let physics: Physics =
+            serde_json::from_str(r#"{"body": "Dynamic", "friction": 0.2}"#).unwrap();
+        assert_eq!(physics.body, BodyKind::Dynamic);
+        assert_eq!(physics.friction, 0.2);
+        assert_eq!(physics.density, 1.0);
+        assert_eq!(physics.mass, None);
+    }
+
+    #[test]
+    fn an_explicit_mass_beats_density_in_the_document() {
+        let physics: Physics =
+            serde_json::from_str(r#"{"body": "Dynamic", "density": 2.0, "mass": 50.0}"#).unwrap();
+        assert_eq!(physics.density, 2.0);
+        assert_eq!(physics.mass, Some(50.0));
+        let json = serde_json::to_string(&physics).unwrap();
+        assert_eq!(serde_json::from_str::<Physics>(&json).unwrap(), physics);
     }
 }

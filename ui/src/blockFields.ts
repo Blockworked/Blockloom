@@ -228,6 +228,8 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
   ApplyImpulse: { head: vector('push', ['ImpulseX', 'ImpulseY', 'ImpulseZ'], ['x', 'y', 'z']) },
   SetVelocity: { head: vector('set velocity', ['VelocityX', 'VelocityY', 'VelocityZ'], ['x', 'y', 'z']) },
   SetGravity: { head: vector('set world gravity', ['GravityX', 'GravityY', 'GravityZ'], ['x', 'y', 'z']) },
+  SetDensity: { head: [label('set density to'), value('Density', 'density')] },
+  SetMass: { head: [label('set mass to'), value('Mass', 'mass')] },
 
   // ── Looks ────────────────────────────────────────────────────────────────
   Say: { head: [label('say'), value('SayText', 'text')] },

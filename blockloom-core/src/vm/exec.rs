@@ -621,6 +621,17 @@ impl Vm {
                 let gravity = self.eval_vec3(vector, actor, params, out);
                 out.push(Effect::SetGravity { gravity });
             }
+            Action::SetDensity(density) => {
+                let density = self.eval_f32(density, actor, params, out);
+                out.push(Effect::SetDensity {
+                    actor: owner,
+                    density,
+                });
+            }
+            Action::SetMass(mass) => {
+                let mass = self.eval_f32(mass, actor, params, out);
+                out.push(Effect::SetMass { actor: owner, mass });
+            }
             Action::Say(text) => {
                 let text = self.eval(text, actor, params, out).as_text();
                 out.push(Effect::Say { actor: owner, text });

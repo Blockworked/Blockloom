@@ -75,6 +75,32 @@ window after every UI tweak. Both paths end in `Backend::dispatch`
 camelCase, as the frontend sends them) to be reachable from either. Play works
 from the browser too: the backend spawns the same runtime process.
 
+### AI/CLI shell (`blockloom-shell`)
+
+A standalone text interface that speaks every `Backend::dispatch` command as
+a single text line, returning JSON responses. Useful for AI agents, scripts
+and manual testing outside the GUI.
+
+```bash
+just shell                              # builds workspace, launches REPL
+just shell --eval 'create-project name=Demo mode=TwoD'   # one-shot
+echo 'add-actor name=Ball shape=Circle' | just shell      # piped script
+```
+
+**Syntax:** `command key=value key2="value with spaces"` - bare words and
+numbers keep their type; quoted strings and JSON values (`[1,2]`, `{"a":1}`)
+are preserved as-is. `# comments`, blank lines, and `help` / `exit` are
+understood. Every response is `{"ok":bool,"result":...,"error":...,"state":...}`.
+
+**Architecture:** a separate binary (`blockloom-app/src/bin/shell.rs`) that
+hosts its own `Backend` (like `devserver`). The command registry lives in
+`blockloom-app/src/shell.rs` (`COMMANDS`), one `CommandSpec` per dispatch
+command. `parse` turns a line into `Action`, `run` turns `Action` into a
+JSON response. `--eval` for one-shot, `--no-state` to suppress the state
+snapshot (useful for bandwidth with large projects). Piped mode exits 1
+if any command errors. **Don't edit the same project from the shell and
+the window simultaneously** - each holds its own in-memory copy.
+
 ## Architecture
 
 ### Cargo workspace

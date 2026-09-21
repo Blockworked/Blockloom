@@ -114,6 +114,15 @@ pub enum InstructionKind {
         y: Value,
         z: Value,
     },
+    /// How heavy this actor is for its size - a `2` shoves a `1` aside and
+    /// resists being shoved itself.
+    SetDensity {
+        density: Value,
+    },
+    /// An explicit body mass; set, it wins over [`SetDensity`] and the shape.
+    SetMass {
+        mass: Value,
+    },
 
     // ─── Looks ──────────────────────────────────────────────────────────────
     /// Shows a speech bubble over the actor. An empty text clears it.
@@ -229,6 +238,8 @@ impl BlockKind for InstructionKind {
             | K::Turn { degrees: v, .. }
             | K::SetRotation { degrees: v, .. }
             | K::SetScale { factor: v }
+            | K::SetDensity { density: v }
+            | K::SetMass { mass: v }
             | K::Say { text: v }
             | K::SetColor { color: v }
             | K::Wait { duration: v }

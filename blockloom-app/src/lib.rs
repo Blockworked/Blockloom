@@ -5,6 +5,7 @@
 mod commands;
 mod dispatch;
 mod runtime;
+pub mod shell;
 mod state;
 
 use crate::state::{AppState, SharedState, UNDO_STACK_LIMIT, state_dto};

@@ -64,6 +64,17 @@ pub enum Effect {
     SetGravity {
         gravity: [f32; 3],
     },
+    /// How heavy a unit of this actor's collider area or volume is - the dial
+    /// between a balloon and a lead ball of the same size.
+    SetDensity {
+        actor: String,
+        density: f32,
+    },
+    /// An explicit body mass, overriding whatever `density` would derive.
+    SetMass {
+        actor: String,
+        mass: f32,
+    },
     /// A speech bubble over the actor; an empty text clears it.
     Say {
         actor: String,
