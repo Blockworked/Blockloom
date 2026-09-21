@@ -18,7 +18,10 @@
 //! skips rather than fails - the same bargain `blockloom-runtime`'s script
 //! tests make.
 
-use blockloom_core::blocks::{Instruction, InstructionKind as K, Strand, VariableDef};
+use blockloom_core::blocks::{
+    BlockDef, BlockPiece, BlockShape, InputValueType, Instruction, InstructionKind as K, Strand,
+    VariableDef,
+};
 use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::{Axis, Mode, Visual};
 use blockloom_core::sense::{ActorSense, Sensors};
@@ -251,15 +254,37 @@ fn shown(value: &Evaluated) -> String {
 const DT: f64 = 1.0 / 60.0;
 const TICKS: usize = 200;
 
-fn project(body: Vec<K>, globals: &[(&str, Evaluated)]) -> Project {
-    project_with_strands(vec![body], globals)
+/// A custom block: what a call names it, the inputs it declares, and the
+/// body those inputs are read in.
+struct Block {
+    id: &'static str,
+    inputs: &'static [&'static str],
+    body: Vec<K>,
 }
 
-/// One actor, one strand per body, each headed by a green flag. Several
-/// strands on one actor start in the order they're written on both sides,
-/// which is what makes them worth comparing; several actors wouldn't, since
-/// the VM finds them through a hash map.
-fn project_with_strands(bodies: Vec<Vec<K>>, globals: &[(&str, Evaluated)]) -> Project {
+fn block(id: &'static str, inputs: &'static [&'static str], body: Vec<K>) -> Block {
+    Block { id, inputs, body }
+}
+
+/// A reporter-shaped call, which resolves to whatever the body returns.
+fn call(id: &str, args: Vec<Value>) -> Value {
+    Value::Call {
+        block_id: id.to_string(),
+        args,
+        // What the editor shows while the call isn't being run; never read.
+        saved: Box::new(Value::number(0.0)),
+    }
+}
+
+/// One actor: a green-flag strand per body, and a custom block per
+/// definition. Several strands on one actor start in the order they're
+/// written on both sides, which is what makes them worth comparing; several
+/// actors wouldn't, since the VM finds those through a hash map.
+fn project_with_blocks(
+    bodies: Vec<Vec<K>>,
+    blocks: Vec<Block>,
+    globals: &[(&str, Evaluated)],
+) -> Project {
     let mut actor = Actor::new(
         "Player",
         Visual::Rect {
@@ -277,6 +302,35 @@ fn project_with_strands(bodies: Vec<Vec<K>>, globals: &[(&str, Evaluated)]) -> P
             Strand::with_instructions(0, index as i32 * 400, instructions)
         })
         .collect();
+
+    // A custom block is a prototype plus a strand headed by it: that header
+    // is how the VM finds the body, and where a call jumps to.
+    for (index, block) in blocks.into_iter().enumerate() {
+        let mut instructions = vec![Instruction::new(K::BlockHeader {
+            block_id: block.id.to_string(),
+        })];
+        instructions.extend(block.body.into_iter().map(Instruction::new));
+        actor.graph.strands.push(Strand::with_instructions(
+            600,
+            index as i32 * 400,
+            instructions,
+        ));
+        let mut pieces = vec![BlockPiece::Label {
+            id: format!("{}-label", block.id),
+            text: block.id.to_string(),
+        }];
+        pieces.extend(block.inputs.iter().map(|name| BlockPiece::Input {
+            id: format!("{}-{name}", block.id),
+            name: name.to_string(),
+            value_type: InputValueType::Any,
+        }));
+        actor.graph.block_defs.push(BlockDef {
+            id: block.id.to_string(),
+            pieces,
+            shape: BlockShape::Normal,
+            color: blockloom_core::blocks::default_block_color(),
+        });
+    }
 
     Project {
         id: "p".to_string(),
@@ -420,10 +474,19 @@ fn assert_same(case: &str, body: Vec<K>, globals: &[(&str, Evaluated)]) {
 }
 
 fn assert_same_strands(case: &str, bodies: Vec<Vec<K>>, globals: &[(&str, Evaluated)]) {
+    assert_same_blocks(case, bodies, Vec::new(), globals);
+}
+
+fn assert_same_blocks(
+    case: &str,
+    bodies: Vec<Vec<K>>,
+    blocks: Vec<Block>,
+    globals: &[(&str, Evaluated)],
+) {
     if !toolchain() {
         return;
     }
-    let project = project_with_strands(bodies, globals);
+    let project = project_with_blocks(bodies, blocks, globals);
     let interpreted = by_vm(&project);
     let compiled = by_compiler(&project, globals, case);
     assert_eq!(
@@ -1031,16 +1094,538 @@ fn strands_take_their_turns_in_the_same_order() {
     );
 }
 
+// ─── Custom blocks ──────────────────────────────────────────────────────────
+
+fn calling(id: &str, args: Vec<Value>) -> K {
+    K::CallBlock {
+        block_id: id.to_string(),
+        args,
+    }
+}
+
+fn param(name: &str) -> Value {
+    Value::Param {
+        name: name.to_string(),
+    }
+}
+
 #[test]
-fn a_project_the_compiler_cant_do_yet_is_refused_by_name() {
-    let project = project(
-        vec![K::CallBlock {
-            block_id: "b1".to_string(),
-            args: vec![],
-        }],
+fn a_statement_call_runs_the_body_and_comes_back() {
+    assert_same_blocks(
+        "statement",
+        vec![vec![
+            K::Say {
+                text: Value::text("before"),
+            },
+            calling("b1", vec![number(3.0)]),
+            K::Say {
+                text: Value::text("after"),
+            },
+            // The same block twice over: the second call has to find its own
+            // way home rather than the first one's.
+            calling("b1", vec![number(4.0)]),
+            K::Say {
+                text: Value::text("done"),
+            },
+        ]],
+        vec![block(
+            "b1",
+            &["distance"],
+            vec![
+                K::Move {
+                    steps: param("distance"),
+                },
+                // A name the block never declared reads as zero on both sides.
+                K::Say {
+                    text: param("nobody"),
+                },
+            ],
+        )],
         &[],
     );
-    let error =
-        blockloom_core::codegen::compile(&project).expect_err("custom blocks aren't compiled yet");
-    assert_eq!(error.what, "a custom block");
+}
+
+/// Arguments bind by position, and only as far as the two lists overlap: a
+/// surplus one is never worked out at all, so its complaints never happen.
+#[test]
+fn arguments_bind_as_far_as_the_two_lists_overlap() {
+    assert_same_blocks(
+        "binding",
+        vec![vec![
+            calling("b1", vec![number(1.0), number(2.0)]),
+            // One short: the second input has nothing to read.
+            calling("b1", vec![number(9.0)]),
+            // One over, and the surplus is a slot that would have complained.
+            calling(
+                "b1",
+                vec![
+                    number(5.0),
+                    number(6.0),
+                    op("Div", vec![number(1.0), number(0.0)]),
+                ],
+            ),
+        ]],
+        vec![block(
+            "b1",
+            &["a", "b"],
+            vec![K::Move { steps: param("a") }, K::Say { text: param("b") }],
+        )],
+        &[],
+    );
+}
+
+#[test]
+fn a_reporter_runs_in_place_and_hands_its_value_back() {
+    assert_same_blocks(
+        "reporter",
+        vec![vec![
+            K::Say {
+                text: call("b1", vec![number(4.0)]),
+            },
+            // In the middle of an expression, and twice over in one.
+            K::Move {
+                steps: op(
+                    "Add",
+                    vec![call("b1", vec![number(1.0)]), call("b1", vec![number(2.0)])],
+                ),
+            },
+            // A body that falls off the end rather than returning is zero.
+            K::Say {
+                text: call("b2", vec![]),
+            },
+        ]],
+        vec![
+            block(
+                "b1",
+                &["n"],
+                vec![
+                    // A reporter may act on the world on its way to a value.
+                    K::Say {
+                        text: Value::text("asked"),
+                    },
+                    K::Return {
+                        value: op("Mul", vec![param("n"), number(10.0)]),
+                    },
+                ],
+            ),
+            block(
+                "b2",
+                &[],
+                vec![K::Say {
+                    text: Value::text("no return"),
+                }],
+            ),
+        ],
+        &[],
+    );
+}
+
+/// The order that makes hoisting necessary. A whole tree is resolved - every
+/// variable and every reporter call - before one operator runs, so a reporter
+/// on the side `and` never reads runs anyway, and says what it says.
+#[test]
+fn a_reporter_runs_even_on_the_side_a_short_circuit_never_reads() {
+    assert_same_blocks(
+        "resolve",
+        vec![vec![
+            K::Say {
+                text: op("And", vec![op("False", vec![]), call("b1", vec![])]),
+            },
+            K::Say {
+                text: op("Or", vec![op("True", vec![]), call("b1", vec![])]),
+            },
+        ]],
+        vec![block(
+            "b1",
+            &[],
+            vec![
+                K::Say {
+                    text: Value::text("ran anyway"),
+                },
+                K::Return {
+                    value: op("True", vec![]),
+                },
+            ],
+        )],
+        &[],
+    );
+}
+
+/// Nothing in a reporter suspends: it runs to completion where it stands, so
+/// a `wait` in one passes straight through and a loop costs no ticks at all.
+#[test]
+fn nothing_inside_a_reporter_suspends() {
+    assert_same_blocks(
+        "immediate",
+        vec![vec![
+            K::Say {
+                text: call("b1", vec![]),
+            },
+            K::Say {
+                text: Value::text("same tick"),
+            },
+        ]],
+        vec![block(
+            "b1",
+            &[],
+            vec![
+                K::Wait {
+                    duration: number(5.0),
+                },
+                K::Repeat {
+                    count: number(3.0),
+                    body: vec![Instruction::new(K::Move { steps: number(1.0) })],
+                },
+                K::WaitUntil {
+                    condition: op("KeyDown", vec![Value::text("escape")]),
+                },
+                K::Glide {
+                    seconds: number(2.0),
+                    x: number(1.0),
+                    y: number(2.0),
+                    z: number(3.0),
+                },
+                K::Return {
+                    value: Value::text("straight through"),
+                },
+            ],
+        )],
+        &[],
+    );
+}
+
+/// A statement call is part of the strand, so a loop inside one yields the
+/// way any other loop does - the block boundary changes nothing about when.
+#[test]
+fn a_loop_inside_a_statement_call_still_costs_its_ticks() {
+    assert_same_blocks(
+        "callloop",
+        vec![vec![
+            calling("b1", vec![]),
+            K::Say {
+                text: Value::text("after"),
+            },
+        ]],
+        vec![block(
+            "b1",
+            &[],
+            vec![
+                K::Repeat {
+                    count: number(3.0),
+                    body: vec![Instruction::new(K::Say {
+                        text: Value::text("round"),
+                    })],
+                },
+                K::Wait {
+                    duration: number(0.1),
+                },
+                K::Say {
+                    text: Value::text("slept"),
+                },
+            ],
+        )],
+        &[],
+    );
+}
+
+/// Each call runs on a state of its own, so a reporter may call itself. This
+/// one counts down, which only works if the inner call's input doesn't
+/// trample the outer one's.
+#[test]
+fn a_recursive_reporter_keeps_each_calls_own_inputs() {
+    assert_same_blocks(
+        "recursion",
+        vec![vec![K::Say {
+            text: call("fact", vec![number(5.0)]),
+        }]],
+        vec![block(
+            "fact",
+            &["n"],
+            vec![
+                K::If {
+                    condition: op("Lte", vec![param("n"), number(1.0)]),
+                    body: vec![Instruction::new(K::Return { value: number(1.0) })],
+                },
+                K::Return {
+                    value: op(
+                        "Mul",
+                        vec![
+                            param("n"),
+                            call("fact", vec![op("Sub", vec![param("n"), number(1.0)])]),
+                        ],
+                    ),
+                },
+            ],
+        )],
+        &[],
+    );
+}
+
+/// And when it never stops, both sides give up at the same depth and say so
+/// in the same words.
+#[test]
+fn a_reporter_that_never_stops_gives_up_at_the_same_depth() {
+    assert_same_blocks(
+        "toodeep",
+        vec![vec![K::Say {
+            text: call("b1", vec![]),
+        }]],
+        vec![block(
+            "b1",
+            &[],
+            vec![K::Return {
+                value: call("b1", vec![]),
+            }],
+        )],
+        &[],
+    );
+}
+
+/// A `return` from inside a loop leaves the whole block, not just the loop.
+#[test]
+fn a_return_from_inside_a_loop_leaves_the_block() {
+    assert_same_blocks(
+        "returnout",
+        vec![vec![
+            calling("b1", vec![]),
+            K::Say {
+                text: Value::text("back"),
+            },
+            K::Say {
+                text: call("b2", vec![]),
+            },
+        ]],
+        vec![
+            block(
+                "b1",
+                &[],
+                vec![
+                    K::Forever {
+                        body: vec![
+                            Instruction::new(K::Say {
+                                text: Value::text("once"),
+                            }),
+                            Instruction::new(K::Return { value: number(0.0) }),
+                        ],
+                    },
+                    K::Say {
+                        text: Value::text("never"),
+                    },
+                ],
+            ),
+            block(
+                "b2",
+                &[],
+                vec![K::Repeat {
+                    count: number(5.0),
+                    body: vec![Instruction::new(K::Return { value: number(7.0) })],
+                }],
+            ),
+        ],
+        &[],
+    );
+}
+
+/// A call to a block that isn't there is stepped over, arguments and all.
+#[test]
+fn a_call_to_nothing_is_skipped_the_same_way() {
+    assert_same_blocks(
+        "missing",
+        vec![vec![
+            calling("gone", vec![op("Div", vec![number(1.0), number(0.0)])]),
+            K::Say {
+                text: call("gone", vec![op("Div", vec![number(1.0), number(0.0)])]),
+            },
+            K::Say {
+                text: Value::text("carried on"),
+            },
+        ]],
+        Vec::new(),
+        &[],
+    );
+}
+
+/// Sensing on both sides of an `and`: the left is asked, the right is not,
+/// and both halves have to agree about which.
+#[test]
+fn sensing_on_both_sides_of_a_short_circuit_agrees() {
+    assert_same(
+        "bothsides",
+        vec![
+            K::Say {
+                text: op(
+                    "And",
+                    vec![
+                        op("KeyDown", vec![Value::text("escape")]),
+                        op(
+                            "ActorPosition",
+                            vec![Value::text("Nobody"), Value::text("X")],
+                        ),
+                    ],
+                ),
+            },
+            K::Say {
+                text: op(
+                    "And",
+                    vec![
+                        op("KeyDown", vec![Value::text("space")]),
+                        op(
+                            "ActorPosition",
+                            vec![Value::text("Friend"), Value::text("X")],
+                        ),
+                    ],
+                ),
+            },
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn a_project_the_compiler_cant_do_is_refused_by_name() {
+    // Two blocks that call each other as statements. Their loops would share
+    // one set of counters where the VM gives every invocation a frame.
+    let project = project_with_blocks(
+        vec![vec![calling("b1", vec![])]],
+        vec![
+            block("b1", &[], vec![calling("b2", vec![])]),
+            block("b2", &[], vec![calling("b1", vec![])]),
+        ],
+        &[],
+    );
+    let error = blockloom_core::codegen::compile(&project)
+        .expect_err("a block that can reach itself is refused");
+    assert_eq!(error.what, "a custom block that calls itself");
+}
+
+/// A statement call inside a reporter's body. It runs on the reporter's own
+/// state, so the frame it pushes is the reporter's and not the strand's.
+#[test]
+fn a_statement_call_inside_a_reporter_stays_inside_it() {
+    assert_same_blocks(
+        "nestedcall",
+        vec![vec![
+            K::Say {
+                text: call("outer", vec![number(3.0)]),
+            },
+            K::Say {
+                text: Value::text("after"),
+            },
+        ]],
+        vec![
+            block(
+                "outer",
+                &["n"],
+                vec![
+                    calling("inner", vec![param("n")]),
+                    // The inner call has been and gone, so this reads the
+                    // outer block's own input again.
+                    K::Return {
+                        value: op("Add", vec![param("n"), number(100.0)]),
+                    },
+                ],
+            ),
+            block(
+                "inner",
+                &["m"],
+                vec![K::Move {
+                    steps: op("Mul", vec![param("m"), number(2.0)]),
+                }],
+            ),
+        ],
+        &[],
+    );
+}
+
+/// One body, called both ways. Its inputs are read back the same however it
+/// was entered, since both bind them by position.
+#[test]
+fn one_block_serves_as_a_statement_and_as_a_reporter() {
+    assert_same_blocks(
+        "bothways",
+        vec![vec![
+            calling("b1", vec![number(2.0)]),
+            K::Say {
+                text: call("b1", vec![number(5.0)]),
+            },
+        ]],
+        vec![block(
+            "b1",
+            &["n"],
+            vec![
+                K::Move { steps: param("n") },
+                K::Return {
+                    value: op("Add", vec![param("n"), number(1.0)]),
+                },
+            ],
+        )],
+        &[],
+    );
+}
+
+/// A `stop all` inside a reporter ends the run - but not before the strand
+/// that asked for the value finishes the slice it was in.
+#[test]
+fn stopping_from_inside_a_reporter_ends_the_run_the_same_way() {
+    assert_same_blocks(
+        "stopinside",
+        vec![
+            vec![
+                K::Say {
+                    text: call("b1", vec![]),
+                },
+                K::Say {
+                    text: Value::text("still this tick"),
+                },
+            ],
+            vec![K::Forever {
+                body: vec![Instruction::new(K::Move { steps: number(1.0) })],
+            }],
+        ],
+        vec![block(
+            "b1",
+            &[],
+            vec![
+                K::Say {
+                    text: Value::text("about to stop"),
+                },
+                K::StopAll,
+            ],
+        )],
+        &[],
+    );
+}
+
+/// A call frame has to survive a suspension: the block waits, and the strand
+/// has to come back into it and then find its way home - twice, from two
+/// different call sites.
+#[test]
+fn a_call_frame_survives_the_wait_inside_it() {
+    assert_same_blocks(
+        "suspendedcall",
+        vec![vec![
+            calling("b1", vec![number(1.0)]),
+            K::Say {
+                text: Value::text("first back"),
+            },
+            calling("b1", vec![number(2.0)]),
+            K::Say {
+                text: Value::text("second back"),
+            },
+        ]],
+        vec![block(
+            "b1",
+            &["n"],
+            vec![
+                K::Move { steps: param("n") },
+                K::Wait {
+                    duration: number(0.05),
+                },
+                // Read after the wait: the frame, and its inputs, are still
+                // there when the strand picks the block back up.
+                K::Say { text: param("n") },
+            ],
+        )],
+        &[],
+    );
 }

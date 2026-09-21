@@ -14,12 +14,13 @@ Obvious gaps already identified in the project notes:
       payload per target under `players/<triple>/`, and let the Build dialog
       pick between the targets an install actually has one for.
 - [ ] Compile a project's blocks instead of interpreting them in a build.
-      Every block but a custom one is done (`blockloom-core/src/codegen/`,
-      with `tests/codegen.rs` running the two halves off one clock and
-      comparing them line for line, tick for tick). What's left:
-      - Custom blocks, including the reporter-shaped ones that run in place.
-        A call needs a return pc the flat counter slots don't cover, so this
-        is where the emitter finally needs a frame stack of its own.
+      Every block compiles (`blockloom-core/src/codegen/`, with
+      `tests/codegen.rs` running the two halves off one clock and comparing
+      them line for line, tick for tick). What's left:
+      - A custom block that can reach itself through statement calls is
+        refused, since its loops would share one set of counters where the VM
+        gives every invocation a frame. Recursive reporters are fine already.
+        Lifting it means loop counters that live on the call frame.
       - Somewhere for a variable to live that both a compiled program and the
         VM can reach, since the VM owns them today and a host call can't borrow
         it mid-tick.

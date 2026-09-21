@@ -1,6 +1,6 @@
 //! What can be checked without a compiler: that the value type this emits
 //! against coerces exactly as the VM's does, that the emitted source says
-//! what it should, and that a block it can't do yet is refused by name.
+//! what it should, and that what it won't compile is refused by name.
 //!
 //! Running the emitted program against the VM is `tests/codegen.rs`, which
 //! has a `rustc` to hand.
@@ -34,6 +34,39 @@ fn started(body: Vec<Instruction>) -> Project {
     let mut instructions = vec![Instruction::new(K::WhenStarted)];
     instructions.extend(body);
     project_with(instructions)
+}
+
+/// A green-flag strand, and one custom block `b1` taking a `distance` for it
+/// to call. Its body starts one past the strand's `End`.
+fn with_block(body: Vec<K>, block: Vec<Instruction>) -> Project {
+    use blockstitch_core::graph::{BlockDef, BlockPiece, BlockShape};
+
+    let mut project = started(body.into_iter().map(Instruction::new).collect());
+    let mut header = vec![Instruction::new(K::BlockHeader {
+        block_id: "b1".to_string(),
+    })];
+    header.extend(block);
+    project.actors[0]
+        .graph
+        .strands
+        .push(Strand::with_instructions(0, 400, header));
+    project.actors[0].graph.block_defs.push(BlockDef {
+        id: "b1".to_string(),
+        pieces: vec![
+            BlockPiece::Label {
+                id: "p0".to_string(),
+                text: "go".to_string(),
+            },
+            BlockPiece::Input {
+                id: "p1".to_string(),
+                name: "distance".to_string(),
+                value_type: Default::default(),
+            },
+        ],
+        shape: BlockShape::Normal,
+        color: blockstitch_core::graph::default_block_color(),
+    });
+    project
 }
 
 /// Every case where a `Val` and an `Evaluated` could disagree. They are two
@@ -98,12 +131,13 @@ fn an_actions_slots_become_expressions_in_its_own_line() {
     let source = compile(&project).expect("actions compile");
 
     assert!(source.contains("const ME: &str = \"a1\";"), "{source}");
-    // The slot is worked out into a local and then handed over: reading it
-    // wants the host and so does the act, and one expression can't have both.
+    // The variable is read first, the way `resolve` reads it, and the slot is
+    // worked out into a local before it is handed over: reading it wants the
+    // host and so does the act, and one expression can't have both.
     assert!(
         source.contains(
-            "let slot = { let v = add(Ok(Val::Num(2.0f64)), \
-             Ok(h.variable(ME, \"speed\"))); number(h, ME, v) };"
+            "let slot = { let v0 = h.variable(ME, \"speed\"); \
+             let v = add(Ok(Val::Num(2.0f64)), Ok(v0)); number(h, ME, v) };"
         ),
         "{source}"
     );
@@ -114,7 +148,7 @@ fn an_actions_slots_become_expressions_in_its_own_line() {
 }
 
 #[test]
-fn a_strand_becomes_a_function_the_entry_table_points_at() {
+fn an_actors_canvas_becomes_a_function_the_entry_table_points_at() {
     let project = started(vec![Instruction::new(K::Say {
         text: Value::text("hello"),
     })]);
@@ -124,11 +158,11 @@ fn a_strand_becomes_a_function_the_entry_table_points_at() {
     // The entry carries where to start and how much state a run needs, since
     // the function itself is resumable and says neither.
     assert!(
-        source.contains("start: 0, counters: 0, run: strand_0"),
+        source.contains("start: 0, counters: 0, run: actor_0"),
         "{source}"
     );
     assert!(
-        source.contains("fn strand_0(h: &mut dyn Host, s: &mut State)"),
+        source.contains("fn actor_0(h: &mut dyn Host, s: &mut State)"),
         "{source}"
     );
     assert!(source.contains("if !s.resume()"), "{source}");
@@ -220,7 +254,7 @@ fn a_repeat_counts_down_in_a_slot_of_its_own() {
     })]);
     let source = compile(&project).expect("a repeat compiles");
 
-    assert!(source.contains("counters: 1, run: strand_0"), "{source}");
+    assert!(source.contains("counters: 1, run: actor_0"), "{source}");
     assert!(source.contains("s.enter_repeat(0, n);"), "{source}");
     assert!(
         source.contains("let left = s.next_iteration(0);"),
@@ -305,100 +339,138 @@ fn a_wait_until_stays_put_until_it_holds() {
     );
 }
 
+/// Where the two copies of the VM's scheduling limits have to agree. A
+/// generated program carries its own, since it links against nothing.
 #[test]
-fn a_custom_block_is_still_named_rather_than_half_emitted() {
-    let calling = K::CallBlock {
-        block_id: "b1".to_string(),
-        args: vec![],
-    };
-    let error = compile(&started(vec![Instruction::new(calling.clone())]))
-        .expect_err("custom blocks aren't compiled yet");
-    assert_eq!(error.what, "a custom block");
-    assert!(!supports(&calling));
-
-    // A project that only defines one is refused too: its body is a strand
-    // nothing here can enter, so half of it would be missing.
-    let mut project = started(vec![]);
-    project.actors[0]
-        .graph
-        .strands
-        .push(Strand::with_instructions(
-            0,
-            0,
-            vec![
-                Instruction::new(K::BlockHeader {
-                    block_id: "b1".to_string(),
-                }),
-                Instruction::new(K::Return {
-                    value: Value::number(1.0),
-                }),
-            ],
-        ));
-    let error = compile(&project).expect_err("a defined custom block is refused too");
-    assert_eq!(error.what, "a custom block");
+fn a_generated_program_runs_to_the_vms_own_limits() {
+    assert_eq!(runtime::MAX_REPORTER_DEPTH, crate::vm::MAX_REPORTER_DEPTH);
+    assert_eq!(runtime::STEP_BUDGET, crate::vm::STEP_BUDGET);
 }
 
+/// A statement call is a jump into the callee's region with somewhere to come
+/// back to, which is why one function covers a whole actor.
 #[test]
-fn every_block_the_emitter_claims_it_can_do_it_can() {
-    // `supports` is what a caller asks before offering a fast build, so it
-    // must not promise more than `compile` delivers.
-    let kinds = [
-        K::Move {
-            steps: Value::number(1.0),
-        },
-        K::Say {
-            text: Value::text("hi"),
-        },
-        K::SetVisible { visible: false },
-        K::Broadcast {
-            name: "go".to_string(),
-        },
-        K::SetVariable {
-            name: "v".to_string(),
-            value: Value::number(1.0),
-        },
-        K::AttachComponent {
-            component: "Body".to_string(),
-        },
-        K::If {
-            condition: Value::Bool,
-            body: vec![Instruction::new(K::StopAll)],
-        },
-        K::IfElse {
-            condition: Value::Bool,
-            then_body: vec![Instruction::new(K::EscapeLoop)],
-            else_body: vec![Instruction::new(K::ContinueLoop)],
-        },
-        K::Repeat {
-            count: Value::number(2.0),
-            body: vec![Instruction::new(K::Wait {
-                duration: Value::number(1.0),
-            })],
-        },
-        K::Forever {
-            body: vec![Instruction::new(K::WaitUntil {
-                condition: Value::Bool,
-            })],
-        },
-        K::While {
-            condition: Value::Bool,
-            body: vec![Instruction::new(K::Return {
-                value: Value::number(0.0),
-            })],
-        },
-        K::Glide {
-            seconds: Value::number(1.0),
-            x: Value::number(0.0),
-            y: Value::number(0.0),
-            z: Value::number(0.0),
-        },
-        K::StopAll,
-    ];
-    for kind in kinds {
-        assert!(supports(&kind), "{kind:?}");
-        compile(&started(vec![Instruction::new(kind.clone())]))
-            .unwrap_or_else(|e| panic!("{kind:?} is claimed supported but {e}"));
-    }
+fn a_custom_block_called_as_a_statement_is_a_jump_and_a_frame() {
+    let source = compile(&with_block(
+        vec![K::CallBlock {
+            block_id: "b1".to_string(),
+            args: vec![Value::number(7.0)],
+        }],
+        vec![Instruction::new(K::Move {
+            steps: Value::Param {
+                name: "distance".to_string(),
+            },
+        })],
+    ))
+    .expect("a statement call compiles");
+
+    assert!(source.contains("s.enter_call(1, args);"), "{source}");
+    // The body sits at 2: the call, the strand's `End`, then the block.
+    assert!(source.contains("s.pc = 2;"), "{source}");
+    assert!(source.contains("match s.resume_at()"), "{source}");
+    // Its input is read back by position, not by the name it was given.
+    assert!(source.contains("let v0 = s.param(0);"), "{source}");
+}
+
+/// A reporter is a function with a state of its own, so one can call another
+/// - and itself - without the caller's program counter going anywhere.
+#[test]
+fn a_reporter_call_is_a_function_with_a_depth_guard() {
+    let source = compile(&with_block(
+        vec![K::Say {
+            text: Value::Call {
+                block_id: "b1".to_string(),
+                args: vec![Value::number(2.0)],
+                saved: Box::new(Value::number(0.0)),
+            },
+        }],
+        vec![Instruction::new(K::Return {
+            value: Value::Param {
+                name: "distance".to_string(),
+            },
+        })],
+    ))
+    .expect("a reporter call compiles");
+
+    assert!(
+        source.contains("fn reporter_0(") && source.contains("s.enter_call(State::RETURN, args);"),
+        "{source}"
+    );
+    // A strand is always at the top, so the guard reads against nothing yet.
+    assert!(
+        source.contains("if 0 >= MAX_REPORTER_DEPTH { too_deep(h, ME) }"),
+        "{source}"
+    );
+    assert!(source.contains("reporter_0(h, s, 2, 0 + 1,"), "{source}");
+    // Nothing suspends in there, and the budget is what ends a runaway one.
+    assert!(source.contains("let mut budget = STEP_BUDGET;"), "{source}");
+}
+
+/// The one thing it won't do. The counters a `repeat` uses are picked when
+/// the code is written, so a second live invocation would share the first's.
+#[test]
+fn a_custom_block_that_can_reach_itself_is_refused_by_name() {
+    let error = compile(&with_block(
+        vec![K::CallBlock {
+            block_id: "b1".to_string(),
+            args: vec![],
+        }],
+        vec![Instruction::new(K::CallBlock {
+            block_id: "b1".to_string(),
+            args: vec![],
+        })],
+    ))
+    .expect_err("a block that calls itself is refused");
+    assert_eq!(error.what, "a custom block that calls itself");
+}
+
+/// A reporter, though, may: each call builds a state of its own, exactly as
+/// the VM builds a fresh script for one.
+#[test]
+fn a_reporter_may_call_itself() {
+    compile(&with_block(
+        vec![K::Say {
+            text: Value::Call {
+                block_id: "b1".to_string(),
+                args: vec![],
+                saved: Box::new(Value::number(0.0)),
+            },
+        }],
+        vec![Instruction::new(K::Return {
+            value: Value::Call {
+                block_id: "b1".to_string(),
+                args: vec![],
+                saved: Box::new(Value::number(0.0)),
+            },
+        })],
+    ))
+    .expect("a recursive reporter compiles");
+}
+
+/// `resolve` replaces every variable and reporter call in a tree before one
+/// operator runs, so the short circuit below can't be allowed to skip them.
+#[test]
+fn everything_resolve_touches_happens_before_the_operators_do() {
+    let project = started(vec![Instruction::new(K::Say {
+        text: Value::op(
+            Op::And,
+            vec![
+                Value::op(Op::False, vec![]),
+                Value::Var {
+                    name: "score".to_string(),
+                },
+            ],
+        ),
+    })]);
+    let source = compile(&project).expect("a short circuit compiles");
+
+    // The read is hoisted out of the closure; only the operator is deferred.
+    assert!(
+        source.contains(
+            "let v0 = h.variable(ME, \"score\"); let v = and(Ok(Val::Bool(false)), || Ok(v0));"
+        ),
+        "{source}"
+    );
 }
 
 #[test]

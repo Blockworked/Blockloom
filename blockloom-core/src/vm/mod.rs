@@ -16,5 +16,7 @@ mod exec;
 mod program;
 
 pub use effect::Effect;
-pub use exec::{ActorVariables, Event, VariableSnapshot, VariableValues, Vm};
+pub use exec::{
+    ActorVariables, Event, MAX_REPORTER_DEPTH, STEP_BUDGET, VariableSnapshot, VariableValues, Vm,
+};
 pub use program::{Action, Entry, LoopKind, Program, Step, Trigger, compile};

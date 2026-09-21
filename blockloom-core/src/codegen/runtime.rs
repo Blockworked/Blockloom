@@ -166,6 +166,19 @@ pub enum Status {
     Done,
 }
 
+/// How deeply reporter blocks may call each other, and how many steps one
+/// reporter body may take before it is given up on. Both are the VM's own
+/// limits; `codegen`'s tests hold these against them.
+pub const MAX_REPORTER_DEPTH: usize = 32;
+pub const STEP_BUDGET: usize = 10_000;
+
+/// One custom block being run as a statement: where to carry on afterwards,
+/// and what its inputs were bound to.
+pub struct CallFrame {
+    return_pc: usize,
+    params: Vec<Val>,
+}
+
 /// One run of one strand: where it is, and what it was in the middle of.
 ///
 /// A compiled strand is a `match` over the program counter rather than a
@@ -178,13 +191,20 @@ pub struct State {
     pub now: f64,
     /// `stop all` was reached, and the scheduler should end the whole run.
     pub stopping: bool,
-    /// Iterations left, one slot per `repeat` in the strand. Loop nesting is
+    /// Iterations left, one slot per `repeat` in the actor. Loop nesting is
     /// known when the code is emitted, so this is a flat array rather than
-    /// the VM's frame stack.
+    /// the VM's frame stack. A custom block that could call itself is refused
+    /// at compile time, which is what makes one slot per loop enough.
     counters: Vec<i64>,
+    /// Custom blocks entered as statements, innermost last.
+    calls: Vec<CallFrame>,
 }
 
 impl State {
+    /// A return address that means "hand the value back to whoever asked"
+    /// rather than "carry on at this step": a reporter body's own boundary.
+    pub const RETURN: usize = usize::MAX;
+
     pub fn new(start: usize, counters: usize) -> Self {
         Self {
             pc: start,
@@ -192,7 +212,32 @@ impl State {
             now: 0.0,
             stopping: false,
             counters: vec![0; counters],
+            calls: Vec::new(),
         }
+    }
+
+    pub fn enter_call(&mut self, return_pc: usize, params: Vec<Val>) {
+        self.calls.push(CallFrame { return_pc, params });
+    }
+
+    /// Leaves the innermost custom block, answering the step to carry on at.
+    /// `None` ends the run instead: either nothing called this, or what did
+    /// was a reporter waiting on the value.
+    pub fn resume_at(&mut self) -> Option<usize> {
+        match self.calls.pop() {
+            Some(frame) if frame.return_pc != Self::RETURN => Some(frame.return_pc),
+            _ => None,
+        }
+    }
+
+    /// One of the innermost call's bound inputs. Anything a caller didn't
+    /// pass reads as zero, as an unbound name does in the VM.
+    pub fn param(&self, index: usize) -> Val {
+        self.calls
+            .last()
+            .and_then(|frame| frame.params.get(index))
+            .cloned()
+            .unwrap_or(Val::Num(0.0))
     }
 
     /// Whether there is anything to do this frame. A sleeping strand wakes on
@@ -270,14 +315,11 @@ pub fn number_f64(host: &mut dyn Host, actor: &str, value: R) -> f64 {
     }
 }
 
-pub fn vec3(host: &mut dyn Host, actor: &str, values: [R; 3]) -> [f32; 3] {
-    let [x, y, z] = values;
-    // In order: each slot reports its own trouble, as the VM's does.
-    [
-        number(host, actor, x),
-        number(host, actor, y),
-        number(host, actor, z),
-    ]
+/// A reporter block nested too deeply to run. The complaint is the VM's, word
+/// for word, and the call reads as zero.
+pub fn too_deep(host: &mut dyn Host, actor: &str) -> Val {
+    host.error(actor, "a reporter block calls itself too deeply");
+    Val::Num(0.0)
 }
 
 pub fn text(host: &mut dyn Host, actor: &str, value: R) -> String {

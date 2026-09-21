@@ -314,9 +314,9 @@ called the same thing would be three chances to ship the wrong one.
 
 `blockloom-core/src/codegen/` emits a project's blocks as Rust source: an
 expression becomes an expression, a variable read becomes a call rather than a
-hash lookup, and a strand becomes a function. It is meant for the same no-Cargo
-`rustc` pipeline the scripts use, so a built game can carry native logic beside
-its native scripts.
+hash lookup, and an actor's canvas becomes a function. It is meant for the same
+no-Cargo `rustc` pipeline the scripts use, so a built game can carry native
+logic beside its native scripts.
 
 A strand can be suspended, so it isn't a straight run of Rust: it comes out as
 a `match` over the program counter, over the very same flattened `Vec<Step>`
@@ -325,6 +325,15 @@ can give the frame back - a `wait`, a `glide`, each iteration of a loop - is an
 arm of its own that picks up where it left off. What the VM works out at run
 time on a frame stack is known here while emitting, so a `repeat` counts down
 in a flat slot the entry table sized and an `escape loop` is just a jump.
+
+One function covers a whole actor rather than one strand, because every strand
+and every custom block body live in one step list with one set of numbers, and
+a custom block called as a statement is a jump into somebody else's region with
+a return address pushed. The VM's `immediate` flag - a reporter body run to
+completion in place - becomes a second function over the same steps, with its
+own state, so a reporter may call another or itself and the strand's program
+counter never moves. Each actor is therefore emitted at most twice, however
+many custom blocks it has.
 
 The rule it has to keep is that a compiled program and the VM ask the world for
 exactly the same things in the same order, on the same tick - including the
@@ -336,31 +345,37 @@ for line. Add a block to the emitter and add a case there, or the two halves
 drift and a compiled game stops meaning what the played one meant.
 
 The one difference on purpose is the VM's per-tick step budget, which compiled
-code doesn't count against. Every back edge belongs to a loop and every loop
+strands don't count against. Every back edge belongs to a loop and every loop
 yields, so a compiled strand can't spin; the budget only catches ten thousand
 straight-line blocks in a row, and a counter on every block would cost what
-compiling was for.
+compiling was for. A reporter body does count, since nothing in one yields and
+the budget is the only thing that ends a runaway.
 
 `codegen/runtime.rs` is the support code a generated program is built on - the
-value type, the operators over it, and the `Host` trait it asks through. Like
-`script/abi.rs` it is compiled twice, once into `blockloom-core` so the tests
-can hold it against `Evaluated`, and once as text into every emitted program.
+value type, the operators over it, the `State` a suspended strand is kept in,
+and the `Host` trait it asks through. Like `script/abi.rs` it is compiled
+twice, once into `blockloom-core` so the tests can hold it against `Evaluated`
+and against the VM's own limits, and once as text into every emitted program.
 Anything that reads the world or the clock is a question for the host, so
 `random` and `current time` go the same way sensing blocks do: one run of a
 game has one source of each rather than two that disagree.
 
-Two things shape the emitted code. Every slot is read into a `let` before the
+Three things shape the emitted code. Every slot is read into a `let` before the
 act that uses it, because reading a slot borrows the host and so does handing
-it something to do. And `and`/`or` take their second operand as a closure,
-because the VM's short circuit is observable: `false and <a bad slot>` reports
-nothing.
+it something to do. `and`/`or` take their second operand as a closure, because
+the VM's short circuit is observable: `false and <a bad slot>` reports nothing.
+And everything `Vm::resolve` replaces - a variable, a parameter, a reporter
+call - is hoisted into a `let` ahead of the expression, because the VM resolves
+a whole tree before one operator runs: a reporter on the side `and` never reads
+still runs, and still does whatever it does to the world.
 
-What compiles so far is everything but custom blocks, which are `Unsupported`
-- that refuses the whole project rather than emitting half of one, so whatever
-calls it can fall back to the VM knowing which block sent it there. Nothing
-calls it yet: there is no scheduler on this side and no home for variables
-both halves can reach, so a build still ships the document and the runtime
-still plays it.
+What it won't compile is a custom block that can reach itself through statement
+calls - its loops would share one set of counters where the VM gives every
+invocation a frame. `Unsupported` refuses the whole project rather than
+emitting half of one, so whatever calls it can fall back to the VM knowing what
+sent it there. Nothing calls it yet: there is no scheduler on this side and no
+home for variables both halves can reach, so a build still ships the document
+and the runtime still plays it.
 
 ### Frontend (`ui/`)
 

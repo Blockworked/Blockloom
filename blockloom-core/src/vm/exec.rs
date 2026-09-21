@@ -28,10 +28,10 @@ pub struct VariableSnapshot<'a> {
 
 /// Steps one script may take in a single frame before being made to yield.
 /// Loops yield on their own; this only catches pathological straight-line code.
-const STEP_BUDGET: usize = 10_000;
+pub const STEP_BUDGET: usize = 10_000;
 
 /// How deeply reporter blocks may call each other.
-const MAX_REPORTER_DEPTH: usize = 32;
+pub const MAX_REPORTER_DEPTH: usize = 32;
 
 /// Something that can start scripts.
 #[derive(Debug, Clone, PartialEq)]
