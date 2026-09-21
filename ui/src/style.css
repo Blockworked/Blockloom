@@ -548,7 +548,7 @@ body.panel-resizing {
 
 /* ── Asset tray ──────────────────────────────────────────────────────────── */
 /* A file manager over the project folder, along the bottom of the editor. It
-   collapses to its header bar; the grip above it sets the height. */
+   collapses to its header bar; the resizer above it sets the height. */
 
 .asset-tray {
   flex: 0 0 auto;
@@ -558,15 +558,34 @@ body.panel-resizing {
   background: var(--blockstitch-bg2);
 }
 
-.asset-grip {
-  height: 6px;
-  margin-bottom: -6px;
+.asset-resizer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  height: 10px;
   cursor: ns-resize;
   touch-action: none;
 }
 
-.asset-grip:hover {
+.asset-resizer-grip {
+  width: 40px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--blockstitch-text-dim);
+  opacity: 0.5;
+  transition: background var(--blockstitch-dur-fast) var(--blockstitch-ease-standard), opacity var(--blockstitch-dur-fast) var(--blockstitch-ease-standard);
+}
+
+.asset-resizer:hover .asset-resizer-grip,
+.asset-resizer.active .asset-resizer-grip {
   background: var(--blockstitch-accent);
+  opacity: 1;
+}
+
+body.asset-resizing {
+  cursor: ns-resize;
+  user-select: none;
 }
 
 .asset-head {

@@ -441,23 +441,42 @@ const menuItems = computed<ContextMenuItem[]>(() => {
 
 // ─── Resizing ──────────────────────────────────────────────────────────────
 
-function startResize(e: MouseEvent) {
+/** Whether the resizer is being dragged, so it can keep its highlight beyond
+ * the pointer leaving the handle itself. */
+const resizing = ref(false);
+
+function startResize(e: PointerEvent) {
+  if (e.button !== undefined && e.button !== 0) return;
   e.preventDefault();
   const startY = e.clientY;
   const startHeight = tray.height;
-  const onMove = (move: MouseEvent) => setTrayHeight(startHeight + (startY - move.clientY));
+  resizing.value = true;
+  document.body.classList.add('asset-resizing');
+  const onMove = (move: PointerEvent) => setTrayHeight(startHeight + (startY - move.clientY));
   const onUp = () => {
-    document.removeEventListener('mousemove', onMove);
-    document.removeEventListener('mouseup', onUp);
+    resizing.value = false;
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    document.removeEventListener('pointercancel', onUp);
+    document.body.classList.remove('asset-resizing');
   };
-  document.addEventListener('mousemove', onMove);
-  document.addEventListener('mouseup', onUp);
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+  document.addEventListener('pointercancel', onUp);
 }
 </script>
 
 <template>
   <section class="asset-tray" :class="{ open: tray.open }" @dragover.prevent @drop="onDropOn($event, tray.path)">
-    <div v-if="tray.open" class="asset-grip" title="Drag to resize" @mousedown="startResize" />
+    <div
+      v-if="tray.open"
+      class="asset-resizer"
+      :class="{ active: resizing }"
+      title="Drag to resize"
+      @pointerdown="startResize"
+    >
+      <span class="asset-resizer-grip" />
+    </div>
 
     <div class="asset-head">
       <button
