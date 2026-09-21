@@ -120,6 +120,17 @@ impl Actor {
         self.position(Axis::Z)
     }
 
+    /// Another actor's position on an axis, by name or id.
+    pub fn position_of(&self, actor: &str, axis: Axis) -> f32 {
+        self.number(
+            READ_POSITION_OF,
+            Str::borrow(actor),
+            Str::EMPTY,
+            axis.index(),
+        )
+        .unwrap_or(0.0) as f32
+    }
+
     /// Euler degrees about `axis`.
     pub fn rotation(&self, axis: Axis) -> f32 {
         self.number(READ_ROTATION, Str::EMPTY, Str::EMPTY, axis.index())

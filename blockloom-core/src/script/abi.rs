@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -73,6 +73,8 @@ pub const READ_DISTANCE_TO: u32 = 10;
 pub const READ_HAS_COMPONENT: u32 = 11;
 /// `a` = component, `b` = field.
 pub const READ_FIELD: u32 = 12;
+/// `a` = another actor's name, `arg` = axis.
+pub const READ_POSITION_OF: u32 = 13;
 
 // ─── What a script can read as text ────────────────────────────────────────
 

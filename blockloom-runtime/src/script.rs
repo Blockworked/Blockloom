@@ -235,6 +235,10 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
             // way a text variable does in an arithmetic block.
             Evaluated::Text(text) => text.trim().parse().ok(),
         },
+        abi::READ_POSITION_OF => {
+            let axis = axis_of(arg).index();
+            sense::read(|sensors| sensors.find(a.trim()).map(|other| other.position[axis] as f64))
+        }
         _ => None,
     }
 }
@@ -535,6 +539,59 @@ blockloom::export!(start = start, tick = tick);
         // The panic is swallowed and the process is still here to assert it.
         script.tick("a1", &mut asked, 0.1);
         assert!(asked.effects.is_empty());
+    }
+
+    #[test]
+    fn a_script_can_read_another_actor() {
+        let project = TempProject::new("crossactor");
+        let Some(script) = project.build(
+            r#"
+use blockloom::*;
+
+fn start(me: &Actor) {}
+
+fn tick(me: &Actor, _dt: f32) {
+    me.say(&format!(
+        "{} is at {},{}",
+        "Friend",
+        me.position_of("Friend", Axis::X),
+        me.position_of("Friend", Axis::Y)
+    ));
+}
+
+blockloom::export!(start = start, tick = tick);
+"#,
+        ) else {
+            return;
+        };
+
+        let mut sensors = Sensors::default();
+        sensors.actors.insert(
+            "a1".to_string(),
+            ActorSense {
+                name: "Me".to_string(),
+                ..Default::default()
+            },
+        );
+        sensors.actors.insert(
+            "b1".to_string(),
+            ActorSense {
+                name: "Friend".to_string(),
+                position: [3.0, 7.0, 0.0],
+                ..Default::default()
+            },
+        );
+        sense::publish(sensors);
+
+        let mut asked = Asked::default();
+        script.tick("a1", &mut asked, 0.1);
+        assert_eq!(
+            asked.effects,
+            vec![Effect::Say {
+                actor: "a1".to_string(),
+                text: "Friend is at 3,7".to_string(),
+            }]
+        );
     }
 
     #[test]
