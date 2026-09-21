@@ -6,6 +6,7 @@
 //! (an axis, a key name, a body kind) is a fixed in-place dropdown the
 //! frontend rewrites with `edit_instruction`.
 
+use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
 use crate::value::Value;
 use serde::{Deserialize, Serialize};
@@ -127,6 +128,21 @@ pub enum InstructionKind {
         color: Value,
     },
 
+    // ─── Components ─────────────────────────────────────────────────────────
+    /// Writes one field of one of this actor's custom components. A field the
+    /// component doesn't declare yet is added; a component it doesn't have is
+    /// an error, since only the editor creates components.
+    SetComponentField {
+        component: String,
+        field: String,
+        value: Value,
+    },
+    /// Switches the camera component's view, so a game can go from third to
+    /// first person mid-run. Does nothing on an actor with no camera.
+    SetCameraView {
+        view: CameraView,
+    },
+
     // ─── Control ────────────────────────────────────────────────────────────
     /// Suspends this script for `duration` seconds.
     Wait {
@@ -210,6 +226,7 @@ impl BlockKind for InstructionKind {
             | K::SetVariable { value: v, .. }
             | K::ChangeVariable { value: v, .. }
             | K::Return { value: v }
+            | K::SetComponentField { value: v, .. }
             | K::Repeat { count: v, .. } => f(v, InputValueType::Any),
             K::GoTo { x, y, z }
             | K::ApplyImpulse { x, y, z }
@@ -244,6 +261,7 @@ impl BlockKind for InstructionKind {
             | K::BlockHeader { .. }
             | K::PointTowards { .. }
             | K::SetBody { .. }
+            | K::SetCameraView { .. }
             | K::SetVisible { .. }
             | K::Forever { .. }
             | K::EscapeLoop

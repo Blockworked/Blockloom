@@ -1,22 +1,42 @@
 <script setup lang="ts">
-// The right-hand panel: the selected actor's look, place and body, then the
-// world's own settings. Every field writes straight through to the backend, and
-// a running world picks the change up as soon as it stops.
-import { computed } from 'vue';
+// The right-hand panel: the selected actor as a list of components, then the
+// world's own settings. Each component is a card with a way to remove it, and
+// "Add component" gives the actor one it hasn't got - including a custom one,
+// a named bag of values the blocks read and write.
+//
+// Every field writes straight through to the backend, and a running world
+// picks the change up as soon as it stops. The `*Of` helpers narrow the
+// component union in one place, so the template stays free of casts.
+import { computed, ref } from 'vue';
 import { AppDropdown, SwitchControl } from 'blockstitch';
+import { Plus, X } from 'lucide-vue-next';
 import { mode, openActor, state } from '../store';
 import {
+  addActorComponent,
+  removeActorComponent,
   renameActor,
-  setActorPhysics,
-  setActorPlacement,
-  setActorVisible,
-  setActorVisual,
+  setActorComponent,
   setBackground,
   setCamera,
   setGravity,
 } from '../tauri';
-import { BODY_OPTIONS } from '../constants';
-import { shapesFor, type CameraDto, type PhysicsDto, type PlacementDto, type VisualDto } from '../types';
+import { BODY_OPTIONS, CAMERA_VIEW_OPTIONS } from '../constants';
+import {
+  ADDABLE_COMPONENTS,
+  actorPhysics,
+  actorPlacement,
+  componentName,
+  shapesFor,
+  type ActorComponentDto,
+  type CameraAttachDto,
+  type CameraDto,
+  type ComponentFieldDto,
+  type ComponentName,
+  type EvaluatedDto,
+  type PhysicsDto,
+  type PlacementDto,
+  type VisualDto,
+} from '../types';
 
 const actor = computed(() => openActor.value);
 const world = computed(() => state.project?.world ?? null);
@@ -25,45 +45,116 @@ const world = computed(() => state.project?.world ?? null);
 const live = computed(() => state.status?.actors.find(a => a.id === actor.value?.id) ?? null);
 
 const shapeOptions = computed(() => shapesFor(mode.value).map(shape => ({ value: shape, label: shape })));
-const followOptions = computed(() => [
-  { value: '', label: 'nothing' },
-  ...(state.project?.actors ?? []).map(a => ({ value: a.id, label: a.name })),
-]);
+
+/** Components this actor hasn't got yet. "Custom" is always on offer: an
+ * actor can carry as many of those as it likes. */
+const addableComponents = computed(() => {
+  const held = new Set((actor.value?.components ?? []).map(componentName));
+  return ADDABLE_COMPONENTS.filter(name => name === 'Custom' || !held.has(name)).map(name => ({
+    value: name,
+    label: name === 'Custom' ? 'Custom…' : name,
+  }));
+});
+
+const addOpen = ref(false);
 
 function num(e: Event, fallback: number): number {
   const parsed = Number((e.target as HTMLInputElement).value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function writePlacement(next: Partial<PlacementDto>) {
-  if (!actor.value) return;
-  void setActorPlacement(actor.value.id, { ...actor.value.placement, ...next });
+function text(e: Event): string {
+  return (e.target as HTMLInputElement).value;
 }
 
-function writePosition(index: 0 | 1 | 2, value: number) {
-  if (!actor.value) return;
-  const position: [number, number, number] = [...actor.value.placement.position];
-  position[index] = value;
-  writePlacement({ position });
+// ─── Reading one component ─────────────────────────────────────────────────
+
+function placementOf(component: ActorComponentDto): PlacementDto {
+  return component.component === 'Place' ? component.placement : actorPlacement(actor.value);
 }
 
-function writeRotation(index: 0 | 1 | 2, value: number) {
-  if (!actor.value) return;
-  const rotation: [number, number, number] = [...actor.value.placement.rotation];
-  rotation[index] = value;
-  writePlacement({ rotation });
+function visualOf(component: ActorComponentDto): VisualDto {
+  return component.component === 'Look'
+    ? component.visual
+    : { shape: 'Rect', color: '#4C97FF', size: [60, 60] };
 }
 
-function writePhysics(next: Partial<PhysicsDto>) {
+function physicsOf(component: ActorComponentDto): PhysicsDto {
+  return component.component === 'Body' ? component.physics : actorPhysics(actor.value);
+}
+
+function cameraOf(component: ActorComponentDto): CameraAttachDto {
+  return component.component === 'Camera'
+    ? component.camera
+    : { view: 'Follow', offset: [0, 0.6, 0], distance: 6, pitch: 15 };
+}
+
+function fieldsOf(component: ActorComponentDto): ComponentFieldDto[] {
+  return component.component === 'Custom' ? component.fields : [];
+}
+
+function visibleOf(component: ActorComponentDto): boolean {
+  return component.component === 'Render' ? component.visible : true;
+}
+
+function sizeOf(component: ActorComponentDto): number[] {
+  const visual = visualOf(component);
+  return 'size' in visual ? visual.size : [];
+}
+
+function colorOf(component: ActorComponentDto): string {
+  const visual = visualOf(component);
+  return 'color' in visual ? visual.color : '#4C97FF';
+}
+
+function radiusOf(component: ActorComponentDto): number {
+  const visual = visualOf(component);
+  return 'radius' in visual ? visual.radius : 0;
+}
+
+function heightOf(component: ActorComponentDto): number {
+  const visual = visualOf(component);
+  return visual.shape === 'Capsule' ? visual.height : 0;
+}
+
+function imagePathOf(component: ActorComponentDto): string {
+  const visual = visualOf(component);
+  return visual.shape === 'Image' ? visual.path : '';
+}
+
+// ─── Writing one component ─────────────────────────────────────────────────
+
+/** Writes a component back under the name it currently has, so renaming a
+ * custom one lands on the same slot. */
+function write(name: string, component: ActorComponentDto) {
   if (!actor.value) return;
-  void setActorPhysics(actor.value.id, { ...actor.value.physics, ...next });
+  void setActorComponent(actor.value.id, name, component).catch((e: unknown) => console.error(e));
+}
+
+function writePlacement(component: ActorComponentDto, next: Partial<PlacementDto>) {
+  write('Place', { component: 'Place', placement: { ...placementOf(component), ...next } });
+}
+
+function writeVector(component: ActorComponentDto, key: 'position' | 'rotation', index: number, value: number) {
+  const next: [number, number, number] = [...placementOf(component)[key]];
+  next[index] = value;
+  writePlacement(component, key === 'position' ? { position: next } : { rotation: next });
+}
+
+function writeVisual(component: ActorComponentDto, next: Partial<VisualDto>) {
+  write('Look', { component: 'Look', visual: { ...visualOf(component), ...next } as VisualDto });
+}
+
+function writeSize(component: ActorComponentDto, index: number, value: number) {
+  const size = [...sizeOf(component)];
+  size[index] = value;
+  writeVisual(component, { size } as unknown as Partial<VisualDto>);
 }
 
 /** Swapping a shape keeps what carries over (its color) and takes sensible
  * defaults for the rest, since a sphere has no width and a box has no radius. */
-function writeShape(shape: string) {
-  if (!actor.value) return;
-  const color = 'color' in actor.value.visual ? actor.value.visual.color : '#4C97FF';
+function writeShape(component: ActorComponentDto, shape: string) {
+  const color = colorOf(component);
   const visuals: Record<string, VisualDto> = {
     Rect: { shape: 'Rect', color, size: [60, 60] },
     Circle: { shape: 'Circle', color, radius: 30 },
@@ -74,20 +165,120 @@ function writeShape(shape: string) {
     Plane: { shape: 'Plane', color, size: [20, 20] },
   };
   const next = visuals[shape];
-  if (next) void setActorVisual(actor.value.id, next);
+  if (next) write('Look', { component: 'Look', visual: next });
 }
 
-function writeVisual(next: Partial<VisualDto>) {
-  if (!actor.value) return;
-  void setActorVisual(actor.value.id, { ...actor.value.visual, ...next } as VisualDto);
+function writePhysics(component: ActorComponentDto, next: Partial<PhysicsDto>) {
+  write('Body', { component: 'Body', physics: { ...physicsOf(component), ...next } });
 }
+
+function writeCameraAttach(component: ActorComponentDto, next: Partial<CameraAttachDto>) {
+  write('Camera', { component: 'Camera', camera: { ...cameraOf(component), ...next } });
+}
+
+function writeCameraOffset(component: ActorComponentDto, index: number, value: number) {
+  const offset: [number, number, number] = [...cameraOf(component).offset];
+  offset[index] = value;
+  writeCameraAttach(component, { offset });
+}
+
+// ─── Custom components ─────────────────────────────────────────────────────
+
+function writeCustom(component: ActorComponentDto, next: { name?: string; fields?: ComponentFieldDto[] }) {
+  if (component.component !== 'Custom') return;
+  write(component.name, {
+    component: 'Custom',
+    name: next.name ?? component.name,
+    fields: next.fields ?? component.fields,
+  });
+}
+
+function writeField(component: ActorComponentDto, index: number, next: Partial<ComponentFieldDto>) {
+  const fields = fieldsOf(component).map((field, i) => (i === index ? { ...field, ...next } : field));
+  writeCustom(component, { fields });
+}
+
+/** Keeps a field's type as the user typed it: a number that parses stays a
+ * number, so arithmetic on it works; anything else is text. */
+function parsedValue(raw: string): EvaluatedDto {
+  const trimmed = raw.trim();
+  if (trimmed !== '' && Number.isFinite(Number(trimmed))) return { kind: 'Number', value: Number(trimmed) };
+  return { kind: 'Text', value: raw };
+}
+
+function fieldText(value: EvaluatedDto): string {
+  return String(value.value);
+}
+
+function addField(component: ActorComponentDto) {
+  const fields = fieldsOf(component);
+  const taken = new Set(fields.map(field => field.name));
+  let name = 'value';
+  for (let n = 2; taken.has(name); n += 1) name = `value ${n}`;
+  writeCustom(component, { fields: [...fields, { name, value: { kind: 'Number', value: 0 } }] });
+}
+
+function removeField(component: ActorComponentDto, index: number) {
+  writeCustom(component, { fields: fieldsOf(component).filter((_, i) => i !== index) });
+}
+
+// ─── Adding and removing whole components ──────────────────────────────────
+
+/** A fresh component of each kind, with defaults that do something useful the
+ * moment it lands. */
+function blankComponent(name: ComponentName): ActorComponentDto | null {
+  switch (name) {
+    case 'Look':
+      return {
+        component: 'Look',
+        visual:
+          mode.value === 'ThreeD'
+            ? { shape: 'Cuboid', color: '#4C97FF', size: [1, 1, 1] }
+            : { shape: 'Rect', color: '#4C97FF', size: [60, 60] },
+      };
+    case 'Render':
+      return { component: 'Render', visible: true };
+    case 'Body':
+      return {
+        component: 'Body',
+        physics: { body: 'Dynamic', gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5 },
+      };
+    case 'Camera':
+      return {
+        component: 'Camera',
+        camera: { view: 'ThirdPerson', offset: [0, 0.6, 0], distance: 6, pitch: 15 },
+      };
+    case 'Custom':
+      return {
+        component: 'Custom',
+        name: 'Component',
+        fields: [{ name: 'value', value: { kind: 'Number', value: 0 } }],
+      };
+    default:
+      return null;
+  }
+}
+
+function add(name: string) {
+  addOpen.value = false;
+  const component = blankComponent(name as ComponentName);
+  if (!component || !actor.value) return;
+  void addActorComponent(actor.value.id, component).catch((e: unknown) => console.error(e));
+}
+
+function remove(name: string) {
+  if (!actor.value) return;
+  void removeActorComponent(actor.value.id, name).catch((e: unknown) => console.error(e));
+}
+
+// ─── The world ─────────────────────────────────────────────────────────────
 
 function writeCamera(next: Partial<CameraDto>) {
   if (!world.value) return;
   void setCamera({ ...world.value.camera, ...next });
 }
 
-function writeGravity(index: 0 | 1 | 2, value: number) {
+function writeGravity(index: number, value: number) {
   if (!world.value) return;
   const gravity: [number, number, number] = [...world.value.gravity];
   gravity[index] = value;
@@ -101,114 +292,213 @@ function writeGravity(index: 0 | 1 | 2, value: number) {
       <div class="panel-heading"><span>{{ actor.name }}</span></div>
       <div class="panel-row">
         <label>Name</label>
-        <input type="text" :value="actor.name" @change="e => renameActor(actor!.id, (e.target as HTMLInputElement).value)">
-      </div>
-      <div class="panel-row">
-        <label>Shape</label>
-        <AppDropdown :options="shapeOptions" :model-value="actor.visual.shape" @update:model-value="writeShape" />
-      </div>
-      <div class="panel-row" v-if="'color' in actor.visual">
-        <label>Color</label>
-        <input type="color" :value="actor.visual.color" @change="e => writeVisual({ color: (e.target as HTMLInputElement).value.toUpperCase() } as Partial<VisualDto>)">
-      </div>
-      <div class="panel-row" v-if="actor.visual.shape === 'Image'">
-        <label>Image</label>
-        <input
-          type="text"
-          :value="actor.visual.path"
-          placeholder="assets/player.png"
-          @change="e => writeVisual({ path: (e.target as HTMLInputElement).value } as Partial<VisualDto>)"
-        >
-      </div>
-      <div class="panel-row" v-if="'radius' in actor.visual">
-        <label>Radius</label>
-        <input type="number" step="any" :value="actor.visual.radius" @change="e => writeVisual({ radius: num(e, 1) } as Partial<VisualDto>)">
-      </div>
-      <div class="panel-row" v-if="actor.visual.shape === 'Capsule'">
-        <label>Height</label>
-        <input type="number" step="any" :value="actor.visual.height" @change="e => writeVisual({ height: num(e, 1) } as Partial<VisualDto>)">
-      </div>
-      <div class="panel-row triple" v-if="'size' in actor.visual">
-        <label>Size</label>
-        <input
-          v-for="(dimension, i) in actor.visual.size"
-          :key="i"
-          type="number"
-          step="any"
-          :value="dimension"
-          @change="e => { const size = [...(actor!.visual as { size: number[] }).size]; size[i] = num(e, dimension); writeVisual({ size } as unknown as Partial<VisualDto>); }"
-        >
+        <input type="text" :value="actor.name" @change="e => renameActor(actor!.id, text(e))">
       </div>
 
-      <div class="panel-heading"><span>Place</span></div>
-      <div class="panel-row triple">
-        <label>Position</label>
-        <input type="number" step="any" :value="actor.placement.position[0]" @change="e => writePosition(0, num(e, 0))">
-        <input type="number" step="any" :value="actor.placement.position[1]" @change="e => writePosition(1, num(e, 0))">
-        <input v-if="mode === 'ThreeD'" type="number" step="any" :value="actor.placement.position[2]" @change="e => writePosition(2, num(e, 0))">
-      </div>
-      <div class="panel-row triple">
-        <label>Rotation</label>
-        <input v-if="mode === 'ThreeD'" type="number" step="any" :value="actor.placement.rotation[0]" @change="e => writeRotation(0, num(e, 0))">
-        <input v-if="mode === 'ThreeD'" type="number" step="any" :value="actor.placement.rotation[1]" @change="e => writeRotation(1, num(e, 0))">
-        <input type="number" step="any" :value="actor.placement.rotation[2]" @change="e => writeRotation(2, num(e, 0))">
-      </div>
-      <div class="panel-row">
-        <label>Size</label>
-        <input type="number" step="any" :value="actor.placement.scale" @change="e => writePlacement({ scale: num(e, 1) })">
-      </div>
-      <div class="panel-row">
-        <label>Visible</label>
-        <SwitchControl :model-value="actor.visible" @update:model-value="v => setActorVisible(actor!.id, v)" />
-      </div>
-      <p class="panel-note" v-if="live">
-        Now at {{ live.position.map(n => n.toFixed(1)).join(', ') }}
-      </p>
+      <template v-for="component in actor.components" :key="componentName(component)">
+        <div class="panel-heading component-heading">
+          <span>{{ componentName(component) }}</span>
+          <button
+            v-if="component.component !== 'Place'"
+            class="component-remove"
+            :title="`Remove the ${componentName(component)} component`"
+            @click="remove(componentName(component))"
+          >
+            <X :size="13" />
+          </button>
+        </div>
 
-      <div class="panel-heading"><span>Body</span></div>
-      <div class="panel-row">
-        <label>Kind</label>
-        <AppDropdown :options="BODY_OPTIONS" :model-value="actor.physics.body" @update:model-value="body => writePhysics({ body: body as PhysicsDto['body'] })" />
-      </div>
-      <template v-if="actor.physics.body !== 'None'">
-        <div class="panel-row">
-          <label>Gravity ×</label>
-          <input type="number" step="any" :value="actor.physics.gravity_scale" @change="e => writePhysics({ gravity_scale: num(e, 1) })">
-        </div>
-        <div class="panel-row">
-          <label>Bounce</label>
-          <input type="number" step="any" :value="actor.physics.restitution" @change="e => writePhysics({ restitution: num(e, 0) })">
-        </div>
-        <div class="panel-row">
-          <label>Friction</label>
-          <input type="number" step="any" :value="actor.physics.friction" @change="e => writePhysics({ friction: num(e, 0.5) })">
-        </div>
-        <div class="panel-row">
-          <label>Upright</label>
-          <SwitchControl :model-value="actor.physics.lock_rotation" @update:model-value="v => writePhysics({ lock_rotation: v })" />
-        </div>
+        <!-- Place: every actor has one, and it can't be taken away. -->
+        <template v-if="component.component === 'Place'">
+          <div class="panel-row triple">
+            <label>Position</label>
+            <input type="number" step="any" :value="placementOf(component).position[0]" @change="e => writeVector(component, 'position', 0, num(e, 0))">
+            <input type="number" step="any" :value="placementOf(component).position[1]" @change="e => writeVector(component, 'position', 1, num(e, 0))">
+            <input v-if="mode === 'ThreeD'" type="number" step="any" :value="placementOf(component).position[2]" @change="e => writeVector(component, 'position', 2, num(e, 0))">
+          </div>
+          <div class="panel-row triple">
+            <label>Rotation</label>
+            <input v-if="mode === 'ThreeD'" type="number" step="any" :value="placementOf(component).rotation[0]" @change="e => writeVector(component, 'rotation', 0, num(e, 0))">
+            <input v-if="mode === 'ThreeD'" type="number" step="any" :value="placementOf(component).rotation[1]" @change="e => writeVector(component, 'rotation', 1, num(e, 0))">
+            <input type="number" step="any" :value="placementOf(component).rotation[2]" @change="e => writeVector(component, 'rotation', 2, num(e, 0))">
+          </div>
+          <div class="panel-row">
+            <label>Size</label>
+            <input type="number" step="any" :value="placementOf(component).scale" @change="e => writePlacement(component, { scale: num(e, 1) })">
+          </div>
+          <p class="panel-note" v-if="live">
+            Now at {{ live.position.map(n => n.toFixed(1)).join(', ') }}
+          </p>
+        </template>
+
+        <!-- Look: the shape, which is also the collider a body gets. -->
+        <template v-else-if="component.component === 'Look'">
+          <div class="panel-row">
+            <label>Shape</label>
+            <AppDropdown
+              :options="shapeOptions"
+              :model-value="visualOf(component).shape"
+              @update:model-value="shape => writeShape(component, shape)"
+            />
+          </div>
+          <div class="panel-row" v-if="'color' in visualOf(component)">
+            <label>Color</label>
+            <input type="color" :value="colorOf(component)" @change="e => writeVisual(component, { color: text(e).toUpperCase() } as Partial<VisualDto>)">
+          </div>
+          <div class="panel-row" v-if="visualOf(component).shape === 'Image'">
+            <label>Image</label>
+            <input
+              type="text"
+              :value="imagePathOf(component)"
+              placeholder="assets/player.png"
+              @change="e => writeVisual(component, { path: text(e) } as Partial<VisualDto>)"
+            >
+          </div>
+          <div class="panel-row" v-if="'radius' in visualOf(component)">
+            <label>Radius</label>
+            <input type="number" step="any" :value="radiusOf(component)" @change="e => writeVisual(component, { radius: num(e, 1) } as Partial<VisualDto>)">
+          </div>
+          <div class="panel-row" v-if="visualOf(component).shape === 'Capsule'">
+            <label>Height</label>
+            <input type="number" step="any" :value="heightOf(component)" @change="e => writeVisual(component, { height: num(e, 1) } as Partial<VisualDto>)">
+          </div>
+          <div class="panel-row triple" v-if="sizeOf(component).length">
+            <label>Size</label>
+            <input
+              v-for="(dimension, i) in sizeOf(component)"
+              :key="i"
+              type="number"
+              step="any"
+              :value="dimension"
+              @change="e => writeSize(component, i, num(e, dimension))"
+            >
+          </div>
+        </template>
+
+        <template v-else-if="component.component === 'Render'">
+          <div class="panel-row">
+            <label>Visible</label>
+            <SwitchControl
+              :model-value="visibleOf(component)"
+              @update:model-value="v => write('Render', { component: 'Render', visible: v })"
+            />
+          </div>
+        </template>
+
+        <template v-else-if="component.component === 'Body'">
+          <div class="panel-row">
+            <label>Kind</label>
+            <AppDropdown
+              :options="BODY_OPTIONS"
+              :model-value="physicsOf(component).body"
+              @update:model-value="body => writePhysics(component, { body: body as PhysicsDto['body'] })"
+            />
+          </div>
+          <template v-if="physicsOf(component).body !== 'None'">
+            <div class="panel-row">
+              <label>Gravity ×</label>
+              <input type="number" step="any" :value="physicsOf(component).gravity_scale" @change="e => writePhysics(component, { gravity_scale: num(e, 1) })">
+            </div>
+            <div class="panel-row">
+              <label>Bounce</label>
+              <input type="number" step="any" :value="physicsOf(component).restitution" @change="e => writePhysics(component, { restitution: num(e, 0) })">
+            </div>
+            <div class="panel-row">
+              <label>Friction</label>
+              <input type="number" step="any" :value="physicsOf(component).friction" @change="e => writePhysics(component, { friction: num(e, 0.5) })">
+            </div>
+            <div class="panel-row">
+              <label>Upright</label>
+              <SwitchControl
+                :model-value="physicsOf(component).lock_rotation"
+                @update:model-value="v => writePhysics(component, { lock_rotation: v })"
+              />
+            </div>
+          </template>
+        </template>
+
+        <template v-else-if="component.component === 'Camera'">
+          <div class="panel-row">
+            <label>View</label>
+            <AppDropdown
+              :options="CAMERA_VIEW_OPTIONS"
+              :model-value="cameraOf(component).view"
+              @update:model-value="view => writeCameraAttach(component, { view: view as CameraAttachDto['view'] })"
+            />
+          </div>
+          <div class="panel-row triple">
+            <label>Eye at</label>
+            <input
+              v-for="(coordinate, i) in cameraOf(component).offset"
+              :key="i"
+              type="number"
+              step="any"
+              :value="coordinate"
+              @change="e => writeCameraOffset(component, i, num(e, coordinate))"
+            >
+          </div>
+          <template v-if="cameraOf(component).view === 'ThirdPerson' && mode === 'ThreeD'">
+            <div class="panel-row">
+              <label>Distance</label>
+              <input type="number" step="any" :value="cameraOf(component).distance" @change="e => writeCameraAttach(component, { distance: num(e, 6) })">
+            </div>
+            <div class="panel-row">
+              <label>Pitch</label>
+              <input type="number" step="any" :value="cameraOf(component).pitch" @change="e => writeCameraAttach(component, { pitch: num(e, 15) })">
+            </div>
+          </template>
+          <p class="panel-note" v-if="mode === 'TwoD'">
+            A 2D world has no depth to stand in, so every view here just keeps
+            this actor centered.
+          </p>
+        </template>
+
+        <!-- A custom component: a name, and the values the blocks read. -->
+        <template v-else-if="component.component === 'Custom'">
+          <div class="panel-row">
+            <label>Name</label>
+            <input type="text" :value="componentName(component)" @change="e => writeCustom(component, { name: text(e) })">
+          </div>
+          <div class="panel-row field-row" v-for="(field, i) in fieldsOf(component)" :key="i">
+            <input class="field-name" type="text" :value="field.name" @change="e => writeField(component, i, { name: text(e) })">
+            <input type="text" :value="fieldText(field.value)" @change="e => writeField(component, i, { value: parsedValue(text(e)) })">
+            <button class="component-remove" title="Remove this field" @click="removeField(component, i)">
+              <X :size="13" />
+            </button>
+          </div>
+          <div class="panel-row">
+            <button class="component-add-field" @click="addField(component)">
+              <Plus :size="13" /> Add field
+            </button>
+          </div>
+        </template>
       </template>
+
+      <div class="panel-row component-add">
+        <AppDropdown
+          v-if="addOpen"
+          :options="addableComponents"
+          model-value=""
+          placeholder="Pick a component"
+          @update:model-value="add"
+        />
+        <button v-else class="component-add-button" @click="addOpen = true">
+          <Plus :size="13" /> Add component
+        </button>
+      </div>
     </template>
 
     <template v-if="world">
       <div class="panel-heading"><span>World</span></div>
       <div class="panel-row">
         <label>Background</label>
-        <input type="color" :value="world.background" @change="e => setBackground((e.target as HTMLInputElement).value.toUpperCase())">
+        <input type="color" :value="world.background" @change="e => setBackground(text(e).toUpperCase())">
       </div>
       <div class="panel-row triple">
         <label>Gravity</label>
         <input type="number" step="any" :value="world.gravity[0]" @change="e => writeGravity(0, num(e, 0))">
         <input type="number" step="any" :value="world.gravity[1]" @change="e => writeGravity(1, num(e, 0))">
         <input v-if="mode === 'ThreeD'" type="number" step="any" :value="world.gravity[2]" @change="e => writeGravity(2, num(e, 0))">
-      </div>
-      <div class="panel-row">
-        <label>Camera on</label>
-        <AppDropdown
-          :options="followOptions"
-          :model-value="world.camera.follow ?? ''"
-          @update:model-value="id => writeCamera({ follow: id === '' ? null : id })"
-        />
       </div>
       <div class="panel-row" v-if="mode === 'TwoD'">
         <label>Zoom</label>
@@ -226,8 +516,9 @@ function writeGravity(index: 0 | 1 | 2, value: number) {
         >
       </div>
       <p class="panel-note">
-        A 2D unit is a pixel and a 3D unit is a metre, which is why the numbers
-        jump when you switch dimensions.
+        Where the camera stands when no actor has a Camera component. A 2D unit
+        is a pixel and a 3D unit is a metre, which is why the numbers jump when
+        you switch dimensions.
       </p>
     </template>
   </aside>

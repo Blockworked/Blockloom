@@ -35,6 +35,8 @@ export const INSTRUCTION_TYPES = [
   'Say',
   'SetVisible',
   'SetColor',
+  'SetComponentField',
+  'SetCameraView',
   'Wait',
   'WaitUntil',
   'If',
@@ -133,11 +135,56 @@ export interface PhysicsDto {
   friction: number;
 }
 
+/** Where the camera stands when no actor is holding it. An actor's `Camera`
+ * component takes it over from there. */
 export interface CameraDto {
   position: [number, number, number];
   look_at: [number, number, number];
   zoom: number;
-  follow: string | null;
+}
+
+// ─── Components ────────────────────────────────────────────────────────────
+
+export type CameraView = 'Follow' | 'FirstPerson' | 'ThirdPerson';
+
+export interface CameraAttachDto {
+  view: CameraView;
+  offset: [number, number, number];
+  distance: number;
+  pitch: number;
+}
+
+/** An already-evaluated value, as a variable or a component field holds it. */
+export type EvaluatedDto =
+  | { kind: 'Number'; value: number }
+  | { kind: 'Text'; value: string }
+  | { kind: 'Bool'; value: boolean };
+
+export interface ComponentFieldDto {
+  name: string;
+  value: EvaluatedDto;
+}
+
+/** One component on an actor. The built-in five are what the engine reads;
+ * `Custom` is a bag of values the project invented, which blocks read and
+ * write by name. */
+export type ActorComponentDto =
+  | { component: 'Place'; placement: PlacementDto }
+  | { component: 'Look'; visual: VisualDto }
+  | { component: 'Render'; visible: boolean }
+  | { component: 'Body'; physics: PhysicsDto }
+  | { component: 'Camera'; camera: CameraAttachDto }
+  | { component: 'Custom'; name: string; fields: ComponentFieldDto[] };
+
+export type ComponentName = ActorComponentDto['component'];
+
+/** Components an actor can be given, in the order the "add" menu offers them.
+ * `Place` isn't here: every actor has one and it can't be removed. */
+export const ADDABLE_COMPONENTS: ComponentName[] = ['Look', 'Render', 'Body', 'Camera', 'Custom'];
+
+/** What the editor calls a component - matches `ActorComponent::name()`. */
+export function componentName(component: ActorComponentDto): string {
+  return component.component === 'Custom' ? component.name : component.component;
 }
 
 /** Saved presentation settings for runtime speech bubbles. `font_asset` is a
@@ -207,10 +254,8 @@ export interface BlockDefDto {
 export interface ActorDto {
   id: string;
   name: string;
-  visual: VisualDto;
-  placement: PlacementDto;
-  physics: PhysicsDto;
-  visible: boolean;
+  /** What the actor is made of - see `blockloom_core::components`. */
+  components: ActorComponentDto[];
   // Flattened `BlockGraph` - one canvas per actor.
   strands: StrandDto[];
   floating_values: FloatingValueDto[];
@@ -312,6 +357,39 @@ export type { ValueLocation };
 export function findActor(project: ProjectDto | null, actorId: string | null): ActorDto | null {
   if (!project || !actorId) return null;
   return project.actors.find(actor => actor.id === actorId) ?? null;
+}
+
+export function findComponent(actor: ActorDto | null, name: string): ActorComponentDto | null {
+  return actor?.components.find(component => componentName(component) === name) ?? null;
+}
+
+/** What an actor looks like, or null when it has no `Look` - a positioned
+ * actor its blocks can still drive, with nothing to draw. */
+export function actorVisual(actor: ActorDto | null): VisualDto | null {
+  const look = findComponent(actor, 'Look');
+  return look?.component === 'Look' ? look.visual : null;
+}
+
+export function actorPlacement(actor: ActorDto | null): PlacementDto {
+  const place = findComponent(actor, 'Place');
+  if (place?.component === 'Place') return place.placement;
+  return { position: [0, 0, 0], rotation: [0, 0, 0], scale: 1 };
+}
+
+/** The actor's physics, or the inert default when it has no `Body`. */
+export function actorPhysics(actor: ActorDto | null): PhysicsDto {
+  const body = findComponent(actor, 'Body');
+  if (body?.component === 'Body') return body.physics;
+  return { body: 'None', gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5 };
+}
+
+/** The custom components an actor carries, which is what the component blocks
+ * can name. */
+export function customComponents(actor: ActorDto | null): Extract<ActorComponentDto, { component: 'Custom' }>[] {
+  return (actor?.components ?? []).filter(
+    (component): component is Extract<ActorComponentDto, { component: 'Custom' }> =>
+      component.component === 'Custom',
+  );
 }
 
 export function findBlockDef(actor: ActorDto | null, blockId: unknown): BlockDefDto | null {

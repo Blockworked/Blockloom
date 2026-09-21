@@ -52,6 +52,10 @@ function defaults(type: InstructionType): Record<string, unknown> {
       return { visible: true };
     case 'SetColor':
       return { color: textValue('#FFAB19') };
+    case 'SetComponentField':
+      return { component: '', field: '', value: numberValue(0) };
+    case 'SetCameraView':
+      return { view: 'ThirdPerson' };
     case 'Wait':
       return { duration: numberValue(1) };
     case 'WaitUntil':

@@ -12,6 +12,7 @@ use crate::{AppHandle, Backend};
 use blockloom_core::blocks::{
     ActorGraph, BlockPiece, BlockShape, Instruction, InstructionKind, normalize_block_color,
 };
+use blockloom_core::components::{ActorComponent, Components};
 use blockloom_core::library;
 use blockloom_core::project::{self, Actor, Project};
 use blockloom_core::scene::{Camera, Mode, Physics, Placement, Visual};
@@ -503,7 +504,7 @@ pub(crate) fn set_actor_visual(
     let mut s = lock(state)?;
     push_undo(&mut s);
     if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
-        actor.visual = visual;
+        actor.components.set_visual(visual);
     }
     auto_save(&s);
     sync_runtime(&mut s);
@@ -525,7 +526,7 @@ pub(crate) fn set_actor_placement(
         }),
     );
     if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
-        actor.placement = placement;
+        actor.components.set_placement(placement);
     }
     auto_save(&s);
     sync_runtime(&mut s);
@@ -542,7 +543,7 @@ pub(crate) fn set_actor_physics(
     let mut s = lock(state)?;
     push_undo(&mut s);
     if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
-        actor.physics = physics;
+        actor.components.set_physics(physics);
     }
     auto_save(&s);
     sync_runtime(&mut s);
@@ -559,7 +560,106 @@ pub(crate) fn set_actor_visible(
     let mut s = lock(state)?;
     push_undo(&mut s);
     if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
-        actor.visible = visible;
+        actor.components.set_visible(visible);
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+// ─── Components ────────────────────────────────────────────────────────────
+
+/// Adds a component to an actor, or replaces the one of the same name. A
+/// custom component is given a name nothing else on the actor is using.
+pub(crate) fn add_actor_component(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    mut component: ActorComponent,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
+        return Err("Actor not found".to_string());
+    };
+    if let ActorComponent::Custom { name, .. } = &mut component {
+        *name = actor.components.unique_custom_name(name);
+    }
+    let name = component.name().to_string();
+    actor.components.insert(component);
+    if name == "Camera" {
+        s.project_mut()
+            .expect("checked above")
+            .claim_camera(&actor_id);
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(name)
+}
+
+/// Replaces a component in place, keyed by the name it already has - what
+/// every field in the inspector writes through.
+pub(crate) fn set_actor_component(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    name: String,
+    component: ActorComponent,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo_for(
+        &mut s,
+        Some(EditSession::Comment {
+            comment_id: format!("actor-component:{actor_id}:{name}"),
+        }),
+    );
+    let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
+        return Err("Actor not found".to_string());
+    };
+    let result = rename_or_replace(&mut actor.components, &name, component);
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    result
+}
+
+/// Writes `component` over the one called `name`. A custom component that
+/// came back under a different name has been renamed, so it takes the old
+/// one's place in the list rather than being appended.
+fn rename_or_replace(
+    components: &mut Components,
+    name: &str,
+    component: ActorComponent,
+) -> Result<(), String> {
+    if component.name() == name {
+        components.insert(component);
+        return Ok(());
+    }
+    if components.contains(component.name()) {
+        return Err(format!(
+            "This actor already has a \"{}\" component",
+            component.name()
+        ));
+    }
+    let Some(index) = components.0.iter().position(|slot| slot.name() == name) else {
+        return Err(format!("No \"{name}\" component to change"));
+    };
+    components.0[index] = component;
+    Ok(())
+}
+
+pub(crate) fn remove_actor_component(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    name: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
+        actor.components.remove(&name);
     }
     auto_save(&s);
     sync_runtime(&mut s);

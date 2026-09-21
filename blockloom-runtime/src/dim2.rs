@@ -2,7 +2,7 @@
 //! that only make sense with a 2D physics engine attached. A 2D unit is a
 //! pixel, which is why gravity defaults to a few hundred of them.
 
-use crate::engine::{ActorId, Engine, PendingEffects};
+use crate::engine::{Engine, PendingEffects};
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -38,8 +38,7 @@ fn circle_image(radius: f32) -> Image {
         for x in 0..diameter {
             // Half-pixel antialiased edge: fully opaque half a pixel inside
             // the radius, fading to transparent half a pixel outside it.
-            let dist =
-                Vec2::new(x as f32 + 0.5 - center, y as f32 + 0.5 - center).length();
+            let dist = Vec2::new(x as f32 + 0.5 - center, y as f32 + 0.5 - center).length();
             let alpha = (radius + 0.5 - dist).clamp(0.0, 1.0);
             data.extend_from_slice(&[255, 255, 255, (alpha * 255.0) as u8]);
         }
@@ -90,33 +89,29 @@ pub fn spawn_actor(
     assets: &AssetServer,
     textures: &mut Assets<Image>,
 ) -> Option<Entity> {
-    let sprite = sprite_for(&actor.visual, assets, textures)?;
-    let mut entity = commands.spawn((
-        Name::new(actor.name.clone()),
-        ActorId(actor.id.clone()),
-        sprite,
-        crate::world::transform_for(actor),
-        crate::world::visibility_for(actor),
-    ));
+    let sprite = sprite_for(actor.visual()?, assets, textures)?;
+    let mut entity = commands.spawn((crate::world::actor_bundle(actor), sprite));
     insert_body(&mut entity, actor);
     Some(entity.id())
 }
 
 fn insert_body(entity: &mut EntityCommands, actor: &Actor) {
-    if let (Some(body), Some(collider)) =
-        (body_for(actor.physics.body), collider_for(&actor.visual))
-    {
+    let physics = actor.physics();
+    if let (Some(body), Some(collider)) = (
+        body_for(physics.body),
+        actor.visual().and_then(collider_for),
+    ) {
         entity.insert((
             body,
             collider,
             rp::ActiveEvents::COLLISION_EVENTS,
             rp::Velocity::zero(),
             rp::ExternalImpulse::default(),
-            rp::GravityScale(actor.physics.gravity_scale),
-            rp::Restitution::coefficient(actor.physics.restitution),
-            rp::Friction::coefficient(actor.physics.friction),
+            rp::GravityScale(physics.gravity_scale),
+            rp::Restitution::coefficient(physics.restitution),
+            rp::Friction::coefficient(physics.friction),
         ));
-        if actor.physics.lock_rotation {
+        if physics.lock_rotation {
             entity.insert(rp::LockedAxes::ROTATION_LOCKED);
         }
     }
@@ -245,7 +240,12 @@ pub fn apply_effects(
                 let Some(entity) = engine.entities.get(actor) else {
                     continue;
                 };
-                let Some(visual) = engine.project.actor(actor).map(|a| a.visual.clone()) else {
+                let Some(visual) = engine
+                    .project
+                    .actor(actor)
+                    .and_then(|a| a.visual())
+                    .cloned()
+                else {
                     continue;
                 };
                 let mut entity = commands.entity(*entity);
@@ -287,10 +287,7 @@ pub fn relay_collisions(
 /// Freezes the physics pipeline while paused or stopped so bodies stop falling
 /// and velocities don't integrate. Runs in `Update` before rapier's own
 /// `PostUpdate` step, so it takes effect the same frame.
-pub fn sync_pause(
-    engine: NonSend<Engine>,
-    mut configs: Query<&mut rp::RapierConfiguration>,
-) {
+pub fn sync_pause(engine: NonSend<Engine>, mut configs: Query<&mut rp::RapierConfiguration>) {
     for mut config in &mut configs {
         config.physics_pipeline_active = engine.running && !engine.paused;
     }

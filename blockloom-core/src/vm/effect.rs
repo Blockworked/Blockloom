@@ -2,7 +2,9 @@
 //! applies to by id, and carries already-evaluated numbers - the host never
 //! evaluates a [`crate::value::Value`] itself.
 
+use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
+use crate::value::Evaluated;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -74,6 +76,19 @@ pub enum Effect {
     SetColor {
         actor: String,
         color: String,
+    },
+    /// Writes one field of one of the actor's custom components.
+    SetComponentField {
+        actor: String,
+        component: String,
+        field: String,
+        value: Evaluated,
+    },
+    /// Switches the actor's camera component between first person, third
+    /// person and plain follow.
+    SetCameraView {
+        actor: String,
+        view: CameraView,
     },
     /// Every script stopped, by a `stop all` block.
     Stopped,

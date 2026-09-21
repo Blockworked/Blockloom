@@ -2,6 +2,7 @@
 // goes through here; bridge.ts applies the fresh state returned with it.
 import { invoke, listen, getVersion } from './bridge';
 import type {
+  ActorComponentDto,
   BlockPieceDto,
   BlockShapeDto,
   CameraDto,
@@ -76,6 +77,14 @@ export const addActor = (shape: string) => invoke<string>('add_actor', { shape }
 export const duplicateActor = (actorId: string) => invoke<string>('duplicate_actor', { actorId });
 export const removeActor = (actorId: string) => invoke<void>('remove_actor', { actorId });
 export const renameActor = (actorId: string, name: string) => invoke<void>('rename_actor', { actorId, name });
+export const addActorComponent = (actorId: string, component: ActorComponentDto) =>
+  invoke<string>('add_actor_component', { actorId, component });
+/** Replaces the component currently called `name` - which is how a custom
+ * component gets renamed, too. */
+export const setActorComponent = (actorId: string, name: string, component: ActorComponentDto) =>
+  invoke<void>('set_actor_component', { actorId, name, component });
+export const removeActorComponent = (actorId: string, name: string) =>
+  invoke<void>('remove_actor_component', { actorId, name });
 export const setActorVisual = (actorId: string, visual: VisualDto) =>
   invoke<void>('set_actor_visual', { actorId, visual });
 export const setActorPlacement = (actorId: string, placement: PlacementDto) =>

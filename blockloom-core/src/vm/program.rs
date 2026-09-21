@@ -7,6 +7,7 @@
 //! per-frame yielding work.
 
 use crate::blocks::{ActorGraph, Instruction, InstructionKind};
+use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
 use crate::value::Value;
 use std::collections::HashMap;
@@ -48,9 +49,18 @@ pub enum LoopKind {
 pub enum Action {
     Move(Value),
     GoTo([Value; 3]),
-    ChangePosition { axis: Axis, by: Value },
-    Turn { axis: Axis, degrees: Value },
-    SetRotation { axis: Axis, degrees: Value },
+    ChangePosition {
+        axis: Axis,
+        by: Value,
+    },
+    Turn {
+        axis: Axis,
+        degrees: Value,
+    },
+    SetRotation {
+        axis: Axis,
+        degrees: Value,
+    },
     PointTowards(String),
     SetScale(Value),
     SetBody(BodyKind),
@@ -60,9 +70,21 @@ pub enum Action {
     Say(Value),
     SetVisible(bool),
     SetColor(Value),
+    SetComponentField {
+        component: String,
+        field: String,
+        value: Value,
+    },
+    SetCameraView(CameraView),
     Broadcast(String),
-    SetVariable { name: String, value: Value },
-    ChangeVariable { name: String, value: Value },
+    SetVariable {
+        name: String,
+        value: Value,
+    },
+    ChangeVariable {
+        name: String,
+        value: Value,
+    },
 }
 
 /// One step of a compiled program.
@@ -225,6 +247,16 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::Say { text } => steps.push(Step::Action(Action::Say(text.clone()))),
         K::SetVisible { visible } => steps.push(Step::Action(Action::SetVisible(*visible))),
         K::SetColor { color } => steps.push(Step::Action(Action::SetColor(color.clone()))),
+        K::SetComponentField {
+            component,
+            field,
+            value,
+        } => steps.push(Step::Action(Action::SetComponentField {
+            component: component.clone(),
+            field: field.clone(),
+            value: value.clone(),
+        })),
+        K::SetCameraView { view } => steps.push(Step::Action(Action::SetCameraView(*view))),
         K::Broadcast { name } => steps.push(Step::Action(Action::Broadcast(name.clone()))),
         K::SetVariable { name, value } => steps.push(Step::Action(Action::SetVariable {
             name: name.clone(),

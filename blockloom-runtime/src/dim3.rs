@@ -1,7 +1,7 @@
 //! The 3D half of the world: meshes, materials, `bevy_rapier3d` bodies, and
 //! the effects that need a 3D physics engine attached. A 3D unit is a metre.
 
-use crate::engine::{ActorId, Engine, PendingEffects};
+use crate::engine::{Engine, PendingEffects};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude as rp;
 use blockloom_core::project::Actor;
@@ -49,38 +49,34 @@ pub fn spawn_actor(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) -> Option<Entity> {
-    let mesh = mesh_for(&actor.visual)?;
-    let color = actor
-        .visual
+    let visual = actor.visual()?;
+    let mesh = mesh_for(visual)?;
+    let color = visual
         .color()
         .map(crate::world::parse_color)
         .unwrap_or(Color::WHITE);
+    let physics = actor.physics();
     let mut entity = commands.spawn((
-        Name::new(actor.name.clone()),
-        ActorId(actor.id.clone()),
+        crate::world::actor_bundle(actor),
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: color,
             perceptual_roughness: 0.6,
             ..default()
         })),
-        crate::world::transform_for(actor),
-        crate::world::visibility_for(actor),
     ));
-    if let (Some(body), Some(collider)) =
-        (body_for(actor.physics.body), collider_for(&actor.visual))
-    {
+    if let (Some(body), Some(collider)) = (body_for(physics.body), collider_for(visual)) {
         entity.insert((
             body,
             collider,
             rp::ActiveEvents::COLLISION_EVENTS,
             rp::Velocity::zero(),
             rp::ExternalImpulse::default(),
-            rp::GravityScale(actor.physics.gravity_scale),
-            rp::Restitution::coefficient(actor.physics.restitution),
-            rp::Friction::coefficient(actor.physics.friction),
+            rp::GravityScale(physics.gravity_scale),
+            rp::Restitution::coefficient(physics.restitution),
+            rp::Friction::coefficient(physics.friction),
         ));
-        if actor.physics.lock_rotation {
+        if physics.lock_rotation {
             entity.insert(rp::LockedAxes::ROTATION_LOCKED);
         }
     }
@@ -197,7 +193,12 @@ pub fn apply_effects(
                 let Some(entity) = engine.entities.get(actor) else {
                     continue;
                 };
-                let Some(visual) = engine.project.actor(actor).map(|a| a.visual.clone()) else {
+                let Some(visual) = engine
+                    .project
+                    .actor(actor)
+                    .and_then(|a| a.visual())
+                    .cloned()
+                else {
                     continue;
                 };
                 let mut entity = commands.entity(*entity);
@@ -236,10 +237,7 @@ pub fn relay_collisions(
 /// Freezes the physics pipeline while paused or stopped so bodies stop falling
 /// and velocities don't integrate. Runs in `Update` before rapier's own
 /// `PostUpdate` step, so it takes effect the same frame.
-pub fn sync_pause(
-    engine: NonSend<Engine>,
-    mut configs: Query<&mut rp::RapierConfiguration>,
-) {
+pub fn sync_pause(engine: NonSend<Engine>, mut configs: Query<&mut rp::RapierConfiguration>) {
     for mut config in &mut configs {
         config.physics_pipeline_active = engine.running && !engine.paused;
     }

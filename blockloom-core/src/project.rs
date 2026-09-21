@@ -12,6 +12,7 @@
 //! user's choice, so [`crate::library`] remembers the ones it has opened.
 
 use crate::blocks::{ActorGraph, InstructionKind, VariableDef};
+use crate::components::{ActorComponent, CameraAttach, CameraView, Components};
 use crate::scene::{Mode, Physics, Placement, Visual, World};
 use crate::value::Evaluated;
 use serde::{Deserialize, Serialize};
@@ -33,10 +34,6 @@ fn new_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
-fn visible_by_default() -> bool {
-    true
-}
-
 fn default_visual() -> Visual {
     Visual::Rect {
         color: "#4C97FF".to_string(),
@@ -44,22 +41,86 @@ fn default_visual() -> Visual {
     }
 }
 
-/// One thing in the world, with its own canvas. Its `BlockGraph` is
-/// flattened into the same JSON object, so an actor reads as one record.
+/// One thing in the world, with its own canvas. What the actor *is* lives in
+/// [`Actor::components`]; its `BlockGraph` is flattened into the same JSON
+/// object, so an actor still reads as one record.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "ActorRepr")]
 pub struct Actor {
     pub id: String,
     pub name: String,
-    #[serde(default = "default_visual")]
-    pub visual: Visual,
     #[serde(default)]
-    pub placement: Placement,
-    #[serde(default)]
-    pub physics: Physics,
-    #[serde(default = "visible_by_default")]
-    pub visible: bool,
+    pub components: Components,
     #[serde(flatten)]
     pub graph: ActorGraph,
+}
+
+/// What an actor deserializes through, so pre-component documents - which
+/// kept the same four properties as flat fields - still load. Each one that
+/// is present and has no component yet becomes that component.
+#[derive(Deserialize)]
+struct ActorRepr {
+    id: String,
+    name: String,
+    #[serde(default)]
+    components: Components,
+    #[serde(default)]
+    visual: Option<Visual>,
+    #[serde(default)]
+    placement: Option<Placement>,
+    #[serde(default)]
+    physics: Option<Physics>,
+    #[serde(default)]
+    visible: Option<bool>,
+    #[serde(flatten)]
+    graph: ActorGraph,
+}
+
+impl From<ActorRepr> for Actor {
+    fn from(repr: ActorRepr) -> Self {
+        let ActorRepr {
+            id,
+            name,
+            mut components,
+            visual,
+            placement,
+            physics,
+            visible,
+            graph,
+        } = repr;
+        // An actor written before components had all four, so a document with
+        // none of them at all is a component-era one that dropped them.
+        let legacy =
+            visual.is_some() || placement.is_some() || physics.is_some() || visible.is_some();
+        if legacy {
+            if !components.contains("Place") {
+                components.0.push(ActorComponent::Place {
+                    placement: placement.unwrap_or_default(),
+                });
+            }
+            if !components.contains("Look") {
+                components.0.push(ActorComponent::Look {
+                    visual: visual.unwrap_or_else(default_visual),
+                });
+            }
+            if !components.contains("Render") {
+                components.0.push(ActorComponent::Render {
+                    visible: visible.unwrap_or(true),
+                });
+            }
+            if !components.contains("Body")
+                && let Some(physics) = physics
+            {
+                components.0.push(ActorComponent::Body { physics });
+            }
+        }
+        Self {
+            id,
+            name,
+            components,
+            graph,
+        }
+    }
 }
 
 impl Deref for Actor {
@@ -81,12 +142,30 @@ impl Actor {
         Self {
             id: new_id(),
             name: name.into(),
-            visual,
-            placement: Placement::default(),
-            physics: Physics::default(),
-            visible: true,
+            components: Components::new(visual),
             graph: ActorGraph::new(),
         }
+    }
+
+    /// What the actor looks like, or `None` when it has no `Look` component.
+    pub fn visual(&self) -> Option<&Visual> {
+        self.components.visual()
+    }
+
+    pub fn placement(&self) -> Placement {
+        self.components.placement()
+    }
+
+    pub fn physics(&self) -> Physics {
+        self.components.physics()
+    }
+
+    pub fn visible(&self) -> bool {
+        self.components.visible()
+    }
+
+    pub fn camera(&self) -> Option<&CameraAttach> {
+        self.components.camera()
     }
 }
 
@@ -141,21 +220,27 @@ impl Project {
         };
 
         let mut player = Actor::new("Player", player);
-        player.placement.position = if mode.is_3d() {
+        player.components.placement_mut().position = if mode.is_3d() {
             [0.0, 3.0, 0.0]
         } else {
             [0.0, 160.0, 0.0]
         };
-        player.physics.body = crate::scene::BodyKind::Dynamic;
-        player.physics.lock_rotation = true;
+        player.components.set_physics(Physics {
+            body: crate::scene::BodyKind::Dynamic,
+            lock_rotation: true,
+            ..Physics::default()
+        });
 
         let mut ground = Actor::new("Ground", ground);
-        ground.placement.position = if mode.is_3d() {
+        ground.components.placement_mut().position = if mode.is_3d() {
             [0.0, 0.0, 0.0]
         } else {
             [0.0, -220.0, 0.0]
         };
-        ground.physics.body = crate::scene::BodyKind::Static;
+        ground.components.set_physics(Physics {
+            body: crate::scene::BodyKind::Static,
+            ..Physics::default()
+        });
 
         Self {
             id: new_id(),
@@ -179,14 +264,18 @@ impl Project {
         }
         let scale = if mode.is_3d() { 0.01 } else { 100.0 };
         for actor in &mut self.actors {
-            actor.placement.position[0] *= scale;
-            actor.placement.position[1] *= scale;
-            actor.placement.position[2] = if mode.is_3d() {
-                actor.placement.position[2] * scale
+            let placement = actor.components.placement_mut();
+            placement.position[0] *= scale;
+            placement.position[1] *= scale;
+            placement.position[2] = if mode.is_3d() {
+                placement.position[2] * scale
             } else {
                 0.0
             };
-            actor.visual = visual_for_mode(&actor.visual, mode);
+            if let Some(visual) = actor.components.visual() {
+                let converted = visual_for_mode(visual, mode);
+                actor.components.set_visual(converted);
+            }
         }
         self.world.mode = mode;
     }
@@ -227,9 +316,6 @@ impl Project {
             return false;
         };
         self.actors.remove(index);
-        if self.world.camera.follow.as_deref() == Some(id) {
-            self.world.camera.follow = None;
-        }
         true
     }
 
@@ -352,10 +438,42 @@ impl Project {
 
     /// Repairs and canonicalizes a just-loaded document, once.
     pub fn normalize(&mut self) {
+        self.migrate_camera_follow();
         for actor in &mut self.actors {
             actor.graph.migrate_bool_slots();
             actor.graph.normalize_block_colors();
             actor.graph.prune_orphaned_comments();
+        }
+    }
+
+    /// Pre-component projects named the followed actor on the world camera.
+    /// That is a camera component on the actor now, so move it there once.
+    fn migrate_camera_follow(&mut self) {
+        let Some(follow) = self.world.camera.legacy_follow.take() else {
+            return;
+        };
+        if let Some(actor) = self.actor_mut(&follow) {
+            actor.components.insert(ActorComponent::Camera {
+                camera: CameraAttach {
+                    view: CameraView::Follow,
+                    ..CameraAttach::default()
+                },
+            });
+        }
+    }
+
+    /// The actor the camera is attached to, if any.
+    pub fn camera_actor(&self) -> Option<&Actor> {
+        self.actors.iter().find(|actor| actor.camera().is_some())
+    }
+
+    /// Leaves `actor_id` the only actor with a camera component. There is one
+    /// camera, so attaching it somewhere takes it off wherever it was.
+    pub fn claim_camera(&mut self, actor_id: &str) {
+        for actor in &mut self.actors {
+            if actor.id != actor_id {
+                actor.components.remove("Camera");
+            }
         }
     }
 }
@@ -663,11 +781,11 @@ mod tests {
         let project = Project::starter("Untitled", Mode::TwoD);
         assert_eq!(project.actors.len(), 2);
         assert_eq!(
-            project.actors[0].physics.body,
+            project.actors[0].physics().body,
             crate::scene::BodyKind::Dynamic
         );
         assert_eq!(
-            project.actors[1].physics.body,
+            project.actors[1].physics().body,
             crate::scene::BodyKind::Static
         );
     }
@@ -679,13 +797,79 @@ mod tests {
 
         assert_eq!(project.world.mode, Mode::ThreeD);
         assert_eq!(project.world.gravity, World::default_gravity(Mode::ThreeD));
-        assert!((project.actors[0].placement.position[1] - 1.6).abs() < 0.001);
-        assert!(project.actors.iter().all(|actor| actor.visual.is_3d()));
+        assert!((project.actors[0].placement().position[1] - 1.6).abs() < 0.001);
+        assert!(
+            project
+                .actors
+                .iter()
+                .all(|actor| actor.visual().is_some_and(Visual::is_3d))
+        );
 
         project.switch_mode(Mode::TwoD);
         assert_eq!(project.world.mode, Mode::TwoD);
-        assert!((project.actors[0].placement.position[1] - 160.0).abs() < 0.001);
-        assert!(project.actors.iter().all(|actor| !actor.visual.is_3d()));
+        assert!((project.actors[0].placement().position[1] - 160.0).abs() < 0.001);
+        assert!(
+            project
+                .actors
+                .iter()
+                .all(|actor| actor.visual().is_some_and(|visual| !visual.is_3d()))
+        );
+    }
+
+    #[test]
+    fn a_pre_component_actor_loads_as_components() {
+        let json = r##"{
+            "id": "a1",
+            "name": "Player",
+            "visual": {"shape": "Circle", "color": "#FFAB19", "radius": 30.0},
+            "placement": {"position": [1.0, 2.0, 0.0], "rotation": [0.0, 0.0, 0.0], "scale": 2.0},
+            "physics": {"body": "Dynamic", "gravity_scale": 1.0, "lock_rotation": true,
+                        "restitution": 0.0, "friction": 0.5},
+            "visible": false,
+            "strands": [], "floating_values": [], "comments": [],
+            "variables": [], "block_defs": []
+        }"##;
+        let actor: Actor = serde_json::from_str(json).unwrap();
+
+        assert_eq!(actor.placement().scale, 2.0);
+        assert_eq!(actor.physics().body, crate::scene::BodyKind::Dynamic);
+        assert!(!actor.visible());
+        assert!(matches!(actor.visual(), Some(Visual::Circle { .. })));
+        // Saving it again writes components, and nothing else.
+        let json = serde_json::to_value(&actor).unwrap();
+        assert!(json.get("visual").is_none());
+        assert_eq!(json["components"][0]["component"], "Place");
+    }
+
+    #[test]
+    fn a_component_era_actor_keeps_the_components_it_has_and_no_others() {
+        let json = r#"{
+            "id": "a1", "name": "Logic",
+            "components": [{"component": "Place",
+                            "placement": {"position": [0,0,0], "rotation": [0,0,0], "scale": 1.0}}],
+            "strands": [], "floating_values": [], "comments": [],
+            "variables": [], "block_defs": []
+        }"#;
+        let actor: Actor = serde_json::from_str(json).unwrap();
+
+        // No `Look` means nothing to draw, not a default square.
+        assert!(actor.visual().is_none());
+        assert_eq!(actor.components.0.len(), 1);
+    }
+
+    #[test]
+    fn a_followed_actor_gains_a_camera_component_on_load() {
+        let mut project = Project::starter("p", Mode::ThreeD);
+        let followed = project.actors[0].id.clone();
+        project.world.camera.legacy_follow = Some(followed.clone());
+        project.normalize();
+
+        assert_eq!(project.world.camera.legacy_follow, None);
+        assert_eq!(project.camera_actor().map(|a| a.id.clone()), Some(followed));
+        assert_eq!(
+            project.actors[0].camera().map(|c| c.view),
+            Some(CameraView::Follow)
+        );
     }
 
     #[test]

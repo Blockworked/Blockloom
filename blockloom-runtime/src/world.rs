@@ -7,10 +7,13 @@
 //! all to the main thread - the same thread the VM's thread-local sensor
 //! snapshot lives on.
 
-use crate::engine::{ActorId, Dimension, Engine, Gliding, PendingEffects};
+use crate::engine::{
+    ActorId, CameraRig, CustomComponents, Dimension, Engine, Gliding, PendingEffects,
+};
 use crate::{bridge, dim2, dim3};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use blockloom_core::components::CameraView;
 use blockloom_core::project::Actor;
 use blockloom_core::scene::{Axis, BodyKind, Mode, Visual};
 use blockloom_core::sense::{ActorSense, Sensors, normalize_key};
@@ -32,8 +35,9 @@ pub fn parse_color(hex: &str) -> Color {
 }
 
 pub fn transform_for(actor: &Actor) -> Transform {
-    let [x, y, z] = actor.placement.position;
-    let [rx, ry, rz] = actor.placement.rotation;
+    let placement = actor.placement();
+    let [x, y, z] = placement.position;
+    let [rx, ry, rz] = placement.rotation;
     Transform {
         translation: Vec3::new(x, y, z),
         rotation: Quat::from_euler(
@@ -42,16 +46,46 @@ pub fn transform_for(actor: &Actor) -> Transform {
             ry.to_radians(),
             rz.to_radians(),
         ),
-        scale: Vec3::splat(actor.placement.scale),
+        scale: Vec3::splat(placement.scale),
     }
 }
 
 pub fn visibility_for(actor: &Actor) -> Visibility {
-    if actor.visible {
+    if actor.visible() {
         Visibility::Inherited
     } else {
         Visibility::Hidden
     }
+}
+
+/// The actor's custom components, as the entity carries them.
+pub fn custom_for(actor: &Actor) -> CustomComponents {
+    CustomComponents(
+        actor
+            .components
+            .custom()
+            .map(|(name, fields)| {
+                let values = fields
+                    .iter()
+                    .map(|field| (field.name.clone(), field.value.clone()))
+                    .collect();
+                (name.to_string(), values)
+            })
+            .collect(),
+    )
+}
+
+/// What every actor entity gets whatever it looks like: who it is, where it
+/// stands, whether it's drawn, and its custom components. The dimension's own
+/// spawner adds the sprite or mesh on top.
+pub fn actor_bundle(actor: &Actor) -> impl Bundle {
+    (
+        Name::new(actor.name.clone()),
+        ActorId(actor.id.clone()),
+        transform_for(actor),
+        visibility_for(actor),
+        custom_for(actor),
+    )
 }
 
 /// Records (or clears) a contact between two entities, and starts any
@@ -199,25 +233,19 @@ pub fn rebuild_world(
                 WorldCamera,
             ));
             for actor in &project.actors {
-                if let Some(entity) =
-                    dim2::spawn_actor(&mut commands, actor, &assets, &mut textures)
-                {
-                    engine.entities.insert(actor.id.clone(), entity);
-                } else {
-                    warn!("{} has a 3D shape in a 2D project", actor.name);
-                }
+                let entity = dim2::spawn_actor(&mut commands, actor, &assets, &mut textures)
+                    .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::TwoD));
+                attach_camera(&mut commands, actor, entity);
+                engine.entities.insert(actor.id.clone(), entity);
             }
         }
         Mode::ThreeD => {
             dim3::spawn_scenery(&mut commands, &project.world.camera);
             for actor in &project.actors {
-                if let Some(entity) =
-                    dim3::spawn_actor(&mut commands, actor, &mut meshes, &mut materials)
-                {
-                    engine.entities.insert(actor.id.clone(), entity);
-                } else {
-                    warn!("{} has a 2D shape in a 3D project", actor.name);
-                }
+                let entity = dim3::spawn_actor(&mut commands, actor, &mut meshes, &mut materials)
+                    .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::ThreeD));
+                attach_camera(&mut commands, actor, entity);
+                engine.entities.insert(actor.id.clone(), entity);
             }
         }
     }
@@ -226,6 +254,27 @@ pub fn rebuild_world(
     effects.0.push(Effect::SetGravity {
         gravity: project.world.gravity,
     });
+}
+
+/// An actor with nothing to draw: it has no `Look` component, or one for the
+/// other dimension. It still gets an entity, so its blocks can move it, other
+/// actors can sense it, and adding a `Look` later is all it takes to see it.
+fn spawn_unseen(commands: &mut Commands, actor: &Actor, mode: Mode) -> Entity {
+    if actor
+        .visual()
+        .is_some_and(|visual| visual.is_3d() != mode.is_3d())
+    {
+        let wanted = if mode.is_3d() { "2D" } else { "3D" };
+        warn!("{} has a {wanted} shape in a {mode:?} project", actor.name);
+    }
+    commands.spawn(actor_bundle(actor)).id()
+}
+
+/// Gives the actor its camera component, if the project put one on it.
+fn attach_camera(commands: &mut Commands, actor: &Actor, entity: Entity) {
+    if let Some(camera) = actor.camera() {
+        commands.entity(entity).insert(CameraRig(*camera));
+    }
 }
 
 // ─── Sensing ───────────────────────────────────────────────────────────────
@@ -240,14 +289,14 @@ pub fn publish_sensors(
     buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
-    actors: Query<(&ActorId, &Transform, &Visibility)>,
+    actors: Query<(&ActorId, &Transform, &Visibility, Option<&CustomComponents>)>,
 ) {
     let now = time.elapsed_secs() as f64;
     let held: HashSet<String> = keys.get_pressed().filter_map(key_name).collect();
     let mouse = mouse_world_position(dimension.0, &windows, &cameras).unwrap_or_default();
 
     let mut senses: HashMap<String, ActorSense> = HashMap::new();
-    for (id, transform, visibility) in &actors {
+    for (id, transform, visibility, custom) in &actors {
         let (rx, ry, rz) = transform.rotation.to_euler(EulerRot::XYZ);
         senses.insert(
             id.0.clone(),
@@ -261,6 +310,7 @@ pub fn publish_sensors(
                 rotation: [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()],
                 visible: *visibility != Visibility::Hidden,
                 touching: engine.touching.get(&id.0).cloned().unwrap_or_default(),
+                components: custom.map(|custom| custom.0.clone()).unwrap_or_default(),
             },
         );
     }
@@ -334,7 +384,12 @@ pub fn detect_clicks(
                 return;
             };
             for (id, transform) in &actors {
-                let Some(visual) = engine.project.actor(&id.0).map(|a| a.visual.clone()) else {
+                let Some(visual) = engine
+                    .project
+                    .actor(&id.0)
+                    .and_then(|a| a.visual())
+                    .cloned()
+                else {
                     continue;
                 };
                 let delta = point - transform.translation.truncate();
@@ -358,7 +413,12 @@ pub fn detect_clicks(
                 return;
             };
             for (id, transform) in &actors {
-                let Some(visual) = engine.project.actor(&id.0).map(|a| a.visual.clone()) else {
+                let Some(visual) = engine
+                    .project
+                    .actor(&id.0)
+                    .and_then(|a| a.visual())
+                    .cloned()
+                else {
                     continue;
                 };
                 // A bounding sphere is close enough to pick with, and needs no
@@ -407,9 +467,10 @@ fn half_extents3(visual: &Visual) -> Vec3 {
 /// screen-space UI, but measuring the visual here keeps it attached to the top
 /// of both 2D and 3D actors as they move and scale.
 pub fn actor_top(actor: &Actor, transform: &Transform, mode: Mode) -> Vec3 {
-    let half_height = match mode {
-        Mode::TwoD => half_extents(&actor.visual).y,
-        Mode::ThreeD => half_extents3(&actor.visual).y,
+    let half_height = match (actor.visual(), mode) {
+        (Some(visual), Mode::TwoD) => half_extents(visual).y,
+        (Some(visual), Mode::ThreeD) => half_extents3(visual).y,
+        (None, _) => 0.0,
     } * transform.scale.y.abs();
     transform.translation + Vec3::Y * half_height
 }
@@ -591,33 +652,98 @@ pub fn step_glides(
     }
 }
 
-/// Keeps the camera on the actor the project follows, if any.
-pub fn follow_camera(
+/// Drives the world camera from the actor carrying a camera component.
+/// Nothing attached leaves the camera where `rebuild_world` put it.
+///
+/// A 2D project has no depth to stand in, so all three views mean the same
+/// thing there: centre on the actor, offset by the rig's x and y.
+pub fn drive_camera(
     engine: NonSend<Engine>,
     dimension: Res<Dimension>,
-    actors: Query<(&ActorId, &Transform), Without<WorldCamera>>,
+    rigs: Query<(&CameraRig, &Transform), Without<WorldCamera>>,
     mut cameras: Query<&mut Transform, With<WorldCamera>>,
 ) {
-    let Some(follow) = engine.project.world.camera.follow.clone() else {
-        return;
-    };
-    let Some(target) = actors
-        .iter()
-        .find(|(id, _)| id.0 == follow)
-        .map(|(_, transform)| transform.translation)
-    else {
+    let Some((rig, target)) = rigs.iter().next() else {
         return;
     };
     let Ok(mut camera) = cameras.single_mut() else {
         return;
     };
-    match dimension.0 {
-        Mode::TwoD => camera.translation = Vec3::new(target.x, target.y, camera.translation.z),
-        Mode::ThreeD => {
+    let rig = rig.0;
+    let offset = Vec3::from(rig.offset);
+    if let Mode::TwoD = dimension.0 {
+        camera.translation = Vec3::new(
+            target.translation.x + offset.x,
+            target.translation.y + offset.y,
+            camera.translation.z,
+        );
+        return;
+    }
+    // The offset is in the actor's own frame, so an eye stays on its head
+    // however the actor is turned.
+    let pivot = target.translation + target.rotation * offset;
+    match rig.view {
+        CameraView::FirstPerson => {
+            camera.translation = pivot;
+            camera.rotation = target.rotation;
+        }
+        CameraView::ThirdPerson => {
+            let pitch = rig.pitch.to_radians();
+            let back = -forward_of(target, Mode::ThreeD) * rig.distance * pitch.cos();
+            camera.translation = pivot + back + Vec3::Y * rig.distance * pitch.sin();
+            camera.look_at(pivot, Vec3::Y);
+        }
+        CameraView::Follow => {
             let settings = &engine.project.world.camera;
-            let offset = Vec3::from(settings.position) - Vec3::from(settings.look_at);
-            camera.translation = target + offset;
-            camera.look_at(target, Vec3::Y);
+            let boom = Vec3::from(settings.position) - Vec3::from(settings.look_at);
+            camera.translation = target.translation + boom;
+            camera.look_at(target.translation, Vec3::Y);
+        }
+    }
+}
+
+/// The two effects that are about components rather than the world: writing a
+/// custom component's field, and switching the camera's view.
+pub fn apply_component_effects(
+    effects: Res<PendingEffects>,
+    engine: NonSend<Engine>,
+    mut customs: Query<&mut CustomComponents>,
+    mut rigs: Query<&mut CameraRig>,
+) {
+    if !engine.running || engine.paused {
+        return;
+    }
+    for effect in &effects.0 {
+        match effect {
+            Effect::SetComponentField {
+                actor,
+                component,
+                field,
+                value,
+            } => {
+                let Some(mut custom) = engine
+                    .entities
+                    .get(actor)
+                    .and_then(|entity| customs.get_mut(*entity).ok())
+                else {
+                    continue;
+                };
+                // Only the editor declares components, so a block can write a
+                // new field but not conjure the component holding it.
+                if let Some(fields) = custom.0.get_mut(component) {
+                    fields.insert(field.clone(), value.clone());
+                }
+            }
+            Effect::SetCameraView { actor, view } => {
+                if let Some(mut rig) = engine
+                    .entities
+                    .get(actor)
+                    .and_then(|entity| rigs.get_mut(*entity).ok())
+                {
+                    rig.0.view = *view;
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -688,6 +814,8 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::Say { actor, .. }
         | Effect::SetVisible { actor, .. }
         | Effect::SetColor { actor, .. }
+        | Effect::SetComponentField { actor, .. }
+        | Effect::SetCameraView { actor, .. }
         | Effect::Error { actor, .. } => Some(actor),
         Effect::SetGravity { .. } | Effect::Stopped => None,
     }
@@ -718,7 +846,7 @@ pub fn is_dynamic(engine: &Engine, actor: &str) -> bool {
     engine
         .project
         .actor(actor)
-        .is_some_and(|actor| actor.physics.body == BodyKind::Dynamic)
+        .is_some_and(|actor| actor.physics().body == BodyKind::Dynamic)
 }
 
 /// Which coordinate an axis names. A 2D project has no depth to change, so Z
@@ -861,9 +989,7 @@ mod tests {
         app.update();
 
         // Pause at t=15: timer freezes at 5.
-        sender
-            .send(EditorMessage::Pause { paused: true })
-            .unwrap();
+        sender.send(EditorMessage::Pause { paused: true }).unwrap();
         app.world_mut()
             .resource_mut::<Time>()
             .advance_to(std::time::Duration::from_secs(15));
@@ -874,9 +1000,7 @@ mod tests {
         assert_eq!(engine.run_time(15.0), 5.0);
 
         // Resume at t=25: timer continues from 5, not jumping to 15.
-        sender
-            .send(EditorMessage::Pause { paused: false })
-            .unwrap();
+        sender.send(EditorMessage::Pause { paused: false }).unwrap();
         app.world_mut()
             .resource_mut::<Time>()
             .advance_to(std::time::Duration::from_secs(25));
@@ -885,6 +1009,89 @@ mod tests {
         assert!(!engine.paused);
         assert_eq!(engine.run_time(25.0), 5.0);
         assert_eq!(engine.run_time(30.0), 10.0);
+    }
+
+    /// Runs `drive_camera` once over a world holding one rigged actor and one
+    /// camera, and hands back where the camera ended up.
+    fn camera_after(
+        mode: Mode,
+        rig: blockloom_core::components::CameraAttach,
+        actor: Transform,
+    ) -> Transform {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut app = App::new();
+        app.insert_resource(Dimension(mode));
+        app.insert_non_send(Engine::new(incoming, mode));
+        let camera = app
+            .world_mut()
+            .spawn((WorldCamera, Transform::default()))
+            .id();
+        app.world_mut().spawn((CameraRig(rig), actor));
+        app.add_systems(Update, drive_camera);
+        app.update();
+        *app.world().entity(camera).get::<Transform>().unwrap()
+    }
+
+    #[test]
+    fn a_first_person_camera_sits_at_the_actors_eye_facing_where_it_faces() {
+        use blockloom_core::components::{CameraAttach, CameraView};
+
+        let facing = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let camera = camera_after(
+            Mode::ThreeD,
+            CameraAttach {
+                view: CameraView::FirstPerson,
+                offset: [0.0, 2.0, 0.0],
+                ..CameraAttach::default()
+            },
+            Transform::from_xyz(5.0, 0.0, 0.0).with_rotation(facing),
+        );
+
+        assert!(
+            camera
+                .translation
+                .abs_diff_eq(Vec3::new(5.0, 2.0, 0.0), 0.001)
+        );
+        assert!(camera.rotation.abs_diff_eq(facing, 0.001));
+    }
+
+    #[test]
+    fn a_third_person_camera_sits_behind_and_above_what_it_looks_at() {
+        use blockloom_core::components::{CameraAttach, CameraView};
+
+        let camera = camera_after(
+            Mode::ThreeD,
+            CameraAttach {
+                view: CameraView::ThirdPerson,
+                offset: [0.0, 0.0, 0.0],
+                distance: 10.0,
+                pitch: 30.0,
+            },
+            Transform::IDENTITY,
+        );
+
+        // Bevy's forward is -Z, so "behind" an unturned actor is +Z.
+        assert!(camera.translation.z > 0.0);
+        assert!((camera.translation.y - 5.0).abs() < 0.001);
+        assert!(camera.translation.x.abs() < 0.001);
+    }
+
+    #[test]
+    fn a_2d_camera_only_ever_centres_on_its_actor() {
+        use blockloom_core::components::{CameraAttach, CameraView};
+
+        let camera = camera_after(
+            Mode::TwoD,
+            CameraAttach {
+                // First person means nothing in a plane, so it still centres.
+                view: CameraView::FirstPerson,
+                offset: [0.0, 20.0, 0.0],
+                ..CameraAttach::default()
+            },
+            Transform::from_xyz(100.0, 40.0, 0.0),
+        );
+
+        assert_eq!(camera.translation.truncate(), Vec2::new(100.0, 60.0));
     }
 
     #[test]

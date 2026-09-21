@@ -60,6 +60,7 @@ export const OPERATOR_GROUPS: { label: string; kinds: string[] }[] = [
       'Touching',
       'DistanceTo',
       'ActorPosition',
+      'ComponentField',
     ],
   },
   { label: 'Maths', kinds: ['Add', 'Sub', 'Mul', 'Div', 'Mod', 'Round', 'Math', 'Random'] },
@@ -114,6 +115,15 @@ export const OPERATOR_KINDS: OperatorKindSpec[] = [
     argTypes: ['text'],
     resultType: 'number',
     prefix: 'distance to',
+  },
+  {
+    kind: 'ComponentField',
+    op: 'ComponentField',
+    arity: 2,
+    argTypes: ['text', 'text'],
+    resultType: 'number',
+    prefix: 'my',
+    infix: 'field',
   },
   {
     kind: 'ActorPosition',

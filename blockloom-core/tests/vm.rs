@@ -418,3 +418,79 @@ fn a_bad_value_reports_an_error_and_the_script_carries_on() {
     assert!(effects.iter().any(|e| matches!(e, Effect::Error { .. })));
     assert_eq!(says(&effects), vec!["still here".to_string()]);
 }
+
+#[test]
+fn a_component_field_is_written_as_an_effect_and_read_back_from_the_snapshot() {
+    use blockloom_core::components::{ActorComponent, ComponentField};
+    use blockloom_core::sense::ActorSense;
+    use std::collections::HashMap;
+
+    let mut project = project_with(vec![started(vec![
+        InstructionKind::SetComponentField {
+            component: "Health".to_string(),
+            field: "hp".to_string(),
+            value: Value::number(7.0),
+        },
+        // Reading the field goes through the snapshot the host publishes, not
+        // through the document, so a run's own writes are what come back.
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("ComponentField"),
+                vec![Value::text("Health"), Value::text("hp")],
+            ),
+        },
+    ])]);
+    project.actors[0].components.insert(ActorComponent::Custom {
+        name: "Health".to_string(),
+        fields: vec![ComponentField::number("hp", 3.0)],
+    });
+    let actor_id = project.actors[0].id.clone();
+
+    blockloom_core::init();
+    let mut vm = Vm::new();
+    vm.load(&project);
+    vm.fire(Event::Started);
+
+    let mut sensors = Sensors::default();
+    sensors.actors.insert(
+        actor_id.clone(),
+        ActorSense {
+            name: "Player".to_string(),
+            components: HashMap::from([(
+                "Health".to_string(),
+                HashMap::from([("hp".to_string(), Evaluated::Number(3.0))]),
+            )]),
+            ..Default::default()
+        },
+    );
+    blockloom_core::sense::publish(sensors);
+
+    let mut effects = Vec::new();
+    vm.tick(0.1, &mut effects);
+
+    assert!(effects.contains(&Effect::SetComponentField {
+        actor: actor_id,
+        component: "Health".to_string(),
+        field: "hp".to_string(),
+        value: Evaluated::Number(7.0),
+    }));
+    // The host hasn't applied that effect yet, so the reporter still sees 3.
+    assert_eq!(says(&effects), vec!["3".to_string()]);
+}
+
+#[test]
+fn setting_a_camera_view_names_the_actor_asking() {
+    let project = project_with(vec![started(vec![InstructionKind::SetCameraView {
+        view: blockloom_core::components::CameraView::FirstPerson,
+    }])]);
+    let actor_id = project.actors[0].id.clone();
+    let mut vm = Harness::started(&project);
+
+    assert_eq!(
+        vm.run(1),
+        vec![Effect::SetCameraView {
+            actor: actor_id,
+            view: blockloom_core::components::CameraView::FirstPerson,
+        }]
+    );
+}

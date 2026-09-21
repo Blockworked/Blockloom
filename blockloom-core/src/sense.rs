@@ -6,6 +6,7 @@
 //! half: which actor's script is being evaluated right now, so "x position"
 //! means the running actor's own.
 
+use crate::value::Evaluated;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
@@ -18,6 +19,10 @@ pub struct ActorSense {
     pub visible: bool,
     /// Ids of the actors this one is currently touching.
     pub touching: HashSet<String>,
+    /// The actor's custom components as they stand this frame, by component
+    /// name then field name. Live values, not the authored ones: a block that
+    /// wrote a field last frame reads its own number back.
+    pub components: HashMap<String, HashMap<String, Evaluated>>,
 }
 
 /// Everything sensible about the world this frame. Keyed by actor id.

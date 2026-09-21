@@ -34,6 +34,7 @@ const BLOCK_GROUPS: { label: string; types: InstructionType[] }[] = [
   },
   { label: 'Physics', types: ['SetBody', 'ApplyImpulse', 'SetVelocity', 'SetGravity'] },
   { label: 'Looks', types: ['Say', 'SetVisible', 'SetColor'] },
+  { label: 'Components', types: ['SetComponentField', 'SetCameraView'] },
   {
     label: 'Control',
     types: ['Wait', 'WaitUntil', 'If', 'IfElse', 'Repeat', 'Forever', 'While', 'EscapeLoop', 'ContinueLoop', 'StopAll'],

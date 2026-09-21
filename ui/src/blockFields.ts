@@ -23,11 +23,19 @@ import {
 } from 'blockstitch';
 import { editInstruction } from './tauri';
 import { mode, openActor, state } from './store';
-import { AXIS_OPTIONS, BODY_OPTIONS, KEY_OPTIONS, MOUSE_TARGET, VISIBLE_OPTIONS } from './constants';
+import {
+  AXIS_OPTIONS,
+  BODY_OPTIONS,
+  CAMERA_VIEW_OPTIONS,
+  KEY_OPTIONS,
+  MOUSE_TARGET,
+  VISIBLE_OPTIONS,
+} from './constants';
 import {
   asBody,
   asString,
   asValue,
+  customComponents,
   fieldLocation,
   variableNames,
   type InstrPath,
@@ -37,7 +45,9 @@ import {
 } from './types';
 
 type Option = { value: string; label: string };
-type Options = Option[] | (() => Option[]);
+/** A fixed list, or one worked out per block - a component's field list
+ * depends on which component the block next to it names. */
+type Options = Option[] | ((instruction: InstructionDto) => Option[]);
 
 type Piece =
   | { kind: 'label'; text: string; mode?: Mode }
@@ -90,6 +100,22 @@ function collisionOptions(): Option[] {
 
 function variableOptions(): Option[] {
   return variableNames(state.project, openActor.value).map(name => ({ value: name, label: name }));
+}
+
+/** The open actor's custom components - the only ones a block can write, since
+ * the built-in five have blocks of their own. */
+function componentOptions(): Option[] {
+  return customComponents(openActor.value).map(component => ({
+    value: component.name,
+    label: component.name,
+  }));
+}
+
+/** The fields of whichever custom component the block currently names. */
+function componentFieldOptions(instruction: InstructionDto): Option[] {
+  const chosen = asString(instruction.component);
+  const component = customComponents(openActor.value).find(candidate => candidate.name === chosen);
+  return (component?.fields ?? []).map(field => ({ value: field.name, label: field.name }));
 }
 
 /** Axes that mean something for a position in this dimension. */
@@ -198,6 +224,24 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
   },
   SetColor: { head: [label('set color to'), value('ColorText', 'color')] },
 
+  // ── Components ───────────────────────────────────────────────────────────
+  SetComponentField: {
+    head: [
+      label('set'),
+      { kind: 'dropdown', key: 'field', options: componentFieldOptions, placeholder: 'field' },
+      label('of'),
+      { kind: 'dropdown', key: 'component', options: componentOptions, placeholder: 'component' },
+      label('to'),
+      value('ComponentFieldValue', 'value'),
+    ],
+  },
+  SetCameraView: {
+    head: [
+      label('set my camera to'),
+      { kind: 'dropdown', key: 'view', options: CAMERA_VIEW_OPTIONS },
+    ],
+  },
+
   // ── Control ──────────────────────────────────────────────────────────────
   Wait: { head: [label('wait'), value('WaitDuration', 'duration'), label('seconds')] },
   WaitUntil: { head: [label('wait until'), value('WaitUntilCondition', 'condition', { bool: true })] },
@@ -248,8 +292,8 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
   Return: { head: [label('return'), value('ReturnValue', 'value')] },
 };
 
-function resolve(options: Options): Option[] {
-  return typeof options === 'function' ? options() : options;
+function resolve(options: Options, instruction: InstructionDto): Option[] {
+  return typeof options === 'function' ? options(instruction) : options;
 }
 
 /** A piece marked `mode` only shows in that dimension. */
@@ -298,7 +342,7 @@ export function defineBlockFields(spec: BlockSpec): Component {
           case 'dropdown': {
             const stored = props.instruction[piece.key];
             return h(AppDropdown, {
-              options: resolve(piece.options),
+              options: resolve(piece.options, props.instruction),
               modelValue: piece.decode ? piece.decode(stored) : asString(stored),
               placeholder: piece.placeholder,
               className: 'dd-compact',
@@ -372,7 +416,7 @@ export function definePaletteBlockFields(spec: BlockSpec): Component {
           case 'dropdown': {
             const stored = props.instruction[piece.key];
             return h(AppDropdown, {
-              options: resolve(piece.options),
+              options: resolve(piece.options, props.instruction),
               modelValue: piece.decode ? piece.decode(stored) : asString(stored),
               placeholder: piece.placeholder,
               className: 'dd-compact',

@@ -5,6 +5,7 @@
 use crate::commands;
 use crate::state::{InstrPath, ValueLocation};
 use blockloom_core::blocks::{BlockPiece, BlockShape, Instruction};
+use blockloom_core::components::ActorComponent;
 use blockloom_core::scene::{Camera, Mode, Physics, Placement, Visual};
 use blockloom_core::value::Value as BlockValue;
 use blockloom_core::wire;
@@ -95,6 +96,31 @@ impl Backend {
             )?),
             "remove_actor" => to_json(commands::remove_actor(state, app, arg(&args, "actorId")?)?),
             "rename_actor" => to_json(commands::rename_actor(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "name")?,
+            )?),
+            "add_actor_component" => {
+                let component: ActorComponent = arg(&args, "component")?;
+                to_json(commands::add_actor_component(
+                    state,
+                    app,
+                    arg(&args, "actorId")?,
+                    component,
+                )?)
+            }
+            "set_actor_component" => {
+                let component: ActorComponent = arg(&args, "component")?;
+                to_json(commands::set_actor_component(
+                    state,
+                    app,
+                    arg(&args, "actorId")?,
+                    arg(&args, "name")?,
+                    component,
+                )?)
+            }
+            "remove_actor_component" => to_json(commands::remove_actor_component(
                 state,
                 app,
                 arg(&args, "actorId")?,

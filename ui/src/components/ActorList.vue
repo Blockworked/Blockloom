@@ -6,7 +6,7 @@ import { AppDropdown } from 'blockstitch';
 import { Copy, Trash2 } from 'lucide-vue-next';
 import { mode, state } from '../store';
 import { addActor, duplicateActor, removeActor, selectActor } from '../tauri';
-import { SHAPES_2D, SHAPES_3D, shapesFor, type ActorDto } from '../types';
+import { SHAPES_2D, SHAPES_3D, actorPhysics, actorVisual, shapesFor, type ActorDto } from '../types';
 
 const SHAPE_LABELS: Record<string, string> = {
   Rect: 'Square',
@@ -25,19 +25,31 @@ const addOptions = computed(() =>
 const actors = computed(() => state.project?.actors ?? []);
 
 /** An actor whose shape belongs to the other dimension can't be drawn - the
- * list says so rather than leaving an invisible actor to puzzle over. */
+ * list says so rather than leaving an invisible actor to puzzle over. An
+ * actor with no Look at all is deliberate, not a mistake, so it says nothing. */
 function wrongDimension(actor: ActorDto): boolean {
+  const visual = actorVisual(actor);
   const list = mode.value === 'ThreeD' ? SHAPES_3D : SHAPES_2D;
-  return !list.includes(actor.visual.shape);
+  return !!visual && !list.includes(visual.shape);
+}
+
+function shapeName(actor: ActorDto): string {
+  return actorVisual(actor)?.shape ?? 'shape';
 }
 
 function swatch(actor: ActorDto): Record<string, string> {
-  const color = 'color' in actor.visual ? actor.visual.color : '#8e8e93';
-  return { background: color };
+  const visual = actorVisual(actor);
+  return { background: visual && 'color' in visual ? visual.color : '#8e8e93' };
 }
 
 function isRound(actor: ActorDto): boolean {
-  return actor.visual.shape === 'Circle' || actor.visual.shape === 'Sphere';
+  const shape = actorVisual(actor)?.shape;
+  return shape === 'Circle' || shape === 'Sphere';
+}
+
+function bodyBadge(actor: ActorDto): string | null {
+  const body = actorPhysics(actor).body;
+  return body === 'None' ? null : body[0];
 }
 
 function onRemove(actorId: string) {
@@ -68,8 +80,8 @@ function onRemove(actorId: string) {
     >
       <span class="actor-swatch" :class="{ round: isRound(actor) }" :style="swatch(actor)" />
       <span class="actor-name">{{ actor.name }}</span>
-      <span v-if="wrongDimension(actor)" class="actor-badge" :title="`A ${actor.visual.shape} can't be drawn in this dimension`">!</span>
-      <span v-else-if="actor.physics.body !== 'None'" class="actor-badge">{{ actor.physics.body[0] }}</span>
+      <span v-if="wrongDimension(actor)" class="actor-badge" :title="`A ${shapeName(actor)} can't be drawn in this dimension`">!</span>
+      <span v-else-if="bodyBadge(actor)" class="actor-badge">{{ bodyBadge(actor) }}</span>
     </button>
     <div class="panel-row" v-if="state.selected_actor">
       <button class="btn-small" title="Duplicate this actor" @click="duplicateActor(state.selected_actor)">

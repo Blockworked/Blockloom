@@ -153,6 +153,22 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "ComponentField",
+        op: "ComponentField",
+        arity: 2,
+        default_args: || vec![text(""), text("")],
+        eval: |args| {
+            let component = args[0].as_text();
+            let field = args[1].as_text();
+            let me = me()?;
+            me.components
+                .get(component.trim())
+                .and_then(|fields| fields.get(field.trim()))
+                .cloned()
+                .ok_or_else(|| format!("I have no \"{component}\" component with a \"{field}\""))
+        },
+    },
+    ExtOperator {
         kind: "ActorPosition",
         op: "ActorPosition",
         arity: 2,

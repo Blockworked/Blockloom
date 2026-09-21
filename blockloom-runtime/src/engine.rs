@@ -6,8 +6,10 @@
 //! thread, and so is the thread-local sensor snapshot the VM reads through.
 
 use bevy::prelude::*;
+use blockloom_core::components::CameraAttach;
 use blockloom_core::project::Project;
 use blockloom_core::scene::Mode;
+use blockloom_core::value::Evaluated;
 use blockloom_core::vm::Vm;
 use blockloom_protocol::EditorMessage;
 use std::collections::{HashMap, HashSet};
@@ -16,6 +18,18 @@ use std::sync::mpsc::Receiver;
 /// Marks a spawned actor and ties it back to its id in the project.
 #[derive(Component, Debug, Clone)]
 pub struct ActorId(pub String);
+
+/// The actor's custom components, live. Authored values seed it on every
+/// rebuild; `set <field> of <component>` writes here, and the sensing
+/// snapshot reads back out, so a run's changes last exactly as long as the
+/// run does - like a position, and unlike a variable.
+#[derive(Component, Debug, Clone, Default)]
+pub struct CustomComponents(pub HashMap<String, HashMap<String, Evaluated>>);
+
+/// A camera component on this actor. Mirrored onto the entity so
+/// `set camera to first person` can change it without touching the document.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct CameraRig(pub CameraAttach);
 
 /// A `glide` in progress: the host interpolates while the script sleeps.
 #[derive(Component, Debug, Clone)]

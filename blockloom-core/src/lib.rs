@@ -3,6 +3,9 @@
 //!
 //! - [`scene`] is the world a project describes - actors, their looks, their
 //!   bodies, the camera, 2D or 3D.
+//! - [`components`] is what an actor is made of: its place, look, body and
+//!   camera as separate components the runtime turns into Bevy ones, plus the
+//!   custom components a project invents.
 //! - [`blocks`] is the block vocabulary ([`blocks::InstructionKind`]) and its
 //!   `BlockKind` impl, the hinge onto `blockstitch-core`'s document model.
 //! - [`project`] is the saved document: a [`scene::World`] plus one canvas
@@ -17,6 +20,7 @@
 //!   blockstitch frontend speaks.
 
 pub mod blocks;
+pub mod components;
 pub mod fields;
 pub mod library;
 pub mod project;

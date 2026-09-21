@@ -200,9 +200,10 @@ impl Default for Placement {
     }
 }
 
-/// How the world is viewed. In `TwoD` only `zoom` and `follow` matter; in
-/// `ThreeD` the camera sits at `position` looking at `look_at`, or trails
-/// `follow` at that same offset when one is set.
+/// Where the camera stands when nothing is holding it. In `TwoD` only `zoom`
+/// matters; in `ThreeD` the camera sits at `position` looking at `look_at`.
+/// An actor carrying a [`crate::components::ActorComponent::Camera`] takes it
+/// over from there.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Camera {
     #[serde(default = "default_camera_position")]
@@ -211,9 +212,11 @@ pub struct Camera {
     pub look_at: [f32; 3],
     #[serde(default = "unit_scale")]
     pub zoom: f32,
-    /// Actor id the camera keeps centered, if any.
-    #[serde(default)]
-    pub follow: Option<String>,
+    /// Pre-component projects named the followed actor here.
+    /// [`crate::project::Project::normalize`] moves it onto that actor as a
+    /// camera component and clears it, so nothing else ever reads it.
+    #[serde(default, rename = "follow", skip_serializing)]
+    pub legacy_follow: Option<String>,
 }
 
 fn default_camera_position() -> [f32; 3] {
@@ -226,7 +229,7 @@ impl Default for Camera {
             position: default_camera_position(),
             look_at: [0.0; 3],
             zoom: 1.0,
-            follow: None,
+            legacy_follow: None,
         }
     }
 }

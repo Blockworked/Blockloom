@@ -34,6 +34,14 @@ export const BODY_OPTIONS = [
   { value: 'Kinematic', label: 'kinematic' },
 ];
 
+/** How an attached camera frames its actor. In a 2D project all three mean
+ * "centre on the actor", so the block still reads sensibly either way. */
+export const CAMERA_VIEW_OPTIONS = [
+  { value: 'Follow', label: 'follow' },
+  { value: 'FirstPerson', label: 'first person' },
+  { value: 'ThirdPerson', label: 'third person' },
+];
+
 export const VISIBLE_OPTIONS = [
   { value: 'true', label: 'show' },
   { value: 'false', label: 'hide' },

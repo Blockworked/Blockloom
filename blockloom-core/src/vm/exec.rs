@@ -636,6 +636,23 @@ impl Vm {
                     color,
                 });
             }
+            Action::SetComponentField {
+                component,
+                field,
+                value,
+            } => {
+                let value = self.eval(value, actor, params, out);
+                out.push(Effect::SetComponentField {
+                    actor: owner,
+                    component: component.trim().to_string(),
+                    field: field.trim().to_string(),
+                    value,
+                });
+            }
+            Action::SetCameraView(view) => out.push(Effect::SetCameraView {
+                actor: owner,
+                view: *view,
+            }),
             Action::Broadcast(name) => self.pending.push(Event::Message(name.trim().to_string())),
             Action::SetVariable { name, value } => {
                 let value = self.eval(value, actor, params, out);

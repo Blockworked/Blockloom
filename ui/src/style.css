@@ -261,6 +261,64 @@ body {
   line-height: 1.5;
 }
 
+/* ── Components ──────────────────────────────────────────────────────────── */
+
+/* A component heading only shows its remove button on hover, so the panel
+   isn't a column of crosses. */
+.component-heading .component-remove {
+  opacity: 0;
+}
+
+.component-heading:hover .component-remove,
+.component-remove:focus-visible {
+  opacity: 1;
+}
+
+.component-remove {
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--blockstitch-radius);
+  background: none;
+  color: var(--blockstitch-text-dim);
+  cursor: pointer;
+}
+
+.component-remove:hover {
+  color: var(--blockstitch-red);
+}
+
+.component-add-button,
+.component-add-field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--blockstitch-btn-h-sm);
+  padding: 0 10px;
+  border: 1px dashed var(--blockstitch-border);
+  border-radius: var(--blockstitch-radius);
+  background: none;
+  color: var(--blockstitch-text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.component-add-button:hover,
+.component-add-field:hover {
+  border-style: solid;
+  color: inherit;
+}
+
+.component-add {
+  padding-bottom: 12px;
+}
+
+/* A custom component's field row: its name, its value, and a way out. */
+.panel-row.field-row .field-name {
+  flex: 0 0 96px;
+}
+
 /* ── Actor list ──────────────────────────────────────────────────────────── */
 
 .actor-row {
