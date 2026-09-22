@@ -554,11 +554,26 @@ body.panel-resizing {
   overflow-y: auto;
 }
 
-/* A valid drop hovers the row it would hang the dragged actor off. */
-.actor-row.drop-target {
+/* A drop inside the hovered row hangs the dragged actor off it. */
+.actor-row.drop-in {
   background: rgba(var(--blockstitch-accent-rgb), 0.28);
   outline: 1px dashed var(--blockstitch-accent);
   outline-offset: -1px;
+}
+
+/* A drop on the hovered row's edge lands next to it instead: a line above
+   or below the row, at the row's own indent. */
+.actor-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--blockstitch-accent);
+}
+
+.actor-row.drop-after {
+  box-shadow: inset 0 -2px 0 var(--blockstitch-accent);
+}
+
+/* A drop on the list background moves to the end of the top level. */
+.actor-list.root-hover {
+  background: rgba(var(--blockstitch-accent-rgb), 0.07);
 }
 
 /* A drop that would make a loop is refused before it lands. */
@@ -600,22 +615,7 @@ body.panel-resizing {
   margin-left: -4px;
 }
 
-/* The explicit way out, shown only mid-drag: dropping here unparents. */
-.actor-unparent-zone {
-  margin: 6px 8px 4px;
-  padding: 7px 10px;
-  border: 1px dashed var(--blockstitch-border);
-  border-radius: 6px;
-  color: var(--blockstitch-text-dim);
-  font-size: 12px;
-  text-align: center;
-}
 
-.actor-unparent-zone.drop-target {
-  border-color: var(--blockstitch-accent);
-  background: rgba(var(--blockstitch-accent-rgb), 0.12);
-  color: inherit;
-}
 
 /* ── Asset tray ──────────────────────────────────────────────────────────── */
 /* A file manager over the project folder, along the bottom of the editor. It

@@ -364,6 +364,86 @@ impl Project {
         true
     }
 
+    /// Moves an actor within the list and optionally under another one, in
+    /// one step: `parent` is the id it hangs off afterwards (empty for the
+    /// top level) and `before` the level-mate it lands in front of (empty
+    /// for the end of the level). Setting a parent keeps the authored offset,
+    /// so the actor doesn't jump the moment its new parent places it.
+    /// Returns whether anything changed - dropping an actor where it already
+    /// is validates but leaves the document alone.
+    pub fn move_actor(&mut self, id: &str, parent: &str, before: &str) -> Result<bool, String> {
+        let Some(from) = self.actors.iter().position(|actor| actor.id == id) else {
+            return Err("Actor not found".to_string());
+        };
+        if before == id {
+            return Err("An actor can't move before itself".to_string());
+        }
+        if !parent.is_empty() {
+            if parent == id {
+                return Err("An actor can't hang off itself".to_string());
+            }
+            let Some(other) = self.actor(parent) else {
+                return Err("No such actor to hang off".to_string());
+            };
+            let parents: HashMap<String, String> = self
+                .actors
+                .iter()
+                .filter_map(|actor| Some((actor.id.clone(), actor.parent()?.to_string())))
+                .collect();
+            if reaches(&parents, parent, id) {
+                return Err(format!(
+                    "\"{}\" already hangs off this actor, so it can't be its parent",
+                    other.name
+                ));
+            }
+        }
+        if !before.is_empty() {
+            let Some(other) = self.actor(before) else {
+                return Err("No such actor to move before".to_string());
+            };
+            if other.parent().unwrap_or_default() != parent {
+                return Err(format!(
+                    "\"{}\" isn't in that level of the list",
+                    other.name
+                ));
+            }
+        }
+        // Dropping an actor where it already stands changes nothing: the
+        // level-mate after it is already `before` (empty means last).
+        let current = self.actor(id).and_then(|actor| actor.parent()).unwrap_or_default();
+        if current == parent {
+            let level: Vec<&str> = self
+                .actors
+                .iter()
+                .filter(|actor| actor.parent().unwrap_or_default() == parent)
+                .map(|actor| actor.id.as_str())
+                .collect();
+            let next = level
+                .iter()
+                .position(|sibling| *sibling == id)
+                .and_then(|i| level.get(i + 1).copied())
+                .unwrap_or_default();
+            if next == before {
+                return Ok(false);
+            }
+        }
+        self.actors[from].components.set_parent(parent);
+        let actor = self.actors.remove(from);
+        // Inserting right before `before` lands the actor before it within
+        // the level whatever other levels interleave in the document; the
+        // end of the document is the end of every level.
+        let to = if before.is_empty() {
+            self.actors.len()
+        } else {
+            self.actors
+                .iter()
+                .position(|actor| actor.id == before)
+                .unwrap_or(self.actors.len())
+        };
+        self.actors.insert(to.min(self.actors.len()), actor);
+        Ok(true)
+    }
+
     /// Renames an actor, keeping names unique. Blocks refer to actors by
     /// name, so every `point towards`/`when I touch` mention follows along.
     pub fn rename_actor(&mut self, id: &str, name: &str) -> Result<String, String> {
@@ -1165,6 +1245,76 @@ mod tests {
         assert!(project.remove_actor(&ground));
         // The child stays in the world; it just isn't hanging off anything.
         assert_eq!(project.actor(&player).unwrap().parent(), None);
+    }
+
+    #[test]
+    fn moving_an_actor_reorders_it_and_optionally_reparents_it() {
+        let mut project = Project::starter("Moves", Mode::TwoD);
+        let player = project.actors[0].id.clone();
+        let ground = project.actors[1].id.clone();
+        let prop = project.add_actor(Actor::new(
+            "Prop",
+            crate::scene::Visual::Rect {
+                color: "#FFAB19".to_string(),
+                size: [10.0, 10.0],
+            },
+        ));
+        fn order(project: &Project) -> Vec<String> {
+            project
+                .actors
+                .iter()
+                .map(|actor| actor.id.clone())
+                .collect()
+        }
+
+        // Reordering the top level: Prop first.
+        assert!(project.move_actor(&prop, "", &player).is_ok_and(|moved| moved));
+        assert_eq!(order(&project), vec![prop.clone(), player.clone(), ground.clone()]);
+
+        // Dropping it where it already is changes nothing.
+        assert!(project.move_actor(&prop, "", &player).is_ok_and(|moved| !moved));
+        assert_eq!(order(&project), vec![prop.clone(), player.clone(), ground.clone()]);
+
+        // Hanging it off Ground puts it at the end of that level.
+        assert!(project.move_actor(&prop, &ground, "").is_ok_and(|moved| moved));
+        assert_eq!(project.actor(&prop).unwrap().parent(), Some(ground.as_str()));
+        // Its level-mate order follows the document.
+        assert!(project.move_actor(&player, &ground, &prop).is_ok_and(|moved| moved));
+        let level: Vec<String> = project
+            .actors
+            .iter()
+            .filter(|actor| actor.parent() == Some(ground.as_str()))
+            .map(|actor| actor.id.clone())
+            .collect();
+        assert_eq!(level, vec![player.clone(), prop.clone()]);
+
+        // Taking it back out leaves it where it stands.
+        assert!(project.move_actor(&prop, "", "").is_ok_and(|moved| moved));
+        assert_eq!(project.actor(&prop).unwrap().parent(), None);
+        assert_eq!(order(&project).last(), Some(&prop));
+    }
+
+    #[test]
+    fn moving_an_actor_refuses_loops_strangers_and_other_levels() {
+        let mut project = Project::starter("Moves", Mode::TwoD);
+        let player = project.actors[0].id.clone();
+        let ground = project.actors[1].id.clone();
+        project.actors[0].components.set_parent(&ground);
+
+        // Under its own child is a loop.
+        assert!(project.move_actor(&ground, &player, "").is_err());
+        // Off itself is nonsense too.
+        assert!(project.move_actor(&player, &player, "").is_err());
+        // Nobody to hang off, nothing to land before, itself to pass.
+        assert!(project.move_actor(&player, "nobody", "").is_err());
+        assert!(project.move_actor(&player, "", "nobody").is_err());
+        assert!(project.move_actor(&player, "", &player).is_err());
+        assert!(project.move_actor("nobody", "", "").is_err());
+        // `before` has to live in the level being moved to: Ground is a
+        // root, not one of Player's (empty) level.
+        assert!(project.move_actor(&player, &ground, &ground).is_err());
+        // Nothing above failed halfway.
+        assert_eq!(project.actor(&player).unwrap().parent(), Some(ground.as_str()));
     }
 
     #[test]

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // The actors in the world, as a parent/child tree. Selecting one swaps the
 // canvas to its own blocks, the way switching sprites does in Scratch.
-// Dragging a row onto another reparents it under that actor; dropping it on
-// the list background (or the top-level strip shown mid-drag) unparents it.
-// A drop that would make a loop is refused, the same way the backend's
-// `check_parent` refuses it.
+// Dragging a row reorders it: hovering the top or bottom edge of another row
+// drops next to it (before or after, at that row's level), hovering its
+// middle drops inside it (as its last child), and dropping on the list
+// background moves to the end of the top level. A drop that would make a
+// loop is refused, the same way the backend refuses it.
 import { computed, ref } from 'vue';
 import { AppDropdown } from 'blockstitch';
 import { ChevronDown, ChevronLeft, ChevronRight, Copy, Trash2 } from 'lucide-vue-next';
@@ -23,24 +24,14 @@ import {
 } from '../actors';
 import { COLLAPSED_PANEL_WIDTH, beginPanelResize, panels, setPanelOpen } from '../panels';
 import { mode, state } from '../store';
-import {
-  addActor,
-  addActorComponent,
-  duplicateActor,
-  removeActor,
-  removeActorComponent,
-  selectActor,
-  setActorComponent,
-} from '../tauri';
+import { addActor, duplicateActor, moveActor, removeActor, selectActor } from '../tauri';
 import {
   SHAPES_2D,
   SHAPES_3D,
   actorParent,
   actorPhysics,
   actorVisual,
-  findComponent,
   shapesFor,
-  type ActorComponentDto,
   type ActorDto,
 } from '../types';
 
@@ -83,9 +74,19 @@ function childCount(actorId: string): number {
   return childrenOf(actors.value, actorId).length;
 }
 
-/** The row (by actor id) a valid drop is hovering over, or `''` for the
- * top-level strip. Null means no valid target is hovered. */
-const dropTarget = ref<string | null>(null);
+/** The level a row sits in: its parent's children, or the roots. */
+function levelOf(actorId: string): ActorDto[] {
+  const parent = actorParent(actors.value.find(candidate => candidate.id === actorId) ?? null);
+  return parent ? childrenOf(actors.value, parent) : rootActors(actors.value);
+}
+
+type DropPos = 'before' | 'after' | 'in';
+
+/** The drop currently hovered: which row and whether the actor would land
+ * next to it or inside it. */
+const dropHint = ref<{ id: string; pos: DropPos } | null>(null);
+/** Whether a drop is hovering the list background (the way to the top level). */
+const rootHover = ref(false);
 
 const panelStyle = computed(() => ({
   width: `${panels.left.open ? panels.left.width : COLLAPSED_PANEL_WIDTH}px`,
@@ -125,109 +126,166 @@ function onRemove(actorId: string) {
   if (actor && window.confirm(`Delete actor "${actor.name}"? This cannot be undone.`)) void removeActor(actorId);
 }
 
-// ─── Reparenting ────────────────────────────────────────────────────────────
-// The Parent component is written back the way the inspector writes it: the
-// existing offset stays, so the actor doesn't jump the moment it starts
-// being placed by its new parent.
+// ─── Moving ─────────────────────────────────────────────────────────────────
+// Every drop goes through one backend call: the new parent plus the
+// level-mate to land in front of. The offset already authored stays, so the
+// actor doesn't jump the moment a new parent places it.
 
-/** Hangs `childId` off `parentId`, keeping its authored offset. A no-op when
- * it already hangs there; failures (like a loop the hover check missed) are
- * the backend's error to report. */
-function reparent(childId: string, parentId: string) {
-  const list = actors.value;
-  const child = list.find(candidate => candidate.id === childId);
-  endActorDrag();
-  dropTarget.value = null;
-  if (!child || parentId === childId || actorParent(child) === parentId) return;
-  if (wouldCycle(list, childId, parentId)) return;
-  const existing = findComponent(child, 'Parent');
-  const offset = existing?.component === 'Parent' ? existing.offset : null;
-  const component: ActorComponentDto = { component: 'Parent', parent: parentId, offset };
-  expandParent(parentId);
-  const call = existing
-    ? setActorComponent(childId, 'Parent', component)
-    : addActorComponent(childId, component);
-  void call.catch((e: unknown) => console.error(e));
+interface Move {
+  parent: string;
+  before: string;
 }
 
-/** Takes `childId` off whatever it hangs off, leaving it where it is. */
-function unparent(childId: string) {
-  const child = actors.value.find(candidate => candidate.id === childId);
+/** Where a `pos` drop on `targetId` goes: the new parent plus the level-mate
+ * to land in front of. */
+function moveFor(targetId: string, pos: DropPos): Move {
+  if (pos === 'in') return { parent: targetId, before: '' };
+  const target = actors.value.find(candidate => candidate.id === targetId);
+  const parent = actorParent(target ?? null) ?? '';
+  if (pos === 'before') return { parent, before: targetId };
+  const level = parent ? childrenOf(actors.value, parent) : rootActors(actors.value);
+  const next = level[level.findIndex(candidate => candidate.id === targetId) + 1];
+  return { parent, before: next?.id ?? '' };
+}
+
+/** Whether a `pos` drop of the dragged actor on `targetId` would make a
+ * loop: inside itself or a descendant, or next to a row whose level lives
+ * inside it. The backend refuses the same drops; this is the list's upfront
+ * answer. */
+function dropInvalid(draggedId: string, targetId: string, pos: DropPos): boolean {
+  if (draggedId === targetId) return true;
+  const { parent } = moveFor(targetId, pos);
+  return !!parent && wouldCycle(actors.value, draggedId, parent);
+}
+
+/** Whether the drop would leave the actor exactly where it is: next to the
+ * row it already neighbours, or inside the parent whose last child it
+ * already is. */
+function dropNoop(draggedId: string, targetId: string, pos: DropPos): boolean {
+  if (pos === 'in') {
+    const kids = childrenOf(actors.value, targetId);
+    return kids[kids.length - 1]?.id === draggedId;
+  }
+  const level = levelOf(targetId);
+  const at = level.findIndex(candidate => candidate.id === targetId);
+  const sameLevel = level.some(candidate => candidate.id === draggedId);
+  if (!sameLevel) return false;
+  if (pos === 'before') return at > 0 && level[at - 1]?.id === draggedId;
+  return level[at + 1]?.id === draggedId;
+}
+
+function applyMove(draggedId: string, move: Move) {
   endActorDrag();
-  dropTarget.value = null;
-  if (!child || !actorParent(child)) return;
-  void removeActorComponent(childId, 'Parent').catch((e: unknown) => console.error(e));
+  dropHint.value = null;
+  rootHover.value = false;
+  if (move.parent) expandParent(move.parent);
+  void moveActor(draggedId, move.parent, move.before).catch((e: unknown) => console.error(e));
 }
 
 // ─── Drag and drop ──────────────────────────────────────────────────────────
+// The pointer's height on the row decides: edges mean next to, the middle
+// means inside.
+
+function posOnRow(e: DragEvent, el: HTMLElement): DropPos {
+  const rect = el.getBoundingClientRect();
+  const ratio = rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0.5;
+  if (ratio < 0.25) return 'before';
+  if (ratio > 0.75) return 'after';
+  return 'in';
+}
 
 function onDragStart(e: DragEvent, actorId: string) {
-  dropTarget.value = null;
+  dropHint.value = null;
+  rootHover.value = false;
   startActorDrag(e, actorId);
 }
 
 function onDragEnd() {
-  dropTarget.value = null;
+  dropHint.value = null;
+  rootHover.value = false;
   endActorDrag();
 }
 
 function onDragOverRow(e: DragEvent, target: ActorDto) {
-  const dragged = droppedActor(e);
+  const dragged = draggedActor.value;
   if (!dragged || dragged === target.id) return;
+  const el = e.currentTarget as HTMLElement | null;
+  const pos = el ? posOnRow(e, el) : 'in';
   // A loop is refused without ever becoming a drop: no highlight, and the
-  // event stays unclaimed so the background won't read it as an unparent.
-  if (wouldCycle(actors.value, dragged, target.id)) {
+  // event stays unclaimed so the background won't read it as a top-level
+  // move either.
+  if (dropInvalid(dragged, target.id, pos)) {
+    if (dropHint.value?.id === target.id) dropHint.value = null;
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
     return;
   }
   e.preventDefault();
   e.stopPropagation();
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-  dropTarget.value = target.id;
+  dropHint.value = { id: target.id, pos };
+  rootHover.value = false;
 }
 
 function onDropOnRow(e: DragEvent, target: ActorDto) {
   e.preventDefault();
   e.stopPropagation();
   const dragged = droppedActor(e);
-  dropTarget.value = null;
-  if (!dragged) {
+  const el = e.currentTarget as HTMLElement | null;
+  // The hover already worked out the position in this runtime; the CEF
+  // fallback's re-dispatched drop carries the release point instead.
+  const hint = dropHint.value?.id === target.id ? dropHint.value : null;
+  const pos = hint?.pos ?? (el ? posOnRow(e, el) : 'in');
+  dropHint.value = null;
+  rootHover.value = false;
+  if (!dragged || dropInvalid(dragged, target.id, pos)) {
     endActorDrag();
     return;
   }
-  reparent(dragged, target.id);
+  if (dropNoop(dragged, target.id, pos)) {
+    endActorDrag();
+    return;
+  }
+  applyMove(dragged, moveFor(target.id, pos));
 }
 
-/** The panel background is the way out: a drop landing on no row unparents.
- * Row hovers never reach here (valid ones stop propagation, invalid ones sit
- * on a row), so anything arriving here really is the background. */
+/** The panel background is the way out: a drop landing on no row moves to
+ * the end of the top level. Row hovers never reach here (valid ones stop
+ * propagation, invalid ones sit on a row), so anything arriving here really
+ * is the background. */
 function onDragOverRoot(e: DragEvent) {
   if ((e.target as HTMLElement | null)?.closest?.('.actor-row')) return;
-  const dragged = droppedActor(e);
+  const dragged = draggedActor.value;
   if (!dragged) return;
-  const child = actors.value.find(candidate => candidate.id === dragged);
-  if (!child || !actorParent(child)) return;
   e.preventDefault();
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-  dropTarget.value = '';
+  dropHint.value = null;
+  rootHover.value = true;
 }
 
 function onDropOnRoot(e: DragEvent) {
   if ((e.target as HTMLElement | null)?.closest?.('.actor-row')) return;
   e.preventDefault();
   const dragged = droppedActor(e);
-  dropTarget.value = null;
+  dropHint.value = null;
+  rootHover.value = false;
   if (!dragged) {
     endActorDrag();
     return;
   }
-  unparent(dragged);
+  const level = rootActors(actors.value);
+  if (!actorParent(actors.value.find(candidate => candidate.id === dragged) ?? null) && level[level.length - 1]?.id === dragged) {
+    endActorDrag();
+    return;
+  }
+  applyMove(dragged, { parent: '', before: '' });
 }
 
 function rowTitle(row: Row): string {
   const dragged = draggedActor.value;
-  if (dragged && dragged !== row.actor.id && wouldCycle(actors.value, dragged, row.actor.id))
-    return `${row.actor.name} already hangs off the dragged actor`;
+  if (dragged && dragged !== row.actor.id) {
+    if (dropInvalid(dragged, row.actor.id, 'in') && dropInvalid(dragged, row.actor.id, 'before'))
+      return `${row.actor.name} hangs off the dragged actor, so nothing can land here`;
+  }
   const kids = childCount(row.actor.id);
   return kids ? `${row.actor.name} (${kids} nested)` : row.actor.name;
 }
@@ -254,9 +312,11 @@ function rowTitle(row: Row): string {
       </div>
       <div
         class="actor-list"
+        :class="{ 'root-hover': rootHover }"
+        data-actor-drop="top-level"
         @dragover="onDragOverRoot"
         @drop="onDropOnRoot"
-        @dragleave="dropTarget === '' && (dropTarget = null)"
+        @dragleave="rootHover && (rootHover = false)"
       >
         <div
           v-for="row in rows"
@@ -269,9 +329,15 @@ function rowTitle(row: Row): string {
           :class="{
             selected: row.actor.id === state.selected_actor,
             mismatch: wrongDimension(row.actor),
-            'drop-target': dropTarget === row.actor.id,
+            'drop-in': dropHint?.id === row.actor.id && dropHint.pos === 'in',
+            'drop-before': dropHint?.id === row.actor.id && dropHint.pos === 'before',
+            'drop-after': dropHint?.id === row.actor.id && dropHint.pos === 'after',
             'drop-denied':
-              !!draggedActor && draggedActor !== row.actor.id && wouldCycle(actors, draggedActor, row.actor.id),
+              !!draggedActor &&
+              draggedActor !== row.actor.id &&
+              dropInvalid(draggedActor, row.actor.id, 'in') &&
+              dropInvalid(draggedActor, row.actor.id, 'before') &&
+              dropInvalid(draggedActor, row.actor.id, 'after'),
           }"
           role="button"
           tabindex="0"
@@ -281,7 +347,7 @@ function rowTitle(row: Row): string {
           @dragend="onDragEnd"
           @dragover="onDragOverRow($event, row.actor)"
           @drop="onDropOnRow($event, row.actor)"
-          @dragleave="dropTarget === row.actor.id && (dropTarget = null)"
+          @dragleave="dropHint?.id === row.actor.id && (dropHint = null)"
         >
           <button
             v-if="childCount(row.actor.id)"
@@ -299,15 +365,6 @@ function rowTitle(row: Row): string {
           <span class="actor-name">{{ row.actor.name }}</span>
           <span v-if="wrongDimension(row.actor)" class="actor-badge" :title="`A ${shapeName(row.actor)} can't be drawn in this dimension`">!</span>
           <span v-else-if="bodyBadge(row.actor)" class="actor-badge">{{ bodyBadge(row.actor) }}</span>
-        </div>
-        <div
-          v-if="draggedActor"
-          class="actor-unparent-zone"
-          data-actor-drop="top-level"
-          :class="{ 'drop-target': dropTarget === '' }"
-          title="Drop here to move the actor to the top level"
-        >
-          Drop here for top level
         </div>
       </div>
       <div class="panel-row" v-if="state.selected_actor">

@@ -115,6 +115,13 @@ impl Backend {
                 arg(&args, "actorId")?,
             )?),
             "remove_actor" => to_json(commands::remove_actor(state, app, arg(&args, "actorId")?)?),
+            "move_actor" => to_json(commands::move_actor(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "parent").unwrap_or_default(),
+                arg(&args, "before").unwrap_or_default(),
+            )?),
             "rename_actor" => to_json(commands::rename_actor(
                 state,
                 app,

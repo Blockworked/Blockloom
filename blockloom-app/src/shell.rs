@@ -315,6 +315,25 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[A],
     },
     CommandSpec {
+        name: "move-actor",
+        cmd: "move_actor",
+        aliases: &["move_actor", "reparent-actor", "reorder-actor"],
+        summary: "Move an actor within the list and optionally under another one: parent is the id it hangs off afterwards (blank for the top level) and before the level-mate it lands in front of (blank for the end). Resolves to whether anything changed.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "parent",
+                ty: "id",
+                required: false,
+            },
+            ArgSpec {
+                name: "before",
+                ty: "id",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
         name: "rename-actor",
         cmd: "rename_actor",
         aliases: &["rename_actor"],

@@ -9,7 +9,7 @@ Obvious gaps already identified in the project notes:
       deletes actors can still ship native logic.
 - [x] Give a child actor an authored local offset, so the inspector can place
       one relative to its parent rather than in world coordinates.
-- [ ] Implement the parent/child hierarchy in the editor actor list, so actors
+- [x] Implement the parent/child hierarchy in the editor actor list, so actors
       can be dragged under other actors to reparent (and dragged out to
       unparent, with cycle protection), and child lists can be collapsed per
       parent.
@@ -48,3 +48,40 @@ Obvious gaps already identified in the project notes:
       - Later: feed `cargo check` output back into the editor so errors also show inline in Blockloom's own script editor, reusing the same project.
 - [x] Add a shell command system with full control over the app, so an AI agent can create and edit projects in any way a user can, at the user's request.
 - [x] Add a Model Context Protocol (MCP) server so AI agents can use blockloom directly instead of shelling out through `blockloom-shell`. The shell's command registry is the natural surface to expose: each dispatch command becomes an MCP tool, so an agent can inspect, create, and edit a project to match a user's request. The `mcp/` package is a pnpm/Node host running the existing `blockloom-shell` binary via stdio, with tool schemas derived from `blockloom-shell --specs`, a `block-vocabulary` command for the block palette, and `blockloom://state` and `blockloom://blocks` resources. Each session owns one backend, so an MCP session and the editor window don't fight over one in-memory project.
+
+## Engine parity roadmap (Godot/Unity order)
+
+Phased by dependency and value per cost. Each phase unblocks the next.
+
+### Phase 1 - Unblock real games, low risk
+- [ ] Lists plus dicts plus JSON: VM-only, everything else needs data structures.
+- [ ] Sound playback plus buses plus 2D/3D positional: isolated, huge completeness win.
+- [ ] Parent-space runtime API (`set parent`, local vs world query): finishes hierarchy work already started.
+- [ ] Physics queries: raycast/shapecast, layers/masks UI, trigger vs solid: required for platformers, AI, UI clicks.
+
+### Phase 2 - Ship a complete single-player game
+- [ ] Input actions plus remapping, gamepad/rumble, touch/multitouch, mouse lock.
+- [ ] Tweens plus sprite animation plus animation player/state machine.
+- [ ] In-game UI: button/label/bar/slider/input, anchors/layout, HUD/menus.
+- [ ] Save slots/profiles plus localization: builds on save system we have.
+
+### Phase 3 - Dev productivity, before API surface explodes
+- [ ] Script toolchain: ship rustc or graceful degrade plus highlight plus inline errors plus rust-analyzer Cargo project.
+- [ ] VM/codegen correctness: suspendable reporter `wait`, recursive statement blocks.
+- [ ] Embedded preview: headless/offscreen runtime plus streamed viewport in editor with input forwarding, pause/step, resolution switch. Keeps separate-process split, no OS reparenting.
+- [ ] Visual world editor: edit-mode 2D/3D viewport with selection sync to ActorList/Inspector, drag to move plus rotate/scale gizmos, snapping, camera pan/zoom/orbit. Shares panel with embedded preview: Edit manipulates placement directly, Play streams runtime.
+- [ ] Editor: gizmos/snapping, prefab mode, scene search, log filter, frame stepper, profiler (draw calls, CPU/GPU/memory), playmode tests.
+
+### Phase 4 - Look and depth, uses Bevy leverage
+- [ ] Asset pipeline: glTF/FBX rigs, atlases, texture/audio compression, reimport tracking.
+- [ ] Materials/custom WGSL plus shader graph lite, particles/trails, post-process, shadows/HDR, 2D sorting layers, tilemap/terrain.
+- [ ] Advanced physics: joints, character controller, one-way platforms, ragdoll.
+- [ ] AI: full nav on top of existing baked polyanya mesh (`navigate to`): runtime rebake, layers/costs, off-mesh links, crowds/separation, plus steering, behavior trees, perception.
+
+### Phase 5 - Scale and ecosystem, do last
+- [ ] Performance: batching/instancing, LOD/occlusion, async loading, world streaming.
+- [ ] Multiplayer: headless server, replication, lobbies, rollback.
+- [ ] Deploy: Web/WASM, Android/iOS signing, console path, auto-updater/DLC/addressables.
+- [ ] Ecosystem: analytics/crash, achievements/IAP hooks, plugin API, asset store, collab/VCS, docs/LTS.
+
+Rule: do 1-4 before 5-8, do 9-11 before adding new block surface in 12-15, leave 17-19 until single-player shipping loop is solid.

@@ -92,6 +92,12 @@ export const selectActor = (actorId: string) => invoke<void>('select_actor', { a
 export const addActor = (shape: string) => invoke<string>('add_actor', { shape });
 export const duplicateActor = (actorId: string) => invoke<string>('duplicate_actor', { actorId });
 export const removeActor = (actorId: string) => invoke<void>('remove_actor', { actorId });
+/** Moves an actor within the list and optionally under another one: `parent`
+ * is the id it hangs off afterwards (blank for the top level) and `before`
+ * the level-mate it lands in front of (blank for the end). Resolves to
+ * whether anything changed. */
+export const moveActor = (actorId: string, parent: string, before: string) =>
+  invoke<boolean>('move_actor', { actorId, parent, before });
 export const renameActor = (actorId: string, name: string) => invoke<void>('rename_actor', { actorId, name });
 export const addActorComponent = (actorId: string, component: ActorComponentDto) =>
   invoke<string>('add_actor_component', { actorId, component });

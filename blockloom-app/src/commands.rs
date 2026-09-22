@@ -566,6 +566,29 @@ pub(crate) fn remove_actor(
     Ok(())
 }
 
+/// Moves an actor within the list and optionally under another one: `parent`
+/// is the id it hangs off afterwards (empty for the top level) and `before`
+/// the level-mate it lands in front of (empty for the end of the level).
+/// Resolves to whether anything changed. Loops and strangers are refused.
+pub(crate) fn move_actor(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    parent: String,
+    before: String,
+) -> Result<bool, String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let moved = match s.project_mut() {
+        Some(project) => project.move_actor(&actor_id, &parent, &before)?,
+        None => return Err("No project is open".to_string()),
+    };
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(moved)
+}
+
 pub(crate) fn rename_actor(
     state: &SharedState,
     app: &AppHandle,
