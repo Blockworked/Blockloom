@@ -209,6 +209,11 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
             Some(sense::read(|sensors| sensors.mouse[index]) as f64)
         }
         abi::READ_MOUSE_DOWN => bool_as(sense::read(|sensors| sensors.mouse_down)),
+        abi::READ_MOUSE_DELTA => {
+            let index = if arg as i32 == 1 { 1 } else { 0 };
+            Some(sense::read(|sensors| sensors.mouse_delta[index]) as f64)
+        }
+        abi::READ_MOUSE_LOCKED => bool_as(sense::read(|sensors| sensors.mouse_locked)),
         abi::READ_TOUCHING => {
             let me = me(actor)?;
             if a.trim().is_empty() {
@@ -391,7 +396,14 @@ extern "C" fn act(
             actor,
             view: view_of(n0),
         },
+        abi::ACT_SET_CAMERA_PITCH => Effect::SetCameraPitch {
+            actor,
+            degrees: n0 as f32,
+        },
         abi::ACT_STOP_ALL => Effect::Stopped,
+        abi::ACT_SET_MOUSE_LOCKED => Effect::SetMouseLocked {
+            locked: n0 != 0.0,
+        },
         abi::ACT_SET_PARENT => Effect::SetParent {
             actor,
             parent: a.trim().to_string(),

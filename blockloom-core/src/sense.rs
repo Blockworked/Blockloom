@@ -45,6 +45,12 @@ pub struct Sensors {
     pub keys: HashSet<String>,
     /// Pointer position in world units.
     pub mouse: [f32; 2],
+    /// Raw pointer motion in pixels since the last frame: x grows as the
+    /// pointer moves right, y as it moves down. What a first-person camera
+    /// wants, where `mouse` is a place an actor can stand.
+    pub mouse_delta: [f32; 2],
+    /// Whether the pointer is grabbed and hidden for first-person play.
+    pub mouse_locked: bool,
     pub mouse_down: bool,
     pub actors: HashMap<String, ActorSense>,
 }

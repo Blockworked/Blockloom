@@ -7,12 +7,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { resolveShell, ShellSession } from "./shell.js";
+import { resolveShell, ShellSession, stageShell, unstageShell } from "./shell.js";
 
 test("a shell session creates actors and reads state back", async (t) => {
   let shell: string;
   try {
-    shell = resolveShell();
+    shell = stageShell(resolveShell());
   } catch {
     t.skip("no blockloom-shell binary built; run `just build` to exercise this test");
     return;
@@ -56,6 +56,7 @@ test("a shell session creates actors and reads state back", async (t) => {
     assert.equal(bad.ok, false, "a nonsense shape is an error, not a crash");
   } finally {
     session.close();
+    unstageShell();
     if (savedDataDir === undefined) delete process.env.BLOCKLOOM_DATA_DIR;
     else process.env.BLOCKLOOM_DATA_DIR = savedDataDir;
     rmSync(dataDir, { recursive: true, force: true });

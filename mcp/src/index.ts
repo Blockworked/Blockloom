@@ -17,6 +17,8 @@ import {
   ShellSession,
   loadSpecs,
   resolveShell,
+  stageShell,
+  unstageShell,
   type ShellCommandSpec,
 } from "./shell.js";
 import { readFileSync } from "node:fs";
@@ -75,13 +77,19 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const specs = await loadSpecs(shell);
-  const session = new ShellSession(shell, ["--no-state"]);
+  // A staged copy, not the build tree's binary: a running executable locks
+  // its own file on Windows, and driving it in place would fail every cargo
+  // build for as long as this server lives.
+  const staged = stageShell(shell);
+  const specs = await loadSpecs(staged);
+  const session = new ShellSession(staged, ["--no-state"]);
   // stderr only: stdout is the protocol and must stay quiet.
   console.error(
     "blockloom-mcp: driving " +
+      staged +
+      " (staged copy of " +
       shell +
-      " with " +
+      ", so cargo builds stay unlocked) with " +
       specs.length +
       " commands. This session has its own copy of any project it opens; " +
       "don't edit the same project from the window or another agent at once.",
@@ -128,10 +136,12 @@ async function main(): Promise<void> {
 
   const shutdown = () => {
     session.close();
+    unstageShell();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  process.on("exit", () => unstageShell());
 }
 
 function readResource(

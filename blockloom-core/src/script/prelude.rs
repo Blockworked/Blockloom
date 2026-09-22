@@ -176,6 +176,24 @@ impl Actor {
             != 0.0
     }
 
+    /// Whether the pointer is grabbed and hidden for first-person play.
+    pub fn mouse_locked(&self) -> bool {
+        self.number(READ_MOUSE_LOCKED, Str::EMPTY, Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
+    /// The pointer's motion in pixels since the last frame: x grows as it
+    /// moves right, y as it moves down. What a first-person camera wants.
+    pub fn mouse_delta(&self) -> (f32, f32) {
+        (
+            self.number(READ_MOUSE_DELTA, Str::EMPTY, Str::EMPTY, 0.0)
+                .unwrap_or(0.0) as f32,
+            self.number(READ_MOUSE_DELTA, Str::EMPTY, Str::EMPTY, 1.0)
+                .unwrap_or(0.0) as f32,
+        )
+    }
+
     pub fn touching(&self, actor: &str) -> bool {
         self.number(READ_TOUCHING, Str::borrow(actor), Str::EMPTY, 0.0)
             .unwrap_or(0.0)
@@ -576,6 +594,34 @@ impl Actor {
             Str::EMPTY,
             Str::EMPTY,
             0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Tilts a first-person camera up or down, in degrees. Positive looks up;
+    /// clamped just short of vertical.
+    pub fn set_camera_pitch(&self, degrees: f32) {
+        self.act(
+            ACT_SET_CAMERA_PITCH,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            degrees as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Grabs the pointer for first-person play, or shows it again. The run
+    /// always ends unlocked.
+    pub fn set_mouse_locked(&self, locked: bool) {
+        self.act(
+            ACT_SET_MOUSE_LOCKED,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            if locked { 1.0 } else { 0.0 },
             0.0,
             0.0,
         );

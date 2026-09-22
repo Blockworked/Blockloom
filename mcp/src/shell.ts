@@ -5,7 +5,8 @@
 //! tools are exactly its commands: no second backend to keep in step.
 
 import { execFile, spawn, type ChildProcessByStdio } from "node:child_process";
-import { existsSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -56,6 +57,77 @@ export function resolveShell(explicit?: string): string {
     "couldn't find blockloom-shell. Build it with `just build`, or point " +
       "BLOCKLOOM_MCP_SHELL at the binary.",
   );
+}
+
+/// Where this process's staged shell copy lives: one dir per server process,
+/// so a fresh start refreshes its own copy and never touches another's.
+export function stageDir(): string {
+  return join(tmpdir(), `blockloom-mcp-shell-${process.pid}`);
+}
+
+/// Copy the shell binary to a scratch file and return the copy's path.
+/// A running executable locks its own file against replacement on Windows,
+/// so driving the build tree's binary in place would fail every `cargo
+/// build` for as long as the child lives. The copy is as fresh as the last
+/// server start; rebuilding mid-session still needs a server restart before
+/// the agent sees the new binary, but the build itself is never blocked.
+export function stageShell(source: string): string {
+  sweepStaleStages();
+  const dir = stageDir();
+  mkdirSync(dir, { recursive: true });
+  const staged = join(dir, shellFileName());
+  try {
+    copyFileSync(source, staged);
+  } catch (error) {
+    throw new Error(
+      `couldn't stage blockloom-shell (is a build writing it right now?): ${error}`,
+    );
+  }
+  if (process.platform !== "win32") chmodSync(staged, 0o755);
+  return staged;
+}
+
+/// Remove this process's staged copy. Best effort: exit paths must not throw.
+export function unstageShell(): void {
+  try {
+    rmSync(stageDir(), { recursive: true, force: true });
+  } catch {
+    // Gone already, or never staged.
+  }
+}
+
+/// Drop stage dirs whose owner is dead, so crashed servers don't accumulate
+/// copies. Anything ambiguous is left alone.
+function sweepStaleStages(): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(tmpdir());
+  } catch {
+    return;
+  }
+  const prefix = "blockloom-mcp-shell-";
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue;
+    const pid = Number(entry.slice(prefix.length));
+    if (!Number.isInteger(pid) || pid === process.pid) continue;
+    if (pidAlive(pid)) continue;
+    try {
+      rmSync(join(tmpdir(), entry), { recursive: true, force: true });
+    } catch {
+      // Someone else's mess, or still in use; leave it.
+    }
+  }
+}
+
+/// True when a process with this pid exists. EPERM means "alive but not
+/// ours", which for sweeping purposes counts as alive.
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException)?.code === "EPERM";
+  }
 }
 
 /// The whole command registry, from `blockloom-shell --specs`. Run once at

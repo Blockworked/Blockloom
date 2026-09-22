@@ -153,6 +153,12 @@ pub enum InstructionKind {
     SetCameraView {
         view: CameraView,
     },
+    /// Tilts a first-person camera up or down, in degrees. Positive looks up.
+    /// Clamped to just short of vertical, so the view can never flip over.
+    /// The body stays level, so this is what first-person mouse look drives.
+    SetCameraPitch {
+        degrees: Value,
+    },
     /// Gives this actor a component mid-run. One the editor authored comes
     /// back as it was left; anything else arrives with its defaults.
     AttachComponent {
@@ -230,6 +236,12 @@ pub enum InstructionKind {
     },
     /// Stops every running script, this one included.
     StopAll,
+    /// Grabs the pointer for first-person play: locked to the window and
+    /// hidden, so `mouse delta` never stalls at a screen edge. Unlocking
+    /// shows it again. The run always ends unlocked.
+    SetMouseLocked {
+        locked: bool,
+    },
 
     // ─── Variables ──────────────────────────────────────────────────────────
     SetVariable {
@@ -274,6 +286,7 @@ impl BlockKind for InstructionKind {
             | K::SetColor { color: v }
             | K::Wait { duration: v }
             | K::SetVariable { value: v, .. }
+            | K::SetCameraPitch { degrees: v, .. }
             | K::ChangeVariable { value: v, .. }
             | K::Return { value: v }
             | K::SetComponentField { value: v, .. }
@@ -329,7 +342,8 @@ impl BlockKind for InstructionKind {
             | K::EscapeLoop
             | K::ContinueLoop
             | K::Broadcast { .. }
-            | K::StopAll => {}
+            | K::StopAll
+            | K::SetMouseLocked { .. } => {}
         }
     }
 

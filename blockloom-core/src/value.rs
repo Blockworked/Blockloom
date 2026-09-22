@@ -71,11 +71,32 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |_| Ok(Evaluated::Number(sense::read(|s| s.mouse[1]) as f64)),
     },
     ExtOperator {
+        kind: "MouseDeltaX",
+        op: "MouseDeltaX",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| Ok(Evaluated::Number(sense::read(|s| s.mouse_delta[0]) as f64)),
+    },
+    ExtOperator {
+        kind: "MouseDeltaY",
+        op: "MouseDeltaY",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| Ok(Evaluated::Number(sense::read(|s| s.mouse_delta[1]) as f64)),
+    },
+    ExtOperator {
         kind: "MouseDown",
         op: "MouseDown",
         arity: 0,
         default_args: Vec::new,
         eval: |_| Ok(Evaluated::Bool(sense::read(|s| s.mouse_down))),
+    },
+    ExtOperator {
+        kind: "MouseLocked",
+        op: "MouseLocked",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| Ok(Evaluated::Bool(sense::read(|s| s.mouse_locked))),
     },
     ExtOperator {
         kind: "Timer",
@@ -253,6 +274,8 @@ mod tests {
         register_blockloom_operators();
         let mut sensors = Sensors {
             time: 4.5,
+            mouse_delta: [12.0, -7.0],
+            mouse_locked: true,
             ..Default::default()
         };
         sensors.keys.insert("space".to_string());
@@ -270,6 +293,13 @@ mod tests {
         assert_eq!(key_down.eval(), Ok(Evaluated::Bool(true)));
         let timer = Value::op(Op::from_name("Timer"), vec![]);
         assert_eq!(timer.eval(), Ok(Evaluated::Number(4.5)));
+
+        let delta_x = Value::op(Op::from_name("MouseDeltaX"), vec![]);
+        assert_eq!(delta_x.eval(), Ok(Evaluated::Number(12.0)));
+        let delta_y = Value::op(Op::from_name("MouseDeltaY"), vec![]);
+        assert_eq!(delta_y.eval(), Ok(Evaluated::Number(-7.0)));
+        let locked = Value::op(Op::from_name("MouseLocked"), vec![]);
+        assert_eq!(locked.eval(), Ok(Evaluated::Bool(true)));
 
         let my_y = Value::op(Op::from_name("MyPosition"), vec![Value::text("Y")]);
         // Outside a script there's no actor, so "my y position" is an error,

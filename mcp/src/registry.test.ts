@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { z } from "zod";
 
 import { buildToolSchema } from "./registry.js";
-import { loadSpecs, resolveShell, type ShellCommandSpec } from "./shell.js";
+import { loadSpecs, resolveShell, stageShell, unstageShell, type ShellCommandSpec } from "./shell.js";
 
 function parseWith(spec: ShellCommandSpec, args: unknown) {
   const shape = buildToolSchema(spec);
@@ -69,11 +69,12 @@ test("an unknown prose type fails loudly, not silently", () => {
 test("every real command in the shell registry maps to a schema", async (t) => {
   let shell: string;
   try {
-    shell = resolveShell();
+    shell = stageShell(resolveShell());
   } catch {
     t.skip("no blockloom-shell binary built; run `just build` to exercise this test");
     return;
   }
+  t.after(() => unstageShell());
   const specs = await loadSpecs(shell);
   assert.ok(specs.length >= 50, `expected a real registry, got ${specs.length} commands`);
   for (const spec of specs) {

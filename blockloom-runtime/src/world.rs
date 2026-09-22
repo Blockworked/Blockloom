@@ -18,8 +18,9 @@ use crate::engine::{
     PrevPose,
 };
 use crate::{bridge, dim2, dim3};
+use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
+use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
 use blockloom_core::components::CameraView;
 use blockloom_core::project::Actor;
 use blockloom_core::scene::{Axis, BodyKind, Mode, Visual};
@@ -546,13 +547,38 @@ pub fn publish_sensors(
     dimension: Res<Dimension>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
+    mut motion: MessageReader<MouseMotion>,
+    mut focus: MessageReader<WindowFocused>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     actors: Query<(&ActorId, &Transform, &Visibility, Option<&CustomComponents>)>,
 ) {
     let now = time.elapsed_secs() as f64;
     let held: HashSet<String> = keys.get_pressed().filter_map(key_name).collect();
+    // OS-confirmed focus, not the component: `Window::focused` defaults to
+    // true and winit only reports changes, so a game opened behind the
+    // editor would otherwise read focused until the heat death of the run.
+    for event in focus.read() {
+        engine.window_focused = event.focused;
+    }
+    let focused = engine.window_focused;
     let mouse = mouse_world_position(dimension.0, &windows, &cameras).unwrap_or_default();
+    // The pointer travels a few pixels a frame, not a teleport: sum the
+    // motion events into one delta so a reporter reads what moved since last
+    // frame, whichever half of the window it crossed.
+    let mut mouse_delta = [0.0f32; 2];
+    for moved in motion.read() {
+        mouse_delta[0] += moved.delta.x;
+        mouse_delta[1] += moved.delta.y;
+    }
+    // Motion events are raw device input: they arrive whichever window holds
+    // the cursor, including the editor beside this one. A game that answered
+    // those would turn under a cursor it can't see, so only a focused window
+    // feeds its game. The drain above still runs, so nothing stale bursts
+    // out the moment focus lands.
+    if !focused {
+        mouse_delta = [0.0; 2];
+    }
 
     let mut senses: HashMap<String, ActorSense> = HashMap::new();
     for (id, transform, visibility, custom) in &actors {
@@ -578,11 +604,18 @@ pub fn publish_sensors(
         );
     }
 
+    // Wanted and focused reads as held: the component alone would still say
+    // Locked after an unfocused request the backend silently dropped, and
+    // reading the window back can't see that drop either.
+    let mouse_locked = engine.wants_cursor_locked && focused;
+
     blockloom_core::sense::publish(Sensors {
         time: engine.run_time(now),
         keys: held,
         mouse,
-        mouse_down: buttons.pressed(MouseButton::Left),
+        mouse_delta,
+        mouse_locked,
+        mouse_down: focused && buttons.pressed(MouseButton::Left),
         actors: senses,
     });
 
@@ -633,6 +666,12 @@ pub fn detect_clicks(
     let Some(window) = windows.iter().next() else {
         return;
     };
+    // Clicks land in the focused window, so a click in the editor beside a
+    // running game must never start its click strands. Event truth, same as
+    // the motion gate above: the component defaults to focused.
+    if !engine.window_focused {
+        return;
+    }
     let Some(cursor) = window.cursor_position() else {
         return;
     };
@@ -958,7 +997,10 @@ pub fn drive_camera(
     match rig.view {
         CameraView::FirstPerson => {
             camera.translation = pivot;
-            camera.rotation = target.rotation;
+            // Yaw from the body, pitch from the rig: the FPS composition,
+            // where turning the body never weakens looking up and down.
+            camera.rotation =
+                target.rotation * Quat::from_rotation_x(rig.pitch.to_radians());
         }
         CameraView::ThirdPerson => {
             let pitch = rig.pitch.to_radians();
@@ -1032,6 +1074,7 @@ pub fn apply_component_effects(
     mut engine: NonSendMut<Engine>,
     mut customs: Query<&mut CustomComponents>,
     mut visibilities: Query<&mut Visibility>,
+    mut rigs: Query<&mut CameraRig>,
 ) {
     if !engine.running || engine.paused {
         return;
@@ -1083,6 +1126,19 @@ pub fn apply_component_effects(
                 };
                 rig.view = *view;
                 commands.entity(entity).insert(CameraRig(rig));
+            }
+            Effect::SetCameraPitch { actor, degrees } => {
+                let Some(entity) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                // The live rig, not the authored one, so a pitch a view
+                // change just reset can be set again straight after.
+                let Ok(mut rig) = rigs.get_mut(entity) else {
+                    continue;
+                };
+                // Just short of vertical either way: at the pole the view
+                // flips over instead of stopping.
+                rig.0.pitch = degrees.clamp(-89.0, 89.0);
             }
             _ => {}
         }
@@ -1713,6 +1769,63 @@ pub fn clear_effects(mut effects: ResMut<PendingEffects>) {
     effects.0.clear();
 }
 
+/// Carries out pointer lock requests, and guarantees a stopped run never
+/// keeps the user's mouse: locking only means anything while running, so a
+/// fresh Play always starts unlocked.
+pub fn apply_cursor_lock(
+    mut engine: NonSendMut<Engine>,
+    effects: Res<PendingEffects>,
+    mut targets: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
+) {
+    let Ok((mut window, mut cursor)) = targets.single_mut() else {
+        return;
+    };
+    if !engine.running {
+        engine.wants_cursor_locked = false;
+        set_cursor_locked(&mut cursor, false);
+        return;
+    }
+    for effect in &effects.0 {
+        if let Effect::SetMouseLocked { locked } = effect {
+            engine.wants_cursor_locked = *locked;
+        }
+    }
+    // Re-asserted every tick, not just when the block runs. The first request
+    // usually lands before the window is focused, and the backend answers an
+    // unfocused grab with a silent no-op while the component still says
+    // Locked - so without this the pointer roams free with no way back.
+    // Rewriting the same values re-triggers the backend attempt, so the real
+    // lock sticks as soon as the window can hold it, and re-sticks after any
+    // later drop. Skipped while unfocused, where no grab can succeed and
+    // every attempt only logs another failure. A tab-out releases instead,
+    // browser-style, and the return trip re-grabs.
+    if engine.wants_cursor_locked && engine.window_focused {
+        if cursor.grab_mode != CursorGrabMode::Locked {
+            // Center first: a lock pins the cursor where it stands, which is
+            // usually still over the editor from the Play click - freezing it
+            // there, visible, outside this window. The backend applies the
+            // warp before the clip, so the pin and the hidden cursor land
+            // inside the game instead.
+            let center = Vec2::new(window.width(), window.height()) / 2.0;
+            window.set_cursor_position(Some(center));
+        }
+        set_cursor_locked(&mut cursor, true);
+    } else if cursor.grab_mode != CursorGrabMode::None {
+        set_cursor_locked(&mut cursor, false);
+    }
+}
+
+/// Locked is grabbed and hidden, the first-person standard; unlocked is a
+/// plain visible pointer again.
+fn set_cursor_locked(cursor: &mut CursorOptions, locked: bool) {
+    cursor.grab_mode = if locked {
+        CursorGrabMode::Locked
+    } else {
+        CursorGrabMode::None
+    };
+    cursor.visible = !locked;
+}
+
 // ─── Small shared helpers ──────────────────────────────────────────────────
 
 fn effect_actor(effect: &Effect) -> Option<&String> {
@@ -1734,7 +1847,8 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetVisible { actor, .. }
         | Effect::SetColor { actor, .. }
         | Effect::SetComponentField { actor, .. }
-        | Effect::SetCameraView { actor, .. }
+        |         Effect::SetCameraView { actor, .. }
+        | Effect::SetCameraPitch { actor, .. }
         | Effect::AttachComponent { actor, .. }
         | Effect::DetachComponent { actor, .. }
         | Effect::Error { actor, .. } => Some(actor),
@@ -1742,6 +1856,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         // to carry out, and none of them is a change to a transform.
         Effect::SetGravity { .. }
         | Effect::Stopped
+        | Effect::SetMouseLocked { .. }
         | Effect::SetParent { .. }
         | Effect::CreateClone { .. }
         | Effect::CreateActor { .. }
@@ -1977,6 +2092,7 @@ mod tests {
             CameraAttach {
                 view: CameraView::FirstPerson,
                 offset: [0.0, 2.0, 0.0],
+                pitch: 30.0,
                 ..CameraAttach::default()
             },
             Transform::from_xyz(5.0, 0.0, 0.0).with_rotation(facing),
@@ -1987,7 +2103,10 @@ mod tests {
                 .translation
                 .abs_diff_eq(Vec3::new(5.0, 2.0, 0.0), 0.001)
         );
-        assert!(camera.rotation.abs_diff_eq(facing, 0.001));
+        // Yaw from the body, pitch from the rig: the FPS composition, so a
+        // level body turning never weakens looking up and down.
+        let looking = facing * Quat::from_rotation_x(30.0f32.to_radians());
+        assert!(camera.rotation.abs_diff_eq(looking, 0.001));
     }
 
     #[test]
@@ -2027,6 +2146,196 @@ mod tests {
         );
 
         assert_eq!(camera.translation.truncate(), Vec2::new(100.0, 60.0));
+    }
+
+    /// Runs `apply_cursor_lock` once over one primary window and hands back
+    /// what the engine wants plus what the window holds.
+    fn lock_after(app: &mut App, window_entity: Entity) -> (bool, CursorGrabMode, bool) {
+        app.update();
+        let engine = app.world().non_send::<Engine>();
+        let wants = engine.wants_cursor_locked;
+        let cursor = app
+            .world()
+            .entity(window_entity)
+            .get::<CursorOptions>()
+            .expect("the window keeps its cursor options");
+        (wants, cursor.grab_mode, cursor.visible)
+    }
+
+    #[test]
+    fn a_lock_request_waits_for_focus_then_grabs() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::ThreeD);
+        engine.running = true;
+        // No focus event has arrived: the window a fresh Play opens behind.
+        // The component still says focused - its default - which is exactly
+        // why the engine tracks event truth instead of reading it.
+
+        let mut app = App::new();
+        app.insert_resource(PendingEffects(vec![Effect::SetMouseLocked {
+            locked: true,
+        }]));
+        app.insert_non_send(engine);
+        let window_entity = app
+            .world_mut()
+            .spawn((Window::default(), CursorOptions::default(), PrimaryWindow))
+            .id();
+        app.add_systems(Update, apply_cursor_lock);
+
+        // Wanted, but unwritable: no grab while unfocused, where every
+        // attempt only logs another failure.
+        assert_eq!(
+            lock_after(&mut app, window_entity),
+            (true, CursorGrabMode::None, true)
+        );
+
+        // The effect is spent; a real focus event retries the same want
+        // into a grab.
+        app.world_mut()
+            .resource_mut::<PendingEffects>()
+            .0
+            .clear();
+        app.world_mut().non_send_mut::<Engine>().window_focused = true;
+        assert_eq!(
+            lock_after(&mut app, window_entity),
+            (true, CursorGrabMode::Locked, false)
+        );
+        // ...centered first, so the pin lands inside the game instead of
+        // freezing over whatever the cursor sat on. Default window,
+        // scale one: middle pixel.
+        let position = app
+            .world()
+            .entity(window_entity)
+            .get::<Window>()
+            .expect("the window")
+            .physical_cursor_position();
+        assert_eq!(position, Some(Vec2::new(640.0, 360.0)));
+    }
+
+    #[test]
+    fn stopping_the_run_releases_the_pointer() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::ThreeD);
+        engine.running = true;
+        engine.window_focused = true;
+
+        let mut app = App::new();
+        app.insert_resource(PendingEffects(vec![Effect::SetMouseLocked {
+            locked: true,
+        }]));
+        app.insert_non_send(engine);
+        let window_entity = app
+            .world_mut()
+            .spawn((Window::default(), CursorOptions::default(), PrimaryWindow))
+            .id();
+        app.add_systems(Update, apply_cursor_lock);
+
+        assert_eq!(
+            lock_after(&mut app, window_entity),
+            (true, CursorGrabMode::Locked, false)
+        );
+
+        // Stop: the want goes with the run, so a finished game never keeps
+        // the user's mouse.
+        app.world_mut().non_send_mut::<Engine>().running = false;
+        assert_eq!(
+            lock_after(&mut app, window_entity),
+            (false, CursorGrabMode::None, true)
+        );
+    }
+
+    #[test]
+    fn a_tab_out_releases_and_the_return_trip_regrabs() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::ThreeD);
+        engine.running = true;
+        engine.window_focused = true;
+
+        let mut app = App::new();
+        app.insert_resource(PendingEffects(vec![Effect::SetMouseLocked {
+            locked: true,
+        }]));
+        app.insert_non_send(engine);
+        let window_entity = app
+            .world_mut()
+            .spawn((Window::default(), CursorOptions::default(), PrimaryWindow))
+            .id();
+        app.add_systems(Update, apply_cursor_lock);
+
+        assert_eq!(
+            lock_after(&mut app, window_entity),
+            (true, CursorGrabMode::Locked, false)
+        );
+
+        // Tabbing out drops the OS grab behind the component's back, so the
+        // runtime lets go too - browser-style - while keeping the want.
+        app.world_mut().non_send_mut::<Engine>().window_focused = false;
+        assert_eq!(
+            lock_after(&mut app, window_entity),
+            (true, CursorGrabMode::None, true)
+        );
+
+        // Back in: the same want re-grabs without another block running.
+        app.world_mut().non_send_mut::<Engine>().window_focused = true;
+        assert_eq!(
+            lock_after(&mut app, window_entity),
+            (true, CursorGrabMode::Locked, false)
+        );
+    }
+
+    /// Runs `publish_sensors` once over a primary window, after feeding one
+    /// motion event and a held left button, and hands back the published
+    /// delta and button state. `focused` drives real focus events: `None`
+    /// means none ever arrived, which is exactly what a window opened behind
+    /// the editor looks like.
+    fn motion_after(focused: Option<bool>) -> ([f32; 2], bool) {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::ThreeD);
+        engine.running = true;
+        let mut buttons = ButtonInput::<MouseButton>::default();
+        buttons.press(MouseButton::Left);
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(Dimension(Mode::ThreeD));
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.insert_resource(buttons);
+        app.init_resource::<Messages<MouseMotion>>();
+        app.init_resource::<Messages<WindowFocused>>();
+        app.insert_non_send(engine);
+        let window_entity = app
+            .world_mut()
+            .spawn((Window::default(), PrimaryWindow))
+            .id();
+        app.world_mut()
+            .resource_mut::<Messages<MouseMotion>>()
+            .write(MouseMotion {
+                delta: Vec2::new(5.0, -3.0),
+            });
+        if let Some(focused) = focused {
+            app.world_mut()
+                .resource_mut::<Messages<WindowFocused>>()
+                .write(WindowFocused {
+                    window: window_entity,
+                    focused,
+                });
+        }
+        app.add_systems(Update, publish_sensors);
+        app.update();
+
+        blockloom_core::sense::read(|sensors| (sensors.mouse_delta, sensors.mouse_down))
+    }
+
+    #[test]
+    fn an_unfocused_window_feeds_the_game_no_pointer() {
+        // Raw device motion arrives whichever window holds the cursor -
+        // including the editor beside a running game - so only a focused
+        // window passes it on. The drain still runs, so focus landing later
+        // starts from zero rather than a stale burst. No event at all reads
+        // as unfocused: the component defaults to focused.
+        assert_eq!(motion_after(None), ([0.0, 0.0], false));
+        assert_eq!(motion_after(Some(false)), ([0.0, 0.0], false));
+        assert_eq!(motion_after(Some(true)), ([5.0, -3.0], true));
     }
 
     #[test]

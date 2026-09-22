@@ -95,7 +95,8 @@ pub enum CameraView {
     /// Keeps the world camera's own offset, centred on the actor.
     #[default]
     Follow,
-    /// Sits at the actor's eye and looks where the actor faces.
+    /// Sits at the actor's eye: yaw from the actor, `pitch` from this rig.
+    /// `set camera pitch` drives that angle mid-run.
     FirstPerson,
     /// Sits `distance` behind and `pitch` degrees above the actor, looking
     /// back at it.
@@ -115,7 +116,7 @@ pub struct CameraAttach {
     #[serde(default = "default_distance")]
     pub distance: f32,
     /// How far above the actor a third-person camera looks down from, in
-    /// degrees.
+    /// degrees; a first-person camera's look-up angle, also in degrees.
     #[serde(default = "default_pitch")]
     pub pitch: f32,
 }

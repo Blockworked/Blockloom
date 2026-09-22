@@ -37,10 +37,13 @@ const ACTOR: &str = "a1";
 const TIMER: f64 = 2.5;
 const MY_POSITION: [f32; 3] = [3.0, 7.0, 0.0];
 const OTHER_POSITION: [f32; 3] = [10.0, -2.0, 0.0];
+const MOUSE_DELTA: [f32; 2] = [24.0, -9.0];
 
 fn publish_world() {
     let mut sensors = Sensors {
         time: TIMER,
+        mouse_delta: MOUSE_DELTA,
+        mouse_locked: true,
         ..Default::default()
     };
     sensors.keys.insert("space".to_string());
@@ -82,6 +85,7 @@ impl Host for Recorder {
         // effect is about.
         let actor = match &act {
             Act::DeleteActor { target } => target.clone(),
+            Act::SetMouseLocked { .. } => String::new(),
             _ => actor.to_string(),
         };
         let line = line_of(&act);
@@ -92,6 +96,9 @@ impl Host for Recorder {
         match kind {
             "KeyDown" => Ok(Val::Bool(args[0].as_text().to_lowercase() == "space")),
             "Timer" => Ok(Val::Num(2.5)),
+            "MouseDeltaX" => Ok(Val::Num(24.0)),
+            "MouseDeltaY" => Ok(Val::Num(-9.0)),
+            "MouseLocked" => Ok(Val::Bool(true)),
             "MyPosition" => Ok(Val::Num(axis_of(&args[0], [3.0, 7.0, 0.0]))),
             "ActorPosition" => {
                 let name = args[0].as_text();
@@ -137,6 +144,8 @@ fn line_of(act: &Act) -> String {
         Act::Say { text } => format!("Say {text}"),
         Act::SetColor { color } => format!("SetColor {color}"),
         Act::SetVisible { visible } => format!("SetVisible {visible}"),
+        Act::SetMouseLocked { locked } => format!("SetMouseLocked {locked}"),
+        Act::SetCameraPitch { degrees } => format!("SetCameraPitch {degrees:?}"),
         Act::SetComponentField { component, field, value } => {
             format!("SetComponentField {component} {field} {}", shown(value))
         }
@@ -246,6 +255,12 @@ fn line_of(effect: &Effect) -> Option<String> {
         // The world's own doing rather than the program's, and nothing the
         // compiled half is asked to produce.
         Effect::SetGravity { .. } => return None,
+        // Window-global, so against nobody: the harness blanks the actor
+        // for this act the same way.
+        Effect::SetMouseLocked { locked } => format!("|SetMouseLocked {locked}"),
+        Effect::SetCameraPitch { actor, degrees } => {
+            format!("{actor}|SetCameraPitch {degrees:?}")
+        }
         other => panic!("this test has no line for {other:?}"),
     };
     Some(line)
@@ -677,6 +692,15 @@ fn sensing_reads_the_same_world() {
             K::Move {
                 steps: op("Timer", vec![]),
             },
+            K::Say {
+                text: op("MouseDeltaX", vec![]),
+            },
+            K::Say {
+                text: op("MouseDeltaY", vec![]),
+            },
+            K::Say {
+                text: op("MouseLocked", vec![]),
+            },
             K::ChangePosition {
                 axis: Axis::X,
                 by: op("MyPosition", vec![Value::text("Y")]),
@@ -744,6 +768,10 @@ fn the_rest_of_the_leaf_blocks_land_the_same() {
                 z: number(0.0),
             },
             K::SetVisible { visible: false },
+            K::SetMouseLocked { locked: true },
+            K::SetCameraPitch {
+                degrees: number(12.5),
+            },
             K::SetColor {
                 color: Value::text("#ff0000"),
             },

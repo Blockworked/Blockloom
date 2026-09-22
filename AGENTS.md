@@ -114,8 +114,13 @@ must be taught there). Tool calls are one shell line, responses are the
 resources. Each session is its own backend, so the window-and-shell warning
 above applies to it too - one MCP server process and the editor must not hold
 the same project. The shell resolves as `target/debug|release/blockloom-shell`
-beside the repo, `BLOCKLOOM_MCP_SHELL`, or `--shell`; `just mcp` builds
-everything and prints the client config line for the built `dist/index.js`.
+beside the repo, `BLOCKLOOM_MCP_SHELL`, or `--shell`, and is then staged to a
+per-process scratch copy before it is spawned: a running executable locks its
+own file on Windows, so driving the build tree's binary in place would fail
+every `cargo build` for as long as the server lives. The copy is as fresh as
+the last server start, so restart the server after rebuilding to pick up a new
+binary. `just mcp` builds everything and prints the client config line for the
+built `dist/index.js`.
 Build/test with `cd mcp && pnpm install && pnpm run build && pnpm test`.
 
 ## Architecture

@@ -60,6 +60,8 @@ function defaults(type: InstructionType): Record<string, unknown> {
       return { component: '', field: '', value: numberValue(0) };
     case 'SetCameraView':
       return { view: 'ThirdPerson' };
+    case 'SetCameraPitch':
+      return { degrees: numberValue(0) };
     case 'AttachComponent':
     case 'DetachComponent':
       return { component: '' };
@@ -93,6 +95,8 @@ function defaults(type: InstructionType): Record<string, unknown> {
       return { block_id: '', args: [] };
     case 'Return':
       return { value: numberValue(0) };
+    case 'SetMouseLocked':
+      return { locked: true };
     // WhenStarted, WhenClicked, WhenCloned, EscapeLoop, ContinueLoop,
     // StopAll: no fields.
     default:

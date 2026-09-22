@@ -47,5 +47,10 @@ export const VISIBLE_OPTIONS = [
   { value: 'false', label: 'hide' },
 ];
 
+export const MOUSE_LOCK_OPTIONS = [
+  { value: 'true', label: 'lock' },
+  { value: 'false', label: 'unlock' },
+];
+
 /** The palette offers "mouse" alongside the actor names, same as the blocks do. */
 export const MOUSE_TARGET = 'mouse';

@@ -101,6 +101,11 @@ pub enum Effect {
         actor: String,
         view: CameraView,
     },
+    /// Tilts a first-person camera up or down, in degrees. Positive looks up.
+    SetCameraPitch {
+        actor: String,
+        degrees: f32,
+    },
     /// Gives the actor a component mid-run, with whatever the project
     /// authored for it or that component's defaults.
     AttachComponent {
@@ -140,6 +145,11 @@ pub enum Effect {
     },
     /// Every script stopped, by a `stop all` block.
     Stopped,
+    /// Grabs the pointer for first-person play, or frees it. Window-global,
+    /// like gravity: no actor.
+    SetMouseLocked {
+        locked: bool,
+    },
     /// A block couldn't be evaluated. The script carries on with a zero, and
     /// the editor shows this in its log.
     Error {

@@ -80,6 +80,18 @@ pub struct Engine {
     pub entities: HashMap<String, Entity>,
     pub running: bool,
     pub paused: bool,
+    /// Whether the game window actually holds OS focus, from `WindowFocused`
+    /// events only. Bevy's `Window::focused` defaults to true and winit only
+    /// reports changes, so a window opened behind the editor would read
+    /// focused forever without this - and raw device input would drive a game
+    /// whose cursor sits in another window.
+    pub window_focused: bool,
+    /// Whether a `lock mouse` block wants the pointer grabbed right now.
+    /// Kept apart from the window's own options because the backend only
+    /// attempts the grab on change: a request that lands before the window is
+    /// focused degrades to confined-or-nothing, so the runtime re-asserts
+    /// from this flag until the real lock sticks.
+    pub wants_cursor_locked: bool,
     /// `Time::elapsed_secs` when the current pause began, if paused. Used to
     /// keep the `timer` reporter frozen while paused.
     pub pause_began: Option<f64>,
@@ -136,6 +148,8 @@ impl Engine {
             entities: HashMap::new(),
             running: false,
             paused: false,
+            window_focused: false,
+            wants_cursor_locked: false,
             pause_began: None,
             started_at: 0.0,
             touching: HashMap::new(),

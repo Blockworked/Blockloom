@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 6;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -65,6 +65,8 @@ pub const READ_KEY_DOWN: u32 = 6;
 /// `arg` = axis; only X and Y mean anything.
 pub const READ_MOUSE: u32 = 7;
 pub const READ_MOUSE_DOWN: u32 = 8;
+/// `arg` = axis; raw pointer motion in pixels since the last frame.
+pub const READ_MOUSE_DELTA: u32 = 16;
 /// `a` = actor name, or empty for "anything at all".
 pub const READ_TOUCHING: u32 = 9;
 /// `a` = actor name, or "mouse".
@@ -79,6 +81,8 @@ pub const READ_POSITION_OF: u32 = 13;
 pub const READ_IS_CLONE: u32 = 14;
 /// `a` = actor name, or empty for every actor; counts clones too.
 pub const READ_ACTOR_COUNT: u32 = 15;
+/// Whether the pointer is grabbed and hidden for first-person play.
+pub const READ_MOUSE_LOCKED: u32 = 17;
 
 // ─── What a script can read as text ────────────────────────────────────────
 
@@ -144,6 +148,10 @@ pub const ACT_CREATE_CLONE: u32 = 22;
 pub const ACT_CREATE_ACTOR: u32 = 23;
 /// `a` = the actor to delete, by id or name; empty deletes this one.
 pub const ACT_DELETE_ACTOR: u32 = 24;
+/// `n0` != 0 grabs the pointer and hides it for first-person play.
+pub const ACT_SET_MOUSE_LOCKED: u32 = 25;
+/// `n0` = camera pitch in degrees; positive looks up.
+pub const ACT_SET_CAMERA_PITCH: u32 = 26;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

@@ -45,12 +45,12 @@ const BLOCK_GROUPS: { label: string; types: InstructionType[] }[] = [
   { label: 'Looks', types: ['Say', 'SetVisible', 'SetColor'] },
   {
     label: 'Components',
-    types: ['SetComponentField', 'SetCameraView', 'AttachComponent', 'DetachComponent', 'SetParent'],
+    types: ['SetComponentField', 'SetCameraView', 'SetCameraPitch', 'AttachComponent', 'DetachComponent', 'SetParent'],
   },
   { label: 'Actors', types: ['CreateClone', 'CreateActor', 'DeleteActor'] },
   {
     label: 'Control',
-    types: ['Wait', 'WaitUntil', 'If', 'IfElse', 'Repeat', 'Forever', 'While', 'EscapeLoop', 'ContinueLoop', 'StopAll'],
+    types: ['Wait', 'WaitUntil', 'If', 'IfElse', 'Repeat', 'Forever', 'While', 'EscapeLoop', 'ContinueLoop', 'StopAll', 'SetMouseLocked'],
   },
 ];
 

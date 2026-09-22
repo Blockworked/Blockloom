@@ -104,6 +104,7 @@ fn main() {
                         dim2::apply_effects,
                         world::apply_component_effects,
                         world::step_glides,
+                        world::apply_cursor_lock,
                         world::clear_effects,
                     )
                         .chain()
@@ -157,6 +158,7 @@ fn main() {
                         dim3::apply_effects,
                         world::apply_component_effects,
                         world::step_glides,
+                        world::apply_cursor_lock,
                         world::clear_effects,
                     )
                         .chain()

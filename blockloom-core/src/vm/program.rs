@@ -80,6 +80,7 @@ pub enum Action {
         value: Value,
     },
     SetCameraView(CameraView),
+    SetCameraPitch(Value),
     AttachComponent(String),
     DetachComponent(String),
     /// An empty target takes the actor off whatever it was hanging from.
@@ -93,6 +94,8 @@ pub enum Action {
     /// An empty target deletes the running actor.
     DeleteActor(Value),
     Broadcast(String),
+    /// Grabs or frees the pointer; window-global, like gravity.
+    SetMouseLocked(bool),
     SetVariable {
         name: String,
         value: Value,
@@ -277,6 +280,9 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             value: value.clone(),
         })),
         K::SetCameraView { view } => steps.push(Step::Action(Action::SetCameraView(*view))),
+        K::SetCameraPitch { degrees } => {
+            steps.push(Step::Action(Action::SetCameraPitch(degrees.clone())))
+        }
         K::AttachComponent { component } => steps.push(Step::Action(Action::AttachComponent(
             component.trim().to_string(),
         ))),
@@ -293,6 +299,9 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         })),
         K::DeleteActor { target } => steps.push(Step::Action(Action::DeleteActor(target.clone()))),
         K::Broadcast { name } => steps.push(Step::Action(Action::Broadcast(name.clone()))),
+        K::SetMouseLocked { locked } => {
+            steps.push(Step::Action(Action::SetMouseLocked(*locked)))
+        }
         K::SetVariable { name, value } => steps.push(Step::Action(Action::SetVariable {
             name: name.clone(),
             value: value.clone(),

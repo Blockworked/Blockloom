@@ -124,6 +124,9 @@ pub enum Act {
     SetCameraView {
         view: &'static str,
     },
+    SetCameraPitch {
+        degrees: f32,
+    },
     AttachComponent {
         component: &'static str,
     },
@@ -153,6 +156,10 @@ pub enum Act {
     },
     Broadcast {
         name: &'static str,
+    },
+    /// Grabs or frees the pointer; window-global, like gravity.
+    SetMouseLocked {
+        locked: bool,
     },
 }
 
@@ -643,7 +650,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 3;
+pub const LOGIC_ABI_VERSION: u32 = 5;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -685,6 +692,10 @@ pub const ACT_SET_PARENT: u32 = 24;
 pub const ACT_CREATE_CLONE: u32 = 25;
 pub const ACT_CREATE_ACTOR: u32 = 26;
 pub const ACT_DELETE_ACTOR: u32 = 27;
+/// `n0` != 0 grabs the pointer and hides it.
+pub const ACT_SET_MOUSE_LOCKED: u32 = 28;
+/// `n0` = pitch in degrees; positive looks up.
+pub const ACT_SET_CAMERA_PITCH: u32 = 29;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -960,6 +971,14 @@ impl Host for AbiHost {
             Act::SetCameraView { view } => {
                 self.act_wire(actor, ACT_SET_CAMERA_VIEW, view, "", [0.0; 3], &zero)
             }
+            Act::SetCameraPitch { degrees } => self.act_wire(
+                actor,
+                ACT_SET_CAMERA_PITCH,
+                "",
+                "",
+                [degrees as f64, 0.0, 0.0],
+                &zero,
+            ),
             Act::AttachComponent { component } => {
                 self.act_wire(actor, ACT_ATTACH, component, "", [0.0; 3], &zero)
             }
@@ -986,6 +1005,14 @@ impl Host for AbiHost {
             Act::Broadcast { name } => {
                 self.act_wire(actor, ACT_BROADCAST, name, "", [0.0; 3], &zero)
             }
+            Act::SetMouseLocked { locked } => self.act_wire(
+                actor,
+                ACT_SET_MOUSE_LOCKED,
+                "",
+                "",
+                [if locked { 1.0 } else { 0.0 }, 0.0, 0.0],
+                &zero,
+            ),
         }
     }
 

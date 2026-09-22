@@ -28,6 +28,7 @@ import {
   BODY_OPTIONS,
   CAMERA_VIEW_OPTIONS,
   KEY_OPTIONS,
+  MOUSE_LOCK_OPTIONS,
   MOUSE_TARGET,
   VISIBLE_OPTIONS,
 } from './constants';
@@ -270,6 +271,9 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
       { kind: 'dropdown', key: 'view', options: CAMERA_VIEW_OPTIONS },
     ],
   },
+  SetCameraPitch: {
+    head: [label('set my camera pitch to'), value('CameraPitchDegrees', 'degrees')],
+  },
   AttachComponent: {
     head: [
       label('attach'),
@@ -326,6 +330,18 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
   EscapeLoop: { head: [label('break out of the loop')] },
   ContinueLoop: { head: [label('next loop iteration')] },
   StopAll: { head: [label('stop everything')] },
+  SetMouseLocked: {
+    head: [
+      {
+        kind: 'dropdown',
+        key: 'locked',
+        options: MOUSE_LOCK_OPTIONS,
+        encode: chosen => chosen === 'true',
+        decode: stored => (stored === false ? 'false' : 'true'),
+      },
+      label('mouse'),
+    ],
+  },
 
   // ── Variables ────────────────────────────────────────────────────────────
   SetVariable: {

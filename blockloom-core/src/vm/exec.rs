@@ -813,6 +813,13 @@ impl Vm {
                 actor: owner,
                 view: *view,
             }),
+            Action::SetCameraPitch(degrees) => {
+                let degrees = self.eval_f32(degrees, actor, params, out);
+                out.push(Effect::SetCameraPitch {
+                    actor: owner,
+                    degrees,
+                });
+            }
             Action::AttachComponent(component) => out.push(Effect::AttachComponent {
                 actor: owner,
                 component: component.clone(),
@@ -868,6 +875,7 @@ impl Vm {
                 }
             }
             Action::Broadcast(name) => self.pending.push(Event::Message(name.trim().to_string())),
+            Action::SetMouseLocked(locked) => out.push(Effect::SetMouseLocked { locked: *locked }),
             Action::SetVariable { name, value } => {
                 let value = self.eval(value, actor, params, out);
                 self.write_var(actor, name, value);
