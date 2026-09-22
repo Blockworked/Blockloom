@@ -886,14 +886,24 @@ pub fn apply_common(
                 }
             }
             Effect::Turn { axis, degrees, .. } => {
-                if let Some(index) = rotation_axis(dimension.0, *axis) {
-                    let mut euler = euler_of(&transform);
-                    euler[index] += degrees.to_radians();
-                    transform.rotation = quat_of(euler);
+                // A dynamic body turns in its dimension's own system, in
+                // effect order with its deferred `move`. Turning here would
+                // net a turn-move-turn sandwich (how strafe is spelled) back
+                // to zero before the move ever sees the turn, so both strafe
+                // keys would walk forward. See `dim2|3::apply_effects`.
+                if is_dynamic(&engine, actor) {
+                    continue;
+                }
+                if dimension.0 == Mode::ThreeD {
+                    turn_3d(&mut transform, *axis, degrees.to_radians());
+                } else if rotation_axis(dimension.0, *axis).is_some() {
+                    turn_2d(&mut transform, degrees.to_radians());
                 }
             }
             Effect::SetRotation { axis, degrees, .. } => {
-                if let Some(index) = rotation_axis(dimension.0, *axis) {
+                if dimension.0 == Mode::ThreeD {
+                    set_rotation_3d(&mut transform, *axis, degrees.to_radians());
+                } else if let Some(index) = rotation_axis(dimension.0, *axis) {
                     let mut euler = euler_of(&transform);
                     euler[index] = degrees.to_radians();
                     transform.rotation = quat_of(euler);
@@ -1919,6 +1929,59 @@ fn quat_of(euler: [f32; 3]) -> Quat {
     Quat::from_euler(EulerRot::XYZ, euler[0], euler[1], euler[2])
 }
 
+/// A 2D turn raises the one rotation a sprite has.
+pub fn turn_2d(transform: &mut Transform, radians: f32) {
+    let mut euler = euler_of(transform);
+    euler[2] += radians;
+    transform.rotation = quat_of(euler);
+}
+
+/// A 3D turn spins about the actor's own axis, composed straight onto the
+/// quaternion. Reading the yaw back out of XYZ euler instead folds it into
+/// [-90, 90] past the first quarter turn, which walled every 3D game's
+/// horizontal look at about 180 degrees of freedom.
+pub fn turn_3d(transform: &mut Transform, axis: Axis, radians: f32) {
+    let spin = Quat::from_axis_angle(axis_vector(axis), radians);
+    transform.rotation = (transform.rotation * spin).normalize();
+}
+
+/// A 3D absolute rotation sets one component through YXZ euler, which spells
+/// yaw first over the full circle. The XYZ spelling folds a yaw past 90
+/// degrees into flipped pitch and roll, so zeroing X or Z through it snaps
+/// the yaw back inside - the same 180-degree wall from the other side.
+fn set_rotation_3d(transform: &mut Transform, axis: Axis, radians: f32) {
+    let (yaw, pitch, roll) = transform.rotation.to_euler(EulerRot::YXZ);
+    let mut angles = [pitch, yaw, roll];
+    angles[axis.index()] = radians;
+    transform.rotation = Quat::from_euler(EulerRot::YXZ, angles[1], angles[0], angles[2]);
+}
+
+fn axis_vector(axis: Axis) -> Vec3 {
+    match axis {
+        Axis::X => Vec3::X,
+        Axis::Y => Vec3::Y,
+        Axis::Z => Vec3::Z,
+    }
+}
+
+/// Which linear axes a released walk brakes: every axis but the one gravity
+/// pulls along, so a released key stops the run without hanging a fall - and
+/// a gravity-free game stops dead on all of them.
+pub fn stop_axes(gravity: Vec3) -> [bool; 3] {
+    if gravity.length_squared() < 1e-6 {
+        return [true, true, true];
+    }
+    let pull = [gravity.x.abs(), gravity.y.abs(), gravity.z.abs()];
+    let mainly = if pull[0] >= pull[1] && pull[0] >= pull[2] {
+        0
+    } else if pull[1] >= pull[2] {
+        1
+    } else {
+        2
+    };
+    [mainly != 0, mainly != 1, mainly != 2]
+}
+
 /// Where a `point towards` target is: another actor, or the mouse.
 fn target_position(
     engine: &Engine,
@@ -2591,5 +2654,526 @@ mod tests {
 
         assert_eq!(position_of(&project, "middle"), [110.0, 0.0, 0.0]);
         assert_eq!(position_of(&project, "leaf"), [111.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_3d_yaw_spins_past_ninety_degrees_without_folding() {
+        // Two hundred one-degree turns, the way a mouse-look strand
+        // drives them. XYZ euler reads the yaw back folded into
+        // [-90, 90] past the first quarter turn, which used to wall
+        // every 3D game at about 180 degrees of horizontal look.
+        let mut transform = Transform::IDENTITY;
+        for _ in 0..200 {
+            turn_3d(&mut transform, Axis::Y, 1f32.to_radians());
+        }
+
+        // 200 degrees wraps to -160, still level, and facing where a
+        // full 200-degree yaw faces rather than folded back inside 90.
+        let (yaw, pitch, roll) = transform.rotation.to_euler(EulerRot::YXZ);
+        assert!((yaw.to_degrees() + 160.0).abs() < 0.5, "{yaw:?}");
+        assert!(pitch.abs() < 0.001, "{pitch:?}");
+        assert!(roll.abs() < 0.001, "{roll:?}");
+        let facing = *transform.forward();
+        let expect = Vec3::new(-200f32.to_radians().sin(), 0.0, -200f32.to_radians().cos());
+        assert!(facing.dot(expect) > 0.999, "{facing:?} vs {expect:?}");
+    }
+
+    #[test]
+    fn a_turn_move_turn_sandwich_strafes_a_dynamic_body() {
+        use bevy_rapier3d::prelude::{ExternalImpulse, Velocity};
+
+        // How strafe is spelled in blocks: face sideways, step, face back.
+        // A dynamic body's `move` is deferred to the dimension pass as a
+        // velocity, so turning in the common pass used to net the sandwich
+        // to zero first and both strafe keys walked forward instead.
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::ThreeD);
+        engine.running = true;
+        let mut project = blockloom_core::project::Project::starter("Strafe", Mode::ThreeD);
+        project.actors.clear();
+        let mut actor = Actor::new(
+            "player",
+            Visual::Rect {
+                color: "#fff".to_string(),
+                size: [1.0, 1.0],
+            },
+        );
+        actor.id = "player".to_string();
+        actor.components.set_physics(blockloom_core::scene::Physics {
+            body: BodyKind::Dynamic,
+            ..Default::default()
+        });
+        project.actors.push(actor);
+        engine.project = project;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(Dimension(Mode::ThreeD));
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Mesh>>();
+        app.insert_resource(PendingEffects(vec![
+            Effect::Turn {
+                actor: "player".to_string(),
+                axis: Axis::Y,
+                degrees: 90.0,
+            },
+            Effect::Move {
+                actor: "player".to_string(),
+                steps: 0.18,
+            },
+            Effect::Turn {
+                actor: "player".to_string(),
+                axis: Axis::Y,
+                degrees: -90.0,
+            },
+        ]));
+        app.add_message::<AppExit>();
+        let entity = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                Visibility::Inherited,
+                Velocity::default(),
+                ExternalImpulse::default(),
+            ))
+            .id();
+        app.world_mut().insert_non_send(engine);
+        app.world_mut()
+            .non_send_mut::<Engine>()
+            .entities
+            .insert("player".to_string(), entity);
+        app.add_systems(Update, (apply_common, dim3::apply_effects).chain());
+        app.update();
+
+        // Sideways velocity, not forward: facing -Z, a +90 yaw looks down
+        // -X, and the sandwich faces back afterwards.
+        let velocity = app
+            .world()
+            .entity(entity)
+            .get::<Velocity>()
+            .expect("the body");
+        assert!(velocity.linear.x < -100.0, "{:?}", velocity.linear);
+        assert!(velocity.linear.z.abs() < 1.0, "{:?}", velocity.linear);
+        assert_eq!(velocity.linear.y, 0.0);
+        let facing = app.world().entity(entity).get::<Transform>().expect("pose");
+        assert!(
+            facing.rotation.angle_between(Quat::IDENTITY) < 0.01,
+            "{:?}",
+            facing.rotation
+        );
+    }
+
+    #[test]
+    fn holding_forward_and_strafe_walks_diagonal() {
+        use bevy_rapier3d::prelude::{ExternalImpulse, Velocity};
+
+        // One tick of W+A in the First Person game: W's forward step and
+        // A's turn-step-turn-back sandwich. Each deferred move writes only
+        // its nonzero axes, so both survive into the velocity.
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::ThreeD);
+        engine.running = true;
+        let mut project = blockloom_core::project::Project::starter("Diagonal", Mode::ThreeD);
+        project.actors.clear();
+        let mut actor = Actor::new(
+            "player",
+            Visual::Rect {
+                color: "#fff".to_string(),
+                size: [1.0, 1.0],
+            },
+        );
+        actor.id = "player".to_string();
+        actor.components.set_physics(blockloom_core::scene::Physics {
+            body: BodyKind::Dynamic,
+            ..Default::default()
+        });
+        project.actors.push(actor);
+        engine.project = project;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(Dimension(Mode::ThreeD));
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Mesh>>();
+        let walk = |steps: f32| Effect::Move {
+            actor: "player".to_string(),
+            steps,
+        };
+        let level = Effect::SetRotation {
+            actor: "player".to_string(),
+            axis: Axis::X,
+            degrees: 0.0,
+        };
+        let sideways = |degrees: f32| Effect::Turn {
+            actor: "player".to_string(),
+            axis: Axis::Y,
+            degrees,
+        };
+        app.insert_resource(PendingEffects(vec![
+            level.clone(),
+            walk(0.22),
+            level.clone(),
+            sideways(90.0),
+            walk(0.18),
+            sideways(-90.0),
+        ]));
+        app.add_message::<AppExit>();
+        let entity = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                Visibility::Inherited,
+                Velocity::default(),
+                ExternalImpulse::default(),
+            ))
+            .id();
+        app.world_mut().insert_non_send(engine);
+        app.world_mut()
+            .non_send_mut::<Engine>()
+            .entities
+            .insert("player".to_string(), entity);
+        app.add_systems(Update, (apply_common, dim3::apply_effects).chain());
+        app.update();
+
+        // Forward (-Z) from W and left (-X) from A, both present.
+        let velocity = app
+            .world()
+            .entity(entity)
+            .get::<Velocity>()
+            .expect("walker")
+            .linear;
+        assert!(velocity.x < -100.0, "{velocity:?}");
+        assert!(velocity.z < -100.0, "{velocity:?}");
+        assert_eq!(velocity.y, 0.0);
+    }
+
+    #[test]
+    fn holding_forward_and_strafe_walks_diagonal_after_a_real_turn_history() {
+        use bevy_rapier3d::prelude::{ExternalImpulse, Velocity};
+
+        // The live-game shape of W+A: the yaw came from ninety small mouse
+        // turns, so the quaternion is inexact the way played yaw always is.
+        // A turned facing reads back with float dust on its true-zero axes,
+        // and each deferred move writing straight through let that dust -
+        // past epsilon - clobber the other move's axis: W+A walked purely
+        // sideways. Composing one tick's walks first keeps both.
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::ThreeD);
+        engine.running = true;
+        let mut project = blockloom_core::project::Project::starter("Turned", Mode::ThreeD);
+        project.actors.clear();
+        let mut actor = Actor::new(
+            "player",
+            Visual::Rect {
+                color: "#fff".to_string(),
+                size: [1.0, 1.0],
+            },
+        );
+        actor.id = "player".to_string();
+        actor.components.set_physics(blockloom_core::scene::Physics {
+            body: BodyKind::Dynamic,
+            ..Default::default()
+        });
+        project.actors.push(actor);
+        engine.project = project;
+
+        let mut start = Transform::IDENTITY;
+        for _ in 0..90 {
+            turn_3d(&mut start, Axis::Y, 1f32.to_radians());
+        }
+        let (yaw, _, _) = start.rotation.to_euler(EulerRot::YXZ);
+        assert!((yaw.to_degrees() - 90.0).abs() < 1.0, "{yaw:?}");
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(Dimension(Mode::ThreeD));
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Mesh>>();
+        let walk = |steps: f32| Effect::Move {
+            actor: "player".to_string(),
+            steps,
+        };
+        let level = Effect::SetRotation {
+            actor: "player".to_string(),
+            axis: Axis::X,
+            degrees: 0.0,
+        };
+        let sideways = |degrees: f32| Effect::Turn {
+            actor: "player".to_string(),
+            axis: Axis::Y,
+            degrees,
+        };
+        app.insert_resource(PendingEffects(vec![
+            level.clone(),
+            walk(0.22),
+            level.clone(),
+            sideways(90.0),
+            walk(0.18),
+            sideways(-90.0),
+        ]));
+        app.add_message::<AppExit>();
+        let entity = app
+            .world_mut()
+            .spawn((
+                start,
+                Visibility::Inherited,
+                Velocity::default(),
+                ExternalImpulse::default(),
+            ))
+            .id();
+        app.world_mut().insert_non_send(engine);
+        app.world_mut()
+            .non_send_mut::<Engine>()
+            .entities
+            .insert("player".to_string(), entity);
+        app.add_systems(Update, (apply_common, dim3::apply_effects).chain());
+        app.update();
+
+        // Facing ~90 degrees: W runs down -X, the sandwich steps up +Z.
+        let velocity = app
+            .world()
+            .entity(entity)
+            .get::<Velocity>()
+            .expect("walker")
+            .linear;
+        assert!(velocity.x < -100.0, "{velocity:?}");
+        assert!(velocity.z > 100.0, "{velocity:?}");
+    }
+
+    #[test]
+    fn opposing_walks_cancel_instead_of_cruising_stale() {
+        use bevy_rapier3d::prelude::{ExternalImpulse, Velocity};
+
+        // W+S in one tick name Z with equal and opposite steps: the axis
+        // is genuinely walked, so it writes zero and stops rather than
+        // keeping whatever the last tick left there. Unwalked axes cruise.
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::ThreeD);
+        engine.running = true;
+        let mut project = blockloom_core::project::Project::starter("Cancel", Mode::ThreeD);
+        project.actors.clear();
+        let mut actor = Actor::new(
+            "player",
+            Visual::Rect {
+                color: "#fff".to_string(),
+                size: [1.0, 1.0],
+            },
+        );
+        actor.id = "player".to_string();
+        actor.components.set_physics(blockloom_core::scene::Physics {
+            body: BodyKind::Dynamic,
+            ..Default::default()
+        });
+        project.actors.push(actor);
+        engine.project = project;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(Dimension(Mode::ThreeD));
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Mesh>>();
+        app.insert_resource(PendingEffects(vec![
+            Effect::Move {
+                actor: "player".to_string(),
+                steps: 0.22,
+            },
+            Effect::Move {
+                actor: "player".to_string(),
+                steps: -0.22,
+            },
+        ]));
+        app.add_message::<AppExit>();
+        let entity = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                Visibility::Inherited,
+                Velocity::default(),
+                ExternalImpulse::default(),
+            ))
+            .id();
+        app.world_mut().insert_non_send(engine);
+        app.world_mut()
+            .non_send_mut::<Engine>()
+            .entities
+            .insert("player".to_string(), entity);
+        app.world_mut()
+            .entity_mut(entity)
+            .get_mut::<Velocity>()
+            .expect("walker")
+            .linear = Vec3::new(9.0, -2.0, 7.0);
+        app.add_systems(Update, (apply_common, dim3::apply_effects).chain());
+        app.update();
+
+        let velocity = app
+            .world()
+            .entity(entity)
+            .get::<Velocity>()
+            .expect("walker")
+            .linear;
+        assert_eq!(velocity, Vec3::new(9.0, -2.0, 0.0));
+    }
+
+    #[test]
+    fn a_released_walk_brakes_but_leaves_falls_and_flying_balls_alone() {
+        use bevy_rapier3d::prelude::{ExternalImpulse, Velocity};
+
+        // A walk writes an absolute velocity every tick it runs, so the
+        // tick after the strand goes quiet that speed used to glide on.
+        // Braking only ever touches walk-driven actors, on every axis but
+        // gravity's: falls, collisions and impulses keep their inertia.
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::ThreeD);
+        engine.running = true;
+        let mut project = blockloom_core::project::Project::starter("Brakes", Mode::ThreeD);
+        project.actors.clear();
+        for id in ["player", "ball"] {
+            let mut actor = Actor::new(
+                id,
+                Visual::Rect {
+                    color: "#fff".to_string(),
+                    size: [1.0, 1.0],
+                },
+            );
+            actor.id = id.to_string();
+            actor.components.set_physics(blockloom_core::scene::Physics {
+                body: BodyKind::Dynamic,
+                ..Default::default()
+            });
+            project.actors.push(actor);
+        }
+        engine.project = project;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(Dimension(Mode::ThreeD));
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Mesh>>();
+        app.insert_resource(PendingEffects(vec![
+            Effect::Turn {
+                actor: "player".to_string(),
+                axis: Axis::Y,
+                degrees: 90.0,
+            },
+            Effect::Move {
+                actor: "player".to_string(),
+                steps: 0.18,
+            },
+            Effect::Turn {
+                actor: "player".to_string(),
+                axis: Axis::Y,
+                degrees: -90.0,
+            },
+        ]));
+        app.add_message::<AppExit>();
+        let player = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                Visibility::Inherited,
+                Velocity::default(),
+                ExternalImpulse::default(),
+            ))
+            .id();
+        let ball = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                Visibility::Inherited,
+                Velocity::default(),
+                ExternalImpulse::default(),
+            ))
+            .id();
+        app.world_mut().insert_non_send(engine);
+        {
+            let mut engine = app.world_mut().non_send_mut::<Engine>();
+            engine.entities.insert("player".to_string(), player);
+            engine.entities.insert("ball".to_string(), ball);
+        }
+        // A mid-fall walker and a steadily rolling ball.
+        app.world_mut()
+            .entity_mut(player)
+            .get_mut::<Velocity>()
+            .expect("walker")
+            .linear
+            .y = -2.0;
+        app.world_mut()
+            .entity_mut(ball)
+            .get_mut::<Velocity>()
+            .expect("ball")
+            .linear = Vec3::new(5.0, -1.0, -3.0);
+        app.add_systems(Update, (apply_common, dim3::apply_effects).chain());
+
+        // Tick one: the sandwich strafes, and the fall is untouched.
+        app.update();
+        let walked = app
+            .world()
+            .entity(player)
+            .get::<Velocity>()
+            .expect("walker")
+            .linear;
+        assert!(walked.x < -100.0, "{walked:?}");
+        assert_eq!(walked.y, -2.0);
+
+        // Tick two: silence. The walker stops dead but keeps falling; the
+        // never-walk-driven ball rolls on untouched.
+        app.world_mut()
+            .resource_mut::<PendingEffects>()
+            .0
+            .clear();
+        app.update();
+        let stopped = app
+            .world()
+            .entity(player)
+            .get::<Velocity>()
+            .expect("walker")
+            .linear;
+        assert_eq!(stopped, Vec3::new(0.0, -2.0, 0.0));
+        let rolling = app
+            .world()
+            .entity(ball)
+            .get::<Velocity>()
+            .expect("ball")
+            .linear;
+        assert_eq!(rolling, Vec3::new(5.0, -1.0, -3.0));
+
+        // An explicit impulse is a physics verb, not a walk: it persists
+        // through the quiet ticks exactly like a collision would.
+        app.world_mut()
+            .resource_mut::<PendingEffects>()
+            .0
+            .push(Effect::ApplyImpulse {
+                actor: "ball".to_string(),
+                impulse: [1.0, 0.0, 0.0],
+            });
+        app.update();
+        app.world_mut()
+            .resource_mut::<PendingEffects>()
+            .0
+            .clear();
+        app.update();
+        let thrown = app
+            .world()
+            .entity(ball)
+            .get::<Velocity>()
+            .expect("ball")
+            .linear;
+        assert_eq!(thrown, Vec3::new(6.0, -1.0, -3.0));
+    }
+
+    #[test]
+    fn zeroing_pitch_and_roll_leaves_a_far_3d_yaw_alone() {
+        // The game's anti-capsize strand zeroes X and Z every tick.
+        // Through XYZ euler that snaps a yaw past 90 back inside it;
+        // through YXZ it is an identity write that changes nothing.
+        let mut transform = Transform::IDENTITY;
+        turn_3d(&mut transform, Axis::Y, (-130f32).to_radians());
+        set_rotation_3d(&mut transform, Axis::X, 0.0);
+        set_rotation_3d(&mut transform, Axis::Z, 0.0);
+
+        let (yaw, pitch, roll) = transform.rotation.to_euler(EulerRot::YXZ);
+        assert!((yaw.to_degrees() + 130.0).abs() < 0.5, "{yaw:?}");
+        assert!(pitch.abs() < 0.001, "{pitch:?}");
+        assert!(roll.abs() < 0.001, "{roll:?}");
     }
 }

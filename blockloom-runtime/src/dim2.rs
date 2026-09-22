@@ -10,6 +10,7 @@ use bevy_rapier2d::prelude as rp;
 use blockloom_core::project::Actor;
 use blockloom_core::scene::{BodyKind, Visual};
 use blockloom_core::vm::Effect;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// How many pixels make a physics metre - the scale rapier reasons about
@@ -149,10 +150,10 @@ pub fn set_gravity(config: &mut rp::RapierConfiguration, gravity: [f32; 3]) {
 pub fn apply_effects(
     mut commands: Commands,
     effects: Res<PendingEffects>,
-    engine: NonSend<Engine>,
+    mut engine: NonSendMut<Engine>,
     time: Res<Time>,
     mut bodies: Query<(&mut rp::Velocity, &mut rp::ExternalImpulse)>,
-    transforms: Query<&Transform>,
+    mut transforms: Query<&mut Transform>,
     mut config: Query<&mut rp::RapierConfiguration>,
     mut sprites: Query<&mut Sprite>,
     assets: Res<AssetServer>,
@@ -173,13 +174,48 @@ pub fn apply_effects(
     // a fixed rate keeps it constant, whatever the display does.
     let dt = time.delta_secs().max(1.0 / 1000.0);
     let dir = engine.project_dir.clone();
+    // Dynamic actors a walk verb drives this tick. Whoever was driven last
+    // tick but isn't now just let go: brake them below.
+    let mut driven: HashSet<String> = HashSet::new();
+    // Each walked actor's composed tick total; see `dim3` for why one
+    // tick's walks share one velocity write.
+    let mut walks: HashMap<String, (Vec3, [bool; 3])> = HashMap::new();
+    for effect in &effects.0 {
+        let actor = match effect {
+            Effect::Move { actor, .. } | Effect::ChangePosition { actor, .. } => actor,
+            _ => continue,
+        };
+        if crate::world::is_dynamic(&engine, actor) {
+            driven.insert(actor.clone());
+        }
+    }
     for effect in &effects.0 {
         match effect {
+            // A dynamic body's turns land here rather than in
+            // `world::apply_common`, in effect order with the deferred
+            // `move` below - same sandwich reasoning as `dim3`.
+            Effect::Turn { actor, axis, degrees } => {
+                // Only Z is a rotation in 2D; X and Y stay ignored, exactly
+                // as `world::apply_common` treats them.
+                if axis.index() != 2 {
+                    continue;
+                }
+                let Some(entity) = engine.entities.get(actor) else {
+                    continue;
+                };
+                if !crate::world::is_dynamic(&engine, actor) {
+                    continue;
+                }
+                if let Ok(mut transform) = transforms.get_mut(*entity) {
+                    crate::world::turn_2d(&mut transform, degrees.to_radians());
+                }
+            }
             // A dynamic body walks by velocity, not by teleporting: that keeps
             // the solver able to resolve contacts, so it stops at walls and
-            // rests on floors instead of passing through them. Only the axes
-            // the block actually names are written, so an upright actor's
-            // `move` leaves the falling to gravity.
+            // rests on floors instead of passing through them. One tick's
+            // walks compose per actor (see `dim3`); only the axes a real
+            // walk names are written, so an upright actor's `move` leaves
+            // the falling to gravity.
             Effect::Move { actor, steps } => {
                 let Some(entity) = engine.entities.get(actor) else {
                     continue;
@@ -187,19 +223,16 @@ pub fn apply_effects(
                 if !crate::world::is_dynamic(&engine, actor) {
                     continue;
                 }
-                let Ok(transform) = transforms.get(*entity) else {
+                let Ok(transform) = transforms.get_mut(*entity) else {
                     continue;
                 };
                 let forward =
-                    crate::world::forward_of(transform, blockloom_core::scene::Mode::TwoD);
-                if let Ok((mut velocity, _)) = bodies.get_mut(*entity) {
-                    let step = forward.truncate() * *steps / dt;
-                    if step.x.abs() > f32::EPSILON {
-                        velocity.linear.x = step.x;
-                    }
-                    if step.y.abs() > f32::EPSILON {
-                        velocity.linear.y = step.y;
-                    }
+                    crate::world::forward_of(&transform, blockloom_core::scene::Mode::TwoD);
+                let walk = walks.entry(actor.clone()).or_insert((Vec3::ZERO, [false; 3]));
+                for axis in 0..2 {
+                    let part = forward.truncate()[axis] * *steps;
+                    walk.0[axis] += part;
+                    walk.1[axis] |= part.abs() > 1e-5;
                 }
             }
             Effect::ChangePosition { actor, axis, by } => {
@@ -339,6 +372,44 @@ pub fn apply_effects(
                 }
             }
             _ => {}
+        }
+    }
+    for (actor, (total, named)) in &walks {
+        let Some(entity) = engine.entities.get(actor) else {
+            continue;
+        };
+        if let Ok((mut velocity, _)) = bodies.get_mut(*entity) {
+            for (axis, named) in named.iter().enumerate().take(2) {
+                if *named {
+                    velocity.linear[axis] = total[axis] / dt;
+                }
+            }
+        }
+    }
+    // Same release-braking as `dim3`: a walk sets an absolute velocity, so
+    // brake whoever went quiet, every axis but the one gravity pulls along.
+    let gravity = config
+        .single()
+        .map(|config| Vec3::new(config.gravity.x, config.gravity.y, 0.0))
+        .unwrap_or(Vec3::NEG_Y * 9.81);
+    let brakes = crate::world::stop_axes(gravity);
+    let previous = std::mem::replace(&mut engine.driven, driven);
+    for id in &previous {
+        if engine.driven.contains(id) {
+            continue;
+        }
+        let Some(entity) = engine.entities.get(id) else {
+            continue;
+        };
+        if !crate::world::is_dynamic(&engine, id) {
+            continue;
+        }
+        if let Ok((mut velocity, _)) = bodies.get_mut(*entity) {
+            for (axis, brake) in brakes.iter().enumerate().take(2) {
+                if *brake {
+                    velocity.linear[axis] = 0.0;
+                }
+            }
         }
     }
 }
