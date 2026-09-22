@@ -81,6 +81,15 @@ pub enum InstructionKind {
         y: Value,
         z: Value,
     },
+    /// One step toward a position along the navmesh, at `speed` units per
+    /// second. Steers around static obstacles; with no route it steps
+    /// straight at the target instead.
+    NavigateTo {
+        x: Value,
+        y: Value,
+        z: Value,
+        speed: Value,
+    },
     ChangePosition {
         axis: Axis,
         by: Value,
@@ -462,6 +471,12 @@ impl BlockKind for InstructionKind {
                 f(x, InputValueType::Any);
                 f(y, InputValueType::Any);
                 f(z, InputValueType::Any);
+            }
+            K::NavigateTo { x, y, z, speed } => {
+                f(x, InputValueType::Any);
+                f(y, InputValueType::Any);
+                f(z, InputValueType::Any);
+                f(speed, InputValueType::Any);
             }
             K::Glide { seconds, x, y, z } => {
                 f(seconds, InputValueType::Any);

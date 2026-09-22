@@ -25,6 +25,7 @@ export const INSTRUCTION_TYPES = [
   'BlockHeader',
   'Move',
   'GoTo',
+  'NavigateTo',
   'ChangePosition',
   'Glide',
   'Turn',
@@ -252,6 +253,19 @@ export interface SpeechBubbleStyleDto {
   font_asset: string | null;
 }
 
+/** How a 3D project is lit. Stored always, read only by the 3D runtime. */
+export interface LightingDto {
+  light_direction: [number, number, number];
+  light_color: string;
+  /** Lux the directional light emits; 10_000 is bright daylight. */
+  illuminance: number;
+  ambient_color: string;
+  /** Bevy-native brightness; 80 is the engine default. */
+  ambient_brightness: number;
+  /** Screen-space ambient occlusion on the 3D camera. */
+  ao_enabled: boolean;
+}
+
 export interface WorldDto {
   mode: Mode;
   background: string;
@@ -261,6 +275,7 @@ export interface WorldDto {
   fixed_rate: number;
   camera: CameraDto;
   speech_bubble: SpeechBubbleStyleDto;
+  lighting: LightingDto;
 }
 
 export interface StrandDto {

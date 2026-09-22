@@ -11,6 +11,7 @@ import type {
   CameraDto,
   InstrPath,
   InstructionDto,
+  LightingDto,
   Mode,
   PhysicsDto,
   PlacementDto,
@@ -84,6 +85,7 @@ export const setBackground = (color: string) => invoke<void>('set_background', {
 export const setGravity = (gravity: [number, number, number]) => invoke<void>('set_gravity', { gravity });
 export const setFixedRate = (fixedRate: number) => invoke<void>('set_fixed_rate', { fixedRate });
 export const setCamera = (camera: CameraDto) => invoke<void>('set_camera', { camera });
+export const setLighting = (lighting: LightingDto) => invoke<void>('set_lighting', { lighting });
 
 // ─── Actors ─────────────────────────────────────────────────────────────────
 export const selectActor = (actorId: string) => invoke<void>('select_actor', { actorId });

@@ -18,7 +18,7 @@ use blockloom_core::codegen;
 use blockloom_core::components::{ActorComponent, Components};
 use blockloom_core::library;
 use blockloom_core::project::{self, Actor, Project};
-use blockloom_core::scene::{Camera, Mode, Physics, Placement, Visual};
+use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, Visual};
 use blockloom_core::script;
 use blockloom_core::value::{Evaluated, Value};
 use blockstitch_core::editor::{ValueEdit, prune_value_buffers};
@@ -446,6 +446,32 @@ pub(crate) fn set_camera(
     push_undo(&mut s);
     if let Some(project) = s.project_mut() {
         project.world.camera = camera;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+pub(crate) fn set_lighting(
+    state: &SharedState,
+    app: &AppHandle,
+    lighting: Lighting,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let light_color =
+        normalize_block_color(&lighting.light_color).ok_or("Choose a valid light color")?;
+    let ambient_color =
+        normalize_block_color(&lighting.ambient_color).ok_or("Choose a valid ambient color")?;
+    if let Some(project) = s.project_mut() {
+        project.world.lighting = Lighting {
+            light_color,
+            ambient_color,
+            illuminance: lighting.illuminance.clamp(0.0, 200_000.0),
+            ambient_brightness: lighting.ambient_brightness.clamp(0.0, 1000.0),
+            ..lighting
+        };
     }
     auto_save(&s);
     sync_runtime(&mut s);

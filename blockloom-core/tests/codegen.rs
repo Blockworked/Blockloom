@@ -183,6 +183,7 @@ fn line_of(act: &Act) -> String {
     match act {
         Act::Move { steps } => format!("Move {steps:?}"),
         Act::GoTo { position } => format!("GoTo {position:?}"),
+        Act::NavigateTo { target, speed } => format!("NavigateTo {target:?} {speed:?}"),
         Act::ChangePosition { axis, by } => format!("ChangePosition {axis} {by:?}"),
         Act::Glide { seconds, target } => format!("Glide {seconds:?} {target:?}"),
         Act::Turn { axis, degrees } => format!("Turn {axis} {degrees:?}"),
@@ -285,6 +286,11 @@ fn line_of(effect: &Effect) -> Option<String> {
     let line = match effect {
         Effect::Move { actor, steps } => format!("{actor}|Move {steps:?}"),
         Effect::GoTo { actor, position } => format!("{actor}|GoTo {position:?}"),
+        Effect::NavigateTo {
+            actor,
+            target,
+            speed,
+        } => format!("{actor}|NavigateTo {target:?} {speed:?}"),
         Effect::ChangePosition { actor, axis, by } => {
             format!("{actor}|ChangePosition {} {by:?}", axis.index())
         }
@@ -883,6 +889,12 @@ fn the_rest_of_the_leaf_blocks_land_the_same() {
                 x: number(1.0),
                 y: op("Add", vec![number(2.0), number(3.0)]),
                 z: number(0.0),
+            },
+            K::NavigateTo {
+                x: number(1.0),
+                y: number(2.0),
+                z: number(0.0),
+                speed: op("Add", vec![number(2.0), number(3.0)]),
             },
             K::SetVisible { visible: false },
             K::SetMouseLocked { locked: true },

@@ -313,6 +313,60 @@ impl Default for SpeechBubbleStyle {
     }
 }
 
+/// How a 3D project is lit. Stored on every project but only read by the
+/// 3D runtime; 2D sprites ignore it. Defaults reproduce the old hardcoded
+/// scenery (one bright directional light, modest ambient, AO off).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Lighting {
+    /// Where the directional light shines from, aimed at the origin.
+    #[serde(default = "default_light_direction")]
+    pub light_direction: [f32; 3],
+    #[serde(default = "default_light_color")]
+    pub light_color: String,
+    /// Lux the directional light emits - 10_000 is bright daylight.
+    #[serde(default = "default_illuminance")]
+    pub illuminance: f32,
+    #[serde(default = "default_light_color")]
+    pub ambient_color: String,
+    #[serde(default = "default_ambient_brightness")]
+    pub ambient_brightness: f32,
+    /// Screen-space ambient occlusion on the 3D camera. Off by default:
+    /// it costs GPU time and changes the look of existing projects.
+    #[serde(default)]
+    pub ao_enabled: bool,
+}
+
+fn default_light_direction() -> [f32; 3] {
+    [8.0, 16.0, 8.0]
+}
+
+fn default_light_color() -> String {
+    "#FFFFFF".to_string()
+}
+
+fn default_illuminance() -> f32 {
+    10_000.0
+}
+
+/// Bevy's own default ambient brightness - keeping it means an old project
+/// with no lighting saved looks exactly like it used to.
+fn default_ambient_brightness() -> f32 {
+    80.0
+}
+
+impl Default for Lighting {
+    fn default() -> Self {
+        Self {
+            light_direction: default_light_direction(),
+            light_color: default_light_color(),
+            illuminance: default_illuminance(),
+            ambient_color: default_light_color(),
+            ambient_brightness: default_ambient_brightness(),
+            ao_enabled: false,
+        }
+    }
+}
+
 /// Everything about the world that isn't an actor.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct World {
@@ -332,6 +386,8 @@ pub struct World {
     pub camera: Camera,
     #[serde(default)]
     pub speech_bubble: SpeechBubbleStyle,
+    #[serde(default)]
+    pub lighting: Lighting,
 }
 
 fn default_background() -> String {
@@ -358,6 +414,7 @@ impl Default for World {
             fixed_rate: default_fixed_rate(),
             camera: Camera::default(),
             speech_bubble: SpeechBubbleStyle::default(),
+            lighting: Lighting::default(),
         }
     }
 }
@@ -381,6 +438,24 @@ mod tests {
     fn an_older_world_gets_the_default_speech_bubble_style() {
         let world: World = serde_json::from_str("{}").unwrap();
         assert_eq!(world.speech_bubble, SpeechBubbleStyle::default());
+    }
+
+    #[test]
+    fn an_older_world_gets_the_default_lighting() {
+        let world: World = serde_json::from_str("{}").unwrap();
+        assert_eq!(world.lighting, Lighting::default());
+        assert!(!world.lighting.ao_enabled);
+    }
+
+    #[test]
+    fn lighting_round_trip() {
+        let mut world = World::default();
+        world.lighting.light_direction = [4.0, 10.0, -6.0];
+        world.lighting.illuminance = 5000.0;
+        world.lighting.ao_enabled = true;
+
+        let json = serde_json::to_string(&world).unwrap();
+        assert_eq!(serde_json::from_str::<World>(&json).unwrap(), world);
     }
 
     #[test]

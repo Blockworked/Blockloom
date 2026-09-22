@@ -294,6 +294,39 @@ pub const BLOCKS: &[BlockSpec] = &[
         bodies: NO_BODIES,
     },
     BlockSpec {
+        r#type: "NavigateTo",
+        category: "Motion",
+        purpose: "Steps toward a position along the navmesh at speed units per second, steering around static obstacles.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "x",
+                id: "NavigateX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "NavigateY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "NavigateZ",
+                value: "Any",
+            },
+            Slot {
+                field: "speed",
+                id: "NavigateSpeed",
+                value: "Any",
+            },
+        ],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
         r#type: "ChangePosition",
         category: "Motion",
         purpose: "Changes the position along one axis by by.",

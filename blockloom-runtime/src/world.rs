@@ -24,6 +24,7 @@ use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
 use blockloom_core::components::CameraView;
+use blockloom_core::nav;
 use blockloom_core::project::Actor;
 use blockloom_core::scene::{Axis, BodyKind, Mode, Visual};
 use blockloom_core::sense::{ActorSense, Sensors, normalize_key};
@@ -36,6 +37,16 @@ use std::collections::{HashMap, HashSet};
 /// The one camera the project controls.
 #[derive(Component)]
 pub struct WorldCamera;
+
+/// The baked navmesh the `navigate to` block walks. Rebuilt from the
+/// project's static geometry every time the world is, so Play always walks
+/// what the editor shows. `None` means the bake had nothing to stand on, and
+/// navigation falls back to a straight step at the target.
+#[derive(Resource, Default)]
+pub struct NavMesh {
+    pub mesh: Option<polyanya::Mesh>,
+    pub mode: Mode,
+}
 
 /// The systems that advance the simulation itself, kept apart from the input
 /// and rendering systems in `Update` so the runtime can order them before the
@@ -331,6 +342,7 @@ pub fn rebuild_world(
     mut textures: ResMut<Assets<Image>>,
     actors: Query<Entity, With<ActorId>>,
     cameras: Query<Entity, With<WorldCamera>>,
+    mut navmesh: Option<ResMut<NavMesh>>,
 ) {
     if !engine.rebuild {
         return;
@@ -399,7 +411,11 @@ pub fn rebuild_world(
             }
         }
         Mode::ThreeD => {
-            dim3::spawn_scenery(&mut commands, &project.world.camera);
+            dim3::spawn_scenery(
+                &mut commands,
+                &project.world.camera,
+                &project.world.lighting,
+            );
             for actor in &project.actors {
                 let entity = dim3::spawn_actor(&mut commands, actor, &mut meshes, &mut materials)
                     .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::ThreeD));
@@ -413,6 +429,15 @@ pub fn rebuild_world(
     effects.0.push(Effect::SetGravity {
         gravity: project.world.gravity,
     });
+    // The navmesh walks what the editor shows: static ground as the boundary,
+    // every other static solid as a hole. A bake that finds nothing to stand
+    // on leaves `None`, and navigation steps straight at its target.
+    if let Some(nav) = navmesh.as_deref_mut() {
+        nav.mesh = nav::build_mesh(&project, nav::DEFAULT_AGENT_RADIUS)
+            .map_err(|error| tracing::warn!("navmesh bake failed: {error}"))
+            .ok();
+        nav.mode = project.world.mode;
+    }
     open_scripts(&mut engine, &project);
 }
 
@@ -1130,6 +1155,7 @@ pub fn apply_common(
     effects: Res<PendingEffects>,
     mut engine: NonSendMut<Engine>,
     dimension: Res<Dimension>,
+    navmesh: Option<Res<NavMesh>>,
     mut exit: MessageWriter<AppExit>,
     mut transforms: Query<(&mut Transform, &mut Visibility)>,
 ) {
@@ -1181,6 +1207,26 @@ pub fn apply_common(
             }
             Effect::GoTo { position, .. } => {
                 transform.translation = vec3_in(dimension.0, *position, transform.translation);
+            }
+            Effect::NavigateTo { target, speed, .. } => {
+                // One step along the baked mesh at `speed` units per second.
+                // No route, or no mesh at all, steps straight at the target,
+                // so the actor never idles where `go to` would have moved.
+                let mode = dimension.0;
+                let from3 = transform.translation;
+                let from = nav::plane_coords(mode, [from3.x, from3.y, from3.z]);
+                let to = nav::plane_coords(mode, *target);
+                let rate = engine.project.world.fixed_rate.clamp(1.0, 1000.0);
+                let max_step = speed.max(0.0) / rate;
+                let mesh = navmesh.as_deref().and_then(|nav| nav.mesh.as_ref());
+                let next = match mesh.and_then(|mesh| nav::find_path(mesh, from, to)) {
+                    Some(path) => nav::next_step(&path, from, max_step),
+                    None => nav::next_step(&[to], from, max_step),
+                };
+                transform.translation = match mode {
+                    Mode::TwoD => Vec3::new(next[0], next[1], from3.z),
+                    Mode::ThreeD => Vec3::new(next[0], from3.y, next[1]),
+                };
             }
             Effect::ChangePosition { axis, by, .. } => {
                 if is_dynamic(&engine, actor) {
@@ -2179,6 +2225,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
     match effect {
         Effect::Move { actor, .. }
         | Effect::GoTo { actor, .. }
+        | Effect::NavigateTo { actor, .. }
         | Effect::ChangePosition { actor, .. }
         | Effect::Glide { actor, .. }
         | Effect::Turn { actor, .. }

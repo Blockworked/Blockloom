@@ -66,6 +66,10 @@ pub enum LoopKind {
 pub enum Action {
     Move(Value),
     GoTo([Value; 3]),
+    NavigateTo {
+        target: [Value; 3],
+        speed: Value,
+    },
     ChangePosition {
         axis: Axis,
         by: Value,
@@ -299,6 +303,10 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             y.clone(),
             z.clone(),
         ]))),
+        K::NavigateTo { x, y, z, speed } => steps.push(Step::Action(Action::NavigateTo {
+            target: [x.clone(), y.clone(), z.clone()],
+            speed: speed.clone(),
+        })),
         K::ChangePosition { axis, by } => steps.push(Step::Action(Action::ChangePosition {
             axis: *axis,
             by: by.clone(),

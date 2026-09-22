@@ -60,8 +60,8 @@ mod runtime;
 pub use runtime::{
     ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH, ACT_BROADCAST,
     ACT_CHANGE_POSITION, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR, ACT_DELETE_ELEMENT,
-    ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_MOVE, ACT_POINT_TOWARDS,
-    ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH,
+    ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_MOVE, ACT_NAVIGATE_TO,
+    ACT_POINT_TOWARDS, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH,
     ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_FOCUS,
     ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED,
     ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY,
@@ -818,6 +818,12 @@ impl<'a> Pass<'a> {
         let line = match action {
             Action::Move(steps) => reading(self.number(steps)?, "Act::Move { steps: slot }"),
             Action::GoTo(target) => reading(self.vec3(target)?, "Act::GoTo { position: slot }"),
+            Action::NavigateTo { target, speed } => format!(
+                "    let target = {};\n    let speed = {};\n    \
+                 h.act(&me, Act::NavigateTo {{ target, speed: speed as f32 }});\n",
+                self.vec3(target)?,
+                self.number(speed)?
+            ),
             Action::ChangePosition { axis, by } => reading(
                 self.number(by)?,
                 &format!("Act::ChangePosition {{ axis: {}, by: slot }}", axis.index()),

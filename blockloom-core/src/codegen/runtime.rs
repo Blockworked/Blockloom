@@ -66,6 +66,10 @@ pub enum Act {
     GoTo {
         position: [f32; 3],
     },
+    NavigateTo {
+        target: [f32; 3],
+        speed: f32,
+    },
     ChangePosition {
         axis: usize,
         by: f32,
@@ -762,7 +766,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 8;
+pub const LOGIC_ABI_VERSION: u32 = 9;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -827,6 +831,8 @@ pub const ACT_SET_FOCUS: u32 = 35;
 pub const ACT_SET_UI_THEME: u32 = 36;
 /// `a` = variable name; `n0` != 0 clears instead of writing.
 pub const ACT_SAVE_VARIABLE: u32 = 37;
+/// `n0`, `n1`, `n2` = target; `n3` = speed in units per second.
+pub const ACT_NAVIGATE_TO: u32 = 39;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1030,6 +1036,20 @@ impl Host for AbiHost {
             Act::GoTo { position } => {
                 self.act_wire(actor, ACT_GO_TO, "", "", position.map(f64::from), &zero)
             }
+            Act::NavigateTo { target, speed } => self.act_many(
+                actor,
+                ACT_NAVIGATE_TO,
+                "",
+                "",
+                "",
+                &[
+                    target[0] as f64,
+                    target[1] as f64,
+                    target[2] as f64,
+                    speed as f64,
+                ],
+                &zero,
+            ),
             Act::ChangePosition { axis, by } => self.act_wire(
                 actor,
                 ACT_CHANGE_POSITION,

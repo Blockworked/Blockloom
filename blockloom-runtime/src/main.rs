@@ -68,6 +68,7 @@ fn main() {
     .insert_resource(ClearColor(Color::srgb(0.11, 0.14, 0.19)))
     .insert_resource(Dimension(mode))
     .init_resource::<PendingEffects>()
+    .init_resource::<world::NavMesh>()
     .init_resource::<ui::UiManager>()
     .insert_non_send(launch.into_engine())
     // Both of these only exist to talk to an editor, and a built game has
@@ -148,6 +149,9 @@ fn main() {
                 dt: 1.0 / 60.0,
                 substeps: 1,
             });
+            // `ScreenSpaceAmbientOcclusion` on the camera is driven by
+            // `bevy_pbr`'s `PbrPlugin` (inside `DefaultPlugins`), so no extra
+            // plugin is needed here.
             app.add_plugins(bevy_rapier3d::prelude::RapierPhysicsPlugin::<
                 bevy_rapier3d::prelude::NoUserData,
             >::default()

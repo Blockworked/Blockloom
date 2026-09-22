@@ -36,6 +36,7 @@ pub mod components;
 mod distribution;
 pub mod fields;
 pub mod library;
+pub mod nav;
 pub mod pack;
 pub mod project;
 pub mod save;

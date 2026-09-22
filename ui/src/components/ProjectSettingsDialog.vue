@@ -17,10 +17,11 @@ import {
   setCamera,
   setFixedRate,
   setGravity,
+  setLighting,
   setMode,
   setProjectIcon,
 } from '../tauri';
-import type { CameraDto, Mode } from '../types';
+import type { CameraDto, LightingDto, Mode } from '../types';
 
 const emit = defineEmits<{ close: [] }>();
 const iconPreview = ref('');
@@ -87,6 +88,19 @@ function writeGravity(index: number, value: number) {
 function writeCamera(next: Partial<CameraDto>) {
   if (!state.project) return;
   void setCamera({ ...state.project.world.camera, ...next }).catch((err: unknown) => console.error(err));
+}
+
+function writeLighting(next: Partial<LightingDto>) {
+  if (!state.project) return;
+  void setLighting({ ...state.project.world.lighting, ...next }).catch((err: unknown) => console.error(err));
+}
+
+function setLightColor(e: Event) {
+  writeLighting({ light_color: (e.target as HTMLInputElement).value.toUpperCase() });
+}
+
+function setAmbientColor(e: Event) {
+  writeLighting({ ambient_color: (e.target as HTMLInputElement).value.toUpperCase() });
 }
 
 function writeFixedRate(e: Event) {
@@ -193,6 +207,46 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown));
         <p class="settings-note">
           Where the camera stands when no actor has a Camera component. A 2D unit
           is a pixel and a 3D unit is a metre.
+        </p>
+      </section>
+
+      <section v-if="state.project && mode === 'ThreeD'" class="settings-section">
+        <h3 class="settings-section-title">Lighting</h3>
+        <div class="settings-row triple">
+          <label>Light direction</label>
+          <input
+            v-for="(coordinate, i) in state.project.world.lighting.light_direction"
+            :key="i"
+            type="number"
+            step="any"
+            :value="coordinate"
+            @change="e => { const light_direction = [...state.project!.world.lighting.light_direction] as [number, number, number]; light_direction[i] = num(e, coordinate); writeLighting({ light_direction }); }"
+          >
+        </div>
+        <div class="settings-row">
+          <label>Light color</label>
+          <input type="color" :value="state.project.world.lighting.light_color" @change="setLightColor">
+        </div>
+        <div class="settings-row">
+          <label>Brightness</label>
+          <input type="number" min="0" max="200000" step="any" :value="state.project.world.lighting.illuminance" @change="e => writeLighting({ illuminance: Math.min(Math.max(num(e, 10000), 0), 200000) })">
+        </div>
+        <div class="settings-row">
+          <label>Ambient color</label>
+          <input type="color" :value="state.project.world.lighting.ambient_color" @change="setAmbientColor">
+        </div>
+        <div class="settings-row">
+          <label>Ambient</label>
+          <input type="number" min="0" max="1000" step="any" :value="state.project.world.lighting.ambient_brightness" @change="e => writeLighting({ ambient_brightness: Math.min(Math.max(num(e, 80), 0), 1000) })">
+        </div>
+        <div class="settings-row">
+          <label>Ambient occlusion</label>
+          <input type="checkbox" :checked="state.project.world.lighting.ao_enabled" @change="e => writeLighting({ ao_enabled: (e.target as HTMLInputElement).checked })">
+        </div>
+        <p class="settings-note">
+          Where the 3D sun shines from (aimed at the origin), and how the scene's
+          ambient light looks. Occlusion darkens creases where objects meet but
+          costs GPU time. Applies on the next run of the game.
         </p>
       </section>
 

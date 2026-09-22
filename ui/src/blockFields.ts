@@ -241,6 +241,13 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
   // ── Motion ───────────────────────────────────────────────────────────────
   Move: { head: [label('move'), value('MoveSteps', 'steps'), label('steps')] },
   GoTo: { head: vector('go to', ['GoToX', 'GoToY', 'GoToZ'], ['x', 'y', 'z']) },
+  NavigateTo: {
+    head: [
+      ...vector('navigate to', ['NavigateX', 'NavigateY', 'NavigateZ'], ['x', 'y', 'z']),
+      label('at speed'),
+      value('NavigateSpeed', 'speed'),
+    ],
+  },
   ChangePosition: {
     head: [
       label('change'),

@@ -787,6 +787,15 @@ impl Vm {
                     position,
                 });
             }
+            Action::NavigateTo { target, speed } => {
+                let position = self.eval_vec3(target, actor, params, out);
+                let speed = self.eval_f32(speed, actor, params, out);
+                out.push(Effect::NavigateTo {
+                    actor: owner,
+                    target: position,
+                    speed,
+                });
+            }
             Action::ChangePosition { axis, by } => {
                 let by = self.eval_f32(by, actor, params, out);
                 out.push(Effect::ChangePosition {

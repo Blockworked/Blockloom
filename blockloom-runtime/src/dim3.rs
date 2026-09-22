@@ -3,6 +3,7 @@
 
 use crate::engine::{Engine, PendingEffects, PhysicsPose, PrevPose};
 use bevy::ecs::system::EntityCommands;
+use bevy::pbr::ScreenSpaceAmbientOcclusion;
 use bevy::prelude::*;
 use bevy_rapier3d::prelude as rp;
 use blockloom_core::project::Actor;
@@ -443,9 +444,15 @@ pub fn record_poses(mut posed: Query<(&Transform, &mut PhysicsPose, &mut PrevPos
     }
 }
 
-/// A light and a camera, so a fresh 3D project isn't a black window.
-pub fn spawn_scenery(commands: &mut Commands, camera: &blockloom_core::scene::Camera) {
-    commands.spawn((
+/// A light and a camera, so a fresh 3D project isn't a black window. The
+/// light and the ambient come from the project's lighting settings; AO is a
+/// component on the camera, so it is only there when the project asks for it.
+pub fn spawn_scenery(
+    commands: &mut Commands,
+    camera: &blockloom_core::scene::Camera,
+    lighting: &blockloom_core::scene::Lighting,
+) {
+    let mut camera_entity = commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
             fov: 75.0_f32.to_radians(),
@@ -457,12 +464,28 @@ pub fn spawn_scenery(commands: &mut Commands, camera: &blockloom_core::scene::Ca
         ),
         crate::world::WorldCamera,
     ));
+    if lighting.ao_enabled {
+        camera_entity.insert(ScreenSpaceAmbientOcclusion::default());
+    }
+    // A zero direction has nowhere to point, so fall back to straight down.
+    let dir = lighting.light_direction;
+    let from = if dir.iter().all(|v| *v == 0.0) {
+        Vec3::new(0.0, 16.0, 0.0)
+    } else {
+        Vec3::new(dir[0], dir[1], dir[2])
+    };
     commands.spawn((
         DirectionalLight {
-            illuminance: 10_000.0,
+            color: crate::world::parse_color(&lighting.light_color),
+            illuminance: lighting.illuminance.max(0.0),
             shadow_maps_enabled: true,
             ..default()
         },
-        Transform::from_xyz(8.0, 16.0, 8.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_translation(from).looking_at(Vec3::ZERO, Vec3::Y),
     ));
+    commands.insert_resource(GlobalAmbientLight {
+        color: crate::world::parse_color(&lighting.ambient_color),
+        brightness: lighting.ambient_brightness.max(0.0),
+        ..default()
+    });
 }

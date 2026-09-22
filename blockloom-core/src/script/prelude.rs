@@ -442,6 +442,19 @@ impl Actor {
         );
     }
 
+    /// One step toward a position along the navmesh, at `speed` units per
+    /// second. Steers around static obstacles; with no route it steps
+    /// straight at the target instead.
+    pub fn navigate_to(&self, x: f32, y: f32, z: f32, speed: f32) {
+        self.act_many(
+            ACT_NAVIGATE_TO,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            &[x as f64, y as f64, z as f64, speed as f64],
+        );
+    }
+
     pub fn change_position(&self, axis: Axis, by: f32) {
         self.act(
             ACT_CHANGE_POSITION,

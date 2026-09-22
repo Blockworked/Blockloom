@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 blockloom-core = { path = "../blockloom-core" }
 blockloom-protocol = { path = "../blockloom-protocol" }
+polyanya.workspace = true
 bevy.workspace = true
 bevy_rapier2d.workspace = true
 bevy_rapier3d.workspace = true

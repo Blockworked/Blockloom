@@ -26,6 +26,8 @@ function defaults(type: InstructionType): Record<string, unknown> {
       return { steps: numberValue(10) };
     case 'GoTo':
       return { x: numberValue(0), y: numberValue(0), z: numberValue(0) };
+    case 'NavigateTo':
+      return { x: numberValue(0), y: numberValue(0), z: numberValue(0), speed: numberValue(4) };
     case 'ChangePosition':
       return { axis: 'X', by: numberValue(10) };
     case 'Glide':

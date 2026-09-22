@@ -381,6 +381,11 @@ extern "C" fn act(
             actor,
             position: vector,
         },
+        abi::ACT_NAVIGATE_TO => Effect::NavigateTo {
+            actor,
+            target: vector,
+            speed: at(3) as f32,
+        },
         abi::ACT_CHANGE_POSITION => Effect::ChangePosition {
             actor,
             axis: axis_of(n0),

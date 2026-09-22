@@ -20,6 +20,13 @@ pub enum Effect {
         actor: String,
         position: [f32; 3],
     },
+    /// One step toward `target` along the navmesh, at `speed` units per
+    /// second. The host resolves the path and moves at most one step.
+    NavigateTo {
+        actor: String,
+        target: [f32; 3],
+        speed: f32,
+    },
     ChangePosition {
         actor: String,
         axis: Axis,

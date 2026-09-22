@@ -263,6 +263,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             required: true,
         }],
     },
+    CommandSpec {
+        name: "set-lighting",
+        cmd: "set_lighting",
+        aliases: &["set_lighting"],
+        summary: "Set the 3D world's light direction, colors, brightness and AO.",
+        args: &[ArgSpec {
+            name: "lighting",
+            ty: "object",
+            required: true,
+        }],
+    },
     // ── Actors ────────────────────────────────────────────────────────────
     CommandSpec {
         name: "select-actor",

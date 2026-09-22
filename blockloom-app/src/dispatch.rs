@@ -6,7 +6,7 @@ use crate::commands;
 use crate::state::{InstrPath, ValueLocation};
 use blockloom_core::blocks::{BlockPiece, BlockShape, Instruction};
 use blockloom_core::components::ActorComponent;
-use blockloom_core::scene::{Camera, Mode, Physics, Placement, Visual};
+use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, Visual};
 use blockloom_core::value::Value as BlockValue;
 use blockloom_core::wire;
 use serde::de::DeserializeOwned;
@@ -95,6 +95,10 @@ impl Backend {
             "set_camera" => {
                 let camera: Camera = arg(&args, "camera")?;
                 to_json(commands::set_camera(state, app, camera)?)
+            }
+            "set_lighting" => {
+                let lighting: Lighting = arg(&args, "lighting")?;
+                to_json(commands::set_lighting(state, app, lighting)?)
             }
 
             // ── Actors ─────────────────────────────────────────────────────
