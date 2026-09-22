@@ -314,6 +314,15 @@ pub enum InstructionKind {
     DeleteElement {
         element: Value,
     },
+    /// Hands the keyboard to a text input without waiting for a click, so a
+    /// menu can open with its field already live. An element that isn't a
+    /// text input takes the keyboard off whoever had it, as clicking away
+    /// does.
+    FocusElement {
+        element: Value,
+    },
+    /// Takes the keyboard back off whichever input holds it.
+    ClearFocus,
     /// Freezes the world: no world strand advances, no physics steps, no key
     /// or collision event queues. Strands a UI click started keep running,
     /// which is what makes a pause menu's buttons work.
@@ -535,9 +544,9 @@ impl BlockKind for InstructionKind {
                 f(id, InputValueType::Any);
                 f(value, InputValueType::Any);
             }
-            K::HideElement { element } | K::DeleteElement { element } => {
-                f(element, InputValueType::Any)
-            }
+            K::HideElement { element }
+            | K::DeleteElement { element }
+            | K::FocusElement { element } => f(element, InputValueType::Any),
             K::If { condition, .. } | K::IfElse { condition, .. } | K::While { condition, .. } => {
                 f(condition, InputValueType::Bool)
             }
@@ -572,6 +581,7 @@ impl BlockKind for InstructionKind {
             | K::WhenUiClicked { .. }
             | K::WhenUiChanged { .. }
             | K::HideAllUi
+            | K::ClearFocus
             | K::PauseGame
             | K::ResumeGame => {}
         }

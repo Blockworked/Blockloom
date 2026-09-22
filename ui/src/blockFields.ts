@@ -435,6 +435,8 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
   HideElement: { head: [label('hide'), value('UiTarget', 'element')] },
   HideAllUi: { head: [label('hide all ui')] },
   DeleteElement: { head: [label('delete'), value('UiTarget', 'element')] },
+  FocusElement: { head: [label('focus'), value('UiTarget', 'element')] },
+  ClearFocus: { head: [label('clear focus')] },
   PauseGame: { head: [label('pause game')] },
   ResumeGame: { head: [label('resume game')] },
 

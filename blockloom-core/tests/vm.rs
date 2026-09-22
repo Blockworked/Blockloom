@@ -950,6 +950,31 @@ fn a_pause_inside_a_ui_strand_leaves_that_strand_running() {
 }
 
 #[test]
+fn focusing_names_the_input_the_block_meant_and_clearing_names_nobody() {
+    let project = project_with(vec![started(vec![
+        InstructionKind::FocusElement {
+            element: Value::text(" name "),
+        },
+        InstructionKind::ClearFocus,
+    ])]);
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(
+        effects
+            .iter()
+            .filter(|effect| !matches!(effect, Effect::Error { .. }))
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![
+            Effect::SetFocus {
+                id: "name".to_string()
+            },
+            // `clear focus` is the same effect with nobody named.
+            Effect::SetFocus { id: String::new() },
+        ]
+    );
+}
+
+#[test]
 fn pause_game_freezes_the_vm_the_moment_it_runs() {
     let project = project_with(vec![
         started(vec![say("before"), InstructionKind::PauseGame]),

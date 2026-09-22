@@ -265,6 +265,12 @@ pub fn apply_ui_effects(
                     });
                 }
             }
+            // An id nothing answers to takes the keyboard back rather than
+            // reporting: `clear focus` is the same act with an empty id, and
+            // clicking away has always released it silently.
+            Effect::SetFocus { id } => {
+                manager.focus_on(if id.is_empty() { None } else { Some(id) })
+            }
             Effect::SetPaused { paused } => {
                 let now = time.elapsed_secs() as f64;
                 world::set_paused(&mut engine, *paused, now);
@@ -320,6 +326,7 @@ pub fn draw_ui(
     despawn_dropped(&mut commands, &mut manager);
 
     let dir = engine.project_dir.clone();
+    let focused = manager.focus().unwrap_or_default().to_string();
     let mut screen = roots.iter().next();
     for id in manager.take_pending() {
         let Some(node) = manager.get(&id) else {
@@ -358,7 +365,7 @@ pub fn draw_ui(
                 }
             }
         };
-        let entity = spawn_element(&mut commands, &assets, dir.as_deref(), node);
+        let entity = spawn_element(&mut commands, &assets, dir.as_deref(), node, id == focused);
         commands.entity(under).add_child(entity);
         manager.attach(&id, entity);
     }
@@ -403,7 +410,7 @@ pub fn draw_ui(
         }
         *background = BackgroundColor(match &element.style.background {
             Some(hex) => world::parse_color(hex),
-            None => crate::ui::background_for(element.kind),
+            None => crate::ui::background_for(element.kind, id == focused),
         });
         node.border_radius = BorderRadius::all(Val::Px(
             element
@@ -466,6 +473,7 @@ fn spawn_element(
     assets: &AssetServer,
     dir: Option<&std::path::Path>,
     node: &crate::ui::UiNode,
+    focused: bool,
 ) -> Entity {
     let id = node.spec.id.clone();
     let parented = !node.parent.is_empty();
@@ -473,7 +481,7 @@ fn spawn_element(
     let mut entity = commands.spawn((
         Name::new(format!("ui: {id}")),
         base,
-        BackgroundColor(crate::ui::background_for(node.kind)),
+        BackgroundColor(crate::ui::background_for(node.kind, focused)),
     ));
     // A top-level element takes its anchor's share of its own size back off,
     // so a right-anchored one ends up inside the window rather than past it.

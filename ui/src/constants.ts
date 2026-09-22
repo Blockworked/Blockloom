@@ -81,6 +81,9 @@ export const UI_PROP_OPTIONS = [
   { value: 'Min', label: 'min' },
   { value: 'Max', label: 'max' },
   { value: 'Value', label: 'value' },
+  { value: 'Step', label: 'step' },
+  { value: 'Allow', label: 'allow' },
+  { value: 'MaxLength', label: 'max length' },
 ];
 
 /** A panel either swallows the clicks behind it or it doesn't. */

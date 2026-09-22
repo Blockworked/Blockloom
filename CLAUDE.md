@@ -514,6 +514,24 @@ seven kinds share one set of field ids (`UiId`, `UiContent`, `UiX`, ...). The
 JSON field is `element` rather than `id`, because a flattened instruction
 already carries its own `id` on the wire (see `wire.rs`).
 
+Three properties have no `show` row and so live beside the style rather than
+on the element: a slider's `step`, and a text input's `allow` and `max
+length`. A HUD strand that re-shows its own slider every frame would
+otherwise wipe them. `step` rounds a slider's number to a multiple of itself
+measured from `min`, which is also applied to a number written straight in,
+so a step that doesn't divide the span leaves the far end short. `allow`
+names a character set (`any`, `numbers`, `digits`, `letters`) by a word
+somebody types, and anything else reads as `any` - a typo shouldn't deaden a
+field. A refused keystroke is simply not there: no error, since somebody
+holding a key down means no harm by it.
+
+Five reporters read the interface: `value of (id)` and `text of (id)`
+(which is a label's words, or an empty input's placeholder), `is (id)
+shown?`, `does (id) exist?` and `the focused element`. `hide` leaves an
+element existing but not shown; only `delete` takes it out of both. An id
+nothing answers to is an error for the first two, the way a missing actor
+is, and plainly false for the other two.
+
 `blockloom-runtime/src/ui.rs` is the id map and the rules over it - the
 hit test, the subtree walk, the anchoring - Bevy-free but for the entity
 handle, so they unit-test without a window. `overlay.rs` is the Bevy half:
@@ -528,7 +546,9 @@ topmost visible element whose rectangle covers the pointer wins, and only
 what nothing wanted reaches the world picks. A visible modal element swallows
 the rest, so clicking beside a pause menu never fires the gun behind it. A
 click on a text input hands it the keyboard; while it holds it, game strands
-see no keys at all.
+see no keys at all. `focus (id)` and `clear focus` move the keyboard without
+a click, and the input holding it is drawn brighter, since otherwise nothing
+would say where the typing is going.
 
 `pause game` freezes the world: no world strand advances, no physics steps,
 no key or collision event queues, so resuming never bursts. The one fork is
@@ -592,7 +612,10 @@ lands.
   per-element props over dark translucent defaults. Settings built with it
   live in variables and last one run.
 - A text input is basic: no selection, no cursor, no IME. Backspace rubs out,
-  Escape and Enter let go, and every other character key appends.
+  Escape and Enter let go, and every other character key appends - subject to
+  the input's own `allow` and `max length`, which is all the validation there
+  is. Backspace ignores both, so a rule written after the typing doesn't trap
+  what is already in the field.
 - A clone copies the template as the editor authored it, standing where the
   template stands now. What `attach`/`detach` did to the template since Play
   doesn't carry over - re-attaching a component has always meant the authored

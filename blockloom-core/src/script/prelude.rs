@@ -751,6 +751,62 @@ impl Actor {
             .unwrap_or_default()
     }
 
+    /// The words an element is showing - a label's text, a button's caption,
+    /// or an empty input's placeholder.
+    pub fn ui_caption(&self, id: &str) -> String {
+        self.text(TEXT_UI_TEXT, Str::borrow(id), Str::EMPTY)
+            .unwrap_or_default()
+    }
+
+    /// Whether an element is on the screen right now, which a hidden parent
+    /// decides as surely as its own `hide` does.
+    pub fn ui_shown(&self, id: &str) -> bool {
+        self.number(READ_UI_SHOWN, Str::borrow(id), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
+    /// Whether an element by that name has been made at all. A hidden one
+    /// still counts - `hide` doesn't forget an element, `delete` does.
+    pub fn ui_exists(&self, id: &str) -> bool {
+        self.number(READ_UI_EXISTS, Str::borrow(id), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
+    /// Hands the keyboard to a text input without waiting for a click.
+    pub fn focus_ui(&self, id: &str) {
+        self.act(
+            ACT_UI_FOCUS,
+            Str::borrow(id),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Takes the keyboard back off whichever input holds it.
+    pub fn clear_ui_focus(&self) {
+        self.act(
+            ACT_UI_FOCUS,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Which text input holds the keyboard, or an empty string. While one
+    /// does, a script's `key_down` sees nothing, the same as a block's.
+    pub fn ui_focus(&self) -> String {
+        self.text(TEXT_UI_FOCUS, Str::EMPTY, Str::EMPTY)
+            .unwrap_or_default()
+    }
+
     /// Freezes the world, as the `pause game` block does. Scripts and blocks
     /// alike stop; a strand the interface started carries on.
     pub fn set_paused(&self, paused: bool) {

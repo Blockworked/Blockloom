@@ -225,7 +225,19 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
         }
         abi::READ_MOUSE_LOCKED => bool_as(sense::read(|sensors| sensors.mouse_locked)),
         abi::READ_GAME_PAUSED => bool_as(sense::read(|sensors| sensors.paused)),
-        abi::READ_UI_VALUE => match sense::read(|sensors| sensors.ui.get(a.trim()).cloned())? {
+        abi::READ_UI_SHOWN => bool_as(sense::read(|sensors| {
+            sensors
+                .ui
+                .get(a.trim())
+                .is_some_and(|element| element.shown)
+        })),
+        abi::READ_UI_EXISTS => bool_as(sense::read(|sensors| sensors.ui.contains_key(a.trim()))),
+        abi::READ_UI_VALUE => match sense::read(|sensors| {
+            sensors
+                .ui
+                .get(a.trim())
+                .map(|element| element.value.clone())
+        })? {
             Evaluated::Number(n) => Some(n),
             Evaluated::Bool(value) => bool_as(value),
             // A text input still answers if what was typed reads as a
@@ -307,8 +319,19 @@ extern "C" fn read_text(
         abi::TEXT_NEW_ACTOR => me(ctx.actor)
             .map(|me| me.last_created)
             .filter(|id| !id.is_empty()),
-        abi::TEXT_UI_VALUE => {
-            sense::read(|sensors| sensors.ui.get(a.trim()).map(Evaluated::as_text))
+        abi::TEXT_UI_VALUE => sense::read(|sensors| {
+            sensors
+                .ui
+                .get(a.trim())
+                .map(|element| element.value.as_text())
+        }),
+        abi::TEXT_UI_TEXT => {
+            sense::read(|sensors| sensors.ui.get(a.trim()).map(|element| element.text.clone()))
+        }
+        // An empty answer is [`MISSING`], which a script reads as "nobody
+        // holds it" - the same shape `the parent` uses for none.
+        abi::TEXT_UI_FOCUS => {
+            sense::read(|sensors| Some(sensors.ui_focus.clone()).filter(|id| !id.is_empty()))
         }
         _ => None,
     };
@@ -462,6 +485,9 @@ extern "C" fn act(
             all: n0 != 0.0,
         },
         abi::ACT_UI_DELETE => Effect::DeleteElement {
+            id: a.trim().to_string(),
+        },
+        abi::ACT_UI_FOCUS => Effect::SetFocus {
             id: a.trim().to_string(),
         },
         abi::ACT_SET_PAUSED => Effect::SetPaused { paused: n0 != 0.0 },

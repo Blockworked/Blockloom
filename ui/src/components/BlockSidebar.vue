@@ -64,6 +64,8 @@ const BLOCK_GROUPS: { label: string; types: InstructionType[] }[] = [
       'HideElement',
       'HideAllUi',
       'DeleteElement',
+      'FocusElement',
+      'ClearFocus',
       'PauseGame',
       'ResumeGame',
     ],

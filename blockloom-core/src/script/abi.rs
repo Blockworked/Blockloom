@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 7;
+pub const ABI_VERSION: u32 = 8;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -88,6 +88,12 @@ pub const READ_MOUSE_LOCKED: u32 = 17;
 pub const READ_UI_VALUE: u32 = 18;
 /// Whether `pause game` has the world frozen right now.
 pub const READ_GAME_PAUSED: u32 = 19;
+/// `a` = an interface element's id. Whether it and everything it flows
+/// inside are visible. An id nothing answers to reads as 0, not [`MISSING`].
+pub const READ_UI_SHOWN: u32 = 20;
+/// `a` = an interface element's id. Whether the blocks have made one by that
+/// name at all - a hidden one still counts.
+pub const READ_UI_EXISTS: u32 = 21;
 
 // ─── What a script can read as text ────────────────────────────────────────
 
@@ -102,6 +108,11 @@ pub const TEXT_PARENT: u32 = 4;
 pub const TEXT_NEW_ACTOR: u32 = 5;
 /// `a` = an interface element's id; a text input's typed text.
 pub const TEXT_UI_VALUE: u32 = 6;
+/// `a` = an interface element's id; the words it is showing, which for an
+/// empty input is its placeholder.
+pub const TEXT_UI_TEXT: u32 = 7;
+/// The id of the text input holding the keyboard, or [`MISSING`] for none.
+pub const TEXT_UI_FOCUS: u32 = 8;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -174,6 +185,9 @@ pub const ACT_UI_HIDE: u32 = 30;
 pub const ACT_UI_DELETE: u32 = 31;
 /// `n0` != 0 freezes the world.
 pub const ACT_SET_PAUSED: u32 = 32;
+/// `a` = a text input's id, which is handed the keyboard. An empty id, or
+/// one naming anything else, takes it back instead.
+pub const ACT_UI_FOCUS: u32 = 33;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

@@ -36,6 +36,19 @@ fn me() -> Result<sense::ActorSense, String> {
     })
 }
 
+/// One interface element, or an error naming the id nothing answers to -
+/// a missing element is a mistake worth reporting, the way a missing actor
+/// is, rather than a silent empty string.
+fn element(id: &str, f: impl FnOnce(&sense::UiSense) -> Evaluated) -> Result<Evaluated, String> {
+    sense::read(|sensors| {
+        sensors
+            .ui
+            .get(id.trim())
+            .map(f)
+            .ok_or_else(|| format!("there's no interface element called \"{id}\""))
+    })
+}
+
 fn distance(a: [f32; 3], b: [f32; 3]) -> f64 {
     let dx = (a[0] - b[0]) as f64;
     let dy = (a[1] - b[1]) as f64;
@@ -127,15 +140,62 @@ static OPERATORS: &[ExtOperator] = &[
         // error rather than a silent zero, as a missing actor is.
         eval: |args| {
             let id = args[0].as_text();
-            let wanted = id.trim();
-            sense::read(|sensors| {
+            element(&id, |element| element.value.clone())
+        },
+    },
+    ExtOperator {
+        kind: "UiText",
+        op: "UiText",
+        arity: 1,
+        default_args: || vec![text("")],
+        // The words an element is showing: a label's text, a button's
+        // caption, what has been typed into an input or, while nothing has,
+        // its placeholder.
+        eval: |args| {
+            let id = args[0].as_text();
+            element(&id, |element| Evaluated::Text(element.text.clone()))
+        },
+    },
+    ExtOperator {
+        kind: "UiShown",
+        op: "UiShown",
+        arity: 1,
+        default_args: || vec![text("")],
+        // Whether it is on the screen right now, which a hidden parent
+        // decides as surely as its own `hide` does. An id nothing answers to
+        // is not shown - unlike `value of`, there is a sensible answer here.
+        eval: |args| {
+            let id = args[0].as_text();
+            Ok(Evaluated::Bool(sense::read(|sensors| {
                 sensors
                     .ui
-                    .get(wanted)
-                    .cloned()
-                    .ok_or_else(|| format!("there's no interface element called \"{id}\""))
-            })
+                    .get(id.trim())
+                    .is_some_and(|element| element.shown)
+            })))
         },
+    },
+    ExtOperator {
+        kind: "UiExists",
+        op: "UiExists",
+        arity: 1,
+        default_args: || vec![text("")],
+        // Whether the blocks have made one by that name at all - hidden
+        // still counts, since `hide` doesn't forget an element.
+        eval: |args| {
+            let id = args[0].as_text();
+            Ok(Evaluated::Bool(sense::read(|sensors| {
+                sensors.ui.contains_key(id.trim())
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "UiFocus",
+        op: "UiFocus",
+        arity: 0,
+        default_args: Vec::new,
+        // Which text input holds the keyboard, or an empty string. What a
+        // strand checks before reading a key itself.
+        eval: |_| Ok(Evaluated::Text(sense::read(|s| s.ui_focus.clone()))),
     },
     ExtOperator {
         kind: "MyPosition",

@@ -648,7 +648,8 @@ pub fn publish_sensors(
         mouse_locked,
         mouse_down: focused && buttons.pressed(MouseButton::Left),
         actors: senses,
-        ui: manager.values(),
+        ui: manager.senses(),
+        ui_focus: manager.focus().unwrap_or_default().to_string(),
     });
 
     // No world event queues while paused, so resuming never bursts.
@@ -704,12 +705,23 @@ pub fn type_into_focused_input(
     if !engine.running {
         return;
     }
-    let mut text = manager
-        .get(&focused)
-        .map(|node| node.value.as_text())
-        .unwrap_or_default();
+    let Some(node) = manager.get(&focused) else {
+        typed.clear();
+        return;
+    };
+    let (allow, ceiling) = (node.allow(), node.max_length());
+    let mut text = node.value.as_text();
     let before = text.clone();
     let mut release = false;
+    // Every character goes through the input's own rules, one at a time:
+    // a full field takes no more, and a numeric one takes no letters. What
+    // is refused is simply not there - a rubbed-out keystroke rather than
+    // an error, since a person holding a key down means no harm by it.
+    let write = |text: &mut String, ch: char| {
+        if let Some(next) = blockloom_core::ui::typed(text, ch, allow, ceiling) {
+            *text = next;
+        }
+    };
     for key in typed.read() {
         if key.state != ButtonState::Pressed {
             continue;
@@ -719,9 +731,13 @@ pub fn type_into_focused_input(
             Key::Backspace => {
                 text.pop();
             }
-            Key::Space => text.push(' '),
+            Key::Space => write(&mut text, ' '),
             Key::Enter => release = true,
-            Key::Character(written) => text.push_str(written),
+            Key::Character(written) => {
+                for ch in written.chars() {
+                    write(&mut text, ch);
+                }
+            }
             _ => {}
         }
     }
@@ -775,8 +791,16 @@ pub fn detect_clicks(
     // this frame - so a panel and a label are as clickable as a button.
     let hit = manager
         .hit(cursor, |node| screen_rect(&laid_out, node.entity))
-        .map(|node| (node.spec.id.clone(), node.kind, node.range, node.entity));
-    if let Some((id, kind, range, entity)) = hit {
+        .map(|node| {
+            (
+                node.spec.id.clone(),
+                node.kind,
+                node.range,
+                node.step(),
+                node.entity,
+            )
+        });
+    if let Some((id, kind, range, step, entity)) = hit {
         // Clicking a text input hands it the keyboard; clicking anything
         // else takes it back, which is how clicking away releases the keys.
         manager.focus_on(if kind == UiKind::Input {
@@ -790,7 +814,7 @@ pub fn detect_clicks(
             UiKind::Slider => screen_rect(&laid_out, entity).and_then(|rect| {
                 let width = rect.width().max(1.0);
                 let fraction = (cursor.x - rect.min.x) / width;
-                let at = crate::ui::slider_at(range, fraction);
+                let at = crate::ui::slider_at(range, step, fraction);
                 manager.changed(&id, Evaluated::Number(at))
             }),
             UiKind::Toggle => {
@@ -2037,6 +2061,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::HideElement { .. }
         | Effect::DeleteElement { .. }
         | Effect::SetUiProp { .. }
+        | Effect::SetFocus { .. }
         | Effect::SetPaused { .. }
         | Effect::SetParent { .. }
         | Effect::CreateClone { .. }
@@ -3639,6 +3664,217 @@ mod tests {
             .get("volume")
             .and_then(|node| node.value.as_number().ok());
         assert_eq!(at, Some(60.0));
+    }
+
+    /// An app with one text input holding the keyboard, ready to be typed
+    /// into, and an actor whose canvas says when that input changed. The
+    /// element carries whatever `rules` writes to it.
+    fn typing_harness(rules: impl FnOnce(&mut crate::ui::UiManager)) -> App {
+        use blockloom_core::blocks::{Instruction, InstructionKind as K, Strand};
+
+        let mut actor = Actor::new(
+            "Target",
+            Visual::Rect {
+                color: "#FFFFFF".to_string(),
+                size: [10.0, 10.0],
+            },
+        );
+        actor.id = "a1".to_string();
+        actor.graph.strands = vec![Strand::with_instructions(
+            0,
+            0,
+            vec![
+                Instruction::new(K::WhenUiChanged {
+                    element: "name".to_string(),
+                }),
+                Instruction::new(K::Say {
+                    text: blockloom_core::value::Value::text("typed"),
+                }),
+            ],
+        )];
+
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.project.actors = vec![actor];
+        let project = engine.project.clone();
+        engine.vm.load(&project);
+        engine.running = true;
+        engine.window_focused = true;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(Dimension(Mode::TwoD));
+        app.init_resource::<Messages<KeyboardInput>>();
+        app.init_resource::<crate::ui::UiManager>();
+        app.insert_non_send(engine);
+        app.add_systems(Update, type_into_focused_input);
+
+        let mut manager = app.world_mut().resource_mut::<crate::ui::UiManager>();
+        manager.show(element("name", blockloom_core::ui::UiKind::Input));
+        manager.take_pending();
+        manager.focus_on(Some("name"));
+        rules(&mut manager);
+        app
+    }
+
+    /// Queues one keypress per character, as a keyboard would.
+    fn keys_in(app: &mut App, word: &str) {
+        for ch in word.chars() {
+            let key = if ch == ' ' {
+                Key::Space
+            } else {
+                Key::Character(ch.to_string().into())
+            };
+            app.world_mut()
+                .resource_mut::<Messages<KeyboardInput>>()
+                .write(KeyboardInput {
+                    key_code: KeyCode::KeyA,
+                    logical_key: key,
+                    state: ButtonState::Pressed,
+                    text: None,
+                    repeat: false,
+                    window: Entity::PLACEHOLDER,
+                });
+        }
+    }
+
+    fn type_word(app: &mut App, word: &str) {
+        keys_in(app, word);
+        app.update();
+    }
+
+    fn typed_text(app: &App) -> String {
+        app.world()
+            .resource::<crate::ui::UiManager>()
+            .get("name")
+            .map(|node| node.value.as_text())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn an_input_takes_every_character_until_its_rules_say_otherwise() {
+        let mut app = typing_harness(|_| {});
+        type_word(&mut app, "Ada 7!");
+        assert_eq!(typed_text(&app), "Ada 7!");
+    }
+
+    #[test]
+    fn a_numeric_input_turns_away_what_is_not_a_number() {
+        let mut app = typing_harness(|manager| {
+            manager.set(
+                "name",
+                blockloom_core::ui::UiProp::Allow,
+                &Evaluated::Text("numbers".to_string()),
+            );
+        });
+        // The letters are simply not there: a refused keystroke rubs itself
+        // out rather than reporting, since a person holding a key down
+        // means no harm by it.
+        type_word(&mut app, "-12a.5b");
+        assert_eq!(typed_text(&app), "-12.5");
+    }
+
+    #[test]
+    fn a_full_input_takes_no_more_however_long_the_key_is_held() {
+        let mut app = typing_harness(|manager| {
+            manager.set(
+                "name",
+                blockloom_core::ui::UiProp::MaxLength,
+                &Evaluated::Number(3.0),
+            );
+        });
+        type_word(&mut app, "Adamant");
+        assert_eq!(typed_text(&app), "Ada");
+
+        // Rubbing one out makes room for exactly one more.
+        app.world_mut()
+            .resource_mut::<Messages<KeyboardInput>>()
+            .write(KeyboardInput {
+                key_code: KeyCode::Backspace,
+                logical_key: Key::Backspace,
+                state: ButtonState::Pressed,
+                text: None,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            });
+        app.update();
+        type_word(&mut app, "ze");
+        assert_eq!(typed_text(&app), "Adz");
+    }
+
+    #[test]
+    fn a_keystroke_an_input_took_starts_its_changed_strand() {
+        let mut app = typing_harness(|_| {});
+        keys_in(&mut app, "h");
+        assert_eq!(routed(&mut app), vec!["typed".to_string()]);
+    }
+
+    #[test]
+    fn a_keystroke_an_input_refused_changes_nothing_and_starts_nothing() {
+        let mut app = typing_harness(|manager| {
+            manager.set(
+                "name",
+                blockloom_core::ui::UiProp::Allow,
+                &Evaluated::Text("digits".to_string()),
+            );
+        });
+        keys_in(&mut app, "h");
+        assert!(routed(&mut app).is_empty());
+        assert_eq!(typed_text(&app), "");
+    }
+
+    #[test]
+    fn the_focus_block_hands_the_keyboard_over_without_a_click() {
+        let mut app = typing_harness(|manager| {
+            manager.show(element("other", blockloom_core::ui::UiKind::Input));
+            manager.take_pending();
+        });
+        app.init_resource::<PendingEffects>();
+        app.add_systems(Update, crate::overlay::apply_ui_effects);
+
+        app.world_mut().resource_mut::<PendingEffects>().0 = vec![Effect::SetFocus {
+            id: "other".to_string(),
+        }];
+        app.update();
+        assert_eq!(
+            app.world().resource::<crate::ui::UiManager>().focus(),
+            Some("other")
+        );
+
+        // `clear focus` is the same effect naming nobody.
+        app.world_mut().resource_mut::<PendingEffects>().0 =
+            vec![Effect::SetFocus { id: String::new() }];
+        app.update();
+        assert_eq!(app.world().resource::<crate::ui::UiManager>().focus(), None);
+    }
+
+    #[test]
+    fn dragging_a_slider_with_a_step_lands_on_one_of_its_stops() {
+        // Two thirds of the way across a 90-wide track centred on 100.
+        let mut app = click_harness(Vec2::new(115.0, 100.0));
+        let mut slider = element("volume", blockloom_core::ui::UiKind::Slider);
+        slider.range = [0.0, 90.0];
+        slider.value = Evaluated::Number(0.0);
+        drawn_element(
+            &mut app,
+            slider,
+            Vec2::new(100.0, 100.0),
+            Vec2::new(90.0, 20.0),
+        );
+        app.world_mut().resource_mut::<crate::ui::UiManager>().set(
+            "volume",
+            blockloom_core::ui::UiProp::Step,
+            &Evaluated::Number(45.0),
+        );
+        assert_eq!(routed(&mut app), vec!["moved".to_string()]);
+
+        // 60 along the track, rounded to the nearest stop.
+        let at = app
+            .world()
+            .resource::<crate::ui::UiManager>()
+            .get("volume")
+            .and_then(|node| node.value.as_number().ok());
+        assert_eq!(at, Some(45.0));
     }
 
     #[test]

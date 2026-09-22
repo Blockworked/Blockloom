@@ -62,13 +62,13 @@ pub use runtime::{
     ACT_CHANGE_POSITION, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR, ACT_DELETE_ELEMENT,
     ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_MOVE, ACT_POINT_TOWARDS,
     ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR,
-    ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED,
-    ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_UI_PROP,
-    ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_TURN, AbiStr, AbiValue, Act, Actors,
-    Entry, Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner,
-    SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
-    SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
-    Val,
+    ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_GRAVITY, ACT_SET_MASS,
+    ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE,
+    ACT_SET_UI_PROP, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_TURN, AbiStr,
+    AbiValue, Act, Actors, Entry, Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE,
+    READ_VARIABLE, Runner, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW,
+    SYM_LOGIC_PAUSE, SYM_LOGIC_RESET, SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL,
+    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
 };
 
 use crate::project::Project;
@@ -991,6 +991,11 @@ impl<'a> Pass<'a> {
             Action::DeleteElement(id) => format!(
                 "    let id = {};\n    \
                  h.act(&me, Act::DeleteElement {{ id: id.trim().to_string() }});\n",
+                self.text(id)?
+            ),
+            Action::SetFocus(id) => format!(
+                "    let id = {};\n    \
+                 h.act(&me, Act::SetFocus {{ id: id.trim().to_string() }});\n",
                 self.text(id)?
             ),
             // The table freezes now, not when the host answers: the rest of

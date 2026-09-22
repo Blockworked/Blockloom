@@ -126,6 +126,9 @@ pub enum Action {
         all: bool,
     },
     DeleteElement(Value),
+    /// Hands the keyboard to a text input. An empty id, or one that names
+    /// anything else, takes it back instead.
+    SetFocus(Value),
     SetPaused(bool),
     SetVariable {
         name: String,
@@ -541,6 +544,8 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::DeleteElement { element } => {
             steps.push(Step::Action(Action::DeleteElement(element.clone())))
         }
+        K::FocusElement { element } => steps.push(Step::Action(Action::SetFocus(element.clone()))),
+        K::ClearFocus => steps.push(Step::Action(Action::SetFocus(Value::text("")))),
         K::PauseGame => steps.push(Step::Action(Action::SetPaused(true))),
         K::ResumeGame => steps.push(Step::Action(Action::SetPaused(false))),
         K::SetVariable { name, value } => steps.push(Step::Action(Action::SetVariable {

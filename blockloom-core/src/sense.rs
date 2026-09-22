@@ -36,6 +36,21 @@ pub struct ActorSense {
     pub components: HashMap<String, HashMap<String, Evaluated>>,
 }
 
+/// One interface element, as the reporter blocks see it. An element the
+/// blocks have made but hidden is still here: `shown` is the question a
+/// block asks, and not being here at all is a different question again.
+#[derive(Debug, Clone)]
+pub struct UiSense {
+    /// A slider's number, a toggle's on/off, an input's text. What
+    /// `value of (id)` reads.
+    pub value: Evaluated,
+    /// The words it is showing: a label's text, a button's caption, an
+    /// input's typing or its placeholder. What `text of (id)` reads.
+    pub text: String,
+    /// Whether it and every element it flows inside are visible.
+    pub shown: bool,
+}
+
 /// Everything sensible about the world this frame. Keyed by actor id.
 #[derive(Debug, Clone, Default)]
 pub struct Sensors {
@@ -58,9 +73,20 @@ pub struct Sensors {
     pub mouse_locked: bool,
     pub mouse_down: bool,
     pub actors: HashMap<String, ActorSense>,
-    /// Each interface element's current value, by id: a slider's number, a
-    /// toggle's on/off, an input's text. What `value of (id)` reads.
-    pub ui: HashMap<String, Evaluated>,
+    /// Every interface element the blocks have made, by id.
+    pub ui: HashMap<String, UiSense>,
+    /// The text input holding the keyboard, by id, or empty for none.
+    pub ui_focus: String,
+}
+
+impl Default for UiSense {
+    fn default() -> Self {
+        Self {
+            value: Evaluated::Text(String::new()),
+            text: String::new(),
+            shown: true,
+        }
+    }
 }
 
 impl Default for ActorSense {

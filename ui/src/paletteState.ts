@@ -127,6 +127,8 @@ function defaults(type: InstructionType): Record<string, unknown> {
     case 'HideElement':
     case 'DeleteElement':
       return { element: textValue('menu') };
+    case 'FocusElement':
+      return { element: textValue('name') };
     // WhenStarted, WhenClicked, WhenCloned, EscapeLoop, ContinueLoop,
     // StopAll: no fields.
     default:

@@ -24,7 +24,7 @@ use blockloom_core::blocks::{
 };
 use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::{Axis, Mode, Visual};
-use blockloom_core::sense::{ActorSense, Sensors};
+use blockloom_core::sense::{ActorSense, Sensors, UiSense};
 use blockloom_core::ui::{UiAnchor, UiProp};
 use blockloom_core::value::{Evaluated, Op, Value};
 use blockloom_core::vm::{Effect, Event, Vm};
@@ -64,6 +64,26 @@ fn publish_world() {
             ..Default::default()
         },
     );
+    // Two interface elements, so the reporters over them have something to
+    // answer about, and one input holding the keyboard.
+    sensors.ui.insert(
+        "volume".to_string(),
+        UiSense {
+            value: Evaluated::Number(4.0),
+            text: String::new(),
+            shown: true,
+        },
+    );
+    sensors.ui.insert(
+        "hint".to_string(),
+        UiSense {
+            value: Evaluated::Text(String::new()),
+            text: "Paused".to_string(),
+            // Inside a panel somebody hid: made, remembered, not on screen.
+            shown: false,
+        },
+    );
+    sensors.ui_focus = "name".to_string();
     blockloom_core::sense::publish(sensors);
 }
 
@@ -93,6 +113,7 @@ impl Host for Recorder {
             | Act::SetUiProp { .. }
             | Act::HideElement { .. }
             | Act::DeleteElement { .. }
+            | Act::SetFocus { .. }
             | Act::SetPaused { .. } => String::new(),
             _ => actor.to_string(),
         };
@@ -107,6 +128,22 @@ impl Host for Recorder {
             "MouseDeltaX" => Ok(Val::Num(24.0)),
             "MouseDeltaY" => Ok(Val::Num(-9.0)),
             "MouseLocked" => Ok(Val::Bool(true)),
+            "UiValue" => match args[0].as_text().as_str() {
+                "volume" => Ok(Val::Num(4.0)),
+                "hint" => Ok(Val::Text(String::new())),
+                other => Err(format!("there's no interface element called \"{other}\"")),
+            },
+            "UiText" => match args[0].as_text().as_str() {
+                "volume" => Ok(Val::Text(String::new())),
+                "hint" => Ok(Val::Text("Paused".to_string())),
+                other => Err(format!("there's no interface element called \"{other}\"")),
+            },
+            "UiShown" => Ok(Val::Bool(args[0].as_text() == "volume")),
+            "UiExists" => Ok(Val::Bool(matches!(
+                args[0].as_text().as_str(),
+                "volume" | "hint"
+            ))),
+            "UiFocus" => Ok(Val::Text("name".to_string())),
             "MyPosition" => Ok(Val::Num(axis_of(&args[0], [3.0, 7.0, 0.0]))),
             "ActorPosition" => {
                 let name = args[0].as_text();
@@ -186,6 +223,7 @@ fn line_of(act: &Act) -> String {
         }
         Act::HideElement { id, all } => format!("HideElement {id} {all}"),
         Act::DeleteElement { id } => format!("DeleteElement {id}"),
+        Act::SetFocus { id } => format!("SetFocus {id}"),
         Act::SetPaused { paused } => format!("SetPaused {paused}"),
         other => format!("{other:?}"),
     }
@@ -312,6 +350,7 @@ fn line_of(effect: &Effect) -> Option<String> {
         }
         Effect::HideElement { id, all } => format!("|HideElement {id} {all}"),
         Effect::DeleteElement { id } => format!("|DeleteElement {id}"),
+        Effect::SetFocus { id } => format!("|SetFocus {id}"),
         Effect::SetPaused { paused } => format!("|SetPaused {paused}"),
         other => panic!("this test has no line for {other:?}"),
     };
@@ -1953,6 +1992,12 @@ fn panel(id: &str, title: Value, modal: bool, parent: &str) -> K {
     }
 }
 
+/// Says whatever a reporter answers, so the transcript carries the answer
+/// itself rather than only the fact that something was asked.
+fn say_value(value: Value) -> K {
+    K::Say { text: value }
+}
+
 fn label(id: &str, text: Value, parent: &str) -> K {
     K::ShowLabel {
         element: Value::text(id),
@@ -2062,6 +2107,68 @@ fn writing_hiding_and_deleting_an_element_land_the_same_way() {
                 element: Value::text("score"),
             },
             K::HideAllUi,
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn an_inputs_rules_and_a_sliders_step_are_written_the_same_way() {
+    assert_same(
+        "interface-polish",
+        vec![
+            K::ShowInput {
+                element: Value::text("name"),
+                placeholder: Value::text("your name"),
+                anchor: UiAnchor::Center,
+                x: number(0.0),
+                y: number(0.0),
+                width: number(180.0),
+                height: number(0.0),
+                parent: Value::text(""),
+            },
+            K::SetUiProp {
+                prop: UiProp::Allow,
+                element: Value::text("name"),
+                value: Value::text("letters"),
+            },
+            K::SetUiProp {
+                prop: UiProp::MaxLength,
+                element: Value::text("name"),
+                value: op("Add", vec![number(8.0), number(4.0)]),
+            },
+            K::SetUiProp {
+                prop: UiProp::Step,
+                element: Value::text("volume"),
+                // A bad slot is reported once and stands a zero in its
+                // place, on both sides and in the same place.
+                value: op("Div", vec![number(1.0), number(0.0)]),
+            },
+            // The keyboard given and taken back, by slot and by block.
+            K::FocusElement {
+                element: op("Join", vec![Value::text("na"), Value::text("me")]),
+            },
+            K::ClearFocus,
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn every_reporter_over_an_element_answers_the_same_on_both_sides() {
+    assert_same(
+        "interface-reporters",
+        vec![
+            say_value(op("UiValue", vec![Value::text("volume")])),
+            say_value(op("UiText", vec![Value::text("hint")])),
+            say_value(op("UiShown", vec![Value::text("volume")])),
+            say_value(op("UiShown", vec![Value::text("hint")])),
+            say_value(op("UiExists", vec![Value::text("hint")])),
+            say_value(op("UiExists", vec![Value::text("nothing")])),
+            say_value(op("UiFocus", vec![])),
+            // An id nothing answers to is reported once and stands a blank
+            // in its place, the same way a missing actor is.
+            say_value(op("UiText", vec![Value::text("nothing")])),
         ],
         &[],
     );

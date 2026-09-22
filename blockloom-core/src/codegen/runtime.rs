@@ -191,6 +191,10 @@ pub enum Act {
     DeleteElement {
         id: String,
     },
+    /// Hands the keyboard to a text input; an empty id takes it back.
+    SetFocus {
+        id: String,
+    },
     /// Freezes or thaws the world; window-global, like gravity.
     SetPaused {
         paused: bool,
@@ -740,7 +744,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 6;
+pub const LOGIC_ABI_VERSION: u32 = 7;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -797,6 +801,8 @@ pub const ACT_HIDE_ELEMENT: u32 = 32;
 pub const ACT_DELETE_ELEMENT: u32 = 33;
 /// `n0` != 0 freezes the world.
 pub const ACT_SET_PAUSED: u32 = 34;
+/// Gives a text input the keyboard, or takes it back.
+pub const ACT_SET_FOCUS: u32 = 35;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1185,6 +1191,7 @@ impl Host for AbiHost {
             Act::DeleteElement { id } => {
                 self.act_wire(actor, ACT_DELETE_ELEMENT, &id, "", [0.0; 3], &zero)
             }
+            Act::SetFocus { id } => self.act_wire(actor, ACT_SET_FOCUS, &id, "", [0.0; 3], &zero),
             Act::SetPaused { paused } => self.act_wire(
                 actor,
                 ACT_SET_PAUSED,

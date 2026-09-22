@@ -12,7 +12,8 @@
 //! window. The spawning and the property writes are the systems below.
 
 use bevy::prelude::*;
-use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp};
+use blockloom_core::sense::UiSense;
+use blockloom_core::ui::{UiAllow, UiAnchor, UiElement, UiKind, UiProp};
 use blockloom_core::value::Evaluated;
 use std::collections::HashMap;
 
@@ -21,6 +22,9 @@ use std::collections::HashMap;
 const PANEL_BACKGROUND: Color = Color::srgba(0.07, 0.09, 0.13, 0.88);
 const BUTTON_BACKGROUND: Color = Color::srgba(0.16, 0.20, 0.28, 0.95);
 const INPUT_BACKGROUND: Color = Color::srgba(0.04, 0.05, 0.08, 0.95);
+/// The one holding the keyboard, so a person can see where their typing is
+/// going - a `focus` block hands it over with no click to watch.
+const INPUT_FOCUSED_BACKGROUND: Color = Color::srgba(0.10, 0.16, 0.26, 0.98);
 const TRACK_BACKGROUND: Color = Color::srgba(0.04, 0.05, 0.08, 0.95);
 const TEXT_COLOR: Color = Color::srgb(0.93, 0.95, 0.98);
 const TEXT_SIZE: f32 = 16.0;
@@ -62,6 +66,12 @@ pub struct UiStyle {
     pub height: Option<f32>,
     pub corner_radius: Option<f32>,
     pub padding: Option<f32>,
+    /// A slider's granularity, and a text input's two rules. They live here
+    /// rather than on the element because no `show` row spells them: a HUD
+    /// strand re-showing its slider every frame would wipe them otherwise.
+    pub step: Option<f32>,
+    pub allow: Option<UiAllow>,
+    pub max_length: Option<usize>,
 }
 
 /// One element as the manager tracks it.
@@ -85,6 +95,25 @@ pub struct UiNode {
     /// looked. Properties live here rather than on the effect because an
     /// effect is gone by the end of the fixed step that produced it.
     pub dirty: bool,
+}
+
+impl UiNode {
+    /// What a slider's number is rounded to. Zero - which is what an element
+    /// nobody wrote a `step` to has - slides continuously.
+    pub fn step(&self) -> f32 {
+        self.style.step.unwrap_or(0.0)
+    }
+
+    /// Which characters this input takes. Everything, until somebody says
+    /// otherwise.
+    pub fn allow(&self) -> UiAllow {
+        self.style.allow.unwrap_or_default()
+    }
+
+    /// How many characters it holds; zero for no ceiling.
+    pub fn max_length(&self) -> usize {
+        self.style.max_length.unwrap_or(0)
+    }
 }
 
 /// Every element the blocks have made, in the order they were made - which
@@ -112,12 +141,21 @@ impl UiManager {
         self.focus.as_deref()
     }
 
-    /// Each element's current value, which is what the sensing snapshot
-    /// carries so `value of (id)` can answer.
-    pub fn values(&self) -> HashMap<String, Evaluated> {
+    /// Every element as the reporter blocks see it, which is what goes into
+    /// the sensing snapshot once a frame.
+    pub fn senses(&self) -> HashMap<String, UiSense> {
         self.nodes
             .iter()
-            .map(|(id, node)| (id.clone(), node.value.clone()))
+            .map(|(id, node)| {
+                (
+                    id.clone(),
+                    UiSense {
+                        value: node.value.clone(),
+                        text: text_of(node),
+                        shown: self.shown(node),
+                    },
+                )
+            })
             .collect()
     }
 
@@ -302,9 +340,23 @@ impl UiManager {
                 }
             }
             UiProp::Modal => node.modal = value.as_bool(),
-            UiProp::Min => node.range[0] = number(value),
-            UiProp::Max => node.range[1] = number(value),
-            UiProp::Value => node.value = UiElement::initial_value(node.kind, value),
+            // Moving an end, or the step, re-settles where the knob is:
+            // a slider told to step by 5 shouldn't stay at 7.4.
+            UiProp::Min => {
+                node.range[0] = number(value);
+                node.value = settled(node, &node.value.clone());
+            }
+            UiProp::Max => {
+                node.range[1] = number(value);
+                node.value = settled(node, &node.value.clone());
+            }
+            UiProp::Step => {
+                node.style.step = Some(number(value).max(0.0));
+                node.value = settled(node, &node.value.clone());
+            }
+            UiProp::Value => node.value = settled(node, value),
+            UiProp::Allow => node.style.allow = Some(UiAllow::from_name(&value.as_text())),
+            UiProp::MaxLength => node.style.max_length = Some(number(value).max(0.0) as usize),
             UiProp::Text => node.style.text = Some(value.as_text()),
             UiProp::TextColor => node.style.text_color = Some(value.as_text()),
             UiProp::TextSize => node.style.text_size = Some(number(value).max(1.0)),
@@ -324,7 +376,7 @@ impl UiManager {
         if !node.kind.is_input() {
             return None;
         }
-        let next = UiElement::initial_value(node.kind, &value);
+        let next = settled(node, &value);
         if next == node.value {
             return None;
         }
@@ -336,12 +388,21 @@ impl UiManager {
     /// Gives the keyboard to a text input, or takes it back. Anything that
     /// isn't one drops focus instead, so clicking away releases the keys.
     pub fn focus_on(&mut self, id: Option<&str>) {
-        self.focus = match id {
+        let next = match id {
             Some(id) if self.nodes.get(id).is_some_and(|n| n.kind == UiKind::Input) => {
                 Some(id.to_string())
             }
             _ => None,
         };
+        if next == self.focus {
+            return;
+        }
+        // Both ends of the move are redrawn, since a focused input looks
+        // different from an idle one and nothing else would say so.
+        for id in [self.focus.clone(), next.clone()].into_iter().flatten() {
+            self.mark_dirty(&id);
+        }
+        self.focus = next;
     }
 
     /// Entities the manager has finished with, handed over once.
@@ -397,10 +458,25 @@ impl UiManager {
 }
 
 /// Where a slider's drag puts its value: the fraction of the way across its
-/// track, mapped onto its own ends and clamped there.
-pub fn slider_at(range: [f32; 2], fraction: f32) -> f64 {
+/// track, mapped onto its own ends, clamped there and rounded to its step.
+pub fn slider_at(range: [f32; 2], step: f32, fraction: f32) -> f64 {
     let [low, high] = range;
-    (low + (high - low) * fraction.clamp(0.0, 1.0)) as f64
+    let raw = (low + (high - low) * fraction.clamp(0.0, 1.0)) as f64;
+    blockloom_core::ui::snap(range, step, raw)
+}
+
+/// What a value really becomes on this element: whatever its kind reports,
+/// and on a slider inside its own ends and on its own step.
+fn settled(node: &UiNode, value: &Evaluated) -> Evaluated {
+    let next = UiElement::initial_value(node.kind, value);
+    if node.kind != UiKind::Slider {
+        return next;
+    }
+    Evaluated::Number(blockloom_core::ui::snap(
+        node.range,
+        node.step(),
+        next.as_number().unwrap_or(0.0),
+    ))
 }
 
 /// How a top-level element hangs off the window: its anchor as a fraction
@@ -502,10 +578,13 @@ pub fn node_for(spec: &UiElement, parented: bool) -> Node {
 }
 
 /// A fresh element's background, which a `background` property overrides.
-pub fn background_for(kind: UiKind) -> Color {
+/// The input holding the keyboard is the one thing here that isn't decided
+/// by its kind alone.
+pub fn background_for(kind: UiKind, focused: bool) -> Color {
     match kind {
         UiKind::Panel => PANEL_BACKGROUND,
         UiKind::Button | UiKind::Toggle => BUTTON_BACKGROUND,
+        UiKind::Input if focused => INPUT_FOCUSED_BACKGROUND,
         UiKind::Input => INPUT_BACKGROUND,
         UiKind::Slider | UiKind::Label | UiKind::Image => Color::NONE,
     }
@@ -583,7 +662,7 @@ mod tests {
         again.content = "score: 3".to_string();
         // The same kind in the same place: nothing to rebuild.
         assert!(!manager.show(again));
-        assert_eq!(manager.values().len(), 1);
+        assert_eq!(manager.senses().len(), 1);
         assert_eq!(manager.get("hud").unwrap().spec.content, "score: 3");
     }
 
@@ -593,7 +672,7 @@ mod tests {
         manager.show(spec("thing", UiKind::Label));
         drawn(&mut manager);
         assert!(manager.show(spec("thing", UiKind::Button)));
-        assert_eq!(manager.values().len(), 1);
+        assert_eq!(manager.senses().len(), 1);
         assert_eq!(manager.get("thing").unwrap().kind, UiKind::Button);
     }
 
@@ -637,7 +716,7 @@ mod tests {
         drawn(&mut manager);
 
         manager.delete("menu");
-        assert!(manager.values().is_empty());
+        assert!(manager.senses().is_empty());
     }
 
     #[test]
@@ -688,6 +767,33 @@ mod tests {
         manager.hide("", true);
         assert_eq!(manager.focus(), None);
         assert!(!manager.get("name").unwrap().visible);
+    }
+
+    #[test]
+    fn the_input_holding_the_keyboard_is_redrawn_at_both_ends_of_the_move() {
+        let mut manager = UiManager::default();
+        manager.show(spec("name", UiKind::Input));
+        manager.show(spec("email", UiKind::Input));
+        drawn(&mut manager);
+        manager.take_dirty();
+
+        manager.focus_on(Some("name"));
+        assert_eq!(manager.take_dirty(), vec!["name".to_string()]);
+        // The one losing it needs redrawing as much as the one taking it.
+        manager.focus_on(Some("email"));
+        assert_eq!(
+            manager.take_dirty(),
+            vec!["name".to_string(), "email".to_string()]
+        );
+        // Focusing what already has it is no change at all.
+        manager.focus_on(Some("email"));
+        assert!(manager.take_dirty().is_empty());
+
+        assert_eq!(
+            background_for(UiKind::Input, true),
+            INPUT_FOCUSED_BACKGROUND
+        );
+        assert_eq!(background_for(UiKind::Input, false), INPUT_BACKGROUND);
     }
 
     #[test]
@@ -754,10 +860,87 @@ mod tests {
         drawn(&mut manager);
         let range = manager.get("volume").unwrap().range;
 
-        assert_eq!(slider_at(range, 0.0), 20.0);
-        assert_eq!(slider_at(range, 0.5), 30.0);
-        assert_eq!(slider_at(range, 2.0), 40.0);
-        assert_eq!(slider_at(range, -1.0), 20.0);
+        assert_eq!(slider_at(range, 0.0, 0.0), 20.0);
+        assert_eq!(slider_at(range, 0.0, 0.5), 30.0);
+        assert_eq!(slider_at(range, 0.0, 2.0), 40.0);
+        assert_eq!(slider_at(range, 0.0, -1.0), 20.0);
+    }
+
+    #[test]
+    fn a_slider_with_a_step_only_stops_where_the_step_says() {
+        let mut manager = UiManager::default();
+        let mut slider = spec("volume", UiKind::Slider);
+        slider.range = [0.0, 10.0];
+        manager.show(slider);
+        drawn(&mut manager);
+        manager.set("volume", UiProp::Step, &Evaluated::Number(5.0));
+
+        let node = manager.get("volume").unwrap();
+        assert_eq!(slider_at(node.range, node.step(), 0.3), 5.0);
+        assert_eq!(slider_at(node.range, node.step(), 0.9), 10.0);
+        // A number written straight in lands on the step too.
+        manager.set("volume", UiProp::Value, &Evaluated::Number(7.4));
+        assert_eq!(manager.get("volume").unwrap().value, Evaluated::Number(5.0));
+        // A drag that stays inside one stop has moved nothing, so nothing
+        // is reported; one that crosses into the next reports it once.
+        assert_eq!(manager.changed("volume", Evaluated::Number(6.0)), None);
+        assert_eq!(
+            manager.changed("volume", Evaluated::Number(8.0)),
+            Some(Evaluated::Number(10.0))
+        );
+        assert_eq!(manager.changed("volume", Evaluated::Number(8.9)), None);
+    }
+
+    #[test]
+    fn writing_a_step_moves_a_knob_already_standing_between_two() {
+        let mut manager = UiManager::default();
+        let mut slider = spec("volume", UiKind::Slider);
+        slider.range = [0.0, 10.0];
+        slider.value = Evaluated::Number(7.4);
+        manager.show(slider);
+        drawn(&mut manager);
+        assert_eq!(manager.get("volume").unwrap().value, Evaluated::Number(7.4));
+
+        manager.set("volume", UiProp::Step, &Evaluated::Number(5.0));
+        assert_eq!(manager.get("volume").unwrap().value, Evaluated::Number(5.0));
+    }
+
+    #[test]
+    fn an_inputs_rules_are_written_by_name_and_survive_a_re_show() {
+        let mut manager = UiManager::default();
+        manager.show(spec("name", UiKind::Input));
+        drawn(&mut manager);
+        manager.set("name", UiProp::Allow, &Evaluated::Text("Digits".into()));
+        manager.set("name", UiProp::MaxLength, &Evaluated::Number(4.0));
+
+        // A HUD strand showing the same field again keeps them: no `show`
+        // row spells either one, so a re-show has nothing to say about them.
+        manager.show(spec("name", UiKind::Input));
+        let node = manager.get("name").unwrap();
+        assert_eq!(node.allow(), UiAllow::Digits);
+        assert_eq!(node.max_length(), 4);
+    }
+
+    #[test]
+    fn what_the_reporters_read_is_every_element_the_blocks_have_made() {
+        let mut manager = UiManager::default();
+        manager.show(spec("menu", UiKind::Panel));
+        let mut label = spec("hint", UiKind::Label);
+        label.parent = "menu".to_string();
+        label.content = "Paused".to_string();
+        manager.show(label);
+        drawn(&mut manager);
+
+        let senses = manager.senses();
+        assert_eq!(senses["hint"].text, "Paused");
+        assert!(senses["hint"].shown);
+
+        // A hidden panel takes its children off the screen without
+        // forgetting them: still sensed, no longer shown.
+        manager.hide("menu", false);
+        let senses = manager.senses();
+        assert_eq!(senses.len(), 2);
+        assert!(!senses["hint"].shown);
     }
 
     #[test]

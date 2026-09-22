@@ -145,6 +145,13 @@ pub enum UiProp {
     Min,
     Max,
     Value,
+    /// A slider's granularity: what its value is rounded to, measured from
+    /// its `min`. Zero means it slides continuously.
+    Step,
+    /// Which characters a text input takes - [`UiAllow`]'s spelling.
+    Allow,
+    /// How many characters a text input holds. Zero means no ceiling.
+    MaxLength,
 }
 
 impl UiProp {
@@ -163,6 +170,9 @@ impl UiProp {
         UiProp::Min,
         UiProp::Max,
         UiProp::Value,
+        UiProp::Step,
+        UiProp::Allow,
+        UiProp::MaxLength,
     ];
 
     /// The wire name, which is also what the ABI carries and what the
@@ -182,12 +192,115 @@ impl UiProp {
             UiProp::Min => "Min",
             UiProp::Max => "Max",
             UiProp::Value => "Value",
+            UiProp::Step => "Step",
+            UiProp::Allow => "Allow",
+            UiProp::MaxLength => "MaxLength",
         }
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
         UiProp::ALL.iter().copied().find(|prop| prop.name() == name)
     }
+}
+
+/// Which characters a text input takes. Written with `set [allow] of (id)
+/// to`, by the name below in any case - anything else reads as
+/// [`UiAllow::Any`], since a typo that quietly deadened a field would be
+/// worse than one that quietly takes everything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum UiAllow {
+    #[default]
+    Any,
+    /// A decimal number: digits, one leading minus, one point.
+    Numbers,
+    /// Digits and nothing else - a PIN, a port, a seed.
+    Digits,
+    /// Letters and spaces, for a name.
+    Letters,
+}
+
+impl UiAllow {
+    pub const ALL: &'static [UiAllow] = &[
+        UiAllow::Any,
+        UiAllow::Numbers,
+        UiAllow::Digits,
+        UiAllow::Letters,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            UiAllow::Any => "any",
+            UiAllow::Numbers => "numbers",
+            UiAllow::Digits => "digits",
+            UiAllow::Letters => "letters",
+        }
+    }
+
+    /// The rule a person's typed word names. Case and surrounding space
+    /// don't matter, and a plural is the same word as its singular, since
+    /// this is a slot somebody fills in by hand.
+    pub fn from_name(name: &str) -> Self {
+        match name.trim().to_ascii_lowercase().trim_end_matches('s') {
+            "number" | "numeric" | "decimal" => UiAllow::Numbers,
+            "digit" | "integer" | "whole" => UiAllow::Digits,
+            "letter" | "alpha" | "alphabetic" => UiAllow::Letters,
+            _ => UiAllow::Any,
+        }
+    }
+
+    /// Whether one more character may go on the end of what is there. The
+    /// text so far is part of the question: a minus only leads, and a number
+    /// has one point.
+    pub fn admits(self, text: &str, ch: char) -> bool {
+        match self {
+            UiAllow::Any => true,
+            UiAllow::Digits => ch.is_ascii_digit(),
+            UiAllow::Numbers => {
+                ch.is_ascii_digit()
+                    || (ch == '-' && text.is_empty())
+                    || (ch == '.' && !text.contains('.'))
+            }
+            UiAllow::Letters => ch.is_alphabetic() || ch == ' ',
+        }
+    }
+}
+
+/// What a text input holds after one character is typed into it, or `None`
+/// when its own rule refuses the character - a full field, or one the wrong
+/// sort. Backspace is the caller's business; this is only the growing half.
+pub fn typed(text: &str, ch: char, allow: UiAllow, max_length: usize) -> Option<String> {
+    if max_length > 0 && text.chars().count() >= max_length {
+        return None;
+    }
+    if !allow.admits(text, ch) {
+        return None;
+    }
+    let mut next = text.to_string();
+    next.push(ch);
+    Some(next)
+}
+
+/// Where a slider's number really lands: inside its own ends, and on a
+/// multiple of its step measured from the low end - so a 0-to-10 slider
+/// stepping 3 stops at 0, 3, 6 and 9, never at 7.4 and never at 10. A step
+/// that doesn't divide the span leaves the top end short, which is the price
+/// of every stop being a whole step from the last.
+///
+/// A step of zero or less slides continuously, which is what an element that
+/// never had a `step` written does.
+pub fn snap(range: [f32; 2], step: f32, value: f64) -> f64 {
+    let [low, high] = [range[0] as f64, range[1] as f64];
+    let (bottom, top) = if low <= high {
+        (low, high)
+    } else {
+        (high, low)
+    };
+    let value = value.clamp(bottom, top);
+    if step <= 0.0 || !step.is_finite() {
+        return value;
+    }
+    let step = step as f64;
+    (low + ((value - low) / step).round() * step).clamp(bottom, top)
 }
 
 /// An element as a `show` block asks for it: every slot already evaluated,
@@ -304,6 +417,61 @@ mod tests {
             UiElement::blank(UiKind::Label, true),
             Evaluated::Text(String::new())
         );
+    }
+
+    #[test]
+    fn a_rule_takes_the_characters_it_names_and_turns_the_rest_away() {
+        assert!(UiAllow::Any.admits("", '/'));
+        assert!(UiAllow::Digits.admits("4", '2'));
+        assert!(!UiAllow::Digits.admits("4", '.'));
+        assert!(UiAllow::Letters.admits("Ada", ' '));
+        assert!(!UiAllow::Letters.admits("Ada", '7'));
+        // A minus only leads, and there is one point in a number.
+        assert!(UiAllow::Numbers.admits("", '-'));
+        assert!(!UiAllow::Numbers.admits("4", '-'));
+        assert!(UiAllow::Numbers.admits("4", '.'));
+        assert!(!UiAllow::Numbers.admits("4.5", '.'));
+    }
+
+    #[test]
+    fn a_typed_character_is_refused_by_the_rule_or_by_the_ceiling() {
+        assert_eq!(typed("ab", 'c', UiAllow::Any, 0), Some("abc".to_string()));
+        // Full: the rule would have taken it, the ceiling doesn't.
+        assert_eq!(typed("ab", 'c', UiAllow::Any, 2), None);
+        assert_eq!(typed("12", 'x', UiAllow::Digits, 0), None);
+        assert_eq!(
+            typed("12", '3', UiAllow::Digits, 3),
+            Some("123".to_string())
+        );
+    }
+
+    #[test]
+    fn a_rule_is_named_by_the_word_a_person_would_write() {
+        assert_eq!(UiAllow::from_name("Numbers"), UiAllow::Numbers);
+        assert_eq!(UiAllow::from_name(" digit "), UiAllow::Digits);
+        assert_eq!(UiAllow::from_name("letters"), UiAllow::Letters);
+        // A word nothing answers to takes everything rather than nothing.
+        assert_eq!(UiAllow::from_name("wharrgarbl"), UiAllow::Any);
+        for allow in UiAllow::ALL {
+            assert_eq!(UiAllow::from_name(allow.name()), *allow);
+        }
+    }
+
+    #[test]
+    fn a_step_rounds_a_sliders_number_from_its_low_end_and_keeps_it_inside() {
+        assert_eq!(snap([0.0, 10.0], 3.0, 7.4), 6.0);
+        assert_eq!(snap([0.0, 10.0], 3.0, 8.0), 9.0);
+        // A step that doesn't divide the span leaves the far end short: the
+        // last stop is a whole step from the one before it.
+        assert_eq!(snap([0.0, 10.0], 3.0, 10.0), 9.0);
+        // One that does divide it reaches the end exactly.
+        assert_eq!(snap([0.0, 100.0], 25.0, 100.0), 100.0);
+        // Measured from the low end, not from zero.
+        assert_eq!(snap([1.0, 11.0], 5.0, 5.0), 6.0);
+        // No step at all is what v1 did, ends and all.
+        assert_eq!(snap([0.0, 10.0], 0.0, 7.4), 7.4);
+        assert_eq!(snap([0.0, 10.0], 0.0, 40.0), 10.0);
+        assert_eq!(snap([0.0, 10.0], 0.0, -40.0), 0.0);
     }
 
     #[test]

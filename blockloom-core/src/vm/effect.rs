@@ -172,6 +172,11 @@ pub enum Effect {
         prop: UiProp,
         value: Evaluated,
     },
+    /// Gives the keyboard to a text input, or takes it back when the id is
+    /// empty or names something that can't hold it.
+    SetFocus {
+        id: String,
+    },
     /// Freezes or thaws the world. Strands a UI event started carry on
     /// either way, which is what keeps a pause menu alive.
     SetPaused {

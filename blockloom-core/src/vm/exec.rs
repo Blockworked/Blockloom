@@ -1026,6 +1026,12 @@ impl Vm {
                     id: id.trim().to_string(),
                 });
             }
+            Action::SetFocus(id) => {
+                let id = self.eval(id, actor, params, out).as_text();
+                out.push(Effect::SetFocus {
+                    id: id.trim().to_string(),
+                });
+            }
             // The VM freezes itself the moment the block runs, so the rest
             // of this tick already sees a paused world - the host catches up
             // when it applies the effect.

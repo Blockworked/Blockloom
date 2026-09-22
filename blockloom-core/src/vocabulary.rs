@@ -105,6 +105,9 @@ const UI_PROPS: &[&str] = &[
     "Min",
     "Max",
     "Value",
+    "Step",
+    "Allow",
+    "MaxLength",
 ];
 
 /// The dropdown every `show` block has: which corner of the window its
@@ -1109,7 +1112,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "SetUiProp",
         category: "Interface",
-        purpose: "Writes one property of an existing interface element.",
+        purpose: "Writes one property of an existing interface element. Step is a slider's granularity, measured from its min; allow (any, numbers, digits or letters) and max length are a text input's.",
         header: false,
         three_d: false,
         slots: &[
@@ -1171,6 +1174,34 @@ pub const BLOCKS: &[BlockSpec] = &[
             id: "UiTarget",
             value: "Any",
         }],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "FocusElement",
+        category: "Interface",
+        purpose: "Hands the keyboard to a text input without waiting for a click. Anything else takes it back.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "element",
+            id: "UiTarget",
+            value: "Any",
+        }],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "ClearFocus",
+        category: "Interface",
+        purpose: "Takes the keyboard back off whichever text input holds it.",
+        header: false,
+        three_d: false,
+        slots: NO_SLOTS,
         dropdowns: NO_DROPDOWNS,
         strings: NO_STRINGS,
         bools: NO_BOOLS,

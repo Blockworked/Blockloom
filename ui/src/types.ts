@@ -72,6 +72,8 @@ export const INSTRUCTION_TYPES = [
   'HideElement',
   'HideAllUi',
   'DeleteElement',
+  'FocusElement',
+  'ClearFocus',
   'PauseGame',
   'ResumeGame',
   'SetVariable',
