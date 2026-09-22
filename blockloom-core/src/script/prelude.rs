@@ -1,4 +1,3 @@
-
 // ─── The API a script writes against ───────────────────────────────────────
 //
 // Everything above this line is the raw boundary; everything below is the
@@ -218,25 +217,15 @@ impl Actor {
     /// Whether the actor is carrying that component right now - which a
     /// [`Actor::detach`] earlier in the run may have changed.
     pub fn has(&self, component: &str) -> bool {
-        self.number(
-            READ_HAS_COMPONENT,
-            Str::borrow(component),
-            Str::EMPTY,
-            0.0,
-        )
-        .unwrap_or(0.0)
+        self.number(READ_HAS_COMPONENT, Str::borrow(component), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
             != 0.0
     }
 
     /// One field of one of the actor's custom components, or `None` when the
     /// actor has no such component or it has no such field.
     pub fn field(&self, component: &str, field: &str) -> Option<f64> {
-        self.number(
-            READ_FIELD,
-            Str::borrow(component),
-            Str::borrow(field),
-            0.0,
-        )
+        self.number(READ_FIELD, Str::borrow(component), Str::borrow(field), 0.0)
     }
 
     pub fn field_or(&self, component: &str, field: &str, fallback: f64) -> f64 {
@@ -800,6 +789,46 @@ impl Actor {
         );
     }
 
+    /// Changes the defaults for interface elements without replacing any
+    /// property written directly on an element.
+    pub fn set_ui_theme(&self, theme: UiTheme) {
+        self.act(
+            ACT_UI_THEME,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            theme as u32 as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Saves the currently visible variable slot for the next run.
+    pub fn save_variable(&self, name: &str) {
+        self.act(
+            ACT_SAVE_VARIABLE,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Forgets a saved value without changing the variable in this run.
+    pub fn clear_saved_variable(&self, name: &str) {
+        self.act(
+            ACT_SAVE_VARIABLE,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::EMPTY,
+            1.0,
+            0.0,
+            0.0,
+        );
+    }
+
     /// Which text input holds the keyboard, or an empty string. While one
     /// does, a script's `key_down` sees nothing, the same as a block's.
     pub fn ui_focus(&self) -> String {
@@ -840,6 +869,15 @@ pub enum UiKind {
     Input = 4,
     Slider = 5,
     Toggle = 6,
+    List = 7,
+}
+
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiTheme {
+    Dark = 0,
+    Light = 1,
+    HighContrast = 2,
 }
 
 /// Which corner, edge or centre of the window an element hangs off.
@@ -926,6 +964,10 @@ impl<'a> Ui<'a> {
         let mut ui = Self::new(id, UiKind::Toggle, label);
         ui.flag = on;
         ui
+    }
+
+    pub fn list(id: &'a str) -> Self {
+        Self::new(id, UiKind::List, "").sized(280.0, 240.0)
     }
 
     /// Where it hangs off the window, and how far from there in pixels.

@@ -109,6 +109,7 @@ const UI_PROPS: &[&str] = &[
     "Allow",
     "MaxLength",
 ];
+const UI_THEMES: &[&str] = &["Dark", "Light", "HighContrast"];
 
 /// The dropdown every `show` block has: which corner of the window its
 /// offset is measured from.
@@ -124,7 +125,7 @@ const UI_ID: Slot = Slot {
     value: "Any",
 };
 
-/// Where it sits and how big it is - shared by all seven kinds, and ignored
+/// Where it sits and how big it is - shared by every kind, and ignored
 /// for one with a parent, which flows after its siblings instead.
 const UI_PLACE: &[Slot] = &[
     Slot {
@@ -1110,6 +1111,40 @@ pub const BLOCKS: &[BlockSpec] = &[
         bodies: NO_BODIES,
     },
     BlockSpec {
+        r#type: "ShowList",
+        category: "Interface",
+        purpose: "Makes or updates a vertical list whose children scroll inside its fixed height.",
+        header: false,
+        three_d: false,
+        slots: &[
+            UI_ID,
+            UI_PLACE[0],
+            UI_PLACE[1],
+            UI_PLACE[2],
+            UI_PLACE[3],
+            UI_PLACE[4],
+        ],
+        dropdowns: UI_ANCHOR,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetUiTheme",
+        category: "Interface",
+        purpose: "Changes the default colors of interface elements that have no explicit style.",
+        header: false,
+        three_d: false,
+        slots: NO_SLOTS,
+        dropdowns: &[Dropdown {
+            field: "theme",
+            options: UI_THEMES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
         r#type: "SetUiProp",
         category: "Interface",
         purpose: "Writes one property of an existing interface element. Step is a slider's granularity, measured from its min; allow (any, numbers, digits or letters) and max length are a text input's.",
@@ -1259,6 +1294,30 @@ pub const BLOCKS: &[BlockSpec] = &[
             id: "ChangeVariableValue",
             value: "Any",
         }],
+        dropdowns: NO_DROPDOWNS,
+        strings: &["name"],
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SaveVariable",
+        category: "Variables",
+        purpose: "Saves the variable's current value for the next run of this project.",
+        header: false,
+        three_d: false,
+        slots: NO_SLOTS,
+        dropdowns: NO_DROPDOWNS,
+        strings: &["name"],
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "ClearSavedVariable",
+        category: "Variables",
+        purpose: "Forgets the saved value without changing the variable in this run.",
+        header: false,
+        three_d: false,
+        slots: NO_SLOTS,
         dropdowns: NO_DROPDOWNS,
         strings: &["name"],
         bools: NO_BOOLS,

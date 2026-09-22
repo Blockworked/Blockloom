@@ -98,5 +98,11 @@ export const ON_OFF_OPTIONS = [
   { value: 'false', label: 'off' },
 ];
 
+export const UI_THEME_OPTIONS = [
+  { value: 'Dark', label: 'dark' },
+  { value: 'Light', label: 'light' },
+  { value: 'HighContrast', label: 'high contrast' },
+];
+
 /** The palette offers "mouse" alongside the actor names, same as the blocks do. */
 export const MOUSE_TARGET = 'mouse';

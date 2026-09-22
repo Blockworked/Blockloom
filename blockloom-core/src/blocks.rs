@@ -8,7 +8,7 @@
 
 use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
-use crate::ui::{UiAnchor, UiProp};
+use crate::ui::{UiAnchor, UiProp, UiTheme};
 use crate::value::Value;
 use serde::{Deserialize, Serialize};
 
@@ -295,6 +295,20 @@ pub enum InstructionKind {
         height: Value,
         parent: Value,
     },
+    /// A vertical container with a clipped, wheel-scrollable viewport.
+    ShowList {
+        element: Value,
+        anchor: UiAnchor,
+        x: Value,
+        y: Value,
+        width: Value,
+        height: Value,
+        parent: Value,
+    },
+    /// Changes the defaults for elements that have no explicit style.
+    SetUiTheme {
+        theme: UiTheme,
+    },
     /// Writes one property of an existing element. A property that means
     /// nothing for that kind is ignored, and an id nothing answers to is an
     /// error the run log shows.
@@ -328,6 +342,16 @@ pub enum InstructionKind {
     /// which is what makes a pause menu's buttons work.
     PauseGame,
     ResumeGame,
+
+    // ─── Saved data ────────────────────────────────────────────────────────
+    /// Writes this actor's visible variable slot to per-player save data.
+    SaveVariable {
+        name: String,
+    },
+    /// Removes a slot from per-player save data without changing it live.
+    ClearSavedVariable {
+        name: String,
+    },
 
     // ─── Control ────────────────────────────────────────────────────────────
     /// Suspends this script for `duration` seconds.
@@ -516,6 +540,22 @@ impl BlockKind for InstructionKind {
                 f(height, InputValueType::Any);
                 f(parent, InputValueType::Any);
             }
+            K::ShowList {
+                element: id,
+                x,
+                y,
+                width,
+                height,
+                parent,
+                ..
+            } => {
+                f(id, InputValueType::Any);
+                f(x, InputValueType::Any);
+                f(y, InputValueType::Any);
+                f(width, InputValueType::Any);
+                f(height, InputValueType::Any);
+                f(parent, InputValueType::Any);
+            }
             K::ShowSlider {
                 element: id,
                 min,
@@ -583,7 +623,10 @@ impl BlockKind for InstructionKind {
             | K::HideAllUi
             | K::ClearFocus
             | K::PauseGame
-            | K::ResumeGame => {}
+            | K::ResumeGame
+            | K::SetUiTheme { .. }
+            | K::SaveVariable { .. }
+            | K::ClearSavedVariable { .. } => {}
         }
     }
 

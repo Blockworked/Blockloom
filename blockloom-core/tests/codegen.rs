@@ -25,7 +25,7 @@ use blockloom_core::blocks::{
 use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::{Axis, Mode, Visual};
 use blockloom_core::sense::{ActorSense, Sensors, UiSense};
-use blockloom_core::ui::{UiAnchor, UiProp};
+use blockloom_core::ui::{UiAnchor, UiProp, UiTheme};
 use blockloom_core::value::{Evaluated, Op, Value};
 use blockloom_core::vm::{Effect, Event, Vm};
 use std::process::Command;
@@ -114,6 +114,7 @@ impl Host for Recorder {
             | Act::HideElement { .. }
             | Act::DeleteElement { .. }
             | Act::SetFocus { .. }
+            | Act::SetUiTheme { .. }
             | Act::SetPaused { .. } => String::new(),
             _ => actor.to_string(),
         };
@@ -224,7 +225,9 @@ fn line_of(act: &Act) -> String {
         Act::HideElement { id, all } => format!("HideElement {id} {all}"),
         Act::DeleteElement { id } => format!("DeleteElement {id}"),
         Act::SetFocus { id } => format!("SetFocus {id}"),
+        Act::SetUiTheme { theme } => format!("SetUiTheme {theme}"),
         Act::SetPaused { paused } => format!("SetPaused {paused}"),
+        Act::SaveVariable { name, clear } => format!("SaveVariable {name} {clear}"),
         other => format!("{other:?}"),
     }
 }
@@ -351,7 +354,11 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::HideElement { id, all } => format!("|HideElement {id} {all}"),
         Effect::DeleteElement { id } => format!("|DeleteElement {id}"),
         Effect::SetFocus { id } => format!("|SetFocus {id}"),
+        Effect::SetUiTheme { theme } => format!("|SetUiTheme {}", theme.index()),
         Effect::SetPaused { paused } => format!("|SetPaused {paused}"),
+        Effect::SaveVariable { actor, name, clear } => {
+            format!("{actor}|SaveVariable {name} {clear}")
+        }
         other => panic!("this test has no line for {other:?}"),
     };
     Some(line)
@@ -2151,6 +2158,34 @@ fn an_inputs_rules_and_a_sliders_step_are_written_the_same_way() {
             K::ClearFocus,
         ],
         &[],
+    );
+}
+
+#[test]
+fn lists_themes_and_saved_variables_land_the_same_way() {
+    assert_same(
+        "interface-v3",
+        vec![
+            K::ShowList {
+                element: Value::text("scores"),
+                anchor: UiAnchor::Right,
+                x: number(-12.0),
+                y: number(0.0),
+                width: number(260.0),
+                height: number(320.0),
+                parent: Value::text(""),
+            },
+            K::SetUiTheme {
+                theme: UiTheme::HighContrast,
+            },
+            K::SaveVariable {
+                name: "score".to_string(),
+            },
+            K::ClearSavedVariable {
+                name: "score".to_string(),
+            },
+        ],
+        &[("score", Evaluated::Number(12.0))],
     );
 }
 

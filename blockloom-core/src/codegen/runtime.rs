@@ -195,9 +195,16 @@ pub enum Act {
     SetFocus {
         id: String,
     },
+    SetUiTheme {
+        theme: usize,
+    },
     /// Freezes or thaws the world; window-global, like gravity.
     SetPaused {
         paused: bool,
+    },
+    SaveVariable {
+        name: &'static str,
+        clear: bool,
     },
 }
 
@@ -744,7 +751,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 7;
+pub const LOGIC_ABI_VERSION: u32 = 8;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -803,6 +810,10 @@ pub const ACT_DELETE_ELEMENT: u32 = 33;
 pub const ACT_SET_PAUSED: u32 = 34;
 /// Gives a text input the keyboard, or takes it back.
 pub const ACT_SET_FOCUS: u32 = 35;
+/// `n0` is a `UiTheme` index.
+pub const ACT_SET_UI_THEME: u32 = 36;
+/// `a` = variable name; `n0` != 0 clears instead of writing.
+pub const ACT_SAVE_VARIABLE: u32 = 37;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1192,12 +1203,28 @@ impl Host for AbiHost {
                 self.act_wire(actor, ACT_DELETE_ELEMENT, &id, "", [0.0; 3], &zero)
             }
             Act::SetFocus { id } => self.act_wire(actor, ACT_SET_FOCUS, &id, "", [0.0; 3], &zero),
+            Act::SetUiTheme { theme } => self.act_wire(
+                actor,
+                ACT_SET_UI_THEME,
+                "",
+                "",
+                [theme as f64, 0.0, 0.0],
+                &zero,
+            ),
             Act::SetPaused { paused } => self.act_wire(
                 actor,
                 ACT_SET_PAUSED,
                 "",
                 "",
                 [if paused { 1.0 } else { 0.0 }, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SaveVariable { name, clear } => self.act_wire(
+                actor,
+                ACT_SAVE_VARIABLE,
+                name,
+                "",
+                [if clear { 1.0 } else { 0.0 }, 0.0, 0.0],
                 &zero,
             ),
         }

@@ -8,6 +8,7 @@
 use bevy::prelude::*;
 use blockloom_core::components::CameraAttach;
 use blockloom_core::project::{Actor, Project};
+use blockloom_core::save::SaveData;
 use blockloom_core::scene::Mode;
 use blockloom_core::value::Evaluated;
 use blockloom_core::vm::{Variables, Vm};
@@ -69,6 +70,9 @@ pub struct Engine {
     pub project: Project,
     pub vm: Vm,
     pub variables: Variables,
+    /// Per-player values for this project's explicitly saved variables.
+    pub save_data: SaveData,
+    pub save_path: PathBuf,
     /// A built game's native block program. Editor Play keeps using the VM so
     /// what is being edited always runs immediately.
     pub logic: Option<crate::logic::LoadedLogic>,
@@ -150,6 +154,8 @@ impl Engine {
             project: Project::starter("Untitled", mode),
             vm: Vm::with_variables(variables.clone()),
             variables,
+            save_data: SaveData::default(),
+            save_path: PathBuf::new(),
             logic: None,
             made: 0,
             entities: HashMap::new(),

@@ -9,7 +9,7 @@
 use crate::blocks::{ActorGraph, Instruction, InstructionKind};
 use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
-use crate::ui::{UiAnchor, UiKind, UiProp};
+use crate::ui::{UiAnchor, UiKind, UiProp, UiTheme};
 use crate::value::Value;
 use std::collections::HashMap;
 
@@ -129,7 +129,12 @@ pub enum Action {
     /// Hands the keyboard to a text input. An empty id, or one that names
     /// anything else, takes it back instead.
     SetFocus(Value),
+    SetUiTheme(UiTheme),
     SetPaused(bool),
+    SaveVariable {
+        name: String,
+        clear: bool,
+    },
     SetVariable {
         name: String,
         value: Value,
@@ -524,6 +529,28 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             parent,
             *on,
         )),
+        K::ShowList {
+            element: id,
+            anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+        } => steps.push(show(
+            UiKind::List,
+            id,
+            &Value::text(""),
+            None,
+            *anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+            false,
+        )),
+        K::SetUiTheme { theme } => steps.push(Step::Action(Action::SetUiTheme(*theme))),
         K::SetUiProp {
             prop,
             element,
@@ -548,6 +575,14 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::ClearFocus => steps.push(Step::Action(Action::SetFocus(Value::text("")))),
         K::PauseGame => steps.push(Step::Action(Action::SetPaused(true))),
         K::ResumeGame => steps.push(Step::Action(Action::SetPaused(false))),
+        K::SaveVariable { name } => steps.push(Step::Action(Action::SaveVariable {
+            name: name.clone(),
+            clear: false,
+        })),
+        K::ClearSavedVariable { name } => steps.push(Step::Action(Action::SaveVariable {
+            name: name.clone(),
+            clear: true,
+        })),
         K::SetVariable { name, value } => steps.push(Step::Action(Action::SetVariable {
             name: name.clone(),
             value: value.clone(),
@@ -608,7 +643,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
     }
 }
 
-/// The six kinds whose row is `id`, one caption and the shared placement.
+/// The kinds whose row is `id`, one caption and the shared placement.
 /// A slider is spelled out in full above instead, since its row asks the
 /// world for three more things.
 #[allow(clippy::too_many_arguments)]

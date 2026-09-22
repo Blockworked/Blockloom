@@ -61,14 +61,14 @@ pub use runtime::{
     ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH, ACT_BROADCAST,
     ACT_CHANGE_POSITION, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR, ACT_DELETE_ELEMENT,
     ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_MOVE, ACT_POINT_TOWARDS,
-    ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR,
-    ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_GRAVITY, ACT_SET_MASS,
+    ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW,
+    ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_GRAVITY, ACT_SET_MASS,
     ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE,
-    ACT_SET_UI_PROP, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_TURN, AbiStr,
-    AbiValue, Act, Actors, Entry, Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE,
-    READ_VARIABLE, Runner, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW,
-    SYM_LOGIC_PAUSE, SYM_LOGIC_RESET, SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL,
-    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
+    ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT,
+    ACT_TURN, AbiStr, AbiValue, Act, Actors, Entry, Host, LOGIC_ABI_VERSION, LogicHostApi, R,
+    READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE,
+    SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET, SYM_LOGIC_TICK, State, Status, TICK_STOPPED,
+    VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
 };
 
 use crate::project::Project;
@@ -998,6 +998,9 @@ impl<'a> Pass<'a> {
                  h.act(&me, Act::SetFocus {{ id: id.trim().to_string() }});\n",
                 self.text(id)?
             ),
+            Action::SetUiTheme(theme) => {
+                act(format!("Act::SetUiTheme {{ theme: {} }}", theme.index()))
+            }
             // The table freezes now, not when the host answers: the rest of
             // this tick has to see a paused world, exactly as the VM does -
             // and this strand stops here unless the interface started it.
@@ -1010,6 +1013,10 @@ impl<'a> Pass<'a> {
                     String::new()
                 }
             ),
+            Action::SaveVariable { name, clear } => act(format!(
+                "Act::SaveVariable {{ name: {}, clear: {clear} }}",
+                literal(name)
+            )),
             // A variable write isn't an effect: it is the host's own state, so
             // it goes through the host rather than through `Act`.
             Action::SetVariable { name, value } => format!(

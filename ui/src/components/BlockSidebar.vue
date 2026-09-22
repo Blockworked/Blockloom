@@ -60,6 +60,8 @@ const BLOCK_GROUPS: { label: string; types: InstructionType[] }[] = [
       'ShowInput',
       'ShowSlider',
       'ShowToggle',
+      'ShowList',
+      'SetUiTheme',
       'SetUiProp',
       'HideElement',
       'HideAllUi',
@@ -186,6 +188,8 @@ function onContextMenu(event: MouseEvent) {
         <div class="sidebar-palette" v-if="hasVariables">
           <PaletteInstructionBlock type="SetVariable" :instruction="paletteInstructions.SetVariable" />
           <PaletteInstructionBlock type="ChangeVariable" :instruction="paletteInstructions.ChangeVariable" />
+          <PaletteInstructionBlock type="SaveVariable" :instruction="paletteInstructions.SaveVariable" />
+          <PaletteInstructionBlock type="ClearSavedVariable" :instruction="paletteInstructions.ClearSavedVariable" />
         </div>
         <p v-else class="panel-note">A variable remembers a number or some text - a score, a level, a name.</p>
 

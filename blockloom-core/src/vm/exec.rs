@@ -1032,6 +1032,7 @@ impl Vm {
                     id: id.trim().to_string(),
                 });
             }
+            Action::SetUiTheme(theme) => out.push(Effect::SetUiTheme { theme: *theme }),
             // The VM freezes itself the moment the block runs, so the rest
             // of this tick already sees a paused world - the host catches up
             // when it applies the effect.
@@ -1039,6 +1040,11 @@ impl Vm {
                 self.paused = *paused;
                 out.push(Effect::SetPaused { paused: *paused });
             }
+            Action::SaveVariable { name, clear } => out.push(Effect::SaveVariable {
+                actor: actor.to_string(),
+                name: name.clone(),
+                clear: *clear,
+            }),
             Action::SetMouseLocked(locked) => out.push(Effect::SetMouseLocked { locked: *locked }),
             Action::SetVariable { name, value } => {
                 let value = self.eval(value, actor, params, out);

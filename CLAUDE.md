@@ -510,7 +510,7 @@ siblings inside its parent's vertical stack and its own placement is ignored,
 which is what makes Resume / Settings / Quit a three-block menu.
 
 Every `show` block spells its id, caption and placement the same way, so the
-seven kinds share one set of field ids (`UiId`, `UiContent`, `UiX`, ...). The
+element kinds share one set of field ids (`UiId`, `UiContent`, `UiX`, ...). The
 JSON field is `element` rather than `id`, because a flattened instruction
 already carries its own `id` on the wire (see `wire.rs`).
 
@@ -607,10 +607,10 @@ lands.
 
 ### Known gaps
 
-- No sounds, no lists.
-- The interface has no global stylesheet and no scrollable lists: styling is
-  per-element props over dark translucent defaults. Settings built with it
-  live in variables and last one run.
+- No sounds or value lists.
+- The interface has three global themes plus per-element overrides and
+  scrollable UI lists. Variables persist only when a `save variable` block or
+  the matching script call writes them to per-player save data.
 - A text input is basic: no selection, no cursor, no IME. Backspace rubs out,
   Escape and Enter let go, and every other character key appends - subject to
   the input's own `allow` and `max length`, which is all the validation there

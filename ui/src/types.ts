@@ -68,6 +68,8 @@ export const INSTRUCTION_TYPES = [
   'ShowInput',
   'ShowSlider',
   'ShowToggle',
+  'ShowList',
+  'SetUiTheme',
   'SetUiProp',
   'HideElement',
   'HideAllUi',
@@ -78,6 +80,8 @@ export const INSTRUCTION_TYPES = [
   'ResumeGame',
   'SetVariable',
   'ChangeVariable',
+  'SaveVariable',
+  'ClearSavedVariable',
   'CallBlock',
   'Return',
 ] as const;

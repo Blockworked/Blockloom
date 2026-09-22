@@ -38,6 +38,7 @@ pub mod fields;
 pub mod library;
 pub mod pack;
 pub mod project;
+pub mod save;
 pub mod scene;
 pub mod script;
 pub mod sense;

@@ -271,6 +271,7 @@ pub fn apply_ui_effects(
             Effect::SetFocus { id } => {
                 manager.focus_on(if id.is_empty() { None } else { Some(id) })
             }
+            Effect::SetUiTheme { theme } => manager.set_theme(*theme),
             Effect::SetPaused { paused } => {
                 let now = time.elapsed_secs() as f64;
                 world::set_paused(&mut engine, *paused, now);
@@ -327,6 +328,7 @@ pub fn draw_ui(
 
     let dir = engine.project_dir.clone();
     let focused = manager.focus().unwrap_or_default().to_string();
+    let theme = manager.theme();
     let mut screen = roots.iter().next();
     for id in manager.take_pending() {
         let Some(node) = manager.get(&id) else {
@@ -365,7 +367,14 @@ pub fn draw_ui(
                 }
             }
         };
-        let entity = spawn_element(&mut commands, &assets, dir.as_deref(), node, id == focused);
+        let entity = spawn_element(
+            &mut commands,
+            &assets,
+            dir.as_deref(),
+            node,
+            id == focused,
+            theme,
+        );
         commands.entity(under).add_child(entity);
         manager.attach(&id, entity);
     }
@@ -410,7 +419,7 @@ pub fn draw_ui(
         }
         *background = BackgroundColor(match &element.style.background {
             Some(hex) => world::parse_color(hex),
-            None => crate::ui::background_for(element.kind, id == focused),
+            None => crate::ui::background_for(theme, element.kind, id == focused),
         });
         node.border_radius = BorderRadius::all(Val::Px(
             element
@@ -431,7 +440,7 @@ pub fn draw_ui(
                 FontSize::Px(element.style.text_size.unwrap_or_else(crate::ui::text_size));
             *color = TextColor(match &element.style.text_color {
                 Some(hex) => world::parse_color(hex),
-                None => crate::ui::text_color(),
+                None => crate::ui::text_color(theme),
             });
         }
         // A slider's fill and a toggle's lamp are the only two whose look is
@@ -445,11 +454,7 @@ pub fn draw_ui(
         let on = element.value.as_bool();
         for (owner, mut lamp) in &mut lamps {
             if owner.0 == id {
-                *lamp = BackgroundColor(if on {
-                    Color::srgb(0.30, 0.78, 0.44)
-                } else {
-                    Color::srgba(0.35, 0.38, 0.45, 0.9)
-                });
+                *lamp = BackgroundColor(crate::ui::toggle_color(theme, on));
             }
         }
     }
@@ -474,6 +479,7 @@ fn spawn_element(
     dir: Option<&std::path::Path>,
     node: &crate::ui::UiNode,
     focused: bool,
+    theme: blockloom_core::ui::UiTheme,
 ) -> Entity {
     let id = node.spec.id.clone();
     let parented = !node.parent.is_empty();
@@ -481,8 +487,11 @@ fn spawn_element(
     let mut entity = commands.spawn((
         Name::new(format!("ui: {id}")),
         base,
-        BackgroundColor(crate::ui::background_for(node.kind, focused)),
+        BackgroundColor(crate::ui::background_for(theme, node.kind, focused)),
     ));
+    if node.kind == UiKind::List {
+        entity.insert(ScrollPosition::default());
+    }
     // A top-level element takes its anchor's share of its own size back off,
     // so a right-anchored one ends up inside the window rather than past it.
     if !parented {
@@ -512,7 +521,7 @@ fn spawn_element(
                             )),
                             ..default()
                         },
-                        BackgroundColor(crate::ui::track_background()),
+                        BackgroundColor(crate::ui::track_background(theme)),
                     ))
                     .with_children(|track| {
                         track.spawn((
@@ -525,7 +534,7 @@ fn spawn_element(
                                 )),
                                 ..default()
                             },
-                            BackgroundColor(Color::srgb(0.36, 0.60, 0.94)),
+                            BackgroundColor(crate::ui::accent(theme)),
                         ));
                     });
             });
@@ -542,19 +551,19 @@ fn spawn_element(
                         border_radius: BorderRadius::all(Val::Px(4.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.35, 0.38, 0.45, 0.9)),
+                    BackgroundColor(crate::ui::toggle_color(theme, false)),
                 ));
                 parent.spawn((
                     UiElementText(caption),
                     Text::new(crate::ui::text_of(node)),
                     TextFont::from_font_size(FontSize::Px(crate::ui::text_size())),
-                    TextColor(crate::ui::text_color()),
+                    TextColor(crate::ui::text_color(theme)),
                 ));
             });
         }
         // Everything else says its piece in words. A panel's is its title
         // row, which an empty title leaves off entirely.
-        UiKind::Panel if node.spec.content.trim().is_empty() => {}
+        UiKind::Panel | UiKind::List if node.spec.content.trim().is_empty() => {}
         _ => {
             let caption = id.clone();
             let words = crate::ui::text_of(node);
@@ -563,7 +572,7 @@ fn spawn_element(
                     UiElementText(caption),
                     Text::new(words),
                     TextFont::from_font_size(FontSize::Px(crate::ui::text_size())),
-                    TextColor(crate::ui::text_color()),
+                    TextColor(crate::ui::text_color(theme)),
                 ));
             });
         }

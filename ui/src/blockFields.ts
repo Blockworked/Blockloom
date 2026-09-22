@@ -34,6 +34,7 @@ import {
   ON_OFF_OPTIONS,
   UI_ANCHOR_OPTIONS,
   UI_PROP_OPTIONS,
+  UI_THEME_OPTIONS,
   VISIBLE_OPTIONS,
 } from './constants';
 import {
@@ -422,6 +423,10 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
   ShowToggle: {
     head: showRow('show toggle', 'label', [flag('on', ON_OFF_OPTIONS)]),
   },
+  ShowList: { head: [label('show list'), value('UiId', 'element'), ...placement()] },
+  SetUiTheme: {
+    head: [label('set ui theme'), { kind: 'dropdown', key: 'theme', options: UI_THEME_OPTIONS }],
+  },
   SetUiProp: {
     head: [
       label('set'),
@@ -456,6 +461,12 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
       label('by'),
       value('ChangeVariableValue', 'value'),
     ],
+  },
+  SaveVariable: {
+    head: [label('save'), { kind: 'dropdown', key: 'name', options: variableOptions, placeholder: 'variable' }],
+  },
+  ClearSavedVariable: {
+    head: [label('clear saved'), { kind: 'dropdown', key: 'name', options: variableOptions, placeholder: 'variable' }],
   },
 
   // ── Custom blocks ────────────────────────────────────────────────────────

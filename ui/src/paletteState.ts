@@ -122,8 +122,15 @@ function defaults(type: InstructionType): Record<string, unknown> {
       };
     case 'ShowToggle':
       return { ...uiPlacement('Center'), element: textValue('shadows'), label: textValue('Shadows'), on: true };
+    case 'ShowList':
+      return { ...uiPlacement('Center'), element: textValue('items'), width: numberValue(280), height: numberValue(240) };
+    case 'SetUiTheme':
+      return { theme: 'Dark' };
     case 'SetUiProp':
       return { prop: 'Text', element: textValue('score'), value: textValue('') };
+    case 'SaveVariable':
+    case 'ClearSavedVariable':
+      return { name: '' };
     case 'HideElement':
     case 'DeleteElement':
       return { element: textValue('menu') };

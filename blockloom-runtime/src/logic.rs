@@ -4,19 +4,20 @@ use blockloom_core::codegen::{
     self, ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH,
     ACT_BROADCAST, ACT_CHANGE_POSITION, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR,
     ACT_DELETE_ELEMENT, ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_MOVE,
-    ACT_POINT_TOWARDS, ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW,
-    ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_GRAVITY, ACT_SET_MASS,
-    ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE,
-    ACT_SET_UI_PROP, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_TURN, AbiStr,
-    AbiValue, LOGIC_ABI_VERSION, LogicHostApi, READ_SENSE, READ_VARIABLE, SYM_LOGIC_ABI,
-    SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
-    SYM_LOGIC_TICK, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
+    ACT_POINT_TOWARDS, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_PITCH,
+    ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_FOCUS,
+    ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED,
+    ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY,
+    ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_TURN, AbiStr, AbiValue, LOGIC_ABI_VERSION, LogicHostApi,
+    READ_SENSE, READ_VARIABLE, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW,
+    SYM_LOGIC_PAUSE, SYM_LOGIC_RESET, SYM_LOGIC_TICK, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR,
+    VALUE_NUMBER, VALUE_TEXT,
 };
 use blockloom_core::components::CameraView;
 use blockloom_core::project::Project;
 use blockloom_core::scene::{Axis, BodyKind};
 use blockloom_core::sense;
-use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp};
+use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp, UiTheme};
 use blockloom_core::value::{Evaluated, ext_operator};
 use blockloom_core::vm::{Effect, Event, Variables};
 use std::ffi::c_void;
@@ -495,7 +496,15 @@ extern "C" fn act(
         },
         ACT_DELETE_ELEMENT => Effect::DeleteElement { id: a.to_string() },
         ACT_SET_FOCUS => Effect::SetFocus { id: a.to_string() },
+        ACT_SET_UI_THEME => Effect::SetUiTheme {
+            theme: UiTheme::from_index(n0 as usize),
+        },
         ACT_SET_PAUSED => Effect::SetPaused { paused: n0 != 0.0 },
+        ACT_SAVE_VARIABLE => Effect::SaveVariable {
+            actor,
+            name: a.to_string(),
+            clear: n0 != 0.0,
+        },
         ACT_ERROR => Effect::Error {
             actor,
             message: a.to_string(),

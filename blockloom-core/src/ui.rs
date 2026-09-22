@@ -27,6 +27,8 @@ pub enum UiKind {
     Input,
     Slider,
     Toggle,
+    /// A bounded vertical stack whose children can be scrolled.
+    List,
 }
 
 impl UiKind {
@@ -39,6 +41,7 @@ impl UiKind {
             UiKind::Input => 4,
             UiKind::Slider => 5,
             UiKind::Toggle => 6,
+            UiKind::List => 7,
         }
     }
 
@@ -50,6 +53,7 @@ impl UiKind {
             4 => UiKind::Input,
             5 => UiKind::Slider,
             6 => UiKind::Toggle,
+            7 => UiKind::List,
             _ => UiKind::Panel,
         }
     }
@@ -58,6 +62,44 @@ impl UiKind {
     /// `when (id) changed` and `value of (id)` mean anything for.
     pub fn is_input(self) -> bool {
         matches!(self, UiKind::Input | UiKind::Slider | UiKind::Toggle)
+    }
+}
+
+/// A set of defaults for elements that have not had the matching property
+/// written. Per-element styling always wins over the theme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum UiTheme {
+    #[default]
+    Dark,
+    Light,
+    HighContrast,
+}
+
+impl UiTheme {
+    pub const ALL: &'static [UiTheme] = &[UiTheme::Dark, UiTheme::Light, UiTheme::HighContrast];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            UiTheme::Dark => "Dark",
+            UiTheme::Light => "Light",
+            UiTheme::HighContrast => "HighContrast",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        match self {
+            UiTheme::Dark => 0,
+            UiTheme::Light => 1,
+            UiTheme::HighContrast => 2,
+        }
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            1 => UiTheme::Light,
+            2 => UiTheme::HighContrast,
+            _ => UiTheme::Dark,
+        }
     }
 }
 
@@ -380,11 +422,18 @@ mod tests {
 
     #[test]
     fn kinds_and_anchors_round_trip_through_their_wire_index() {
-        for index in 0..7 {
+        for index in 0..8 {
             assert_eq!(UiKind::from_index(index).index(), index);
         }
         for index in 0..9 {
             assert_eq!(UiAnchor::from_index(index).index(), index);
+        }
+    }
+
+    #[test]
+    fn themes_round_trip_through_their_wire_index() {
+        for theme in UiTheme::ALL {
+            assert_eq!(UiTheme::from_index(theme.index()), *theme);
         }
     }
 

@@ -31,7 +31,7 @@ Obvious gaps already identified in the project notes:
 - [ ] Compile recursive statement-shaped custom blocks. They are refused for
       now because each invocation needs its own loop-counter slots. Recursive
       reporter-shaped blocks already compile.
-- [ ] Add a save-data system so a finished game can persist the player's progress across runs, with a block API and a matching Rust script API.
+- [x] Add a save-data system so a finished game can persist the player's progress across runs, with a block API and a matching Rust script API.
 - [x] Redesign projects as folders: the app always starts on a Dashboard page for creating new projects and opening existing ones, with each project stored as a folder so it can hold assets.
 - [x] Add a component system built on Bevy's ECS components that turns all properties into components, with support for custom components and camera-attach components (for first-person / third-person cameras).
 - [x] Add a script component that runs Rust, so a project can drop out of blocks where it needs to.

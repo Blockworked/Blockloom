@@ -839,6 +839,49 @@ fn a_show_block_names_its_element_and_carries_its_slots_evaluated() {
 }
 
 #[test]
+fn v3_interface_blocks_emit_a_list_theme_and_saved_variable_requests() {
+    let project = project_with(vec![started(vec![
+        InstructionKind::ShowList {
+            element: Value::text("items"),
+            anchor: blockloom_core::ui::UiAnchor::Center,
+            x: Value::number(0.0),
+            y: Value::number(0.0),
+            width: Value::number(280.0),
+            height: Value::number(240.0),
+            parent: Value::text(""),
+        },
+        InstructionKind::SetUiTheme {
+            theme: blockloom_core::ui::UiTheme::Light,
+        },
+        InstructionKind::SaveVariable {
+            name: "score".to_string(),
+        },
+        InstructionKind::ClearSavedVariable {
+            name: "score".to_string(),
+        },
+    ])]);
+    let actor = project.actors[0].id.clone();
+    let effects = Harness::started(&project).run(1);
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::ShowElement { element } if element.kind == blockloom_core::ui::UiKind::List
+    )));
+    assert!(effects.contains(&Effect::SetUiTheme {
+        theme: blockloom_core::ui::UiTheme::Light,
+    }));
+    assert!(effects.contains(&Effect::SaveVariable {
+        actor: actor.clone(),
+        name: "score".to_string(),
+        clear: false,
+    }));
+    assert!(effects.contains(&Effect::SaveVariable {
+        actor,
+        name: "score".to_string(),
+        clear: true,
+    }));
+}
+
+#[test]
 fn a_click_on_an_element_starts_the_strand_that_names_it_and_no_other() {
     let project = project_with(vec![
         ui_clicked("resume", vec![say("resumed")]),

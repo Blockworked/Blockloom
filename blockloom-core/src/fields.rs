@@ -44,7 +44,7 @@ pub enum FieldId {
     NewActorZ,
     DeleteTarget,
     // The interface slots. Every `show` block spells the shared five the
-    // same way, so one id each covers all seven kinds.
+    // same way, so one id each covers every kind.
     UiId,
     UiContent,
     UiX,
@@ -270,7 +270,8 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         | (K::ShowImage { element, .. }, F::UiId)
         | (K::ShowInput { element, .. }, F::UiId)
         | (K::ShowSlider { element, .. }, F::UiId)
-        | (K::ShowToggle { element, .. }, F::UiId) => Some(element),
+        | (K::ShowToggle { element, .. }, F::UiId)
+        | (K::ShowList { element, .. }, F::UiId) => Some(element),
         (K::ShowPanel { title: slot, .. }, F::UiContent)
         | (K::ShowLabel { text: slot, .. }, F::UiContent)
         | (K::ShowButton { label: slot, .. }, F::UiContent)
@@ -288,41 +289,47 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         | (K::ShowImage { x, .. }, F::UiX)
         | (K::ShowInput { x, .. }, F::UiX)
         | (K::ShowSlider { x, .. }, F::UiX)
-        | (K::ShowToggle { x, .. }, F::UiX) => Some(x),
+        | (K::ShowToggle { x, .. }, F::UiX)
+        | (K::ShowList { x, .. }, F::UiX) => Some(x),
         (K::ShowPanel { y, .. }, F::UiY)
         | (K::ShowLabel { y, .. }, F::UiY)
         | (K::ShowButton { y, .. }, F::UiY)
         | (K::ShowImage { y, .. }, F::UiY)
         | (K::ShowInput { y, .. }, F::UiY)
         | (K::ShowSlider { y, .. }, F::UiY)
-        | (K::ShowToggle { y, .. }, F::UiY) => Some(y),
+        | (K::ShowToggle { y, .. }, F::UiY)
+        | (K::ShowList { y, .. }, F::UiY) => Some(y),
         (K::ShowPanel { width, .. }, F::UiWidth)
         | (K::ShowLabel { width, .. }, F::UiWidth)
         | (K::ShowButton { width, .. }, F::UiWidth)
         | (K::ShowImage { width, .. }, F::UiWidth)
         | (K::ShowInput { width, .. }, F::UiWidth)
         | (K::ShowSlider { width, .. }, F::UiWidth)
-        | (K::ShowToggle { width, .. }, F::UiWidth) => Some(width),
+        | (K::ShowToggle { width, .. }, F::UiWidth)
+        | (K::ShowList { width, .. }, F::UiWidth) => Some(width),
         (K::ShowPanel { height, .. }, F::UiHeight)
         | (K::ShowLabel { height, .. }, F::UiHeight)
         | (K::ShowButton { height, .. }, F::UiHeight)
         | (K::ShowImage { height, .. }, F::UiHeight)
         | (K::ShowInput { height, .. }, F::UiHeight)
         | (K::ShowSlider { height, .. }, F::UiHeight)
-        | (K::ShowToggle { height, .. }, F::UiHeight) => Some(height),
+        | (K::ShowToggle { height, .. }, F::UiHeight)
+        | (K::ShowList { height, .. }, F::UiHeight) => Some(height),
         (K::ShowPanel { parent, .. }, F::UiParent)
         | (K::ShowLabel { parent, .. }, F::UiParent)
         | (K::ShowButton { parent, .. }, F::UiParent)
         | (K::ShowImage { parent, .. }, F::UiParent)
         | (K::ShowInput { parent, .. }, F::UiParent)
         | (K::ShowSlider { parent, .. }, F::UiParent)
-        | (K::ShowToggle { parent, .. }, F::UiParent) => Some(parent),
+        | (K::ShowToggle { parent, .. }, F::UiParent)
+        | (K::ShowList { parent, .. }, F::UiParent) => Some(parent),
         (K::ShowSlider { min, .. }, F::UiMin) => Some(min),
         (K::ShowSlider { max, .. }, F::UiMax) => Some(max),
         (K::ShowSlider { value, .. }, F::UiValue) => Some(value),
         (K::SetUiProp { element, .. }, F::UiTarget)
         | (K::HideElement { element }, F::UiTarget)
-        | (K::DeleteElement { element }, F::UiTarget) => Some(element),
+        | (K::DeleteElement { element }, F::UiTarget)
+        | (K::FocusElement { element }, F::UiTarget) => Some(element),
         (K::SetUiProp { value, .. }, F::UiPropValue) => Some(value),
         (K::Wait { duration }, F::WaitDuration) => Some(duration),
         (K::WaitUntil { condition }, F::WaitUntilCondition) => Some(condition),

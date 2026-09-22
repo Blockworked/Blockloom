@@ -15,7 +15,7 @@ use blockloom_core::components::CameraView;
 use blockloom_core::scene::Axis;
 use blockloom_core::script::abi::{self, HostApi, Str};
 use blockloom_core::sense;
-use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp};
+use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp, UiTheme};
 use blockloom_core::value::Evaluated;
 use blockloom_core::vm::Effect;
 use blockloom_protocol::RuntimeMessage;
@@ -489,6 +489,14 @@ extern "C" fn act(
         },
         abi::ACT_UI_FOCUS => Effect::SetFocus {
             id: a.trim().to_string(),
+        },
+        abi::ACT_UI_THEME => Effect::SetUiTheme {
+            theme: UiTheme::from_index(n0 as usize),
+        },
+        abi::ACT_SAVE_VARIABLE => Effect::SaveVariable {
+            actor,
+            name: a.trim().to_string(),
+            clear: n0 != 0.0,
         },
         abi::ACT_SET_PAUSED => Effect::SetPaused { paused: n0 != 0.0 },
         abi::ACT_STOP_ALL => Effect::Stopped,

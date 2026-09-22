@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 8;
+pub const ABI_VERSION: u32 = 9;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -188,6 +188,10 @@ pub const ACT_SET_PAUSED: u32 = 32;
 /// `a` = a text input's id, which is handed the keyboard. An empty id, or
 /// one naming anything else, takes it back instead.
 pub const ACT_UI_FOCUS: u32 = 33;
+/// `n0` = 0 dark, 1 light, 2 high contrast.
+pub const ACT_UI_THEME: u32 = 34;
+/// `a` = variable name; `n0` != 0 clears instead of saving.
+pub const ACT_SAVE_VARIABLE: u32 = 35;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

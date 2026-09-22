@@ -20,7 +20,7 @@ use crate::engine::{
 use crate::{bridge, dim2, dim3};
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
-use bevy::input::mouse::MouseMotion;
+use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
 use blockloom_core::components::CameraView;
@@ -185,6 +185,7 @@ pub fn pump_editor(
                 engine.project_dir = dir.map(std::path::PathBuf::from);
                 let loaded = engine.project.clone();
                 engine.vm.load(&loaded);
+                load_saved_data(&mut engine);
                 open_logic(&mut engine);
                 engine.speech.clear();
                 // The interface goes with the world it belonged to. Cleared
@@ -199,6 +200,7 @@ pub fn pump_editor(
             EditorMessage::Start => {
                 let project = engine.project.clone();
                 engine.vm.load(&project);
+                load_saved_data(&mut engine);
                 if let Some(logic) = &mut engine.logic {
                     logic.reset();
                 }
@@ -227,6 +229,65 @@ pub fn pump_editor(
                 exit.write(AppExit::Success);
                 return;
             }
+        }
+    }
+}
+
+fn load_saved_data(engine: &mut Engine) {
+    engine.save_path = blockloom_core::save::path(&engine.project.id);
+    match blockloom_core::save::read(&engine.save_path) {
+        Ok(data) => {
+            data.apply(&engine.project, &engine.variables);
+            engine.save_data = data;
+        }
+        Err(message) => {
+            engine.save_data = Default::default();
+            bridge::send(&RuntimeMessage::Error {
+                actor: String::new(),
+                message: format!("couldn't load saved variables: {message}"),
+            });
+        }
+    }
+}
+
+/// Persists the variable slots named by this step's save-data effects. This
+/// runs while paused too, since a settings menu is the common caller.
+pub fn apply_saved_data(effects: Res<PendingEffects>, mut engine: NonSendMut<Engine>) {
+    if !engine.running {
+        return;
+    }
+    for effect in &effects.0 {
+        let Effect::SaveVariable { actor, name, clear } = effect else {
+            continue;
+        };
+        let owner = engine
+            .clones
+            .get(actor)
+            .cloned()
+            .unwrap_or_else(|| actor.clone());
+        let project = engine.project.clone();
+        let snapshot = engine.variables.snapshot();
+        let changed = if *clear {
+            engine.save_data.clear(&project, &owner, name)
+        } else {
+            engine
+                .save_data
+                .capture(&project, &snapshot, &owner, actor, name)
+        };
+        if !changed && !clear {
+            bridge::send(&RuntimeMessage::Error {
+                actor: actor.clone(),
+                message: format!("there's no variable called \"{name}\" to save"),
+            });
+            continue;
+        }
+        if changed
+            && let Err(message) = blockloom_core::save::write(&engine.save_path, &engine.save_data)
+        {
+            bridge::send(&RuntimeMessage::Error {
+                actor: actor.clone(),
+                message: format!("couldn't save variable \"{name}\": {message}"),
+            });
         }
     }
 }
@@ -891,6 +952,44 @@ pub fn detect_clicks(
     }
     for actor in hits {
         engine.fire(Event::Click { actor });
+    }
+}
+
+/// Scrolls the nearest list under the pointer. Children count as part of the
+/// list, and clipped children cannot receive clicks or wheel input outside its
+/// viewport because `UiManager::hit` checks list ancestors.
+pub fn scroll_ui_lists(
+    mut wheels: MessageReader<MouseWheel>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    manager: Res<crate::ui::UiManager>,
+    laid_out: Query<(&ComputedNode, &UiGlobalTransform)>,
+    mut scrolls: Query<(&mut ScrollPosition, &Node, &ComputedNode)>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(point) = window.cursor_position() else {
+        return;
+    };
+    let Some(hit) = manager.hit(point, |node| screen_rect(&laid_out, node.entity)) else {
+        return;
+    };
+    let Some(list) = manager.scroll_owner(&hit.spec.id) else {
+        return;
+    };
+    let Ok((mut position, node, computed)) = scrolls.get_mut(list.entity) else {
+        return;
+    };
+    for wheel in wheels.read() {
+        let scale = if wheel.unit == MouseScrollUnit::Line {
+            24.0
+        } else {
+            1.0
+        };
+        let max = (computed.content_size() - computed.size()) * computed.inverse_scale_factor();
+        if node.overflow.y == OverflowAxis::Scroll {
+            position.y = (position.y - wheel.y * scale).clamp(0.0, max.y.max(0.0));
+        }
     }
 }
 
@@ -2062,7 +2161,9 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::DeleteElement { .. }
         | Effect::SetUiProp { .. }
         | Effect::SetFocus { .. }
+        | Effect::SetUiTheme { .. }
         | Effect::SetPaused { .. }
+        | Effect::SaveVariable { .. }
         | Effect::SetParent { .. }
         | Effect::CreateClone { .. }
         | Effect::CreateActor { .. }

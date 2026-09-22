@@ -13,20 +13,12 @@
 
 use bevy::prelude::*;
 use blockloom_core::sense::UiSense;
-use blockloom_core::ui::{UiAllow, UiAnchor, UiElement, UiKind, UiProp};
+use blockloom_core::ui::{UiAllow, UiAnchor, UiElement, UiKind, UiProp, UiTheme};
 use blockloom_core::value::Evaluated;
 use std::collections::HashMap;
 
 /// How a fresh element looks before a `set` block says otherwise. Dark and
 /// translucent, so the naive pause menu looks intentional.
-const PANEL_BACKGROUND: Color = Color::srgba(0.07, 0.09, 0.13, 0.88);
-const BUTTON_BACKGROUND: Color = Color::srgba(0.16, 0.20, 0.28, 0.95);
-const INPUT_BACKGROUND: Color = Color::srgba(0.04, 0.05, 0.08, 0.95);
-/// The one holding the keyboard, so a person can see where their typing is
-/// going - a `focus` block hands it over with no click to watch.
-const INPUT_FOCUSED_BACKGROUND: Color = Color::srgba(0.10, 0.16, 0.26, 0.98);
-const TRACK_BACKGROUND: Color = Color::srgba(0.04, 0.05, 0.08, 0.95);
-const TEXT_COLOR: Color = Color::srgb(0.93, 0.95, 0.98);
 const TEXT_SIZE: f32 = 16.0;
 const PANEL_GAP: f32 = 8.0;
 const PANEL_PADDING: f32 = 12.0;
@@ -54,8 +46,7 @@ pub struct UiSliderFill(pub String);
 pub struct UiToggleLamp(pub String);
 
 /// What a `set` block has written over an element's defaults. Each is
-/// `None` until somebody says otherwise, so the theme-like defaults show
-/// through - there is no global stylesheet in v1.
+/// `None` until somebody says otherwise, so the active theme shows through.
 #[derive(Debug, Clone, Default)]
 pub struct UiStyle {
     pub text: Option<String>,
@@ -130,6 +121,7 @@ pub struct UiManager {
     pending: Vec<String>,
     /// Elements whose entity has to go.
     dropped: Vec<Entity>,
+    theme: UiTheme,
 }
 
 impl UiManager {
@@ -139,6 +131,20 @@ impl UiManager {
 
     pub fn focus(&self) -> Option<&str> {
         self.focus.as_deref()
+    }
+
+    pub fn theme(&self) -> UiTheme {
+        self.theme
+    }
+
+    pub fn set_theme(&mut self, theme: UiTheme) {
+        if self.theme == theme {
+            return;
+        }
+        self.theme = theme;
+        for node in self.nodes.values_mut() {
+            node.dirty = true;
+        }
     }
 
     /// Every element as the reporter blocks see it, which is what goes into
@@ -253,6 +259,7 @@ impl UiManager {
         self.order.clear();
         self.pending.clear();
         self.focus = None;
+        self.theme = UiTheme::default();
     }
 
     /// An element and everything flowing inside it, parents first.
@@ -317,10 +324,41 @@ impl UiManager {
             if !self.shown(node) || node.entity == Entity::PLACEHOLDER {
                 return None;
             }
-            rect_of(node)
-                .filter(|rect| rect.contains(point))
-                .map(|_| node)
+            if !rect_of(node).is_some_and(|rect| rect.contains(point)) {
+                return None;
+            }
+            let mut parent = node.parent.as_str();
+            let mut guard = 0;
+            while !parent.is_empty() && guard < self.order.len() + 1 {
+                let Some(above) = self.nodes.get(parent) else {
+                    break;
+                };
+                if above.kind == UiKind::List
+                    && !rect_of(above).is_some_and(|rect| rect.contains(point))
+                {
+                    return None;
+                }
+                parent = &above.parent;
+                guard += 1;
+            }
+            Some(node)
         })
+    }
+
+    /// The list under an element, or the element itself when it is a list.
+    pub fn scroll_owner(&self, id: &str) -> Option<&UiNode> {
+        let mut node = self.nodes.get(id)?;
+        let mut guard = 0;
+        loop {
+            if node.kind == UiKind::List {
+                return Some(node);
+            }
+            if node.parent.is_empty() || guard > self.order.len() {
+                return None;
+            }
+            node = self.nodes.get(&node.parent)?;
+            guard += 1;
+        }
     }
 
     /// Writes one property. Answers what the sensed value became, when the
@@ -540,11 +578,20 @@ pub fn node_for(spec: &UiElement, parented: bool) -> Node {
         node.margin = at.margin;
     }
     match spec.kind {
-        UiKind::Panel => {
+        UiKind::Panel | UiKind::List => {
             node.flex_direction = FlexDirection::Column;
             node.row_gap = Val::Px(PANEL_GAP);
             node.padding = UiRect::all(Val::Px(PANEL_PADDING));
             node.align_items = AlignItems::Stretch;
+            if spec.kind == UiKind::List {
+                node.overflow = Overflow::scroll_y();
+                if spec.size[0] <= 0.0 {
+                    node.width = Val::Px(280.0);
+                }
+                if spec.size[1] <= 0.0 {
+                    node.height = Val::Px(240.0);
+                }
+            }
         }
         UiKind::Label => {
             node.padding = UiRect::all(Val::Px(2.0));
@@ -580,18 +627,42 @@ pub fn node_for(spec: &UiElement, parented: bool) -> Node {
 /// A fresh element's background, which a `background` property overrides.
 /// The input holding the keyboard is the one thing here that isn't decided
 /// by its kind alone.
-pub fn background_for(kind: UiKind, focused: bool) -> Color {
+pub fn background_for(theme: UiTheme, kind: UiKind, focused: bool) -> Color {
+    let (panel, button, input, focused_input) = match theme {
+        UiTheme::Dark => (
+            Color::srgba(0.07, 0.09, 0.13, 0.88),
+            Color::srgba(0.16, 0.20, 0.28, 0.95),
+            Color::srgba(0.04, 0.05, 0.08, 0.95),
+            Color::srgba(0.10, 0.16, 0.26, 0.98),
+        ),
+        UiTheme::Light => (
+            Color::srgba(0.94, 0.96, 0.99, 0.94),
+            Color::srgba(0.82, 0.86, 0.92, 0.98),
+            Color::srgba(1.0, 1.0, 1.0, 0.98),
+            Color::srgba(0.78, 0.87, 1.0, 1.0),
+        ),
+        UiTheme::HighContrast => (
+            Color::BLACK,
+            Color::srgb(0.12, 0.12, 0.12),
+            Color::BLACK,
+            Color::srgb(0.10, 0.20, 0.45),
+        ),
+    };
     match kind {
-        UiKind::Panel => PANEL_BACKGROUND,
-        UiKind::Button | UiKind::Toggle => BUTTON_BACKGROUND,
-        UiKind::Input if focused => INPUT_FOCUSED_BACKGROUND,
-        UiKind::Input => INPUT_BACKGROUND,
+        UiKind::Panel | UiKind::List => panel,
+        UiKind::Button | UiKind::Toggle => button,
+        UiKind::Input if focused => focused_input,
+        UiKind::Input => input,
         UiKind::Slider | UiKind::Label | UiKind::Image => Color::NONE,
     }
 }
 
-pub fn text_color() -> Color {
-    TEXT_COLOR
+pub fn text_color(theme: UiTheme) -> Color {
+    match theme {
+        UiTheme::Dark => Color::srgb(0.93, 0.95, 0.98),
+        UiTheme::Light => Color::srgb(0.08, 0.10, 0.14),
+        UiTheme::HighContrast => Color::WHITE,
+    }
 }
 
 pub fn text_size() -> f32 {
@@ -602,8 +673,32 @@ pub fn corner_radius() -> f32 {
     CORNER_RADIUS
 }
 
-pub fn track_background() -> Color {
-    TRACK_BACKGROUND
+pub fn track_background(theme: UiTheme) -> Color {
+    match theme {
+        UiTheme::Dark => Color::srgba(0.04, 0.05, 0.08, 0.95),
+        UiTheme::Light => Color::srgba(0.65, 0.69, 0.76, 1.0),
+        UiTheme::HighContrast => Color::BLACK,
+    }
+}
+
+pub fn accent(theme: UiTheme) -> Color {
+    match theme {
+        UiTheme::Dark => Color::srgb(0.36, 0.60, 0.94),
+        UiTheme::Light => Color::srgb(0.10, 0.38, 0.78),
+        UiTheme::HighContrast => Color::srgb(1.0, 0.85, 0.0),
+    }
+}
+
+pub fn toggle_color(theme: UiTheme, on: bool) -> Color {
+    if on {
+        accent(theme)
+    } else {
+        match theme {
+            UiTheme::Dark => Color::srgba(0.35, 0.38, 0.45, 0.9),
+            UiTheme::Light => Color::srgba(0.58, 0.62, 0.68, 1.0),
+            UiTheme::HighContrast => Color::WHITE,
+        }
+    }
 }
 
 pub fn track_height() -> f32 {
@@ -789,11 +884,49 @@ mod tests {
         manager.focus_on(Some("email"));
         assert!(manager.take_dirty().is_empty());
 
-        assert_eq!(
-            background_for(UiKind::Input, true),
-            INPUT_FOCUSED_BACKGROUND
+        assert_ne!(
+            background_for(UiTheme::Dark, UiKind::Input, true),
+            background_for(UiTheme::Dark, UiKind::Input, false)
         );
-        assert_eq!(background_for(UiKind::Input, false), INPUT_BACKGROUND);
+    }
+
+    #[test]
+    fn changing_the_theme_redraws_every_element_and_keeps_overrides() {
+        let mut manager = UiManager::default();
+        manager.show(spec("menu", UiKind::Panel));
+        manager.show(spec("go", UiKind::Button));
+        drawn(&mut manager);
+        manager.take_dirty();
+        manager.set("go", UiProp::Background, &Evaluated::Text("#123456".into()));
+        manager.take_dirty();
+
+        manager.set_theme(UiTheme::Light);
+
+        assert_eq!(manager.theme(), UiTheme::Light);
+        assert_eq!(
+            manager.take_dirty(),
+            vec!["menu".to_string(), "go".to_string()]
+        );
+        assert_eq!(
+            manager.get("go").unwrap().style.background.as_deref(),
+            Some("#123456")
+        );
+    }
+
+    #[test]
+    fn a_scrolled_child_is_not_hit_outside_its_lists_viewport() {
+        let mut manager = UiManager::default();
+        manager.show(spec("list", UiKind::List));
+        let mut child = spec("item", UiKind::Button);
+        child.parent = "list".to_string();
+        manager.show(child);
+        drawn(&mut manager);
+        let rect = |node: &UiNode| match node.spec.id.as_str() {
+            "list" => Some(Rect::new(0.0, 0.0, 100.0, 100.0)),
+            "item" => Some(Rect::new(0.0, 120.0, 100.0, 150.0)),
+            _ => None,
+        };
+        assert!(manager.hit(Vec2::new(50.0, 130.0), rect).is_none());
     }
 
     #[test]

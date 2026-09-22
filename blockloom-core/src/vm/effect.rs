@@ -4,7 +4,7 @@
 
 use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
-use crate::ui::{UiElement, UiProp};
+use crate::ui::{UiElement, UiProp, UiTheme};
 use crate::value::Evaluated;
 use serde::{Deserialize, Serialize};
 
@@ -177,10 +177,18 @@ pub enum Effect {
     SetFocus {
         id: String,
     },
+    SetUiTheme {
+        theme: UiTheme,
+    },
     /// Freezes or thaws the world. Strands a UI event started carry on
     /// either way, which is what keeps a pause menu alive.
     SetPaused {
         paused: bool,
+    },
+    SaveVariable {
+        actor: String,
+        name: String,
+        clear: bool,
     },
     /// A block couldn't be evaluated. The script carries on with a zero, and
     /// the editor shows this in its log.
