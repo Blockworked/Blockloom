@@ -4,6 +4,7 @@
 
 use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
+use crate::ui::{UiElement, UiProp};
 use crate::value::Evaluated;
 use serde::{Deserialize, Serialize};
 
@@ -149,6 +150,32 @@ pub enum Effect {
     /// like gravity: no actor.
     SetMouseLocked {
         locked: bool,
+    },
+    /// Makes an interface element, or updates the one that id already names.
+    /// Screen-space, so no actor - the block's owner is only ever who to
+    /// blame in the log.
+    ShowElement {
+        element: UiElement,
+    },
+    /// Takes an element off the screen, children and all, without forgetting
+    /// it. `all` hides everything and drops keyboard focus with it.
+    HideElement {
+        id: String,
+        all: bool,
+    },
+    /// Forgets an element entirely, children and all.
+    DeleteElement {
+        id: String,
+    },
+    SetUiProp {
+        id: String,
+        prop: UiProp,
+        value: Evaluated,
+    },
+    /// Freezes or thaws the world. Strands a UI event started carry on
+    /// either way, which is what keeps a pause menu alive.
+    SetPaused {
+        paused: bool,
     },
     /// A block couldn't be evaluated. The script carries on with a zero, and
     /// the editor shows this in its log.

@@ -25,6 +25,7 @@ use blockloom_core::blocks::{
 use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::{Axis, Mode, Visual};
 use blockloom_core::sense::{ActorSense, Sensors};
+use blockloom_core::ui::{UiAnchor, UiProp};
 use blockloom_core::value::{Evaluated, Op, Value};
 use blockloom_core::vm::{Effect, Event, Vm};
 use std::process::Command;
@@ -85,7 +86,14 @@ impl Host for Recorder {
         // effect is about.
         let actor = match &act {
             Act::DeleteActor { target } => target.clone(),
-            Act::SetMouseLocked { .. } => String::new(),
+            // Window-global, or screen-space: against nobody in particular,
+            // which is how the VM's own effects say it.
+            Act::SetMouseLocked { .. }
+            | Act::ShowElement { .. }
+            | Act::SetUiProp { .. }
+            | Act::HideElement { .. }
+            | Act::DeleteElement { .. }
+            | Act::SetPaused { .. } => String::new(),
             _ => actor.to_string(),
         };
         let line = line_of(&act);
@@ -157,6 +165,28 @@ fn line_of(act: &Act) -> String {
         }
         Act::DeleteActor { .. } => "DeleteActor".to_string(),
         Act::SetBody { body } => format!("SetBody {body}"),
+        Act::ShowElement {
+            id,
+            kind,
+            content,
+            anchor,
+            offset,
+            size,
+            parent,
+            flag,
+            range,
+            value,
+        } => format!(
+            "ShowElement {id} {kind} {content} {anchor} {offset:?} {size:?} \
+             {parent} {flag} {range:?} {}",
+            shown(value)
+        ),
+        Act::SetUiProp { id, prop, value } => {
+            format!("SetUiProp {id} {prop} {}", shown(value))
+        }
+        Act::HideElement { id, all } => format!("HideElement {id} {all}"),
+        Act::DeleteElement { id } => format!("DeleteElement {id}"),
+        Act::SetPaused { paused } => format!("SetPaused {paused}"),
         other => format!("{other:?}"),
     }
 }
@@ -183,6 +213,7 @@ fn main() {
     // after they were made, and deleted actors dropped at the end of one.
     let mut runner = Runner::new(NAMES);
     runner.fire(ENTRIES, "Started", "", "", "");
+    runner.fire(ENTRIES, "UiClicked", "", "resume", "");
 
     for tick in 0..TICKS {
         recorder.tick = tick;
@@ -261,6 +292,27 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetCameraPitch { actor, degrees } => {
             format!("{actor}|SetCameraPitch {degrees:?}")
         }
+        // Screen-space, so against nobody: the harness blanks the actor for
+        // these acts the same way.
+        Effect::ShowElement { element } => format!(
+            "|ShowElement {} {} {} {} {:?} {:?} {} {} {:?} {}",
+            element.id,
+            element.kind.index(),
+            element.content,
+            element.anchor.index(),
+            element.offset,
+            element.size,
+            element.parent,
+            element.modal,
+            element.range,
+            shown(&element.value)
+        ),
+        Effect::SetUiProp { id, prop, value } => {
+            format!("|SetUiProp {id} {} {}", prop.name(), shown(value))
+        }
+        Effect::HideElement { id, all } => format!("|HideElement {id} {all}"),
+        Effect::DeleteElement { id } => format!("|DeleteElement {id}"),
+        Effect::SetPaused { paused } => format!("|SetPaused {paused}"),
         other => panic!("this test has no line for {other:?}"),
     };
     Some(line)
@@ -400,6 +452,12 @@ fn by_vm(project: &Project) -> Vec<String> {
     let mut vm = Vm::new();
     vm.load(project);
     vm.fire(Event::Started);
+    // The interface's own click, beside the green flag: a case with a
+    // `when (resume) clicked` strand gets one that keeps running while the
+    // world is frozen. No other case has that hat, so nothing else sees it.
+    vm.fire(Event::UiClicked {
+        id: "resume".to_string(),
+    });
     let mut lines = Vec::new();
     for tick in 0..TICKS {
         let mut effects = Vec::new();
@@ -1872,5 +1930,204 @@ fn naming_nobody_is_reported_by_both_and_kills_neither() {
             say("carried on regardless"),
         ],
         &[],
+    );
+}
+
+// ─── The interface ──────────────────────────────────────────────────────────
+// Every `show` block reads a run of slots left to right, so what matters here
+// is not only that the element comes out the same but that the two halves
+// asked the world for its pieces in the same order - which is why the cases
+// below put reporters in the slots rather than plain numbers.
+
+fn panel(id: &str, title: Value, modal: bool, parent: &str) -> K {
+    K::ShowPanel {
+        element: Value::text(id),
+        title,
+        modal,
+        anchor: UiAnchor::Center,
+        x: number(0.0),
+        y: number(0.0),
+        width: number(240.0),
+        height: number(0.0),
+        parent: Value::text(parent),
+    }
+}
+
+fn label(id: &str, text: Value, parent: &str) -> K {
+    K::ShowLabel {
+        element: Value::text(id),
+        text,
+        anchor: UiAnchor::TopLeft,
+        x: number(12.0),
+        y: number(12.0),
+        width: number(0.0),
+        height: number(0.0),
+        parent: Value::text(parent),
+    }
+}
+
+#[test]
+fn every_show_block_asks_for_its_slots_in_the_same_order() {
+    assert_same(
+        "interface-show",
+        vec![
+            panel("menu", Value::text("Paused"), true, ""),
+            K::ShowButton {
+                element: Value::text("resume"),
+                label: op("Join", vec![Value::text("Res"), Value::text("ume")]),
+                anchor: UiAnchor::Center,
+                x: number(0.0),
+                y: number(0.0),
+                width: number(0.0),
+                height: number(0.0),
+                parent: Value::text("menu"),
+            },
+            K::ShowImage {
+                element: Value::text("logo"),
+                asset: Value::text("assets/logo.png"),
+                anchor: UiAnchor::Top,
+                x: number(0.0),
+                y: number(8.0),
+                width: number(64.0),
+                height: number(64.0),
+                parent: Value::text(""),
+            },
+            K::ShowInput {
+                element: Value::text("name"),
+                placeholder: Value::text("your name"),
+                anchor: UiAnchor::Center,
+                x: number(0.0),
+                y: number(40.0),
+                width: number(180.0),
+                height: number(0.0),
+                parent: Value::text("menu"),
+            },
+            // The one row with three slots of its own, and the one whose
+            // starting value is asked for rather than fixed.
+            K::ShowSlider {
+                element: Value::text("volume"),
+                min: number(0.0),
+                max: op("Add", vec![number(5.0), number(5.0)]),
+                value: op("MyPosition", vec![Value::text("X")]),
+                anchor: UiAnchor::Center,
+                x: number(0.0),
+                y: number(80.0),
+                width: number(180.0),
+                height: number(0.0),
+                parent: Value::text("menu"),
+            },
+            K::ShowToggle {
+                element: Value::text("shadows"),
+                label: Value::text("Shadows"),
+                on: true,
+                anchor: UiAnchor::Center,
+                x: number(0.0),
+                y: number(120.0),
+                width: number(0.0),
+                height: number(0.0),
+                parent: Value::text("menu"),
+            },
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn writing_hiding_and_deleting_an_element_land_the_same_way() {
+    assert_same(
+        "interface-change",
+        vec![
+            label("score", Value::text("score: 0"), ""),
+            K::SetUiProp {
+                prop: UiProp::Text,
+                element: Value::text("score"),
+                value: op("Join", vec![Value::text("score: "), number(3.0)]),
+            },
+            K::SetUiProp {
+                prop: UiProp::TextSize,
+                element: Value::text("score"),
+                value: number(22.0),
+            },
+            // A bad slot is reported once and stands a zero in its place,
+            // on both sides and in the same place.
+            K::SetUiProp {
+                prop: UiProp::Width,
+                element: Value::text("score"),
+                value: op("Div", vec![number(1.0), number(0.0)]),
+            },
+            K::HideElement {
+                element: Value::text("score"),
+            },
+            K::DeleteElement {
+                element: Value::text("score"),
+            },
+            K::HideAllUi,
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn a_paused_world_stops_every_strand_the_interface_did_not_start() {
+    assert_same_strands(
+        "interface-pause",
+        vec![
+            vec![
+                say("before"),
+                K::PauseGame,
+                // The pause takes hold where it stands, the strand that ran
+                // it included, so neither of these ever runs.
+                say("never said"),
+                K::Wait {
+                    duration: number(0.1),
+                },
+                say("nor this"),
+            ],
+            // A second strand, later in the same tick: frozen too, wherever
+            // in the tick the block landed.
+            vec![
+                K::Wait {
+                    duration: number(0.05),
+                },
+                say("nor this either"),
+            ],
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn a_strand_the_interface_started_runs_through_a_pause_and_ends_it() {
+    assert_same_headed(
+        "interface-resume",
+        vec![
+            (
+                K::WhenStarted,
+                vec![say("before"), K::PauseGame, say("after")],
+            ),
+            // The interface's own strand: it pauses nothing by running, and
+            // a `pause game` inside it doesn't stop it either.
+            (
+                K::WhenUiClicked {
+                    element: "resume".to_string(),
+                },
+                vec![
+                    K::PauseGame,
+                    say("the menu is alive"),
+                    K::ResumeGame,
+                    say("and the world is back"),
+                ],
+            ),
+            // Frozen at its `wait` until that resume lands, then it finishes.
+            (
+                K::WhenStarted,
+                vec![
+                    K::Wait {
+                        duration: number(0.05),
+                    },
+                    say("the world moved again"),
+                ],
+            ),
+        ],
     );
 }

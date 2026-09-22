@@ -8,6 +8,7 @@
 
 use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
+use crate::ui::{UiAnchor, UiProp};
 use crate::value::Value;
 use serde::{Deserialize, Serialize};
 
@@ -50,6 +51,19 @@ pub enum InstructionKind {
     },
     /// Runs on a fresh clone, in the clone itself, the moment it is made.
     WhenCloned,
+    /// Runs when the interface element named `element` is clicked.
+    ///
+    /// Spelled `element` rather than `id` because a flattened instruction
+    /// already carries its own `id` on the wire - see [`crate::wire`].
+    WhenUiClicked {
+        element: String,
+    },
+    /// Runs when the input element named `element` is changed - every
+    /// keystroke in a text input, every drag step of a slider, a toggle
+    /// going over.
+    WhenUiChanged {
+        element: String,
+    },
     /// Marks a strand as a custom block's body; `block_id` is its
     /// [`BlockDef::id`]. Never runs on its own.
     BlockHeader {
@@ -197,6 +211,115 @@ pub enum InstructionKind {
         target: Value,
     },
 
+    // ─── Interface ──────────────────────────────────────────────────────────
+    /// Creates the element `id` names, or updates it in place when it is
+    /// already there - so a HUD strand can rebuild itself every frame.
+    ///
+    /// One variant per kind, because the row differs: a panel has a modal
+    /// dropdown, a slider its ends, a toggle its starting state. Everything
+    /// they share - where it sits, how big it is, whose child it is - is
+    /// spelled the same way on all of them.
+    ShowPanel {
+        element: Value,
+        title: Value,
+        modal: bool,
+        anchor: UiAnchor,
+        x: Value,
+        y: Value,
+        width: Value,
+        height: Value,
+        parent: Value,
+    },
+    ShowLabel {
+        element: Value,
+        text: Value,
+        anchor: UiAnchor,
+        x: Value,
+        y: Value,
+        width: Value,
+        height: Value,
+        parent: Value,
+    },
+    ShowButton {
+        element: Value,
+        label: Value,
+        anchor: UiAnchor,
+        x: Value,
+        y: Value,
+        width: Value,
+        height: Value,
+        parent: Value,
+    },
+    /// `asset` is a project-relative path, the same spelling a Look's image
+    /// uses (`assets/sprites/logo.png`).
+    ShowImage {
+        element: Value,
+        asset: Value,
+        anchor: UiAnchor,
+        x: Value,
+        y: Value,
+        width: Value,
+        height: Value,
+        parent: Value,
+    },
+    ShowInput {
+        element: Value,
+        placeholder: Value,
+        anchor: UiAnchor,
+        x: Value,
+        y: Value,
+        width: Value,
+        height: Value,
+        parent: Value,
+    },
+    ShowSlider {
+        element: Value,
+        min: Value,
+        max: Value,
+        value: Value,
+        anchor: UiAnchor,
+        x: Value,
+        y: Value,
+        width: Value,
+        height: Value,
+        parent: Value,
+    },
+    ShowToggle {
+        element: Value,
+        label: Value,
+        on: bool,
+        anchor: UiAnchor,
+        x: Value,
+        y: Value,
+        width: Value,
+        height: Value,
+        parent: Value,
+    },
+    /// Writes one property of an existing element. A property that means
+    /// nothing for that kind is ignored, and an id nothing answers to is an
+    /// error the run log shows.
+    SetUiProp {
+        prop: UiProp,
+        element: Value,
+        value: Value,
+    },
+    /// Takes an element off the screen without forgetting it, children and
+    /// all. `show` or `set visible` brings it back.
+    HideElement {
+        element: Value,
+    },
+    /// Hides every element at once, and drops keyboard focus with them.
+    HideAllUi,
+    /// Forgets an element entirely, children and all.
+    DeleteElement {
+        element: Value,
+    },
+    /// Freezes the world: no world strand advances, no physics steps, no key
+    /// or collision event queues. Strands a UI click started keep running,
+    /// which is what makes a pause menu's buttons work.
+    PauseGame,
+    ResumeGame,
+
     // ─── Control ────────────────────────────────────────────────────────────
     /// Suspends this script for `duration` seconds.
     Wait {
@@ -313,6 +436,108 @@ impl BlockKind for InstructionKind {
                 f(y, InputValueType::Any);
                 f(z, InputValueType::Any);
             }
+            // Every `show` block reads the same five slots, plus whatever
+            // its own kind adds. Order matters: it is the order the VM and
+            // a compiled program evaluate them in.
+            K::ShowPanel {
+                element: id,
+                title: content,
+                x,
+                y,
+                width,
+                height,
+                parent,
+                ..
+            }
+            | K::ShowLabel {
+                element: id,
+                text: content,
+                x,
+                y,
+                width,
+                height,
+                parent,
+                ..
+            }
+            | K::ShowButton {
+                element: id,
+                label: content,
+                x,
+                y,
+                width,
+                height,
+                parent,
+                ..
+            }
+            | K::ShowImage {
+                element: id,
+                asset: content,
+                x,
+                y,
+                width,
+                height,
+                parent,
+                ..
+            }
+            | K::ShowInput {
+                element: id,
+                placeholder: content,
+                x,
+                y,
+                width,
+                height,
+                parent,
+                ..
+            }
+            | K::ShowToggle {
+                element: id,
+                label: content,
+                x,
+                y,
+                width,
+                height,
+                parent,
+                ..
+            } => {
+                f(id, InputValueType::Any);
+                f(content, InputValueType::Any);
+                f(x, InputValueType::Any);
+                f(y, InputValueType::Any);
+                f(width, InputValueType::Any);
+                f(height, InputValueType::Any);
+                f(parent, InputValueType::Any);
+            }
+            K::ShowSlider {
+                element: id,
+                min,
+                max,
+                value,
+                x,
+                y,
+                width,
+                height,
+                parent,
+                ..
+            } => {
+                f(id, InputValueType::Any);
+                f(min, InputValueType::Any);
+                f(max, InputValueType::Any);
+                f(value, InputValueType::Any);
+                f(x, InputValueType::Any);
+                f(y, InputValueType::Any);
+                f(width, InputValueType::Any);
+                f(height, InputValueType::Any);
+                f(parent, InputValueType::Any);
+            }
+            K::SetUiProp {
+                element: id, value, ..
+            } => {
+                f(id, InputValueType::Any);
+                f(value, InputValueType::Any);
+            }
+            K::HideElement { element } | K::DeleteElement { element } => {
+                f(element, InputValueType::Any)
+            }
             K::If { condition, .. } | K::IfElse { condition, .. } | K::While { condition, .. } => {
                 f(condition, InputValueType::Bool)
             }
@@ -343,7 +568,12 @@ impl BlockKind for InstructionKind {
             | K::ContinueLoop
             | K::Broadcast { .. }
             | K::StopAll
-            | K::SetMouseLocked { .. } => {}
+            | K::SetMouseLocked { .. }
+            | K::WhenUiClicked { .. }
+            | K::WhenUiChanged { .. }
+            | K::HideAllUi
+            | K::PauseGame
+            | K::ResumeGame => {}
         }
     }
 
@@ -356,6 +586,8 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenCollision { .. }
                 | InstructionKind::WhenMessage { .. }
                 | InstructionKind::WhenCloned
+                | InstructionKind::WhenUiClicked { .. }
+                | InstructionKind::WhenUiChanged { .. }
                 | InstructionKind::BlockHeader { .. }
         )
     }

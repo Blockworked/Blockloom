@@ -9,6 +9,7 @@
 use crate::blocks::{ActorGraph, Instruction, InstructionKind};
 use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
+use crate::ui::{UiAnchor, UiKind, UiProp};
 use crate::value::Value;
 use std::collections::HashMap;
 
@@ -26,6 +27,20 @@ pub enum Trigger {
     Message(String),
     /// A fresh clone starting up, in the clone itself.
     Cloned,
+    /// An interface element was clicked, by its id.
+    UiClicked(String),
+    /// An input element was changed, by its id.
+    UiChanged(String),
+}
+
+impl Trigger {
+    /// True for a trigger the interface fires. A strand one of these started
+    /// keeps running while the game is paused - otherwise a pause menu's own
+    /// buttons would be dead - and it runs on the wall clock, so a blink on
+    /// a paused menu still blinks.
+    pub fn is_ui(&self) -> bool {
+        matches!(self, Trigger::UiClicked(_) | Trigger::UiChanged(_))
+    }
 }
 
 /// One entry point: a header strand's trigger and where its body starts.
@@ -96,6 +111,22 @@ pub enum Action {
     Broadcast(String),
     /// Grabs or frees the pointer; window-global, like gravity.
     SetMouseLocked(bool),
+    /// Makes or updates one interface element. Boxed because it names nine
+    /// slots where no other block names more than four, and every `Step` in
+    /// a program is as big as the biggest one.
+    ShowElement(Box<ShowElement>),
+    SetUiProp {
+        prop: UiProp,
+        id: Value,
+        value: Value,
+    },
+    /// An empty id, or the `all` flag, hides everything.
+    HideElement {
+        id: Value,
+        all: bool,
+    },
+    DeleteElement(Value),
+    SetPaused(bool),
     SetVariable {
         name: String,
         value: Value,
@@ -104,6 +135,28 @@ pub enum Action {
         name: String,
         value: Value,
     },
+}
+
+/// What a `show` block asks for, before any of it is evaluated. The slots
+/// are read in the order they are written here, which is the order the row
+/// reads in - and the order a compiled program has to keep.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShowElement {
+    pub kind: UiKind,
+    pub id: Value,
+    pub content: Value,
+    /// A slider's ends; `None` for every other kind, which has no row for
+    /// them and so asks the world nothing.
+    pub range: Option<[Value; 2]>,
+    /// A slider's starting number; the rest carry their own flag in `flag`
+    /// instead.
+    pub value: Option<Value>,
+    pub anchor: UiAnchor,
+    pub offset: [Value; 2],
+    pub size: [Value; 2],
+    pub parent: Value,
+    /// A panel's modal, a toggle's on. Meaningless for the rest.
+    pub flag: bool,
 }
 
 /// One step of a compiled program.
@@ -182,6 +235,12 @@ pub fn compile(graph: &ActorGraph) -> Program {
                 Some(Trigger::Message(name.trim().to_string()))
             }
             InstructionKind::WhenCloned => Some(Trigger::Cloned),
+            InstructionKind::WhenUiClicked { element } => {
+                Some(Trigger::UiClicked(element.trim().to_string()))
+            }
+            InstructionKind::WhenUiChanged { element } => {
+                Some(Trigger::UiChanged(element.trim().to_string()))
+            }
             InstructionKind::BlockHeader { .. } => None,
             // Not a header at all: a loose stack nothing can start.
             _ => continue,
@@ -221,6 +280,8 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenCollision { .. }
         | K::WhenMessage { .. }
         | K::WhenCloned
+        | K::WhenUiClicked { .. }
+        | K::WhenUiChanged { .. }
         | K::BlockHeader { .. } => {}
 
         K::Move { steps: amount } => steps.push(Step::Action(Action::Move(amount.clone()))),
@@ -299,9 +360,189 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         })),
         K::DeleteActor { target } => steps.push(Step::Action(Action::DeleteActor(target.clone()))),
         K::Broadcast { name } => steps.push(Step::Action(Action::Broadcast(name.clone()))),
-        K::SetMouseLocked { locked } => {
-            steps.push(Step::Action(Action::SetMouseLocked(*locked)))
+        K::SetMouseLocked { locked } => steps.push(Step::Action(Action::SetMouseLocked(*locked))),
+
+        K::ShowPanel {
+            element: id,
+            title,
+            modal,
+            anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+        } => steps.push(show(
+            UiKind::Panel,
+            id,
+            title,
+            None,
+            *anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+            *modal,
+        )),
+        K::ShowLabel {
+            element: id,
+            text,
+            anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+        } => steps.push(show(
+            UiKind::Label,
+            id,
+            text,
+            None,
+            *anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+            false,
+        )),
+        K::ShowButton {
+            element: id,
+            label,
+            anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+        } => steps.push(show(
+            UiKind::Button,
+            id,
+            label,
+            None,
+            *anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+            false,
+        )),
+        K::ShowImage {
+            element: id,
+            asset,
+            anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+        } => steps.push(show(
+            UiKind::Image,
+            id,
+            asset,
+            None,
+            *anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+            false,
+        )),
+        K::ShowInput {
+            element: id,
+            placeholder,
+            anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+        } => steps.push(show(
+            UiKind::Input,
+            id,
+            placeholder,
+            None,
+            *anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+            false,
+        )),
+        K::ShowSlider {
+            element: id,
+            min,
+            max,
+            value,
+            anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+        } => steps.push(Step::Action(Action::ShowElement(Box::new(ShowElement {
+            kind: UiKind::Slider,
+            id: id.clone(),
+            // A slider has no caption of its own; its ends and its number
+            // are its content.
+            content: Value::text(""),
+            range: Some([min.clone(), max.clone()]),
+            value: Some(value.clone()),
+            anchor: *anchor,
+            offset: [x.clone(), y.clone()],
+            size: [width.clone(), height.clone()],
+            parent: parent.clone(),
+            flag: false,
+        })))),
+        K::ShowToggle {
+            element: id,
+            label,
+            on,
+            anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+        } => steps.push(show(
+            UiKind::Toggle,
+            id,
+            label,
+            None,
+            *anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+            *on,
+        )),
+        K::SetUiProp {
+            prop,
+            element,
+            value,
+        } => steps.push(Step::Action(Action::SetUiProp {
+            prop: *prop,
+            id: element.clone(),
+            value: value.clone(),
+        })),
+        K::HideElement { element } => steps.push(Step::Action(Action::HideElement {
+            id: element.clone(),
+            all: false,
+        })),
+        K::HideAllUi => steps.push(Step::Action(Action::HideElement {
+            id: Value::text(""),
+            all: true,
+        })),
+        K::DeleteElement { element } => {
+            steps.push(Step::Action(Action::DeleteElement(element.clone())))
         }
+        K::PauseGame => steps.push(Step::Action(Action::SetPaused(true))),
+        K::ResumeGame => steps.push(Step::Action(Action::SetPaused(false))),
         K::SetVariable { name, value } => steps.push(Step::Action(Action::SetVariable {
             name: name.clone(),
             value: value.clone(),
@@ -360,6 +601,37 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::Forever { body } => emit_loop(steps, LoopKind::Forever, body),
         K::While { condition, body } => emit_loop(steps, LoopKind::While(condition.clone()), body),
     }
+}
+
+/// The six kinds whose row is `id`, one caption and the shared placement.
+/// A slider is spelled out in full above instead, since its row asks the
+/// world for three more things.
+#[allow(clippy::too_many_arguments)]
+fn show(
+    kind: UiKind,
+    id: &Value,
+    content: &Value,
+    value: Option<Value>,
+    anchor: UiAnchor,
+    x: &Value,
+    y: &Value,
+    width: &Value,
+    height: &Value,
+    parent: &Value,
+    flag: bool,
+) -> Step {
+    Step::Action(Action::ShowElement(Box::new(ShowElement {
+        kind,
+        id: id.clone(),
+        content: content.clone(),
+        range: None,
+        value,
+        anchor,
+        offset: [x.clone(), y.clone()],
+        size: [width.clone(), height.clone()],
+        parent: parent.clone(),
+        flag,
+    })))
 }
 
 fn emit_loop(steps: &mut Vec<Step>, kind: LoopKind, body: &[Instruction]) {

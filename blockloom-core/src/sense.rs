@@ -39,8 +39,13 @@ pub struct ActorSense {
 /// Everything sensible about the world this frame. Keyed by actor id.
 #[derive(Debug, Clone, Default)]
 pub struct Sensors {
-    /// Seconds since the run started.
+    /// Seconds since the run started. Frozen while the game is paused.
     pub time: f64,
+    /// The same, unfrozen: what a strand the interface started reads, so a
+    /// clock on a pause menu keeps its own time.
+    pub wall_time: f64,
+    /// Whether `pause game` has the world frozen right now.
+    pub paused: bool,
     /// Held keys, in [`normalize_key`]'s spelling.
     pub keys: HashSet<String>,
     /// Pointer position in world units.
@@ -53,6 +58,9 @@ pub struct Sensors {
     pub mouse_locked: bool,
     pub mouse_down: bool,
     pub actors: HashMap<String, ActorSense>,
+    /// Each interface element's current value, by id: a slider's number, a
+    /// toggle's on/off, an input's text. What `value of (id)` reads.
+    pub ui: HashMap<String, Evaluated>,
 }
 
 impl Default for ActorSense {
@@ -97,6 +105,12 @@ impl Sensors {
             .values()
             .find(|actor| actor.name.eq_ignore_ascii_case(id_or_name))
     }
+
+    /// The clock a script should read: the world's, or the wall's when the
+    /// interface is what started it.
+    pub fn clock(&self, ui: bool) -> f64 {
+        if ui { self.wall_time } else { self.time }
+    }
 }
 
 thread_local! {
@@ -108,6 +122,11 @@ thread_local! {
 
     /// Actor id whose script is currently being stepped.
     static CURRENT_ACTOR: RefCell<Option<String>> = const { RefCell::new(None) };
+
+    /// Whether that script was started by the interface. Kept beside the
+    /// actor for the same reason: the operators are plain `fn`s with no
+    /// context, and `timer` has to know which clock it is being asked for.
+    static UI_STRAND: RefCell<bool> = const { RefCell::new(false) };
 }
 
 /// Replaces this thread's snapshot - the host calls it once a frame, before
@@ -125,15 +144,35 @@ pub fn read<R>(f: impl FnOnce(&Sensors) -> R) -> R {
 /// Runs `f` with `actor_id` as the actor "my x position" and friends refer
 /// to. Nested calls restore the previous actor on the way out.
 pub fn with_actor<R>(actor_id: &str, f: impl FnOnce() -> R) -> R {
+    with_script(actor_id, in_ui_strand(), f)
+}
+
+/// The same, also saying whether the interface started this script - which
+/// is what decides the clock `timer` answers with.
+pub fn with_script<R>(actor_id: &str, ui: bool, f: impl FnOnce() -> R) -> R {
     let previous = CURRENT_ACTOR.with(|cell| cell.replace(Some(actor_id.to_string())));
+    let was_ui = UI_STRAND.with(|cell| cell.replace(ui));
     let result = f();
     CURRENT_ACTOR.with(|cell| *cell.borrow_mut() = previous);
+    UI_STRAND.with(|cell| *cell.borrow_mut() = was_ui);
     result
 }
 
 /// The actor whose script is being stepped, if any.
 pub fn current_actor() -> Option<String> {
     CURRENT_ACTOR.with(|cell| cell.borrow().clone())
+}
+
+/// Whether the script being stepped was started by the interface.
+pub fn in_ui_strand() -> bool {
+    UI_STRAND.with(|cell| *cell.borrow())
+}
+
+/// Says which kind of strand the host is about to step, for a scheduler
+/// that isn't the VM. The compiled runner calls this through the ABI before
+/// each slice, so `timer` answers the same clock on both sides.
+pub fn set_ui_strand(ui: bool) {
+    UI_STRAND.with(|cell| *cell.borrow_mut() = ui);
 }
 
 /// The key names blocks and the runtime agree on. Anything not listed here
@@ -213,6 +252,27 @@ mod tests {
         assert!(sensors.find("a1").is_some());
         assert!(sensors.find("player").is_some());
         assert!(sensors.find("Enemy").is_none());
+    }
+
+    #[test]
+    fn a_ui_strand_reads_the_wall_clock_and_everything_else_the_worlds() {
+        let sensors = Sensors {
+            time: 2.0,
+            wall_time: 9.0,
+            ..Default::default()
+        };
+        assert_eq!(sensors.clock(false), 2.0);
+        assert_eq!(sensors.clock(true), 9.0);
+    }
+
+    #[test]
+    fn the_ui_flag_is_restored_with_the_actor_after_a_nested_scope() {
+        with_script("outer", true, || {
+            assert!(in_ui_strand());
+            with_script("inner", false, || assert!(!in_ui_strand()));
+            assert!(in_ui_strand());
+        });
+        assert!(!in_ui_strand());
     }
 
     #[test]

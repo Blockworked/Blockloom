@@ -97,11 +97,54 @@ function defaults(type: InstructionType): Record<string, unknown> {
       return { value: numberValue(0) };
     case 'SetMouseLocked':
       return { locked: true };
+    case 'WhenUiClicked':
+    case 'WhenUiChanged':
+      return { element: 'my-button' };
+    // Every `show` block wears the same placement tail, so they share one
+    // set of defaults for it and add only their own caption on top.
+    case 'ShowPanel':
+      return { ...uiPlacement('Center'), element: textValue('menu'), title: textValue('Menu'), modal: true };
+    case 'ShowLabel':
+      return { ...uiPlacement('TopLeft'), element: textValue('score'), text: textValue('Score: 0') };
+    case 'ShowButton':
+      return { ...uiPlacement('Center'), element: textValue('resume'), label: textValue('Resume') };
+    case 'ShowImage':
+      return { ...uiPlacement('TopLeft'), element: textValue('logo'), asset: textValue('') };
+    case 'ShowInput':
+      return { ...uiPlacement('Center'), element: textValue('name'), placeholder: textValue('your name') };
+    case 'ShowSlider':
+      return {
+        ...uiPlacement('Center'),
+        element: textValue('volume'),
+        min: numberValue(0),
+        max: numberValue(100),
+        value: numberValue(50),
+      };
+    case 'ShowToggle':
+      return { ...uiPlacement('Center'), element: textValue('shadows'), label: textValue('Shadows'), on: true };
+    case 'SetUiProp':
+      return { prop: 'Text', element: textValue('score'), value: textValue('') };
+    case 'HideElement':
+    case 'DeleteElement':
+      return { element: textValue('menu') };
     // WhenStarted, WhenClicked, WhenCloned, EscapeLoop, ContinueLoop,
     // StopAll: no fields.
     default:
       return {};
   }
+}
+
+/** The placement tail every `show` block starts with: hung off `anchor`,
+ * no offset, sized to its content, and at screen level. */
+function uiPlacement(anchor: string): Record<string, unknown> {
+  return {
+    anchor,
+    x: numberValue(0),
+    y: numberValue(0),
+    width: numberValue(0),
+    height: numberValue(0),
+    parent: textValue(''),
+  };
 }
 
 export function defaultInstruction(type: InstructionType): InstructionDto {

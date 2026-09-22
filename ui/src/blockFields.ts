@@ -28,8 +28,12 @@ import {
   BODY_OPTIONS,
   CAMERA_VIEW_OPTIONS,
   KEY_OPTIONS,
+  MODAL_OPTIONS,
   MOUSE_LOCK_OPTIONS,
   MOUSE_TARGET,
+  ON_OFF_OPTIONS,
+  UI_ANCHOR_OPTIONS,
+  UI_PROP_OPTIONS,
   VISIBLE_OPTIONS,
 } from './constants';
 import {
@@ -156,6 +160,48 @@ function rotationAxes(): Option[] {
   return mode.value === 'ThreeD' ? AXIS_OPTIONS : AXIS_OPTIONS.filter(axis => axis.value === 'Z');
 }
 
+/** The tail every `show` block wears: where it hangs, how far from there,
+ * how big it is, and whose child it is. Ignored, all of it, once a parent is
+ * named - a parented element flows after its siblings instead. */
+function placement(): Piece[] {
+  return [
+    label('at'),
+    { kind: 'dropdown', key: 'anchor', options: UI_ANCHOR_OPTIONS },
+    label('+ x:'),
+    value('UiX', 'x'),
+    label('y:'),
+    value('UiY', 'y'),
+    label('size'),
+    value('UiWidth', 'width'),
+    label('x'),
+    value('UiHeight', 'height'),
+    label('in'),
+    value('UiParent', 'parent'),
+  ];
+}
+
+/** A `show` block's head: the verb, the id, one caption slot, the placement. */
+function showRow(verb: string, contentKey: string, extra: Piece[] = []): Piece[] {
+  return [
+    label(verb),
+    value('UiId', 'element'),
+    ...(contentKey ? [value('UiContent', contentKey)] : []),
+    ...extra,
+    ...placement(),
+  ];
+}
+
+/** A yes/no dropdown over a plain boolean field. */
+function flag(key: string, options: Option[]): Piece {
+  return {
+    kind: 'dropdown',
+    key,
+    options,
+    encode: chosen => chosen === 'true',
+    decode: stored => (stored === true ? 'true' : 'false'),
+  };
+}
+
 /** The x/y/z row shared by every vector block, with z hidden in 2D. */
 function vector(prefix: string, fields: [string, string, string], keys: [string, string, string]): Piece[] {
   return [
@@ -182,6 +228,12 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
     head: [label('when I get'), { kind: 'text', key: 'name', placeholder: 'message' }],
   },
   WhenCloned: { head: [label('when I start as a clone')] },
+  WhenUiClicked: {
+    head: [label('when'), { kind: 'text', key: 'element', placeholder: 'element id' }, label('clicked')],
+  },
+  WhenUiChanged: {
+    head: [label('when'), { kind: 'text', key: 'element', placeholder: 'element id' }, label('changed')],
+  },
   Broadcast: { head: [label('broadcast'), { kind: 'text', key: 'name', placeholder: 'message' }] },
   BlockHeader: { head: [] },
 
@@ -342,6 +394,49 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
       label('mouse'),
     ],
   },
+
+  // ── Interface ────────────────────────────────────────────────────────────
+  ShowPanel: {
+    head: [
+      label('show panel'),
+      value('UiId', 'element'),
+      value('UiContent', 'title'),
+      flag('modal', MODAL_OPTIONS),
+      ...placement(),
+    ],
+  },
+  ShowLabel: { head: showRow('show label', 'text') },
+  ShowButton: { head: showRow('show button', 'label') },
+  ShowImage: { head: showRow('show image', 'asset') },
+  ShowInput: { head: showRow('show text input', 'placeholder') },
+  ShowSlider: {
+    head: showRow('show slider', '', [
+      label('min'),
+      value('UiMin', 'min'),
+      label('max'),
+      value('UiMax', 'max'),
+      label('value'),
+      value('UiValue', 'value'),
+    ]),
+  },
+  ShowToggle: {
+    head: showRow('show toggle', 'label', [flag('on', ON_OFF_OPTIONS)]),
+  },
+  SetUiProp: {
+    head: [
+      label('set'),
+      { kind: 'dropdown', key: 'prop', options: UI_PROP_OPTIONS },
+      label('of'),
+      value('UiTarget', 'element'),
+      label('to'),
+      value('UiPropValue', 'value'),
+    ],
+  },
+  HideElement: { head: [label('hide'), value('UiTarget', 'element')] },
+  HideAllUi: { head: [label('hide all ui')] },
+  DeleteElement: { head: [label('delete'), value('UiTarget', 'element')] },
+  PauseGame: { head: [label('pause game')] },
+  ResumeGame: { head: [label('resume game')] },
 
   // ── Variables ────────────────────────────────────────────────────────────
   SetVariable: {

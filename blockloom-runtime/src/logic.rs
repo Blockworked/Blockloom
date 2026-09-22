@@ -3,18 +3,20 @@
 use blockloom_core::codegen::{
     self, ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH,
     ACT_BROADCAST, ACT_CHANGE_POSITION, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR,
-    ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_MOVE, ACT_POINT_TOWARDS, ACT_SAY,
-    ACT_SET_BODY, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY,
-    ACT_SET_FIELD, ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT,
-    ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_TURN, AbiStr, AbiValue,
-    LOGIC_ABI_VERSION, LogicHostApi, READ_SENSE, READ_VARIABLE, SYM_LOGIC_ABI, SYM_LOGIC_FIRE,
-    SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_RESET, SYM_LOGIC_TICK, TICK_STOPPED, VALUE_BOOL,
-    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
+    ACT_DELETE_ELEMENT, ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_MOVE,
+    ACT_POINT_TOWARDS, ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW,
+    ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_GRAVITY, ACT_SET_MASS,
+    ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE,
+    ACT_SET_UI_PROP, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_TURN, AbiStr,
+    AbiValue, LOGIC_ABI_VERSION, LogicHostApi, READ_SENSE, READ_VARIABLE, SYM_LOGIC_ABI,
+    SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
+    SYM_LOGIC_TICK, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
 };
 use blockloom_core::components::CameraView;
 use blockloom_core::project::Project;
 use blockloom_core::scene::{Axis, BodyKind};
 use blockloom_core::sense;
+use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp};
 use blockloom_core::value::{Evaluated, ext_operator};
 use blockloom_core::vm::{Effect, Event, Variables};
 use std::ffi::c_void;
@@ -25,7 +27,8 @@ type NewFn = unsafe extern "C" fn() -> *mut c_void;
 type FreeFn = unsafe extern "C" fn(*mut c_void);
 type ResetFn = unsafe extern "C" fn(*mut c_void);
 type FireFn = unsafe extern "C" fn(*mut c_void, AbiStr, AbiStr, AbiStr, AbiStr);
-type TickFn = unsafe extern "C" fn(*mut c_void, *mut c_void, *const LogicHostApi, f64) -> u32;
+type TickFn = unsafe extern "C" fn(*mut c_void, *mut c_void, *const LogicHostApi, f64, f64) -> u32;
+type PauseFn = unsafe extern "C" fn(*mut c_void, u32);
 
 /// One generated program and its suspended strands.
 pub struct LoadedLogic {
@@ -35,6 +38,9 @@ pub struct LoadedLogic {
     reset: ResetFn,
     fire: FireFn,
     tick: TickFn,
+    /// A program built before this export existed simply has none, and the
+    /// editor's Pause then reaches it the long way, through `SetPaused`.
+    pause: Option<PauseFn>,
 }
 
 impl LoadedLogic {
@@ -76,6 +82,7 @@ impl LoadedLogic {
             let tick = *library
                 .get::<TickFn>(SYM_LOGIC_TICK)
                 .map_err(|_| missing_export())?;
+            let pause = library.get::<PauseFn>(SYM_LOGIC_PAUSE).ok().map(|f| *f);
             let state = new();
             if state.is_null() {
                 return Err("the compiled block program could not start".to_string());
@@ -87,12 +94,22 @@ impl LoadedLogic {
                 reset,
                 fire,
                 tick,
+                pause,
             })
         }
     }
 
     pub fn reset(&mut self) {
         unsafe { (self.reset)(self.state) };
+    }
+
+    /// Freezes or thaws the world from outside the program - the editor's
+    /// own Pause button. A `pause game` block freezes the program's table
+    /// itself, so this is only ever the host's word.
+    pub fn set_paused(&mut self, paused: bool) {
+        if let Some(pause) = self.pause {
+            unsafe { pause(self.state, u32::from(paused)) };
+        }
     }
 
     pub fn fire(&mut self, event: Event, project: &Project) {
@@ -110,6 +127,8 @@ impl LoadedLogic {
                     .unwrap_or("");
                 self.fire_raw("Collision", &actor, &with, other_name);
             }
+            Event::UiClicked { id } => self.fire_raw("UiClicked", "", &id, ""),
+            Event::UiChanged { id, .. } => self.fire_raw("UiChanged", "", &id, ""),
             // The program makes its own clones and starts their strands
             // itself, so nothing outside it queues one. A script's clone
             // comes through `cloned` below instead.
@@ -150,6 +169,7 @@ impl LoadedLogic {
     pub fn tick(
         &mut self,
         now: f64,
+        wall: f64,
         variables: Variables,
         effects: &mut Vec<Effect>,
         messages: &mut Vec<String>,
@@ -165,6 +185,7 @@ impl LoadedLogic {
                 (&raw mut context).cast(),
                 &raw const HOST_API,
                 now,
+                wall,
             )
         };
         match status {
@@ -208,7 +229,15 @@ static HOST_API: LogicHostApi = LogicHostApi {
     read,
     set_variable,
     act,
+    set_clock,
 };
+
+/// Which clock the strand about to run keeps. The generated program says so
+/// before every slice, so `timer` answers a strand the interface started
+/// with the wall clock - exactly as it does under the VM.
+extern "C" fn set_clock(_pointer: *mut c_void, ui: u32) {
+    sense::set_ui_strand(ui != 0);
+}
 
 extern "C" fn read(
     pointer: *mut c_void,
@@ -290,15 +319,25 @@ extern "C" fn act(
     what: u32,
     a: AbiStr,
     b: AbiStr,
-    n0: f64,
-    n1: f64,
-    n2: f64,
+    c: AbiStr,
+    numbers: *const f64,
+    count: usize,
     value: AbiValue,
 ) {
     let context = unsafe { context(pointer) };
     let actor = unsafe { actor.as_str() }.to_string();
     let a = unsafe { a.as_str() };
     let b = unsafe { b.as_str() };
+    let c = unsafe { c.as_str() };
+    // A run of numbers rather than a fixed three, because one interface
+    // element names nine at once. A short one reads as zeros from there on.
+    let numbers: &[f64] = if numbers.is_null() || count == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(numbers, count) }
+    };
+    let at = |index: usize| numbers.get(index).copied().unwrap_or(0.0);
+    let (n0, n1, n2) = (at(0), at(1), at(2));
     let vector = [n0 as f32, n1 as f32, n2 as f32];
     let effect = match what {
         ACT_MOVE => Effect::Move {
@@ -421,13 +460,41 @@ extern "C" fn act(
             context.messages.push(a.to_string());
             return;
         }
-        ACT_SET_MOUSE_LOCKED => Effect::SetMouseLocked {
-            locked: n0 != 0.0,
-        },
+        ACT_SET_MOUSE_LOCKED => Effect::SetMouseLocked { locked: n0 != 0.0 },
         ACT_SET_CAMERA_PITCH => Effect::SetCameraPitch {
             actor,
             degrees: n0 as f32,
         },
+        ACT_SHOW_ELEMENT => Effect::ShowElement {
+            element: UiElement {
+                id: a.to_string(),
+                kind: UiKind::from_index(at(0) as usize),
+                content: b.to_string(),
+                anchor: UiAnchor::from_index(at(1) as usize),
+                offset: [at(2) as f32, at(3) as f32],
+                size: [at(4) as f32, at(5) as f32],
+                parent: c.to_string(),
+                modal: at(6) != 0.0,
+                range: [at(7) as f32, at(8) as f32],
+                value: value_from_abi(&value),
+            },
+        },
+        ACT_SET_UI_PROP => match UiProp::from_name(b) {
+            Some(prop) => Effect::SetUiProp {
+                id: a.to_string(),
+                prop,
+                value: value_from_abi(&value),
+            },
+            // A property the program knows and this player doesn't: nothing
+            // to write, and nothing worth stopping the run for.
+            None => return,
+        },
+        ACT_HIDE_ELEMENT => Effect::HideElement {
+            id: a.to_string(),
+            all: n0 != 0.0,
+        },
+        ACT_DELETE_ELEMENT => Effect::DeleteElement { id: a.to_string() },
+        ACT_SET_PAUSED => Effect::SetPaused { paused: n0 != 0.0 },
         ACT_ERROR => Effect::Error {
             actor,
             message: a.to_string(),
@@ -526,7 +593,7 @@ mod tests {
         logic.fire(Event::Started, &project);
         let mut effects = Vec::new();
         let mut messages = Vec::new();
-        logic.tick(0.0, variables.clone(), &mut effects, &mut messages);
+        logic.tick(0.0, 0.0, variables.clone(), &mut effects, &mut messages);
 
         assert_eq!(
             effects,
@@ -603,7 +670,7 @@ mod tests {
 
         let mut effects = Vec::new();
         let mut messages = Vec::new();
-        logic.tick(0.0, variables.clone(), &mut effects, &mut messages);
+        logic.tick(0.0, 0.0, variables.clone(), &mut effects, &mut messages);
         let clone = match effects.as_slice() {
             [Effect::CreateClone { actor, clone, of }] => {
                 assert_eq!(actor, "a1");
@@ -615,7 +682,13 @@ mod tests {
 
         // The copy's own strand runs on the next tick, not this one.
         effects.clear();
-        logic.tick(1.0 / 60.0, variables.clone(), &mut effects, &mut messages);
+        logic.tick(
+            1.0 / 60.0,
+            1.0 / 60.0,
+            variables.clone(),
+            &mut effects,
+            &mut messages,
+        );
         assert_eq!(
             effects,
             vec![Effect::Move {

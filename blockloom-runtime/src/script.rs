@@ -15,6 +15,7 @@ use blockloom_core::components::CameraView;
 use blockloom_core::scene::Axis;
 use blockloom_core::script::abi::{self, HostApi, Str};
 use blockloom_core::sense;
+use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp};
 use blockloom_core::value::Evaluated;
 use blockloom_core::vm::Effect;
 use blockloom_protocol::RuntimeMessage;
@@ -169,6 +170,15 @@ fn view_of(value: f64) -> CameraView {
     }
 }
 
+/// What a fresh element a script asked for starts at. A slider reads its
+/// own number off the call; everything else takes the blank its kind means.
+fn ui_start(kind: UiKind, flag: bool, value: f64) -> Evaluated {
+    match kind {
+        UiKind::Slider => Evaluated::Number(value),
+        other => UiElement::blank(other, flag),
+    }
+}
+
 /// This actor as the frame's snapshot sees it.
 fn me(actor: &str) -> Option<sense::ActorSense> {
     sense::read(|sensors| sensors.actors.get(actor).cloned())
@@ -214,6 +224,14 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
             Some(sense::read(|sensors| sensors.mouse_delta[index]) as f64)
         }
         abi::READ_MOUSE_LOCKED => bool_as(sense::read(|sensors| sensors.mouse_locked)),
+        abi::READ_GAME_PAUSED => bool_as(sense::read(|sensors| sensors.paused)),
+        abi::READ_UI_VALUE => match sense::read(|sensors| sensors.ui.get(a.trim()).cloned())? {
+            Evaluated::Number(n) => Some(n),
+            Evaluated::Bool(value) => bool_as(value),
+            // A text input still answers if what was typed reads as a
+            // number, the same way a text field does.
+            Evaluated::Text(text) => text.trim().parse().ok(),
+        },
         abi::READ_TOUCHING => {
             let me = me(actor)?;
             if a.trim().is_empty() {
@@ -289,6 +307,9 @@ extern "C" fn read_text(
         abi::TEXT_NEW_ACTOR => me(ctx.actor)
             .map(|me| me.last_created)
             .filter(|id| !id.is_empty()),
+        abi::TEXT_UI_VALUE => {
+            sense::read(|sensors| sensors.ui.get(a.trim()).map(Evaluated::as_text))
+        }
         _ => None,
     };
     let Some(answer) = answer else {
@@ -310,15 +331,23 @@ extern "C" fn act(
     a: Str,
     b: Str,
     c: Str,
-    n0: f64,
-    n1: f64,
-    n2: f64,
+    numbers: *const f64,
+    count: usize,
 ) {
     let ctx = unsafe { ctx(pointer) };
     let a = unsafe { a.as_str() };
     let b = unsafe { b.as_str() };
     let c = unsafe { c.as_str() };
     let actor = ctx.actor.to_string();
+    // A run of numbers rather than a fixed three, because one interface
+    // element names ten at once. A short run reads as zeros from there on.
+    let numbers: &[f64] = if numbers.is_null() || count == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(numbers, count) }
+    };
+    let at = |index: usize| numbers.get(index).copied().unwrap_or(0.0);
+    let (n0, n1, n2) = (at(0), at(1), at(2));
     let vector = [n0 as f32, n1 as f32, n2 as f32];
     let effect = match what {
         abi::ACT_MOVE => Effect::Move {
@@ -400,10 +429,44 @@ extern "C" fn act(
             actor,
             degrees: n0 as f32,
         },
-        abi::ACT_STOP_ALL => Effect::Stopped,
-        abi::ACT_SET_MOUSE_LOCKED => Effect::SetMouseLocked {
-            locked: n0 != 0.0,
+        abi::ACT_UI_SHOW => Effect::ShowElement {
+            element: UiElement {
+                id: a.trim().to_string(),
+                kind: UiKind::from_index(at(0) as usize),
+                content: b.to_string(),
+                anchor: UiAnchor::from_index(at(1) as usize),
+                offset: [at(2) as f32, at(3) as f32],
+                size: [at(4) as f32, at(5) as f32],
+                parent: c.trim().to_string(),
+                modal: UiKind::from_index(at(0) as usize) == UiKind::Panel && at(6) != 0.0,
+                range: [at(7) as f32, at(8) as f32],
+                value: ui_start(UiKind::from_index(at(0) as usize), at(6) != 0.0, at(9)),
+            },
         },
+        abi::ACT_UI_SET | abi::ACT_UI_SET_TEXT => {
+            let Some(prop) = UiProp::from_name(b) else {
+                return;
+            };
+            Effect::SetUiProp {
+                id: a.trim().to_string(),
+                prop,
+                value: if what == abi::ACT_UI_SET_TEXT {
+                    Evaluated::Text(c.to_string())
+                } else {
+                    Evaluated::Number(n0)
+                },
+            }
+        }
+        abi::ACT_UI_HIDE => Effect::HideElement {
+            id: a.trim().to_string(),
+            all: n0 != 0.0,
+        },
+        abi::ACT_UI_DELETE => Effect::DeleteElement {
+            id: a.trim().to_string(),
+        },
+        abi::ACT_SET_PAUSED => Effect::SetPaused { paused: n0 != 0.0 },
+        abi::ACT_STOP_ALL => Effect::Stopped,
+        abi::ACT_SET_MOUSE_LOCKED => Effect::SetMouseLocked { locked: n0 != 0.0 },
         abi::ACT_SET_PARENT => Effect::SetParent {
             actor,
             parent: a.trim().to_string(),

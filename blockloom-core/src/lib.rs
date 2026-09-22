@@ -23,6 +23,8 @@
 //!   a host to apply. `blockloom-runtime` is that host.
 //! - [`sense`] is the world state reporter blocks read, published by the host
 //!   once a frame.
+//! - [`ui`] is the screen-space overlay a game builds out of blocks: what
+//!   kinds of element there are, where one sits, and what a block can change.
 //! - [`wire`] converts documents to and from the flat JSON shape the
 //!   blockstitch frontend speaks.
 
@@ -39,6 +41,7 @@ pub mod project;
 pub mod scene;
 pub mod script;
 pub mod sense;
+pub mod ui;
 pub mod value;
 pub mod vm;
 pub mod vocabulary;

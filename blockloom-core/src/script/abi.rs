@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 6;
+pub const ABI_VERSION: u32 = 7;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -83,6 +83,11 @@ pub const READ_IS_CLONE: u32 = 14;
 pub const READ_ACTOR_COUNT: u32 = 15;
 /// Whether the pointer is grabbed and hidden for first-person play.
 pub const READ_MOUSE_LOCKED: u32 = 17;
+/// `a` = an interface element's id. A slider's number, or a toggle as 0/1.
+/// An id nothing answers to is [`MISSING`].
+pub const READ_UI_VALUE: u32 = 18;
+/// Whether `pause game` has the world frozen right now.
+pub const READ_GAME_PAUSED: u32 = 19;
 
 // ─── What a script can read as text ────────────────────────────────────────
 
@@ -95,6 +100,8 @@ pub const TEXT_ACTOR_ID: u32 = 3;
 pub const TEXT_PARENT: u32 = 4;
 /// The id of the last actor or clone this one made.
 pub const TEXT_NEW_ACTOR: u32 = 5;
+/// `a` = an interface element's id; a text input's typed text.
+pub const TEXT_UI_VALUE: u32 = 6;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -152,6 +159,21 @@ pub const ACT_DELETE_ACTOR: u32 = 24;
 pub const ACT_SET_MOUSE_LOCKED: u32 = 25;
 /// `n0` = camera pitch in degrees; positive looks up.
 pub const ACT_SET_CAMERA_PITCH: u32 = 26;
+/// Makes an interface element or updates the one that id already names.
+/// `a` = id, `b` = content, `c` = parent id, and the numbers are kind,
+/// anchor, x, y, width, height, flag, min, max, value - the one act that
+/// needs more than three, which is why [`HostApi::act`] takes a run of them.
+pub const ACT_UI_SHOW: u32 = 27;
+/// `a` = id, `b` = the property's name, `n0` = the number to write.
+pub const ACT_UI_SET: u32 = 28;
+/// The same, writing text: `c` = the text.
+pub const ACT_UI_SET_TEXT: u32 = 29;
+/// `a` = id; `n0` != 0 hides every element instead.
+pub const ACT_UI_HIDE: u32 = 30;
+/// `a` = id.
+pub const ACT_UI_DELETE: u32 = 31;
+/// `n0` != 0 freezes the world.
+pub const ACT_SET_PAUSED: u32 = 32;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per
@@ -166,8 +188,10 @@ pub struct HostApi {
     /// `out_len` is always written with the length the answer needs, so a
     /// caller handed [`TOO_LONG`] knows how big a buffer to bring back.
     pub read_text: extern "C" fn(*mut c_void, u32, Str, Str, *mut u8, usize, *mut usize) -> u32,
-    /// `(ctx, what, a, b, c, n0, n1, n2)`
-    pub act: extern "C" fn(*mut c_void, u32, Str, Str, Str, f64, f64, f64),
+    /// `(ctx, what, a, b, c, numbers, count)`. A run of numbers rather than a
+    /// fixed three, because one interface element names ten at once; a
+    /// shorter run reads as zeros from there on.
+    pub act: extern "C" fn(*mut c_void, u32, Str, Str, Str, *const f64, usize),
 }
 
 /// What the host looks for in a compiled script. A library missing any of

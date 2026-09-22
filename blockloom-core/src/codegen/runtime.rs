@@ -161,6 +161,40 @@ pub enum Act {
     SetMouseLocked {
         locked: bool,
     },
+    /// Makes an interface element, or updates the one `id` already names.
+    /// The kind and the anchor travel as their index, the way an axis does.
+    ShowElement {
+        id: String,
+        kind: usize,
+        content: String,
+        anchor: usize,
+        offset: [f32; 2],
+        size: [f32; 2],
+        parent: String,
+        /// A panel's modal, a toggle's on.
+        flag: bool,
+        /// A slider's ends.
+        range: [f32; 2],
+        /// What the widget starts at.
+        value: Val,
+    },
+    SetUiProp {
+        id: String,
+        prop: &'static str,
+        value: Val,
+    },
+    /// `all` hides everything, and the id is then empty.
+    HideElement {
+        id: String,
+        all: bool,
+    },
+    DeleteElement {
+        id: String,
+    },
+    /// Freezes or thaws the world; window-global, like gravity.
+    SetPaused {
+        paused: bool,
+    },
 }
 
 /// One compiled strand, and what starts it. The trigger travels as text for
@@ -168,7 +202,8 @@ pub enum Act {
 pub struct Entry {
     pub actor: &'static str,
     pub strand: &'static str,
-    /// `Started`, `Key`, `Clicked`, `Collision` or `Message`.
+    /// `Started`, `Key`, `Clicked`, `Collision`, `Message`, `Cloned`,
+    /// `UiClicked` or `UiChanged`.
     pub trigger: &'static str,
     /// The key, the other actor or the message name; empty for the rest.
     pub detail: &'static str,
@@ -210,6 +245,11 @@ pub struct Actors {
     /// Clone id -> the authored actor it is a copy of, which is whose
     /// strands it runs.
     clones: Vec<(Rc<str>, Rc<str>)>,
+    /// Whether `pause game` has the world frozen. It lives here rather than
+    /// on the [`Runner`] because a generated function is handed this table
+    /// and not the runner, and the VM freezes the moment the block runs -
+    /// so the rest of the tick has to see it, not the host's reply.
+    paused: bool,
 }
 
 impl Actors {
@@ -223,7 +263,13 @@ impl Actors {
             fresh: Vec::new(),
             gone: Vec::new(),
             clones: Vec::new(),
+            paused: false,
         }
+    }
+
+    /// Freezes or thaws the world, as `pause game` does.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
     }
 
     /// Which actor `wanted` means: itself when the slot is empty or says so,
@@ -408,6 +454,7 @@ impl Runner {
             let matches = match (entry.trigger, kind) {
                 ("Started", "Started") => true,
                 ("Key", "Key") | ("Message", "Message") => entry.detail == detail,
+                ("UiClicked", "UiClicked") | ("UiChanged", "UiChanged") => entry.detail == detail,
                 ("Clicked", "Clicked") => entry.actor == &*template,
                 ("Collision", "Collision") => {
                     entry.actor == &*template
@@ -421,7 +468,8 @@ impl Runner {
                 continue;
             }
             // An event aimed at one actor starts that actor's copy of the
-            // strand; a broadcast starts every copy's.
+            // strand; a broadcast, or an interface element nobody owns,
+            // starts every copy's.
             let running = match kind {
                 "Clicked" | "Collision" => vec![Rc::from(actor)],
                 _ => self.actors.copies_of(entry.actor),
@@ -455,8 +503,25 @@ impl Runner {
         }
     }
 
+    /// Freezes or thaws the world. While it holds, only strands the
+    /// interface started are given a slice - the same rule the VM keeps.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.actors.set_paused(paused);
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.actors.paused
+    }
+
     /// Gives every live strand one slice. True means `stop all` ended the run.
     pub fn tick(&mut self, entries: &[Entry], host: &mut dyn Host, now: f64) -> bool {
+        self.tick_at(entries, host, now, now)
+    }
+
+    /// The same, with the world's clock and the wall's told apart. A strand
+    /// the interface started runs on `wall`, so a `wait` on a pause menu
+    /// finishes while the world stands still.
+    pub fn tick_at(&mut self, entries: &[Entry], host: &mut dyn Host, now: f64, wall: f64) -> bool {
         // A clone made last tick starts its own strands now, by which time
         // the host has built the actor those blocks read through.
         for (clone, template) in std::mem::take(&mut self.actors.fresh) {
@@ -468,9 +533,16 @@ impl Runner {
         }
         let mut index = 0;
         while index < self.live.len() {
+            let ui = entries[self.live[index].entry].is_ui();
+            // A paused world advances only what the interface started.
+            if self.actors.paused && !ui {
+                index += 1;
+                continue;
+            }
             let Self { live, actors, .. } = self;
             let slice = &mut live[index];
-            slice.state.now = now;
+            slice.state.now = if ui { wall } else { now };
+            host.set_clock(ui);
             (entries[slice.entry].run)(host, &mut slice.state, actors);
             if slice.state.stopping {
                 self.live.clear();
@@ -495,12 +567,21 @@ impl Runner {
 }
 
 impl Entry {
+    /// True for a strand the interface starts. One of those keeps running
+    /// while the game is paused - a pause menu's own buttons have to work -
+    /// and it sleeps against the wall clock rather than the frozen one.
+    pub fn is_ui(&self) -> bool {
+        matches!(self.trigger, "UiClicked" | "UiChanged")
+    }
+
     /// A fresh run of this strand under `actor`, ready for the first
     /// [`Entry::run`]. The actor is the entry's own for an authored strand
     /// and a clone's id for a copy, which is the whole of what lets one
     /// emitted function run under many actors.
     pub fn begin(&self, actor: &Rc<str>) -> State {
-        State::new(actor, self.start, self.counters)
+        let mut state = State::new(actor, self.start, self.counters);
+        state.ui = self.is_ui();
+        state
     }
 }
 
@@ -542,6 +623,10 @@ pub struct State {
     pub now: f64,
     /// `stop all` was reached, and the scheduler should end the whole run.
     pub stopping: bool,
+    /// Whether the interface started this strand. One of those keeps running
+    /// while the world is frozen, so a `pause game` inside one doesn't stop
+    /// it the way it stops a world strand.
+    pub ui: bool,
     /// Iterations left, one slot per `repeat` in the actor. Loop nesting is
     /// known when the code is emitted, so this is a flat array rather than
     /// the VM's frame stack. A custom block that could call itself is refused
@@ -563,6 +648,7 @@ impl State {
             status: Status::Run,
             now: 0.0,
             stopping: false,
+            ui: false,
             counters: vec![0; counters],
             calls: Vec::new(),
         }
@@ -646,11 +732,15 @@ pub trait Host {
     fn set_variable(&mut self, actor: &str, name: &str, value: Val);
     /// A value that wouldn't evaluate. The program carries on with a zero.
     fn error(&mut self, actor: &str, message: &str);
+    /// Which clock the strand about to be stepped runs on - the wall's for
+    /// one the interface started, the world's for everything else. Not a
+    /// verb, so it has a default: a host that never pauses need not care.
+    fn set_clock(&mut self, _ui: bool) {}
 }
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 5;
+pub const LOGIC_ABI_VERSION: u32 = 6;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -696,6 +786,17 @@ pub const ACT_DELETE_ACTOR: u32 = 27;
 pub const ACT_SET_MOUSE_LOCKED: u32 = 28;
 /// `n0` = pitch in degrees; positive looks up.
 pub const ACT_SET_CAMERA_PITCH: u32 = 29;
+/// `a` = id, `b` = content, `c` = parent, `value` = what it starts at, and
+/// the numbers are kind, anchor, x, y, width, height, flag, min, max.
+pub const ACT_SHOW_ELEMENT: u32 = 30;
+/// `a` = id, `b` = the property's wire name, `value` = what to write.
+pub const ACT_SET_UI_PROP: u32 = 31;
+/// `a` = id; `n0` != 0 hides everything instead.
+pub const ACT_HIDE_ELEMENT: u32 = 32;
+/// `a` = id.
+pub const ACT_DELETE_ELEMENT: u32 = 33;
+/// `n0` != 0 freezes the world.
+pub const ACT_SET_PAUSED: u32 = 34;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -774,8 +875,21 @@ pub struct LogicHostApi {
         *mut usize,
     ) -> u32,
     pub set_variable: extern "C" fn(*mut std::ffi::c_void, AbiStr, AbiStr, AbiValue),
-    pub act:
-        extern "C" fn(*mut std::ffi::c_void, AbiStr, u32, AbiStr, AbiStr, f64, f64, f64, AbiValue),
+    /// Three strings and a run of numbers rather than a fixed three, because
+    /// one interface element names nine of them at once.
+    pub act: extern "C" fn(
+        *mut std::ffi::c_void,
+        AbiStr,
+        u32,
+        AbiStr,
+        AbiStr,
+        AbiStr,
+        *const f64,
+        usize,
+        AbiValue,
+    ),
+    /// Which clock the strand about to run keeps - see [`Host::set_clock`].
+    pub set_clock: extern "C" fn(*mut std::ffi::c_void, u32),
 }
 
 /// A generated program's safe view of the runtime callbacks.
@@ -848,15 +962,29 @@ impl AbiHost {
         numbers: [f64; 3],
         value: &Val,
     ) {
+        self.act_many(actor, kind, a, b, "", &numbers, value);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn act_many(
+        &mut self,
+        actor: &str,
+        kind: u32,
+        a: &str,
+        b: &str,
+        c: &str,
+        numbers: &[f64],
+        value: &Val,
+    ) {
         (self.api().act)(
             self.ctx,
             AbiStr::borrow(actor),
             kind,
             AbiStr::borrow(a),
             AbiStr::borrow(b),
-            numbers[0],
-            numbers[1],
-            numbers[2],
+            AbiStr::borrow(c),
+            numbers.as_ptr(),
+            numbers.len(),
             AbiValue::borrow(value),
         );
     }
@@ -1013,6 +1141,58 @@ impl Host for AbiHost {
                 [if locked { 1.0 } else { 0.0 }, 0.0, 0.0],
                 &zero,
             ),
+            Act::ShowElement {
+                id,
+                kind,
+                content,
+                anchor,
+                offset,
+                size,
+                parent,
+                flag,
+                range,
+                value,
+            } => self.act_many(
+                actor,
+                ACT_SHOW_ELEMENT,
+                &id,
+                &content,
+                &parent,
+                &[
+                    kind as f64,
+                    anchor as f64,
+                    offset[0] as f64,
+                    offset[1] as f64,
+                    size[0] as f64,
+                    size[1] as f64,
+                    if flag { 1.0 } else { 0.0 },
+                    range[0] as f64,
+                    range[1] as f64,
+                ],
+                &value,
+            ),
+            Act::SetUiProp { id, prop, value } => {
+                self.act_many(actor, ACT_SET_UI_PROP, &id, prop, "", &[], &value)
+            }
+            Act::HideElement { id, all } => self.act_wire(
+                actor,
+                ACT_HIDE_ELEMENT,
+                &id,
+                "",
+                [if all { 1.0 } else { 0.0 }, 0.0, 0.0],
+                &zero,
+            ),
+            Act::DeleteElement { id } => {
+                self.act_wire(actor, ACT_DELETE_ELEMENT, &id, "", [0.0; 3], &zero)
+            }
+            Act::SetPaused { paused } => self.act_wire(
+                actor,
+                ACT_SET_PAUSED,
+                "",
+                "",
+                [if paused { 1.0 } else { 0.0 }, 0.0, 0.0],
+                &zero,
+            ),
         }
     }
 
@@ -1037,6 +1217,10 @@ impl Host for AbiHost {
     fn error(&mut self, actor: &str, message: &str) {
         self.act_wire(actor, ACT_ERROR, message, "", [0.0; 3], &Val::Num(0.0));
     }
+
+    fn set_clock(&mut self, ui: bool) {
+        (self.api().set_clock)(self.ctx, u32::from(ui));
+    }
 }
 
 pub const SYM_LOGIC_ABI: &[u8] = b"blockloom_logic_abi";
@@ -1045,11 +1229,39 @@ pub const SYM_LOGIC_FREE: &[u8] = b"blockloom_logic_free";
 pub const SYM_LOGIC_RESET: &[u8] = b"blockloom_logic_reset";
 pub const SYM_LOGIC_FIRE: &[u8] = b"blockloom_logic_fire";
 pub const SYM_LOGIC_TICK: &[u8] = b"blockloom_logic_tick";
+pub const SYM_LOGIC_PAUSE: &[u8] = b"blockloom_logic_pause";
 
 // ─── Reading a value at an instruction's slot ───────────────────────────────
 // The VM reports a bad slot once and stands a zero in its place; a slot that
 // evaluated fine but isn't a number is simply zero, with nothing reported.
 // Both halves of that matter, so each has a function here.
+
+/// What a fresh element of one kind reports before anybody has touched it.
+/// The same rule `ui::UiElement::initial_value` keeps, and for the same
+/// reason: `value of (id)` must mean one thing whichever scheduler ran the
+/// `show` block. The kind arrives as its index, as everything else does here.
+pub fn ui_value(kind: usize, value: Val) -> Val {
+    match kind {
+        // Toggle, Slider, Button; everything else reports its own words.
+        6 => Val::Bool(value.as_bool()),
+        5 => Val::Num(value.as_number().unwrap_or(0.0)),
+        2 => Val::Bool(false),
+        _ => Val::Text(value.as_text()),
+    }
+}
+
+/// What a fresh element of a kind whose row has no value slot starts at.
+/// `ui::UiElement::blank`'s rule, for the same reason - only a toggle
+/// carries a starting state, and a new text input is empty, not the word
+/// "false".
+pub fn ui_blank(kind: usize, flag: bool) -> Val {
+    match kind {
+        6 => Val::Bool(flag),
+        5 => Val::Num(0.0),
+        2 => Val::Bool(false),
+        _ => Val::Text(String::new()),
+    }
+}
 
 pub fn number(host: &mut dyn Host, actor: &str, value: R) -> f32 {
     number_f64(host, actor, value) as f32

@@ -9,6 +9,7 @@ use super::effect::Effect;
 use super::program::{Action, LoopKind, Program, Step, Trigger, compile};
 use crate::project::Project;
 use crate::sense;
+use crate::ui::{UiElement, UiKind};
 use crate::value::{Evaluated, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -139,6 +140,25 @@ pub enum Event {
     Cloned {
         actor: String,
     },
+    /// An interface element was clicked.
+    UiClicked {
+        id: String,
+    },
+    /// An input element changed. The value travels with it for a host that
+    /// wants it; matching is on the id alone, since `value of (id)` is how a
+    /// strand reads what it became.
+    UiChanged {
+        id: String,
+        value: Evaluated,
+    },
+}
+
+impl Event {
+    /// True for an event the interface raised. A strand one of these starts
+    /// keeps running while the game is paused.
+    pub fn is_ui(&self) -> bool {
+        matches!(self, Event::UiClicked { .. } | Event::UiChanged { .. })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -174,6 +194,9 @@ struct Script {
     pc: usize,
     frames: Vec<Frame>,
     status: Status,
+    /// Started by a UI event: it keeps ticking while the game is paused, and
+    /// it sleeps against the wall clock rather than the frozen world one.
+    ui: bool,
 }
 
 impl Script {
@@ -186,6 +209,7 @@ impl Script {
             pc: 0,
             frames: Vec::new(),
             status: Status::Done,
+            ui: false,
         }
     }
 }
@@ -209,6 +233,11 @@ pub struct Vm {
     /// Events to start scripts for, drained at the top of the next tick.
     pending: Vec<Event>,
     now: f64,
+    /// The wall clock: never frozen, and what a UI strand's `wait` counts
+    /// against so a pause menu can still animate.
+    wall: f64,
+    /// Whether the world is frozen. Only UI strands advance while it is.
+    paused: bool,
     /// Set by `stop all`, which invalidates the script list mid-tick.
     stopping: bool,
     depth: usize,
@@ -239,6 +268,8 @@ impl Vm {
             scripts: Vec::new(),
             pending: Vec::new(),
             now: 0.0,
+            wall: 0.0,
+            paused: false,
             stopping: false,
             depth: 0,
             made: 0,
@@ -256,6 +287,7 @@ impl Vm {
         self.scripts.clear();
         self.pending.clear();
         self.stopping = false;
+        self.paused = false;
         self.made = 0;
         self.variables.load(project);
         for actor in &project.actors {
@@ -337,10 +369,29 @@ impl Vm {
         self.variables.clone()
     }
 
+    /// Whether the world is frozen. Set by the host from the `pause game`
+    /// block's effect; while it holds, only strands a UI event started tick.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
     /// Runs every live script for one frame. `now` is seconds since the run
     /// started; effects are appended to `out` in the order they happened.
     pub fn tick(&mut self, now: f64, out: &mut Vec<Effect>) {
+        self.tick_at(now, now, out);
+    }
+
+    /// The same, with the two clocks told apart: `now` is the world's, which
+    /// the host freezes while paused, and `wall` is the one that never stops.
+    /// A UI strand runs on `wall`, so a `wait 1` on a pause menu still
+    /// finishes; everything else runs on `now`.
+    pub fn tick_at(&mut self, now: f64, wall: f64, out: &mut Vec<Effect>) {
         self.now = now;
+        self.wall = wall;
         let events = std::mem::take(&mut self.pending);
         for event in events {
             self.start_for(event);
@@ -348,13 +399,19 @@ impl Vm {
 
         let mut index = 0;
         while index < self.scripts.len() {
+            // A paused world advances only what the interface started.
+            if self.paused && !self.scripts[index].ui {
+                index += 1;
+                continue;
+            }
             let mut script = std::mem::replace(&mut self.scripts[index], Script::spent());
             let Some(program) = self.programs.get(&script.actor).map(Rc::clone) else {
                 index += 1;
                 continue;
             };
             let actor = script.actor.clone();
-            sense::with_actor(&actor, || {
+            let ui = script.ui;
+            sense::with_script(&actor, ui, || {
                 self.run(&mut script, &program, false, out);
             });
             if self.stopping {
@@ -379,6 +436,7 @@ impl Vm {
     // ─── Starting scripts ───────────────────────────────────────────────────
 
     fn start_for(&mut self, event: Event) {
+        let ui = event.is_ui();
         let matches: Vec<(String, String, usize)> = self
             .programs
             .iter()
@@ -391,7 +449,7 @@ impl Vm {
             })
             .collect();
         for (actor, strand_id, pc) in matches {
-            self.start(actor, strand_id, pc);
+            self.start(actor, strand_id, pc, ui);
         }
     }
 
@@ -417,12 +475,14 @@ impl Vm {
             }
             (Trigger::Message(want), Event::Message(got)) => want == got,
             (Trigger::Cloned, Event::Cloned { actor: fresh }) => fresh == actor,
+            (Trigger::UiClicked(want), Event::UiClicked { id }) => want == id,
+            (Trigger::UiChanged(want), Event::UiChanged { id, .. }) => want == id,
             _ => false,
         }
     }
 
     /// Starts an entry point, restarting it if it's already running.
-    fn start(&mut self, actor: String, strand_id: String, pc: usize) {
+    fn start(&mut self, actor: String, strand_id: String, pc: usize, ui: bool) {
         let key = (actor.clone(), strand_id);
         let fresh = Script {
             actor,
@@ -430,6 +490,7 @@ impl Vm {
             pc,
             frames: Vec::new(),
             status: Status::Run,
+            ui,
         };
         match self
             .scripts
@@ -453,10 +514,13 @@ impl Vm {
         immediate: bool,
         out: &mut Vec<Effect>,
     ) -> Option<Evaluated> {
+        // A UI strand keeps its own clock: the world's is frozen while a
+        // menu is up, and a `wait` on that menu still has to finish.
+        let clock = if script.ui { self.wall } else { self.now };
         match script.status {
             Status::Done => return None,
             Status::Sleep(until) => {
-                if self.now < until {
+                if clock < until {
                     return None;
                 }
                 script.status = Status::Run;
@@ -479,6 +543,13 @@ impl Vm {
                     // stands, as `stop all` ends everything.
                     if self.deleted.iter().any(|gone| gone == &script.actor) {
                         script.status = Status::Done;
+                        return None;
+                    }
+                    // `pause game` freezes the world where it stands, the
+                    // strand that ran it included - a strand the interface
+                    // started is what has to start it again. The pc is
+                    // already past the block, so resuming carries on.
+                    if !immediate && !script.ui && matches!(action, Action::SetPaused(true)) {
                         return None;
                     }
                 }
@@ -602,7 +673,7 @@ impl Vm {
                         .max(0.0);
                     script.pc = pc + 1;
                     if !immediate && seconds > 0.0 {
-                        script.status = Status::Sleep(self.now + seconds);
+                        script.status = Status::Sleep(clock + seconds);
                         return None;
                     }
                 }
@@ -633,7 +704,7 @@ impl Vm {
                     });
                     script.pc = pc + 1;
                     if !immediate && seconds > 0.0 {
-                        script.status = Status::Sleep(self.now + seconds);
+                        script.status = Status::Sleep(clock + seconds);
                         return None;
                     }
                 }
@@ -875,6 +946,93 @@ impl Vm {
                 }
             }
             Action::Broadcast(name) => self.pending.push(Event::Message(name.trim().to_string())),
+            // The interface. Every slot is read here, left to right, exactly
+            // as the row is written - a compiled program reads them in the
+            // same order, and a bad one complains in the same place.
+            Action::ShowElement(spec) => {
+                let super::program::ShowElement {
+                    kind,
+                    id,
+                    content,
+                    range,
+                    value,
+                    anchor,
+                    offset,
+                    size,
+                    parent,
+                    flag,
+                } = &**spec;
+                let id = self.eval(id, actor, params, out).as_text();
+                let content = self.eval(content, actor, params, out).as_text();
+                let range = match range {
+                    Some([low, high]) => [
+                        self.eval_f32(low, actor, params, out),
+                        self.eval_f32(high, actor, params, out),
+                    ],
+                    None => [0.0, 1.0],
+                };
+                // Only a slider's row has a value slot; the rest start at
+                // whatever their kind means by blank.
+                let started_at = match value {
+                    Some(value) => {
+                        let value = self.eval(value, actor, params, out);
+                        UiElement::initial_value(*kind, &value)
+                    }
+                    None => UiElement::blank(*kind, *flag),
+                };
+                let offset = [
+                    self.eval_f32(&offset[0], actor, params, out),
+                    self.eval_f32(&offset[1], actor, params, out),
+                ];
+                let size = [
+                    self.eval_f32(&size[0], actor, params, out),
+                    self.eval_f32(&size[1], actor, params, out),
+                ];
+                let parent = self.eval(parent, actor, params, out).as_text();
+                out.push(Effect::ShowElement {
+                    element: UiElement {
+                        id: id.trim().to_string(),
+                        kind: *kind,
+                        content,
+                        anchor: *anchor,
+                        offset,
+                        size,
+                        parent: parent.trim().to_string(),
+                        modal: *kind == UiKind::Panel && *flag,
+                        range,
+                        value: started_at,
+                    },
+                });
+            }
+            Action::SetUiProp { prop, id, value } => {
+                let id = self.eval(id, actor, params, out).as_text();
+                let value = self.eval(value, actor, params, out);
+                out.push(Effect::SetUiProp {
+                    id: id.trim().to_string(),
+                    prop: *prop,
+                    value,
+                });
+            }
+            Action::HideElement { id, all } => {
+                let id = self.eval(id, actor, params, out).as_text();
+                out.push(Effect::HideElement {
+                    id: id.trim().to_string(),
+                    all: *all,
+                });
+            }
+            Action::DeleteElement(id) => {
+                let id = self.eval(id, actor, params, out).as_text();
+                out.push(Effect::DeleteElement {
+                    id: id.trim().to_string(),
+                });
+            }
+            // The VM freezes itself the moment the block runs, so the rest
+            // of this tick already sees a paused world - the host catches up
+            // when it applies the effect.
+            Action::SetPaused(paused) => {
+                self.paused = *paused;
+                out.push(Effect::SetPaused { paused: *paused });
+            }
             Action::SetMouseLocked(locked) => out.push(Effect::SetMouseLocked { locked: *locked }),
             Action::SetVariable { name, value } => {
                 let value = self.eval(value, actor, params, out);
@@ -1096,6 +1254,9 @@ impl Vm {
                 params: bound,
             }],
             status: Status::Run,
+            // A reporter body runs to completion in place, so it keeps the
+            // clock of whoever asked - and nothing in one sleeps anyway.
+            ui: sense::in_ui_strand(),
         };
         self.depth += 1;
         let result = self.run(&mut script, &program, true, out);

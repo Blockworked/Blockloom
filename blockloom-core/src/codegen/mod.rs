@@ -59,18 +59,20 @@ mod runtime;
 
 pub use runtime::{
     ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH, ACT_BROADCAST,
-    ACT_CHANGE_POSITION, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR, ACT_DETACH,
-    ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_MOVE, ACT_POINT_TOWARDS, ACT_SAY, ACT_SET_BODY,
-    ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD,
-    ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_ROTATION,
-    ACT_SET_SCALE, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_TURN, AbiStr, AbiValue, Act, Actors,
-    Entry, Host, LOGIC_ABI_VERSION,
-    LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI, SYM_LOGIC_FIRE,
-    SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_RESET, SYM_LOGIC_TICK, State, Status, TICK_STOPPED,
-    VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
+    ACT_CHANGE_POSITION, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR, ACT_DELETE_ELEMENT,
+    ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_MOVE, ACT_POINT_TOWARDS,
+    ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR,
+    ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED,
+    ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_UI_PROP,
+    ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_TURN, AbiStr, AbiValue, Act, Actors,
+    Entry, Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner,
+    SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
+    SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
+    Val,
 };
 
 use crate::project::Project;
+use crate::ui::UiKind;
 use crate::value::{Op, Value};
 use crate::vm::{Action, LoopKind, Program, Step, compile as compile_program};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -128,11 +130,19 @@ pub unsafe extern "C" fn blockloom_logic_fire(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn blockloom_logic_pause(state: *mut std::ffi::c_void, paused: u32) {
+    if let Some(runner) = unsafe { state.cast::<Runner>().as_mut() } {
+        runner.set_paused(paused != 0);
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn blockloom_logic_tick(
     state: *mut std::ffi::c_void,
     ctx: *mut std::ffi::c_void,
     api: *const LogicHostApi,
     now: f64,
+    wall: f64,
 ) -> u32 {
     let Some(runner) = (unsafe { state.cast::<Runner>().as_mut() }) else {
         return ABI_PANIC;
@@ -145,7 +155,7 @@ pub unsafe extern "C" fn blockloom_logic_tick(
     }
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut host = unsafe { AbiHost::new(ctx, api) };
-        runner.tick(ENTRIES, &mut host, now)
+        runner.tick_at(ENTRIES, &mut host, now, wall)
     })) {
         Ok(true) => TICK_STOPPED,
         Ok(false) => ABI_OK,
@@ -329,6 +339,8 @@ fn trigger_name(trigger: &crate::vm::Trigger) -> &'static str {
         Trigger::Collision { .. } => "Collision",
         Trigger::Message(_) => "Message",
         Trigger::Cloned => "Cloned",
+        Trigger::UiClicked(_) => "UiClicked",
+        Trigger::UiChanged(_) => "UiChanged",
     }
 }
 
@@ -338,6 +350,7 @@ fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
         Trigger::KeyPressed(key) => key.clone(),
         Trigger::Collision { with } => with.clone(),
         Trigger::Message(name) => name.clone(),
+        Trigger::UiClicked(id) | Trigger::UiChanged(id) => id.clone(),
         Trigger::Started | Trigger::Clicked | Trigger::Cloned => String::new(),
     }
 }
@@ -506,6 +519,11 @@ impl Plan {
                 // open across the boundary.
                 Step::End => {
                     open.clear();
+                    leaders.insert(pc + 1);
+                }
+                // `pause game` hands the frame back like a `wait`, so
+                // what follows it has to be an arm the strand resumes at.
+                Step::Action(Action::SetPaused(true)) => {
                     leaders.insert(pc + 1);
                 }
                 Step::Action(_) => {}
@@ -853,9 +871,10 @@ impl<'a> Pass<'a> {
             Action::SetCameraView(view) => {
                 act(format!("Act::SetCameraView {{ view: {} }}", name_of(view)))
             }
-            Action::SetCameraPitch(degrees) => {
-                reading(self.number(degrees)?, "Act::SetCameraPitch { degrees: slot }")
-            }
+            Action::SetCameraPitch(degrees) => reading(
+                self.number(degrees)?,
+                "Act::SetCameraPitch { degrees: slot }",
+            ),
             Action::AttachComponent(component) => act(format!(
                 "Act::AttachComponent {{ component: {} }}",
                 literal(component)
@@ -905,6 +924,87 @@ impl<'a> Pass<'a> {
             Action::SetMouseLocked(locked) => {
                 act(format!("Act::SetMouseLocked {{ locked: {locked} }}"))
             }
+            // The interface. Every slot is hoisted into a `let` first, in
+            // the order the VM evaluates them, because reading a slot
+            // borrows the host and so does handing it something to do.
+            Action::ShowElement(spec) => {
+                let crate::vm::ShowElement {
+                    kind,
+                    id,
+                    content,
+                    range,
+                    value,
+                    anchor,
+                    offset,
+                    size,
+                    parent,
+                    flag,
+                } = &**spec;
+                let id = self.text(id)?;
+                let content = self.text(content)?;
+                let range = match range {
+                    Some([low, high]) => {
+                        format!("[{}, {}]", self.number(low)?, self.number(high)?)
+                    }
+                    None => "[0.0f32, 1.0f32]".to_string(),
+                };
+                // A slider reads its starting number off the canvas; every
+                // other kind carries a fixed flag instead and asks nothing.
+                // Only a slider's row has a value slot; the rest start at
+                // whatever their kind means by blank.
+                let started_at = match value {
+                    Some(value) => {
+                        format!("ui_value({}, {})", kind.index(), self.evaluated(value)?)
+                    }
+                    None => format!("ui_blank({}, {flag})", kind.index()),
+                };
+                let x = self.number(&offset[0])?;
+                let y = self.number(&offset[1])?;
+                let width = self.number(&size[0])?;
+                let height = self.number(&size[1])?;
+                let parent = self.text(parent)?;
+                format!(
+                    "    let id = {id};\n    let content = {content};\n    \
+                     let range = {range};\n    let value = {started_at};\n    \
+                     let offset = [{x}, {y}];\n    let size = [{width}, {height}];\n    \
+                     let parent = {parent};\n    \
+                     h.act(&me, Act::ShowElement {{ id: id.trim().to_string(), kind: {}, \
+                     content, anchor: {}, offset, size, parent: parent.trim().to_string(), \
+                     flag: {}, range, value }});\n",
+                    kind.index(),
+                    anchor.index(),
+                    *kind == UiKind::Panel && *flag,
+                )
+            }
+            Action::SetUiProp { prop, id, value } => format!(
+                "    let id = {};\n    let value = {};\n    \
+                 h.act(&me, Act::SetUiProp {{ id: id.trim().to_string(), prop: {}, value }});\n",
+                self.text(id)?,
+                self.evaluated(value)?,
+                literal(prop.name()),
+            ),
+            Action::HideElement { id, all } => format!(
+                "    let id = {};\n    \
+                 h.act(&me, Act::HideElement {{ id: id.trim().to_string(), all: {all} }});\n",
+                self.text(id)?
+            ),
+            Action::DeleteElement(id) => format!(
+                "    let id = {};\n    \
+                 h.act(&me, Act::DeleteElement {{ id: id.trim().to_string() }});\n",
+                self.text(id)?
+            ),
+            // The table freezes now, not when the host answers: the rest of
+            // this tick has to see a paused world, exactly as the VM does -
+            // and this strand stops here unless the interface started it.
+            Action::SetPaused(paused) => format!(
+                "    actors.set_paused({paused});\n    \
+                 h.act(&me, Act::SetPaused {{ paused: {paused} }});\n{}",
+                if *paused {
+                    self.freeze(next)
+                } else {
+                    String::new()
+                }
+            ),
             // A variable write isn't an effect: it is the host's own state, so
             // it goes through the host rather than through `Act`.
             Action::SetVariable { name, value } => format!(
@@ -930,6 +1030,16 @@ impl<'a> Pass<'a> {
     /// act read counts, and so does one another actor ran earlier this tick.
     /// Nothing is emitted for a project with no `delete` in it, where the
     /// answer could only ever be no.
+    /// Handing the frame back at a `pause game`: the strand stops where it
+    /// stands, unless the interface is what started it. Nothing to hand back
+    /// in a reporter, where a `pause` is just the act.
+    fn freeze(&self, next: usize) -> String {
+        if self.immediate {
+            return String::new();
+        }
+        format!("    if !s.ui {{\n        s.pc = {next};\n        return;\n    }}\n")
+    }
+
     fn check_deleted(&self, next: usize) -> String {
         if !self.canvas.deletes {
             return String::new();

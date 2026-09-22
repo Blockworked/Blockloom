@@ -98,7 +98,11 @@ impl Actor {
     }
 
     fn act(&self, what: u32, a: Str, b: Str, c: Str, n0: f64, n1: f64, n2: f64) {
-        unsafe { ((*self.api).act)(self.ctx, what, a, b, c, n0, n1, n2) }
+        self.act_many(what, a, b, c, &[n0, n1, n2]);
+    }
+
+    fn act_many(&self, what: u32, a: Str, b: Str, c: Str, numbers: &[f64]) {
+        unsafe { ((*self.api).act)(self.ctx, what, a, b, c, numbers.as_ptr(), numbers.len()) }
     }
 
     // ─── Reading the world ─────────────────────────────────────────────────
@@ -638,6 +642,260 @@ impl Actor {
             0.0,
             0.0,
         );
+    }
+
+    // ─── The interface ─────────────────────────────────────────────────────
+    // The same elements the `show` blocks make, named by the same ids: a
+    // script and a canvas can build one menu between them.
+
+    /// Makes an interface element, or updates the one `id` already names.
+    /// Build one with [`Ui::at`] and friends, then hand it here.
+    pub fn show(&self, element: &Ui) {
+        self.act_many(
+            ACT_UI_SHOW,
+            Str::borrow(element.id),
+            Str::borrow(element.content),
+            Str::borrow(element.parent),
+            &[
+                element.kind as u32 as f64,
+                element.anchor as u32 as f64,
+                element.offset.0 as f64,
+                element.offset.1 as f64,
+                element.size.0 as f64,
+                element.size.1 as f64,
+                if element.flag { 1.0 } else { 0.0 },
+                element.range.0 as f64,
+                element.range.1 as f64,
+                element.value,
+            ],
+        );
+    }
+
+    /// Writes one numeric property of an element - `"width"`, `"value"`,
+    /// `"visible"` and the rest, spelled as [`UiProp`]'s wire names.
+    pub fn set_ui(&self, id: &str, property: &str, value: f64) {
+        self.act(
+            ACT_UI_SET,
+            Str::borrow(id),
+            Str::borrow(property),
+            Str::EMPTY,
+            value,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// The same, writing text - `"Text"`, `"Background"`, `"TextColor"`.
+    pub fn set_ui_text(&self, id: &str, property: &str, value: &str) {
+        self.act(
+            ACT_UI_SET_TEXT,
+            Str::borrow(id),
+            Str::borrow(property),
+            Str::borrow(value),
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Takes an element off the screen, children and all, without forgetting
+    /// it.
+    pub fn hide_ui(&self, id: &str) {
+        self.act(
+            ACT_UI_HIDE,
+            Str::borrow(id),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Hides every element at once, and drops keyboard focus with them.
+    pub fn hide_all_ui(&self) {
+        self.act(
+            ACT_UI_HIDE,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            1.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Forgets an element entirely, children and all.
+    pub fn delete_ui(&self, id: &str) {
+        self.act(
+            ACT_UI_DELETE,
+            Str::borrow(id),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// A slider's number, or a toggle as `1.0`/`0.0`. Zero for an id nothing
+    /// answers to.
+    pub fn ui_value(&self, id: &str) -> f64 {
+        self.number(READ_UI_VALUE, Str::borrow(id), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+    }
+
+    /// A text input's typed text, or an empty string.
+    pub fn ui_text(&self, id: &str) -> String {
+        self.text(TEXT_UI_VALUE, Str::borrow(id), Str::EMPTY)
+            .unwrap_or_default()
+    }
+
+    /// Freezes the world, as the `pause game` block does. Scripts and blocks
+    /// alike stop; a strand the interface started carries on.
+    pub fn set_paused(&self, paused: bool) {
+        self.act(
+            ACT_SET_PAUSED,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            if paused { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        );
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.number(READ_GAME_PAUSED, Str::EMPTY, Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+}
+
+/// What kind of interface element [`Ui`] describes. The numbers are the wire
+/// ones, shared with `blockloom_core::ui::UiKind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum UiKind {
+    Panel = 0,
+    Label = 1,
+    Button = 2,
+    Image = 3,
+    Input = 4,
+    Slider = 5,
+    Toggle = 6,
+}
+
+/// Which corner, edge or centre of the window an element hangs off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum UiAnchor {
+    TopLeft = 0,
+    Top = 1,
+    TopRight = 2,
+    Left = 3,
+    Center = 4,
+    Right = 5,
+    BottomLeft = 6,
+    Bottom = 7,
+    BottomRight = 8,
+}
+
+/// One interface element, as a script describes it before handing it to
+/// [`Actor::show`]. Borrowed strings throughout: nothing here outlives the
+/// call that carries it over the boundary.
+///
+/// ```ignore
+/// me.show(&Ui::panel("menu", "Paused").modal().at(UiAnchor::Center, 0.0, 0.0));
+/// me.show(&Ui::button("resume", "Resume").inside("menu"));
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct Ui<'a> {
+    pub id: &'a str,
+    pub kind: UiKind,
+    pub content: &'a str,
+    pub parent: &'a str,
+    pub anchor: UiAnchor,
+    pub offset: (f32, f32),
+    pub size: (f32, f32),
+    pub range: (f32, f32),
+    pub value: f64,
+    pub flag: bool,
+}
+
+impl<'a> Ui<'a> {
+    pub fn new(id: &'a str, kind: UiKind, content: &'a str) -> Self {
+        Self {
+            id,
+            kind,
+            content,
+            parent: "",
+            anchor: UiAnchor::Center,
+            offset: (0.0, 0.0),
+            size: (0.0, 0.0),
+            range: (0.0, 1.0),
+            value: 0.0,
+            flag: false,
+        }
+    }
+
+    pub fn panel(id: &'a str, title: &'a str) -> Self {
+        Self::new(id, UiKind::Panel, title)
+    }
+
+    pub fn label(id: &'a str, text: &'a str) -> Self {
+        Self::new(id, UiKind::Label, text)
+    }
+
+    pub fn button(id: &'a str, label: &'a str) -> Self {
+        Self::new(id, UiKind::Button, label)
+    }
+
+    pub fn image(id: &'a str, asset: &'a str) -> Self {
+        Self::new(id, UiKind::Image, asset)
+    }
+
+    pub fn input(id: &'a str, placeholder: &'a str) -> Self {
+        Self::new(id, UiKind::Input, placeholder)
+    }
+
+    pub fn slider(id: &'a str, min: f32, max: f32, value: f64) -> Self {
+        let mut ui = Self::new(id, UiKind::Slider, "");
+        ui.range = (min, max);
+        ui.value = value;
+        ui
+    }
+
+    pub fn toggle(id: &'a str, label: &'a str, on: bool) -> Self {
+        let mut ui = Self::new(id, UiKind::Toggle, label);
+        ui.flag = on;
+        ui
+    }
+
+    /// Where it hangs off the window, and how far from there in pixels.
+    /// Ignored once [`Ui::inside`] names a parent.
+    pub fn at(mut self, anchor: UiAnchor, x: f32, y: f32) -> Self {
+        self.anchor = anchor;
+        self.offset = (x, y);
+        self
+    }
+
+    /// How big it is; a zero means "as big as the content needs".
+    pub fn sized(mut self, width: f32, height: f32) -> Self {
+        self.size = (width, height);
+        self
+    }
+
+    /// Flows it inside another element rather than against the window.
+    pub fn inside(mut self, parent: &'a str) -> Self {
+        self.parent = parent;
+        self
+    }
+
+    /// A panel that swallows the world clicks behind it.
+    pub fn modal(mut self) -> Self {
+        self.flag = true;
+        self
     }
 }
 

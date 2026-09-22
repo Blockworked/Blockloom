@@ -62,6 +62,9 @@ fn say(text: &str) -> InstructionKind {
 struct Harness {
     vm: Vm,
     time: f64,
+    /// Whether the world is frozen, and what its clock read when it froze.
+    paused: bool,
+    frozen: f64,
 }
 
 impl Harness {
@@ -69,7 +72,12 @@ impl Harness {
         blockloom_core::init();
         let mut vm = Vm::new();
         vm.load(project);
-        Self { vm, time: 0.0 }
+        Self {
+            vm,
+            time: 0.0,
+            paused: false,
+            frozen: 0.0,
+        }
     }
 
     fn started(project: &Project) -> Self {
@@ -83,10 +91,24 @@ impl Harness {
         for _ in 0..frames {
             self.time += 0.1;
             blockloom_core::sense::publish(Sensors {
-                time: self.time,
+                // Frozen while paused, which is what a host does, and the
+                // wall clock beside it for the strands the interface
+                // started.
+                time: if self.paused { self.frozen } else { self.time },
+                wall_time: self.time,
+                paused: self.paused,
                 ..Default::default()
             });
-            self.vm.tick(self.time, &mut out);
+            let world = if self.paused { self.frozen } else { self.time };
+            self.vm.tick_at(world, self.time, &mut out);
+            // A `pause game` block freezes the VM itself; the host notices
+            // at the same moment and stops the world clock with it.
+            if self.vm.is_paused() != self.paused {
+                self.paused = self.vm.is_paused();
+                if self.paused {
+                    self.frozen = self.time;
+                }
+            }
         }
         out
     }
@@ -763,5 +785,226 @@ fn an_empty_parent_slot_is_how_a_block_hangs_an_actor_off_nothing() {
             actor: project.actors[0].id.clone(),
             parent: String::new(),
         }]
+    );
+}
+
+// ─── The interface ──────────────────────────────────────────────────────────
+
+fn ui_clicked(id: &str, body: Vec<InstructionKind>) -> Strand {
+    let mut instructions = vec![Instruction::new(InstructionKind::WhenUiClicked {
+        element: id.to_string(),
+    })];
+    instructions.extend(body.into_iter().map(Instruction::new));
+    Strand::with_instructions(0, 400, instructions)
+}
+
+fn shows(effects: &[Effect]) -> Vec<String> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::ShowElement { element } => Some(element.id.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_show_block_names_its_element_and_carries_its_slots_evaluated() {
+    let project = project_with(vec![started(vec![InstructionKind::ShowLabel {
+        element: Value::text("score"),
+        text: Value::op(
+            Op::from_name("Join"),
+            vec![Value::text("hi "), Value::number(3.0)],
+        ),
+        anchor: blockloom_core::ui::UiAnchor::TopLeft,
+        x: Value::number(12.0),
+        y: Value::number(8.0),
+        width: Value::number(0.0),
+        height: Value::number(0.0),
+        parent: Value::text(""),
+    }])]);
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(shows(&effects), vec!["score".to_string()]);
+    let Some(Effect::ShowElement { element }) = effects
+        .iter()
+        .find(|effect| matches!(effect, Effect::ShowElement { .. }))
+    else {
+        panic!("expected a show, got {effects:?}");
+    };
+    assert_eq!(element.id, "score");
+    assert_eq!(element.kind, blockloom_core::ui::UiKind::Label);
+    assert_eq!(element.content, "hi 3");
+    assert_eq!(element.offset, [12.0, 8.0]);
+    assert_eq!(element.anchor, blockloom_core::ui::UiAnchor::TopLeft);
+}
+
+#[test]
+fn a_click_on_an_element_starts_the_strand_that_names_it_and_no_other() {
+    let project = project_with(vec![
+        ui_clicked("resume", vec![say("resumed")]),
+        ui_clicked("quit", vec![say("quit")]),
+    ]);
+    let mut vm = Harness::new(&project);
+    vm.vm.fire(Event::UiClicked {
+        id: "resume".to_string(),
+    });
+    assert_eq!(says(&vm.run(1)), vec!["resumed".to_string()]);
+}
+
+#[test]
+fn pausing_freezes_a_world_strand_but_not_one_the_interface_started() {
+    let project = project_with(vec![
+        started(vec![InstructionKind::Forever {
+            body: vec![ins(move_by(1.0))],
+        }]),
+        ui_clicked("resume", vec![say("menu is alive")]),
+    ]);
+    let mut vm = Harness::started(&project);
+    assert_eq!(moves(&vm.run(2)).len(), 2);
+
+    vm.vm.set_paused(true);
+    vm.paused = true;
+    vm.frozen = vm.time;
+    // The world strand gets no slice at all while the world is frozen.
+    assert!(moves(&vm.run(3)).is_empty());
+
+    // A click still starts its strand, and that strand still runs.
+    vm.vm.fire(Event::UiClicked {
+        id: "resume".to_string(),
+    });
+    assert_eq!(says(&vm.run(1)), vec!["menu is alive".to_string()]);
+
+    vm.vm.set_paused(false);
+    vm.paused = false;
+    assert_eq!(moves(&vm.run(2)).len(), 2);
+}
+
+#[test]
+fn a_wait_on_a_paused_menu_finishes_on_the_wall_clock() {
+    let project = project_with(vec![
+        ui_clicked(
+            "blink",
+            vec![
+                InstructionKind::Wait {
+                    duration: Value::number(0.25),
+                },
+                say("blinked"),
+            ],
+        ),
+        // A world strand waiting the same span, to show the two clocks
+        // really are different: its own never advances.
+        started(vec![
+            InstructionKind::Wait {
+                duration: Value::number(0.25),
+            },
+            say("the world moved"),
+        ]),
+    ]);
+    let mut vm = Harness::started(&project);
+    vm.run(1);
+    vm.vm.set_paused(true);
+    vm.paused = true;
+    vm.frozen = vm.time;
+    vm.vm.fire(Event::UiClicked {
+        id: "blink".to_string(),
+    });
+
+    // Four tenths of a second of wall time: enough for the menu's wait,
+    // while the world clock has not moved at all.
+    let effects = vm.run(4);
+    assert_eq!(says(&effects), vec!["blinked".to_string()]);
+}
+
+#[test]
+fn pause_game_stops_the_strand_that_ran_it_where_it_stands() {
+    let project = project_with(vec![started(vec![
+        say("before"),
+        InstructionKind::PauseGame,
+        say("never said"),
+    ])]);
+    let mut vm = Harness::started(&project);
+    assert_eq!(says(&vm.run(5)), vec!["before".to_string()]);
+
+    // It resumes where it left off, rather than starting again.
+    vm.vm.set_paused(false);
+    vm.paused = false;
+    assert_eq!(says(&vm.run(1)), vec!["never said".to_string()]);
+}
+
+#[test]
+fn a_pause_inside_a_ui_strand_leaves_that_strand_running() {
+    let project = project_with(vec![ui_clicked(
+        "resume",
+        vec![
+            InstructionKind::PauseGame,
+            say("the menu is alive"),
+            InstructionKind::ResumeGame,
+        ],
+    )]);
+    let mut vm = Harness::new(&project);
+    vm.vm.fire(Event::UiClicked {
+        id: "resume".to_string(),
+    });
+    assert_eq!(says(&vm.run(1)), vec!["the menu is alive".to_string()]);
+    assert!(!vm.vm.is_paused());
+}
+
+#[test]
+fn pause_game_freezes_the_vm_the_moment_it_runs() {
+    let project = project_with(vec![
+        started(vec![say("before"), InstructionKind::PauseGame]),
+        // Later in the same tick, and frozen where it stands.
+        Strand::with_instructions(
+            0,
+            400,
+            vec![
+                ins(InstructionKind::WhenStarted),
+                ins(InstructionKind::Wait {
+                    duration: Value::number(0.05),
+                }),
+                ins(say("never said")),
+            ],
+        ),
+    ]);
+    let mut vm = Harness::started(&project);
+    let effects = vm.run(5);
+    assert_eq!(says(&effects), vec!["before".to_string()]);
+    assert!(effects.contains(&Effect::SetPaused { paused: true }));
+    assert!(vm.vm.is_paused());
+}
+
+#[test]
+fn hiding_and_deleting_name_the_element_the_block_meant() {
+    let project = project_with(vec![started(vec![
+        InstructionKind::HideElement {
+            element: Value::text(" menu "),
+        },
+        InstructionKind::HideAllUi,
+        InstructionKind::DeleteElement {
+            element: Value::text("menu"),
+        },
+    ])]);
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(
+        effects
+            .iter()
+            .filter(|effect| !matches!(effect, Effect::Error { .. }))
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![
+            // A stray space around an id is trimmed, as it is everywhere
+            // else a block names something.
+            Effect::HideElement {
+                id: "menu".to_string(),
+                all: false
+            },
+            Effect::HideElement {
+                id: String::new(),
+                all: true
+            },
+            Effect::DeleteElement {
+                id: "menu".to_string()
+            },
+        ]
     );
 }

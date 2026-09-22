@@ -66,6 +66,7 @@ export const OPERATOR_GROUPS: { label: string; kinds: string[] }[] = [
       'ComponentField',
     ],
   },
+  { label: 'Interface', kinds: ['UiValue', 'GamePaused'] },
   { label: 'Actors', kinds: ['IsClone', 'MyParent', 'NewActor', 'ActorCount'] },
   { label: 'Maths', kinds: ['Add', 'Sub', 'Mul', 'Div', 'Mod', 'Round', 'Math', 'Random'] },
   { label: 'Comparing', kinds: ['Eq', 'Neq', 'Gt', 'Lt', 'Gte', 'Lte', 'And', 'Or', 'Not', 'True', 'False'] },
@@ -94,6 +95,15 @@ export const OPERATOR_KINDS: OperatorKindSpec[] = [
   { kind: 'MouseDeltaY', op: 'MouseDeltaY', arity: 0, argTypes: [], resultType: 'number', prefix: 'mouse delta y' },
   { kind: 'MouseLocked', op: 'MouseLocked', arity: 0, argTypes: [], resultType: 'bool', prefix: 'mouse locked?' },
   { kind: 'Timer', op: 'Timer', arity: 0, argTypes: [], resultType: 'number', prefix: 'timer' },
+  {
+    kind: 'UiValue',
+    op: 'UiValue',
+    arity: 1,
+    argTypes: ['text'],
+    resultType: 'number',
+    prefix: 'value of',
+  },
+  { kind: 'GamePaused', op: 'GamePaused', arity: 0, argTypes: [], resultType: 'bool', prefix: 'game paused?' },
   {
     kind: 'MyPosition',
     op: 'MyPosition',

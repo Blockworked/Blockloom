@@ -164,8 +164,9 @@ Two processes: the editor window, and the game world.
   build out), `vm/` (the block VM), `codegen/` (the same blocks as Rust
   instead),
   `script/` (compiling a project's Rust scripts, and the ABI they talk over),
-  `sense.rs` (the world state reporter blocks read), and `wire.rs` (the one
-  shape difference between documents and the frontend).
+  `sense.rs` (the world state reporter blocks read), `ui.rs` (the screen-space
+  interface a game builds out of blocks - see Interface below), and `wire.rs`
+  (the one shape difference between documents and the frontend).
 - **`blockstitch-core`** (sibling repo, see above) - the shared block-editor
   backend. `value` is the `Value`/`Op` expression system, extended by an app
   through `register_operators` (Blockloom registers its sensing reporters in
@@ -495,6 +496,53 @@ answers variable and sensing callbacks. Editor Play stays on the VM as the
 reference behavior. A packaged player uses the native runner whenever its
 build carries one, and falls back to the VM when it does not.
 
+### Interface
+
+A game builds its HUD and its menus out of blocks, in screen space, over the
+world. `blockloom-core/src/ui.rs` is the vocabulary: seven element kinds
+(`Panel`, `Label`, `Button`, `Image`, `Input`, `Slider`, `Toggle`), a 9-point
+anchor, and the properties `set [prop] of (id) to` can write. An element is
+named by an id string the project invents, and `show` makes one *or updates
+the one that id already names* - so a HUD strand can rebuild itself every
+frame without piling up. `hide` takes one off the screen without forgetting
+it, children and all; `delete` forgets it. A parented element flows after its
+siblings inside its parent's vertical stack and its own placement is ignored,
+which is what makes Resume / Settings / Quit a three-block menu.
+
+Every `show` block spells its id, caption and placement the same way, so the
+seven kinds share one set of field ids (`UiId`, `UiContent`, `UiX`, ...). The
+JSON field is `element` rather than `id`, because a flattened instruction
+already carries its own `id` on the wire (see `wire.rs`).
+
+`blockloom-runtime/src/ui.rs` is the id map and the rules over it - the
+hit test, the subtree walk, the anchoring - Bevy-free but for the entity
+handle, so they unit-test without a window. `overlay.rs` is the Bevy half:
+`apply_ui_effects` folds the fixed step's effects into the map, and `draw_ui`
+spawns, despawns and restyles. An element's anchor is a percentage plus a
+`UiTransform` of its own size rather than a worked-out pixel offset, because
+an auto-sized label isn't measured until Bevy has laid it out - and a window
+resize then recomputes for free.
+
+Clicks route through the interface first (`world::detect_clicks`): the
+topmost visible element whose rectangle covers the pointer wins, and only
+what nothing wanted reaches the world picks. A visible modal element swallows
+the rest, so clicking beside a pause menu never fires the gun behind it. A
+click on a text input hands it the keyboard; while it holds it, game strands
+see no keys at all.
+
+`pause game` freezes the world: no world strand advances, no physics steps,
+no key or collision event queues, so resuming never bursts. The one fork is
+that strands a UI event started keep ticking - otherwise a pause menu's own
+buttons would be dead - and they run on the wall clock, so a `wait 1` blink
+on a frozen menu still blinks. A `pause game` in a world strand stops that
+strand where it stands, the way `delete myself` does; in a UI strand it
+doesn't. `world::set_paused` is the one place that flips it, whether the
+editor's Pause button or the block asked.
+
+Pointer lock is fully manual: game code unlocks around a menu and re-locks on
+close. The one safety net is that showing a modal while the pointer is locked
+logs a warning, since a locked hidden cursor can't press anything.
+
 ### Frontend (`ui/`)
 
 Vue 3 + TypeScript + Vite, package-managed with pnpm. `src-tauri/tauri.conf.json`
@@ -540,6 +588,11 @@ lands.
 ### Known gaps
 
 - No sounds, no lists.
+- The interface has no global stylesheet and no scrollable lists: styling is
+  per-element props over dark translucent defaults. Settings built with it
+  live in variables and last one run.
+- A text input is basic: no selection, no cursor, no IME. Backspace rubs out,
+  Escape and Enter let go, and every other character key appends.
 - A clone copies the template as the editor authored it, standing where the
   template stands now. What `attach`/`detach` did to the template since Play
   doesn't carry over - re-attaching a component has always meant the authored

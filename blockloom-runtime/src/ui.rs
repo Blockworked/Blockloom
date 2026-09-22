@@ -1,0 +1,775 @@
+//! The screen-space interface a game builds out of blocks.
+//!
+//! [`UiManager`] is the id map: one entry per element the blocks have made,
+//! holding the Bevy entity that draws it, what kind it is, whose child it is
+//! and what it currently reports. `show` makes one or updates it in place,
+//! `set` writes a property, `hide` takes it off the screen without forgetting
+//! it, and `delete` forgets it. Every one of those is idempotent, so a HUD
+//! strand can run the same blocks every frame.
+//!
+//! The pure half - the id map, the hit test, the anchor maths - is Bevy-free
+//! except for the entity handle, so the rules can be unit-tested without a
+//! window. The spawning and the property writes are the systems below.
+
+use bevy::prelude::*;
+use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp};
+use blockloom_core::value::Evaluated;
+use std::collections::HashMap;
+
+/// How a fresh element looks before a `set` block says otherwise. Dark and
+/// translucent, so the naive pause menu looks intentional.
+const PANEL_BACKGROUND: Color = Color::srgba(0.07, 0.09, 0.13, 0.88);
+const BUTTON_BACKGROUND: Color = Color::srgba(0.16, 0.20, 0.28, 0.95);
+const INPUT_BACKGROUND: Color = Color::srgba(0.04, 0.05, 0.08, 0.95);
+const TRACK_BACKGROUND: Color = Color::srgba(0.04, 0.05, 0.08, 0.95);
+const TEXT_COLOR: Color = Color::srgb(0.93, 0.95, 0.98);
+const TEXT_SIZE: f32 = 16.0;
+const PANEL_GAP: f32 = 8.0;
+const PANEL_PADDING: f32 = 12.0;
+const WIDGET_PADDING: f32 = 8.0;
+const CORNER_RADIUS: f32 = 8.0;
+/// How tall a slider's track and a toggle's box are, in pixels.
+const TRACK_HEIGHT: f32 = 10.0;
+const KNOB: f32 = 18.0;
+
+/// Marks the one node every element hangs off, so the tree can be found and
+/// cleared without touching the status corner or the speech bubbles.
+#[derive(Component)]
+pub struct UiRoot;
+
+/// The text node inside an element, which is what a `text` property writes.
+#[derive(Component, Debug, Clone)]
+pub struct UiElementText(pub String);
+
+/// A slider's filled part, which follows its value.
+#[derive(Component, Debug, Clone)]
+pub struct UiSliderFill(pub String);
+
+/// A toggle's lamp, which follows its on/off.
+#[derive(Component, Debug, Clone)]
+pub struct UiToggleLamp(pub String);
+
+/// What a `set` block has written over an element's defaults. Each is
+/// `None` until somebody says otherwise, so the theme-like defaults show
+/// through - there is no global stylesheet in v1.
+#[derive(Debug, Clone, Default)]
+pub struct UiStyle {
+    pub text: Option<String>,
+    pub text_color: Option<String>,
+    pub text_size: Option<f32>,
+    pub background: Option<String>,
+    pub width: Option<f32>,
+    pub height: Option<f32>,
+    pub corner_radius: Option<f32>,
+    pub padding: Option<f32>,
+}
+
+/// One element as the manager tracks it.
+#[derive(Debug, Clone)]
+pub struct UiNode {
+    pub entity: Entity,
+    pub kind: UiKind,
+    /// The id of the element this one flows inside, or empty for the window.
+    pub parent: String,
+    pub modal: bool,
+    pub visible: bool,
+    /// A slider's ends, for turning a drag into a number.
+    pub range: [f32; 2],
+    /// What `value of (id)` answers with.
+    pub value: Evaluated,
+    /// The spec the last `show` asked for, so re-showing the same thing can
+    /// leave the entity alone.
+    pub spec: UiElement,
+    pub style: UiStyle,
+    /// Something about this element changed since the drawing system last
+    /// looked. Properties live here rather than on the effect because an
+    /// effect is gone by the end of the fixed step that produced it.
+    pub dirty: bool,
+}
+
+/// Every element the blocks have made, in the order they were made - which
+/// is the order they are laid out in and the reverse of the order a click is
+/// tested in.
+#[derive(Resource, Default)]
+pub struct UiManager {
+    order: Vec<String>,
+    nodes: HashMap<String, UiNode>,
+    /// The text input holding the keyboard, if any. While one does, game
+    /// strands see no keys.
+    focus: Option<String>,
+    /// Elements whose entity still has to be built, in the order asked for.
+    pending: Vec<String>,
+    /// Elements whose entity has to go.
+    dropped: Vec<Entity>,
+}
+
+impl UiManager {
+    pub fn get(&self, id: &str) -> Option<&UiNode> {
+        self.nodes.get(id)
+    }
+
+    pub fn focus(&self) -> Option<&str> {
+        self.focus.as_deref()
+    }
+
+    /// Each element's current value, which is what the sensing snapshot
+    /// carries so `value of (id)` can answer.
+    pub fn values(&self) -> HashMap<String, Evaluated> {
+        self.nodes
+            .iter()
+            .map(|(id, node)| (id.clone(), node.value.clone()))
+            .collect()
+    }
+
+    /// Makes the element `spec` names, or updates the one already there.
+    /// Answers true when the entity has to be built again - a change of kind
+    /// or of parent, which no property write can carry.
+    pub fn show(&mut self, spec: UiElement) -> bool {
+        let id = spec.id.clone();
+        if id.is_empty() {
+            return false;
+        }
+        match self.nodes.get_mut(&id) {
+            Some(node) if node.kind == spec.kind && node.parent == spec.parent => {
+                // The same element again: a HUD strand rebuilding itself.
+                // Only its own value is left alone, since a person may have
+                // moved it since.
+                node.modal = spec.modal;
+                node.visible = true;
+                node.range = spec.range;
+                node.spec = spec;
+                node.dirty = true;
+                false
+            }
+            _ => {
+                if let Some(old) = self.nodes.remove(&id) {
+                    self.dropped.push(old.entity);
+                } else {
+                    self.order.push(id.clone());
+                }
+                self.nodes.insert(
+                    id.clone(),
+                    UiNode {
+                        // A placeholder until the spawning system runs. The
+                        // hit test skips a node nothing has drawn yet.
+                        entity: Entity::PLACEHOLDER,
+                        kind: spec.kind,
+                        parent: spec.parent.clone(),
+                        modal: spec.modal,
+                        visible: true,
+                        range: spec.range,
+                        value: spec.value.clone(),
+                        spec,
+                        style: UiStyle::default(),
+                        dirty: true,
+                    },
+                );
+                self.pending.push(id);
+                true
+            }
+        }
+    }
+
+    /// Takes an element off the screen without forgetting it, children and
+    /// all. An `all` hides everything and drops keyboard focus with it.
+    pub fn hide(&mut self, id: &str, all: bool) {
+        if all {
+            for node in self.nodes.values_mut() {
+                node.visible = false;
+                node.dirty = true;
+            }
+            self.focus = None;
+            return;
+        }
+        for id in self.subtree(id) {
+            if let Some(node) = self.nodes.get_mut(&id) {
+                node.visible = false;
+                node.dirty = true;
+            }
+            if self.focus.as_deref() == Some(id.as_str()) {
+                self.focus = None;
+            }
+        }
+    }
+
+    /// Forgets an element entirely, children and all.
+    pub fn delete(&mut self, id: &str) {
+        for id in self.subtree(id) {
+            if let Some(node) = self.nodes.remove(&id) {
+                self.dropped.push(node.entity);
+            }
+            self.order.retain(|other| other != &id);
+            self.pending.retain(|other| other != &id);
+            if self.focus.as_deref() == Some(id.as_str()) {
+                self.focus = None;
+            }
+        }
+    }
+
+    /// Forgets everything, as a fresh Play does.
+    pub fn clear(&mut self) {
+        for node in self.nodes.values() {
+            self.dropped.push(node.entity);
+        }
+        self.nodes.clear();
+        self.order.clear();
+        self.pending.clear();
+        self.focus = None;
+    }
+
+    /// An element and everything flowing inside it, parents first.
+    pub fn subtree(&self, id: &str) -> Vec<String> {
+        let mut found = vec![id.to_string()];
+        let mut index = 0;
+        while index < found.len() {
+            let parent = found[index].clone();
+            for candidate in &self.order {
+                if self
+                    .nodes
+                    .get(candidate)
+                    .is_some_and(|node| node.parent == parent)
+                    && !found.contains(candidate)
+                {
+                    found.push(candidate.clone());
+                }
+            }
+            index += 1;
+        }
+        found
+    }
+
+    /// Whether a click anywhere should be kept from the world: any visible
+    /// modal element swallows it, so clicking Resume never fires the gun
+    /// behind the menu.
+    pub fn swallows_world_clicks(&self) -> bool {
+        self.nodes
+            .values()
+            .any(|node| node.modal && self.shown(node))
+    }
+
+    /// Whether an element and every ancestor of it is visible.
+    pub fn shown(&self, node: &UiNode) -> bool {
+        if !node.visible {
+            return false;
+        }
+        let mut parent = node.parent.clone();
+        let mut guard = 0;
+        while !parent.is_empty() && guard < self.order.len() + 1 {
+            let Some(above) = self.nodes.get(&parent) else {
+                return true;
+            };
+            if !above.visible {
+                return false;
+            }
+            parent = above.parent.clone();
+            guard += 1;
+        }
+        true
+    }
+
+    /// Which element a click at `point` lands on: the topmost visible one
+    /// whose rectangle covers it. Later elements are on top, so the order
+    /// list is walked backwards.
+    ///
+    /// `rect_of` hands back each element's screen rectangle, which is what
+    /// the caller reads off Bevy's computed layout.
+    pub fn hit(&self, point: Vec2, rect_of: impl Fn(&UiNode) -> Option<Rect>) -> Option<&UiNode> {
+        self.order.iter().rev().find_map(|id| {
+            let node = self.nodes.get(id)?;
+            if !self.shown(node) || node.entity == Entity::PLACEHOLDER {
+                return None;
+            }
+            rect_of(node)
+                .filter(|rect| rect.contains(point))
+                .map(|_| node)
+        })
+    }
+
+    /// Writes one property. Answers what the sensed value became, when the
+    /// property is one that changes it.
+    pub fn set(&mut self, id: &str, prop: UiProp, value: &Evaluated) -> bool {
+        let Some(node) = self.nodes.get_mut(id) else {
+            return false;
+        };
+        let number = |value: &Evaluated| value.as_number().unwrap_or(0.0) as f32;
+        node.dirty = true;
+        match prop {
+            UiProp::Visible => {
+                let visible = value.as_bool();
+                node.visible = visible;
+                if !visible && self.focus.as_deref() == Some(id) {
+                    self.focus = None;
+                }
+            }
+            UiProp::Modal => node.modal = value.as_bool(),
+            UiProp::Min => node.range[0] = number(value),
+            UiProp::Max => node.range[1] = number(value),
+            UiProp::Value => node.value = UiElement::initial_value(node.kind, value),
+            UiProp::Text => node.style.text = Some(value.as_text()),
+            UiProp::TextColor => node.style.text_color = Some(value.as_text()),
+            UiProp::TextSize => node.style.text_size = Some(number(value).max(1.0)),
+            UiProp::Background => node.style.background = Some(value.as_text()),
+            UiProp::Width => node.style.width = Some(number(value)),
+            UiProp::Height => node.style.height = Some(number(value)),
+            UiProp::CornerRadius => node.style.corner_radius = Some(number(value).max(0.0)),
+            UiProp::Padding => node.style.padding = Some(number(value).max(0.0)),
+        }
+        true
+    }
+
+    /// Records what a person just did to an input, and answers what it is
+    /// now - which is what the `changed` event carries.
+    pub fn changed(&mut self, id: &str, value: Evaluated) -> Option<Evaluated> {
+        let node = self.nodes.get_mut(id)?;
+        if !node.kind.is_input() {
+            return None;
+        }
+        let next = UiElement::initial_value(node.kind, &value);
+        if next == node.value {
+            return None;
+        }
+        node.value = next.clone();
+        node.dirty = true;
+        Some(next)
+    }
+
+    /// Gives the keyboard to a text input, or takes it back. Anything that
+    /// isn't one drops focus instead, so clicking away releases the keys.
+    pub fn focus_on(&mut self, id: Option<&str>) {
+        self.focus = match id {
+            Some(id) if self.nodes.get(id).is_some_and(|n| n.kind == UiKind::Input) => {
+                Some(id.to_string())
+            }
+            _ => None,
+        };
+    }
+
+    /// Entities the manager has finished with, handed over once.
+    pub fn take_dropped(&mut self) -> Vec<Entity> {
+        std::mem::take(&mut self.dropped)
+    }
+
+    /// Elements still waiting to be drawn, handed over once.
+    pub fn take_pending(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending)
+    }
+
+    /// Marks an element's drawing out of date again - its entity wasn't in
+    /// the world yet when the drawing system last looked, which is what a
+    /// `show` in this fixed step leaves behind.
+    pub fn mark_dirty(&mut self, id: &str) {
+        if let Some(node) = self.nodes.get_mut(id) {
+            node.dirty = true;
+        }
+    }
+
+    /// Puts an element back in the queue: its parent wasn't drawn yet, so
+    /// there was nothing to hang it off this frame.
+    pub fn defer(&mut self, id: &str) {
+        if self.nodes.contains_key(id) && !self.pending.iter().any(|other| other == id) {
+            self.pending.push(id.to_string());
+        }
+    }
+
+    /// Ties an id to the entity that draws it, once the spawner has made it.
+    pub fn attach(&mut self, id: &str, entity: Entity) {
+        if let Some(node) = self.nodes.get_mut(id) {
+            node.entity = entity;
+            node.dirty = true;
+        }
+    }
+
+    /// Ids whose drawing is out of date, handed over once.
+    pub fn take_dirty(&mut self) -> Vec<String> {
+        let mut stale = Vec::new();
+        for id in &self.order {
+            if self.nodes.get(id).is_some_and(|node| node.dirty) {
+                stale.push(id.clone());
+            }
+        }
+        for id in &stale {
+            if let Some(node) = self.nodes.get_mut(id) {
+                node.dirty = false;
+            }
+        }
+        stale
+    }
+}
+
+/// Where a slider's drag puts its value: the fraction of the way across its
+/// track, mapped onto its own ends and clamped there.
+pub fn slider_at(range: [f32; 2], fraction: f32) -> f64 {
+    let [low, high] = range;
+    (low + (high - low) * fraction.clamp(0.0, 1.0)) as f64
+}
+
+/// How a top-level element hangs off the window: its anchor as a fraction
+/// of the window, the same fraction of its own size taken back off, and its
+/// pixel offset as a margin.
+///
+/// Said this way rather than in worked-out pixels because the element's own
+/// size isn't known until Bevy has laid it out - an auto-sized label is as
+/// wide as its words - and because a window resize then recomputes all three
+/// for free.
+pub fn anchoring(anchor: UiAnchor, offset: [f32; 2]) -> Anchoring {
+    let [fx, fy] = anchor.fractions();
+    Anchoring {
+        left: Val::Percent(fx * 100.0),
+        top: Val::Percent(fy * 100.0),
+        margin: UiRect {
+            left: Val::Px(offset[0]),
+            top: Val::Px(offset[1]),
+            ..default()
+        },
+        // Negative fractions of the element's own size: a right-anchored
+        // element sits its own right edge on the window's.
+        self_shift: Val2::percent(-fx * 100.0, -fy * 100.0),
+    }
+}
+
+/// The three things [`anchoring`] works out, and the transform that goes
+/// with them.
+pub struct Anchoring {
+    pub left: Val,
+    pub top: Val,
+    pub margin: UiRect,
+    pub self_shift: Val2,
+}
+
+/// The Bevy node one element is drawn as, before any property is written.
+pub fn node_for(spec: &UiElement, parented: bool) -> Node {
+    let mut node = Node {
+        position_type: if parented {
+            PositionType::Relative
+        } else {
+            PositionType::Absolute
+        },
+        border_radius: BorderRadius::all(Val::Px(CORNER_RADIUS)),
+        ..default()
+    };
+    if spec.size[0] > 0.0 {
+        node.width = Val::Px(spec.size[0]);
+    } else if parented && spec.kind != UiKind::Image {
+        // Inside a vertical stack, a row that says nothing takes the whole
+        // width - which is what makes Resume / Settings / Quit line up.
+        node.width = Val::Percent(100.0);
+    }
+    if spec.size[1] > 0.0 {
+        node.height = Val::Px(spec.size[1]);
+    }
+    if !parented {
+        let at = anchoring(spec.anchor, spec.offset);
+        node.left = at.left;
+        node.top = at.top;
+        node.margin = at.margin;
+    }
+    match spec.kind {
+        UiKind::Panel => {
+            node.flex_direction = FlexDirection::Column;
+            node.row_gap = Val::Px(PANEL_GAP);
+            node.padding = UiRect::all(Val::Px(PANEL_PADDING));
+            node.align_items = AlignItems::Stretch;
+        }
+        UiKind::Label => {
+            node.padding = UiRect::all(Val::Px(2.0));
+        }
+        UiKind::Button | UiKind::Input => {
+            node.padding = UiRect::all(Val::Px(WIDGET_PADDING));
+            node.justify_content = if spec.kind == UiKind::Button {
+                JustifyContent::Center
+            } else {
+                JustifyContent::FlexStart
+            };
+            node.align_items = AlignItems::Center;
+        }
+        UiKind::Slider => {
+            node.height = Val::Px(if spec.size[1] > 0.0 {
+                spec.size[1]
+            } else {
+                KNOB
+            });
+            node.align_items = AlignItems::Center;
+            node.padding = UiRect::vertical(Val::Px(4.0));
+        }
+        UiKind::Toggle => {
+            node.column_gap = Val::Px(PANEL_GAP);
+            node.align_items = AlignItems::Center;
+            node.padding = UiRect::all(Val::Px(WIDGET_PADDING));
+        }
+        UiKind::Image => {}
+    }
+    node
+}
+
+/// A fresh element's background, which a `background` property overrides.
+pub fn background_for(kind: UiKind) -> Color {
+    match kind {
+        UiKind::Panel => PANEL_BACKGROUND,
+        UiKind::Button | UiKind::Toggle => BUTTON_BACKGROUND,
+        UiKind::Input => INPUT_BACKGROUND,
+        UiKind::Slider | UiKind::Label | UiKind::Image => Color::NONE,
+    }
+}
+
+pub fn text_color() -> Color {
+    TEXT_COLOR
+}
+
+pub fn text_size() -> f32 {
+    TEXT_SIZE
+}
+
+pub fn corner_radius() -> f32 {
+    CORNER_RADIUS
+}
+
+pub fn track_background() -> Color {
+    TRACK_BACKGROUND
+}
+
+pub fn track_height() -> f32 {
+    TRACK_HEIGHT
+}
+
+pub fn knob_size() -> f32 {
+    KNOB
+}
+
+/// What an element shows as its own text: a label's own words, a button's
+/// caption, an input's typed text or its placeholder when it is empty.
+pub fn text_of(node: &UiNode) -> String {
+    // A `set text` wins over whatever the `show` block said, so a HUD can
+    // build its labels once and only write the number afterwards.
+    let written = node.style.text.clone();
+    match node.kind {
+        UiKind::Input => {
+            let typed = node.value.as_text();
+            if typed.is_empty() {
+                written.unwrap_or_else(|| node.spec.content.clone())
+            } else {
+                typed
+            }
+        }
+        UiKind::Slider => String::new(),
+        _ => written.unwrap_or_else(|| node.spec.content.clone()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec(id: &str, kind: UiKind) -> UiElement {
+        UiElement {
+            id: id.to_string(),
+            kind,
+            ..Default::default()
+        }
+    }
+
+    fn drawn(manager: &mut UiManager) {
+        for id in manager.take_pending() {
+            // Any entity will do: the tests only care that one is there.
+            manager.attach(&id, Entity::from_raw_u32(1).expect("a valid entity"));
+        }
+    }
+
+    #[test]
+    fn re_showing_the_same_element_updates_it_rather_than_making_a_second() {
+        let mut manager = UiManager::default();
+        assert!(manager.show(spec("hud", UiKind::Label)));
+        drawn(&mut manager);
+        let mut again = spec("hud", UiKind::Label);
+        again.content = "score: 3".to_string();
+        // The same kind in the same place: nothing to rebuild.
+        assert!(!manager.show(again));
+        assert_eq!(manager.values().len(), 1);
+        assert_eq!(manager.get("hud").unwrap().spec.content, "score: 3");
+    }
+
+    #[test]
+    fn re_showing_an_id_as_another_kind_builds_it_again() {
+        let mut manager = UiManager::default();
+        manager.show(spec("thing", UiKind::Label));
+        drawn(&mut manager);
+        assert!(manager.show(spec("thing", UiKind::Button)));
+        assert_eq!(manager.values().len(), 1);
+        assert_eq!(manager.get("thing").unwrap().kind, UiKind::Button);
+    }
+
+    #[test]
+    fn hiding_a_panel_hides_everything_flowing_inside_it() {
+        let mut manager = UiManager::default();
+        manager.show(spec("menu", UiKind::Panel));
+        let mut button = spec("resume", UiKind::Button);
+        button.parent = "menu".to_string();
+        manager.show(button);
+        drawn(&mut manager);
+
+        manager.hide("menu", false);
+        assert!(!manager.get("menu").unwrap().visible);
+        // The child's own flag is down too, and it reads as hidden either way.
+        assert!(!manager.get("resume").unwrap().visible);
+    }
+
+    #[test]
+    fn a_child_of_a_hidden_panel_reads_as_hidden_even_with_its_own_flag_up() {
+        let mut manager = UiManager::default();
+        manager.show(spec("menu", UiKind::Panel));
+        let mut button = spec("resume", UiKind::Button);
+        button.parent = "menu".to_string();
+        manager.show(button);
+        drawn(&mut manager);
+
+        manager.set("menu", UiProp::Visible, &Evaluated::Bool(false));
+        let child = manager.get("resume").unwrap();
+        assert!(child.visible);
+        assert!(!manager.shown(child));
+    }
+
+    #[test]
+    fn deleting_a_panel_forgets_its_children_too() {
+        let mut manager = UiManager::default();
+        manager.show(spec("menu", UiKind::Panel));
+        let mut button = spec("resume", UiKind::Button);
+        button.parent = "menu".to_string();
+        manager.show(button);
+        drawn(&mut manager);
+
+        manager.delete("menu");
+        assert!(manager.values().is_empty());
+    }
+
+    #[test]
+    fn a_click_lands_on_the_topmost_element_under_it() {
+        let mut manager = UiManager::default();
+        manager.show(spec("under", UiKind::Button));
+        manager.show(spec("over", UiKind::Button));
+        drawn(&mut manager);
+
+        let everywhere = |_: &UiNode| Some(Rect::new(0.0, 0.0, 100.0, 100.0));
+        let hit = manager.hit(Vec2::new(50.0, 50.0), everywhere).unwrap();
+        assert_eq!(hit.spec.id, "over");
+        // Outside every rectangle, nothing is hit.
+        assert!(manager.hit(Vec2::new(500.0, 50.0), everywhere).is_none());
+    }
+
+    #[test]
+    fn a_hidden_element_is_never_hit() {
+        let mut manager = UiManager::default();
+        manager.show(spec("button", UiKind::Button));
+        drawn(&mut manager);
+        manager.hide("button", false);
+        let everywhere = |_: &UiNode| Some(Rect::new(0.0, 0.0, 100.0, 100.0));
+        assert!(manager.hit(Vec2::new(10.0, 10.0), everywhere).is_none());
+    }
+
+    #[test]
+    fn only_a_visible_modal_swallows_world_clicks() {
+        let mut manager = UiManager::default();
+        let mut menu = spec("menu", UiKind::Panel);
+        menu.modal = true;
+        manager.show(menu);
+        drawn(&mut manager);
+        assert!(manager.swallows_world_clicks());
+
+        manager.hide("menu", false);
+        assert!(!manager.swallows_world_clicks());
+    }
+
+    #[test]
+    fn hiding_everything_clears_the_keyboard_focus_with_it() {
+        let mut manager = UiManager::default();
+        manager.show(spec("name", UiKind::Input));
+        drawn(&mut manager);
+        manager.focus_on(Some("name"));
+        assert_eq!(manager.focus(), Some("name"));
+
+        manager.hide("", true);
+        assert_eq!(manager.focus(), None);
+        assert!(!manager.get("name").unwrap().visible);
+    }
+
+    #[test]
+    fn only_a_text_input_can_hold_the_keyboard() {
+        let mut manager = UiManager::default();
+        manager.show(spec("go", UiKind::Button));
+        manager.show(spec("name", UiKind::Input));
+        drawn(&mut manager);
+
+        manager.focus_on(Some("go"));
+        assert_eq!(manager.focus(), None);
+        manager.focus_on(Some("name"));
+        assert_eq!(manager.focus(), Some("name"));
+        manager.focus_on(None);
+        assert_eq!(manager.focus(), None);
+    }
+
+    #[test]
+    fn an_anchor_puts_a_box_against_the_edge_it_names() {
+        let top_left = anchoring(UiAnchor::TopLeft, [10.0, 20.0]);
+        assert_eq!(top_left.left, Val::Percent(0.0));
+        assert_eq!(top_left.top, Val::Percent(0.0));
+        assert_eq!(top_left.margin.left, Val::Px(10.0));
+        assert_eq!(top_left.margin.top, Val::Px(20.0));
+        // Nothing of its own size comes off in the corner it is already in.
+        assert_eq!(top_left.self_shift, Val2::percent(0.0, 0.0));
+
+        // Bottom-right sits the element's own far corner on the window's.
+        let bottom_right = anchoring(UiAnchor::BottomRight, [0.0, 0.0]);
+        assert_eq!(bottom_right.left, Val::Percent(100.0));
+        assert_eq!(bottom_right.top, Val::Percent(100.0));
+        assert_eq!(bottom_right.self_shift, Val2::percent(-100.0, -100.0));
+
+        let centre = anchoring(UiAnchor::Center, [0.0, 0.0]);
+        assert_eq!(centre.left, Val::Percent(50.0));
+        assert_eq!(centre.self_shift, Val2::percent(-50.0, -50.0));
+    }
+
+    #[test]
+    fn a_change_is_only_reported_when_the_value_really_moved() {
+        let mut manager = UiManager::default();
+        let mut slider = spec("volume", UiKind::Slider);
+        slider.range = [0.0, 10.0];
+        slider.value = Evaluated::Number(5.0);
+        manager.show(slider);
+        drawn(&mut manager);
+
+        assert_eq!(manager.changed("volume", Evaluated::Number(5.0)), None);
+        assert_eq!(
+            manager.changed("volume", Evaluated::Number(7.0)),
+            Some(Evaluated::Number(7.0))
+        );
+        // A label has nothing a person can change.
+        manager.show(spec("hud", UiKind::Label));
+        assert_eq!(manager.changed("hud", Evaluated::Text("x".into())), None);
+    }
+
+    #[test]
+    fn a_drag_maps_onto_the_sliders_own_ends_and_stops_there() {
+        let mut manager = UiManager::default();
+        let mut slider = spec("volume", UiKind::Slider);
+        slider.range = [20.0, 40.0];
+        manager.show(slider);
+        drawn(&mut manager);
+        let range = manager.get("volume").unwrap().range;
+
+        assert_eq!(slider_at(range, 0.0), 20.0);
+        assert_eq!(slider_at(range, 0.5), 30.0);
+        assert_eq!(slider_at(range, 2.0), 40.0);
+        assert_eq!(slider_at(range, -1.0), 20.0);
+    }
+
+    #[test]
+    fn an_empty_input_shows_its_placeholder_and_a_typed_one_shows_the_typing() {
+        let mut manager = UiManager::default();
+        let mut input = spec("name", UiKind::Input);
+        input.content = "your name".to_string();
+        manager.show(input);
+        drawn(&mut manager);
+
+        assert_eq!(text_of(manager.get("name").unwrap()), "your name");
+        manager.changed("name", Evaluated::Text("Ada".to_string()));
+        assert_eq!(text_of(manager.get("name").unwrap()), "Ada");
+    }
+}

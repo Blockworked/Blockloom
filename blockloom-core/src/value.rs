@@ -103,7 +103,39 @@ static OPERATORS: &[ExtOperator] = &[
         op: "Timer",
         arity: 0,
         default_args: Vec::new,
-        eval: |_| Ok(Evaluated::Number(sense::read(|s| s.time))),
+        // A strand the interface started reads the wall clock: a menu is up
+        // precisely when the world's own clock is frozen.
+        eval: |_| {
+            let ui = sense::in_ui_strand();
+            Ok(Evaluated::Number(sense::read(|s| s.clock(ui))))
+        },
+    },
+    ExtOperator {
+        kind: "GamePaused",
+        op: "GamePaused",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| Ok(Evaluated::Bool(sense::read(|s| s.paused))),
+    },
+    ExtOperator {
+        kind: "UiValue",
+        op: "UiValue",
+        arity: 1,
+        default_args: || vec![text("")],
+        // A slider's number, a toggle's on/off, an input's text - whatever
+        // that kind of element has to report. An id nothing answers to is an
+        // error rather than a silent zero, as a missing actor is.
+        eval: |args| {
+            let id = args[0].as_text();
+            let wanted = id.trim();
+            sense::read(|sensors| {
+                sensors
+                    .ui
+                    .get(wanted)
+                    .cloned()
+                    .ok_or_else(|| format!("there's no interface element called \"{id}\""))
+            })
+        },
     },
     ExtOperator {
         kind: "MyPosition",

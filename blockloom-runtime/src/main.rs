@@ -26,6 +26,7 @@ mod logic;
 mod overlay;
 mod player;
 mod script;
+mod ui;
 mod world;
 
 use bevy::asset::{AssetPlugin, UnapprovedPathMode};
@@ -67,6 +68,7 @@ fn main() {
     .insert_resource(ClearColor(Color::srgb(0.11, 0.14, 0.19)))
     .insert_resource(Dimension(mode))
     .init_resource::<PendingEffects>()
+    .init_resource::<ui::UiManager>()
     .insert_non_send(launch.into_engine())
     // Both of these only exist to talk to an editor, and a built game has
     // none: no corner status, no handshake.
@@ -99,6 +101,7 @@ fn main() {
                         world::restore_poses,
                         world::step_vm,
                         world::step_scripts,
+                        overlay::apply_ui_effects,
                         world::apply_lifetimes,
                         world::apply_common,
                         dim2::apply_effects,
@@ -120,7 +123,9 @@ fn main() {
                         world::pump_editor,
                         world::rebuild_world,
                         dim2::relay_collisions,
+                        overlay::draw_ui,
                         world::publish_sensors,
+                        world::type_into_focused_input,
                         world::detect_clicks,
                         world::interpolate_poses,
                         world::drive_camera,
@@ -153,6 +158,7 @@ fn main() {
                         world::restore_poses,
                         world::step_vm,
                         world::step_scripts,
+                        overlay::apply_ui_effects,
                         world::apply_lifetimes,
                         world::apply_common,
                         dim3::apply_effects,
@@ -174,7 +180,9 @@ fn main() {
                         world::pump_editor,
                         world::rebuild_world,
                         dim3::relay_collisions,
+                        overlay::draw_ui,
                         world::publish_sensors,
+                        world::type_into_focused_input,
                         world::detect_clicks,
                         world::interpolate_poses,
                         world::drive_camera,

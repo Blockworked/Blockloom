@@ -18,6 +18,8 @@ use crate::engine::{
     PrevPose,
 };
 use crate::{bridge, dim2, dim3};
+use bevy::input::ButtonState;
+use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
@@ -25,6 +27,8 @@ use blockloom_core::components::CameraView;
 use blockloom_core::project::Actor;
 use blockloom_core::scene::{Axis, BodyKind, Mode, Visual};
 use blockloom_core::sense::{ActorSense, Sensors, normalize_key};
+use blockloom_core::ui::UiKind;
+use blockloom_core::value::Evaluated;
 use blockloom_core::vm::{Effect, Event};
 use blockloom_protocol::{ActorStatus, EditorMessage, RuntimeMessage, Status, VariableValue};
 use std::collections::{HashMap, HashSet};
@@ -153,6 +157,7 @@ pub fn note_contact(engine: &mut Engine, a: Entity, b: Entity, started: bool) {
 
 pub fn pump_editor(
     mut engine: NonSendMut<Engine>,
+    mut manager: ResMut<crate::ui::UiManager>,
     time: Res<Time>,
     mut fixed: ResMut<Time<Fixed>>,
     mut exit: MessageWriter<AppExit>,
@@ -182,6 +187,10 @@ pub fn pump_editor(
                 engine.vm.load(&loaded);
                 open_logic(&mut engine);
                 engine.speech.clear();
+                // The interface goes with the world it belonged to. Cleared
+                // here rather than in `rebuild_world`, which runs after the
+                // fixed step that builds this run's interface.
+                manager.clear();
                 engine.running = false;
                 engine.paused = false;
                 engine.pause_began = None;
@@ -195,6 +204,7 @@ pub fn pump_editor(
                 }
                 engine.touching.clear();
                 engine.speech.clear();
+                manager.clear();
                 engine.rebuild = true;
                 engine.running = true;
                 engine.paused = false;
@@ -205,30 +215,42 @@ pub fn pump_editor(
             EditorMessage::Stop => {
                 engine.stop_program();
                 engine.speech.clear();
+                manager.clear();
                 engine.running = false;
                 engine.paused = false;
                 engine.pause_began = None;
                 engine.rebuild = true;
                 bridge::send(&RuntimeMessage::Stopped);
             }
-            EditorMessage::Pause { paused } => {
-                if paused && !engine.paused {
-                    engine.paused = true;
-                    engine.pause_began = Some(now);
-                } else if !paused && engine.paused {
-                    engine.paused = false;
-                    if let Some(began) = engine.pause_began.take() {
-                        // Shift the start forward by the paused span so the
-                        // timer resumes where it froze instead of jumping.
-                        engine.started_at += now - began;
-                    }
-                }
-            }
+            EditorMessage::Pause { paused } => set_paused(&mut engine, paused, now),
             EditorMessage::Shutdown => {
                 exit.write(AppExit::Success);
                 return;
             }
         }
+    }
+}
+
+/// Freezes or thaws the world. The editor's Pause button and the `pause
+/// game` block both land here, so the timer is shifted forward by the paused
+/// span exactly once however the pause was asked for.
+pub fn set_paused(engine: &mut Engine, paused: bool, now: f64) {
+    if paused == engine.paused {
+        return;
+    }
+    engine.paused = paused;
+    if paused {
+        engine.pause_began = Some(now);
+    } else if let Some(began) = engine.pause_began.take() {
+        // Shift the start forward by the paused span so the timer resumes
+        // where it froze instead of jumping.
+        engine.started_at += now - began;
+    }
+    // The schedulers keep their own copy: a paused world still gives a slice
+    // to strands the interface started, so a pause menu's buttons work.
+    engine.vm.set_paused(paused);
+    if let Some(logic) = &mut engine.logic {
+        logic.set_paused(paused);
     }
 }
 
@@ -543,6 +565,7 @@ fn attach_camera(commands: &mut Commands, actor: &Actor, entity: Entity) {
 /// strands for keys that went down this frame.
 pub fn publish_sensors(
     mut engine: NonSendMut<Engine>,
+    manager: Res<crate::ui::UiManager>,
     time: Res<Time>,
     dimension: Res<Dimension>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -609,17 +632,27 @@ pub fn publish_sensors(
     // reading the window back can't see that drop either.
     let mouse_locked = engine.wants_cursor_locked && focused;
 
+    // A focused text input owns the keyboard: while one does, game strands
+    // see no keys at all, so typing a name never also fires the gun.
+    let typing = manager.focus().is_some();
+
     blockloom_core::sense::publish(Sensors {
         time: engine.run_time(now),
-        keys: held,
+        // Never frozen: what a strand the interface started reads, so a
+        // clock on a pause menu keeps ticking.
+        wall_time: (now - engine.started_at).max(0.0),
+        paused: engine.paused,
+        keys: if typing { HashSet::new() } else { held },
         mouse,
         mouse_delta,
         mouse_locked,
         mouse_down: focused && buttons.pressed(MouseButton::Left),
         actors: senses,
+        ui: manager.values(),
     });
 
-    if engine.running && !engine.paused {
+    // No world event queues while paused, so resuming never bursts.
+    if engine.running && !engine.paused && !typing {
         for key in keys.get_just_pressed().filter_map(key_name) {
             engine.fire(Event::Key(key));
         }
@@ -651,16 +684,78 @@ fn mouse_world_position(
     }
 }
 
-/// Starts `when I am clicked` strands for whatever the pointer hit.
+/// Types into whichever text input holds the keyboard. Escape lets go of
+/// it, Backspace rubs a character out, and every other key that means a
+/// character adds one. `changed` fires per keystroke, as the spec has it.
+///
+/// While an input holds the keyboard, `publish_sensors` hands the game no
+/// keys at all, so nothing else sees this typing.
+pub fn type_into_focused_input(
+    mut engine: NonSendMut<Engine>,
+    mut manager: ResMut<crate::ui::UiManager>,
+    mut typed: MessageReader<KeyboardInput>,
+) {
+    let Some(focused) = manager.focus().map(str::to_string) else {
+        // Nothing has the keyboard, but the queue still has to be drained:
+        // otherwise a burst arrives the moment an input is clicked.
+        typed.clear();
+        return;
+    };
+    if !engine.running {
+        return;
+    }
+    let mut text = manager
+        .get(&focused)
+        .map(|node| node.value.as_text())
+        .unwrap_or_default();
+    let before = text.clone();
+    let mut release = false;
+    for key in typed.read() {
+        if key.state != ButtonState::Pressed {
+            continue;
+        }
+        match &key.logical_key {
+            Key::Escape => release = true,
+            Key::Backspace => {
+                text.pop();
+            }
+            Key::Space => text.push(' '),
+            Key::Enter => release = true,
+            Key::Character(written) => text.push_str(written),
+            _ => {}
+        }
+    }
+    if text != before
+        && let Some(value) = manager.changed(&focused, Evaluated::Text(text))
+    {
+        engine.fire(Event::UiChanged {
+            id: focused.clone(),
+            value,
+        });
+    }
+    if release {
+        manager.focus_on(None);
+    }
+}
+
+/// Routes a click: the interface is asked first, and only what it doesn't
+/// want reaches the world.
+///
+/// The interface is asked whether the game is running or paused - a pause
+/// menu's own buttons are the whole point - while world picks need a running,
+/// unpaused game with no modal element up. That is why this can't return
+/// early on `paused` the way it used to.
 pub fn detect_clicks(
     mut engine: NonSendMut<Engine>,
+    mut manager: ResMut<crate::ui::UiManager>,
     buttons: Res<ButtonInput<MouseButton>>,
     dimension: Res<Dimension>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     actors: Query<(&ActorId, &Transform)>,
+    laid_out: Query<(&ComputedNode, &UiGlobalTransform)>,
 ) {
-    if !engine.running || engine.paused || !buttons.just_pressed(MouseButton::Left) {
+    if !engine.running || !buttons.just_pressed(MouseButton::Left) {
         return;
     }
     let Some(window) = windows.iter().next() else {
@@ -675,6 +770,48 @@ pub fn detect_clicks(
     let Some(cursor) = window.cursor_position() else {
         return;
     };
+
+    // The interface first, topmost-first, over the rectangles Bevy laid out
+    // this frame - so a panel and a label are as clickable as a button.
+    let hit = manager
+        .hit(cursor, |node| screen_rect(&laid_out, node.entity))
+        .map(|node| (node.spec.id.clone(), node.kind, node.range, node.entity));
+    if let Some((id, kind, range, entity)) = hit {
+        // Clicking a text input hands it the keyboard; clicking anything
+        // else takes it back, which is how clicking away releases the keys.
+        manager.focus_on(if kind == UiKind::Input {
+            Some(id.as_str())
+        } else {
+            None
+        });
+        // A drag on a slider and a press on a toggle are changes, not
+        // clicks - though both also count as a click on the element.
+        let changed = match kind {
+            UiKind::Slider => screen_rect(&laid_out, entity).and_then(|rect| {
+                let width = rect.width().max(1.0);
+                let fraction = (cursor.x - rect.min.x) / width;
+                let at = crate::ui::slider_at(range, fraction);
+                manager.changed(&id, Evaluated::Number(at))
+            }),
+            UiKind::Toggle => {
+                let was = manager.get(&id).is_some_and(|node| node.value.as_bool());
+                manager.changed(&id, Evaluated::Bool(!was))
+            }
+            _ => None,
+        };
+        engine.fire(Event::UiClicked { id: id.clone() });
+        if let Some(value) = changed {
+            engine.fire(Event::UiChanged { id, value });
+        }
+        return;
+    }
+    manager.focus_on(None);
+
+    // Nothing in the interface wanted it, so the world picks are next - if
+    // the world is taking clicks at all.
+    if !world_takes_clicks(&engine, &manager) {
+        return;
+    }
     let Some((camera, camera_transform)) = cameras.iter().next() else {
         return;
     };
@@ -733,6 +870,29 @@ pub fn detect_clicks(
     }
 }
 
+/// Whether a click nothing in the interface wanted should reach the world.
+/// A frozen world has no world clicks at all, and any visible modal element
+/// swallows what lands beside it - so clicking next to a pause menu never
+/// fires the gun behind it.
+fn world_takes_clicks(engine: &Engine, manager: &crate::ui::UiManager) -> bool {
+    !engine.paused && !manager.swallows_world_clicks()
+}
+
+/// Where one interface element's box ended up on screen, from the layout
+/// Bevy computed this frame. `None` for an element nothing has drawn yet.
+fn screen_rect(
+    laid_out: &Query<(&ComputedNode, &UiGlobalTransform)>,
+    entity: Entity,
+) -> Option<Rect> {
+    let (node, transform) = laid_out.get(entity).ok()?;
+    let size = node.size();
+    if size.x <= 0.0 || size.y <= 0.0 {
+        return None;
+    }
+    let centre = transform.translation;
+    Some(Rect::from_center_size(centre, size))
+}
+
 fn half_extents(visual: &Visual) -> Vec2 {
     match visual {
         Visual::Rect { size, .. } | Visual::Image { size, .. } => {
@@ -776,22 +936,28 @@ pub fn step_vm(
     time: Res<Time>,
     mut effects: ResMut<PendingEffects>,
 ) {
-    if !engine.running || engine.paused {
+    // A paused world is still stepped: the scheduler gives a slice to the
+    // strands the interface started and skips everything else, which is what
+    // keeps a pause menu's own buttons alive.
+    if !engine.running {
         return;
     }
-    let now = engine.run_time(time.elapsed_secs() as f64);
+    let elapsed = time.elapsed_secs() as f64;
+    let now = engine.run_time(elapsed);
+    let wall = (elapsed - engine.started_at).max(0.0);
     let mut produced = Vec::new();
     let mut messages = Vec::new();
     if engine.logic.is_some() {
         let variables = engine.variables.clone();
         engine.logic.as_mut().expect("checked above").tick(
             now,
+            wall,
             variables,
             &mut produced,
             &mut messages,
         );
     } else {
-        engine.vm.tick(now, &mut produced);
+        engine.vm.tick_at(now, wall, &mut produced);
     }
     for message in messages {
         engine.fire(Event::Message(message));
@@ -1009,8 +1175,7 @@ pub fn drive_camera(
             camera.translation = pivot;
             // Yaw from the body, pitch from the rig: the FPS composition,
             // where turning the body never weakens looking up and down.
-            camera.rotation =
-                target.rotation * Quat::from_rotation_x(rig.pitch.to_radians());
+            camera.rotation = target.rotation * Quat::from_rotation_x(rig.pitch.to_radians());
         }
         CameraView::ThirdPerson => {
             let pitch = rig.pitch.to_radians();
@@ -1867,6 +2032,12 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         Effect::SetGravity { .. }
         | Effect::Stopped
         | Effect::SetMouseLocked { .. }
+        // Screen-space, so against no actor at all - `overlay` applies them.
+        | Effect::ShowElement { .. }
+        | Effect::HideElement { .. }
+        | Effect::DeleteElement { .. }
+        | Effect::SetUiProp { .. }
+        | Effect::SetPaused { .. }
         | Effect::SetParent { .. }
         | Effect::CreateClone { .. }
         | Effect::CreateActor { .. }
@@ -2097,6 +2268,7 @@ mod tests {
         app.insert_resource(Time::<()>::default());
         app.insert_resource(Time::<Fixed>::from_hz(60.0));
         app.init_resource::<PendingEffects>();
+        app.init_resource::<crate::ui::UiManager>();
         app.insert_non_send(engine);
         app.add_systems(Update, pump_editor);
         app.update();
@@ -2254,10 +2426,7 @@ mod tests {
 
         // The effect is spent; a real focus event retries the same want
         // into a grab.
-        app.world_mut()
-            .resource_mut::<PendingEffects>()
-            .0
-            .clear();
+        app.world_mut().resource_mut::<PendingEffects>().0.clear();
         app.world_mut().non_send_mut::<Engine>().window_focused = true;
         assert_eq!(
             lock_after(&mut app, window_entity),
@@ -2365,6 +2534,7 @@ mod tests {
         app.insert_resource(buttons);
         app.init_resource::<Messages<MouseMotion>>();
         app.init_resource::<Messages<WindowFocused>>();
+        app.init_resource::<crate::ui::UiManager>();
         app.insert_non_send(engine);
         let window_entity = app
             .world_mut()
@@ -2699,10 +2869,12 @@ mod tests {
             },
         );
         actor.id = "player".to_string();
-        actor.components.set_physics(blockloom_core::scene::Physics {
-            body: BodyKind::Dynamic,
-            ..Default::default()
-        });
+        actor
+            .components
+            .set_physics(blockloom_core::scene::Physics {
+                body: BodyKind::Dynamic,
+                ..Default::default()
+            });
         project.actors.push(actor);
         engine.project = project;
 
@@ -2783,10 +2955,12 @@ mod tests {
             },
         );
         actor.id = "player".to_string();
-        actor.components.set_physics(blockloom_core::scene::Physics {
-            body: BodyKind::Dynamic,
-            ..Default::default()
-        });
+        actor
+            .components
+            .set_physics(blockloom_core::scene::Physics {
+                body: BodyKind::Dynamic,
+                ..Default::default()
+            });
         project.actors.push(actor);
         engine.project = project;
 
@@ -2870,10 +3044,12 @@ mod tests {
             },
         );
         actor.id = "player".to_string();
-        actor.components.set_physics(blockloom_core::scene::Physics {
-            body: BodyKind::Dynamic,
-            ..Default::default()
-        });
+        actor
+            .components
+            .set_physics(blockloom_core::scene::Physics {
+                body: BodyKind::Dynamic,
+                ..Default::default()
+            });
         project.actors.push(actor);
         engine.project = project;
 
@@ -2960,10 +3136,12 @@ mod tests {
             },
         );
         actor.id = "player".to_string();
-        actor.components.set_physics(blockloom_core::scene::Physics {
-            body: BodyKind::Dynamic,
-            ..Default::default()
-        });
+        actor
+            .components
+            .set_physics(blockloom_core::scene::Physics {
+                body: BodyKind::Dynamic,
+                ..Default::default()
+            });
         project.actors.push(actor);
         engine.project = project;
 
@@ -3036,10 +3214,12 @@ mod tests {
                 },
             );
             actor.id = id.to_string();
-            actor.components.set_physics(blockloom_core::scene::Physics {
-                body: BodyKind::Dynamic,
-                ..Default::default()
-            });
+            actor
+                .components
+                .set_physics(blockloom_core::scene::Physics {
+                    body: BodyKind::Dynamic,
+                    ..Default::default()
+                });
             project.actors.push(actor);
         }
         engine.project = project;
@@ -3117,10 +3297,7 @@ mod tests {
 
         // Tick two: silence. The walker stops dead but keeps falling; the
         // never-walk-driven ball rolls on untouched.
-        app.world_mut()
-            .resource_mut::<PendingEffects>()
-            .0
-            .clear();
+        app.world_mut().resource_mut::<PendingEffects>().0.clear();
         app.update();
         let stopped = app
             .world()
@@ -3147,10 +3324,7 @@ mod tests {
                 impulse: [1.0, 0.0, 0.0],
             });
         app.update();
-        app.world_mut()
-            .resource_mut::<PendingEffects>()
-            .0
-            .clear();
+        app.world_mut().resource_mut::<PendingEffects>().0.clear();
         app.update();
         let thrown = app
             .world()
@@ -3175,5 +3349,332 @@ mod tests {
         assert!((yaw.to_degrees() + 130.0).abs() < 0.5, "{yaw:?}");
         assert!(pitch.abs() < 0.001, "{pitch:?}");
         assert!(roll.abs() < 0.001, "{roll:?}");
+    }
+
+    // ─── Routing a click through the interface ─────────────────────────────
+
+    /// One element, drawn where a layout pass would have put it: a box of
+    /// `size` centred on `centre`. That rectangle is all the hit test reads.
+    fn drawn_element(app: &mut App, spec: blockloom_core::ui::UiElement, centre: Vec2, size: Vec2) {
+        let entity = app
+            .world_mut()
+            .spawn((
+                ComputedNode {
+                    size,
+                    ..Default::default()
+                },
+                UiGlobalTransform::from_translation(centre),
+            ))
+            .id();
+        let mut manager = app.world_mut().resource_mut::<crate::ui::UiManager>();
+        let id = spec.id.clone();
+        manager.show(spec);
+        manager.take_pending();
+        manager.attach(&id, entity);
+    }
+
+    fn element(id: &str, kind: blockloom_core::ui::UiKind) -> blockloom_core::ui::UiElement {
+        blockloom_core::ui::UiElement {
+            id: id.to_string(),
+            kind,
+            ..Default::default()
+        }
+    }
+
+    /// An app with one clickable world actor at the origin whose canvas says
+    /// which route a click took, a pointer parked at `cursor`, and the left
+    /// button just pressed.
+    fn click_harness(cursor: Vec2) -> App {
+        use blockloom_core::blocks::{Instruction, InstructionKind as K, Strand};
+
+        let headed = |header: K, text: &str| {
+            Strand::with_instructions(
+                0,
+                0,
+                vec![
+                    Instruction::new(header),
+                    Instruction::new(K::Say {
+                        text: blockloom_core::value::Value::text(text),
+                    }),
+                ],
+            )
+        };
+        let mut actor = Actor::new(
+            "Target",
+            Visual::Rect {
+                color: "#FFFFFF".to_string(),
+                size: [400.0, 400.0],
+            },
+        );
+        actor.id = "a1".to_string();
+        actor.graph.strands = vec![
+            headed(K::WhenClicked, "world"),
+            headed(
+                K::WhenUiClicked {
+                    element: "resume".to_string(),
+                },
+                "ui",
+            ),
+            headed(
+                K::WhenUiChanged {
+                    element: "shadows".to_string(),
+                },
+                "changed",
+            ),
+            headed(
+                K::WhenUiChanged {
+                    element: "volume".to_string(),
+                },
+                "moved",
+            ),
+        ];
+
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.project.actors = vec![actor];
+        let project = engine.project.clone();
+        engine.vm.load(&project);
+        engine.running = true;
+        engine.window_focused = true;
+
+        let mut buttons = ButtonInput::<MouseButton>::default();
+        buttons.press(MouseButton::Left);
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(Dimension(Mode::TwoD));
+        app.insert_resource(buttons);
+        app.init_resource::<crate::ui::UiManager>();
+
+        let entity = app
+            .world_mut()
+            .spawn((ActorId("a1".to_string()), Transform::default()))
+            .id();
+        engine.entities.insert("a1".to_string(), entity);
+        app.insert_non_send(engine);
+
+        let mut window = Window::default();
+        window.set_physical_cursor_position(Some(bevy::math::DVec2::new(
+            cursor.x as f64,
+            cursor.y as f64,
+        )));
+        app.world_mut().spawn((window, PrimaryWindow));
+        // A camera the world pick projects through, parked so the origin is
+        // under the middle of the window.
+        app.world_mut().spawn((
+            Camera2d,
+            Camera::default(),
+            Transform::default(),
+            GlobalTransform::default(),
+            WorldCamera,
+        ));
+        app.add_systems(Update, detect_clicks);
+        app
+    }
+
+    /// Routes the click, then gives the VM one tick and answers with what
+    /// the strands the click started had to say.
+    fn routed(app: &mut App) -> Vec<String> {
+        app.update();
+        let mut effects = Vec::new();
+        let mut engine = app.world_mut().non_send_mut::<Engine>();
+        let paused = engine.paused;
+        engine.vm.set_paused(paused);
+        engine.vm.tick(0.0, &mut effects);
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Say { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_click_on_an_element_starts_its_strand_and_never_reaches_the_world() {
+        let mut app = click_harness(Vec2::new(100.0, 100.0));
+        drawn_element(
+            &mut app,
+            element("resume", blockloom_core::ui::UiKind::Button),
+            Vec2::new(100.0, 100.0),
+            Vec2::new(80.0, 30.0),
+        );
+        assert_eq!(routed(&mut app), vec!["ui".to_string()]);
+    }
+
+    /// Whether the world would be offered the click this app just routed.
+    /// The pick itself needs a render target, which a headless app has none
+    /// of, so the rule is checked where it is decided.
+    fn world_offered(app: &mut App) -> bool {
+        app.update();
+        let engine = app.world().non_send::<Engine>();
+        let manager = app.world().resource::<crate::ui::UiManager>();
+        world_takes_clicks(engine, manager)
+    }
+
+    #[test]
+    fn a_click_that_misses_every_element_is_offered_to_the_world() {
+        let mut app = click_harness(Vec2::new(480.0, 360.0));
+        drawn_element(
+            &mut app,
+            element("resume", blockloom_core::ui::UiKind::Button),
+            Vec2::new(100.0, 100.0),
+            Vec2::new(80.0, 30.0),
+        );
+        // Nothing in the interface answered, and nothing is swallowing.
+        assert!(routed(&mut app).is_empty());
+        assert!(world_offered(&mut app));
+    }
+
+    #[test]
+    fn a_click_beside_a_modal_panel_is_swallowed_rather_than_hitting_the_world() {
+        let mut app = click_harness(Vec2::new(480.0, 360.0));
+        let mut menu = element("menu", blockloom_core::ui::UiKind::Panel);
+        menu.modal = true;
+        // Drawn somewhere the pointer isn't: the swallow is about the panel
+        // being up, not about what the click landed on.
+        drawn_element(&mut app, menu, Vec2::new(10.0, 10.0), Vec2::new(20.0, 20.0));
+        assert!(routed(&mut app).is_empty());
+        assert!(!world_offered(&mut app));
+    }
+
+    #[test]
+    fn the_same_click_reaches_the_world_once_the_panel_is_hidden() {
+        let mut app = click_harness(Vec2::new(480.0, 360.0));
+        let mut menu = element("menu", blockloom_core::ui::UiKind::Panel);
+        menu.modal = true;
+        drawn_element(&mut app, menu, Vec2::new(10.0, 10.0), Vec2::new(20.0, 20.0));
+        app.world_mut()
+            .resource_mut::<crate::ui::UiManager>()
+            .hide("menu", false);
+        assert!(world_offered(&mut app));
+    }
+
+    #[test]
+    fn a_world_click_is_dead_while_paused_but_an_element_still_answers() {
+        let mut app = click_harness(Vec2::new(100.0, 100.0));
+        drawn_element(
+            &mut app,
+            element("resume", blockloom_core::ui::UiKind::Button),
+            Vec2::new(100.0, 100.0),
+            Vec2::new(80.0, 30.0),
+        );
+        app.world_mut().non_send_mut::<Engine>().paused = true;
+        // The strand a UI click started runs on, frozen world or not.
+        assert_eq!(routed(&mut app), vec!["ui".to_string()]);
+
+        let mut beside = click_harness(Vec2::new(480.0, 360.0));
+        beside.world_mut().non_send_mut::<Engine>().paused = true;
+        assert!(routed(&mut beside).is_empty());
+        assert!(!world_offered(&mut beside));
+    }
+
+    #[test]
+    fn clicking_a_text_input_hands_it_the_keyboard_and_clicking_away_takes_it_back() {
+        let mut app = click_harness(Vec2::new(100.0, 100.0));
+        drawn_element(
+            &mut app,
+            element("name", blockloom_core::ui::UiKind::Input),
+            Vec2::new(100.0, 100.0),
+            Vec2::new(180.0, 30.0),
+        );
+        app.update();
+        assert_eq!(
+            app.world().resource::<crate::ui::UiManager>().focus(),
+            Some("name")
+        );
+
+        // The pointer moves off it; the next click releases the keyboard.
+        let mut windows = app.world_mut().query::<&mut Window>();
+        for mut window in windows.iter_mut(app.world_mut()) {
+            window.set_physical_cursor_position(Some(bevy::math::DVec2::new(500.0, 400.0)));
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.update();
+        assert_eq!(app.world().resource::<crate::ui::UiManager>().focus(), None);
+    }
+
+    #[test]
+    fn clicking_a_toggle_turns_it_over_and_reports_the_change() {
+        let mut app = click_harness(Vec2::new(100.0, 100.0));
+        let mut toggle = element("shadows", blockloom_core::ui::UiKind::Toggle);
+        toggle.value = blockloom_core::value::Evaluated::Bool(false);
+        drawn_element(
+            &mut app,
+            toggle,
+            Vec2::new(100.0, 100.0),
+            Vec2::new(120.0, 30.0),
+        );
+        // The click and the change both land, in that order.
+        assert_eq!(routed(&mut app), vec!["changed".to_string()]);
+        assert_eq!(
+            app.world()
+                .resource::<crate::ui::UiManager>()
+                .get("shadows")
+                .map(|node| node.value.clone()),
+            Some(blockloom_core::value::Evaluated::Bool(true))
+        );
+    }
+
+    #[test]
+    fn dragging_a_slider_lands_on_the_number_its_own_ends_name() {
+        // Two thirds of the way across a 90-wide track centred on 100.
+        let mut app = click_harness(Vec2::new(115.0, 100.0));
+        let mut slider = element("volume", blockloom_core::ui::UiKind::Slider);
+        slider.range = [0.0, 90.0];
+        slider.value = blockloom_core::value::Evaluated::Number(0.0);
+        drawn_element(
+            &mut app,
+            slider,
+            Vec2::new(100.0, 100.0),
+            Vec2::new(90.0, 20.0),
+        );
+        assert_eq!(routed(&mut app), vec!["moved".to_string()]);
+
+        let at = app
+            .world()
+            .resource::<crate::ui::UiManager>()
+            .get("volume")
+            .and_then(|node| node.value.as_number().ok());
+        assert_eq!(at, Some(60.0));
+    }
+
+    #[test]
+    fn a_focused_input_keeps_every_key_from_the_game() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.running = true;
+        engine.window_focused = true;
+
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyW);
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(Dimension(Mode::TwoD));
+        app.insert_resource(keys);
+        app.init_resource::<ButtonInput<MouseButton>>();
+        app.init_resource::<Messages<MouseMotion>>();
+        app.init_resource::<Messages<WindowFocused>>();
+        app.init_resource::<crate::ui::UiManager>();
+        app.insert_non_send(engine);
+        app.world_mut().spawn((Window::default(), PrimaryWindow));
+        app.add_systems(Update, publish_sensors);
+
+        app.update();
+        assert!(blockloom_core::sense::read(|sensors| sensors
+            .keys
+            .contains("w")));
+
+        let mut manager = app.world_mut().resource_mut::<crate::ui::UiManager>();
+        manager.show(element("name", blockloom_core::ui::UiKind::Input));
+        manager.take_pending();
+        manager.focus_on(Some("name"));
+        app.update();
+        assert!(blockloom_core::sense::read(|sensors| sensors
+            .keys
+            .is_empty()));
     }
 }
