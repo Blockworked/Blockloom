@@ -436,7 +436,10 @@ impl Vm {
     // ─── Starting scripts ───────────────────────────────────────────────────
 
     fn start_for(&mut self, event: Event) {
-        let ui = event.is_ui();
+        // Escape is the pause key: while paused it starts key strands as
+        // interface strands, so a pause menu can toggle itself shut.
+        let ui =
+            event.is_ui() || (self.paused && matches!(&event, Event::Key(key) if key == "escape"));
         let matches: Vec<(String, String, usize)> = self
             .programs
             .iter()
@@ -889,6 +892,13 @@ impl Vm {
                 out.push(Effect::SetCameraPitch {
                     actor: owner,
                     degrees,
+                });
+            }
+            Action::SetCameraFov(fov) => {
+                let fov = self.eval_f32(fov, actor, params, out);
+                out.push(Effect::SetCameraFov {
+                    actor: owner,
+                    fov,
                 });
             }
             Action::AttachComponent(component) => out.push(Effect::AttachComponent {

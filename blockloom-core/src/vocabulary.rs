@@ -637,6 +637,22 @@ pub const BLOCKS: &[BlockSpec] = &[
         bodies: NO_BODIES,
     },
     BlockSpec {
+        r#type: "SetCameraFov",
+        category: "Components",
+        purpose: "Sets the camera's vertical field of view in degrees.",
+        header: false,
+        three_d: true,
+        slots: &[Slot {
+            field: "fov",
+            id: "CameraFovDegrees",
+            value: "Any",
+        }],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
         r#type: "AttachComponent",
         category: "Components",
         purpose: "Gives this actor a component mid-run.",

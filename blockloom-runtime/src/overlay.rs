@@ -10,6 +10,7 @@ use crate::engine::{ActorId, Dimension, Engine, PendingEffects};
 use crate::ui::{UiElementText, UiManager, UiRoot, UiSliderFill, UiToggleLamp};
 use crate::world::{self, WorldCamera};
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 use blockloom_core::ui::UiKind;
 use blockloom_core::vm::Effect;
 use blockloom_protocol::RuntimeMessage;
@@ -80,6 +81,7 @@ pub fn update_speech_bubbles(
     actors: Query<(&ActorId, &Transform, &Visibility)>,
     mut bubbles: Query<(Entity, &SpeechBubble, &mut Node)>,
     mut labels: Query<(&SpeechBubbleText, &mut Text)>,
+    windows: Query<&Window, With<PrimaryWindow>>,
 ) {
     let camera = cameras.iter().next();
     let mut existing = HashSet::new();
@@ -129,9 +131,16 @@ pub fn update_speech_bubbles(
         let offset = engine.project.world.speech_bubble.offset;
         // Whole pixels keep the glyphs put instead of re-blitting them at a
         // new sub-pixel offset every frame while the bubble follows the actor.
+        // The viewport reads logical while node pixels resolve physical, so
+        // the position is de-scaled or bubbles drift off on scaled displays.
+        let scale = windows
+            .iter()
+            .next()
+            .map(|window| window.scale_factor())
+            .unwrap_or(1.0);
         node.display = Display::Flex;
-        node.left = Val::Px((viewport.x + offset[0]).round());
-        node.top = Val::Px((viewport.y + offset[1]).round());
+        node.left = Val::Px((viewport.x + offset[0]).round() / scale);
+        node.top = Val::Px((viewport.y + offset[1]).round() / scale);
     }
 
     for (actor, text) in &engine.speech {

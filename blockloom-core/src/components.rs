@@ -119,6 +119,9 @@ pub struct CameraAttach {
     /// degrees; a first-person camera's look-up angle, also in degrees.
     #[serde(default = "default_pitch")]
     pub pitch: f32,
+    /// Vertical field of view, in degrees. What a settings slider drives.
+    #[serde(default = "default_fov")]
+    pub fov: f32,
 }
 
 fn default_eye() -> [f32; 3] {
@@ -133,6 +136,10 @@ fn default_pitch() -> f32 {
     15.0
 }
 
+fn default_fov() -> f32 {
+    75.0
+}
+
 impl Default for CameraAttach {
     fn default() -> Self {
         Self {
@@ -140,6 +147,7 @@ impl Default for CameraAttach {
             offset: default_eye(),
             distance: default_distance(),
             pitch: default_pitch(),
+            fov: default_fov(),
         }
     }
 }

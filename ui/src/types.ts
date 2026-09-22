@@ -43,6 +43,7 @@ export const INSTRUCTION_TYPES = [
   'SetComponentField',
   'SetCameraView',
   'SetCameraPitch',
+  'SetCameraFov',
   'AttachComponent',
   'DetachComponent',
   'SetParent',
@@ -188,6 +189,8 @@ export interface CameraAttachDto {
   offset: [number, number, number];
   distance: number;
   pitch: number;
+  /** Vertical field of view in degrees. Optional so older documents load. */
+  fov?: number;
 }
 
 /** An already-evaluated value, as a variable or a component field holds it. */

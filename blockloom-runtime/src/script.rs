@@ -452,6 +452,10 @@ extern "C" fn act(
             actor,
             degrees: n0 as f32,
         },
+        abi::ACT_SET_CAMERA_FOV => Effect::SetCameraFov {
+            actor,
+            fov: n0 as f32,
+        },
         abi::ACT_UI_SHOW => Effect::ShowElement {
             element: UiElement {
                 id: a.trim().to_string(),

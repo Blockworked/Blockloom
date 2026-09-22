@@ -606,6 +606,19 @@ impl Actor {
         );
     }
 
+    /// Sets the camera's vertical field of view, in degrees.
+    pub fn set_camera_fov(&self, fov: f32) {
+        self.act(
+            ACT_SET_CAMERA_FOV,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            fov as f64,
+            0.0,
+            0.0,
+        );
+    }
+
     /// Grabs the pointer for first-person play, or shows it again. The run
     /// always ends unlocked.
     pub fn set_mouse_locked(&self, locked: bool) {

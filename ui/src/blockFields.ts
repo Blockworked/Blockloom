@@ -327,6 +327,9 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
   SetCameraPitch: {
     head: [label('set my camera pitch to'), value('CameraPitchDegrees', 'degrees')],
   },
+  SetCameraFov: {
+    head: [label('set my camera fov to'), value('CameraFovDegrees', 'fov')],
+  },
   AttachComponent: {
     head: [
       label('attach'),

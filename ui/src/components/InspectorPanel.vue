@@ -151,8 +151,8 @@ function physicsOf(component: ActorComponentDto): PhysicsDto {
 
 function cameraOf(component: ActorComponentDto): CameraAttachDto {
   return component.component === 'Camera'
-    ? component.camera
-    : { view: 'Follow', offset: [0, 0.6, 0], distance: 6, pitch: 15 };
+    ? { ...component.camera, fov: component.camera.fov ?? 75 }
+    : { view: 'Follow', offset: [0, 0.6, 0], distance: 6, pitch: 15, fov: 75 };
 }
 
 function fieldsOf(component: ActorComponentDto): ComponentFieldDto[] {
@@ -426,7 +426,7 @@ function blankComponent(name: ComponentName): ActorComponentDto | null {
     case 'Camera':
       return {
         component: 'Camera',
-        camera: { view: 'ThirdPerson', offset: [0, 0.6, 0], distance: 6, pitch: 15 },
+        camera: { view: 'ThirdPerson', offset: [0, 0.6, 0], distance: 6, pitch: 15, fov: 75 },
       };
     case 'Parent':
       return { component: 'Parent', parent: '', offset: null };
@@ -702,6 +702,10 @@ function remove(name: string) {
               <input type="number" step="any" :value="cameraOf(component).pitch" @change="e => writeCameraAttach(component, { pitch: num(e, 15) })">
             </div>
           </template>
+          <div class="panel-row" v-if="mode === 'ThreeD'">
+            <label>FOV</label>
+            <input type="number" step="any" min="30" max="110" :value="cameraOf(component).fov ?? 75" @change="e => writeCameraAttach(component, { fov: num(e, 75) })">
+          </div>
           <p class="panel-note" v-if="mode === 'TwoD'">
             A 2D world has no depth to stand in, so every view here just keeps
             this actor centered.

@@ -96,6 +96,7 @@ pub enum Action {
     },
     SetCameraView(CameraView),
     SetCameraPitch(Value),
+    SetCameraFov(Value),
     AttachComponent(String),
     DetachComponent(String),
     /// An empty target takes the actor off whatever it was hanging from.
@@ -351,6 +352,9 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::SetCameraView { view } => steps.push(Step::Action(Action::SetCameraView(*view))),
         K::SetCameraPitch { degrees } => {
             steps.push(Step::Action(Action::SetCameraPitch(degrees.clone())))
+        }
+        K::SetCameraFov { fov } => {
+            steps.push(Step::Action(Action::SetCameraFov(fov.clone())))
         }
         K::AttachComponent { component } => steps.push(Step::Action(Action::AttachComponent(
             component.trim().to_string(),

@@ -62,6 +62,8 @@ function defaults(type: InstructionType): Record<string, unknown> {
       return { view: 'ThirdPerson' };
     case 'SetCameraPitch':
       return { degrees: numberValue(0) };
+    case 'SetCameraFov':
+      return { fov: numberValue(75) };
     case 'AttachComponent':
     case 'DetachComponent':
       return { component: '' };

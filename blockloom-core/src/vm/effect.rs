@@ -107,6 +107,11 @@ pub enum Effect {
         actor: String,
         degrees: f32,
     },
+    /// Sets the camera's vertical field of view, in degrees.
+    SetCameraFov {
+        actor: String,
+        fov: f32,
+    },
     /// Gives the actor a component mid-run, with whatever the project
     /// authored for it or that component's defaults.
     AttachComponent {

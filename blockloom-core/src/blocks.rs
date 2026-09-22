@@ -173,6 +173,11 @@ pub enum InstructionKind {
     SetCameraPitch {
         degrees: Value,
     },
+    /// Sets the camera's vertical field of view, in degrees. Clamped to a
+    /// usable lens range, so a settings slider cannot break the projection.
+    SetCameraFov {
+        fov: Value,
+    },
     /// Gives this actor a component mid-run. One the editor authored comes
     /// back as it was left; anything else arrives with its defaults.
     AttachComponent {
@@ -443,6 +448,7 @@ impl BlockKind for InstructionKind {
             | K::Wait { duration: v }
             | K::SetVariable { value: v, .. }
             | K::SetCameraPitch { degrees: v, .. }
+            | K::SetCameraFov { fov: v, .. }
             | K::ChangeVariable { value: v, .. }
             | K::Return { value: v }
             | K::SetComponentField { value: v, .. }

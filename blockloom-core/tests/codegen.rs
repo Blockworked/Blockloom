@@ -192,6 +192,7 @@ fn line_of(act: &Act) -> String {
         Act::SetVisible { visible } => format!("SetVisible {visible}"),
         Act::SetMouseLocked { locked } => format!("SetMouseLocked {locked}"),
         Act::SetCameraPitch { degrees } => format!("SetCameraPitch {degrees:?}"),
+        Act::SetCameraFov { fov } => format!("SetCameraFov {fov:?}"),
         Act::SetComponentField { component, field, value } => {
             format!("SetComponentField {component} {field} {}", shown(value))
         }
@@ -258,6 +259,10 @@ fn main() {
 
     for tick in 0..TICKS {
         recorder.tick = tick;
+        // Escape mid-run, matching the VM side tick for tick.
+        if tick == 3 {
+            runner.fire(ENTRIES, "Key", "", "escape", "");
+        }
         if runner.tick(ENTRIES, &mut recorder, tick as f64 * DT) {
             // Everything after this one in the tick is gone too, as the VM
             // has it: `stop all` empties the list where it stands.
@@ -332,6 +337,9 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetMouseLocked { locked } => format!("|SetMouseLocked {locked}"),
         Effect::SetCameraPitch { actor, degrees } => {
             format!("{actor}|SetCameraPitch {degrees:?}")
+        }
+        Effect::SetCameraFov { actor, fov } => {
+            format!("{actor}|SetCameraFov {fov:?}")
         }
         // Screen-space, so against nobody: the harness blanks the actor for
         // these acts the same way.
@@ -506,6 +514,11 @@ fn by_vm(project: &Project) -> Vec<String> {
     });
     let mut lines = Vec::new();
     for tick in 0..TICKS {
+        // Escape mid-run, so a case with a pause menu can toggle on it. No
+        // other case has that hat, so nothing else sees it.
+        if tick == 3 {
+            vm.fire(Event::Key("escape".to_string()));
+        }
         let mut effects = Vec::new();
         vm.tick(tick as f64 * DT, &mut effects);
         // The tick each line landed on, not just the order they came in: a
@@ -876,6 +889,7 @@ fn the_rest_of_the_leaf_blocks_land_the_same() {
             K::SetCameraPitch {
                 degrees: number(12.5),
             },
+            K::SetCameraFov { fov: number(90.0) },
             K::SetColor {
                 color: Value::text("#ff0000"),
             },
@@ -2271,5 +2285,40 @@ fn a_strand_the_interface_started_runs_through_a_pause_and_ends_it() {
                 ],
             ),
         ],
+    );
+}
+
+#[test]
+fn escape_toggles_a_pause_menu_on_both_sides() {
+    // Both harnesses fire escape at tick 3, while the world stands still.
+    // The strand has to run there rather than staying frozen, on each side.
+    let case = "interface-escape";
+    if !toolchain() {
+        return;
+    }
+    let project = project_with_headers(
+        vec![
+            (K::WhenStarted, vec![say("down"), K::PauseGame]),
+            (
+                K::WhenKeyPressed {
+                    key: "escape".to_string(),
+                },
+                vec![say("up"), K::ResumeGame],
+            ),
+        ],
+        Vec::new(),
+        &[],
+    );
+    let interpreted = by_vm(&project);
+    let compiled = by_compiler(&project, &[], case);
+    assert_eq!(
+        interpreted, compiled,
+        "{case}: the VM and the compiled program disagreed"
+    );
+    assert!(
+        interpreted
+            .iter()
+            .any(|line| line.contains("|Say") && line.contains("up")),
+        "{case}: escape while paused never ran its strand"
     );
 }

@@ -401,6 +401,55 @@ fn a_key_press_starts_its_own_strand_and_restarts_it_when_pressed_again() {
 }
 
 #[test]
+fn escape_while_paused_runs_the_key_strand_as_an_interface_one() {
+    // The pause-menu toggle: escape pauses the world, and escape again
+    // thaws it, even though no world event queues while paused.
+    let project = project_with(vec![
+        started(vec![say("down"), InstructionKind::PauseGame]),
+        Strand::with_instructions(
+            0,
+            400,
+            vec![
+                ins(InstructionKind::WhenKeyPressed {
+                    key: "escape".to_string(),
+                }),
+                ins(say("up")),
+                ins(InstructionKind::ResumeGame),
+            ],
+        ),
+    ]);
+    let mut vm = Harness::started(&project);
+    assert_eq!(says(&vm.run(1)), vec!["down".to_string()]);
+    assert!(vm.vm.is_paused());
+    vm.vm.fire(Event::Key("escape".to_string()));
+    assert_eq!(says(&vm.run(1)), vec!["up".to_string()]);
+    assert!(!vm.vm.is_paused());
+}
+
+#[test]
+fn any_other_key_stays_frozen_while_paused() {
+    let project = project_with(vec![
+        started(vec![say("down"), InstructionKind::PauseGame]),
+        Strand::with_instructions(
+            0,
+            400,
+            vec![
+                ins(InstructionKind::WhenKeyPressed {
+                    key: "space".to_string(),
+                }),
+                ins(say("jump")),
+            ],
+        ),
+    ]);
+    let mut vm = Harness::started(&project);
+    assert_eq!(says(&vm.run(1)), vec!["down".to_string()]);
+    assert!(vm.vm.is_paused());
+    vm.vm.fire(Event::Key("space".to_string()));
+    assert!(says(&vm.run(1)).is_empty());
+    assert!(vm.vm.is_paused());
+}
+
+#[test]
 fn a_collision_only_starts_the_strand_whose_target_matches() {
     let mut project = project_with(vec![Strand::with_instructions(
         0,

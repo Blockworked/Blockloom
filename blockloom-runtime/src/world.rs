@@ -624,6 +624,11 @@ fn attach_camera(commands: &mut Commands, actor: &Actor, entity: Entity) {
 
 /// Publishes the snapshot reporter blocks read, and starts `when key pressed`
 /// strands for keys that went down this frame.
+///
+/// Runs after the frame's input has landed (`type_into_focused_input`,
+/// `detect_clicks`), so the snapshot reflects the click that fired a strand
+/// rather than the frame before it - a one-shot `when input changed` strand
+/// would otherwise read the value the click just moved away from.
 pub fn publish_sensors(
     mut engine: NonSendMut<Engine>,
     manager: Res<crate::ui::UiManager>,
@@ -714,8 +719,13 @@ pub fn publish_sensors(
     });
 
     // No world event queues while paused, so resuming never bursts.
-    if engine.running && !engine.paused && !typing {
+    // Escape is the exception: a pause menu toggles on it, and the schedulers
+    // run that strand as an interface one while the world stands still.
+    if engine.running && !typing {
         for key in keys.get_just_pressed().filter_map(key_name) {
+            if engine.paused && key != "escape" {
+                continue;
+            }
             engine.fire(Event::Key(key));
         }
     }
@@ -847,6 +857,10 @@ pub fn detect_clicks(
     let Some(cursor) = window.cursor_position() else {
         return;
     };
+    // Boxes are laid out in physical pixels while the cursor reads logical:
+    // scale it up the way Bevy's own picking does, or every click falls
+    // through on a scaled display.
+    let cursor = cursor * window.scale_factor();
 
     // The interface first, topmost-first, over the rectangles Bevy laid out
     // this frame - so a panel and a label are as clickable as a button.
@@ -971,6 +985,8 @@ pub fn scroll_ui_lists(
     let Some(point) = window.cursor_position() else {
         return;
     };
+    // Physical boxes, logical cursor: scaled up like a click is.
+    let point = point * window.scale_factor();
     let Some(hit) = manager.hit(point, |node| screen_rect(&laid_out, node.entity)) else {
         return;
     };
@@ -1272,12 +1288,12 @@ pub fn drive_camera(
     engine: NonSend<Engine>,
     dimension: Res<Dimension>,
     rigs: Query<(&CameraRig, &Transform), Without<WorldCamera>>,
-    mut cameras: Query<&mut Transform, With<WorldCamera>>,
+    mut cameras: Query<(&mut Transform, Option<&mut Projection>), With<WorldCamera>>,
 ) {
     let Some((rig, target)) = rigs.iter().next() else {
         return;
     };
-    let Ok(mut camera) = cameras.single_mut() else {
+    let Ok((mut camera, projection)) = cameras.single_mut() else {
         return;
     };
     let rig = rig.0;
@@ -1312,6 +1328,12 @@ pub fn drive_camera(
             camera.translation = target.translation + boom;
             camera.look_at(target.translation, Vec3::Y);
         }
+    }
+    if dimension.0 == Mode::ThreeD
+        && let Some(mut projection) = projection
+        && let Projection::Perspective(perspective) = projection.as_mut()
+    {
+        perspective.fov = rig.fov.clamp(30.0, 110.0).to_radians();
     }
 }
 
@@ -1363,6 +1385,10 @@ pub fn interpolate_poses(
 /// world: writing a custom component's field, switching the camera's view,
 /// and attaching or detaching a whole component mid-run.
 ///
+/// Camera tweaks apply while paused too, so a settings menu can preview
+/// them. Everything structural waits for the thaw, like the rest of the
+/// simulation.
+///
 /// The dimension-specific halves of attach/detach - the ones that need a
 /// sprite, a mesh or a physics body - are in `dim2`/`dim3`; this owns the
 /// bookkeeping, so `engine.attached` is written in exactly one place.
@@ -1374,10 +1400,24 @@ pub fn apply_component_effects(
     mut visibilities: Query<&mut Visibility>,
     mut rigs: Query<&mut CameraRig>,
 ) {
-    if !engine.running || engine.paused {
+    if !engine.running {
         return;
     }
+    let paused = engine.paused;
     for effect in &effects.0 {
+        // While paused only interface-started strands run, and those are a
+        // settings menu: its camera tweaks preview live, while structural
+        // changes wait for the world to thaw like everything else does.
+        if paused
+            && !matches!(
+                effect,
+                Effect::SetCameraView { .. }
+                    | Effect::SetCameraPitch { .. }
+                    | Effect::SetCameraFov { .. }
+            )
+        {
+            continue;
+        }
         match effect {
             Effect::AttachComponent { actor, component } => attach(
                 &mut commands,
@@ -1437,6 +1477,15 @@ pub fn apply_component_effects(
                 // Just short of vertical either way: at the pole the view
                 // flips over instead of stopping.
                 rig.0.pitch = degrees.clamp(-89.0, 89.0);
+            }
+            Effect::SetCameraFov { actor, fov } => {
+                let Some(entity) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                let Ok(mut rig) = rigs.get_mut(entity) else {
+                    continue;
+                };
+                rig.0.fov = fov.clamp(30.0, 110.0);
             }
             _ => {}
         }
@@ -2147,6 +2196,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetComponentField { actor, .. }
         |         Effect::SetCameraView { actor, .. }
         | Effect::SetCameraPitch { actor, .. }
+        | Effect::SetCameraFov { actor, .. }
         | Effect::AttachComponent { actor, .. }
         | Effect::DetachComponent { actor, .. }
         | Effect::Error { actor, .. } => Some(actor),
@@ -2481,6 +2531,7 @@ mod tests {
                 offset: [0.0, 0.0, 0.0],
                 distance: 10.0,
                 pitch: 30.0,
+                ..CameraAttach::default()
             },
             Transform::IDENTITY,
         );
@@ -2507,6 +2558,52 @@ mod tests {
         );
 
         assert_eq!(camera.translation.truncate(), Vec2::new(100.0, 60.0));
+    }
+
+    #[test]
+    fn a_settings_slider_retunes_the_camera_while_paused() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::ThreeD);
+        engine.running = true;
+        engine.paused = true;
+        engine.vm.set_paused(true);
+
+        let mut app = App::new();
+        app.insert_resource(PendingEffects(vec![
+            Effect::SetCameraFov {
+                actor: "player".to_string(),
+                fov: 90.0,
+            },
+            Effect::AttachComponent {
+                actor: "player".to_string(),
+                component: "Body".to_string(),
+            },
+        ]));
+        app.insert_non_send(engine);
+        let actor = app
+            .world_mut()
+            .spawn((
+                ActorId("player".to_string()),
+                CameraRig(blockloom_core::components::CameraAttach::default()),
+            ))
+            .id();
+        app.world_mut()
+            .non_send_mut::<Engine>()
+            .entities
+            .insert("player".to_string(), actor);
+        app.add_systems(Update, apply_component_effects);
+        app.update();
+
+        // The slider's tweak previews live, while structural changes wait
+        // for the thaw like the rest of the simulation.
+        let rig = app.world().entity(actor).get::<CameraRig>().unwrap();
+        assert_eq!(rig.0.fov, 90.0);
+        assert!(
+            !app
+                .world()
+                .non_send::<Engine>()
+                .has_component("player", "Body")
+        );
     }
 
     /// Runs `apply_cursor_lock` once over one primary window and hands back
@@ -3765,6 +3862,226 @@ mod tests {
             .get("volume")
             .and_then(|node| node.value.as_number().ok());
         assert_eq!(at, Some(60.0));
+    }
+
+    #[test]
+    fn a_slider_click_reaches_the_sensor_snapshot_the_same_frame() {
+        // Two thirds of the way across a 90-wide track centred on 100. A
+        // `when input changed` strand reads the new number through the
+        // snapshot, so the snapshot has to hold 60 - the click's own value -
+        // rather than the 0 it just moved away from. Input lands before
+        // publishing: the chain below mirrors main.rs, where
+        // `publish_sensors` follows `detect_clicks`.
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.running = true;
+        engine.window_focused = true;
+
+        let mut buttons = ButtonInput::<MouseButton>::default();
+        buttons.press(MouseButton::Left);
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(Dimension(Mode::TwoD));
+        app.insert_resource(buttons);
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<Messages<MouseMotion>>();
+        app.init_resource::<Messages<WindowFocused>>();
+        app.init_resource::<crate::ui::UiManager>();
+        app.insert_non_send(engine);
+
+        let mut window = Window::default();
+        window.set_physical_cursor_position(Some(bevy::math::DVec2::new(115.0, 100.0)));
+        app.world_mut().spawn((window, PrimaryWindow));
+
+        let mut slider = element("volume", blockloom_core::ui::UiKind::Slider);
+        slider.range = [0.0, 90.0];
+        slider.value = blockloom_core::value::Evaluated::Number(0.0);
+        drawn_element(
+            &mut app,
+            slider,
+            Vec2::new(100.0, 100.0),
+            Vec2::new(90.0, 20.0),
+        );
+        app.add_systems(Update, (detect_clicks, publish_sensors).chain());
+        app.update();
+
+        let seen = blockloom_core::sense::read(|sensors| {
+            sensors.ui.get("volume").map(|sense| sense.value.clone())
+        });
+        assert_eq!(seen.and_then(|value| value.as_number().ok()), Some(60.0));
+    }
+
+    /// The whole menu stack with nothing mocked: the blocks show a modal
+    /// panel with a parented button, real Bevy layout draws it, and a click
+    /// on the button's own drawn box starts its strand while paused.
+    #[test]
+    fn a_drawn_menu_button_answers_a_click_on_its_own_box() {
+        use bevy::asset::AssetPlugin;
+        use bevy::text::TextPlugin;
+        use bevy::time::TimePlugin;
+        use bevy::ui::UiPlugin;
+        use blockloom_core::blocks::{Instruction, InstructionKind as K, Strand};
+        use blockloom_core::ui::{UiAnchor, UiElement, UiKind};
+        use blockloom_core::value::{Evaluated, Value};
+
+        let mut actor = Actor::new(
+            "Player",
+            Visual::Rect {
+                color: "#fff".to_string(),
+                size: [10.0, 10.0],
+            },
+        );
+        actor.id = "a1".to_string();
+        actor.graph.strands = vec![Strand::with_instructions(
+            0,
+            0,
+            vec![
+                Instruction::new(K::WhenUiClicked {
+                    element: "resume_btn".to_string(),
+                }),
+                Instruction::new(K::Say {
+                    text: Value::text("ui"),
+                }),
+            ],
+        )];
+
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.project.actors = vec![actor];
+        let project = engine.project.clone();
+        engine.vm.load(&project);
+        engine.running = true;
+        engine.paused = true;
+        engine.vm.set_paused(true);
+        engine.window_focused = true;
+
+        let mut manager = crate::ui::UiManager::default();
+        manager.show(UiElement {
+            id: "pause_menu".to_string(),
+            kind: UiKind::Panel,
+            content: "Paused".to_string(),
+            anchor: UiAnchor::Center,
+            offset: [0.0, 0.0],
+            size: [320.0, 0.0],
+            parent: String::new(),
+            modal: true,
+            range: [0.0, 100.0],
+            value: Evaluated::Text(String::new()),
+        });
+        manager.show(UiElement {
+            id: "resume_btn".to_string(),
+            kind: UiKind::Button,
+            content: "Resume".to_string(),
+            anchor: UiAnchor::Center,
+            offset: [0.0, 0.0],
+            size: [0.0, 0.0],
+            parent: "pause_menu".to_string(),
+            modal: false,
+            range: [0.0, 100.0],
+            value: Evaluated::Bool(false),
+        });
+
+        let mut app = App::new();
+        app.add_plugins((AssetPlugin::default(), TimePlugin, TextPlugin, UiPlugin));
+        // Bevy's own viewport picking runs but has nothing to say here; it
+        // only needs its two maps and its messages to exist.
+        app.init_resource::<bevy::picking::hover::HoverMap>();
+        app.init_resource::<bevy::picking::events::PointerState>();
+        app.add_message::<bevy::picking::pointer::PointerInput>();
+        app.add_message::<bevy::picking::backend::PointerHits>();
+        app.init_asset::<bevy::image::Image>();
+        app.init_asset::<bevy::image::TextureAtlasLayout>();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(Dimension(Mode::TwoD));
+        app.init_resource::<ButtonInput<MouseButton>>();
+        app.init_resource::<bevy::input::touch::Touches>();
+        app.insert_non_send(engine);
+        app.insert_resource(manager);
+        app.world_mut().spawn((Window::default(), PrimaryWindow));
+        app.world_mut().spawn((
+            Camera2d,
+            Camera::default(),
+            Transform::default(),
+            GlobalTransform::default(),
+            WorldCamera,
+        ));
+        app.add_systems(Update, (crate::overlay::draw_ui, detect_clicks).chain());
+
+        // Spawn, then let layout measure the button's real box.
+        for _ in 0..5 {
+            app.update();
+        }
+        let centre: Vec2 = {
+            let entity = app
+                .world()
+                .resource::<crate::ui::UiManager>()
+                .get("resume_btn")
+                .expect("the button was drawn")
+                .entity;
+            let world = app.world_mut();
+            let mut laid_out = world.query::<(&ComputedNode, &UiGlobalTransform)>();
+            let (node, transform) = laid_out.get(world, entity).expect("a laid-out box");
+            assert!(
+                node.size().x > 0.0 && node.size().y > 0.0,
+                "the button drew at no size: {node:?}"
+            );
+            transform.translation
+        };
+
+        let mut windows = app.world_mut().query::<&mut Window>();
+        for mut window in windows.iter_mut(app.world_mut()) {
+            window.set_physical_cursor_position(Some(bevy::math::DVec2::new(
+                centre.x as f64,
+                centre.y as f64,
+            )));
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.update();
+
+        let mut effects = Vec::new();
+        {
+            let mut engine = app.world_mut().non_send_mut::<Engine>();
+            engine.vm.tick(0.0, &mut effects);
+        }
+        let said: Vec<String> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Say { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(said, vec!["ui".to_string()]);
+    }
+
+    /// A click on a high-DPI display: layout boxes are physical pixels while
+    /// the cursor reads logical ones, so the router has to scale the pointer
+    /// up the way Bevy's own picking does. The box below is the live report
+    /// that found this: a 200% menu the clicks fell straight through.
+    #[test]
+    fn a_click_at_double_scale_lands_on_the_physical_box() {
+        // A 1920x1440 window at 200%: logical space is 960x720.
+        let mut app = click_harness(Vec2::new(480.0, 360.0));
+        drawn_element(
+            &mut app,
+            element("resume", blockloom_core::ui::UiKind::Button),
+            Vec2::new(960.0, 720.0),
+            Vec2::new(592.0, 72.0),
+        );
+        // The physical point above reads as half in logical pixels - which
+        // is what the router is handed.
+        let mut windows = app.world_mut().query::<&mut Window>();
+        for mut window in windows.iter_mut(app.world_mut()) {
+            window.resolution =
+                bevy::window::WindowResolution::new(1920, 1440).with_scale_factor_override(2.0);
+            // The OS cursor sits over the rendered button, in raw physical
+            // pixels like a real pointer would.
+            window.set_physical_cursor_position(Some(bevy::math::DVec2::new(960.0, 720.0)));
+        }
+        app.world_mut().non_send_mut::<Engine>().paused = true;
+        assert_eq!(routed(&mut app), vec!["ui".to_string()]);
     }
 
     /// An app with one text input holding the keyboard, ready to be typed

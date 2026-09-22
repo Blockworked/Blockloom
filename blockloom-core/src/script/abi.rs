@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 9;
+pub const ABI_VERSION: u32 = 10;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -170,6 +170,8 @@ pub const ACT_DELETE_ACTOR: u32 = 24;
 pub const ACT_SET_MOUSE_LOCKED: u32 = 25;
 /// `n0` = camera pitch in degrees; positive looks up.
 pub const ACT_SET_CAMERA_PITCH: u32 = 26;
+/// `n0` = vertical field of view in degrees.
+pub const ACT_SET_CAMERA_FOV: u32 = 36;
 /// Makes an interface element or updates the one that id already names.
 /// `a` = id, `b` = content, `c` = parent id, and the numbers are kind,
 /// anchor, x, y, width, height, flag, min, max, value - the one act that

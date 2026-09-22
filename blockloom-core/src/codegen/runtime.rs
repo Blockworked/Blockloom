@@ -127,6 +127,9 @@ pub enum Act {
     SetCameraPitch {
         degrees: f32,
     },
+    SetCameraFov {
+        fov: f32,
+    },
     AttachComponent {
         component: &'static str,
     },
@@ -500,10 +503,16 @@ impl Runner {
             return;
         }
         let entry = &entries[index];
+        let mut state = entry.begin(&actor);
+        // Escape is the pause key: while paused it starts key strands as
+        // interface strands, so a pause menu can toggle itself shut.
+        if self.actors.paused && entry.trigger == "Key" && entry.detail == "escape" {
+            state.ui = true;
+        }
         let fresh = Live {
             entry: index,
             actor: Rc::clone(&actor),
-            state: entry.begin(&actor),
+            state,
         };
         match self.live.iter_mut().find(|live| {
             let old = &entries[live.entry];
@@ -544,7 +553,9 @@ impl Runner {
         }
         let mut index = 0;
         while index < self.live.len() {
-            let ui = entries[self.live[index].entry].is_ui();
+            // The flag the strand started with, so one escape began while
+            // paused keeps the slice that began it.
+            let ui = self.live[index].state.ui;
             // A paused world advances only what the interface started.
             if self.actors.paused && !ui {
                 index += 1;
@@ -797,6 +808,8 @@ pub const ACT_DELETE_ACTOR: u32 = 27;
 pub const ACT_SET_MOUSE_LOCKED: u32 = 28;
 /// `n0` = pitch in degrees; positive looks up.
 pub const ACT_SET_CAMERA_PITCH: u32 = 29;
+/// `n0` = vertical field of view in degrees.
+pub const ACT_SET_CAMERA_FOV: u32 = 38;
 /// `a` = id, `b` = content, `c` = parent, `value` = what it starts at, and
 /// the numbers are kind, anchor, x, y, width, height, flag, min, max.
 pub const ACT_SHOW_ELEMENT: u32 = 30;
@@ -1122,6 +1135,14 @@ impl Host for AbiHost {
                 "",
                 "",
                 [degrees as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetCameraFov { fov } => self.act_wire(
+                actor,
+                ACT_SET_CAMERA_FOV,
+                "",
+                "",
+                [fov as f64, 0.0, 0.0],
                 &zero,
             ),
             Act::AttachComponent { component } => {

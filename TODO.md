@@ -9,6 +9,10 @@ Obvious gaps already identified in the project notes:
       deletes actors can still ship native logic.
 - [x] Give a child actor an authored local offset, so the inspector can place
       one relative to its parent rather than in world coordinates.
+- [ ] Implement the parent/child hierarchy in the editor actor list, so actors
+      can be dragged under other actors to reparent (and dragged out to
+      unparent, with cycle protection), and child lists can be collapsed per
+      parent.
 - [ ] Let a child be asked about its place in its parent's frame, and let
       `set my parent to` place it there rather than leaving it where it
       stands. The offset is authored-only today, read once when the world is

@@ -447,6 +447,10 @@ pub fn record_poses(mut posed: Query<(&Transform, &mut PhysicsPose, &mut PrevPos
 pub fn spawn_scenery(commands: &mut Commands, camera: &blockloom_core::scene::Camera) {
     commands.spawn((
         Camera3d::default(),
+        Projection::Perspective(PerspectiveProjection {
+            fov: 75.0_f32.to_radians(),
+            ..default()
+        }),
         Transform::from_xyz(camera.position[0], camera.position[1], camera.position[2]).looking_at(
             Vec3::new(camera.look_at[0], camera.look_at[1], camera.look_at[2]),
             Vec3::Y,
