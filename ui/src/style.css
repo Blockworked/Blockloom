@@ -546,6 +546,77 @@ body.panel-resizing {
   color: var(--blockstitch-yellow);
 }
 
+/* The tree the rows sit in: dropping on its background moves the actor to
+   the top level. */
+.actor-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* A valid drop hovers the row it would hang the dragged actor off. */
+.actor-row.drop-target {
+  background: rgba(var(--blockstitch-accent-rgb), 0.28);
+  outline: 1px dashed var(--blockstitch-accent);
+  outline-offset: -1px;
+}
+
+/* A drop that would make a loop is refused before it lands. */
+.actor-row.drop-denied {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* One parent's collapse toggle: a bare chevron that must not read as the
+   row's own selection. */
+.actor-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin-left: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--blockstitch-text-dim);
+  cursor: pointer;
+}
+
+.actor-toggle:hover {
+  background: var(--blockstitch-hover-overlay);
+  color: inherit;
+}
+
+.actor-toggle svg {
+  transition: transform var(--blockstitch-dur-fast) var(--blockstitch-ease-standard);
+}
+
+.actor-toggle-spacer {
+  flex: 0 0 16px;
+  width: 16px;
+  margin-left: -4px;
+}
+
+/* The explicit way out, shown only mid-drag: dropping here unparents. */
+.actor-unparent-zone {
+  margin: 6px 8px 4px;
+  padding: 7px 10px;
+  border: 1px dashed var(--blockstitch-border);
+  border-radius: 6px;
+  color: var(--blockstitch-text-dim);
+  font-size: 12px;
+  text-align: center;
+}
+
+.actor-unparent-zone.drop-target {
+  border-color: var(--blockstitch-accent);
+  background: rgba(var(--blockstitch-accent-rgb), 0.12);
+  color: inherit;
+}
+
 /* ── Asset tray ──────────────────────────────────────────────────────────── */
 /* A file manager over the project folder, along the bottom of the editor. It
    collapses to its header bar; the resizer above it sets the height. */
