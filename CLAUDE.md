@@ -217,7 +217,12 @@ An actor's id is what everything keys it by, and a run can mint ids the
 document never had. `engine.spawned` holds those runtime-only actors and
 `Engine::actor` looks there before the project, so one question finds any
 actor at all - a clone answers about its shape, its physics and its components
-exactly as the actor it was copied from does.
+exactly as the actor it was copied from does. Those ids are counted rather
+than random - `~1`, `~2` - so one project run makes the same ids however it
+was scheduled, which is what lets `tests/codegen.rs` hold a compiled run's
+clones against the VM's. An id the host mints itself, for a script's clone in
+a build whose scheduler is the compiled program, is `~h1` instead, so the two
+counters can never land on the same name.
 
 `create a clone of` copies a running actor. The VM does the scheduling half:
 `register_clone` gives the copy the template's compiled `Program` (an `Rc`
@@ -231,6 +236,9 @@ now, carrying its live custom-component values and hanging off whatever it
 hangs off. A clone shares its template's name, so `when I touch Ball`,
 `broadcast` and `how many Ball there are` all reach every copy; `the actor I
 made` reports an id, which is how a block means one clone in particular.
+A compiled program does the same halves in the same order: its own `Actors`
+table mints the id and queues the copy, and the host is handed the entity to
+build (see Compiling the blocks below).
 
 `create actor` makes something the document never had: a `Place`, a plain
 `Look`, and no blocks at all. `delete` takes an actor out of the run - the
@@ -254,6 +262,15 @@ pose the renderer interpolates towards is where the child ended up. Loops are
 refused where they would be made - `Project::prune_parents` on load,
 `commands::check_parent` in the editor, `world::set_parent` at run time -
 because a cycle has no root to start the pass at.
+
+A `Parent` may also carry an `offset`, which is where the child stands in its
+parent's frame. `Place` stays the one thing the world is built from, so the
+offset is read once: `world::place_authored_children` resolves it into a world
+placement before anything is spawned, parents before their children so an
+offset down a chain is measured against a parent that has already moved. A
+`Parent` without one - which is what a document written before offsets says,
+and what `set my parent to` leaves - keeps the world position its own `Place`
+gives it.
 
 ### Scripts
 
@@ -452,16 +469,24 @@ call - is hoisted into a `let` ahead of the expression, because the VM resolves
 a whole tree before one operator runs: a reporter on the side `and` never reads
 still runs, and still does whatever it does to the world.
 
-What it won't compile is a custom block that can reach itself through statement
-calls - its loops would share one set of counters where the VM gives every
-invocation a frame - or anything that makes or unmakes an actor:
-`create a clone of`, `create actor`, `delete`, and a `when I start as a clone`
-strand. A generated program has one fixed `Entry` table with one state per
-authored strand and no way to run one under a second actor id, so there would
-be nowhere to put a clone's scripts. `set my parent to` compiles like any other
-act, since the hierarchy is entirely the host's. `Unsupported` refuses the
-whole project rather than emitting half of one, so the Build dialog can disable
-native logic and name what sent it there.
+The actor is a value rather than a constant, which is what lets one emitted
+function cover an authored actor and every clone of it: a `State` carries the
+id it is running under, and `Entry` says which authored actor's strand it is.
+The generated program keeps its own `Actors` table, the same one the VM keeps
+and for the same reason - `delete` and `create a clone of` name an actor the
+way every block does, and both have to be answerable before the host has done
+anything about them. So the program mints the id, copies the scheduling and
+queues the copy's `when I start as a clone` strands for the top of the next
+tick, and the host is left with the entity. `NAMES` lists every actor the
+document has, blocks or none, because an empty canvas still answers to its
+name. A clone or a deletion from outside the program - a script's - comes in
+through `fire` as a `Cloned`, `Created` or `Deleted` kind instead.
+
+What it won't compile is a custom block that can reach itself through
+statement calls: its loops would share one set of counters where the VM gives
+every invocation a frame. `Unsupported` refuses the whole project rather than
+emitting half of one, so the Build dialog can disable native logic and name
+what sent it there.
 
 `vm::Variables` is the live variable home shared by either scheduler. Generated
 logic exports one runner behind the ABI in `codegen/runtime.rs`, and
@@ -515,17 +540,13 @@ lands.
 ### Known gaps
 
 - No sounds, no lists.
-- A project that clones, creates or deletes actors can't ship compiled blocks:
-  the Build dialog offers it the VM instead and says why. A script in such a
-  build can still create and delete, but asking one for a clone is reported
-  rather than done, since only the VM can schedule the copy's strands.
 - A clone copies the template as the editor authored it, standing where the
   template stands now. What `attach`/`detach` did to the template since Play
   doesn't carry over - re-attaching a component has always meant the authored
   one.
-- A child keeps its own world position when it is hung off a parent: a parent
-  moves a child from then on, it doesn't place it. There is no authored local
-  offset, and no way to ask for a child's position in its parent's frame.
+- A child's offset places it when the world is built and nothing after that:
+  `set my parent to` at run time leaves the actor where it stands, and no
+  reporter gives a child's position in its parent's frame.
 - Building for another platform needs its player staged by hand, and a scripted
   project also needs that target's `std` and a linker for it.
 - Recursive statement-shaped custom blocks fall back to the VM because their

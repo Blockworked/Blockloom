@@ -41,6 +41,14 @@
 //! whole point of compiling. A reporter body is the exception and does count,
 //! since nothing in it yields and the budget is all that ends a runaway one.
 //!
+//! An actor is a value rather than a constant here: the emitted function is
+//! handed the id it is running under, so one function covers an authored
+//! actor and every clone of it. The clones themselves, and the actors a run
+//! makes and unmakes, live in the generated program's own [`Actors`] table -
+//! the same table the VM keeps, for the same reason: `delete` names an actor
+//! the way every block does, and has to be answerable before the host has
+//! done anything about it.
+//!
 //! What it won't compile is a custom block that can reach itself through
 //! statement calls: [`Unsupported`] refuses the project rather than emitting
 //! half of it, so a build can fall back to the VM knowing exactly why.
@@ -51,13 +59,14 @@ mod runtime;
 
 pub use runtime::{
     ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH, ACT_BROADCAST,
-    ACT_CHANGE_POSITION, ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_MOVE, ACT_POINT_TOWARDS,
-    ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD,
-    ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_PARENT, ACT_SET_ROTATION, ACT_SET_SCALE,
-    ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_TURN, AbiStr, AbiValue, Act, Entry, Host,
-    LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI,
-    SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_RESET, SYM_LOGIC_TICK, State, Status,
-    TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
+    ACT_CHANGE_POSITION, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR, ACT_DETACH,
+    ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_MOVE, ACT_POINT_TOWARDS, ACT_SAY, ACT_SET_BODY,
+    ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_GRAVITY,
+    ACT_SET_MASS, ACT_SET_PARENT, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_VELOCITY,
+    ACT_SET_VISIBLE, ACT_TURN, AbiStr, AbiValue, Act, Actors, Entry, Host, LOGIC_ABI_VERSION,
+    LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI, SYM_LOGIC_FIRE,
+    SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_RESET, SYM_LOGIC_TICK, State, Status, TICK_STOPPED,
+    VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
 };
 
 use crate::project::Project;
@@ -80,7 +89,7 @@ pub extern "C" fn blockloom_logic_abi() -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn blockloom_logic_new() -> *mut std::ffi::c_void {
-    Box::into_raw(Box::new(Runner::new())).cast()
+    Box::into_raw(Box::new(Runner::new(NAMES))).cast()
 }
 
 #[unsafe(no_mangle)]
@@ -244,12 +253,28 @@ pub fn compile(project: &Project) -> Emit<String> {
     let mut entries = Vec::new();
     let mut bodies = String::new();
 
+    let programs: Vec<Program> = project
+        .actors
+        .iter()
+        .map(|actor| compile_program(&actor.graph))
+        .collect();
+    // The VM ends a strand the moment the actor running it has been deleted,
+    // whoever deleted it, and it checks after every act. That costs a read
+    // per act, so it is only emitted for a project that can delete at all -
+    // where nothing deletes, the check could never have held.
+    let deletes = programs.iter().any(|program| {
+        program
+            .steps
+            .iter()
+            .any(|step| matches!(step, Step::Action(Action::DeleteActor(_))))
+    });
+
     for (index, actor) in project.actors.iter().enumerate() {
-        let program = compile_program(&actor.graph);
+        let program = &programs[index];
         if program.steps.is_empty() {
             continue;
         }
-        let canvas = Canvas::of(&actor.id, index, &program, &actor.graph)?;
+        let canvas = Canvas::of(index, program, &actor.graph, deletes)?;
 
         bodies.push_str(&Pass::new(&canvas, false).emit()?);
         // A reporter runs on a state of its own, so its mode is only worth
@@ -260,45 +285,50 @@ pub fn compile(project: &Project) -> Emit<String> {
 
         let counters = canvas.plan.counters.len();
         for entry in &program.entries {
-            let trigger = trigger_name(&entry.trigger).ok_or_else(|| {
-                Unsupported::new("`when I start as a clone`, which needs a scheduler per clone")
-            })?;
             entries.push(format!(
                 "    Entry {{ actor: {}, strand: {}, trigger: {}, detail: {}, \
                  start: {}, counters: {counters}, run: actor_{index} }},",
                 literal(&actor.id),
                 literal(&entry.strand_id),
-                literal(trigger),
+                literal(trigger_name(&entry.trigger)),
                 literal(&trigger_detail(&entry.trigger)),
                 entry.pc,
             ));
         }
     }
 
+    // Every actor the document has, blocks or none: `delete` and `create a
+    // clone of` name one the way a block does, and an actor with nothing on
+    // its canvas still answers to its name.
+    let names: Vec<String> = project
+        .actors
+        .iter()
+        .map(|actor| format!("    ({}, {}),", literal(&actor.id), literal(&actor.name)))
+        .collect();
+
     Ok(format!(
         "// Generated by Blockloom from {}. Rebuilt on every build; don't edit.\n\
          #![allow(unused, clippy::all)]\n\n\
          {RUNTIME_SOURCE}\n\
+         pub static NAMES: &[(&str, &str)] = &[\n{}\n];\n\n\
          pub static ENTRIES: &[Entry] = &[\n{}\n];\n\n{bodies}\n{EXPORT_SOURCE}",
         literal(&project.name),
+        names.join("\n"),
         entries.join("\n")
     ))
 }
 
 /// What `trigger`'s [`Entry`] says, in the two halves the runtime matches on.
-/// `None` for a trigger a compiled program can't carry: a clone's strands
-/// need a scheduler that can run one program under many actor ids, which the
-/// generated `Runner` deliberately isn't.
-fn trigger_name(trigger: &crate::vm::Trigger) -> Option<&'static str> {
+fn trigger_name(trigger: &crate::vm::Trigger) -> &'static str {
     use crate::vm::Trigger;
-    Some(match trigger {
+    match trigger {
         Trigger::Started => "Started",
         Trigger::KeyPressed(_) => "Key",
         Trigger::Clicked => "Clicked",
         Trigger::Collision { .. } => "Collision",
         Trigger::Message(_) => "Message",
-        Trigger::Cloned => return None,
-    })
+        Trigger::Cloned => "Cloned",
+    }
 }
 
 fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
@@ -319,7 +349,6 @@ const PAD: &str = "                ";
 /// One actor's program, plus everything the emitter has to work out about it
 /// before writing a line.
 struct Canvas<'a> {
-    id: &'a str,
     index: usize,
     program: &'a Program,
     /// Custom block id -> its input names, in prototype order: the positional
@@ -329,14 +358,17 @@ struct Canvas<'a> {
     /// read back by position, and the position is a fact about that block.
     owner: HashMap<usize, &'a str>,
     plan: Plan,
+    /// Whether anything in the project deletes an actor, which is what makes
+    /// the after-every-act check worth emitting.
+    deletes: bool,
 }
 
 impl<'a> Canvas<'a> {
     fn of(
-        id: &'a str,
         index: usize,
         program: &'a Program,
         graph: &'a crate::blocks::ActorGraph,
+        deletes: bool,
     ) -> Emit<Self> {
         let inputs = graph
             .block_defs
@@ -346,12 +378,12 @@ impl<'a> Canvas<'a> {
         let owner = owners(program);
         refuse_recursion(program, &owner)?;
         Ok(Self {
-            id,
             index,
             program,
             inputs,
             owner,
             plan: Plan::of(program),
+            deletes,
         })
     }
 
@@ -558,17 +590,16 @@ impl<'a> Pass<'a> {
             ));
         }
 
-        let me = literal(self.canvas.id);
         let index = self.canvas.index;
         Ok(if self.immediate {
             format!(
                 "/// A custom block of this actor's, run to completion in place as a\n\
                  /// reporter. Its own state, so one of these may call another.\n\
                  fn reporter_{index}(\n    \
-                 h: &mut dyn Host,\n    top: &mut State,\n    start: usize,\n    \
-                 depth: usize,\n    args: Vec<Val>,\n) -> Val {{\n    \
-                 const ME: &str = {me};\n    \
-                 let mut s = State::new(start, {});\n    \
+                 h: &mut dyn Host,\n    top: &mut State,\n    actors: &mut Actors,\n    \
+                 start: usize,\n    depth: usize,\n    args: Vec<Val>,\n) -> Val {{\n    \
+                 let me = Rc::clone(&top.me);\n    \
+                 let mut s = State::new(&me, start, {});\n    \
                  s.enter_call(State::RETURN, args);\n    \
                  let mut budget = STEP_BUDGET;\n    \
                  loop {{\n        \
@@ -578,9 +609,12 @@ impl<'a> Pass<'a> {
                 self.canvas.plan.counters.len()
             )
         } else {
+            // The actor is read off the state rather than written in: one
+            // emitted function runs for the authored actor and for every
+            // clone of it.
             format!(
-                "fn actor_{index}(h: &mut dyn Host, s: &mut State) {{\n    \
-                 const ME: &str = {me};\n    \
+                "fn actor_{index}(h: &mut dyn Host, s: &mut State, actors: &mut Actors) {{\n    \
+                 let me = Rc::clone(&s.me);\n    \
                  if !s.resume() {{\n        return;\n    }}\n    \
                  loop {{\n        match s.pc {{\n{arms}            \
                  _ => {{\n                s.finish();\n                return;\n            }}\n        \
@@ -596,7 +630,7 @@ impl<'a> Pass<'a> {
         let steps = &self.canvas.program.steps;
         let next = pc + 1;
         Ok(match &steps[pc] {
-            Step::Action(action) => nested(&self.emit_action(action)?),
+            Step::Action(action) => nested(&self.emit_action(action, next)?),
             Step::Jump { to } => format!("{PAD}s.pc = {to};\n"),
             Step::JumpUnless { condition, to } => format!(
                 "{PAD}let holds = {};\n{PAD}s.pc = if holds {{ {next} }} else {{ {to} }};\n",
@@ -675,7 +709,7 @@ impl<'a> Pass<'a> {
                 let target = self.vec3(target)?;
                 format!(
                     "{PAD}let seconds = {seconds}.max(0.0);\n{PAD}let target = {target};\n\
-                     {PAD}h.act(ME, Act::Glide {{ seconds: seconds as f32, target }});\n\
+                     {PAD}h.act(&me, Act::Glide {{ seconds: seconds as f32, target }});\n\
                      {PAD}s.pc = {next};\n{}",
                     self.sleep()
                 )
@@ -760,7 +794,7 @@ impl<'a> Pass<'a> {
         Ok(parts.join(", "))
     }
 
-    fn emit_action(&mut self, action: &Action) -> Emit<String> {
+    fn emit_action(&mut self, action: &Action, next: usize) -> Emit<String> {
         let line = match action {
             Action::Move(steps) => reading(self.number(steps)?, "Act::Move { steps: slot }"),
             Action::GoTo(target) => reading(self.vec3(target)?, "Act::GoTo { position: slot }"),
@@ -829,20 +863,37 @@ impl<'a> Pass<'a> {
             Action::SetParent(target) => {
                 reading(self.text(target)?, "Act::SetParent { target: slot }")
             }
-            // Every one of these makes or unmakes an actor mid-run, and a
-            // generated program has one fixed `Entry` table with one state
-            // per strand: there is nowhere to put a clone's own scripts, and
-            // nothing to take a deleted actor's out of. The VM stays the
-            // scheduler for a project that uses them.
-            Action::CreateClone(_) => {
-                return Err(Unsupported::new("`create a clone`"));
-            }
-            Action::CreateActor { .. } => {
-                return Err(Unsupported::new("`create an actor`"));
-            }
-            Action::DeleteActor(_) => {
-                return Err(Unsupported::new("`delete an actor`"));
-            }
+            // The three that make and unmake actors. Each does its own
+            // half here - the id, the name and the scheduling - and hands
+            // the host the world's half, which is the same split the VM
+            // makes between `register_clone` and `Effect::CreateClone`.
+            Action::CreateClone(of) => format!(
+                "    match actors.find(&me, {}) {{\n        \
+                 Some(template) => {{\n            \
+                 let clone = actors.clone_of(&template);\n            \
+                 h.act(&me, Act::CreateClone {{ of: template.to_string(), \
+                 clone: clone.to_string() }});\n        }}\n        \
+                 None => h.error(&me, {}),\n    }}\n",
+                literal(of),
+                literal(&format!("there's no actor named \"{of}\" to clone"))
+            ),
+            // A name and a place, and no blocks at all: nothing schedules it,
+            // so only naming it has to keep working.
+            Action::CreateActor { name, position } => format!(
+                "    let name = {};\n    let position = {};\n    \
+                 let id = actors.create(&name);\n    \
+                 h.act(&me, Act::CreateActor {{ id: id.to_string(), name, position }});\n",
+                self.text(name)?,
+                self.vec3(position)?
+            ),
+            Action::DeleteActor(target) => format!(
+                "    let wanted = {};\n    match actors.find(&me, &wanted) {{\n        \
+                 Some(gone) => {{\n            actors.remove(&gone);\n            \
+                 h.act(&me, Act::DeleteActor {{ target: gone.to_string() }});\n        }}\n        \
+                 None => h.error(&me, &format!(\"there's no actor named \\\"{{wanted}}\\\" \
+                 to delete\")),\n    }}\n",
+                self.text(target)?
+            ),
             Action::Broadcast(name) => act(format!(
                 "Act::Broadcast {{ name: {} }}",
                 literal(name.trim())
@@ -850,7 +901,7 @@ impl<'a> Pass<'a> {
             // A variable write isn't an effect: it is the host's own state, so
             // it goes through the host rather than through `Act`.
             Action::SetVariable { name, value } => format!(
-                "    let value = {};\n    h.set_variable(ME, {}, value);\n",
+                "    let value = {};\n    h.set_variable(&me, {}, value);\n",
                 self.evaluated(value)?,
                 literal(name)
             ),
@@ -858,13 +909,30 @@ impl<'a> Pass<'a> {
             // neither reports a non-numeric one, exactly as in Scratch.
             Action::ChangeVariable { name, value } => format!(
                 "    let by = {};\n    \
-                 let now = h.variable(ME, {name_literal}).as_number().unwrap_or(0.0);\n    \
-                 h.set_variable(ME, {name_literal}, Val::Num(now + by));\n",
+                 let now = h.variable(&me, {name_literal}).as_number().unwrap_or(0.0);\n    \
+                 h.set_variable(&me, {name_literal}, Val::Num(now + by));\n",
                 self.number_f64(value)?,
                 name_literal = literal(name)
             ),
         };
-        Ok(line)
+        Ok(format!("{line}{}", self.check_deleted(next)))
+    }
+
+    /// The VM ends a strand as soon as the actor running it has been deleted,
+    /// and it looks after every act - so a `delete` inside a reporter this
+    /// act read counts, and so does one another actor ran earlier this tick.
+    /// Nothing is emitted for a project with no `delete` in it, where the
+    /// answer could only ever be no.
+    fn check_deleted(&self, next: usize) -> String {
+        if !self.canvas.deletes {
+            return String::new();
+        }
+        let leave = if self.immediate {
+            "        return Val::Num(0.0);\n"
+        } else {
+            "        s.finish();\n        return;\n"
+        };
+        format!("    if actors.is_gone(&me) {{\n        s.pc = {next};\n{leave}    }}\n")
     }
 
     // ─── Value slots ────────────────────────────────────────────────────────
@@ -881,7 +949,9 @@ impl<'a> Pass<'a> {
     fn read_with(&mut self, reader: &str, value: &Value) -> Emit<String> {
         let mut prelude = String::new();
         let expr = self.resolve(value, &mut prelude)?;
-        Ok(format!("{{ {prelude}let v = {expr}; {reader}(h, ME, v) }}"))
+        Ok(format!(
+            "{{ {prelude}let v = {expr}; {reader}(h, &me, v) }}"
+        ))
     }
 
     fn number(&mut self, value: &Value) -> Emit<String> {
@@ -927,7 +997,7 @@ impl<'a> Pass<'a> {
             Value::Text { value } => format!("Ok(Val::Text({}.to_string()))", literal(value)),
             Value::Bool => "Ok(Val::Bool(false))".to_string(),
             Value::Var { name } => {
-                let read = format!("h.variable(ME, {})", literal(name));
+                let read = format!("h.variable(&me, {})", literal(name));
                 format!("Ok({})", self.bind(prelude, read))
             }
             Value::Param { name } => {
@@ -960,9 +1030,9 @@ impl<'a> Pass<'a> {
                 // bound before the call for the usual reason - working one
                 // out borrows the host, and so does running the block.
                 let call = format!(
-                    "if {depth} >= MAX_REPORTER_DEPTH {{ too_deep(h, ME) }} \
+                    "if {depth} >= MAX_REPORTER_DEPTH {{ too_deep(h, &me) }} \
                      else {{ let a = vec![{args}]; \
-                     reporter_{index}(h, {outer}, {start}, {depth} + 1, a) }}"
+                     reporter_{index}(h, {outer}, actors, {start}, {depth} + 1, a) }}"
                 );
                 format!("Ok({})", self.bind(prelude, call))
             }
@@ -1024,16 +1094,16 @@ impl<'a> Pass<'a> {
             // The world and the clock are the host's to answer, so that one
             // run of a game has one of each rather than two that disagree.
             Op::Random => Ok(format!(
-                "{{ let a = vec![{}, {}]; sense(h, ME, \"Random\", a) }}",
+                "{{ let a = vec![{}, {}]; sense(h, &me, \"Random\", a) }}",
                 arg(0)?,
                 arg(1)?
             )),
             Op::CurrentTime => Ok(format!(
-                "{{ let a = vec![{}]; sense(h, ME, \"CurrentTime\", a) }}",
+                "{{ let a = vec![{}]; sense(h, &me, \"CurrentTime\", a) }}",
                 arg(0)?
             )),
             Op::Ext(name) => Ok(format!(
-                "{{ let a = vec![{}]; sense(h, ME, {}, a) }}",
+                "{{ let a = vec![{}]; sense(h, &me, {}, a) }}",
                 parts.join(", "),
                 literal(name)
             )),
@@ -1045,14 +1115,14 @@ impl<'a> Pass<'a> {
 
 /// One emitted line, handing the host something to do.
 fn act(built: String) -> String {
-    format!("    h.act(ME, {built});\n")
+    format!("    h.act(&me, {built});\n")
 }
 
 /// The same, for an act with a slot in it. The slot is read into a `let`
 /// first: building the act borrows the host and so does reading a slot, and
 /// one expression can't do both.
 fn reading(reader: String, built: &str) -> String {
-    format!("    let slot = {reader};\n    h.act(ME, {built});\n")
+    format!("    let slot = {reader};\n    h.act(&me, {built});\n")
 }
 
 /// Lines written for a bare statement, moved in to sit inside an arm.

@@ -72,6 +72,10 @@ pub struct Engine {
     /// A built game's native block program. Editor Play keeps using the VM so
     /// what is being edited always runs immediately.
     pub logic: Option<crate::logic::LoadedLogic>,
+    /// How many actors the host itself has made this run. Only a compiled
+    /// program's run needs them: it mints its own ids, so the host's carry a
+    /// shape of their own and the two can never collide.
+    made: usize,
     /// Actor id -> its entity, for as long as the world stands.
     pub entities: HashMap<String, Entity>,
     pub running: bool,
@@ -128,6 +132,7 @@ impl Engine {
             vm: Vm::with_variables(variables.clone()),
             variables,
             logic: None,
+            made: 0,
             entities: HashMap::new(),
             running: false,
             paused: false,
@@ -199,6 +204,13 @@ impl Engine {
         }
     }
 
+    /// An id for an actor the host is making itself, distinct from anything
+    /// the VM or a compiled program mints.
+    pub fn new_actor_id(&mut self) -> String {
+        self.made += 1;
+        format!("~h{}", self.made)
+    }
+
     pub fn fire(&mut self, event: blockloom_core::vm::Event) {
         if let Some(logic) = &mut self.logic {
             logic.fire(event, &self.project);
@@ -209,6 +221,7 @@ impl Engine {
 
     pub fn stop_program(&mut self) {
         self.vm.stop_all();
+        self.made = 0;
         if let Some(logic) = &mut self.logic {
             logic.reset();
         }

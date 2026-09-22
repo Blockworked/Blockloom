@@ -7,6 +7,8 @@
 // Nothing here may use anything but `std`: a generated program is compiled by
 // one `rustc` run with no dependencies at all.
 
+use std::rc::Rc;
+
 /// A value as a generated program carries it. The same three cases
 /// `Evaluated` has, with the same coercions - a difference here is a
 /// difference in what a game does.
@@ -133,6 +135,22 @@ pub enum Act {
     SetParent {
         target: String,
     },
+    /// A copy of `of`, which the program has already given an id and its own
+    /// scripts. The host's half is the entity.
+    CreateClone {
+        of: String,
+        clone: String,
+    },
+    /// An actor the document never had, under an id the program minted.
+    CreateActor {
+        id: String,
+        name: String,
+        position: [f32; 3],
+    },
+    /// Takes `target` - an id, already resolved - out of the run.
+    DeleteActor {
+        target: String,
+    },
     Broadcast {
         name: &'static str,
     },
@@ -151,31 +169,207 @@ pub struct Entry {
     pub start: usize,
     /// How many `repeat` counters one run of it needs.
     pub counters: usize,
-    pub run: fn(&mut dyn Host, &mut State),
+    pub run: fn(&mut dyn Host, &mut State, &mut Actors),
 }
 
-/// One live entry in a compiled run.
+/// One live entry in a compiled run. `actor` is who is running it: the
+/// entry's own actor for an authored strand, a clone's id for a copy.
 struct Live {
     entry: usize,
+    actor: Rc<str>,
     state: State,
+}
+
+/// Every actor a compiled run knows about: the ones the document had, and
+/// the clones and creations the run has made.
+///
+/// The VM keeps the same table, for the same reason - `create a clone of`
+/// and `delete` name an actor the way every block does, by id or by name,
+/// and both have to be answerable before the host has done anything about
+/// them.
+pub struct Actors {
+    /// Id and name, authored first and runtime ones appended.
+    live: Vec<(Rc<str>, String)>,
+    /// How many actors this run has made, which is where the next one's id
+    /// comes from. Counted the way `Vm::new_actor_id` counts, so one project
+    /// run either way makes the same ids.
+    made: usize,
+    /// Clone and template, waiting for `when I start as a clone` to run at
+    /// the top of the next tick - the VM's `Event::Cloned` queue.
+    fresh: Vec<(Rc<str>, Rc<str>)>,
+    /// Ids taken out of the run. Their strands go at the end of the tick,
+    /// and one that asked for its own deletion stops where it stands.
+    gone: Vec<Rc<str>>,
+    /// Clone id -> the authored actor it is a copy of, which is whose
+    /// strands it runs.
+    clones: Vec<(Rc<str>, Rc<str>)>,
+}
+
+impl Actors {
+    fn new(names: &'static [(&'static str, &'static str)]) -> Self {
+        Self {
+            live: names
+                .iter()
+                .map(|(id, name)| (Rc::from(*id), (*name).to_string()))
+                .collect(),
+            made: 0,
+            fresh: Vec::new(),
+            gone: Vec::new(),
+            clones: Vec::new(),
+        }
+    }
+
+    /// Which actor `wanted` means: itself when the slot is empty or says so,
+    /// then an id, then a name. The same order `Vm::find_actor` uses, so a
+    /// block means the same actor whichever scheduler ran it.
+    pub fn find(&self, running: &str, wanted: &str) -> Option<Rc<str>> {
+        let wanted = wanted.trim();
+        if wanted.is_empty()
+            || wanted.eq_ignore_ascii_case("myself")
+            || wanted.eq_ignore_ascii_case("me")
+        {
+            return Some(Rc::from(running));
+        }
+        if let Some((id, _)) = self.live.iter().find(|(id, _)| &**id == wanted) {
+            return Some(Rc::clone(id));
+        }
+        self.live
+            .iter()
+            .find(|(_, name)| name.eq_ignore_ascii_case(wanted))
+            .map(|(id, _)| Rc::clone(id))
+    }
+
+    fn mint(&mut self) -> Rc<str> {
+        self.made += 1;
+        Rc::from(format!("~{}", self.made).as_str())
+    }
+
+    /// Registers a copy of `template` and answers its id. It shares the
+    /// template's name, so a broadcast and a `when I touch` reach it too.
+    pub fn clone_of(&mut self, template: &str) -> Rc<str> {
+        let id = self.mint();
+        self.register_clone(Rc::clone(&id), template);
+        id
+    }
+
+    /// The same, for a clone something outside the program made and named -
+    /// a script's, which the host hands over through `fire`.
+    fn adopt(&mut self, clone: &str, template: &str) {
+        if clone.is_empty() || self.live.iter().any(|(id, _)| &**id == clone) {
+            return;
+        }
+        self.register_clone(Rc::from(clone), template);
+    }
+
+    /// Registers an actor something outside the program made, so a block
+    /// can still name it. It has no strands, so nothing is scheduled.
+    fn adopt_created(&mut self, actor: &str, name: &str) {
+        if actor.is_empty() || self.live.iter().any(|(id, _)| &**id == actor) {
+            return;
+        }
+        self.live.push((Rc::from(actor), name.to_string()));
+    }
+
+    fn register_clone(&mut self, id: Rc<str>, template: &str) {
+        let name = self
+            .live
+            .iter()
+            .find(|(other, _)| &**other == template)
+            .map(|(_, name)| name.clone())
+            .unwrap_or_default();
+        self.live.push((Rc::clone(&id), name));
+        let root = self.template_of(template);
+        self.clones.push((Rc::clone(&id), Rc::clone(&root)));
+        self.fresh.push((id, root));
+    }
+
+    /// Registers an actor the document never had. It has no blocks, so
+    /// nothing schedules it - only naming it has to keep working.
+    pub fn create(&mut self, name: &str) -> Rc<str> {
+        let id = self.mint();
+        self.live.push((Rc::clone(&id), name.to_string()));
+        id
+    }
+
+    /// Takes an actor out of the run.
+    pub fn remove(&mut self, actor: &str) {
+        self.live.retain(|(id, _)| &**id != actor);
+        self.clones.retain(|(id, _)| &**id != actor);
+        self.fresh.retain(|(id, _)| &**id != actor);
+        if !self.is_gone(actor) {
+            self.gone.push(Rc::from(actor));
+        }
+    }
+
+    /// Whether `actor` has been deleted this tick, which is what ends the
+    /// strand that asked.
+    pub fn is_gone(&self, actor: &str) -> bool {
+        self.gone.iter().any(|id| &**id == actor)
+    }
+
+    /// Whether `actor` is still in the run at all.
+    fn is_live(&self, actor: &str) -> bool {
+        self.live.iter().any(|(id, _)| &**id == actor)
+    }
+
+    /// The authored actor a runtime one runs the strands of. A clone of a
+    /// clone is a clone of the same authored actor.
+    fn template_of(&self, actor: &str) -> Rc<str> {
+        self.clones
+            .iter()
+            .find(|(id, _)| &**id == actor)
+            .map(|(_, root)| Rc::clone(root))
+            .unwrap_or_else(|| Rc::from(actor))
+    }
+
+    /// Every runtime actor running an authored actor's strands: that actor,
+    /// and each clone of it.
+    fn copies_of(&self, authored: &str) -> Vec<Rc<str>> {
+        let mut found = vec![Rc::from(authored)];
+        found.extend(
+            self.clones
+                .iter()
+                .filter(|(_, root)| &**root == authored)
+                .map(|(id, _)| Rc::clone(id)),
+        );
+        found
+    }
 }
 
 /// The scheduler held inside a compiled logic library.
 pub struct Runner {
     live: Vec<Live>,
+    actors: Actors,
+    names: &'static [(&'static str, &'static str)],
 }
 
 impl Runner {
-    pub fn new() -> Self {
-        Self { live: Vec::new() }
+    pub fn new(names: &'static [(&'static str, &'static str)]) -> Self {
+        Self {
+            live: Vec::new(),
+            actors: Actors::new(names),
+            names,
+        }
     }
 
     pub fn reset(&mut self) {
         self.live.clear();
+        self.actors = Actors::new(self.names);
+    }
+
+    /// True while any strand is still live.
+    pub fn is_running(&self) -> bool {
+        self.live.iter().any(|live| !live.state.done())
     }
 
     /// Starts every matching entry, replacing an existing run of the same
     /// strand in place as the VM does.
+    ///
+    /// Three kinds are the host's word about an actor rather than a trigger:
+    /// `Cloned` is a copy something outside the program made - a script's
+    /// `create_clone` - `Created` an actor it conjured, and `Deleted` one it
+    /// took out of the run. The program's own clones, creations and deletions
+    /// go straight into [`Actors`] as they happen.
     pub fn fire(
         &mut self,
         entries: &[Entry],
@@ -184,13 +378,32 @@ impl Runner {
         detail: &str,
         other_name: &str,
     ) {
+        match kind {
+            "Cloned" => {
+                self.actors.adopt(actor, detail);
+                return;
+            }
+            "Created" => {
+                self.actors.adopt_created(actor, detail);
+                return;
+            }
+            "Deleted" => {
+                self.actors.remove(actor);
+                self.drop_deleted();
+                return;
+            }
+            _ => {}
+        }
+        // A clone answers to its template's entries, so what an event means
+        // is worked out against the actor those entries were written for.
+        let template = self.actors.template_of(actor);
         for (index, entry) in entries.iter().enumerate() {
             let matches = match (entry.trigger, kind) {
                 ("Started", "Started") => true,
                 ("Key", "Key") | ("Message", "Message") => entry.detail == detail,
-                ("Clicked", "Clicked") => entry.actor == actor,
+                ("Clicked", "Clicked") => entry.actor == &*template,
                 ("Collision", "Collision") => {
-                    entry.actor == actor
+                    entry.actor == &*template
                         && (entry.detail.is_empty()
                             || entry.detail == detail
                             || entry.detail.eq_ignore_ascii_case(other_name))
@@ -200,45 +413,87 @@ impl Runner {
             if !matches {
                 continue;
             }
-            let fresh = Live {
-                entry: index,
-                state: entry.begin(),
+            // An event aimed at one actor starts that actor's copy of the
+            // strand; a broadcast starts every copy's.
+            let running = match kind {
+                "Clicked" | "Collision" => vec![Rc::from(actor)],
+                _ => self.actors.copies_of(entry.actor),
             };
-            match self.live.iter_mut().find(|live| {
-                let old = &entries[live.entry];
-                old.actor == entry.actor && old.strand == entry.strand
-            }) {
-                Some(old) => *old = fresh,
-                None => self.live.push(fresh),
+            for id in running {
+                self.begin(entries, index, id);
             }
+        }
+    }
+
+    /// Starts one entry under one actor, replacing that actor's own run of
+    /// the same strand.
+    fn begin(&mut self, entries: &[Entry], index: usize, actor: Rc<str>) {
+        // A deleted actor has no strands to start: the VM drops its program,
+        // so nothing of its matches an event any more.
+        if !self.actors.is_live(&actor) {
+            return;
+        }
+        let entry = &entries[index];
+        let fresh = Live {
+            entry: index,
+            actor: Rc::clone(&actor),
+            state: entry.begin(&actor),
+        };
+        match self.live.iter_mut().find(|live| {
+            let old = &entries[live.entry];
+            live.actor == actor && old.strand == entry.strand
+        }) {
+            Some(old) => *old = fresh,
+            None => self.live.push(fresh),
         }
     }
 
     /// Gives every live strand one slice. True means `stop all` ended the run.
     pub fn tick(&mut self, entries: &[Entry], host: &mut dyn Host, now: f64) -> bool {
-        for live in &mut self.live {
-            live.state.now = now;
-            (entries[live.entry].run)(host, &mut live.state);
-            if live.state.stopping {
+        // A clone made last tick starts its own strands now, by which time
+        // the host has built the actor those blocks read through.
+        for (clone, template) in std::mem::take(&mut self.actors.fresh) {
+            for (index, entry) in entries.iter().enumerate() {
+                if entry.trigger == "Cloned" && entry.actor == &*template {
+                    self.begin(entries, index, Rc::clone(&clone));
+                }
+            }
+        }
+        let mut index = 0;
+        while index < self.live.len() {
+            let Self { live, actors, .. } = self;
+            let slice = &mut live[index];
+            slice.state.now = now;
+            (entries[slice.entry].run)(host, &mut slice.state, actors);
+            if slice.state.stopping {
                 self.live.clear();
                 return true;
             }
+            index += 1;
         }
         self.live.retain(|live| !live.state.done());
+        // A deleted actor's other strands go with it, wherever in the tick
+        // they were - the one that ran the block already stopped itself.
+        self.drop_deleted();
         false
     }
-}
 
-impl Default for Runner {
-    fn default() -> Self {
-        Self::new()
+    fn drop_deleted(&mut self) {
+        if self.actors.gone.is_empty() {
+            return;
+        }
+        let gone = std::mem::take(&mut self.actors.gone);
+        self.live.retain(|live| !gone.contains(&live.actor));
     }
 }
 
 impl Entry {
-    /// A fresh run of this strand, ready for the first [`Entry::run`].
-    pub fn begin(&self) -> State {
-        State::new(self.start, self.counters)
+    /// A fresh run of this strand under `actor`, ready for the first
+    /// [`Entry::run`]. The actor is the entry's own for an authored strand
+    /// and a clone's id for a copy, which is the whole of what lets one
+    /// emitted function run under many actors.
+    pub fn begin(&self, actor: &Rc<str>) -> State {
+        State::new(actor, self.start, self.counters)
     }
 }
 
@@ -271,6 +526,9 @@ pub struct CallFrame {
 /// recursive walk, for the same reason the VM flattens its blocks - a nested
 /// body can't be suspended, but a number can be put down and picked up.
 pub struct State {
+    /// Whose strand this is. An `Rc` because every reporter body this strand
+    /// runs is handed the same one.
+    pub me: Rc<str>,
     pub pc: usize,
     pub status: Status,
     /// Seconds since the run started. The scheduler sets it before each call.
@@ -291,8 +549,9 @@ impl State {
     /// rather than "carry on at this step": a reporter body's own boundary.
     pub const RETURN: usize = usize::MAX;
 
-    pub fn new(start: usize, counters: usize) -> Self {
+    pub fn new(me: &Rc<str>, start: usize, counters: usize) -> Self {
         Self {
+            me: Rc::clone(me),
             pc: start,
             status: Status::Run,
             now: 0.0,
@@ -384,7 +643,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 2;
+pub const LOGIC_ABI_VERSION: u32 = 3;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -423,6 +682,9 @@ pub const ACT_DETACH: u32 = 21;
 pub const ACT_BROADCAST: u32 = 22;
 pub const ACT_ERROR: u32 = 23;
 pub const ACT_SET_PARENT: u32 = 24;
+pub const ACT_CREATE_CLONE: u32 = 25;
+pub const ACT_CREATE_ACTOR: u32 = 26;
+pub const ACT_DELETE_ACTOR: u32 = 27;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -706,6 +968,20 @@ impl Host for AbiHost {
             }
             Act::SetParent { target } => {
                 self.act_wire(actor, ACT_SET_PARENT, &target, "", [0.0; 3], &zero)
+            }
+            Act::CreateClone { of, clone } => {
+                self.act_wire(actor, ACT_CREATE_CLONE, &of, &clone, [0.0; 3], &zero)
+            }
+            Act::CreateActor { id, name, position } => self.act_wire(
+                actor,
+                ACT_CREATE_ACTOR,
+                &id,
+                &name,
+                position.map(f64::from),
+                &zero,
+            ),
+            Act::DeleteActor { target } => {
+                self.act_wire(actor, ACT_DELETE_ACTOR, &target, "", [0.0; 3], &zero)
             }
             Act::Broadcast { name } => {
                 self.act_wire(actor, ACT_BROADCAST, name, "", [0.0; 3], &zero)

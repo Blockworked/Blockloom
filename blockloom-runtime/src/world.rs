@@ -290,7 +290,10 @@ pub fn rebuild_world(
         })
         .collect();
 
-    let project = engine.project.clone();
+    let mut project = engine.project.clone();
+    // A child authored in its parent's frame is put where that works out to,
+    // once, before anything is spawned from these placements.
+    place_authored_children(&mut project);
     let dir = engine.project_dir.clone();
     clear_color.0 = parse_color(&project.world.background);
     match dimension.0 {
@@ -428,21 +431,20 @@ pub fn step_scripts(
 }
 
 /// The actor a script asked to make or unmake. Clones and fresh actors need
-/// a scheduler slot before they need an entity, so they go through the VM the
-/// same way a block's do, and come back out as the same effects.
+/// a scheduler slot before they need an entity, so they are registered with
+/// whichever scheduler this run has and come back out as the same effects.
+///
+/// The VM mints its own ids; a compiled program mints its own too, so when
+/// that is the scheduler the host mints a differently shaped one and hands
+/// it over, which is what keeps the two from ever picking the same id.
 fn script_lifetimes(engine: &mut Engine, asked: &mut crate::script::Asked) {
     for (actor, wanted) in asked.clones.drain(..) {
-        // A fast build's scheduler is the compiled program, which has no room
-        // for a strand it wasn't built with - `codegen` refuses a project
-        // whose blocks clone, and a script's ask lands in the same place.
-        if engine.logic.is_some() {
-            bridge::send(&RuntimeMessage::Error {
-                actor,
-                message: "a script can't make clones in a build with compiled blocks".to_string(),
-            });
-            continue;
-        }
-        match engine.vm.clone_actor(&actor, &wanted) {
+        let made = if engine.logic.is_some() {
+            clone_for_logic(engine, &actor, &wanted)
+        } else {
+            engine.vm.clone_actor(&actor, &wanted)
+        };
+        match made {
             Some((clone, of)) => asked.effects.push(Effect::CreateClone { actor, clone, of }),
             None => bridge::send(&RuntimeMessage::Error {
                 actor,
@@ -451,7 +453,15 @@ fn script_lifetimes(engine: &mut Engine, asked: &mut crate::script::Asked) {
         }
     }
     for (actor, name, position) in asked.created.drain(..) {
-        let id = engine.vm.create_actor(&name);
+        let id = if engine.logic.is_some() {
+            let id = engine.new_actor_id();
+            if let Some(logic) = &mut engine.logic {
+                logic.created(&id, &name);
+            }
+            id
+        } else {
+            engine.vm.create_actor(&name)
+        };
         asked.effects.push(Effect::CreateActor {
             actor,
             id,
@@ -460,7 +470,19 @@ fn script_lifetimes(engine: &mut Engine, asked: &mut crate::script::Asked) {
         });
     }
     for (actor, wanted) in asked.deleted.drain(..) {
-        match engine.vm.delete_actor(&actor, &wanted) {
+        let gone = if engine.logic.is_some() {
+            let gone = named_or_self(engine, &actor, &wanted);
+            if let Some(gone) = gone.as_deref() {
+                engine.variables.forget_actor(gone);
+                if let Some(logic) = &mut engine.logic {
+                    logic.deleted(gone);
+                }
+            }
+            gone
+        } else {
+            engine.vm.delete_actor(&actor, &wanted)
+        };
+        match gone {
             Some(gone) => asked.effects.push(Effect::DeleteActor { actor: gone }),
             None => bridge::send(&RuntimeMessage::Error {
                 actor,
@@ -468,6 +490,29 @@ fn script_lifetimes(engine: &mut Engine, asked: &mut crate::script::Asked) {
             }),
         }
     }
+}
+
+/// Makes a clone on a script's behalf while a compiled program is the
+/// scheduler: the host names the copy and the program adopts it, so the
+/// copy's `when I start as a clone` strands run like any other clone's.
+fn clone_for_logic(engine: &mut Engine, running: &str, wanted: &str) -> Option<(String, String)> {
+    let of = named_or_self(engine, running, wanted)?;
+    let clone = engine.new_actor_id();
+    engine.variables.copy_actor(&of, &clone);
+    if let Some(logic) = &mut engine.logic {
+        logic.cloned(&clone, &of);
+    }
+    Some((clone, of))
+}
+
+/// Which actor a script means, with an empty slot meaning itself - the rule
+/// `Vm::find_actor` uses, and the one thing [`resolve_actor`] leaves out
+/// because an empty slot elsewhere means nothing at all.
+fn named_or_self(engine: &Engine, running: &str, wanted: &str) -> Option<String> {
+    if wanted.trim().is_empty() {
+        return Some(running.to_string());
+    }
+    resolve_actor(engine, running, wanted)
 }
 
 /// An actor with nothing to draw: it has no `Look` component, or one for the
@@ -1127,6 +1172,18 @@ fn attach(
             let rig = camera_of(engine, actor).unwrap_or_default();
             commands.entity(entity).insert(CameraRig(rig));
         }
+        // The hierarchy is `engine.parents`, not anything on the entity, and
+        // the actor stays where it stands - as `set my parent to` leaves it.
+        "Parent" => {
+            let Some(parent) = engine
+                .actor(actor)
+                .and_then(|actor| actor.parent())
+                .map(str::to_string)
+            else {
+                return;
+            };
+            set_parent(engine, actor, &parent);
+        }
         // Anything else is a custom component: it comes back with the fields
         // the editor gave it, or empty if the project never had one.
         name => {
@@ -1186,6 +1243,9 @@ fn detach(
         }
         "Script" => {
             engine.scripts.remove(actor);
+        }
+        "Parent" => {
+            engine.parents.remove(actor);
         }
         name => {
             if let Ok(mut custom) = customs.get_mut(entity) {
@@ -1462,6 +1522,69 @@ pub fn resolve_actor(engine: &Engine, running: &str, wanted: &str) -> Option<Str
                 .is_some_and(|actor| actor.name.eq_ignore_ascii_case(wanted))
         })
         .cloned()
+}
+
+/// Resolves every authored local offset into the world placement the actor
+/// is spawned at.
+///
+/// `Place` stays what the world is built from, so this is the one moment an
+/// offset is read: a child that carries one stands at
+/// `parent placement * offset`, and one that doesn't stays exactly where its
+/// own `Place` puts it. Parents are laid out before their children, so an
+/// offset down a chain is measured against a parent that has already moved.
+fn place_authored_children(project: &mut blockloom_core::project::Project) {
+    let parents: HashMap<String, String> = project
+        .actors
+        .iter()
+        .filter_map(|actor| Some((actor.id.clone(), actor.parent()?.to_string())))
+        .collect();
+    if parents.is_empty() {
+        return;
+    }
+    let mut placed: HashMap<String, Transform> = project
+        .actors
+        .iter()
+        .map(|actor| (actor.id.clone(), transform_of(&actor.placement())))
+        .collect();
+    let mut order: Vec<&String> = parents.keys().collect();
+    order.sort_by_key(|id| depth_of(&parents, id));
+    let order: Vec<String> = order.into_iter().cloned().collect();
+
+    for child in order {
+        let Some(offset) = project
+            .actor(&child)
+            .and_then(|actor| actor.parent_offset())
+            .map(Vec3::from)
+        else {
+            continue;
+        };
+        let Some(parent) = parents.get(&child).and_then(|id| placed.get(id)).copied() else {
+            continue;
+        };
+        let Some(mine) = placed.get_mut(&child) else {
+            continue;
+        };
+        mine.translation = parent.transform_point(offset);
+        let world = *mine;
+        if let Some(actor) = project.actor_mut(&child) {
+            actor.components.placement_mut().position = world.translation.to_array();
+        }
+    }
+}
+
+/// A `Place` as the transform the world is built with.
+fn transform_of(placement: &blockloom_core::scene::Placement) -> Transform {
+    let [rx, ry, rz] = placement.rotation;
+    Transform {
+        translation: Vec3::from(placement.position),
+        rotation: Quat::from_euler(
+            EulerRot::XYZ,
+            rx.to_radians(),
+            ry.to_radians(),
+            rz.to_radians(),
+        ),
+        scale: Vec3::splat(placement.scale),
+    }
 }
 
 /// Carries every parent's motion this step onto everything hanging off it.
@@ -2052,5 +2175,112 @@ mod tests {
                 .translation
                 .abs_diff_eq(child.translation, 0.001)
         );
+    }
+
+    // ─── Authored local offsets ─────────────────────────────────────────────
+
+    /// A project of plain actors, each at a placement, with the hierarchy
+    /// and offsets the test asks for.
+    fn project_of(
+        actors: &[(&str, blockloom_core::scene::Placement)],
+        parents: &[(&str, &str, Option<[f32; 3]>)],
+    ) -> blockloom_core::project::Project {
+        let mut project = blockloom_core::project::Project::starter("Offsets", Mode::TwoD);
+        project.actors.clear();
+        for (id, placement) in actors {
+            let mut actor = Actor::new(
+                *id,
+                Visual::Rect {
+                    color: "#fff".to_string(),
+                    size: [10.0, 10.0],
+                },
+            );
+            actor.id = (*id).to_string();
+            actor.components.set_placement(*placement);
+            project.actors.push(actor);
+        }
+        for (child, parent, offset) in parents {
+            let actor = project.actor_mut(child).unwrap();
+            actor.components.set_parent(parent);
+            actor.components.set_parent_offset(*offset);
+        }
+        project
+    }
+
+    fn at(x: f32, y: f32) -> blockloom_core::scene::Placement {
+        blockloom_core::scene::Placement {
+            position: [x, y, 0.0],
+            ..Default::default()
+        }
+    }
+
+    fn position_of(project: &blockloom_core::project::Project, id: &str) -> [f32; 3] {
+        project.actor(id).unwrap().placement().position
+    }
+
+    #[test]
+    fn an_offset_child_is_placed_in_its_parents_frame() {
+        let mut project = project_of(
+            &[("parent", at(100.0, 50.0)), ("child", at(0.0, 0.0))],
+            &[("child", "parent", Some([10.0, -5.0, 0.0]))],
+        );
+        place_authored_children(&mut project);
+
+        assert_eq!(position_of(&project, "child"), [110.0, 45.0, 0.0]);
+        assert_eq!(position_of(&project, "parent"), [100.0, 50.0, 0.0]);
+    }
+
+    #[test]
+    fn a_child_without_an_offset_stays_in_world_coordinates() {
+        let mut project = project_of(
+            &[("parent", at(100.0, 50.0)), ("child", at(7.0, 7.0))],
+            &[("child", "parent", None)],
+        );
+        place_authored_children(&mut project);
+
+        assert_eq!(position_of(&project, "child"), [7.0, 7.0, 0.0]);
+    }
+
+    #[test]
+    fn a_turned_parent_turns_the_offset_with_it() {
+        let mut project = project_of(
+            &[
+                (
+                    "parent",
+                    blockloom_core::scene::Placement {
+                        position: [0.0, 0.0, 0.0],
+                        rotation: [0.0, 0.0, 90.0],
+                        scale: 1.0,
+                    },
+                ),
+                ("child", at(0.0, 0.0)),
+            ],
+            &[("child", "parent", Some([10.0, 0.0, 0.0]))],
+        );
+        place_authored_children(&mut project);
+
+        // A quarter turn puts ten to the right ten above instead.
+        let position = position_of(&project, "child");
+        assert!(position[0].abs() < 0.001, "{position:?}");
+        assert!((position[1] - 10.0).abs() < 0.001, "{position:?}");
+    }
+
+    #[test]
+    fn an_offset_down_a_chain_is_measured_against_a_parent_already_placed() {
+        let mut project = project_of(
+            &[
+                ("root", at(100.0, 0.0)),
+                ("middle", at(0.0, 0.0)),
+                ("leaf", at(0.0, 0.0)),
+            ],
+            &[
+                ("middle", "root", Some([10.0, 0.0, 0.0])),
+                ("leaf", "middle", Some([1.0, 0.0, 0.0])),
+            ],
+        );
+        place_authored_children(&mut project);
+
+        assert_eq!(position_of(&project, "middle"), [110.0, 0.0, 0.0]);
+        assert_eq!(position_of(&project, "leaf"), [111.0, 0.0, 0.0]);
     }
 }

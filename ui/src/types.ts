@@ -190,7 +190,7 @@ export type ActorComponentDto =
   /** A Rust file under the project's assets/scripts, compiled on Play. */
   | { component: 'Script'; path: string }
   /** The actor this one hangs off, by id, so the two move together. */
-  | { component: 'Parent'; parent: string }
+  | { component: 'Parent'; parent: string; offset: [number, number, number] | null }
   | { component: 'Custom'; name: string; fields: ComponentFieldDto[] };
 
 export type ComponentName = ActorComponentDto['component'];
@@ -470,6 +470,7 @@ export function actorParent(actor: ActorDto | null): string | null {
   const parent = findComponent(actor, 'Parent');
   return parent?.component === 'Parent' && parent.parent ? parent.parent : null;
 }
+
 
 /** The script file an actor runs, if it has a Script component. */
 export function actorScript(actor: ActorDto | null): string | null {

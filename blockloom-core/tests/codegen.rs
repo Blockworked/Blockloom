@@ -77,6 +77,13 @@ struct Recorder {
 
 impl Host for Recorder {
     fn act(&mut self, actor: &str, act: Act) {
+        // `delete` is recorded against the actor it takes out of the run
+        // rather than the one that asked, because that is who the VM's own
+        // effect is about.
+        let actor = match &act {
+            Act::DeleteActor { target } => target.clone(),
+            _ => actor.to_string(),
+        };
         let line = line_of(&act);
         self.out.push(format!("{} {actor}|{line}", self.tick));
     }
@@ -135,6 +142,11 @@ fn line_of(act: &Act) -> String {
         }
         Act::AttachComponent { component } => format!("AttachComponent {component}"),
         Act::SetParent { target } => format!("SetParent {target}"),
+        Act::CreateClone { of, clone } => format!("CreateClone {clone} {of}"),
+        Act::CreateActor { id, name, position } => {
+            format!("CreateActor {id} {name} {position:?}")
+        }
+        Act::DeleteActor { .. } => "DeleteActor".to_string(),
         Act::SetBody { body } => format!("SetBody {body}"),
         other => format!("{other:?}"),
     }
@@ -157,32 +169,21 @@ fn main() {
         recorder.vars.insert(name.to_string(), value);
     }
 
-    let mut running: Vec<(&Entry, State)> = ENTRIES
-        .iter()
-        .filter(|entry| entry.trigger == "Started")
-        .map(|entry| (entry, entry.begin()))
-        .collect();
+    // The program's own scheduler, which is what a built game runs on: one
+    // slice per strand per fixed tick, clones started at the top of the tick
+    // after they were made, and deleted actors dropped at the end of one.
+    let mut runner = Runner::new(NAMES);
+    runner.fire(ENTRIES, "Started", "", "", "");
 
     for tick in 0..TICKS {
-        let now = tick as f64 * DT;
         recorder.tick = tick;
-        let mut stopped = false;
-        for (entry, state) in running.iter_mut() {
-            state.now = now;
-            (entry.run)(&mut recorder, state);
-            if state.stopping {
-                stopped = true;
-                break;
-            }
-        }
-        if stopped {
+        if runner.tick(ENTRIES, &mut recorder, tick as f64 * DT) {
             // Everything after this one in the tick is gone too, as the VM
             // has it: `stop all` empties the list where it stands.
             recorder.out.push(format!("{tick} |Stopped"));
             break;
         }
-        running.retain(|(_, state)| !state.done());
-        if running.is_empty() {
+        if !runner.is_running() {
             break;
         }
     }
@@ -230,6 +231,16 @@ fn line_of(effect: &Effect) -> Option<String> {
             format!("{actor}|AttachComponent {component}")
         }
         Effect::SetParent { actor, parent } => format!("{actor}|SetParent {parent}"),
+        Effect::CreateClone { actor, clone, of } => format!("{actor}|CreateClone {clone} {of}"),
+        Effect::CreateActor {
+            actor,
+            id,
+            name,
+            position,
+        } => format!("{actor}|CreateActor {id} {name} {position:?}"),
+        // Against the actor it takes out of the run, which is the one thing
+        // both halves say about it.
+        Effect::DeleteActor { actor } => format!("{actor}|DeleteActor"),
         Effect::SetBody { actor, body } => format!("{actor}|SetBody {body:?}"),
         Effect::Error { actor, message } => format!("{actor}|Error {message}"),
         // The world's own doing rather than the program's, and nothing the
@@ -287,6 +298,20 @@ fn project_with_blocks(
     blocks: Vec<Block>,
     globals: &[(&str, Evaluated)],
 ) -> Project {
+    let headed = bodies
+        .into_iter()
+        .map(|body| (K::WhenStarted, body))
+        .collect();
+    project_with_headers(headed, blocks, globals)
+}
+
+/// The same, with each strand's own header: `when I start as a clone` is a
+/// header like any other, and a clone's strands are the point of these cases.
+fn project_with_headers(
+    strands: Vec<(K, Vec<K>)>,
+    blocks: Vec<Block>,
+    globals: &[(&str, Evaluated)],
+) -> Project {
     let mut actor = Actor::new(
         "Player",
         Visual::Rect {
@@ -295,11 +320,11 @@ fn project_with_blocks(
         },
     );
     actor.id = ACTOR.to_string();
-    actor.graph.strands = bodies
+    actor.graph.strands = strands
         .into_iter()
         .enumerate()
-        .map(|(index, body)| {
-            let mut instructions = vec![Instruction::new(K::WhenStarted)];
+        .map(|(index, (header, body))| {
+            let mut instructions = vec![Instruction::new(header)];
             instructions.extend(body.into_iter().map(Instruction::new));
             Strand::with_instructions(0, index as i32 * 400, instructions)
         })
@@ -480,6 +505,13 @@ fn assert_same_strands(case: &str, bodies: Vec<Vec<K>>, globals: &[(&str, Evalua
     assert_same_blocks(case, bodies, Vec::new(), globals);
 }
 
+fn assert_same_headed(case: &str, strands: Vec<(K, Vec<K>)>) {
+    if !toolchain() {
+        return;
+    }
+    assert_project(case, project_with_headers(strands, Vec::new(), &[]), &[]);
+}
+
 fn assert_same_blocks(
     case: &str,
     bodies: Vec<Vec<K>>,
@@ -489,7 +521,10 @@ fn assert_same_blocks(
     if !toolchain() {
         return;
     }
-    let project = project_with_blocks(bodies, blocks, globals);
+    assert_project(case, project_with_blocks(bodies, blocks, globals), globals);
+}
+
+fn assert_project(case: &str, project: Project, globals: &[(&str, Evaluated)]) {
     let interpreted = by_vm(&project);
     let compiled = by_compiler(&project, globals, case);
     assert_eq!(
@@ -731,43 +766,30 @@ fn the_rest_of_the_leaf_blocks_land_the_same() {
 }
 
 #[test]
-fn making_and_unmaking_actors_is_refused_rather_than_half_compiled() {
-    for (what, block) in [
-        ("a clone", K::CreateClone { of: String::new() }),
-        (
-            "a fresh actor",
-            K::CreateActor {
-                name: Value::text("Bullet"),
-                x: number(0.0),
-                y: number(0.0),
-                z: number(0.0),
-            },
-        ),
-        (
-            "a delete",
-            K::DeleteActor {
-                target: Value::text("myself"),
-            },
-        ),
-    ] {
-        let project = project_with_blocks(vec![vec![block]], Vec::new(), &[]);
-        assert!(
-            blockloom_core::codegen::compile(&project).is_err(),
-            "{what} should send the whole project back to the VM"
-        );
-    }
-
-    // And so is a strand a clone would start, since one program can't be run
-    // under a second actor id.
+fn every_actor_is_in_the_name_table_whether_it_has_blocks_or_not() {
+    // `delete` and `create a clone of` name an actor the way a block does, so
+    // one with an empty canvas still has to be findable by name.
     let mut project = project_with_blocks(
-        vec![vec![K::Say {
-            text: Value::text("hi"),
+        vec![vec![K::DeleteActor {
+            target: Value::text("Scenery"),
         }]],
         Vec::new(),
         &[],
     );
-    project.actors[0].graph.strands[0].instructions[0] = Instruction::new(K::WhenCloned);
-    assert!(blockloom_core::codegen::compile(&project).is_err());
+    let mut quiet = Actor::new(
+        "Scenery",
+        Visual::Rect {
+            color: "#000000".to_string(),
+            size: [1.0, 1.0],
+        },
+    );
+    quiet.id = "a2".to_string();
+    project.actors.push(quiet);
+
+    let source = blockloom_core::codegen::compile(&project).expect("this project compiles");
+    assert!(source.contains("(\"a2\", \"Scenery\")"), "{source}");
+    // And nothing was emitted for it: an actor with no steps has no strands.
+    assert!(!source.contains("fn actor_1("), "{source}");
 }
 
 fn body(kinds: Vec<K>) -> Vec<Instruction> {
@@ -1674,6 +1696,153 @@ fn a_call_frame_survives_the_wait_inside_it() {
                 K::Say { text: param("n") },
             ],
         )],
+        &[],
+    );
+}
+
+// ─── Actors that come and go ────────────────────────────────────────────────
+// A clone is the one place a compiled program runs one emitted function under
+// an id the document never had, so what matters here is that both halves make
+// the same actors, in the same order, and give them the same slices.
+
+fn say(text: &str) -> K {
+    K::Say {
+        text: Value::text(text),
+    }
+}
+
+fn clone_of(name: &str) -> K {
+    K::CreateClone {
+        of: name.to_string(),
+    }
+}
+
+fn delete(target: &str) -> K {
+    K::DeleteActor {
+        target: Value::text(target),
+    }
+}
+
+#[test]
+fn a_clone_runs_its_own_strand_under_its_own_id() {
+    assert_same_headed(
+        "clones",
+        vec![
+            (
+                K::WhenStarted,
+                vec![clone_of(""), clone_of(""), say("made them")],
+            ),
+            (
+                K::WhenCloned,
+                vec![say("I am new"), K::Move { steps: number(1.0) }],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_clone_of_a_clone_is_a_clone_of_the_same_authored_actor() {
+    assert_same_headed(
+        "clones-of-clones",
+        vec![
+            (K::WhenStarted, vec![clone_of("Player")]),
+            (
+                K::WhenCloned,
+                vec![
+                    say("copy"),
+                    K::Wait {
+                        duration: number(0.1),
+                    },
+                    K::StopAll,
+                ],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_clone_keeps_the_variables_its_template_had_and_counts_its_own() {
+    assert_same_headed(
+        "clone-variables",
+        vec![
+            (
+                K::WhenStarted,
+                vec![
+                    K::SetVariable {
+                        name: "hits".to_string(),
+                        value: number(7.0),
+                    },
+                    clone_of(""),
+                    K::ChangeVariable {
+                        name: "hits".to_string(),
+                        value: number(100.0),
+                    },
+                    say("template done"),
+                ],
+            ),
+            (
+                K::WhenCloned,
+                vec![
+                    K::ChangeVariable {
+                        name: "hits".to_string(),
+                        value: number(1.0),
+                    },
+                    K::Say {
+                        text: Value::Var {
+                            name: "hits".to_string(),
+                        },
+                    },
+                ],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn an_actor_made_mid_run_is_named_and_placed_the_same_way_by_both() {
+    assert_same(
+        "create-actor",
+        vec![
+            K::CreateActor {
+                name: Value::text("Bullet"),
+                x: number(3.0),
+                y: op("Add", vec![number(2.0), number(2.0)]),
+                z: number(0.0),
+            },
+            say("made one"),
+            delete("Bullet"),
+            say("and unmade it"),
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn deleting_myself_ends_the_strand_where_it_stands() {
+    assert_same_strands(
+        "delete-myself",
+        vec![
+            vec![say("bye"), delete(""), say("never said")],
+            vec![
+                K::Wait {
+                    duration: number(0.1),
+                },
+                say("the other strand went with it"),
+            ],
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn naming_nobody_is_reported_by_both_and_kills_neither() {
+    assert_same(
+        "no-such-actor",
+        vec![
+            delete("Nobody"),
+            clone_of("Nobody"),
+            say("carried on regardless"),
+        ],
         &[],
     );
 }

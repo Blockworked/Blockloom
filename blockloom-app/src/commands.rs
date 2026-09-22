@@ -703,7 +703,7 @@ fn check_parent(
     actor_id: &str,
     component: &ActorComponent,
 ) -> Result<(), String> {
-    let ActorComponent::Parent { parent } = component else {
+    let ActorComponent::Parent { parent, .. } = component else {
         return Ok(());
     };
     if parent.is_empty() {

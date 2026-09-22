@@ -179,6 +179,12 @@ impl Actor {
         self.components.parent()
     }
 
+    /// Where this actor stands in its parent's frame, if it was authored
+    /// that way rather than in world coordinates.
+    pub fn parent_offset(&self) -> Option<[f32; 3]> {
+        self.components.parent_offset()
+    }
+
     pub fn placement(&self) -> Placement {
         self.components.placement()
     }

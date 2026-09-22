@@ -212,6 +212,9 @@ pub struct Vm {
     /// Set by `stop all`, which invalidates the script list mid-tick.
     stopping: bool,
     depth: usize,
+    /// How many actors this run has made, which is where the next one's id
+    /// comes from.
+    made: usize,
 }
 
 impl Default for Vm {
@@ -238,6 +241,7 @@ impl Vm {
             now: 0.0,
             stopping: false,
             depth: 0,
+            made: 0,
         }
     }
 
@@ -252,6 +256,7 @@ impl Vm {
         self.scripts.clear();
         self.pending.clear();
         self.stopping = false;
+        self.made = 0;
         self.variables.load(project);
         for actor in &project.actors {
             self.programs
@@ -292,7 +297,7 @@ impl Vm {
 
     /// Registers a brand-new actor with no blocks and answers its id.
     pub fn create_actor(&mut self, name: &str) -> String {
-        let id = new_actor_id();
+        let id = self.new_actor_id();
         self.programs
             .insert(id.clone(), Rc::new(Program::default()));
         self.names.insert(id.clone(), name.to_string());
@@ -909,7 +914,7 @@ impl Vm {
     /// same compiled program, the same name, the same custom-block inputs,
     /// and a copy of the template's variables as they stand.
     fn register_clone(&mut self, template: &str) -> String {
-        let id = new_actor_id();
+        let id = self.new_actor_id();
         if let Some(program) = self.programs.get(template).map(Rc::clone) {
             self.programs.insert(id.clone(), program);
         }
@@ -943,6 +948,18 @@ impl Vm {
         if !self.deleted.iter().any(|gone| gone == actor) {
             self.deleted.push(actor.to_string());
         }
+    }
+
+    /// A runtime actor's id. Clones and created actors get one the moment
+    /// they are made, which is what everything else keys them by.
+    ///
+    /// Counted rather than random, so one run of a project makes the same
+    /// ids however it is scheduled - which is what lets `tests/codegen.rs`
+    /// hold a compiled program's clones against the VM's line for line. The
+    /// shape is one the editor never writes, so nothing authored collides.
+    fn new_actor_id(&mut self) -> String {
+        self.made += 1;
+        format!("~{}", self.made)
     }
 
     // ─── Variables ──────────────────────────────────────────────────────────
@@ -1099,12 +1116,6 @@ impl Vm {
             .map(|(name, arg)| (name.clone(), self.eval(arg, actor, params, out)))
             .collect()
     }
-}
-
-/// A runtime actor's id. Clones and created actors get one the moment they
-/// are made, which is what everything else keys them by.
-fn new_actor_id() -> String {
-    uuid::Uuid::new_v4().simple().to_string()
 }
 
 /// The parameters bound by the innermost custom-block call, if any.

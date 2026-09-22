@@ -130,19 +130,20 @@ fn an_actions_slots_become_expressions_in_its_own_line() {
     })]);
     let source = compile(&project).expect("actions compile");
 
-    assert!(source.contains("const ME: &str = \"a1\";"), "{source}");
+    assert!(source.contains("let me = Rc::clone(&s.me);"), "{source}");
+    assert!(source.contains("(\"a1\", \"Player\")"), "{source}");
     // The variable is read first, the way `resolve` reads it, and the slot is
     // worked out into a local before it is handed over: reading it wants the
     // host and so does the act, and one expression can't have both.
     assert!(
         source.contains(
-            "let slot = { let v0 = h.variable(ME, \"speed\"); \
-             let v = add(Ok(Val::Num(2.0f64)), Ok(v0)); number(h, ME, v) };"
+            "let slot = { let v0 = h.variable(&me, \"speed\"); \
+             let v = add(Ok(Val::Num(2.0f64)), Ok(v0)); number(h, &me, v) };"
         ),
         "{source}"
     );
     assert!(
-        source.contains("h.act(ME, Act::ChangePosition { axis: 1, by: slot });"),
+        source.contains("h.act(&me, Act::ChangePosition { axis: 1, by: slot });"),
         "{source}"
     );
 }
@@ -162,7 +163,7 @@ fn an_actors_canvas_becomes_a_function_the_entry_table_points_at() {
         "{source}"
     );
     assert!(
-        source.contains("fn actor_0(h: &mut dyn Host, s: &mut State)"),
+        source.contains("fn actor_0(h: &mut dyn Host, s: &mut State, actors: &mut Actors)"),
         "{source}"
     );
     assert!(source.contains("if !s.resume()"), "{source}");
@@ -209,13 +210,16 @@ fn the_world_and_the_clock_are_asked_of_the_host() {
     assert!(
         source.contains(
             "{ let a = vec![Ok(Val::Text(\"space\".to_string()))]; \
-             sense(h, ME, \"KeyDown\", a) }"
+             sense(h, &me, \"KeyDown\", a) }"
         ),
         "{source}"
     );
     // Random isn't a sensing block, but it reads something outside the
     // program all the same, so it goes the same way.
-    assert!(source.contains("sense(h, ME, \"Random\", a) }"), "{source}");
+    assert!(
+        source.contains("sense(h, &me, \"Random\", a) }"),
+        "{source}"
+    );
 }
 
 #[test]
@@ -233,11 +237,11 @@ fn a_variable_write_goes_through_the_host_rather_than_an_act() {
     let source = compile(&project).expect("variables compile");
 
     assert!(
-        source.contains("h.set_variable(ME, \"score\", value);"),
+        source.contains("h.set_variable(&me, \"score\", value);"),
         "{source}"
     );
     assert!(
-        source.contains("h.variable(ME, \"score\").as_number().unwrap_or(0.0)"),
+        source.contains("h.variable(&me, \"score\").as_number().unwrap_or(0.0)"),
         "{source}"
     );
 }
@@ -278,11 +282,21 @@ fn a_loop_gives_the_frame_back_at_its_back_edge() {
         source.contains("            2 => {\n                s.pc = 0;\n                return;"),
         "{source}"
     );
-    // And nothing else in it does, or a `forever` would hang the game.
+    // And nothing else in it does, or a `forever` would hang the game. The
+    // other three are the resume guard, the fall off the end, and the arm
+    // that runs off the step list.
     let actor = source
-        .split("#[unsafe(no_mangle)]")
-        .next()
-        .expect("the actor source comes before the ABI exports");
+        .split("fn actor_0")
+        .nth(1)
+        .and_then(|rest| {
+            rest.split(
+                "
+}
+",
+            )
+            .next()
+        })
+        .expect("the emitted function");
     assert_eq!(actor.matches("return;").count(), 4, "{source}");
 }
 
@@ -402,10 +416,13 @@ fn a_reporter_call_is_a_function_with_a_depth_guard() {
     );
     // A strand is always at the top, so the guard reads against nothing yet.
     assert!(
-        source.contains("if 0 >= MAX_REPORTER_DEPTH { too_deep(h, ME) }"),
+        source.contains("if 0 >= MAX_REPORTER_DEPTH { too_deep(h, &me) }"),
         "{source}"
     );
-    assert!(source.contains("reporter_0(h, s, 2, 0 + 1,"), "{source}");
+    assert!(
+        source.contains("reporter_0(h, s, actors, 2, 0 + 1,"),
+        "{source}"
+    );
     // Nothing suspends in there, and the budget is what ends a runaway one.
     assert!(source.contains("let mut budget = STEP_BUDGET;"), "{source}");
 }
@@ -471,7 +488,7 @@ fn everything_resolve_touches_happens_before_the_operators_do() {
     // The read is hoisted out of the closure; only the operator is deferred.
     assert!(
         source.contains(
-            "let v0 = h.variable(ME, \"score\"); let v = and(Ok(Val::Bool(false)), || Ok(v0));"
+            "let v0 = h.variable(&me, \"score\"); let v = and(Ok(Val::Bool(false)), || Ok(v0));"
         ),
         "{source}"
     );
@@ -483,4 +500,60 @@ fn a_float_slot_survives_the_round_trip_through_source() {
     assert_eq!(float(-2.0), "-2.0f64");
     assert_eq!(float(f64::INFINITY), "f64::INFINITY");
     assert!(float(f64::NAN).contains("NAN"));
+}
+
+#[test]
+fn a_clone_trigger_is_an_entry_like_any_other() {
+    let mut project = started(vec![Instruction::new(K::CreateClone { of: String::new() })]);
+    project.actors[0]
+        .graph
+        .strands
+        .push(Strand::with_instructions(
+            0,
+            400,
+            vec![
+                Instruction::new(K::WhenCloned),
+                Instruction::new(K::Move {
+                    steps: Value::number(1.0),
+                }),
+            ],
+        ));
+    let source = compile(&project).expect("clones compile");
+
+    assert!(source.contains("trigger: \"Cloned\""), "{source}");
+    // The copy is the program's own to name and to schedule; the host is
+    // handed the entity and nothing else.
+    assert!(
+        source.contains("let clone = actors.clone_of(&template);"),
+        "{source}"
+    );
+    assert!(
+        source.contains("h.act(&me, Act::CreateClone { of: template.to_string()"),
+        "{source}"
+    );
+}
+
+#[test]
+fn a_delete_ends_the_strand_that_asked_where_it_stands() {
+    let project = started(vec![
+        Instruction::new(K::DeleteActor {
+            target: Value::text("myself"),
+        }),
+        Instruction::new(K::Say {
+            text: Value::text("never"),
+        }),
+    ]);
+    let source = compile(&project).expect("a delete compiles");
+
+    assert!(source.contains("actors.remove(&gone);"), "{source}");
+    // Checked after the act, as the VM checks it, and the `say` after it is
+    // in the same arm - so the guard has to end the arm itself.
+    assert!(source.contains("if actors.is_gone(&me) {"), "{source}");
+
+    // A project that never deletes pays nothing for the check.
+    let quiet = started(vec![Instruction::new(K::Say {
+        text: Value::text("hello"),
+    })]);
+    let source = compile(&quiet).expect("a say compiles");
+    assert!(!source.contains("if actors.is_gone(&me) {"), "{source}");
 }

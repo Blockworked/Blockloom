@@ -2,9 +2,10 @@
 
 use blockloom_core::codegen::{
     self, ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH,
-    ACT_BROADCAST, ACT_CHANGE_POSITION, ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_MOVE,
-    ACT_POINT_TOWARDS, ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY,
-    ACT_SET_FIELD, ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_PARENT, ACT_SET_ROTATION, ACT_SET_SCALE,
+    ACT_BROADCAST, ACT_CHANGE_POSITION, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR,
+    ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_MOVE, ACT_POINT_TOWARDS, ACT_SAY,
+    ACT_SET_BODY, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD,
+    ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_PARENT, ACT_SET_ROTATION, ACT_SET_SCALE,
     ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_TURN, AbiStr, AbiValue, LOGIC_ABI_VERSION, LogicHostApi,
     READ_SENSE, READ_VARIABLE, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW,
     SYM_LOGIC_RESET, SYM_LOGIC_TICK, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER,
@@ -109,11 +110,29 @@ impl LoadedLogic {
                     .unwrap_or("");
                 self.fire_raw("Collision", &actor, &with, other_name);
             }
-            // A compiled program has one state per authored strand and no way
-            // to run one under a second actor id, so `codegen` refuses a
-            // project with clones in it and this can't arrive.
+            // The program makes its own clones and starts their strands
+            // itself, so nothing outside it queues one. A script's clone
+            // comes through `cloned` below instead.
             Event::Cloned { .. } => {}
         }
+    }
+
+    /// Hands over a clone something outside the program made - a script's -
+    /// so the copy's `when I start as a clone` strands run too.
+    pub fn cloned(&mut self, clone: &str, template: &str) {
+        self.fire_raw("Cloned", clone, template, "");
+    }
+
+    /// The same for an actor the program never had, so a block can still name
+    /// it. It has no blocks of its own, so nothing is scheduled for it.
+    pub fn created(&mut self, actor: &str, name: &str) {
+        self.fire_raw("Created", actor, name, "");
+    }
+
+    /// Takes an actor out of the run: its strands stop, as they do when a
+    /// block deletes it.
+    pub fn deleted(&mut self, actor: &str) {
+        self.fire_raw("Deleted", actor, "", "");
     }
 
     fn fire_raw(&mut self, kind: &str, actor: &str, detail: &str, other_name: &str) {
@@ -373,6 +392,31 @@ extern "C" fn act(
             actor,
             parent: a.trim().to_string(),
         },
+        // The program has already given the copy an id and its own strands;
+        // the entity is all that is left, and that is the host's. The
+        // variables are copied here rather than when the effect lands,
+        // because the VM copies them the moment the block runs.
+        ACT_CREATE_CLONE => {
+            context.variables.copy_actor(a, b);
+            Effect::CreateClone {
+                actor,
+                clone: b.to_string(),
+                of: a.to_string(),
+            }
+        }
+        ACT_CREATE_ACTOR => Effect::CreateActor {
+            actor,
+            id: a.to_string(),
+            name: b.to_string(),
+            position: vector,
+        },
+        // About the actor it takes out of the run, not the one that asked.
+        ACT_DELETE_ACTOR => {
+            context.variables.forget_actor(a);
+            Effect::DeleteActor {
+                actor: a.to_string(),
+            }
+        }
         ACT_BROADCAST => {
             context.messages.push(a.to_string());
             return;
@@ -485,6 +529,97 @@ mod tests {
             }]
         );
         assert_eq!(variables.read("a1", "distance"), Evaluated::Number(9.0));
+        drop(logic);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_clone_runs_its_own_strand_under_its_own_id_through_the_boundary() {
+        if blockloom_core::script::toolchain_version().is_err() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!(
+            "blockloom-native-clone-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let mut project = Project::starter("Native clones", Mode::TwoD);
+        project.actors.clear();
+        let mut actor = Actor::new(
+            "Player",
+            Visual::Circle {
+                color: "#fff".to_string(),
+                radius: 10.0,
+            },
+        );
+        actor.id = "a1".to_string();
+        // The template counts to 5, clones itself, and the copy counts one
+        // more onto the number it inherited.
+        actor.graph.strands.push(Strand::with_instructions(
+            0,
+            0,
+            vec![
+                Instruction::new(K::WhenStarted),
+                Instruction::new(K::SetVariable {
+                    name: "hits".to_string(),
+                    value: Value::number(5.0),
+                }),
+                Instruction::new(K::CreateClone { of: String::new() }),
+            ],
+        ));
+        actor.graph.strands.push(Strand::with_instructions(
+            0,
+            400,
+            vec![
+                Instruction::new(K::WhenCloned),
+                Instruction::new(K::ChangeVariable {
+                    name: "hits".to_string(),
+                    value: Value::number(1.0),
+                }),
+                Instruction::new(K::Move {
+                    steps: Value::Var {
+                        name: "hits".to_string(),
+                    },
+                }),
+            ],
+        ));
+        project.actors.push(actor);
+
+        codegen::compile_for(&project, &root, None).unwrap();
+        let variables = Variables::default();
+        variables.load(&project);
+        let mut logic = LoadedLogic::load(&root).unwrap();
+        logic.fire(Event::Started, &project);
+
+        let mut effects = Vec::new();
+        let mut messages = Vec::new();
+        logic.tick(0.0, variables.clone(), &mut effects, &mut messages);
+        let clone = match effects.as_slice() {
+            [Effect::CreateClone { actor, clone, of }] => {
+                assert_eq!(actor, "a1");
+                assert_eq!(of, "a1");
+                clone.clone()
+            }
+            other => panic!("expected one clone, got {other:?}"),
+        };
+
+        // The copy's own strand runs on the next tick, not this one.
+        effects.clear();
+        logic.tick(1.0 / 60.0, variables.clone(), &mut effects, &mut messages);
+        assert_eq!(
+            effects,
+            vec![Effect::Move {
+                actor: clone.clone(),
+                steps: 6.0,
+            }],
+            "the clone started from its template's 5 and counted its own one on"
+        );
+        assert_eq!(variables.read("a1", "hits"), Evaluated::Number(5.0));
+        assert_eq!(variables.read(&clone, "hits"), Evaluated::Number(6.0));
+
         drop(logic);
         let _ = std::fs::remove_dir_all(root);
     }

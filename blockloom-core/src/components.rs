@@ -46,10 +46,18 @@ pub enum ActorComponent {
     /// library the runtime loads and ticks. `path` is relative to the project
     /// folder - see [`crate::script`].
     Script { path: String },
-    /// Hangs this actor off another one: it keeps its own world position,
-    /// and every move the parent makes is made to it too. `parent` is the
-    /// other actor's id.
-    Parent { parent: String },
+    /// Hangs this actor off another one: every move the parent makes is
+    /// made to it too. `parent` is the other actor's id.
+    ///
+    /// `offset` is where the child stands in its parent's frame. `None` -
+    /// which is what a document written before offsets says, and what `set
+    /// my parent to` leaves - means the child keeps the world position its
+    /// `Place` gives it.
+    Parent {
+        parent: String,
+        #[serde(default)]
+        offset: Option<[f32; 3]>,
+    },
     /// A named set of values this project invented, readable and writable
     /// from blocks.
     Custom {
@@ -305,21 +313,42 @@ impl Components {
     /// The actor this one hangs off, by id, if any.
     pub fn parent(&self) -> Option<&str> {
         match self.get("Parent") {
-            Some(ActorComponent::Parent { parent }) if !parent.is_empty() => Some(parent),
+            Some(ActorComponent::Parent { parent, .. }) if !parent.is_empty() => Some(parent),
+            _ => None,
+        }
+    }
+
+    /// Where this actor stands in its parent's frame, if it was authored
+    /// that way. Nothing reads it without a parent to read it against.
+    pub fn parent_offset(&self) -> Option<[f32; 3]> {
+        match self.get("Parent") {
+            Some(ActorComponent::Parent { parent, offset }) if !parent.is_empty() => *offset,
             _ => None,
         }
     }
 
     /// Hangs the actor off `parent`, or takes it off whatever it was on when
-    /// `parent` is empty.
+    /// `parent` is empty. An offset already authored stays: it is about where
+    /// the child stands, not about which actor it hangs off.
     pub fn set_parent(&mut self, parent: &str) {
         if parent.is_empty() {
             self.remove("Parent");
             return;
         }
+        let offset = self.parent_offset();
         self.insert(ActorComponent::Parent {
             parent: parent.to_string(),
+            offset,
         });
+    }
+
+    /// Places the actor in its parent's frame, or puts it back in world
+    /// coordinates with `None`. Silent without a parent to stand against.
+    pub fn set_parent_offset(&mut self, offset: Option<[f32; 3]>) {
+        let Some(parent) = self.parent().map(str::to_string) else {
+            return;
+        };
+        self.insert(ActorComponent::Parent { parent, offset });
     }
 
     // ─── Custom components ─────────────────────────────────────────────────

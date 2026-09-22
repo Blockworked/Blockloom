@@ -171,6 +171,40 @@ function parentOf(component: ActorComponentDto): string {
   return component.component === 'Parent' ? component.parent : '';
 }
 
+function offsetOf(component: ActorComponentDto): [number, number, number] | null {
+  return component.component === 'Parent' ? (component.offset ?? null) : null;
+}
+
+/** Writes the whole component back: an id, an offset, or both. */
+function writeParent(component: ActorComponentDto, next: Partial<{ parent: string; offset: [number, number, number] | null }>) {
+  write('Parent', {
+    component: 'Parent',
+    parent: next.parent ?? parentOf(component),
+    offset: 'offset' in next ? (next.offset ?? null) : offsetOf(component),
+  });
+}
+
+function writeOffset(component: ActorComponentDto, axis: number, value: number) {
+  const offset: [number, number, number] = [...(offsetOf(component) ?? [0, 0, 0])];
+  offset[axis] = value;
+  writeParent(component, { offset });
+}
+
+/** Turning this on measures the offset from where the two actors stand now,
+ * so the actor doesn't move the moment it starts being placed by its parent. */
+function toggleOffset(component: ActorComponentDto, on: boolean) {
+  if (!on) {
+    writeParent(component, { offset: null });
+    return;
+  }
+  const parent = state.project?.actors.find(candidate => candidate.id === parentOf(component));
+  const mine = actorPlacement(actor.value)?.position ?? [0, 0, 0];
+  const theirs = actorPlacement(parent ?? null)?.position ?? [0, 0, 0];
+  writeParent(component, {
+    offset: [mine[0] - theirs[0], mine[1] - theirs[1], mine[2] - theirs[2]],
+  });
+}
+
 /** Every other actor, as a parent to hang this one off. Stored by id so a
  * rename doesn't break the link; "nothing" clears it. */
 const parentOptions = computed(() => [
@@ -395,7 +429,7 @@ function blankComponent(name: ComponentName): ActorComponentDto | null {
         camera: { view: 'ThirdPerson', offset: [0, 0.6, 0], distance: 6, pitch: 15 },
       };
     case 'Parent':
-      return { component: 'Parent', parent: '' };
+      return { component: 'Parent', parent: '', offset: null };
     case 'Custom':
       return {
         component: 'Custom',
@@ -561,11 +595,30 @@ function remove(name: string) {
               :options="parentOptions"
               :model-value="parentOf(component)"
               placeholder="nothing"
-              @update:model-value="id => write('Parent', { component: 'Parent', parent: id })"
+              @update:model-value="id => writeParent(component, { parent: id })"
             />
           </div>
+          <div class="panel-row" v-if="parentOf(component)">
+            <label>Placed by it</label>
+            <SwitchControl
+              :model-value="offsetOf(component) !== null"
+              @update:model-value="on => toggleOffset(component, on)"
+            />
+          </div>
+          <div class="panel-row triple" v-if="offsetOf(component)">
+            <label>Offset</label>
+            <input type="number" step="any" :value="offsetOf(component)![0]" @change="e => writeOffset(component, 0, num(e, 0))">
+            <input type="number" step="any" :value="offsetOf(component)![1]" @change="e => writeOffset(component, 1, num(e, 0))">
+            <input v-if="mode === 'ThreeD'" type="number" step="any" :value="offsetOf(component)![2]" @change="e => writeOffset(component, 2, num(e, 0))">
+          </div>
           <p class="panel-note">
-            This actor keeps its own place, and every move its parent makes is made to it too.
+            <template v-if="offsetOf(component)">
+              This actor starts that far from its parent, in the parent's own frame, and every move
+              the parent makes is made to it too.
+            </template>
+            <template v-else>
+              This actor keeps its own place, and every move its parent makes is made to it too.
+            </template>
           </p>
         </template>
 
