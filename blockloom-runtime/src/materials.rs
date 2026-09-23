@@ -33,15 +33,15 @@ use bevy::sprite_render::{
 use blockloom_core::material::{GraphEffect, SurfaceMaterial, TileMesh};
 use std::path::Path;
 
-/// Register the graph materials, the tilemap material, and their embedded
-/// shaders. Every dimension registers all three: systems take their asset
-/// stores unconditionally, and an unused plugin costs nothing at runtime.
+/// Register the graph materials and their embedded shaders. Every dimension
+/// registers both: systems take their asset stores unconditionally, and an
+/// unused plugin costs nothing at runtime. The tilemap material
+/// (`ColorMaterial`) comes from `DefaultPlugins`.
 pub fn register(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/graph_2d.wgsl");
     bevy::asset::embedded_asset!(app, "shaders/graph_3d.wgsl");
     app.add_plugins(Material2dPlugin::<GraphMaterial2d>::default());
     app.add_plugins(MaterialPlugin::<GraphMaterial3d>::default());
-    app.add_plugins(bevy::sprite_render::ColorMaterialPlugin);
 }
 
 /// One custom-shaded 2D actor: tint and second color, effect params, and the

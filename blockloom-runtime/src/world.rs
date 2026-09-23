@@ -911,7 +911,8 @@ pub fn publish_sensors(
     // Pressed/released are edges against last frame's held.
     let mut actions: HashMap<String, ActionSense> = HashMap::new();
     let mut fired_actions: Vec<String> = Vec::new();
-    for action in &engine.project.world.input.actions {
+    let action_defs = engine.project.world.input.actions.clone();
+    for action in &action_defs {
         let bindings = engine
             .input_overrides
             .get(&action.name.to_lowercase())
@@ -947,9 +948,17 @@ pub fn publish_sensors(
         }
     }
     // Remapped-away actions leave no stale edge behind.
+    let valid_actions: HashSet<String> = engine
+        .project
+        .world
+        .input
+        .actions
+        .iter()
+        .map(|action| action.name.to_lowercase())
+        .collect();
     engine
         .prev_action_held
-        .retain(|name, _| engine.project.world.input.find(name).is_some());
+        .retain(|name, _| valid_actions.contains(name));
 
     // Touches in world units, press order. Unfocused windows read none, the
     // same gate the pointer delta keeps.
@@ -2699,15 +2708,17 @@ pub fn apply_input_effects(mut engine: NonSendMut<Engine>, effects: Res<PendingE
                 match blockloom_core::input::parse_binding(binding) {
                     Some(parsed) => {
                         let key = found.to_lowercase();
-                        let entry = engine.input_overrides.entry(key).or_insert_with(|| {
-                            engine
+                        if !engine.input_overrides.contains_key(&key) {
+                            let defaults = engine
                                 .project
                                 .world
                                 .input
                                 .find(&found)
                                 .map(|found| found.bindings.clone())
-                                .unwrap_or_default()
-                        });
+                                .unwrap_or_default();
+                            engine.input_overrides.insert(key.clone(), defaults);
+                        }
+                        let entry = engine.input_overrides.entry(key).or_default();
                         let text = parsed.text();
                         if !entry.iter().any(|held| held.text() == text) {
                             entry.push(parsed);
