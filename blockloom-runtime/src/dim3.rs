@@ -5,6 +5,7 @@ use crate::engine::{Engine, PendingEffects, PhysicsPose, PrevPose};
 use bevy::ecs::system::EntityCommands;
 use bevy::pbr::ScreenSpaceAmbientOcclusion;
 use bevy::prelude::*;
+use bevy::render::view::Msaa;
 use bevy_rapier3d::prelude as rp;
 use blockloom_core::project::Actor;
 use blockloom_core::scene::{BodyKind, Visual};
@@ -465,7 +466,9 @@ pub fn spawn_scenery(
         crate::world::WorldCamera,
     ));
     if lighting.ao_enabled {
-        camera_entity.insert(ScreenSpaceAmbientOcclusion::default());
+        // SSAO needs multisampling off on the same camera, or `bevy_pbr`
+        // logs a mismatch error and skips the effect.
+        camera_entity.insert((ScreenSpaceAmbientOcclusion::default(), Msaa::Off));
     }
     // A zero direction has nowhere to point, so fall back to straight down.
     let dir = lighting.light_direction;
