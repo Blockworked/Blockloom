@@ -3,7 +3,7 @@
 // project settings, and the run controls.
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useTheme } from 'blockstitch';
-import { Download, LayoutGrid, Moon, MonitorX, Package, Pause, Play, Redo2, Save, Settings, Square, Sun, Undo2, Upload } from 'lucide-vue-next';
+import { Download, LayoutGrid, Moon, MonitorX, Package, Pause, Play, Redo2, Save, Settings, Square, StepForward, Sun, Undo2, Upload } from 'lucide-vue-next';
 import { state } from '../store';
 import {
   closeProject,
@@ -17,6 +17,7 @@ import {
   runProject,
   saveProject,
   setProjectName,
+  stepProject,
   stopProject,
   undo,
 } from '../tauri';
@@ -116,6 +117,14 @@ async function report(action: () => Promise<void>) {
     >
       <Play v-if="state.paused" />
       <Pause v-else />
+    </button>
+    <button
+      v-if="state.running && state.paused"
+      class="icon-button"
+      title="Advance one tick"
+      @click="report(stepProject)"
+    >
+      <StepForward />
     </button>
     <button
       class="run-button"

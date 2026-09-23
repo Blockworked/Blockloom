@@ -27,6 +27,7 @@ mod logic;
 mod materials;
 mod overlay;
 mod player;
+mod preview;
 mod script;
 mod sound;
 mod ui;
@@ -75,6 +76,10 @@ fn main() {
     .init_resource::<ui::UiManager>()
     .init_resource::<sound::SoundState>()
     .init_resource::<fx::FxCache>()
+    .init_resource::<preview::PreviewState>()
+    .init_resource::<preview::PreviewPointer>()
+    .init_resource::<preview::PreviewButtons>()
+    .init_resource::<preview::PreviewKeys>()
     .insert_non_send(launch.into_engine());
     // Custom shader materials plus the tilemap material. Every dimension
     // registers all three, so systems can take their asset stores
@@ -129,6 +134,7 @@ fn main() {
                         world::apply_rumble,
                         world::apply_cursor_lock,
                         world::clear_effects,
+                        world::finish_step,
                     )
                         .chain()
                         .in_set(world::SimulationSet),
@@ -141,6 +147,8 @@ fn main() {
                     Update,
                     (
                         world::pump_editor,
+                        preview::apply_preview_resize,
+                        preview::drain_preview_inputs,
                         fx::despawn_fx,
                         world::rebuild_world,
                         dim2::relay_collisions,
@@ -153,6 +161,7 @@ fn main() {
                         world::interpolate_poses,
                         world::drive_camera,
                         overlay::update_speech_bubbles,
+                        preview::capture_preview_frame,
                         world::report_status.run_if(bridge::editor_attached),
                         overlay::update_status.run_if(bridge::editor_attached),
                     )
@@ -207,6 +216,7 @@ fn main() {
                         world::apply_rumble,
                         world::apply_cursor_lock,
                         world::clear_effects,
+                        world::finish_step,
                     )
                         .chain()
                         .in_set(world::SimulationSet),
@@ -219,6 +229,8 @@ fn main() {
                     Update,
                     (
                         world::pump_editor,
+                        preview::apply_preview_resize,
+                        preview::drain_preview_inputs,
                         fx::despawn_fx,
                         world::rebuild_world,
                         dim3::relay_collisions,
@@ -231,6 +243,7 @@ fn main() {
                         world::interpolate_poses,
                         world::drive_camera,
                         overlay::update_speech_bubbles,
+                        preview::capture_preview_frame,
                         world::report_status.run_if(bridge::editor_attached),
                         overlay::update_status.run_if(bridge::editor_attached),
                     )

@@ -17,6 +17,7 @@ polyanya.workspace = true
 bevy = { workspace = true, features = ["wav", "mp3", "flac"] }
 bevy_rapier2d.workspace = true
 bevy_rapier3d.workspace = true
+image.workspace = true
 libloading.workspace = true
 serde.workspace = true
 serde_json.workspace = true

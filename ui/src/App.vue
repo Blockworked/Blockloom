@@ -12,6 +12,7 @@ import ActorList from './components/ActorList.vue';
 import BlockSidebar from './components/BlockSidebar.vue';
 import InspectorPanel from './components/InspectorPanel.vue';
 import AssetTray from './components/AssetTray.vue';
+import PreviewPanel from './components/PreviewPanel.vue';
 import RunLog from './components/RunLog.vue';
 import ContextMenu from './components/ContextMenu.vue';
 
@@ -90,6 +91,7 @@ async function onKeydown(e: KeyboardEvent) {
     <div class="editor-body">
       <ActorList />
       <div class="editor-middle">
+        <PreviewPanel />
         <div class="editor-content-area">
           <BlockSidebar />
           <Canvas>

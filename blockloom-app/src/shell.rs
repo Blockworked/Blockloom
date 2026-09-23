@@ -728,6 +728,53 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "step-project",
+        cmd: "step_project",
+        aliases: &["step_project", "step"],
+        summary: "Advance a paused run by one fixed tick.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "set-preview-enabled",
+        cmd: "set_preview_enabled",
+        aliases: &["set_preview_enabled", "preview"],
+        summary: "Turn the embedded preview sidecar on or off.",
+        args: &[ArgSpec {
+            name: "enabled",
+            ty: "bool",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-preview-size",
+        cmd: "set_preview_size",
+        aliases: &["set_preview_size", "preview-size"],
+        summary: "Ask the preview stream to follow width x height.",
+        args: &[
+            ArgSpec {
+                name: "width",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "height",
+                ty: "number",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "preview-input",
+        cmd: "preview_input",
+        aliases: &["preview_input"],
+        summary: "Forward one viewport input event to the run.",
+        args: &[ArgSpec {
+            name: "input",
+            ty: "object {\"kind\": ...}",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "close-runtime",
         cmd: "close_runtime",
         aliases: &["close_runtime"],

@@ -73,6 +73,10 @@ impl Backend {
             paused: false,
             status: None,
             log: Vec::new(),
+            preview_enabled: false,
+            preview_port: None,
+            preview_width: 480,
+            preview_height: 270,
         };
         Backend {
             state: Arc::new(Mutex::new(state)),

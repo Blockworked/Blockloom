@@ -312,7 +312,11 @@ pub fn apply_effects(
             // strafe is spelled) turned while the move reads its facing;
             // turning in the common pass would net the sandwich to zero
             // first, walking both strafe keys forward.
-            Effect::Turn { actor, axis, degrees } => {
+            Effect::Turn {
+                actor,
+                axis,
+                degrees,
+            } => {
                 let Some(entity) = engine.entities.get(actor) else {
                     continue;
                 };
@@ -342,7 +346,9 @@ pub fn apply_effects(
                 };
                 let forward =
                     crate::world::forward_of(&transform, blockloom_core::scene::Mode::ThreeD);
-                let walk = walks.entry(actor.clone()).or_insert((Vec3::ZERO, [false; 3]));
+                let walk = walks
+                    .entry(actor.clone())
+                    .or_insert((Vec3::ZERO, [false; 3]));
                 for axis in 0..3 {
                     let part = forward[axis] * *steps;
                     walk.0[axis] += part;

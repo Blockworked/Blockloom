@@ -206,7 +206,25 @@ export const pickFiles = (title: string) => invoke<string[] | null>('pick_files'
 export const runProject = () => invoke<void>('run_project');
 export const stopProject = () => invoke<void>('stop_project');
 export const pauseProject = (paused: boolean) => invoke<void>('pause_project', { paused });
+export const stepProject = () => invoke<void>('step_project');
 export const closeRuntime = () => invoke<void>('close_runtime');
+
+// ─── Embedded preview ───────────────────────────────────────────────────────
+// The viewport reads MJPEG straight from the runtime's loopback sidecar
+// (`http://127.0.0.1:{port}/preview.mjpg`), so frames never cross invoke.
+// These commands only switch the sidecar, resize the stream and forward
+// input; the port arrives on state as `preview_port`.
+export const setPreviewEnabled = (enabled: boolean) =>
+  invoke<void>('set_preview_enabled', { enabled });
+export const setPreviewSize = (width: number, height: number) =>
+  invoke<void>('set_preview_size', { width, height });
+export type PreviewInputDto =
+  | { kind: 'mouse_move'; x: number; y: number; w: number; h: number }
+  | { kind: 'mouse_button'; button: number; down: boolean; x: number; y: number; w: number; h: number }
+  | { kind: 'key'; code: string; down: boolean }
+  | { kind: 'text'; text: string };
+export const previewInput = (input: PreviewInputDto) =>
+  invoke<void>('preview_input', { input });
 
 // ─── Instructions ───────────────────────────────────────────────────────────
 export const addInstruction = (strandId: string, path: InstrPath, instruction: InstructionDto) =>

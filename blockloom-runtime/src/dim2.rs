@@ -356,7 +356,11 @@ pub fn apply_effects(
             // A dynamic body's turns land here rather than in
             // `world::apply_common`, in effect order with the deferred
             // `move` below - same sandwich reasoning as `dim3`.
-            Effect::Turn { actor, axis, degrees } => {
+            Effect::Turn {
+                actor,
+                axis,
+                degrees,
+            } => {
                 // Only Z is a rotation in 2D; X and Y stay ignored, exactly
                 // as `world::apply_common` treats them.
                 if axis.index() != 2 {
@@ -390,7 +394,9 @@ pub fn apply_effects(
                 };
                 let forward =
                     crate::world::forward_of(&transform, blockloom_core::scene::Mode::TwoD);
-                let walk = walks.entry(actor.clone()).or_insert((Vec3::ZERO, [false; 3]));
+                let walk = walks
+                    .entry(actor.clone())
+                    .or_insert((Vec3::ZERO, [false; 3]));
                 for axis in 0..2 {
                     let part = forward.truncate()[axis] * *steps;
                     walk.0[axis] += part;

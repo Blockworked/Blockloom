@@ -42,6 +42,13 @@ pub(crate) struct AppState {
     /// The last status the runtime reported.
     pub(crate) status: Option<blockloom_protocol::Status>,
     pub(crate) log: Vec<LogLine>,
+    /// Whether the embedded preview viewport wants the sidecar stream.
+    pub(crate) preview_enabled: bool,
+    /// The sidecar's loopback port, while it is serving.
+    pub(crate) preview_port: Option<u16>,
+    /// The size the viewport asked the stream to follow.
+    pub(crate) preview_width: u32,
+    pub(crate) preview_height: u32,
 }
 
 impl AppState {
@@ -112,6 +119,14 @@ pub(crate) struct StateDto {
     /// Whether a game window is open at all - it outlives a run, so Play is
     /// instant the second time.
     pub(crate) runtime_open: bool,
+    /// Whether the embedded preview viewport wants the sidecar stream.
+    pub(crate) preview_enabled: bool,
+    /// The sidecar's loopback port, while it is serving. The viewport reads
+    /// `http://127.0.0.1:{port}/preview.mjpg` directly.
+    pub(crate) preview_port: Option<u16>,
+    /// The size the viewport asked the stream to follow.
+    pub(crate) preview_width: u32,
+    pub(crate) preview_height: u32,
 }
 
 /// One Dashboard card.
@@ -172,5 +187,9 @@ pub(crate) fn state_dto(s: &AppState) -> StateDto {
         log: s.log.clone(),
         runtime_available: blockloom_protocol::runtime_path().exists(),
         runtime_open: s.runtime.is_some(),
+        preview_enabled: s.preview_enabled,
+        preview_port: s.preview_port,
+        preview_width: s.preview_width,
+        preview_height: s.preview_height,
     }
 }

@@ -146,6 +146,12 @@ impl Backend {
                 s.running = false;
                 s.paused = false;
             }
+            RuntimeMessage::PreviewReady { port } => {
+                s.preview_port = Some(port);
+            }
+            RuntimeMessage::PreviewStopped => {
+                s.preview_port = None;
+            }
             RuntimeMessage::Fatal { message } => {
                 s.running = false;
                 s.push_log(LogLine {
@@ -176,6 +182,7 @@ impl Backend {
         s.paused = false;
         s.status = None;
         s.runtime = None;
+        s.preview_port = None;
         let dto = crate::state::state_dto(&s);
         drop(s);
         self.app.send(Event::RuntimeClosed);

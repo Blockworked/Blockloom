@@ -398,6 +398,8 @@ fn close_open_project(s: &mut AppState, save: bool) {
     s.running = false;
     s.paused = false;
     s.status = None;
+    s.preview_enabled = false;
+    s.preview_port = None;
     s.log.clear();
 }
 
@@ -448,6 +450,19 @@ pub(crate) fn set_mode(
                             || runtime
                                 .send(&blockloom_protocol::EditorMessage::Pause { paused: true })));
                 if loaded && started {
+                    if s.preview_enabled {
+                        let (width, height) = (s.preview_width, s.preview_height);
+                        if runtime
+                            .send(&blockloom_protocol::EditorMessage::Preview { enabled: true })
+                        {
+                            runtime.send(&blockloom_protocol::EditorMessage::PreviewResize {
+                                width,
+                                height,
+                            });
+                        } else {
+                            s.preview_port = None;
+                        }
+                    }
                     s.runtime = Some(runtime);
                 } else {
                     restart_error = Some("Lost the connection to the game runtime".to_string());
@@ -1046,6 +1061,16 @@ pub(crate) fn run_project(
         s.runtime = None;
         return Err("Lost the connection to the game runtime".to_string());
     }
+    // The sidecar belongs to the process, so a fresh runtime re-enables it.
+    if s.preview_enabled {
+        let (width, height) = (s.preview_width, s.preview_height);
+        let runtime = s.runtime.as_mut().expect("checked above");
+        if runtime.send(&blockloom_protocol::EditorMessage::Preview { enabled: true }) {
+            runtime.send(&blockloom_protocol::EditorMessage::PreviewResize { width, height });
+        } else {
+            s.preview_port = None;
+        }
+    }
     s.log.clear();
     s.running = true;
     s.paused = false;
@@ -1094,6 +1119,106 @@ pub(crate) fn close_runtime(state: &SharedState, app: &AppHandle) -> Result<(), 
     s.running = false;
     s.paused = false;
     s.status = None;
+    s.preview_port = None;
+    s.preview_enabled = false;
+    emit(app, &s);
+    Ok(())
+}
+
+/// Turns the embedded preview sidecar on or off. The runtime serves MJPEG on
+/// loopback and reports the port, which the viewport reads directly.
+pub(crate) fn set_preview_enabled(
+    state: &SharedState,
+    app: &AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    s.preview_enabled = enabled;
+    if !enabled {
+        s.preview_port = None;
+    }
+    let (width, height) = (s.preview_width, s.preview_height);
+    if let Some(runtime) = s.runtime.as_mut() {
+        if !runtime.send(&blockloom_protocol::EditorMessage::Preview { enabled }) {
+            s.runtime = None;
+            s.running = false;
+            s.paused = false;
+            s.status = None;
+            s.preview_port = None;
+            emit(app, &s);
+            return Err("Lost the connection to the game runtime".to_string());
+        }
+        if enabled {
+            runtime.send(&blockloom_protocol::EditorMessage::PreviewResize { width, height });
+        }
+    }
+    emit(app, &s);
+    Ok(())
+}
+
+/// Asks the preview stream to follow `width`x`height`. The runtime resizes
+/// its window to match, so the stream is 1:1 with the viewport.
+pub(crate) fn set_preview_size(
+    state: &SharedState,
+    app: &AppHandle,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    s.preview_width = width.clamp(160, 1920);
+    s.preview_height = height.clamp(90, 1080);
+    let (width, height) = (s.preview_width, s.preview_height);
+    let enabled = s.preview_enabled;
+    if enabled
+        && let Some(runtime) = s.runtime.as_mut()
+        && !runtime.send(&blockloom_protocol::EditorMessage::PreviewResize { width, height })
+    {
+        s.runtime = None;
+        s.running = false;
+        s.paused = false;
+        s.status = None;
+        s.preview_port = None;
+        emit(app, &s);
+        return Err("Lost the connection to the game runtime".to_string());
+    }
+    emit(app, &s);
+    Ok(())
+}
+
+/// Forwards one viewport input event to the runtime. Sent often, so this
+/// skips the state broadcast: nothing in the snapshot changed.
+pub(crate) fn preview_input(
+    state: &SharedState,
+    input: blockloom_protocol::PreviewInput,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    if let Some(runtime) = s.runtime.as_mut()
+        && !runtime.send(&blockloom_protocol::EditorMessage::PreviewInput { input })
+    {
+        s.runtime = None;
+        s.running = false;
+        s.paused = false;
+        s.status = None;
+        s.preview_port = None;
+        return Err("Lost the connection to the game runtime".to_string());
+    }
+    Ok(())
+}
+
+/// Advances a paused world by one fixed tick. Ignored unless paused.
+pub(crate) fn step_project(state: &SharedState, app: &AppHandle) -> Result<(), String> {
+    let mut s = lock(state)?;
+    if let Some(runtime) = s.runtime.as_mut()
+        && !runtime.send(&blockloom_protocol::EditorMessage::Step)
+    {
+        s.runtime = None;
+        s.running = false;
+        s.paused = false;
+        s.status = None;
+        s.preview_port = None;
+        emit(app, &s);
+        return Err("Lost the connection to the game runtime".to_string());
+    }
     emit(app, &s);
     Ok(())
 }

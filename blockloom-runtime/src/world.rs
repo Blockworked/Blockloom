@@ -212,6 +212,7 @@ pub fn note_contact(engine: &mut Engine, a: Entity, b: Entity, started: bool) {
 
 pub fn pump_editor(
     mut engine: NonSendMut<Engine>,
+    mut preview: Option<ResMut<crate::preview::PreviewState>>,
     mut manager: ResMut<crate::ui::UiManager>,
     time: Res<Time>,
     mut fixed: ResMut<Time<Fixed>>,
@@ -280,6 +281,40 @@ pub fn pump_editor(
                 bridge::send(&RuntimeMessage::Stopped);
             }
             EditorMessage::Pause { paused } => set_paused(&mut engine, paused, now),
+            EditorMessage::Step => {
+                // One fixed tick while paused, then re-pause at the end of
+                // the fixed chain (`finish_step`). Ignored unless paused:
+                // a running world is already stepping.
+                if engine.running && engine.paused && !engine.pause_after_tick {
+                    engine.paused = false;
+                    engine.pause_began.take();
+                    engine.vm.set_paused(false);
+                    if let Some(logic) = &mut engine.logic {
+                        logic.set_paused(false);
+                    }
+                    engine.pause_after_tick = true;
+                }
+            }
+            EditorMessage::Preview { enabled } => {
+                let Some(preview) = preview.as_mut() else {
+                    continue;
+                };
+                if enabled {
+                    match crate::preview::start_preview(preview) {
+                        Some(port) => bridge::send(&RuntimeMessage::PreviewReady { port }),
+                        None => bridge::send(&RuntimeMessage::PreviewStopped),
+                    }
+                } else {
+                    crate::preview::stop_preview(preview);
+                    bridge::send(&RuntimeMessage::PreviewStopped);
+                }
+            }
+            EditorMessage::PreviewResize { width, height } => {
+                engine.preview_resize = Some((width.max(64), height.max(64)));
+            }
+            EditorMessage::PreviewInput { input } => {
+                engine.preview_inputs.push(input);
+            }
             EditorMessage::Shutdown => {
                 exit.write(AppExit::Success);
                 return;
@@ -370,8 +405,19 @@ pub fn set_paused(engine: &mut Engine, paused: bool, now: f64) {
     }
 }
 
-// ─── Building the world ────────────────────────────────────────────────────
+/// Re-pauses after a stepped tick (`EditorMessage::Step`). Runs last in the
+/// fixed chain, so the one tick simulated fully before freezing again.
+pub fn finish_step(mut engine: NonSendMut<Engine>, time: Res<Time>) {
+    if !engine.pause_after_tick {
+        return;
+    }
+    engine.pause_after_tick = false;
+    if engine.running && !engine.paused {
+        set_paused(&mut engine, true, time.elapsed_secs() as f64);
+    }
+}
 
+// ─── Building the world ────────────────────────────────────────────────────
 /// Despawns everything and spawns it again from the project. Called on load,
 /// on every Start (so actors go back where they were authored), and on stop.
 pub fn rebuild_world(
@@ -781,6 +827,7 @@ pub fn publish_sensors(
     cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     actors: Query<(&ActorId, &Transform, &Visibility, Option<&CustomComponents>)>,
     sound: Res<crate::sound::SoundState>,
+    preview_pointer: Option<ResMut<crate::preview::PreviewPointer>>,
 ) {
     let now = time.elapsed_secs() as f64;
     let held: HashSet<String> = keys.get_pressed().filter_map(key_name).collect();
@@ -790,8 +837,21 @@ pub fn publish_sensors(
     for event in focus.read() {
         engine.window_focused = event.focused;
     }
-    let focused = engine.window_focused;
-    let mouse = mouse_world_position(dimension.0, &windows, &cameras).unwrap_or_default();
+    // A live preview pointer counts as attention: the OS window sits behind
+    // the editor while the viewport is used, so it would otherwise never
+    // report focus.
+    let preview_live = preview_pointer
+        .as_ref()
+        .is_some_and(|pointer| crate::preview::pointer_live(pointer));
+    let focused = engine.window_focused || preview_live;
+    let mouse = preview_pointer
+        .as_ref()
+        .and_then(|pointer| {
+            let pos = pointer.pos.filter(|_| preview_live)?;
+            screen_to_world(dimension.0, pos, &windows, &cameras)
+        })
+        .or_else(|| mouse_world_position(dimension.0, &windows, &cameras))
+        .unwrap_or_default();
     // The pointer travels a few pixels a frame, not a teleport: sum the
     // motion events into one delta so a reporter reads what moved since last
     // frame, whichever half of the window it crossed.
@@ -799,6 +859,11 @@ pub fn publish_sensors(
     for moved in motion.read() {
         mouse_delta[0] += moved.delta.x;
         mouse_delta[1] += moved.delta.y;
+    }
+    if let Some(mut pointer) = preview_pointer {
+        mouse_delta[0] += pointer.delta.x;
+        mouse_delta[1] += pointer.delta.y;
+        pointer.delta = Vec2::ZERO;
     }
     // Motion events are raw device input: they arrive whichever window holds
     // the cursor, including the editor beside this one. A game that answered
@@ -1183,6 +1248,7 @@ pub fn detect_clicks(
     cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     actors: Query<(&ActorId, &Transform)>,
     laid_out: Query<(&ComputedNode, &UiGlobalTransform)>,
+    preview_pointer: Option<Res<crate::preview::PreviewPointer>>,
 ) {
     if !engine.running || !buttons.just_pressed(MouseButton::Left) {
         return;
@@ -1192,11 +1258,19 @@ pub fn detect_clicks(
     };
     // Clicks land in the focused window, so a click in the editor beside a
     // running game must never start its click strands. Event truth, same as
-    // the motion gate above: the component defaults to focused.
-    if !engine.window_focused {
+    // the motion gate above: the component defaults to focused. A live
+    // preview pointer counts as attention for the same reason.
+    let preview_live = preview_pointer
+        .as_ref()
+        .is_some_and(|pointer| crate::preview::pointer_live(pointer));
+    if !engine.window_focused && !preview_live {
         return;
     }
-    let Some(cursor) = window.cursor_position() else {
+    let Some(cursor) = preview_pointer
+        .as_ref()
+        .and_then(|pointer| pointer.pos.filter(|_| preview_live))
+        .or_else(|| window.cursor_position())
+    else {
         return;
     };
     // Boxes are laid out in physical pixels while the cursor reads logical:
@@ -1451,8 +1525,7 @@ fn collider_shape(
                 size[1] / 2.0 * scale.y.max(0.0),
                 size[2] / 2.0 * scale.z.max(0.0),
             ];
-            (half[0] > 0.0 && half[1] > 0.0 && half[2] > 0.0)
-                .then_some(ColliderShape::Box { half })
+            (half[0] > 0.0 && half[1] > 0.0 && half[2] > 0.0).then_some(ColliderShape::Box { half })
         }
         (Visual::Capsule { radius, height, .. }, Mode::ThreeD) => {
             let half = [
@@ -1463,7 +1536,11 @@ fn collider_shape(
             (half[0] > 0.0 && half[1] > 0.0).then_some(ColliderShape::Box { half })
         }
         (Visual::Plane { size, .. }, Mode::ThreeD) => {
-            let half = [size[0] / 2.0 * scale.x.max(0.0), 0.1, size[1] / 2.0 * scale.z.max(0.0)];
+            let half = [
+                size[0] / 2.0 * scale.x.max(0.0),
+                0.1,
+                size[1] / 2.0 * scale.z.max(0.0),
+            ];
             (half[0] > 0.0 && half[2] > 0.0).then_some(ColliderShape::Box { half })
         }
         (Visual::Model { scale: size, .. }, Mode::ThreeD) => {
@@ -1472,8 +1549,7 @@ fn collider_shape(
                 size[1] / 2.0 * scale.y.max(0.0),
                 size[2] / 2.0 * scale.z.max(0.0),
             ];
-            (half[0] > 0.0 && half[1] > 0.0 && half[2] > 0.0)
-                .then_some(ColliderShape::Box { half })
+            (half[0] > 0.0 && half[1] > 0.0 && half[2] > 0.0).then_some(ColliderShape::Box { half })
         }
         (Visual::Tilemap { tilemap }, Mode::TwoD) if tilemap.solid => {
             let size = tilemap.size();
@@ -2486,7 +2562,11 @@ pub fn resolve_actor(engine: &Engine, running: &str, wanted: &str) -> Option<Str
 /// inverted onto the child's world position. What the local-position
 /// reporters read, and the inverse of [`world_of`].
 fn local_of(parent: &Transform, child: Vec3) -> [f32; 3] {
-    parent.compute_affine().inverse().transform_point3(child).to_array()
+    parent
+        .compute_affine()
+        .inverse()
+        .transform_point3(child)
+        .to_array()
 }
 
 /// Where an offset in a parent's frame lands in the world: the same
@@ -2696,9 +2776,17 @@ pub fn apply_input_effects(mut engine: NonSendMut<Engine>, effects: Res<PendingE
     for effect in &effects.0 {
         match effect {
             Effect::BindAction {
-                actor, action, binding,
+                actor,
+                action,
+                binding,
             } => {
-                let Some(found) = engine.project.world.input.find(action).map(|found| found.name.clone()) else {
+                let Some(found) = engine
+                    .project
+                    .world
+                    .input
+                    .find(action)
+                    .map(|found| found.name.clone())
+                else {
                     crate::bridge::send(&RuntimeMessage::Error {
                         actor: actor.clone(),
                         message: format!("there's no input action named \"{action}\""),
@@ -2733,14 +2821,22 @@ pub fn apply_input_effects(mut engine: NonSendMut<Engine>, effects: Res<PendingE
                 }
             }
             Effect::ClearActionBindings { action, actor } => {
-                let Some(found) = engine.project.world.input.find(action).map(|found| found.name.clone()) else {
+                let Some(found) = engine
+                    .project
+                    .world
+                    .input
+                    .find(action)
+                    .map(|found| found.name.clone())
+                else {
                     crate::bridge::send(&RuntimeMessage::Error {
                         actor: actor.clone(),
                         message: format!("there's no input action named \"{action}\""),
                     });
                     continue;
                 };
-                engine.input_overrides.insert(found.to_lowercase(), Vec::new());
+                engine
+                    .input_overrides
+                    .insert(found.to_lowercase(), Vec::new());
             }
             _ => {}
         }
@@ -3146,6 +3242,53 @@ mod tests {
         assert!(!engine.paused);
         assert_eq!(engine.run_time(25.0), 5.0);
         assert_eq!(engine.run_time(30.0), 10.0);
+    }
+
+    #[test]
+    fn preview_step_ticks_once_then_repauses_and_queues_input() {
+        use blockloom_protocol::PreviewInput;
+
+        let (sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.running = true;
+        engine.paused = true;
+        engine.vm.set_paused(true);
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(Time::<Fixed>::from_hz(60.0));
+        app.init_resource::<PendingEffects>();
+        app.init_resource::<crate::ui::UiManager>();
+        app.insert_non_send(engine);
+        // No PreviewState resource: the sidecar arms are skipped, nothing panics.
+        app.add_systems(Update, (pump_editor, finish_step).chain());
+
+        sender.send(EditorMessage::Step).unwrap();
+        sender
+            .send(EditorMessage::PreviewInput {
+                input: PreviewInput::Key {
+                    code: "Space".to_string(),
+                    down: true,
+                },
+            })
+            .unwrap();
+        sender
+            .send(EditorMessage::PreviewResize {
+                width: 640,
+                height: 360,
+            })
+            .unwrap();
+        sender
+            .send(EditorMessage::Preview { enabled: true })
+            .unwrap();
+        app.update();
+
+        let engine = app.world().non_send::<Engine>();
+        // Stepped, then re-paused by the end of the tick.
+        assert!(engine.paused);
+        assert!(!engine.pause_after_tick);
+        assert_eq!(engine.preview_inputs.len(), 1);
+        assert_eq!(engine.preview_resize, Some((640, 360)));
     }
 
     /// Runs `drive_camera` once over a world holding one rigged actor and one

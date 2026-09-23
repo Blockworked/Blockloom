@@ -13,6 +13,7 @@ use blockloom_core::scene::Mode;
 use blockloom_core::value::Evaluated;
 use blockloom_core::vm::{Dicts, Lists, Variables, Vm};
 use blockloom_protocol::EditorMessage;
+use blockloom_protocol::PreviewInput;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
@@ -158,6 +159,14 @@ pub struct Engine {
     /// Whether each action was held last frame, by lowercase name. What
     /// turns a held action into a one-frame `pressed`/`released`.
     pub prev_action_held: HashMap<String, bool>,
+    /// Input events forwarded from the embedded preview, drained once a
+    /// frame by the preview systems.
+    pub preview_inputs: Vec<PreviewInput>,
+    /// A resize the preview viewport asked for, applied to the window.
+    pub preview_resize: Option<(u32, u32)>,
+    /// A single fixed tick to run while paused, then re-pause. What the
+    /// editor's step button asks for.
+    pub pause_after_tick: bool,
 }
 
 impl Engine {
@@ -200,6 +209,9 @@ impl Engine {
             physics_filter: HashMap::new(),
             input_overrides: HashMap::new(),
             prev_action_held: HashMap::new(),
+            preview_inputs: Vec::new(),
+            preview_resize: None,
+            pause_after_tick: false,
         }
     }
 
@@ -247,7 +259,13 @@ impl Engine {
 
     /// Records a mid-run filter change, keeping the two halves the effect
     /// didn't name.
-    pub fn set_filter(&mut self, id: &str, layer: Option<u8>, mask: Option<u8>, trigger: Option<bool>) {
+    pub fn set_filter(
+        &mut self,
+        id: &str,
+        layer: Option<u8>,
+        mask: Option<u8>,
+        trigger: Option<bool>,
+    ) {
         let (old_layer, old_mask, old_trigger) = self.filter_of(id);
         self.physics_filter.insert(
             id.to_string(),

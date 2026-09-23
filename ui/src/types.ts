@@ -643,6 +643,13 @@ export interface StateDto {
   log: LogLineDto[];
   runtime_available: boolean;
   runtime_open: boolean;
+  /** Whether the embedded preview viewport wants the sidecar stream. */
+  preview_enabled: boolean;
+  /** The sidecar's loopback port, while it is serving. */
+  preview_port: number | null;
+  /** The size the viewport asked the stream to follow. */
+  preview_width: number;
+  preview_height: number;
 }
 
 export function emptyState(): StateDto {
@@ -661,6 +668,10 @@ export function emptyState(): StateDto {
     log: [],
     runtime_available: true,
     runtime_open: false,
+    preview_enabled: false,
+    preview_port: null,
+    preview_width: 480,
+    preview_height: 270,
   };
 }
 

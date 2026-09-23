@@ -13,7 +13,36 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
+
+/// Where the embedded preview streams: the runtime's MJPEG sidecar, which
+/// the editor's viewport reads directly so frames never clog the control
+/// pipe. Always loopback.
+pub const PREVIEW_MIME: &str = "multipart/x-mixed-replace; boundary=blockloom-frame";
+
+/// One forwarded input event for the embedded preview, in preview-pixel
+/// coordinates. The runtime maps it onto its own window before injecting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PreviewInput {
+    /// Pointer moved. `x`/`y` are in preview pixels, `w`/`h` the preview's
+    /// size so the runtime can scale onto its window.
+    MouseMove { x: f32, y: f32, w: f32, h: f32 },
+    /// Button went down (`down` true) or up. `button` is 0/1/2 for
+    /// left/right/middle.
+    MouseButton {
+        button: u8,
+        down: bool,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    },
+    /// Physical key went down or up, by Bevy [`KeyCode`](https://docs.rs/bevy/latest/bevy/prelude/struct.KeyCode.html) name (`"KeyW"`, `"Space"`, ...).
+    Key { code: String, down: bool },
+    /// Text typed into a focused in-game input while the preview has focus.
+    Text { text: String },
+}
 
 /// Editor -> runtime.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -35,6 +64,25 @@ pub enum EditorMessage {
     Pause {
         paused: bool,
     },
+    /// Advances a paused world by one fixed tick. Ignored while running.
+    Step,
+    /// Turns the embedded-preview sidecar on or off. When on, the runtime
+    /// serves MJPEG on loopback and reports the port with
+    /// [`RuntimeMessage::PreviewReady`]; the editor's viewport reads it
+    /// directly. Additive: the OS window stays up.
+    Preview {
+        enabled: bool,
+    },
+    /// Asks the preview stream to follow this size. The runtime resizes its
+    /// window to match, so the stream is 1:1 with the viewport.
+    PreviewResize {
+        width: u32,
+        height: u32,
+    },
+    /// A pointer or keyboard event from the embedded viewport.
+    PreviewInput {
+        input: PreviewInput,
+    },
     /// Close the window and exit.
     Shutdown,
 }
@@ -54,6 +102,11 @@ pub enum RuntimeMessage {
     Status(Status),
     /// The play session ended through Stop or a `stop all` block.
     Stopped,
+    /// The preview sidecar is serving MJPEG on this loopback port. The
+    /// editor's viewport reads `http://127.0.0.1:{port}/preview.mjpg`.
+    PreviewReady { port: u16 },
+    /// The preview sidecar stopped (turned off or failed to bind).
+    PreviewStopped,
     /// The runtime is giving up (a fatal renderer or physics error).
     Fatal { message: String },
 }
@@ -139,5 +192,24 @@ mod tests {
     fn a_blank_line_is_not_an_error() {
         assert_eq!(decode::<EditorMessage>("  \n"), None);
         assert!(matches!(decode::<EditorMessage>("{oops}"), Some(Err(_))));
+    }
+
+    #[test]
+    fn preview_messages_round_trip_as_one_line() {
+        let input = EditorMessage::PreviewInput {
+            input: PreviewInput::MouseButton {
+                button: 0,
+                down: true,
+                x: 10.0,
+                y: 20.0,
+                w: 480.0,
+                h: 270.0,
+            },
+        };
+        let line = encode(&input);
+        assert_eq!(decode::<EditorMessage>(&line), Some(Ok(input)));
+        let ready = RuntimeMessage::PreviewReady { port: 4129 };
+        let line = encode(&ready);
+        assert_eq!(decode::<RuntimeMessage>(&line), Some(Ok(ready)));
     }
 }

@@ -269,7 +269,23 @@ impl Backend {
             "run_project" => to_json(commands::run_project(self, state, app)?),
             "stop_project" => to_json(commands::stop_project(state, app)?),
             "pause_project" => to_json(commands::pause_project(state, app, arg(&args, "paused")?)?),
+            "step_project" => to_json(commands::step_project(state, app)?),
             "close_runtime" => to_json(commands::close_runtime(state, app)?),
+            "set_preview_enabled" => to_json(commands::set_preview_enabled(
+                state,
+                app,
+                arg(&args, "enabled")?,
+            )?),
+            "set_preview_size" => to_json(commands::set_preview_size(
+                state,
+                app,
+                arg(&args, "width")?,
+                arg(&args, "height")?,
+            )?),
+            "preview_input" => to_json(commands::preview_input(
+                state,
+                arg::<blockloom_protocol::PreviewInput>(&args, "input")?,
+            )?),
 
             // ── Instructions ───────────────────────────────────────────────
             "add_instruction" => to_json(commands::add_instruction(
