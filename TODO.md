@@ -75,6 +75,10 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 ### Phase 4 - Look and depth, uses Bevy leverage
 - [x] Asset pipeline: glTF/FBX rigs, atlases, texture/audio compression, reimport tracking.
 - [x] Materials/custom WGSL plus shader graph lite, particles/trails, post-process, shadows/HDR, 2D sorting layers, tilemap/terrain.
+- [ ] Load glTF scenes for Model looks (a ModelSource loader with rig playback from the parsed animations) instead of placeholder boxes.
+- [ ] Bake atlas layouts into sheets at build time - pack_atlas is plan-only today - and let a tilemap animate tiles and collide per-tile rather than as one slab.
+- [ ] Close the custom-shader loop: export a shader graph to a .wgsl asset, and let hand-authored WGSL drive the live material instead of only the uniform path.
+- [ ] Particle/trail blocks (burst, emitter dials) once block surface reopens, plus ghost trails for custom-shaded and tilemap actors, which leave none today.
 - [ ] Advanced physics: joints, character controller, one-way platforms, ragdoll.
 - [ ] AI: full nav on top of existing baked polyanya mesh (`navigate to`): runtime rebake, layers/costs, off-mesh links, crowds/separation, plus steering, behavior trees, perception.
 
