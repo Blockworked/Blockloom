@@ -130,6 +130,52 @@ export const SOUND_BUS_OPTIONS = [
   { value: 'Sfx', label: 'sound effects' },
 ];
 
+/** Gamepad buttons a binding or a reporter can name. Kept in step with
+ * `blockloom_core::input::GAMEPAD_BUTTONS`. */
+export const GAMEPAD_BUTTON_NAMES = [
+  'South',
+  'East',
+  'North',
+  'West',
+  'C',
+  'Z',
+  'LeftTrigger',
+  'LeftTrigger2',
+  'RightTrigger',
+  'RightTrigger2',
+  'Select',
+  'Start',
+  'Mode',
+  'LeftThumb',
+  'RightThumb',
+  'DPadUp',
+  'DPadDown',
+  'DPadLeft',
+  'DPadRight',
+];
+
+export const GAMEPAD_BUTTON_OPTIONS = GAMEPAD_BUTTON_NAMES.map(name => ({ value: name, label: name }));
+
+/** Gamepad axes a reporter can read. Kept in step with
+ * `blockloom_core::input::GAMEPAD_AXES`. */
+export const GAMEPAD_AXIS_NAMES = [
+  'LeftStickX',
+  'LeftStickY',
+  'LeftZ',
+  'RightStickX',
+  'RightStickY',
+  'RightZ',
+];
+
+export const GAMEPAD_AXIS_OPTIONS = GAMEPAD_AXIS_NAMES.map(name => ({ value: name, label: name }));
+
+/** Mouse buttons a binding or a reporter can name. */
+export const MOUSE_BUTTON_OPTIONS = [
+  { value: 'left', label: 'left' },
+  { value: 'right', label: 'right' },
+  { value: 'middle', label: 'middle' },
+];
+
 /** Whether a play block fires once or repeats. */
 export const SOUND_LOOP_OPTIONS = [
   { value: 'false', label: 'once' },

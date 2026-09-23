@@ -35,6 +35,7 @@ import {
   Pencil,
   Play,
   RefreshCw,
+  Sparkles,
   Trash2,
   Upload,
 } from 'lucide-vue-next';
@@ -49,7 +50,9 @@ import {
   moveAsset,
   openAssetLocation,
   pickFiles,
+  pipelineStatus,
   readAsset,
+  reimportAssets,
   renameAsset,
 } from '../tauri';
 import {
@@ -64,11 +67,14 @@ import {
   startAssetDrag,
   tray,
 } from '../assets';
-import type { AssetEntry, AssetKind } from '../types';
+import type { AssetEntry, AssetKind, PipelineReportDto } from '../types';
 
 const entries = ref<AssetEntry[]>([]);
 const error = ref('');
 const busy = ref(false);
+/** What the pipeline makes of each asset, by path. Best-effort: a project
+ * with no pipeline state yet simply shows no badges. */
+const reports = ref<Record<string, PipelineReportDto>>({});
 /** The audio file previewing right now, by path. One at a time: starting
  * another stops the first. */
 const previewing = ref<string | null>(null);
@@ -131,6 +137,7 @@ const ICONS: Record<AssetKind, Component> = {
   font: FileType,
   model: Box,
   script: FileCode,
+  shader: Sparkles,
   text: FileText,
   other: FileIcon,
 };
@@ -147,6 +154,7 @@ async function refresh() {
     entries.value = await listAssets(tray.path);
     error.value = '';
     void loadThumbnails();
+    void loadReports();
   } catch (e) {
     entries.value = [];
     // A folder deleted from under us drops the tray back to the top rather
@@ -175,6 +183,45 @@ async function loadThumbnails() {
 
 function thumbnail(entry: AssetEntry): string | null {
   return thumbnails.value[`${entry.path}@${entry.modified}`] ?? null;
+}
+
+/** The pipeline's take on every asset, for the tray badges. A scan that
+ * fails - a huge project, a backend that predates the pipeline - leaves the
+ * old badges up rather than clearing them. */
+async function loadReports() {
+  try {
+    const statuses = await pipelineStatus();
+    const next: Record<string, PipelineReportDto> = {};
+    for (const report of statuses) next[report.path] = report;
+    reports.value = next;
+  } catch {
+    // No badges is a working tray; a broken one isn't.
+  }
+}
+
+function report(entry: AssetEntry): PipelineReportDto | null {
+  return reports.value[entry.path] ?? null;
+}
+
+/** A tile's tooltip: where it is, how big, and what the pipeline says. */
+function tileTitle(entry: AssetEntry): string {
+  const head = `${entry.path}${entry.kind === 'folder' ? '' : ` · ${fileSize(entry.size)}`}`;
+  const summary = report(entry)?.summary;
+  return summary ? `${head}\n${summary}` : head;
+}
+
+/** Re-inspects one file and refreshes its fingerprint. */
+async function reimport(entry: AssetEntry) {
+  await run(() => reimportAssets([entry.path]).then(() => undefined));
+}
+
+/** Re-inspects everything the pipeline flags as changed. */
+async function reimportChanged() {
+  const dirty = Object.values(reports.value)
+    .filter(r => r.dirty)
+    .map(r => r.path);
+  if (!dirty.length) return;
+  await run(() => reimportAssets(dirty).then(() => undefined));
 }
 
 // A different project is a different folder tree, so nothing carries over.
@@ -431,7 +478,7 @@ const menuItems = computed<ContextMenuItem[]>(() => {
   };
   // No entry is the background: actions for the folder being listed.
   if (!entry) {
-    return [
+    const background: ContextMenuItem[] = [
       {
         key: 'location',
         label: 'Open File Location',
@@ -443,6 +490,15 @@ const menuItems = computed<ContextMenuItem[]>(() => {
       { key: 'import', label: 'Import files here', icon: Download, onSelect: choose(() => void importHere()) },
       { key: 'refresh', label: 'Re-read this folder', icon: RefreshCw, onSelect: choose(() => void refresh()) },
     ];
+    if (Object.values(reports.value).some(r => r.dirty)) {
+      background.push({
+        key: 'reimport',
+        label: 'Reimport changed files',
+        icon: Sparkles,
+        onSelect: choose(() => void reimportChanged()),
+      });
+    }
+    return background;
   }
   if (entry.protected) return [];
   const items: ContextMenuItem[] = [
@@ -453,6 +509,14 @@ const menuItems = computed<ContextMenuItem[]>(() => {
       onSelect: choose(() => void openLocation(entry.path)),
     },
   ];
+  if (report(entry)?.dirty) {
+    items.push({
+      key: 'reimport',
+      label: 'Reimport this file',
+      icon: Sparkles,
+      onSelect: choose(() => void reimport(entry)),
+    });
+  }
   if (entry.kind === 'folder') {
     items.push({ key: 'open', label: 'Open', icon: Folder, onSelect: choose(() => open(entry)) });
   }
@@ -630,7 +694,7 @@ function startResize(e: PointerEvent) {
             folder: entry.kind === 'folder',
           }"
           :draggable="!isRenaming(entry)"
-          :title="`${entry.path}${entry.kind === 'folder' ? '' : ` · ${fileSize(entry.size)}`}`"
+          :title="tileTitle(entry)"
           @click.stop="tray.selected = entry.path"
           @dblclick="open(entry)"
           @contextmenu.prevent.stop="openMenu($event, entry)"
@@ -643,6 +707,11 @@ function startResize(e: PointerEvent) {
           <span class="asset-icon">
             <img v-if="thumbnail(entry)" :src="thumbnail(entry)!" alt="" class="asset-thumb">
             <component :is="ICONS[entry.kind]" v-else :size="22" />
+            <span
+              v-if="report(entry)?.dirty"
+              class="asset-dirty"
+              :title="`Changed since import - ${report(entry)?.summary ?? ''}`"
+            />
             <button
               v-if="entry.kind === 'audio'"
               class="asset-preview"

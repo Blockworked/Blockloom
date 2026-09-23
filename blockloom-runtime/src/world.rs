@@ -19,18 +19,19 @@ use crate::engine::{
 };
 use crate::{bridge, dim2, dim3};
 use bevy::input::ButtonState;
-use bevy::input::gamepad::{Gamepad, GamepadAxis, GamepadButton, GamepadRumbleIntensity, GamepadRumbleRequest};
+use bevy::input::gamepad::{
+    Gamepad, GamepadAxis, GamepadButton, GamepadRumbleIntensity, GamepadRumbleRequest,
+};
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
 use blockloom_core::components::CameraView;
+use blockloom_core::input::{ActionSense, LiveInput, normalize_pad_axis, normalize_pad_button};
 use blockloom_core::nav;
 use blockloom_core::project::Actor;
 use blockloom_core::scene::{Axis, BodyKind, Mode, Visual};
-use blockloom_core::input::{LiveInput, normalize_pad_axis, normalize_pad_button};
-use blockloom_core::input::ActionSense;
 use blockloom_core::sense::{ActorSense, Sensors, TouchSense, normalize_key};
 use blockloom_core::ui::UiKind;
 use blockloom_core::value::Evaluated;
@@ -72,8 +73,8 @@ pub fn parse_color(hex: &str) -> Color {
 pub fn tonemapping_of(
     name: blockloom_core::scene::TonemapName,
 ) -> bevy::core_pipeline::tonemapping::Tonemapping {
-    use blockloom_core::scene::TonemapName;
     use bevy::core_pipeline::tonemapping::Tonemapping;
+    use blockloom_core::scene::TonemapName;
     match name {
         TonemapName::None => Tonemapping::None,
         TonemapName::Reinhard => Tonemapping::Reinhard,
@@ -388,11 +389,7 @@ pub fn rebuild_world(
     voices: Query<Entity, With<crate::sound::VoiceTag>>,
     mut sound: ResMut<crate::sound::SoundState>,
     mut navmesh: Option<ResMut<NavMesh>>,
-    particles: Query<Entity, With<crate::fx::Particle>>,
-    ghosts: Query<Entity, With<crate::fx::Ghost>>,
-    mut graph_materials_2d: ResMut<Assets<crate::materials::GraphMaterial2d>>,
-    mut graph_materials_3d: ResMut<Assets<crate::materials::GraphMaterial3d>>,
-    mut tile_materials: ResMut<Assets<bevy::sprite::ColorMaterial>>,
+    mut stores: crate::materials::MaterialStores,
 ) {
     if !engine.rebuild {
         return;
@@ -410,10 +407,7 @@ pub fn rebuild_world(
     for entity in &voices {
         commands.entity(entity).despawn();
     }
-    // Particles and ghosts belong to the last run, not the document.
-    for entity in particles.iter().chain(ghosts.iter()) {
-        commands.entity(entity).despawn();
-    }
+    // Particles and ghosts go in `fx::despawn_fx`, just before this system.
     sound.reset(project_sound(&engine));
     engine.entities.clear();
     engine.touching.clear();
@@ -500,8 +494,8 @@ pub fn rebuild_world(
                     &assets,
                     &mut textures,
                     &mut meshes,
-                    &mut graph_materials_2d,
-                    &mut tile_materials,
+                    &mut stores.graph_2d,
+                    &mut stores.tiles,
                 )
                 .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::TwoD));
                 attach_camera(&mut commands, actor, entity);
@@ -524,7 +518,7 @@ pub fn rebuild_world(
                     &assets,
                     &mut meshes,
                     &mut materials,
-                    &mut graph_materials_3d,
+                    &mut stores.graph_3d,
                 )
                 .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::ThreeD));
                 attach_camera(&mut commands, actor, entity);
@@ -953,14 +947,9 @@ pub fn publish_sensors(
         }
     }
     // Remapped-away actions leave no stale edge behind.
-    engine.prev_action_held.retain(|name, _| {
-        engine
-            .project
-            .world
-            .input
-            .find(name)
-            .is_some()
-    });
+    engine
+        .prev_action_held
+        .retain(|name, _| engine.project.world.input.find(name).is_some());
 
     // Touches in world units, press order. Unfocused windows read none, the
     // same gate the pointer delta keeps.
@@ -968,8 +957,7 @@ pub fn publish_sensors(
     let mut touch_started = false;
     if focused {
         for touch in touches.iter() {
-            if let Some(point) =
-                screen_to_world(dimension.0, touch.position(), &windows, &cameras)
+            if let Some(point) = screen_to_world(dimension.0, touch.position(), &windows, &cameras)
             {
                 touch_points.push(TouchSense {
                     id: touch.id(),
@@ -2167,7 +2155,7 @@ pub fn apply_lifetimes(
     mut textures: ResMut<Assets<Image>>,
     mut graph_materials_2d: ResMut<Assets<crate::materials::GraphMaterial2d>>,
     mut graph_materials_3d: ResMut<Assets<crate::materials::GraphMaterial3d>>,
-    mut tile_materials: ResMut<Assets<bevy::sprite::ColorMaterial>>,
+    mut tile_materials: ResMut<Assets<bevy::sprite_render::ColorMaterial>>,
     live: Query<(&Visibility, Option<&CustomComponents>)>,
     mut transforms: Query<&mut Transform>,
 ) {
@@ -2285,7 +2273,7 @@ fn spawn_runtime_actor(
     textures: &mut Assets<Image>,
     graph_materials_2d: &mut Assets<crate::materials::GraphMaterial2d>,
     graph_materials_3d: &mut Assets<crate::materials::GraphMaterial3d>,
-    tile_materials: &mut Assets<bevy::sprite::ColorMaterial>,
+    tile_materials: &mut Assets<bevy::sprite_render::ColorMaterial>,
     actor: Actor,
 ) {
     let dir = engine.project_dir.clone();

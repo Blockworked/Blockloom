@@ -1246,6 +1246,93 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "create-input-action",
+        cmd: "create_input_action",
+        aliases: &["create_input_action"],
+        summary: "Declare a named input action with no bindings.",
+        args: &[ArgSpec {
+            name: "name",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "rename-input-action",
+        cmd: "rename_input_action",
+        aliases: &["rename_input_action"],
+        summary: "Rename an input action and every block that names it.",
+        args: &[
+            ArgSpec {
+                name: "oldName",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "newName",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "delete-input-action",
+        cmd: "delete_input_action",
+        aliases: &["delete_input_action"],
+        summary: "Delete an input action. Blocks naming it read as unheld.",
+        args: &[ArgSpec {
+            name: "name",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "add-input-binding",
+        cmd: "add_input_binding",
+        aliases: &["add_input_binding"],
+        summary: "Add one binding (space, mouse:left, gamepad:south) to an action.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "binding",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-input-binding",
+        cmd: "remove_input_binding",
+        aliases: &["remove_input_binding"],
+        summary: "Remove one binding from an action.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "binding",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "clear-input-bindings",
+        cmd: "clear_input_bindings",
+        aliases: &["clear_input_bindings"],
+        summary: "Forget every binding an action has.",
+        args: &[ArgSpec {
+            name: "name",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "create-list",
         cmd: "create_list",
         aliases: &["create_list"],

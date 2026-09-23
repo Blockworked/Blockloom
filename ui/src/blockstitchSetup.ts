@@ -48,6 +48,8 @@ const DOCUMENT_SHAPED: InstructionType[] = ['BlockHeader', 'CallBlock'];
 const HEADER_TYPES: InstructionType[] = [
   'WhenStarted',
   'WhenKeyPressed',
+  'WhenActionPressed',
+  'WhenTouched',
   'WhenClicked',
   'WhenCollision',
   'WhenMessage',

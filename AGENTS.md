@@ -200,14 +200,18 @@ Rust file (see below). `Custom` is a named bag of values the project invented
 (`Health { hp, armour }`); the runtime carries it on the entity as
 `CustomComponents`, publishes it through `sense::ActorSense`, and
 `set <field> of <component> to` writes it back. Like a position and unlike a
-variable, those writes last exactly as long as the run.
+variable, those writes last exactly as long as the run. `Material` is what a
+surface is made of (PBR properties plus an optional shader-graph effect),
+`Emitter` sprays CPU particles while attached, and `Trail` stamps fading
+ghosts of where the actor just was. `Render` also carries a 2D sort layer,
+so a higher layer draws on top without touching the actor's depth.
 
 Components come and go mid-run, from a block (`attach`/`detach`) or from a
 script. `engine.attached` is the one record of what an actor is carrying right
 now - the document says what it *started* with - and
-`world::apply_component_effects` is the only place that writes it. A `Body` or
-a `Look` needs the dimension's own pipeline, so `dim2`/`dim3` pick those two
-out of the same effect list and do the ECS half. Re-attaching brings back what
+`world::apply_component_effects` is the only place that writes it. A `Body`, a
+`Look` or a `Material` needs the dimension's own pipeline, so `dim2`/`dim3`
+pick those three out of the same effect list and do the ECS half. Re-attaching brings back what
 the editor authored, or that component's defaults if the project never had one.
 
 Pre-component documents kept `visual`/`placement`/`physics`/`visible` flat on

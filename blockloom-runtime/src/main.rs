@@ -141,6 +141,7 @@ fn main() {
                     Update,
                     (
                         world::pump_editor,
+                        fx::despawn_fx,
                         world::rebuild_world,
                         dim2::relay_collisions,
                         overlay::draw_ui,
@@ -151,11 +152,6 @@ fn main() {
                         sound::maintain_voices,
                         world::interpolate_poses,
                         world::drive_camera,
-                        fx::emit_particles,
-                        fx::step_particles,
-                        fx::snapshot_trails,
-                        fx::step_ghosts,
-                        materials::tick_graph_time,
                         overlay::update_speech_bubbles,
                         world::report_status.run_if(bridge::editor_attached),
                         overlay::update_status.run_if(bridge::editor_attached),
@@ -166,6 +162,17 @@ fn main() {
                     FixedUpdate,
                     world::SimulationSet
                         .before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend),
+                )
+                .add_systems(
+                    Update,
+                    (
+                        fx::emit_particles,
+                        fx::step_particles,
+                        fx::snapshot_trails,
+                        fx::step_ghosts,
+                        materials::tick_graph_time,
+                    )
+                        .chain(),
                 );
         }
         Mode::ThreeD => {
@@ -212,6 +219,7 @@ fn main() {
                     Update,
                     (
                         world::pump_editor,
+                        fx::despawn_fx,
                         world::rebuild_world,
                         dim3::relay_collisions,
                         overlay::draw_ui,
@@ -222,11 +230,6 @@ fn main() {
                         sound::maintain_voices,
                         world::interpolate_poses,
                         world::drive_camera,
-                        fx::emit_particles,
-                        fx::step_particles,
-                        fx::snapshot_trails,
-                        fx::step_ghosts,
-                        materials::tick_graph_time,
                         overlay::update_speech_bubbles,
                         world::report_status.run_if(bridge::editor_attached),
                         overlay::update_status.run_if(bridge::editor_attached),
@@ -237,6 +240,17 @@ fn main() {
                     FixedUpdate,
                     world::SimulationSet
                         .before(bevy_rapier3d::prelude::PhysicsSet::SyncBackend),
+                )
+                .add_systems(
+                    Update,
+                    (
+                        fx::emit_particles,
+                        fx::step_particles,
+                        fx::snapshot_trails,
+                        fx::step_ghosts,
+                        materials::tick_graph_time,
+                    )
+                        .chain(),
                 );
         }
     }

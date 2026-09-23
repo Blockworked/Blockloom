@@ -14,8 +14,9 @@
 use bevy::prelude::*;
 use blockloom_core::material::ParticleSpec;
 
+use crate::engine::ActorId;
 use crate::engine::{Dimension, Engine};
-use crate::world::{ActorId, forward_of, parse_color};
+use crate::world::{forward_of, parse_color};
 
 /// Live emission bookkeeping on an actor carrying an emitter.
 #[derive(Component)]
@@ -67,6 +68,23 @@ pub struct Ghost {
 #[derive(Resource, Default)]
 pub struct FxCache {
     sphere: Option<Handle<Mesh>>,
+}
+
+/// Despawn every particle and ghost when the world rebuilds: they belong to
+/// the last run, not the document. Split out of `rebuild_world`, which is
+/// already at the system's sixteen-param limit. Runs just before it.
+pub fn despawn_fx(
+    mut commands: Commands,
+    engine: NonSend<Engine>,
+    particles: Query<Entity, With<Particle>>,
+    ghosts: Query<Entity, With<Ghost>>,
+) {
+    if !engine.rebuild {
+        return;
+    }
+    for entity in particles.iter().chain(ghosts.iter()) {
+        commands.entity(entity).despawn();
+    }
 }
 
 /// At most this many particles and ghosts combined. Past it the world stops
@@ -126,7 +144,7 @@ pub fn emit_particles(
     // One sphere for every 3D particle, scaled per entity.
     let sphere = if dimension.0.is_3d() {
         Some(cache.sphere.clone().unwrap_or_else(|| {
-            let handle = meshes.add(Sphere::new(0.5).mesh());
+            let handle = meshes.add(Mesh::from(Sphere::new(0.5)));
             cache.sphere = Some(handle.clone());
             handle
         }))
@@ -220,7 +238,11 @@ fn spawn_particle(
                 scale: Vec3::splat(spec.size_start.max(0.01)),
                 ..default()
             },
-            Mesh3d(sphere.clone().expect("the 3D branch always builds the sphere")),
+            Mesh3d(
+                sphere
+                    .clone()
+                    .expect("the 3D branch always builds the sphere"),
+            ),
             MeshMaterial3d(material),
         ));
     } else {
@@ -276,7 +298,7 @@ pub fn step_particles(
             sprite.custom_size = Some(Vec2::splat(size.max(0.0)));
         }
         if let Some(handle) = handle {
-            if let Some(material) = materials.get_mut(&handle.0) {
+            if let Some(mut material) = materials.get_mut(&handle.0) {
                 material.base_color = faded;
                 material.emissive = bevy::color::LinearRgba::from(faded) * 1.5;
             }
@@ -385,7 +407,7 @@ pub fn step_ghosts(
         if let Some(mut sprite) = sprite {
             sprite.color.set_alpha(alpha);
         } else if let Some(handle) = handle {
-            if let Some(material) = materials.get_mut(&handle.0) {
+            if let Some(mut material) = materials.get_mut(&handle.0) {
                 material.base_color.set_alpha(alpha);
             }
         }

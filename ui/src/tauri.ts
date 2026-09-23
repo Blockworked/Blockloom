@@ -266,6 +266,16 @@ export const createVariable = (name: string, scope: 'actor' | 'global') =>
 export const renameVariable = (oldName: string, newName: string) =>
   invoke<void>('rename_variable', { oldName, newName });
 export const deleteVariable = (name: string) => invoke<void>('delete_variable', { name });
+// ─── Input actions ────────────────────────────────────────────────────────────
+export const createInputAction = (name: string) => invoke<void>('create_input_action', { name });
+export const renameInputAction = (oldName: string, newName: string) =>
+  invoke<void>('rename_input_action', { oldName, newName });
+export const deleteInputAction = (name: string) => invoke<void>('delete_input_action', { name });
+export const addInputBinding = (name: string, binding: string) =>
+  invoke<boolean>('add_input_binding', { name, binding });
+export const removeInputBinding = (name: string, binding: string) =>
+  invoke<boolean>('remove_input_binding', { name, binding });
+export const clearInputBindings = (name: string) => invoke<boolean>('clear_input_bindings', { name });
 // A list item is a literal number or text - see `ListItemDto` in types.ts.
 export const createList = (name: string, scope: 'actor' | 'global') =>
   invoke<void>('create_list', { name, scope });

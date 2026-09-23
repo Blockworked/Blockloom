@@ -1759,4 +1759,62 @@ mod tests {
         assert_eq!(target_of(&project.actors[1]), "save");
         assert_eq!(read_of(&project.actors[1]), "save");
     }
+
+    #[test]
+    fn renaming_an_input_action_follows_the_blocks_that_name_it() {
+        let mut project = Project::starter("p", Mode::TwoD);
+        project.create_input_action("Dash").unwrap();
+        project.actors[0]
+            .graph
+            .strands
+            .push(crate::blocks::Strand::with_instructions(
+                0,
+                0,
+                vec![
+                    Instruction::new(InstructionKind::WhenActionPressed {
+                        action: "Dash".to_string(),
+                    }),
+                    Instruction::new(InstructionKind::Say {
+                        text: crate::value::Value::Op {
+                            op: crate::value::Op::from_name("ActionDown"),
+                            args: vec![crate::value::Value::text("Dash")],
+                            saved: Box::new(crate::value::Value::number(0.0)),
+                        },
+                    }),
+                    Instruction::new(InstructionKind::BindAction {
+                        action: crate::value::Value::text("Dash"),
+                        binding: crate::value::Value::text("shift"),
+                    }),
+                ],
+            ));
+        project.rename_input_action("dash", "Sprint").unwrap();
+
+        let strand = &project.actors[0].graph.strands[0].instructions;
+        let InstructionKind::WhenActionPressed { action } = &strand[0].kind else {
+            panic!("expected an action header");
+        };
+        assert_eq!(action, "Sprint");
+        let InstructionKind::Say { text } = &strand[1].kind else {
+            panic!("expected a say");
+        };
+        let crate::value::Value::Op { args, .. } = text else {
+            panic!("expected a reporter");
+        };
+        assert!(matches!(
+            &args[0],
+            crate::value::Value::Text { value } if value == "Sprint"
+        ));
+        let InstructionKind::BindAction { action, binding } = &strand[2].kind else {
+            panic!("expected a bind");
+        };
+        assert!(matches!(
+            action,
+            crate::value::Value::Text { value } if value == "Sprint"
+        ));
+        // The binding slot keeps its own spelling: it names a key, not the action.
+        assert!(matches!(
+            binding,
+            crate::value::Value::Text { value } if value == "shift"
+        ));
+    }
 }

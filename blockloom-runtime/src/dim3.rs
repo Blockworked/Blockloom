@@ -58,18 +58,12 @@ fn mesh_for(visual: &Visual) -> Option<Mesh> {
     match visual {
         Visual::Cuboid { size, .. } => Some(Cuboid::new(size[0], size[1], size[2]).into()),
         Visual::Sphere { radius, .. } => Some(Sphere::new(*radius).into()),
-        Visual::Capsule { radius, height, .. } => {
-            Some(Capsule3d::new(*radius, *height).into())
-        }
-        Visual::Plane { size, .. } => {
-            Some(Cuboid::new(size[0], PLANE_THICKNESS, size[1]).into())
-        }
+        Visual::Capsule { radius, height, .. } => Some(Capsule3d::new(*radius, *height).into()),
+        Visual::Plane { size, .. } => Some(Cuboid::new(size[0], PLANE_THICKNESS, size[1]).into()),
         // Placeholder until the glTF scene streams in (see ModelSource):
         // a tinted box at the authored scale, so a missing rig is visible
         // rather than invisible.
-        Visual::Model { scale, .. } => {
-            Some(Cuboid::new(scale[0], scale[1], scale[2]).into())
-        }
+        Visual::Model { scale, .. } => Some(Cuboid::new(scale[0], scale[1], scale[2]).into()),
         // An empty tilemap draws nothing: let the unseen fallback take it.
         Visual::Tilemap { tilemap } => {
             let built = tilemap.build_mesh();
@@ -104,13 +98,12 @@ pub fn spawn_actor(
 ) -> Option<Entity> {
     let visual = actor.visual()?.clone();
     let mesh = mesh_for(&visual)?;
-    let mut entity = commands.spawn((
-        crate::world::actor_bundle(actor),
-        Mesh3d(meshes.add(mesh)),
-    ));
+    let id = commands
+        .spawn((crate::world::actor_bundle(actor), Mesh3d(meshes.add(mesh))))
+        .id();
     insert_surface(
         commands,
-        entity.id(),
+        id,
         actor,
         &visual,
         dir,
@@ -119,10 +112,10 @@ pub fn spawn_actor(
         graph_materials,
     );
     if let Visual::Model { path, .. } = &visual {
-        entity.insert(ModelSource(path.clone()));
+        commands.entity(id).insert(ModelSource(path.clone()));
     }
-    insert_body(&mut entity, actor);
-    Some(entity.id())
+    insert_body(&mut commands.entity(id), actor);
+    Some(id)
 }
 
 /// The actor's surface: graph effect, tilemap texture, or PBR properties.
@@ -144,9 +137,11 @@ fn insert_surface(
     let material = actor.components.material();
     if let Some(effect) = material.and_then(|material| material.shader.as_ref()) {
         let secondary = crate::world::parse_color(&effect.color);
-        commands.entity(id).insert(MeshMaterial3d(graph_materials.add(
-            crate::materials::graph_material_3d(effect, color, secondary, None),
-        )));
+        commands
+            .entity(id)
+            .insert(MeshMaterial3d(graph_materials.add(
+                crate::materials::graph_material_3d(effect, color, secondary, None),
+            )));
         return;
     }
     if let Visual::Tilemap { tilemap } = visual {
@@ -155,15 +150,15 @@ fn insert_surface(
         } else {
             Some(assets.load(crate::world::asset_path(dir, tilemap.tileset.trim())))
         };
-        commands.entity(id).insert(MeshMaterial3d(materials.add(
-            StandardMaterial {
+        commands
+            .entity(id)
+            .insert(MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::WHITE,
                 base_color_texture: texture,
                 alpha_mode: AlphaMode::Blend,
                 cull_mode: None,
                 ..default()
-            },
-        )));
+            })));
         return;
     }
     let standard = match material {
@@ -174,7 +169,9 @@ fn insert_surface(
             ..default()
         },
     };
-    commands.entity(id).insert(MeshMaterial3d(materials.add(standard)));
+    commands
+        .entity(id)
+        .insert(MeshMaterial3d(materials.add(standard)));
 }
 
 /// Drop whatever surface the actor renders with: standard or graph.
@@ -182,7 +179,9 @@ fn remove_surface(commands: &mut Commands, id: Entity) {
     commands
         .entity(id)
         .remove::<MeshMaterial3d<StandardMaterial>>();
-    commands.entity(id).remove::<MeshMaterial3d<GraphMaterial3d>>();
+    commands
+        .entity(id)
+        .remove::<MeshMaterial3d<GraphMaterial3d>>();
 }
 
 /// Gives an actor the rigid body its `Body` component asks for, with the
@@ -533,20 +532,20 @@ pub fn apply_effects(
                 }
             }
             Effect::DetachComponent { actor, component } => {
-                let Some(entity) = engine.entities.get(actor).copied() else {
+                let Some(id) = engine.entities.get(actor).copied() else {
                     continue;
                 };
-                let mut entity = commands.entity(entity);
                 match component.as_str() {
                     "Body" => {
+                        let mut entity = commands.entity(id);
                         entity.remove::<rp::RigidBody>();
                         entity.remove::<rp::Collider>();
                     }
                     // Nothing to draw, but the actor is still there to be
                     // moved, sensed and given a look again.
                     "Look" => {
-                        entity.remove::<Mesh3d>();
-                        remove_surface(&mut commands, entity.id());
+                        commands.entity(id).remove::<Mesh3d>();
+                        remove_surface(&mut commands, id);
                     }
                     // Back to the plain standard surface.
                     "Material" => {
@@ -556,10 +555,10 @@ pub fn apply_effects(
                         let Some(visual) = authored.visual().cloned() else {
                             continue;
                         };
-                        remove_surface(&mut commands, entity.id());
+                        remove_surface(&mut commands, id);
                         insert_surface(
                             &mut commands,
-                            entity.id(),
+                            id,
                             &authored,
                             &visual,
                             dir.as_deref(),

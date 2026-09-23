@@ -410,6 +410,38 @@ body.panel-resizing {
   border-color: var(--blockstitch-accent, #4c97ff);
 }
 
+/* The tilemap paint grid: one cell per tile, filled ones tinted, empty ones
+   dim. Scrolls inside the panel on big maps. */
+.tile-grid {
+  display: grid;
+  gap: 1px;
+  flex: 1 1 auto;
+  max-height: 240px;
+  overflow: auto;
+  padding: 2px;
+  border: 1px solid var(--blockstitch-border);
+  border-radius: var(--blockstitch-radius);
+}
+
+.tile-cell {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: var(--blockstitch-bg);
+  color: var(--blockstitch-text-dim);
+  font-size: 9px;
+  line-height: 18px;
+  text-align: center;
+  cursor: crosshair;
+}
+
+.tile-cell.filled {
+  background: var(--blockstitch-accent-dim, #2b3f5e);
+  color: inherit;
+}
+
 /* ── Components ──────────────────────────────────────────────────────────── */
 
 /* A component heading only shows its remove button on hover, so the panel
@@ -844,6 +876,18 @@ body.asset-resizing {
 
 .asset-tile:hover .asset-preview {
   display: flex;
+}
+
+/* The pipeline's dirty dot: a file changed on disk since import, so what
+ * the game plays with isn't what the tray inspected. Top-right of the icon. */
+.asset-tile .asset-dirty {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--blockstitch-warning, #ffab19);
 }
 
 .asset-tile.folder .asset-icon {
@@ -1368,6 +1412,41 @@ body.asset-resizing {
   margin: 0 0 4px;
   color: var(--blockstitch-text-dim);
   line-height: 1.5;
+}
+
+.settings-action {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--blockstitch-border);
+}
+
+.settings-action:last-of-type {
+  border-bottom: none;
+}
+
+.settings-bindings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.settings-binding {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--blockstitch-border);
+  border-radius: var(--blockstitch-radius);
+  background: var(--blockstitch-bg);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-binding .btn {
+  padding: 0 4px;
+  min-height: 0;
+  height: auto;
+  line-height: 1;
 }
 
 .project-icon-row {

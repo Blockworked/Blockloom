@@ -5,9 +5,10 @@
 use crate::engine::{Engine, PendingEffects, PhysicsPose, PrevPose};
 use crate::materials::{GraphMaterial2d, custom_quad_size};
 use bevy::asset::RenderAssetUsages;
+use bevy::mesh::Mesh2d;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::sprite::{ColorMaterial, MeshMaterial2d, Mesh2d};
+use bevy::sprite_render::{ColorMaterial, MeshMaterial2d};
 use bevy_rapier2d::prelude as rp;
 use blockloom_core::project::Actor;
 use blockloom_core::scene::{BodyKind, Visual};
@@ -118,10 +119,13 @@ pub fn spawn_actor(
         _ => {}
     }
     let mut entity = commands.spawn(crate::world::actor_bundle(actor));
-    // The sort layer rides on z, leaving the authored depth alone.
-    let (transform, pose, prev) = spawn_pose(actor);
-    entity.insert((transform, pose, prev));
-    let id = entity.id();
+    // The sort layer rides on z, leaving the authored depth alone. The
+    // borrow ends with this block: the passes below take `commands` again.
+    let id = {
+        let (transform, pose, prev) = spawn_pose(actor);
+        entity.insert((transform, pose, prev));
+        entity.id()
+    };
     match &visual {
         Visual::Tilemap { tilemap } => {
             crate::materials::spawn_tilemap_2d(
@@ -138,10 +142,11 @@ pub fn spawn_actor(
             insert_graph(commands, id, actor, dir, assets, meshes, graph_materials);
         }
         _ => {
-            entity.insert(sprite_for(&visual, dir, assets, textures).expect("checked above"));
+            let sprite = sprite_for(&visual, dir, assets, textures).expect("checked above");
+            commands.entity(id).insert(sprite);
         }
     }
-    insert_body(&mut entity, actor);
+    insert_body(&mut commands.entity(id), actor);
     Some(id)
 }
 
@@ -187,10 +192,8 @@ fn insert_graph(
         .and_then(|visual| visual.color())
         .map(crate::world::parse_color)
         .unwrap_or(Color::WHITE);
-    let texture = match visual {
-        Some(Visual::Image { path, .. }) => {
-            Some(assets.load(crate::world::asset_path(dir, &path)))
-        }
+    let texture = match &visual {
+        Some(Visual::Image { path, .. }) => Some(assets.load(crate::world::asset_path(dir, path))),
         _ => None,
     };
     let rounded = matches!(visual, Some(Visual::Circle { .. }));
@@ -215,7 +218,9 @@ fn remove_drawn(
 ) {
     commands.entity(id).remove::<Sprite>();
     commands.entity(id).remove::<Mesh2d>();
-    commands.entity(id).remove::<MeshMaterial2d<GraphMaterial2d>>();
+    commands
+        .entity(id)
+        .remove::<MeshMaterial2d<GraphMaterial2d>>();
     if let Ok(marker) = tiles.get(id) {
         commands.entity(marker.0).despawn();
         commands
@@ -613,12 +618,9 @@ pub fn apply_effects(
                                     );
                                 }
                                 _ => {
-                                    if let Some(sprite) = sprite_for(
-                                        visual,
-                                        dir.as_deref(),
-                                        &assets,
-                                        &mut textures,
-                                    ) {
+                                    if let Some(sprite) =
+                                        sprite_for(visual, dir.as_deref(), &assets, &mut textures)
+                                    {
                                         commands.entity(entity).insert(sprite);
                                     }
                                 }
@@ -629,28 +631,28 @@ pub fn apply_effects(
                 }
             }
             Effect::DetachComponent { actor, component } => {
-                let Some(entity) = engine.entities.get(actor).copied() else {
+                let Some(id) = engine.entities.get(actor).copied() else {
                     continue;
                 };
-                let mut entity = commands.entity(entity);
                 match component.as_str() {
                     "Body" => {
+                        let mut entity = commands.entity(id);
                         entity.remove::<rp::RigidBody>();
                         entity.remove::<rp::Collider>();
                     }
                     // Nothing to draw, but the actor is still there to be
                     // moved, sensed and given a look again.
                     "Look" => {
-                        remove_drawn(&mut commands, entity.id(), &tiles);
+                        remove_drawn(&mut commands, id, &tiles);
                     }
                     // Back to the plain sprite pipeline.
                     "Material" => {
-                        remove_drawn(&mut commands, entity.id(), &tiles);
+                        remove_drawn(&mut commands, id, &tiles);
                         match engine.actor(actor).and_then(|a| a.visual()) {
                             Some(Visual::Tilemap { tilemap }) => {
                                 crate::materials::spawn_tilemap_2d(
                                     &mut commands,
-                                    entity.id(),
+                                    id,
                                     tilemap,
                                     dir.as_deref(),
                                     &assets,
@@ -662,7 +664,7 @@ pub fn apply_effects(
                                 if let Some(sprite) =
                                     sprite_for(visual, dir.as_deref(), &assets, &mut textures)
                                 {
-                                    commands.entity(entity.id()).insert(sprite);
+                                    commands.entity(id).insert(sprite);
                                 }
                             }
                             None => {}

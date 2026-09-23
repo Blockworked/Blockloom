@@ -369,11 +369,8 @@ impl InputConfig {
             return Err("Input action not found".to_string());
         };
         action.name = trimmed.clone();
-        self.normalize_blocks_rename(old, &trimmed);
         Ok(trimmed)
     }
-
-    fn normalize_blocks_rename(&mut self, _old: &str, _new: &str) {}
 
     pub fn remove_action(&mut self, name: &str) -> bool {
         let wanted = normalize_action(name).to_lowercase();

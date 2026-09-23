@@ -449,6 +449,39 @@ impl Backend {
             "delete_variable" => {
                 to_json(commands::delete_variable(state, app, arg(&args, "name")?)?)
             }
+            "create_input_action" => to_json(commands::create_input_action(
+                state,
+                app,
+                arg(&args, "name")?,
+            )?),
+            "rename_input_action" => to_json(commands::rename_input_action(
+                state,
+                app,
+                arg(&args, "oldName")?,
+                arg(&args, "newName")?,
+            )?),
+            "delete_input_action" => to_json(commands::delete_input_action(
+                state,
+                app,
+                arg(&args, "name")?,
+            )?),
+            "add_input_binding" => to_json(commands::add_input_binding(
+                state,
+                app,
+                arg(&args, "name")?,
+                arg(&args, "binding")?,
+            )?),
+            "remove_input_binding" => to_json(commands::remove_input_binding(
+                state,
+                app,
+                arg(&args, "name")?,
+                arg(&args, "binding")?,
+            )?),
+            "clear_input_bindings" => to_json(commands::clear_input_bindings(
+                state,
+                app,
+                arg(&args, "name")?,
+            )?),
             "create_list" => to_json(commands::create_list(
                 state,
                 app,

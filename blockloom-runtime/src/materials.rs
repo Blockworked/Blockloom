@@ -18,12 +18,18 @@
 
 use bevy::asset::{Assets, Handle};
 use bevy::color::Color;
+use bevy::ecs::system::SystemParam;
 use bevy::image::Image;
 use bevy::math::Vec4;
+use bevy::mesh::Mesh2d;
 use bevy::pbr::{Material, MaterialPlugin};
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, ShaderRef};
-use bevy::sprite::{AlphaMode2d, Material2d, Material2dPlugin, Mesh2d};
+use bevy::reflect::TypePath;
+use bevy::render::render_resource::AsBindGroup;
+use bevy::shader::ShaderRef;
+use bevy::sprite_render::{
+    AlphaMode2d, ColorMaterial, Material2d, Material2dPlugin, MeshMaterial2d,
+};
 use blockloom_core::material::{GraphEffect, SurfaceMaterial, TileMesh};
 use std::path::Path;
 
@@ -35,12 +41,12 @@ pub fn register(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/graph_3d.wgsl");
     app.add_plugins(Material2dPlugin::<GraphMaterial2d>::default());
     app.add_plugins(MaterialPlugin::<GraphMaterial3d>::default());
-    app.add_plugins(bevy::sprite::ColorMaterialPlugin);
+    app.add_plugins(bevy::sprite_render::ColorMaterialPlugin);
 }
 
 /// One custom-shaded 2D actor: tint and second color, effect params, and the
 /// look's own image when it has one.
-#[derive(Asset, AsBindGroup, Clone)]
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct GraphMaterial2d {
     #[uniform(0)]
     pub tint: Vec4,
@@ -74,7 +80,7 @@ impl Material2d for GraphMaterial2d {
 
 /// One custom-shaded 3D actor. Unlit by design: an effect is its own light,
 /// so the scene's lamps leave it alone.
-#[derive(Asset, AsBindGroup, Clone)]
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct GraphMaterial3d {
     #[uniform(0)]
     pub tint: Vec4,
@@ -123,12 +129,7 @@ pub fn graph_material_2d(
             effect.strength,
             0.0,
         ),
-        flags: Vec4::new(
-            f32::from(texture.is_some()),
-            f32::from(rounded),
-            0.0,
-            0.0,
-        ),
+        flags: Vec4::new(f32::from(texture.is_some()), f32::from(rounded), 0.0, 0.0),
         texture,
     }
 }
@@ -190,9 +191,8 @@ pub fn surface_standard(
         base_color_texture: albedo,
         metallic: material.metallic.clamp(0.0, 1.0),
         perceptual_roughness: material.roughness.clamp(0.0, 1.0),
-        emissive: bevy::color::LinearRgba::from(
-            crate::world::parse_color(&material.emissive),
-        ) * material.emissive_energy.max(0.0),
+        emissive: bevy::color::LinearRgba::from(crate::world::parse_color(&material.emissive))
+            * material.emissive_energy.max(0.0),
         double_sided: material.double_sided,
         ..default()
     }
@@ -207,17 +207,23 @@ pub fn tilemesh_to_bevy(mesh: &TileMesh) -> Mesh {
     );
     bevy.insert_attribute(
         Mesh::ATTRIBUTE_POSITION,
-        mesh.positions.iter().map(|p| [p[0], p[1], p[2]]).collect::<Vec<_>>(),
+        mesh.positions
+            .iter()
+            .map(|p| [p[0], p[1], p[2]])
+            .collect::<Vec<_>>(),
     );
     bevy.insert_attribute(
         Mesh::ATTRIBUTE_NORMAL,
-        mesh.normals.iter().map(|n| [n[0], n[1], n[2]]).collect::<Vec<_>>(),
+        mesh.normals
+            .iter()
+            .map(|n| [n[0], n[1], n[2]])
+            .collect::<Vec<_>>(),
     );
     bevy.insert_attribute(
         Mesh::ATTRIBUTE_UV_0,
         mesh.uvs.iter().map(|uv| [uv[0], uv[1]]).collect::<Vec<_>>(),
     );
-    bevy.set_indices(Some(bevy::render::mesh::Indices::U32(mesh.indices.clone())));
+    bevy.insert_indices(bevy::render::mesh::Indices::U32(mesh.indices.clone()));
     bevy
 }
 
@@ -226,9 +232,7 @@ pub fn tilemesh_to_bevy(mesh: &TileMesh) -> Mesh {
 pub fn custom_quad_size(visual: &blockloom_core::scene::Visual) -> Option<Vec2> {
     use blockloom_core::scene::Visual;
     match visual {
-        Visual::Rect { size, .. } | Visual::Image { size, .. } => {
-            Some(Vec2::new(size[0], size[1]))
-        }
+        Visual::Rect { size, .. } | Visual::Image { size, .. } => Some(Vec2::new(size[0], size[1])),
         Visual::Circle { radius, .. } => Some(Vec2::splat(radius * 2.0)),
         Visual::Tilemap { tilemap } => {
             let size = tilemap.size();
@@ -236,6 +240,16 @@ pub fn custom_quad_size(visual: &blockloom_core::scene::Visual) -> Option<Vec2> 
         }
         _ => None,
     }
+}
+
+/// The material asset stores, as one system param: graph effects for both
+/// dimensions plus the tilemap material. Bundled because a system takes at
+/// most sixteen params, and the spawners already need most of them.
+#[derive(SystemParam)]
+pub struct MaterialStores<'w> {
+    pub graph_2d: ResMut<'w, Assets<GraphMaterial2d>>,
+    pub graph_3d: ResMut<'w, Assets<GraphMaterial3d>>,
+    pub tiles: ResMut<'w, Assets<ColorMaterial>>,
 }
 
 /// The entity carrying a tilemap mesh, so systems can find it. Stored on the
@@ -255,7 +269,7 @@ pub fn spawn_tilemap_2d(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
 ) -> Option<Entity> {
-    use bevy::sprite::ColorMaterial;
+    use bevy::sprite_render::ColorMaterial;
     let built = tilemap.build_mesh();
     if built.is_empty() {
         return None;
@@ -273,7 +287,7 @@ pub fn spawn_tilemap_2d(
         ..default()
     });
     let child = commands
-        .spawn((Mesh2d(mesh), bevy::sprite::MeshMaterial2d(material)))
+        .spawn((Mesh2d(mesh), MeshMaterial2d(material)))
         .id();
     commands.entity(entity).add_child(child);
     commands.entity(entity).insert(TilemapMesh(child));

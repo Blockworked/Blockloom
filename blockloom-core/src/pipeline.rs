@@ -800,7 +800,7 @@ impl ImportSettings {
             "{}:{}:{}",
             self.texture_max, self.audio_quality, self.atlas_max
         );
-        crc32(&text.as_bytes())
+        crc32(text.as_bytes())
     }
 }
 

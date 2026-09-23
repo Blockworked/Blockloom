@@ -17,6 +17,8 @@ export type InstrPath = { index: number; slot?: number }[];
 export const INSTRUCTION_TYPES = [
   'WhenStarted',
   'WhenKeyPressed',
+  'WhenActionPressed',
+  'WhenTouched',
   'WhenClicked',
   'WhenCollision',
   'WhenMessage',
@@ -73,6 +75,9 @@ export const INSTRUCTION_TYPES = [
   'Broadcast',
   'StopAll',
   'SetMouseLocked',
+  'RumbleGamepad',
+  'BindAction',
+  'ClearActionBindings',
   'ShowPanel',
   'ShowLabel',
   'ShowButton',
@@ -393,6 +398,21 @@ export interface SoundMixerDto {
   sfx_volume: number;
 }
 
+/** One way to say an input action - see `blockloom_core::input`. */
+export interface InputBindingDto {
+  binding: 'Key' | 'Mouse' | 'GamepadButton' | 'GamepadAxis';
+  key?: string;
+  button?: string;
+  axis?: string;
+  direction?: number;
+}
+
+/** One named input action and every binding that drives it. */
+export interface InputActionDto {
+  name: string;
+  bindings: InputBindingDto[];
+}
+
 export interface WorldDto {
   mode: Mode;
   background: string;
@@ -405,6 +425,7 @@ export interface WorldDto {
   lighting: LightingDto;
   sound: SoundMixerDto;
   post?: PostProcessDto;
+  input?: { actions: InputActionDto[] };
 }
 
 export interface StrandDto {

@@ -35,6 +35,8 @@ const BLOCK_GROUPS: { label: string; types: InstructionType[] }[] = [
     types: [
       'WhenStarted',
       'WhenKeyPressed',
+      'WhenActionPressed',
+      'WhenTouched',
       'WhenClicked',
       'WhenCollision',
       'WhenMessage',
@@ -84,6 +86,10 @@ const BLOCK_GROUPS: { label: string; types: InstructionType[] }[] = [
   {
     label: 'Control',
     types: ['Wait', 'WaitUntil', 'If', 'IfElse', 'Repeat', 'Forever', 'While', 'EscapeLoop', 'ContinueLoop', 'StopAll', 'SetMouseLocked'],
+  },
+  {
+    label: 'Input',
+    types: ['RumbleGamepad', 'BindAction', 'ClearActionBindings'],
   },
 ];
 

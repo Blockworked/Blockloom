@@ -22,9 +22,10 @@ use blockloom_core::blocks::{
     BlockDef, BlockPiece, BlockShape, DictDef, DictEntry, DictItem, InputValueType, Instruction,
     InstructionKind as K, ListDef, ListItem, Strand, VariableDef,
 };
+use blockloom_core::input::ActionSense;
 use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::{Axis, Mode, Visual};
-use blockloom_core::sense::{ActorSense, Sensors, UiSense};
+use blockloom_core::sense::{ActorSense, Sensors, TouchSense, UiSense};
 use blockloom_core::sound::SoundBus;
 use blockloom_core::ui::{UiAnchor, UiProp, UiTheme};
 use blockloom_core::value::{Evaluated, Op, Value};
@@ -97,6 +98,32 @@ fn publish_world() {
         },
     );
     sensors.ui_focus = "name".to_string();
+    sensors.mouse_buttons.insert("right".to_string());
+    sensors.actions.insert(
+        "Jump".to_string(),
+        ActionSense {
+            held: true,
+            pressed: true,
+            released: false,
+            value: 1.0,
+        },
+    );
+    sensors.actions.insert(
+        "Left".to_string(),
+        ActionSense {
+            held: true,
+            pressed: false,
+            released: false,
+            value: 0.5,
+        },
+    );
+    sensors.touches.push(TouchSense {
+        id: 7,
+        position: [5.0, 6.0],
+    });
+    sensors.gamepad_connected = true;
+    sensors.gamepad_axes.insert("leftstickx".to_string(), 0.5);
+    sensors.gamepad_buttons.insert("south".to_string());
     blockloom_core::sense::publish(sensors);
 }
 
@@ -246,6 +273,7 @@ impl Host for Recorder {
             // Window-global, or screen-space: against nobody in particular,
             // which is how the VM's own effects say it.
             Act::SetMouseLocked { .. }
+            | Act::RumbleGamepad { .. }
             | Act::ShowElement { .. }
             | Act::SetUiProp { .. }
             | Act::HideElement { .. }
@@ -267,6 +295,43 @@ impl Host for Recorder {
             "MouseDeltaX" => Ok(Val::Num(24.0)),
             "MouseDeltaY" => Ok(Val::Num(-9.0)),
             "MouseLocked" => Ok(Val::Bool(true)),
+            "MouseButtonDown" => Ok(Val::Bool(args[0].as_text().to_lowercase() == "right")),
+            "ActionDown" => Ok(Val::Bool(args[0].as_text().eq_ignore_ascii_case("Jump"))),
+            "ActionPressed" => Ok(Val::Bool(args[0].as_text().eq_ignore_ascii_case("Jump"))),
+            "ActionReleased" => Ok(Val::Bool(false)),
+            "ActionValue" => Ok(Val::Num(
+                if args[0].as_text().eq_ignore_ascii_case("Jump") {
+                    1.0
+                } else if args[0].as_text().eq_ignore_ascii_case("Left") {
+                    0.5
+                } else {
+                    0.0
+                },
+            )),
+            "TouchCount" => Ok(Val::Num(1.0)),
+            "TouchX" => Ok(Val::Num(if args[0].as_number().unwrap_or(0.0) as usize == 1 {
+                5.0
+            } else {
+                0.0
+            })),
+            "TouchY" => Ok(Val::Num(if args[0].as_number().unwrap_or(0.0) as usize == 1 {
+                6.0
+            } else {
+                0.0
+            })),
+            "GamepadConnected" => Ok(Val::Bool(true)),
+            "GamepadAxis" => Ok(Val::Num(
+                if args[0].as_text().to_lowercase().replace([' ', '_', '-'], "").as_str()
+                    == "leftstickx"
+                {
+                    0.5
+                } else {
+                    0.0
+                },
+            )),
+            "GamepadButtonDown" => Ok(Val::Bool(
+                args[0].as_text().to_lowercase().replace([' ', '_', '-'], "") == "south",
+            )),
             "UiValue" => match args[0].as_text().as_str() {
                 "volume" => Ok(Val::Num(4.0)),
                 "hint" => Ok(Val::Text(String::new())),
@@ -1597,6 +1662,39 @@ fn sensing_reads_the_same_world() {
             K::Say {
                 text: op("MouseLocked", vec![]),
             },
+            K::Say {
+                text: op("MouseButtonDown", vec![Value::text("right")]),
+            },
+            K::Say {
+                text: op("ActionDown", vec![Value::text("Jump")]),
+            },
+            K::Say {
+                text: op("ActionPressed", vec![Value::text("Jump")]),
+            },
+            K::Say {
+                text: op("ActionReleased", vec![Value::text("Jump")]),
+            },
+            K::Say {
+                text: op("ActionValue", vec![Value::text("Left")]),
+            },
+            K::Say {
+                text: op("TouchCount", vec![]),
+            },
+            K::Say {
+                text: op("TouchX", vec![number(1.0)]),
+            },
+            K::Say {
+                text: op("TouchY", vec![number(1.0)]),
+            },
+            K::Say {
+                text: op("GamepadConnected", vec![]),
+            },
+            K::Say {
+                text: op("GamepadAxis", vec![Value::text("LeftStickX")]),
+            },
+            K::Say {
+                text: op("GamepadButtonDown", vec![Value::text("South")]),
+            },
             K::ChangePosition {
                 axis: Axis::X,
                 by: op("MyPosition", vec![Value::text("Y")]),
@@ -2011,6 +2109,17 @@ fn the_rest_of_the_leaf_blocks_land_the_same() {
             },
             K::SetVisible { visible: false },
             K::SetMouseLocked { locked: true },
+            K::RumbleGamepad {
+                strength: number(80.0),
+                duration: number(0.5),
+            },
+            K::BindAction {
+                action: Value::text("Jump"),
+                binding: Value::text("space"),
+            },
+            K::ClearActionBindings {
+                action: Value::text("Jump"),
+            },
             K::SetCameraPitch {
                 degrees: number(12.5),
             },

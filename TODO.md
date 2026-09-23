@@ -60,7 +60,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 - [x] Physics queries: raycast/shapecast, layers/masks UI, trigger vs solid: required for platformers, AI, UI clicks.
 
 ### Phase 2 - Ship a complete single-player game
-- [ ] Input actions plus remapping, gamepad/rumble, touch/multitouch, mouse lock.
+- [x] Input actions plus remapping, gamepad/rumble, touch/multitouch, mouse lock.
 - [ ] Tweens plus sprite animation plus animation player/state machine.
 - [ ] In-game UI: button/label/bar/slider/input, anchors/layout, HUD/menus.
 - [ ] Save slots/profiles plus localization: builds on save system we have.
@@ -74,7 +74,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 
 ### Phase 4 - Look and depth, uses Bevy leverage
 - [x] Asset pipeline: glTF/FBX rigs, atlases, texture/audio compression, reimport tracking.
-- [ ] Materials/custom WGSL plus shader graph lite, particles/trails, post-process, shadows/HDR, 2D sorting layers, tilemap/terrain.
+- [x] Materials/custom WGSL plus shader graph lite, particles/trails, post-process, shadows/HDR, 2D sorting layers, tilemap/terrain.
 - [ ] Advanced physics: joints, character controller, one-way platforms, ragdoll.
 - [ ] AI: full nav on top of existing baked polyanya mesh (`navigate to`): runtime rebake, layers/costs, off-mesh links, crowds/separation, plus steering, behavior trees, perception.
 

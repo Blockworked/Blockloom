@@ -41,8 +41,13 @@ import {
   type ComponentFieldDto,
   type ComponentName,
   type EvaluatedDto,
+  type GraphEffectDto,
+  type ParticleSpecDto,
   type PhysicsDto,
   type PlacementDto,
+  type SurfaceMaterialDto,
+  type TilemapDto,
+  type TrailSpecDto,
   type VisualDto,
 } from '../types';
 
@@ -264,6 +269,144 @@ function imagePathOf(component: ActorComponentDto): string {
   return visual.shape === 'Image' ? visual.path : '';
 }
 
+function modelPathOf(component: ActorComponentDto): string {
+  const visual = visualOf(component);
+  return visual.shape === 'Model' ? visual.path : '';
+}
+
+function modelTintOf(component: ActorComponentDto): string {
+  const visual = visualOf(component);
+  return visual.shape === 'Model' ? visual.tint : '#4C97FF';
+}
+
+function modelScaleOf(component: ActorComponentDto): [number, number, number] {
+  const visual = visualOf(component);
+  return visual.shape === 'Model' ? visual.scale : [1, 1, 1];
+}
+
+function writeModelScale(component: ActorComponentDto, index: number, value: number) {
+  const scale: [number, number, number] = [...modelScaleOf(component)];
+  scale[index] = value;
+  writeVisual(component, { scale } as Partial<VisualDto>);
+}
+
+function tilemapOf(component: ActorComponentDto): TilemapDto {
+  const current =
+    component.component === 'Look' && component.visual.shape === 'Tilemap'
+      ? component.visual.tilemap
+      : null;
+  return {
+    tileset: current?.tileset ?? '',
+    tile_size: current?.tile_size ?? [32, 32],
+    width: current?.width ?? 8,
+    height: current?.height ?? 8,
+    sheet_columns: current?.sheet_columns ?? 4,
+    sheet_rows: current?.sheet_rows ?? 4,
+    tiles: current?.tiles ?? [],
+    solid: current?.solid ?? false,
+  };
+}
+
+function writeTilemap(component: ActorComponentDto, next: Partial<TilemapDto>) {
+  const tilemap = { ...tilemapOf(component), ...next };
+  // The grid is always exactly width × height; resizing keeps what overlaps.
+  const width = Math.min(256, Math.max(1, Math.round(tilemap.width)));
+  const height = Math.min(256, Math.max(1, Math.round(tilemap.height)));
+  const tiles: number[] = [];
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      tiles.push(y < tilemapOf(component).height && x < tilemapOf(component).width
+        ? (tilemapOf(component).tiles[y * tilemapOf(component).width + x] ?? -1)
+        : -1);
+    }
+  }
+  writeVisual(component, { tilemap: { ...tilemap, width, height, tiles } } as Partial<VisualDto>);
+}
+
+function writeTileSize(component: ActorComponentDto, index: number, value: number) {
+  const tile_size: [number, number] = [...tilemapOf(component).tile_size];
+  tile_size[index] = Math.max(1, value);
+  writeTilemap(component, { tile_size });
+}
+
+function writeTilemapSize(component: ActorComponentDto, index: number, value: number) {
+  writeTilemap(component, index === 0 ? { width: value } : { height: value });
+}
+
+/** Which tile a grid click paints, shared across the panel. -1 erases. */
+const paintTile = ref(0);
+
+function paintTileAt(component: ActorComponentDto, index: number) {
+  const current = tilemapOf(component);
+  if (index < 0 || index >= current.tiles.length) return;
+  const tiles = [...current.tiles];
+  const cells = Math.max(1, current.sheet_columns * current.sheet_rows);
+  const tile = Math.round(paintTile.value);
+  tiles[index] = tile >= 0 && tile < cells ? tile : -1;
+  writeVisual(component, { tilemap: { ...current, tiles } } as Partial<VisualDto>);
+}
+
+function layerOf(component: ActorComponentDto): number {
+  return component.component === 'Render' ? (component.layer ?? 0) : 0;
+}
+
+function writeRender(component: ActorComponentDto, next: { visible?: boolean; layer?: number }) {
+  write('Render', {
+    component: 'Render',
+    visible: next.visible ?? visibleOf(component),
+    layer: next.layer ?? layerOf(component),
+  });
+}
+
+function materialOf(component: ActorComponentDto): SurfaceMaterialDto {
+  return component.component === 'Material'
+    ? component.material
+    : { metallic: 0, roughness: 0.6, emissive: '#000000', emissive_energy: 0, albedo_texture: '', double_sided: false, shader: null };
+}
+
+function writeMaterial(component: ActorComponentDto, next: Partial<SurfaceMaterialDto>) {
+  write('Material', { component: 'Material', material: { ...materialOf(component), ...next } });
+}
+
+function writeShader(component: ActorComponentDto, next: Partial<GraphEffectDto>) {
+  const current = materialOf(component).shader ?? { mode: 'Solid', speed: 1, strength: 0.5, color: '#FFFFFF' };
+  writeMaterial(component, { shader: { ...current, ...next } });
+}
+
+/** Switching the effect on starts from Solid white; switching it off drops
+ * the whole custom path and the actor renders PBR again. */
+function toggleShader(component: ActorComponentDto, on: boolean) {
+  writeMaterial(component, {
+    shader: on ? { mode: 'Solid', speed: 1, strength: 0.5, color: '#FFFFFF' } : null,
+  });
+}
+
+function emitterOf(component: ActorComponentDto): ParticleSpecDto {
+  return component.component === 'Emitter'
+    ? component.emitter
+    : { rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: '#FFFFFF', color_end: '#FFAB19', max: 128 };
+}
+
+function writeEmitter(component: ActorComponentDto, next: Partial<ParticleSpecDto>) {
+  write('Emitter', { component: 'Emitter', emitter: { ...emitterOf(component), ...next } });
+}
+
+function trailOf(component: ActorComponentDto): TrailSpecDto {
+  return component.component === 'Trail'
+    ? component.trail
+    : { interval: 0.05, life: 0.4, color: '#FFFFFF' };
+}
+
+function writeTrail(component: ActorComponentDto, next: Partial<TrailSpecDto>) {
+  write('Trail', { component: 'Trail', trail: { ...trailOf(component), ...next } });
+}
+
+/** The custom motions the effect dropdown offers. */
+const EFFECT_OPTIONS = (['Solid', 'Wave', 'Plasma', 'Pulse', 'Dissolve'] as const).map(mode => ({
+  value: mode,
+  label: mode,
+}));
+
 // ─── Writing one component ─────────────────────────────────────────────────
 
 /** Writes a component back under the name it currently has, so renaming a
@@ -330,6 +473,20 @@ function writeShape(component: ActorComponentDto, shape: string) {
     Sphere: { shape: 'Sphere', color, radius: 0.5 },
     Capsule: { shape: 'Capsule', color, radius: 0.4, height: 1 },
     Plane: { shape: 'Plane', color, size: [20, 20] },
+    Model: { shape: 'Model', path: '', tint: color, scale: [1, 1, 1] },
+    Tilemap: {
+      shape: 'Tilemap',
+      tilemap: {
+        tileset: '',
+        tile_size: [32, 32],
+        width: 8,
+        height: 8,
+        sheet_columns: 4,
+        sheet_rows: 4,
+        tiles: Array(64).fill(-1),
+        solid: false,
+      },
+    },
   };
   const next = visuals[shape];
   if (next) write('Look', { component: 'Look', visual: next });
@@ -427,7 +584,7 @@ function blankComponent(name: ComponentName): ActorComponentDto | null {
             : { shape: 'Rect', color: '#4C97FF', size: [60, 60] },
       };
     case 'Render':
-      return { component: 'Render', visible: true };
+      return { component: 'Render', visible: true, layer: 0 };
     case 'Body':
       return {
         component: 'Body',
@@ -440,6 +597,40 @@ function blankComponent(name: ComponentName): ActorComponentDto | null {
       };
     case 'Parent':
       return { component: 'Parent', parent: '', offset: null };
+    case 'Material':
+      return {
+        component: 'Material',
+        material: {
+          metallic: 0,
+          roughness: 0.6,
+          emissive: '#000000',
+          emissive_energy: 0,
+          albedo_texture: '',
+          double_sided: false,
+          shader: null,
+        },
+      };
+    case 'Emitter':
+      return {
+        component: 'Emitter',
+        emitter: {
+          rate: 24,
+          lifetime: 0.8,
+          speed: 120,
+          spread: 60,
+          gravity_scale: 0.5,
+          size_start: 6,
+          size_end: 1,
+          color_start: '#FFFFFF',
+          color_end: '#FFAB19',
+          max: 128,
+        },
+      };
+    case 'Trail':
+      return {
+        component: 'Trail',
+        trail: { interval: 0.05, life: 0.4, color: '#FFFFFF' },
+      };
     case 'Custom':
       return {
         component: 'Custom',
@@ -552,6 +743,91 @@ function remove(name: string) {
             <label />
             <img :src="preview" :alt="imagePathOf(component)">
           </div>
+          <div class="panel-row" v-if="visualOf(component).shape === 'Model'">
+            <label>Model</label>
+            <AssetDrop :accept="['model']" @asset="path => writeVisual(component, { path } as Partial<VisualDto>)">
+              <input
+                type="text"
+                :value="modelPathOf(component)"
+                placeholder="Drag a model here"
+                @change="e => writeVisual(component, { path: text(e) } as Partial<VisualDto>)"
+              >
+            </AssetDrop>
+          </div>
+          <div class="panel-row" v-if="visualOf(component).shape === 'Model'">
+            <label>Tint</label>
+            <input type="color" :value="modelTintOf(component)" @change="e => writeVisual(component, { tint: text(e).toUpperCase() } as Partial<VisualDto>)">
+          </div>
+          <div class="panel-row triple" v-if="visualOf(component).shape === 'Model'">
+            <label>Scale</label>
+            <input
+              v-for="(dimension, i) in modelScaleOf(component)"
+              :key="i"
+              type="number"
+              step="any"
+              :value="dimension"
+              @change="e => writeModelScale(component, i, num(e, dimension))"
+            >
+          </div>
+          <p class="panel-note" v-if="visualOf(component).shape === 'Model' && !modelPathOf(component)">
+            No file yet: the actor renders nothing until one is picked. glTF
+            plays back rigs; OBJ and FBX import as static meshes.
+          </p>
+          <template v-if="visualOf(component).shape === 'Tilemap'">
+            <div class="panel-row">
+              <label>Tileset</label>
+              <AssetDrop :accept="['image']" @asset="path => writeTilemap(component, { tileset: path })">
+                <input
+                  type="text"
+                  :value="tilemapOf(component).tileset"
+                  placeholder="Drag a tileset here"
+                  @change="e => writeTilemap(component, { tileset: text(e) })"
+                >
+              </AssetDrop>
+            </div>
+            <div class="panel-row triple">
+              <label>Tile px</label>
+              <input type="number" step="any" :value="tilemapOf(component).tile_size[0]" @change="e => writeTileSize(component, 0, num(e, 32))">
+              <input type="number" step="any" :value="tilemapOf(component).tile_size[1]" @change="e => writeTileSize(component, 1, num(e, 32))">
+            </div>
+            <div class="panel-row triple">
+              <label>Map</label>
+              <input type="number" step="1" min="1" max="256" :value="tilemapOf(component).width" @change="e => writeTilemapSize(component, 0, num(e, 8))">
+              <input type="number" step="1" min="1" max="256" :value="tilemapOf(component).height" @change="e => writeTilemapSize(component, 1, num(e, 8))">
+            </div>
+            <div class="panel-row triple">
+              <label>Sheet</label>
+              <input type="number" step="1" min="1" :value="tilemapOf(component).sheet_columns" @change="e => writeTilemap(component, { sheet_columns: Math.max(1, Math.round(num(e, 4))) })">
+              <input type="number" step="1" min="1" :value="tilemapOf(component).sheet_rows" @change="e => writeTilemap(component, { sheet_rows: Math.max(1, Math.round(num(e, 4))) })">
+            </div>
+            <div class="panel-row">
+              <label>Solid</label>
+              <SwitchControl
+                :model-value="tilemapOf(component).solid"
+                @update:model-value="v => writeTilemap(component, { solid: v })"
+              />
+            </div>
+            <div class="panel-row">
+              <label>Paint</label>
+              <input type="number" step="1" min="-1" :value="paintTile" @change="e => paintTile = Math.round(num(e, 0))">
+              <span class="panel-note">-1 erases</span>
+            </div>
+            <div class="panel-row">
+              <label>Grid</label>
+              <div class="tile-grid" :style="{ gridTemplateColumns: `repeat(${tilemapOf(component).width}, 18px)` }">
+                <button
+                  v-for="(tile, i) in tilemapOf(component).tiles"
+                  :key="i"
+                  class="tile-cell"
+                  :class="{ filled: tile >= 0 }"
+                  :title="`(${(i % tilemapOf(component).width)}, ${Math.floor(i / tilemapOf(component).width)}): ${tile}`"
+                  @click="paintTileAt(component, i)"
+                >
+                  {{ tile >= 0 ? tile : '' }}
+                </button>
+              </div>
+            </div>
+          </template>
           <div class="panel-row" v-if="'radius' in visualOf(component)">
             <label>Radius</label>
             <input type="number" step="any" :value="radiusOf(component)" @change="e => writeVisual(component, { radius: num(e, 1) } as Partial<VisualDto>)">
@@ -637,9 +913,16 @@ function remove(name: string) {
             <label>Visible</label>
             <SwitchControl
               :model-value="visibleOf(component)"
-              @update:model-value="v => write('Render', { component: 'Render', visible: v })"
+              @update:model-value="v => writeRender(component, { visible: v })"
             />
           </div>
+          <div class="panel-row" v-if="mode === 'TwoD'">
+            <label>Layer</label>
+            <input type="number" step="1" :value="layerOf(component)" @change="e => writeRender(component, { layer: Math.round(num(e, 0)) })">
+          </div>
+          <p class="panel-note" v-if="mode === 'TwoD'">
+            Higher layers draw on top, without touching the actor's depth.
+          </p>
         </template>
 
         <template v-else-if="component.component === 'Body'">
@@ -785,6 +1068,129 @@ function remove(name: string) {
             <button class="component-add-field" @click="addField(component)">
               <Plus :size="13" /> Add field
             </button>
+          </div>
+        </template>
+
+        <template v-else-if="component.component === 'Material'">
+          <div class="panel-row">
+            <label>Metallic</label>
+            <input type="number" step="any" min="0" max="1" :value="materialOf(component).metallic" @change="e => writeMaterial(component, { metallic: num(e, 0) })">
+          </div>
+          <div class="panel-row">
+            <label>Rough</label>
+            <input type="number" step="any" min="0" max="1" :value="materialOf(component).roughness" @change="e => writeMaterial(component, { roughness: num(e, 0.6) })">
+          </div>
+          <div class="panel-row">
+            <label>Glow</label>
+            <input type="color" :value="materialOf(component).emissive" @change="e => writeMaterial(component, { emissive: text(e).toUpperCase() })">
+            <input type="number" step="any" min="0" :value="materialOf(component).emissive_energy" title="Glow strength" @change="e => writeMaterial(component, { emissive_energy: num(e, 0) })">
+          </div>
+          <div class="panel-row">
+            <label>Texture</label>
+            <AssetDrop :accept="['image']" @asset="path => writeMaterial(component, { albedo_texture: path })">
+              <input
+                type="text"
+                :value="materialOf(component).albedo_texture"
+                placeholder="Optional albedo"
+                @change="e => writeMaterial(component, { albedo_texture: text(e) })"
+              >
+            </AssetDrop>
+          </div>
+          <div class="panel-row">
+            <label>Two-sided</label>
+            <SwitchControl
+              :model-value="materialOf(component).double_sided"
+              @update:model-value="v => writeMaterial(component, { double_sided: v })"
+            />
+          </div>
+          <div class="panel-row">
+            <label>Effect</label>
+            <SwitchControl
+              :model-value="materialOf(component).shader !== null"
+              @update:model-value="v => toggleShader(component, v)"
+            />
+          </div>
+          <template v-if="materialOf(component).shader">
+            <div class="panel-row">
+              <label>Motion</label>
+              <AppDropdown
+                :options="EFFECT_OPTIONS"
+                :model-value="materialOf(component).shader!.mode"
+                @update:model-value="mode => writeShader(component, { mode: mode as GraphEffectDto['mode'] })"
+              />
+            </div>
+            <div class="panel-row">
+              <label>Speed</label>
+              <input type="number" step="any" min="0" :value="materialOf(component).shader!.speed" @change="e => writeShader(component, { speed: num(e, 1) })">
+            </div>
+            <div class="panel-row">
+              <label>Strength</label>
+              <input type="number" step="any" min="0" max="1" :value="materialOf(component).shader!.strength" @change="e => writeShader(component, { strength: num(e, 0.5) })">
+            </div>
+            <div class="panel-row">
+              <label>Color</label>
+              <input type="color" :value="materialOf(component).shader!.color" @change="e => writeShader(component, { color: text(e).toUpperCase() })">
+            </div>
+          </template>
+          <p class="panel-note" v-if="mode === 'TwoD' && !materialOf(component).shader">
+            Metallic, roughness and glow need 3D lighting; in 2D they rest
+            until a custom effect is switched on.
+          </p>
+        </template>
+
+        <template v-else-if="component.component === 'Emitter'">
+          <div class="panel-row">
+            <label>Rate /s</label>
+            <input type="number" step="any" min="0" max="240" :value="emitterOf(component).rate" @change="e => writeEmitter(component, { rate: num(e, 24) })">
+          </div>
+          <div class="panel-row">
+            <label>Life s</label>
+            <input type="number" step="any" min="0.05" max="10" :value="emitterOf(component).lifetime" @change="e => writeEmitter(component, { lifetime: num(e, 0.8) })">
+          </div>
+          <div class="panel-row">
+            <label>Speed</label>
+            <input type="number" step="any" min="0" :value="emitterOf(component).speed" @change="e => writeEmitter(component, { speed: num(e, 120) })">
+          </div>
+          <div class="panel-row">
+            <label>Spread</label>
+            <input type="number" step="any" min="0" max="360" :value="emitterOf(component).spread" @change="e => writeEmitter(component, { spread: num(e, 60) })">
+          </div>
+          <div class="panel-row">
+            <label>Gravity ×</label>
+            <input type="number" step="any" min="0" max="4" :value="emitterOf(component).gravity_scale" @change="e => writeEmitter(component, { gravity_scale: num(e, 0.5) })">
+          </div>
+          <div class="panel-row">
+            <label>Size</label>
+            <input type="number" step="any" :value="emitterOf(component).size_start" title="At birth" @change="e => writeEmitter(component, { size_start: num(e, 6) })">
+            <input type="number" step="any" :value="emitterOf(component).size_end" title="At death" @change="e => writeEmitter(component, { size_end: num(e, 1) })">
+          </div>
+          <div class="panel-row">
+            <label>Color</label>
+            <input type="color" :value="emitterOf(component).color_start" title="At birth" @change="e => writeEmitter(component, { color_start: text(e).toUpperCase() })">
+            <input type="color" :value="emitterOf(component).color_end" title="At death" @change="e => writeEmitter(component, { color_end: text(e).toUpperCase() })">
+          </div>
+          <div class="panel-row">
+            <label>Max</label>
+            <input type="number" step="1" min="1" max="512" :value="emitterOf(component).max" @change="e => writeEmitter(component, { max: Math.round(num(e, 128)) })">
+          </div>
+          <p class="panel-note">
+            Runs while attached - detaching the emitter stops the spray, and
+            what is already flying fades out on its own.
+          </p>
+        </template>
+
+        <template v-else-if="component.component === 'Trail'">
+          <div class="panel-row">
+            <label>Every s</label>
+            <input type="number" step="any" min="0.016" max="1" :value="trailOf(component).interval" @change="e => writeTrail(component, { interval: num(e, 0.05) })">
+          </div>
+          <div class="panel-row">
+            <label>Lasts s</label>
+            <input type="number" step="any" min="0.05" max="5" :value="trailOf(component).life" @change="e => writeTrail(component, { life: num(e, 0.4) })">
+          </div>
+          <div class="panel-row">
+            <label>Color</label>
+            <input type="color" :value="trailOf(component).color" @change="e => writeTrail(component, { color: text(e).toUpperCase() })">
           </div>
         </template>
       </template>

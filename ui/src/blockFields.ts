@@ -115,6 +115,15 @@ function collisionOptions(): Option[] {
   return [{ value: '', label: 'anything' }, ...actorOptions(false)];
 }
 
+/** Input action names, for the action headers and reporters. */
+function actionOptions(): Option[] {
+  const actions = (state.project?.world.input?.actions ?? []).map(action => ({
+    value: action.name,
+    label: action.name,
+  }));
+  return actions.length > 0 ? actions : [{ value: 'Jump', label: 'Jump' }];
+}
+
 function variableOptions(): Option[] {
   return variableNames(state.project, openActor.value).map(name => ({ value: name, label: name }));
 }
@@ -132,7 +141,7 @@ function dictOptions(): Option[] {
 }
 
 /** The open actor's custom components - the only ones a block can write, since
- * the built-in five have blocks of their own. */
+ * the built-ins have blocks of their own. */
 function componentOptions(): Option[] {
   return customComponents(openActor.value).map(component => ({
     value: component.name,
@@ -145,7 +154,7 @@ function componentOptions(): Option[] {
  * editor, so it isn't offered. */
 function attachableOptions(): Option[] {
   const held = componentNames(openActor.value);
-  const names = ['Look', 'Render', 'Body', 'Camera'].filter(name => !held.includes(name));
+  const names = ['Look', 'Render', 'Body', 'Camera', 'Material', 'Emitter', 'Trail'].filter(name => !held.includes(name));
   return [...held.filter(name => name !== 'Place' && name !== 'Script'), ...names].map(name => ({
     value: name,
     label: name,
@@ -238,6 +247,10 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
   WhenKeyPressed: {
     head: [label('when'), { kind: 'dropdown', key: 'key', options: KEY_OPTIONS }, label('pressed')],
   },
+  WhenActionPressed: {
+    head: [label('when action'), { kind: 'dropdown', key: 'action', options: actionOptions, placeholder: 'action' }, label('pressed')],
+  },
+  WhenTouched: { head: [label('when the screen is touched')] },
   WhenClicked: { head: [label('when I am clicked')] },
   WhenCollision: {
     head: [label('when I touch'), { kind: 'dropdown', key: 'with', options: collisionOptions, placeholder: 'anything' }],
@@ -490,6 +503,20 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
       },
       label('mouse'),
     ],
+  },
+  RumbleGamepad: {
+    head: [label('rumble gamepad at'), value('RumbleStrength', 'strength'), label('for'), value('RumbleDuration', 'duration'), label('secs')],
+  },
+  BindAction: {
+    head: [
+      label('bind'),
+      value('ActionBinding', 'binding'),
+      label('to action'),
+      value('ActionName', 'action'),
+    ],
+  },
+  ClearActionBindings: {
+    head: [label('clear bindings of action'), value('ActionName', 'action')],
   },
 
   // ── Interface ────────────────────────────────────────────────────────────

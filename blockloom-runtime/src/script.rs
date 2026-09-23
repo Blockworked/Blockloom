@@ -277,9 +277,7 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
                     .unwrap_or(0.0)
             }))
         }
-        abi::READ_GAMEPAD_CONNECTED => {
-            bool_as(sense::read(|sensors| sensors.gamepad_connected))
-        }
+        abi::READ_GAMEPAD_CONNECTED => bool_as(sense::read(|sensors| sensors.gamepad_connected)),
         abi::READ_GAMEPAD_AXIS => {
             let axis = blockloom_core::input::normalize_pad_axis(a);
             Some(sense::read(|sensors| {
@@ -288,7 +286,9 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
         }
         abi::READ_GAMEPAD_BUTTON => {
             let button = blockloom_core::input::normalize_pad_button(a);
-            bool_as(sense::read(|sensors| sensors.gamepad_buttons.contains(&button)))
+            bool_as(sense::read(|sensors| {
+                sensors.gamepad_buttons.contains(&button)
+            }))
         }
         abi::READ_GAME_PAUSED => bool_as(sense::read(|sensors| sensors.paused)),
         abi::READ_UI_SHOWN => bool_as(sense::read(|sensors| {

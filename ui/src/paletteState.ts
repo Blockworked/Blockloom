@@ -16,6 +16,10 @@ function defaults(type: InstructionType): Record<string, unknown> {
   switch (type) {
     case 'WhenKeyPressed':
       return { key: 'space' };
+    case 'WhenActionPressed':
+      return { action: 'Jump' };
+    case 'WhenTouched':
+      return {};
     case 'WhenCollision':
       return { with: '' };
     case 'WhenMessage':
@@ -133,6 +137,12 @@ function defaults(type: InstructionType): Record<string, unknown> {
       return { value: numberValue(0) };
     case 'SetMouseLocked':
       return { locked: true };
+    case 'RumbleGamepad':
+      return { strength: numberValue(100), duration: numberValue(0.5) };
+    case 'BindAction':
+      return { action: textValue('Jump'), binding: textValue('space') };
+    case 'ClearActionBindings':
+      return { action: textValue('Jump') };
     case 'WhenUiClicked':
     case 'WhenUiChanged':
       return { element: 'my-button' };

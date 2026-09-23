@@ -1024,19 +1024,22 @@ impl<'a> Pass<'a> {
                 act(format!("Act::SetMouseLocked {{ locked: {locked} }}"))
             }
             Action::RumbleGamepad { strength, duration } => format!(
-                "    h.act(&me, Act::RumbleGamepad {{ strength: ({} as f32).clamp(0.0, 100.0), \
-                 duration: ({} as f32).max(0.0) }});\n",
+                "    let strength = ({} as f32).clamp(0.0, 100.0);\n    \
+                 let duration = ({} as f32).max(0.0);\n    \
+                 h.act(&me, Act::RumbleGamepad {{ strength, duration }});\n",
                 self.number(strength)?,
                 self.number(duration)?,
             ),
             Action::BindAction { action, binding } => format!(
-                "    h.act(&me, Act::BindAction {{ action: {}.trim().to_string(), \
-                 binding: {}.trim().to_string() }});\n",
+                "    let action = {}.trim().to_string();\n    \
+                 let binding = {}.trim().to_string();\n    \
+                 h.act(&me, Act::BindAction {{ action, binding }});\n",
                 self.text(action)?,
                 self.text(binding)?,
             ),
             Action::ClearActionBindings { action } => format!(
-                "    h.act(&me, Act::ClearActionBindings {{ action: {}.trim().to_string() }});\n",
+                "    let action = {}.trim().to_string();\n    \
+                 h.act(&me, Act::ClearActionBindings {{ action }});\n",
                 self.text(action)?,
             ),
             // The interface. Every slot is hoisted into a `let` first, in

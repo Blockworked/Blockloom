@@ -2241,6 +2241,108 @@ pub(crate) fn delete_variable(
     Ok(())
 }
 
+// ─── Input actions ─────────────────────────────────────────────────────────
+
+pub(crate) fn create_input_action(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let result = match s.project_mut() {
+        Some(project) => project.create_input_action(&name).map(|_| ()),
+        None => Ok(()),
+    };
+    auto_save(&s);
+    emit(app, &s);
+    result
+}
+
+pub(crate) fn rename_input_action(
+    state: &SharedState,
+    app: &AppHandle,
+    old_name: String,
+    new_name: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let result = match s.project_mut() {
+        Some(project) => project
+            .rename_input_action(&old_name, &new_name)
+            .map(|_| ()),
+        None => Ok(()),
+    };
+    auto_save(&s);
+    emit(app, &s);
+    result
+}
+
+pub(crate) fn delete_input_action(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    if let Some(project) = s.project_mut() {
+        project.remove_input_action(&name);
+    }
+    auto_save(&s);
+    emit(app, &s);
+    Ok(())
+}
+
+pub(crate) fn add_input_binding(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+    binding: String,
+) -> Result<bool, String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let result = match s.project_mut() {
+        Some(project) => project.world.input.add_binding(&name, &binding),
+        None => Ok(false),
+    };
+    auto_save(&s);
+    emit(app, &s);
+    result
+}
+
+pub(crate) fn remove_input_binding(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+    binding: String,
+) -> Result<bool, String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let result = match s.project_mut() {
+        Some(project) => project.world.input.remove_binding(&name, &binding),
+        None => Ok(false),
+    };
+    auto_save(&s);
+    emit(app, &s);
+    result
+}
+
+pub(crate) fn clear_input_bindings(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+) -> Result<bool, String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let result = match s.project_mut() {
+        Some(project) => project.world.input.clear_bindings(&name),
+        None => Ok(false),
+    };
+    auto_save(&s);
+    emit(app, &s);
+    result
+}
+
 // ─── Lists ───────────────────────────────────────────────────────────────────
 
 /// `scope` is `"global"` for a project-wide list, anything else for one
