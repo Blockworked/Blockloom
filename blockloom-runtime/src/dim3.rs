@@ -32,6 +32,12 @@ fn collider_for(visual: &Visual) -> Option<rp::Collider> {
             PLANE_THICKNESS / 2.0,
             size[1] / 2.0,
         )),
+        // A rig collides as its authored box; the drawn mesh swaps in.
+        Visual::Model { scale, .. } => Some(rp::Collider::cuboid(
+            scale[0] / 2.0,
+            scale[1] / 2.0,
+            scale[2] / 2.0,
+        )),
         _ => None,
     }
 }
@@ -42,9 +48,18 @@ fn mesh_for(visual: &Visual) -> Option<Mesh> {
         Visual::Sphere { radius, .. } => Sphere::new(*radius).into(),
         Visual::Capsule { radius, height, .. } => Capsule3d::new(*radius, *height).into(),
         Visual::Plane { size, .. } => Cuboid::new(size[0], PLANE_THICKNESS, size[1]).into(),
+        // Placeholder until the glTF scene streams in (see ModelSource):
+        // a tinted box at the authored scale, so a missing rig is visible
+        // rather than invisible.
+        Visual::Model { scale, .. } => Cuboid::new(scale[0], scale[1], scale[2]).into(),
         _ => return None,
     })
 }
+
+/// Where a `Visual::Model` actor's file lives. The placeholder box spawns
+/// immediately; a loader swaps the real scene in once Bevy resolves it.
+#[derive(Component, Debug, Clone)]
+pub struct ModelSource(pub String);
 
 /// Spawns one actor, or nothing if its visual belongs to the other dimension.
 pub fn spawn_actor(
@@ -68,6 +83,9 @@ pub fn spawn_actor(
             ..default()
         })),
     ));
+    if let Visual::Model { path, .. } = visual {
+        entity.insert(ModelSource(path.clone()));
+    }
     insert_body(&mut entity, actor);
     Some(entity.id())
 }

@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 11;
+pub const ABI_VERSION: u32 = 12;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -98,6 +98,12 @@ pub const READ_UI_EXISTS: u32 = 21;
 pub const READ_SOUND_PLAYING: u32 = 22;
 /// `a` = a bus name. Its live gain in 0-100, as the play blocks speak it.
 pub const READ_BUS_VOLUME: u32 = 23;
+/// `arg` = axis. Where this actor stands in its parent's frame - the world
+/// position itself when it hangs off nothing.
+pub const READ_LOCAL_POSITION: u32 = 24;
+/// `a` = another actor's name, `arg` = axis. Its place in its own parent's
+/// frame, likewise the world position when it hangs off nothing.
+pub const READ_LOCAL_POSITION_OF: u32 = 25;
 
 // ─── What a script can read as text ────────────────────────────────────────
 

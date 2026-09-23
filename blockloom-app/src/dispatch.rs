@@ -195,6 +195,18 @@ impl Backend {
             "open_asset_location" => {
                 to_json(commands::open_asset_location(state, arg(&args, "path")?)?)
             }
+            "inspect_asset" => to_json(commands::inspect_asset(state, arg(&args, "path")?)?),
+            "pipeline_status" => to_json(commands::pipeline_status(state)?),
+            "reimport_assets" => to_json(commands::reimport_assets(
+                state,
+                arg(&args, "paths").unwrap_or_default(),
+            )?),
+            "pack_atlas" => to_json(commands::pack_atlas(
+                state,
+                arg(&args, "paths")?,
+                arg(&args, "maxSize").ok().flatten(),
+                arg(&args, "padding").ok().flatten(),
+            )?),
 
             // ── Scripts ────────────────────────────────────────────────────
             "create_script" => {
@@ -202,6 +214,12 @@ impl Backend {
             }
             "check_script" => to_json(commands::check_script(state, app, arg(&args, "actorId")?)?),
             "read_script" => to_json(commands::read_script(state, arg(&args, "actorId")?)?),
+            "script_toolchain" => to_json(commands::script_toolchain(state)?),
+            "script_diagnostics" => {
+                to_json(commands::script_diagnostics(state, arg(&args, "actorId")?)?)
+            }
+            "sync_script_ide" => to_json(commands::sync_script_ide(state)?),
+            "open_script_ide" => to_json(commands::open_script_ide(state)?),
             "write_script" => to_json(commands::write_script(
                 state,
                 app,

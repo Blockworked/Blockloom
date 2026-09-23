@@ -716,7 +716,22 @@ pub fn publish_sensors(
     }
 
     let mut senses: HashMap<String, ActorSense> = HashMap::new();
+    // Every actor's world transform, so a child can be answered about its
+    // place in its parent's frame below.
+    let posed: HashMap<&str, Transform> = actors
+        .iter()
+        .map(|(id, transform, _, _)| (id.0.as_str(), *transform))
+        .collect();
     for (id, transform, visibility, custom) in &actors {
+        // The parent's world transform inverted onto this actor's own: the
+        // world position itself when it hangs off nothing, or its parent is
+        // gone. The inverse of `world_of`, which places an offset.
+        let local_position = engine
+            .parents
+            .get(&id.0)
+            .and_then(|parent| posed.get(parent.as_str()))
+            .map(|parent| local_of(parent, transform.translation))
+            .unwrap_or(transform.translation.to_array());
         let (rx, ry, rz) = transform.rotation.to_euler(EulerRot::XYZ);
         senses.insert(
             id.0.clone(),
@@ -726,6 +741,7 @@ pub fn publish_sensors(
                     .map(|actor| actor.name.clone())
                     .unwrap_or_default(),
                 position: transform.translation.to_array(),
+                local_position,
                 rotation: [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()],
                 scale: transform.scale.x,
                 visible: *visibility != Visibility::Hidden,
@@ -1098,6 +1114,9 @@ fn half_extents3(visual: &Visual) -> Vec3 {
             Vec3::new(*radius, height / 2.0 + radius, *radius)
         }
         Visual::Plane { size, .. } => Vec3::new(size[0] / 2.0, 0.1, size[1] / 2.0),
+        // A model's extents are its authored scale until the glTF scene
+        // loads and reports its own bounds.
+        Visual::Model { scale, .. } => Vec3::new(scale[0] / 2.0, scale[1] / 2.0, scale[2] / 2.0),
         _ => Vec3::ZERO,
     }
 }
@@ -1472,6 +1491,7 @@ pub fn apply_component_effects(
     mut customs: Query<&mut CustomComponents>,
     mut visibilities: Query<&mut Visibility>,
     mut rigs: Query<&mut CameraRig>,
+    mut transforms: Query<&mut Transform>,
 ) {
     if !engine.running {
         return;
@@ -1497,6 +1517,7 @@ pub fn apply_component_effects(
                 &mut engine,
                 &mut customs,
                 &mut visibilities,
+                &mut transforms,
                 actor,
                 component,
             ),
@@ -1592,6 +1613,7 @@ fn attach(
     engine: &mut Engine,
     customs: &mut Query<&mut CustomComponents>,
     visibilities: &mut Query<&mut Visibility>,
+    transforms: &mut Query<&mut Transform>,
     actor: &str,
     component: &str,
 ) {
@@ -1648,8 +1670,9 @@ fn attach(
             let rig = camera_of(engine, actor).unwrap_or_default();
             commands.entity(entity).insert(CameraRig(rig));
         }
-        // The hierarchy is `engine.parents`, not anything on the entity, and
-        // the actor stays where it stands - as `set my parent to` leaves it.
+        // The hierarchy is `engine.parents`, not anything on the entity. Like
+        // `set my parent to`, hanging it off its authored parent puts it at
+        // its authored offset when it carries one.
         "Parent" => {
             let Some(parent) = engine
                 .actor(actor)
@@ -1658,7 +1681,7 @@ fn attach(
             else {
                 return;
             };
-            set_parent(engine, actor, &parent);
+            set_parent(engine, actor, &parent, transforms);
         }
         // Anything else is a custom component: it comes back with the fields
         // the editor gave it, or empty if the project never had one.
@@ -1751,7 +1774,8 @@ pub fn apply_lifetimes(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut textures: ResMut<Assets<Image>>,
-    live: Query<(&Transform, &Visibility, Option<&CustomComponents>)>,
+    live: Query<(&Visibility, Option<&CustomComponents>)>,
+    mut transforms: Query<&mut Transform>,
 ) {
     if !engine.running || engine.paused {
         return;
@@ -1763,14 +1787,16 @@ pub fn apply_lifetimes(
                     continue;
                 };
                 copy.id = clone.clone();
-                if let Some(entity) = engine.entities.get(of).copied()
-                    && let Ok((transform, visibility, custom)) = live.get(entity)
-                {
-                    copy.components.set_placement(placement_of(transform));
-                    copy.components
-                        .set_visible(*visibility != Visibility::Hidden);
-                    if let Some(custom) = custom {
-                        carry_custom(&mut copy, custom);
+                if let Some(entity) = engine.entities.get(of).copied() {
+                    if let Ok(transform) = transforms.get(entity) {
+                        copy.components.set_placement(placement_of(transform));
+                    }
+                    if let Ok((visibility, custom)) = live.get(entity) {
+                        copy.components
+                            .set_visible(*visibility != Visibility::Hidden);
+                        if let Some(custom) = custom {
+                            carry_custom(&mut copy, custom);
+                        }
                     }
                 }
                 // A clone hangs where its template hangs. Its own blocks can
@@ -1812,7 +1838,9 @@ pub fn apply_lifetimes(
                 );
             }
             Effect::DeleteActor { actor } => delete_actor(&mut commands, &mut engine, actor),
-            Effect::SetParent { actor, parent } => set_parent(&mut engine, actor, parent),
+            Effect::SetParent { actor, parent } => {
+                set_parent(&mut engine, actor, parent, &mut transforms)
+            }
             _ => {}
         }
     }
@@ -1940,10 +1968,16 @@ fn delete_actor(commands: &mut Commands, engine: &mut Engine, actor: &str) {
     }
 }
 
-/// Hangs `actor` off `wanted`, or takes it off when that names nothing. The
-/// actor stays exactly where it is: a parent moves a child from here on, it
-/// doesn't place it.
-fn set_parent(engine: &mut Engine, actor: &str, wanted: &str) {
+/// Hangs `actor` off `wanted`, or takes it off when that names nothing. A
+/// child carrying an authored offset is placed at it - that far from its new
+/// parent, in the parent's own frame, the same `parent * offset` the world is
+/// built from - while one without an offset stays exactly where it is.
+fn set_parent(
+    engine: &mut Engine,
+    actor: &str,
+    wanted: &str,
+    transforms: &mut Query<&mut Transform>,
+) {
     if !engine.entities.contains_key(actor) {
         return;
     }
@@ -1973,7 +2007,26 @@ fn set_parent(engine: &mut Engine, actor: &str, wanted: &str) {
         });
         return;
     }
-    engine.parents.insert(actor.to_string(), parent);
+    engine.parents.insert(actor.to_string(), parent.clone());
+    // The offset is where the child stands in its parent's frame, so hanging
+    // it off someone new puts it there rather than leaving it where it
+    // stood. Without one there is nowhere to put it, and it keeps its world
+    // place, as before.
+    let offset = engine.actor(actor).and_then(|actor| actor.parent_offset());
+    let Some(offset) = offset else {
+        return;
+    };
+    let parent_pose = engine
+        .entities
+        .get(&parent)
+        .and_then(|entity| transforms.get(*entity).ok())
+        .copied();
+    let (Some(parent), Some(child)) = (parent_pose, engine.entities.get(actor).copied()) else {
+        return;
+    };
+    if let Ok(mut mine) = transforms.get_mut(child) {
+        mine.translation = world_of(&parent, offset);
+    }
 }
 
 /// Which actor a name or an id means right now. Clones share their
@@ -2000,14 +2053,30 @@ pub fn resolve_actor(engine: &Engine, running: &str, wanted: &str) -> Option<Str
         .cloned()
 }
 
+/// Where `child` stands in its parent's frame: the parent's world transform
+/// inverted onto the child's world position. What the local-position
+/// reporters read, and the inverse of [`world_of`].
+fn local_of(parent: &Transform, child: Vec3) -> [f32; 3] {
+    parent.compute_affine().inverse().transform_point3(child).to_array()
+}
+
+/// Where an offset in a parent's frame lands in the world: the same
+/// `parent * offset` the world is built from, which is also where `set my
+/// parent to` puts a child carrying an authored offset.
+fn world_of(parent: &Transform, offset: [f32; 3]) -> Vec3 {
+    parent.transform_point(Vec3::from(offset))
+}
+
 /// Resolves every authored local offset into the world placement the actor
 /// is spawned at.
 ///
-/// `Place` stays what the world is built from, so this is the one moment an
+/// `Place` stays what the world is built from, so this is the first moment an
 /// offset is read: a child that carries one stands at
 /// `parent placement * offset`, and one that doesn't stays exactly where its
-/// own `Place` puts it. Parents are laid out before their children, so an
-/// offset down a chain is measured against a parent that has already moved.
+/// own `Place` puts it. `set my parent to` reads it again at run time, when
+/// it hangs the actor off someone new. Parents are laid out before their
+/// children, so an offset down a chain is measured against a parent that has
+/// already moved.
 fn place_authored_children(project: &mut blockloom_core::project::Project) {
     let parents: HashMap<String, String> = project
         .actors
@@ -2030,7 +2099,6 @@ fn place_authored_children(project: &mut blockloom_core::project::Project) {
         let Some(offset) = project
             .actor(&child)
             .and_then(|actor| actor.parent_offset())
-            .map(Vec3::from)
         else {
             continue;
         };
@@ -2040,7 +2108,7 @@ fn place_authored_children(project: &mut blockloom_core::project::Project) {
         let Some(mine) = placed.get_mut(&child) else {
             continue;
         };
-        mine.translation = parent.transform_point(offset);
+        mine.translation = world_of(&parent, offset);
         let world = *mine;
         if let Some(actor) = project.actor_mut(&child) {
             actor.components.placement_mut().position = world.translation.to_array();
@@ -3108,6 +3176,106 @@ mod tests {
         let position = position_of(&project, "child");
         assert!(position[0].abs() < 0.001, "{position:?}");
         assert!((position[1] - 10.0).abs() < 0.001, "{position:?}");
+    }
+
+    #[test]
+    fn a_placed_child_reads_back_the_offset_it_was_placed_at() {
+        let parent = transform_of(&at(100.0, 50.0));
+        let child = world_of(&parent, [10.0, -5.0, 0.0]);
+
+        assert_eq!(child.to_array(), [110.0, 45.0, 0.0]);
+        // The reporters' read is the inverse of `set my parent to`'s write.
+        assert_eq!(local_of(&parent, child), [10.0, -5.0, 0.0]);
+    }
+
+    #[test]
+    fn a_turned_parent_turns_the_local_reading_with_it() {
+        let parent = transform_of(&blockloom_core::scene::Placement {
+            position: [0.0, 0.0, 0.0],
+            rotation: [0.0, 0.0, 90.0],
+            scale: 1.0,
+        });
+        let child = world_of(&parent, [10.0, 0.0, 0.0]);
+
+        // Ten to the right in the parent's frame is ten above in the world.
+        assert!(child.x.abs() < 0.001, "{child:?}");
+        assert!((child.y - 10.0).abs() < 0.001, "{child:?}");
+        let local = local_of(&parent, child);
+        assert!((local[0] - 10.0).abs() < 0.001, "{local:?}");
+        assert!(local[1].abs() < 0.001, "{local:?}");
+    }
+
+    /// A running app with a parent at (100, 50) and a child at (7, 7)
+    /// carrying `offset`, with `set my parent to parent` queued for it.
+    fn reparent_app(offset: Option<[f32; 3]>) -> App {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.running = true;
+        // The offset only places the child once something hangs it: at build
+        // time that is the authored parent, at run time `set my parent to`.
+        engine.project = project_of(
+            &[("parent", at(100.0, 50.0)), ("child", at(7.0, 7.0))],
+            &[("child", "parent", offset)],
+        );
+        engine.parents.clear();
+
+        let mut app = App::new();
+        app.add_plugins(bevy::asset::AssetPlugin::default());
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+        app.insert_resource(Dimension(Mode::TwoD));
+        app.insert_resource(PendingEffects(vec![Effect::SetParent {
+            actor: "child".to_string(),
+            parent: "parent".to_string(),
+        }]));
+        app.insert_non_send(engine);
+        for (id, x, y) in [("parent", 100.0, 50.0), ("child", 7.0, 7.0)] {
+            let entity = app
+                .world_mut()
+                .spawn((
+                    ActorId(id.to_string()),
+                    Transform::from_xyz(x, y, 0.0),
+                    Visibility::Inherited,
+                ))
+                .id();
+            app.world_mut()
+                .non_send_mut::<Engine>()
+                .entities
+                .insert(id.to_string(), entity);
+        }
+        app.add_systems(Update, apply_lifetimes);
+        app
+    }
+
+    #[test]
+    fn setting_a_parent_at_run_time_places_an_offset_child_in_its_frame() {
+        let mut app = reparent_app(Some([10.0, -5.0, 0.0]));
+        app.update();
+
+        let engine = app.world().non_send::<Engine>();
+        assert_eq!(
+            engine.parents.get("child").map(String::as_str),
+            Some("parent")
+        );
+        let child = engine.entities["child"];
+        let transform = app.world().entity(child).get::<Transform>().unwrap();
+        assert_eq!(transform.translation.to_array(), [110.0, 45.0, 0.0]);
+    }
+
+    #[test]
+    fn setting_a_parent_at_run_time_leaves_a_child_without_an_offset_where_it_stands() {
+        let mut app = reparent_app(None);
+        app.update();
+
+        let engine = app.world().non_send::<Engine>();
+        assert_eq!(
+            engine.parents.get("child").map(String::as_str),
+            Some("parent")
+        );
+        let child = engine.entities["child"];
+        let transform = app.world().entity(child).get::<Transform>().unwrap();
+        assert_eq!(transform.translation.to_array(), [7.0, 7.0, 0.0]);
     }
 
     #[test]

@@ -799,7 +799,7 @@ impl Project {
             for component in actor.components.iter_mut() {
                 match component {
                     ActorComponent::Look {
-                        visual: Visual::Image { path, .. },
+                        visual: Visual::Image { path, .. } | Visual::Model { path, .. },
                     } => repoint(path),
                     ActorComponent::Script { path } => repoint(path),
                     _ => {}
@@ -881,6 +881,12 @@ fn visual_for_mode(visual: &Visual, mode: Mode) -> Visual {
         Visual::Plane { color, size } => Visual::Rect {
             color: color.clone(),
             size: [size[0] * PIXELS_PER_METRE, 40.0],
+        },
+        // A model in 2D reads as its footprint box; a 2D visual never
+        // becomes a model on its own since there is no file to name.
+        Visual::Model { tint, scale, .. } => Visual::Rect {
+            color: tint.clone(),
+            size: [scale[0] * PIXELS_PER_METRE, scale[1] * PIXELS_PER_METRE],
         },
     }
 }

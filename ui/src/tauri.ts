@@ -119,6 +119,37 @@ export const checkScript = (actorId: string) => invoke<void>('check_script', { a
 export const readScript = (actorId: string) => invoke<string>('read_script', { actorId });
 export const writeScript = (actorId: string, source: string) =>
   invoke<void>('write_script', { actorId, source });
+
+/** One error or warning pinned to a line of a script. */
+export interface ScriptDiagnostic {
+  path: string;
+  line: number;
+  column: number;
+  end_line: number;
+  end_column: number;
+  level: string;
+  message: string;
+}
+
+/** Whether this machine can compile scripts, and what it would use. */
+export interface ToolchainStatus {
+  available: boolean;
+  rustc_version: string | null;
+  rustc_error: string | null;
+  cargo_version: string | null;
+  cargo_error: string | null;
+  help: string;
+}
+
+/** One actor's script errors pinned to their lines, for inline display. */
+export const scriptDiagnostics = (actorId: string) =>
+  invoke<ScriptDiagnostic[]>('script_diagnostics', { actorId });
+/** Whether this machine can compile scripts - missing is a status, not an error. */
+export const scriptToolchain = () => invoke<ToolchainStatus>('script_toolchain');
+/** Regenerates the Cargo project rust-analyzer opens for this project's scripts. */
+export const syncScriptIde = () => invoke<{ scripts: number; manifest: string }>('sync_script_ide');
+/** Points the user's own editor at the project folder. Resolves to the folder and what opened it. */
+export const openScriptIde = () => invoke<{ path: string; openedWith: string }>('open_script_ide');
 export const setActorVisual = (actorId: string, visual: VisualDto) =>
   invoke<void>('set_actor_visual', { actorId, visual });
 export const setActorPlacement = (actorId: string, placement: PlacementDto) =>

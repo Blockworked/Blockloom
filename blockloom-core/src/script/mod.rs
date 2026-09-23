@@ -17,13 +17,14 @@
 //! machine that presses Play. [`compile`] says so plainly when it isn't.
 
 pub mod abi;
+pub mod ide;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// The crate a script links against, assembled from the two halves that make
 /// it: the boundary the host also compiles, and the API over it.
-const PRELUDE_SOURCE: &str = concat!(include_str!("abi.rs"), include_str!("prelude.rs"));
+pub(crate) const PRELUDE_SOURCE: &str = concat!(include_str!("abi.rs"), include_str!("prelude.rs"));
 
 /// Where scripts live inside a project folder.
 pub const SCRIPTS_DIR: &str = "assets/scripts";
@@ -249,6 +250,10 @@ pub fn compile_for(
 
     let build = build_dir_for(project_dir, target);
     std::fs::create_dir_all(&build).map_err(|e| format!("{}: {e}", build.display()))?;
+
+    // Analysis-only, so it must never break Play: a project that can't spare
+    // two small files still compiles.
+    let _ = ide::sync_ide_project(project_dir);
 
     let library = library_path_for(project_dir, relative, target);
     let stamp = stamp_path(project_dir, relative, target);

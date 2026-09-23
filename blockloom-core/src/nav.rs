@@ -87,6 +87,7 @@ fn obstacle_of(mode: Mode, actor: &crate::project::Actor) -> Option<Footprint> {
         (true, Visual::Cuboid { size, .. }) => ([pos[0], pos[2]], [size[0] / 2.0, size[2] / 2.0]),
         (true, Visual::Sphere { radius, .. }) => ([pos[0], pos[2]], [*radius, *radius]),
         (true, Visual::Capsule { radius, .. }) => ([pos[0], pos[2]], [*radius, *radius]),
+        (true, Visual::Model { scale, .. }) => ([pos[0], pos[2]], [scale[0] / 2.0, scale[2] / 2.0]),
         (false, Visual::Rect { size, .. }) => ([pos[0], pos[1]], [size[0] / 2.0, size[1] / 2.0]),
         (false, Visual::Circle { radius, .. }) => ([pos[0], pos[1]], [*radius, *radius]),
         (false, Visual::Image { size, .. }) => ([pos[0], pos[1]], [size[0] / 2.0, size[1] / 2.0]),

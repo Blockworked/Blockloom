@@ -18,6 +18,7 @@ use blockloom_core::build;
 use blockloom_core::codegen;
 use blockloom_core::components::{ActorComponent, Components};
 use blockloom_core::library;
+use blockloom_core::pipeline;
 use blockloom_core::project::{self, Actor, Project};
 use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, Visual};
 use blockloom_core::script;
@@ -61,6 +62,24 @@ fn auto_save(s: &AppState) {
     {
         tracing::warn!("Couldn't save the project: {e}");
     }
+}
+
+/// Regenerates the analysis project rust-analyzer opens: the root `Cargo.toml`
+/// plus the `blockloom` crate under `.blockloom/ide/`. Analysis-only, so a
+/// failure is a warning rather than a refused edit.
+fn sync_ide(dir: &Path) {
+    if let Err(e) = script::ide::sync_ide_project(dir) {
+        tracing::warn!("Couldn't sync the script IDE project: {e}");
+    }
+}
+
+/// Whether `path` is a script file or lives under the scripts folder, which is
+/// when an asset change means the analysis project needs regenerating.
+fn touches_scripts(path: &str) -> bool {
+    let path = path.replace('\\', "/");
+    path == script::SCRIPTS_DIR
+        || path.starts_with(&format!("{}/", script::SCRIPTS_DIR))
+        || (path.ends_with(".rs") && script::is_valid_path(&path))
 }
 
 fn emit(app: &AppHandle, s: &AppState) {
@@ -155,6 +174,9 @@ pub(crate) fn open_project(
     library::remember(&dir);
     s.open = Some(OpenProject { project, dir });
     s.library = library::list();
+    if let Some(dir) = s.project_dir().map(Path::to_path_buf) {
+        sync_ide(&dir);
+    }
     emit(app, &s);
     Ok(())
 }
@@ -185,6 +207,9 @@ pub(crate) fn create_project(
     library::remember(&dir);
     s.open = Some(OpenProject { project, dir });
     s.library = library::list();
+    if let Some(dir) = s.project_dir().map(Path::to_path_buf) {
+        sync_ide(&dir);
+    }
     emit(app, &s);
     Ok(())
 }
@@ -351,6 +376,9 @@ pub(crate) fn import_project(
     library::remember(&dir);
     s.open = Some(OpenProject { project, dir });
     s.library = library::list();
+    if let Some(dir) = s.project_dir().map(Path::to_path_buf) {
+        sync_ide(&dir);
+    }
     emit(app, &s);
     Ok(())
 }
@@ -1045,7 +1073,9 @@ fn build_scripts(s: &mut AppState) -> usize {
 /// Compiles every actor's script for `target` (`None` being this machine),
 /// logging whatever rustc has to say about the ones that fail and answering
 /// how many did. A failed script just doesn't load, so Play carries on - a
-/// build can't, since the game would ship without it.
+/// build can't, since the game would ship without it. Without a toolchain
+/// there is one log line, not one per script: blocks still run, only scripts
+/// stay quiet.
 fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
     let Some(dir) = s.project_dir().map(Path::to_path_buf) else {
         return 0;
@@ -1061,6 +1091,22 @@ fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
                 .map(|path| (actor.name.clone(), path.to_string()))
         })
         .collect();
+    if scripts.is_empty() {
+        return 0;
+    }
+    if target.is_none()
+        && let Err(error) = script::toolchain_version()
+    {
+        s.push_log(LogLine {
+            kind: "error".to_string(),
+            actor: "Scripts".to_string(),
+            text: format!(
+                "Scripts need a Rust toolchain and this machine doesn't have one, so {} script(s) won't run. Blocks still run. {error}",
+                scripts.len()
+            ),
+        });
+        return scripts.len();
+    }
     let mut failed = 0;
     for (actor, path) in scripts {
         if let Err(error) = script::compile_for(&dir, &path, target) {
@@ -1233,7 +1279,12 @@ pub(crate) fn create_asset(
     name: String,
 ) -> Result<String, String> {
     let s = lock(state)?;
-    assets::create_file(&project_dir(&s)?, &parent, &name, &asset_template(&name))
+    let dir = project_dir(&s)?;
+    let made = assets::create_file(&dir, &parent, &name, &asset_template(&name))?;
+    if touches_scripts(&made) {
+        sync_ide(&dir);
+    }
+    Ok(made)
 }
 
 /// Copies files from anywhere on the machine into the project folder.
@@ -1243,9 +1294,21 @@ pub(crate) fn import_assets(
     paths: Vec<String>,
 ) -> Result<Vec<String>, String> {
     let s = lock(state)?;
+    let dir = project_dir(&s)?;
     let sources: Vec<std::path::PathBuf> =
         paths.into_iter().map(std::path::PathBuf::from).collect();
-    assets::import(&project_dir(&s)?, &parent, &sources)
+    let made = assets::import(&dir, &parent, &sources)?;
+    for path in &made {
+        // Best-effort: the pipeline learns the file's shape at import so the
+        // tray can show it and reimport tracking starts clean.
+        if let Ok(report) = pipeline::inspect_asset(&dir, path) {
+            let _ = pipeline::note_imported(&dir, path, &report.summary);
+        }
+    }
+    if made.iter().any(|path| touches_scripts(path)) {
+        sync_ide(&dir);
+    }
+    Ok(made)
 }
 
 pub(crate) fn rename_asset(
@@ -1255,7 +1318,12 @@ pub(crate) fn rename_asset(
     name: String,
 ) -> Result<String, String> {
     let mut s = lock(state)?;
-    let moved = assets::rename(&project_dir(&s)?, &path, &name)?;
+    let dir = project_dir(&s)?;
+    let moved = assets::rename(&dir, &path, &name)?;
+    pipeline::note_moved(&dir, &path, &moved);
+    if touches_scripts(&path) || touches_scripts(&moved) {
+        sync_ide(&dir);
+    }
     repoint_assets(&mut s, app, &path, &moved);
     Ok(moved)
 }
@@ -1267,14 +1335,25 @@ pub(crate) fn move_asset(
     parent: String,
 ) -> Result<String, String> {
     let mut s = lock(state)?;
-    let moved = assets::move_to(&project_dir(&s)?, &path, &parent)?;
+    let dir = project_dir(&s)?;
+    let moved = assets::move_to(&dir, &path, &parent)?;
+    pipeline::note_moved(&dir, &path, &moved);
+    if touches_scripts(&path) || touches_scripts(&moved) {
+        sync_ide(&dir);
+    }
     repoint_assets(&mut s, app, &path, &moved);
     Ok(moved)
 }
 
 pub(crate) fn delete_asset(state: &SharedState, path: String) -> Result<(), String> {
     let s = lock(state)?;
-    assets::delete(&project_dir(&s)?, &path)
+    let dir = project_dir(&s)?;
+    assets::delete(&dir, &path)?;
+    pipeline::note_removed(&dir, &path);
+    if touches_scripts(&path) {
+        sync_ide(&dir);
+    }
+    Ok(())
 }
 
 /// A file's bytes as a `data:` URL - the only way a web page can show a
@@ -1291,6 +1370,63 @@ pub(crate) fn open_asset_location(state: &SharedState, path: String) -> Result<(
     let target = assets::resolve(&project_dir(&s)?, &path)
         .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))?;
     reveal_in_file_manager(&target)
+}
+
+// ─── Asset pipeline ────────────────────────────────────────────────────────
+
+/// One asset through the pipeline: what it is, what import would do, and
+/// whether it changed since import.
+pub(crate) fn inspect_asset(
+    state: &SharedState,
+    path: String,
+) -> Result<pipeline::PipelineReport, String> {
+    let s = lock(state)?;
+    pipeline::inspect_asset(&project_dir(&s)?, &path)
+}
+
+/// Every importable file with its pipeline report, for the tray's badges.
+pub(crate) fn pipeline_status(
+    state: &SharedState,
+) -> Result<Vec<pipeline::PipelineReport>, String> {
+    let s = lock(state)?;
+    Ok(pipeline::scan_project(&project_dir(&s)?))
+}
+
+/// Re-inspect files and refresh their fingerprints. Empty means everything
+/// dirty; naming paths forces those even when clean.
+pub(crate) fn reimport_assets(
+    state: &SharedState,
+    paths: Vec<String>,
+) -> Result<Vec<pipeline::PipelineReport>, String> {
+    let s = lock(state)?;
+    pipeline::reimport(&project_dir(&s)?, &paths)
+}
+
+/// Lay images into one atlas sheet plan without writing files: the tray
+/// previews it, and a build can bake it. Paths are project-relative images.
+pub(crate) fn pack_atlas(
+    state: &SharedState,
+    paths: Vec<String>,
+    max_size: Option<u32>,
+    padding: Option<u32>,
+) -> Result<pipeline::AtlasLayout, String> {
+    let s = lock(state)?;
+    let dir = project_dir(&s)?;
+    let mut inputs = Vec::new();
+    for path in paths {
+        let relative = assets::normalize(&path)
+            .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))?;
+        let full = assets::resolve(&dir, &relative)
+            .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))?;
+        let bytes = std::fs::read(&full).map_err(|e| format!("{}: {e}", full.display()))?;
+        let info = pipeline::inspect_texture(&relative, &bytes)?;
+        inputs.push(pipeline::AtlasInput {
+            name: relative,
+            width: info.width,
+            height: info.height,
+        });
+    }
+    pipeline::pack_atlas(&inputs, max_size.unwrap_or(2048), padding.unwrap_or(1))
 }
 
 /// Hand the OS a path: reveal a file inside its parent in the file manager,
@@ -1378,6 +1514,7 @@ pub(crate) fn create_script(
         .components
         .insert(ActorComponent::Script { path: path.clone() });
     auto_save(&s);
+    sync_ide(&dir);
     sync_runtime(&mut s);
     emit(app, &s);
     Ok(path)
@@ -1404,6 +1541,7 @@ pub(crate) fn check_script(
         .script()
         .ok_or("This actor has no script")?
         .to_string();
+    sync_ide(&dir);
     let line = match script::compile(&dir, &path) {
         Ok(_) => LogLine {
             kind: "say".to_string(),
@@ -1466,8 +1604,77 @@ pub(crate) fn write_script(
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
     std::fs::write(&file, source).map_err(|e| format!("{}: {e}", file.display()))?;
+    sync_ide(&dir);
     emit(app, &s);
     Ok(())
+}
+
+/// Whether this machine can compile scripts, and what it would use. Missing is
+/// a status, not an error: blocks still run, only scripts need a toolchain.
+pub(crate) fn script_toolchain(
+    state: &SharedState,
+) -> Result<script::ide::ToolchainStatus, String> {
+    drop(lock(state)?);
+    Ok(script::ide::toolchain_status())
+}
+
+/// One actor's script errors pinned to their lines, for the editor to show
+/// inline. `cargo check` over the analysis project when Cargo is here, else
+/// one `rustc` run. Empty means it compiled, or there is nothing to compile
+/// with - the run log says which.
+pub(crate) fn script_diagnostics(
+    state: &SharedState,
+    actor_id: String,
+) -> Result<Vec<script::ide::ScriptDiagnostic>, String> {
+    let s = lock(state)?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or("No project is open")?;
+    let path = s
+        .project()
+        .and_then(|p| p.actor(&actor_id))
+        .and_then(|actor| actor.components.script())
+        .ok_or("This actor has no script")?
+        .to_string();
+    drop(s);
+    sync_ide(&dir);
+    Ok(script::ide::diagnostics_for(&dir, &path))
+}
+
+/// Regenerates the analysis project rust-analyzer opens and answers what it
+/// holds. The editor calls this implicitly on every scripted edit; this is
+/// the explicit spelling for agents and for the "Open in editor" button.
+pub(crate) fn sync_script_ide(state: &SharedState) -> Result<script::ide::SyncReport, String> {
+    let s = lock(state)?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or("No project is open")?;
+    drop(s);
+    let report = script::ide::sync_ide_project(&dir)?;
+    Ok(report)
+}
+
+/// Points the user's own editor at the project: syncs the analysis project,
+/// then tries VS Code / Zed / the file manager, in that order. Returns the
+/// folder and what opened it.
+pub(crate) fn open_script_ide(state: &SharedState) -> Result<serde_json::Value, String> {
+    let s = lock(state)?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or("No project is open")?;
+    drop(s);
+    sync_ide(&dir);
+    let path = dir.to_string_lossy().into_owned();
+    for (binary, editor) in [("code", "VS Code"), ("zed", "Zed")] {
+        if std::process::Command::new(binary).arg(&dir).spawn().is_ok() {
+            return Ok(serde_json::json!({"path": path, "openedWith": editor}));
+        }
+    }
+    reveal_in_file_manager(&dir)?;
+    Ok(serde_json::json!({"path": path, "openedWith": "file manager"}))
 }
 
 /// Pushes the edited project to an idle runtime, so a scene edit shows in the

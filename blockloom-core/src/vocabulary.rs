@@ -862,7 +862,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "SetParent",
         category: "Components",
-        purpose: "Hangs this actor off another one, so the two move together.                   Names an actor or an id; an empty slot takes it off.",
+        purpose: "Hangs this actor off another one, so the two move together.                   Names an actor or an id; an empty slot takes it off.                   A child with an authored offset is placed at it, in the                   parent's own frame; one without keeps its place.",
         header: false,
         three_d: false,
         slots: &[Slot {

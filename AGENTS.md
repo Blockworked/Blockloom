@@ -234,10 +234,22 @@ There is no Cargo, so a script gets `std` and nothing else.
 
 The editor compiles scripts on Play (`commands::build_scripts`) so rustc's
 errors land in the run log against the script's own line numbers; the runtime
-only ever loads what it finds. **Scripts therefore need `rustc` on the machine
-that presses Play.** The boundary is three calls, not one per verb, so adding
+only ever loads what it finds. Without a toolchain Play logs one line saying
+scripts are skipped and runs the blocks alone (`script::ide::toolchain_status`
+is the same answer on demand). The boundary is three calls, not one per verb, so adding
 something a script can do is a new constant in `abi.rs` rather than a new
 field in `HostApi` - which would break every script already built.
+
+The script editor (`ui/src/components/ScriptDialog.vue`) tints Rust with its
+own tokenizer and shows `script_diagnostics` inline on their lines and in the
+run log. `blockloom-core/src/script/ide.rs` keeps a Cargo project at the
+project root in sync - one `[[test]]` per script in `assets/scripts/*.rs` plus
+a path dependency on the assembled `blockloom` crate under `.blockloom/ide/`
+- so an external editor gets completion, `export!` expansion and go-to-source
+on the API. Play still compiles directly with `rustc`, so Cargo is
+analysis-only; `cargo check --tests` over that project is what feeds the inline
+errors, with a direct-`rustc` JSON run as the fallback. "Open in editor" tries
+VS Code, then Zed, then the file manager on the project folder.
 
 A script reads the world through the same frame snapshot the reporter blocks
 read (`sense`) and everything it does comes back as a `vm::Effect`, applied by
@@ -464,8 +476,9 @@ lands.
 - A built game's blocks are interpreted, the same way the editor plays them.
   Nothing compiles a project down.
 - A script needs a Rust toolchain on the machine that presses Play, which a
-  packaged install can't assume. The script editor is a plain textarea, and a
-  script's errors only show in the run log.
+  packaged install can't assume. Without one Play runs the blocks alone and
+  says so once in the run log; the script editor shows the same status, with
+  highlighting and inline errors either way.
 - A script can't be attached mid-run: its library is opened when the world is
   built.
 - `say` shows as a camera-projected speech bubble over its actor in both 2D and

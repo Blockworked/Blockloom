@@ -253,7 +253,10 @@ pub enum InstructionKind {
         component: String,
     },
     /// Hangs this actor off another one, so the two move together. An empty
-    /// target takes it off whatever it was on. Names an actor or an id.
+    /// target takes it off whatever it was on. Names an actor or an id. A
+    /// child carrying an authored offset is placed at it - that far from its
+    /// new parent, in the parent's own frame - and one without an offset
+    /// keeps the place it is standing in.
     SetParent {
         parent: Value,
     },

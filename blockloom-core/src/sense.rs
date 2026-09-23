@@ -16,6 +16,10 @@ use std::collections::{HashMap, HashSet};
 pub struct ActorSense {
     pub name: String,
     pub position: [f32; 3],
+    /// Where the actor stands in its parent's frame - the parent's world
+    /// transform inverted onto the world position above. The world position
+    /// itself when the actor hangs off nothing.
+    pub local_position: [f32; 3],
     pub rotation: [f32; 3],
     pub scale: f32,
     pub visible: bool,
@@ -101,6 +105,7 @@ impl Default for ActorSense {
         Self {
             name: String::new(),
             position: [0.0; 3],
+            local_position: [0.0; 3],
             rotation: [0.0; 3],
             scale: 1.0,
             visible: true,

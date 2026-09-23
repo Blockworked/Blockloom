@@ -266,12 +266,17 @@ because a cycle has no root to start the pass at.
 
 A `Parent` may also carry an `offset`, which is where the child stands in its
 parent's frame. `Place` stays the one thing the world is built from, so the
-offset is read once: `world::place_authored_children` resolves it into a world
-placement before anything is spawned, parents before their children so an
-offset down a chain is measured against a parent that has already moved. A
-`Parent` without one - which is what a document written before offsets says,
-and what `set my parent to` leaves - keeps the world position its own `Place`
-gives it.
+offset is resolved into a world placement before anything is spawned -
+`world::place_authored_children`, parents before their children so an offset
+down a chain is measured against a parent that has already moved - and read
+again whenever `set my parent to` hangs the actor off someone new, which
+places it at the offset rather than leaving it where it stood. A `Parent`
+without one - which is what a document written before offsets says - keeps
+the world position its own `Place` gives it, at build and at run time both.
+The local-position reporters (`my local x position`, `<actor>'s local x
+position`, and the matching script reads) answer that frame live: the
+parent's world transform inverted onto the child's world position, or the
+world position itself for an actor hanging off nothing.
 
 ### Scripts
 
@@ -619,9 +624,6 @@ lands.
   template stands now. What `attach`/`detach` did to the template since Play
   doesn't carry over - re-attaching a component has always meant the authored
   one.
-- A child's offset places it when the world is built and nothing after that:
-  `set my parent to` at run time leaves the actor where it stands, and no
-  reporter gives a child's position in its parent's frame.
 - Building for another platform needs its player staged by hand, and a scripted
   project also needs that target's `std` and a linker for it.
 - Recursive statement-shaped custom blocks fall back to the VM because their

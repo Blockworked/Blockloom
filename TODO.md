@@ -13,10 +13,10 @@ Obvious gaps already identified in the project notes:
       can be dragged under other actors to reparent (and dragged out to
       unparent, with cycle protection), and child lists can be collapsed per
       parent.
-- [ ] Let a child be asked about its place in its parent's frame, and let
+- [x] Let a child be asked about its place in its parent's frame, and let
       `set my parent to` place it there rather than leaving it where it
-      stands. The offset is authored-only today, read once when the world is
-      built.
+      stands. A child with an authored offset is put at it, in the parent's
+      own frame; `my local` / `<actor>'s local` reporters answer it live.
 - [x] Add sound playback and sound-related blocks.
 - [x] Add lists and blocks for creating, reading, and changing list items.
 - [x] Add asset management UI for importing, organizing, previewing, replacing, and removing project assets.
@@ -40,12 +40,12 @@ Obvious gaps already identified in the project notes:
 - [x] Add a component system built on Bevy's ECS components that turns all properties into components, with support for custom components and camera-attach components (for first-person / third-person cameras).
 - [x] Add a script component that runs Rust, so a project can drop out of blocks where it needs to.
 - [x] Let blocks attach and detach whole components at runtime, not just write their fields.
-- [ ] Ship the script toolchain, or degrade well without one: a script needs `rustc` on the machine that presses Play, and a packaged install can't assume it.
-- [ ] Give the script editor real Rust editing - highlighting, and errors shown against the line they're on rather than only in the run log.
-- [ ] Give Rust scripts a real rust-analyzer experience: syntax highlighting, completion, `export!` macro expansion, and go-to-source on the API, the way Unity hands Rider its project folder. Today a script is a bare textarea, and the `blockloom` crate it links against exists only in memory inside the build, so rust-analyzer has nothing to index.
-      - Generate a `Cargo.toml` at the project root, next to `project.blockloom` and `assets/`. It is the Rust analog of the `.sln`/`.csproj` Unity generates for an IDE: the entry point an editor (VS Code, Zed, RustRover) opens, while the scripts stay in place under `assets/scripts/`. An "Open in editor" action just points at that folder.
-      - The root `Cargo.toml` declares one target per script in `assets/scripts/*.rs`, plus a path dependency on the assembled `abi.rs` + `prelude.rs` kept as a `blockloom` crate under `.blockloom/`, so `use blockloom::*` and `export!` resolve against real source. Play keeps the fast direct-`rustc` compile, so Cargo is analysis-only; regenerate the root `Cargo.toml` whenever scripts or the ABI change to keep it in sync.
-      - Later: feed `cargo check` output back into the editor so errors also show inline in Blockloom's own script editor, reusing the same project.
+- [x] Ship the script toolchain, or degrade well without one: a script needs `rustc` on the machine that presses Play, and a packaged install can't assume it.
+- [x] Give the script editor real Rust editing - highlighting, and errors shown against the line they're on rather than only in the run log.
+- [x] Give Rust scripts a real rust-analyzer experience: syntax highlighting, completion, `export!` macro expansion, and go-to-source on the API, the way Unity hands Rider its project folder. Today a script is a bare textarea, and the `blockloom` crate it links against exists only in memory inside the build, so rust-analyzer has nothing to index.
+      - [x] Generate a `Cargo.toml` at the project root, next to `project.blockloom` and `assets/`. It is the Rust analog of the `.sln`/`.csproj` Unity generates for an IDE: the entry point an editor (VS Code, Zed, RustRover) opens, while the scripts stay in place under `assets/scripts/`. An "Open in editor" action just points at that folder.
+      - [x] The root `Cargo.toml` declares one target per script in `assets/scripts/*.rs`, plus a path dependency on the assembled `abi.rs` + `prelude.rs` kept as a `blockloom` crate under `.blockloom/`, so `use blockloom::*` and `export!` resolve against real source. Play keeps the fast direct-`rustc` compile, so Cargo is analysis-only; regenerate the root `Cargo.toml` whenever scripts or the ABI change to keep it in sync.
+      - [x] Later: feed `cargo check` output back into the editor so errors also show inline in Blockloom's own script editor, reusing the same project.
 - [x] Add a shell command system with full control over the app, so an AI agent can create and edit projects in any way a user can, at the user's request.
 - [x] Add a Model Context Protocol (MCP) server so AI agents can use blockloom directly instead of shelling out through `blockloom-shell`. The shell's command registry is the natural surface to expose: each dispatch command becomes an MCP tool, so an agent can inspect, create, and edit a project to match a user's request. The `mcp/` package is a pnpm/Node host running the existing `blockloom-shell` binary via stdio, with tool schemas derived from `blockloom-shell --specs`, a `block-vocabulary` command for the block palette, and `blockloom://state` and `blockloom://blocks` resources. Each session owns one backend, so an MCP session and the editor window don't fight over one in-memory project.
 
@@ -56,7 +56,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 ### Phase 1 - Unblock real games, low risk
 - [x] Lists plus dicts plus JSON: VM and compiled both, everything else needs data structures.
 - [x] Sound playback plus buses plus 2D/3D positional: isolated, huge completeness win.
-- [ ] Parent-space runtime API (`set parent`, local vs world query): finishes hierarchy work already started.
+- [x] Parent-space runtime API (`set parent`, local vs world query): finishes hierarchy work already started.
 - [ ] Physics queries: raycast/shapecast, layers/masks UI, trigger vs solid: required for platformers, AI, UI clicks.
 
 ### Phase 2 - Ship a complete single-player game
@@ -66,14 +66,14 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 - [ ] Save slots/profiles plus localization: builds on save system we have.
 
 ### Phase 3 - Dev productivity, before API surface explodes
-- [ ] Script toolchain: ship rustc or graceful degrade plus highlight plus inline errors plus rust-analyzer Cargo project.
+- [x] Script toolchain: ship rustc or graceful degrade plus highlight plus inline errors plus rust-analyzer Cargo project.
 - [ ] VM/codegen correctness: suspendable reporter `wait`, recursive statement blocks.
 - [ ] Embedded preview: headless/offscreen runtime plus streamed viewport in editor with input forwarding, pause/step, resolution switch. Keeps separate-process split, no OS reparenting.
 - [ ] Visual world editor: edit-mode 2D/3D viewport with selection sync to ActorList/Inspector, drag to move plus rotate/scale gizmos, snapping, camera pan/zoom/orbit. Shares panel with embedded preview: Edit manipulates placement directly, Play streams runtime.
 - [ ] Editor: gizmos/snapping, prefab mode, scene search, log filter, frame stepper, profiler (draw calls, CPU/GPU/memory), playmode tests.
 
 ### Phase 4 - Look and depth, uses Bevy leverage
-- [ ] Asset pipeline: glTF/FBX rigs, atlases, texture/audio compression, reimport tracking.
+- [x] Asset pipeline: glTF/FBX rigs, atlases, texture/audio compression, reimport tracking.
 - [ ] Materials/custom WGSL plus shader graph lite, particles/trails, post-process, shadows/HDR, 2D sorting layers, tilemap/terrain.
 - [ ] Advanced physics: joints, character controller, one-way platforms, ragdoll.
 - [ ] AI: full nav on top of existing baked polyanya mesh (`navigate to`): runtime rebake, layers/costs, off-mesh links, crowds/separation, plus steering, behavior trees, perception.

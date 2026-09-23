@@ -38,7 +38,9 @@ use std::process::Command;
 const ACTOR: &str = "a1";
 const TIMER: f64 = 2.5;
 const MY_POSITION: [f32; 3] = [3.0, 7.0, 0.0];
+const MY_LOCAL_POSITION: [f64; 3] = [1.0, 2.0, 0.0];
 const OTHER_POSITION: [f32; 3] = [10.0, -2.0, 0.0];
+const OTHER_LOCAL_POSITION: [f64; 3] = [4.0, -1.0, 0.0];
 const MOUSE_DELTA: [f32; 2] = [24.0, -9.0];
 
 fn publish_world() {
@@ -54,6 +56,11 @@ fn publish_world() {
         ActorSense {
             name: "Player".to_string(),
             position: MY_POSITION,
+            local_position: [
+                MY_LOCAL_POSITION[0] as f32,
+                MY_LOCAL_POSITION[1] as f32,
+                0.0,
+            ],
             ..Default::default()
         },
     );
@@ -62,6 +69,11 @@ fn publish_world() {
         ActorSense {
             name: "Friend".to_string(),
             position: OTHER_POSITION,
+            local_position: [
+                OTHER_LOCAL_POSITION[0] as f32,
+                OTHER_LOCAL_POSITION[1] as f32,
+                0.0,
+            ],
             ..Default::default()
         },
     );
@@ -272,12 +284,20 @@ impl Host for Recorder {
             ))),
             "UiFocus" => Ok(Val::Text("name".to_string())),
             "MyPosition" => Ok(Val::Num(axis_of(&args[0], [3.0, 7.0, 0.0]))),
+            "MyLocalPosition" => Ok(Val::Num(axis_of(&args[0], [1.0, 2.0, 0.0]))),
             "ActorPosition" => {
                 let name = args[0].as_text();
                 if name != "Friend" {
                     return Err(format!("there's no actor named \"{name}\""));
                 }
                 Ok(Val::Num(axis_of(&args[1], [10.0, -2.0, 0.0])))
+            }
+            "ActorLocalPosition" => {
+                let name = args[0].as_text();
+                if name != "Friend" {
+                    return Err(format!("there's no actor named \"{name}\""));
+                }
+                Ok(Val::Num(axis_of(&args[1], [4.0, -1.0, 0.0])))
             }
             // List reporters read the run's lists, unknown names included:
             // nothing declared reads as empty, exactly as it does on the VM.
@@ -1536,9 +1556,19 @@ fn sensing_reads_the_same_world() {
                 axis: Axis::X,
                 by: op("MyPosition", vec![Value::text("Y")]),
             },
+            K::ChangePosition {
+                axis: Axis::Y,
+                by: op("MyLocalPosition", vec![Value::text("Y")]),
+            },
             K::Say {
                 text: op(
                     "ActorPosition",
+                    vec![Value::text("Friend"), Value::text("X")],
+                ),
+            },
+            K::Say {
+                text: op(
+                    "ActorLocalPosition",
                     vec![Value::text("Friend"), Value::text("X")],
                 ),
             },

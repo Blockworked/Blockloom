@@ -50,9 +50,9 @@ pub enum ActorComponent {
     /// made to it too. `parent` is the other actor's id.
     ///
     /// `offset` is where the child stands in its parent's frame. `None` -
-    /// which is what a document written before offsets says, and what `set
-    /// my parent to` leaves - means the child keeps the world position its
-    /// `Place` gives it.
+    /// which is what a document written before offsets says - means the
+    /// child keeps the world position its `Place` gives it, both when the
+    /// world is built and when `set my parent to` hangs it off someone new.
     Parent {
         parent: String,
         #[serde(default)]

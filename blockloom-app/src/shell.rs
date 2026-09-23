@@ -586,6 +586,46 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             required: true,
         }],
     },
+    CommandSpec {
+        name: "inspect-asset",
+        cmd: "inspect_asset",
+        aliases: &["inspect_asset"],
+        summary: "What the pipeline makes of one asset (rig counts, texture/audio plan, dirt).",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "asset path",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "pipeline-status",
+        cmd: "pipeline_status",
+        aliases: &["pipeline_status"],
+        summary: "Every asset with its pipeline report and reimport dirt.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "reimport-assets",
+        cmd: "reimport_assets",
+        aliases: &["reimport_assets"],
+        summary: "Re-inspect assets and refresh fingerprints (empty paths means everything dirty).",
+        args: &[ArgSpec {
+            name: "paths",
+            ty: "[source paths]",
+            required: false,
+        }],
+    },
+    CommandSpec {
+        name: "pack-atlas",
+        cmd: "pack_atlas",
+        aliases: &["pack_atlas"],
+        summary: "Lay images into one atlas sheet plan.",
+        args: &[ArgSpec {
+            name: "paths",
+            ty: "[source paths]",
+            required: true,
+        }],
+    },
     // ── Scripts ───────────────────────────────────────────────────────────
     CommandSpec {
         name: "create-script",
@@ -621,6 +661,34 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 required: true,
             },
         ],
+    },
+    CommandSpec {
+        name: "script-toolchain",
+        cmd: "script_toolchain",
+        aliases: &["script_toolchain", "toolchain"],
+        summary: "Whether this machine can compile scripts, and what it would use.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "script-diagnostics",
+        cmd: "script_diagnostics",
+        aliases: &["script_diagnostics", "diagnostics"],
+        summary: "One actor's script errors pinned to their lines, for inline display.",
+        args: &[A],
+    },
+    CommandSpec {
+        name: "sync-script-ide",
+        cmd: "sync_script_ide",
+        aliases: &["sync_script_ide", "sync-ide"],
+        summary: "Regenerate the Cargo project rust-analyzer opens for this project's scripts.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "open-script-ide",
+        cmd: "open_script_ide",
+        aliases: &["open_script_ide", "open-ide"],
+        summary: "Point the user's own editor at the project folder (VS Code, Zed, or the file manager).",
+        args: &[],
     },
     // ── Running ───────────────────────────────────────────────────────────
     CommandSpec {

@@ -153,6 +153,36 @@ impl Actor {
         .unwrap_or(0.0) as f32
     }
 
+    /// Where this actor stands in its parent's frame - the world position
+    /// itself when it hangs off nothing.
+    pub fn local_position(&self, axis: Axis) -> f32 {
+        self.number(READ_LOCAL_POSITION, Str::EMPTY, Str::EMPTY, axis.index())
+            .unwrap_or(0.0) as f32
+    }
+
+    pub fn local_x(&self) -> f32 {
+        self.local_position(Axis::X)
+    }
+
+    pub fn local_y(&self) -> f32 {
+        self.local_position(Axis::Y)
+    }
+
+    pub fn local_z(&self) -> f32 {
+        self.local_position(Axis::Z)
+    }
+
+    /// Another actor's place in its own parent's frame, by name or id.
+    pub fn local_position_of(&self, actor: &str, axis: Axis) -> f32 {
+        self.number(
+            READ_LOCAL_POSITION_OF,
+            Str::borrow(actor),
+            Str::EMPTY,
+            axis.index(),
+        )
+        .unwrap_or(0.0) as f32
+    }
+
     /// Euler degrees about `axis`.
     pub fn rotation(&self, axis: Axis) -> f32 {
         self.number(READ_ROTATION, Str::EMPTY, Str::EMPTY, axis.index())
@@ -363,7 +393,9 @@ impl Actor {
     }
 
     /// Hangs this actor off another, by id or name, so the two move
-    /// together. The actor keeps the place it is standing in.
+    /// together. When the actor carries an authored offset it is placed at
+    /// it - that far from its new parent, in the parent's own frame - and
+    /// otherwise it keeps the place it is standing in.
     pub fn set_parent(&self, actor: &str) {
         self.act(
             ACT_SET_PARENT,

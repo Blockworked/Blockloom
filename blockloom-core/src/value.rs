@@ -223,6 +223,20 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "MyLocalPosition",
+        op: "MyLocalPosition",
+        arity: 1,
+        default_args: || vec![text("X")],
+        // Where I stand in my parent's frame - the world position itself
+        // when I hang off nothing, so this never needs a parent to answer.
+        eval: |args| {
+            let me = me()?;
+            Ok(Evaluated::Number(
+                me.local_position[axis_of(args.first()).index()] as f64,
+            ))
+        },
+    },
+    ExtOperator {
         kind: "Touching",
         op: "Touching",
         arity: 1,
@@ -334,6 +348,24 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "ActorLocalPosition",
+        op: "ActorLocalPosition",
+        arity: 2,
+        default_args: || vec![text(""), text("X")],
+        // Another actor's place in its own parent's frame - its world
+        // position when it hangs off nothing, mirroring `MyLocalPosition`.
+        eval: |args| {
+            let name = args[0].as_text();
+            let axis = axis_of(args.get(1));
+            sense::read(|sensors| {
+                let actor = sensors
+                    .find(&name)
+                    .ok_or_else(|| format!("there's no actor named \"{name}\""))?;
+                Ok(Evaluated::Number(actor.local_position[axis.index()] as f64))
+            })
+        },
+    },
+    ExtOperator {
         kind: "SoundPlaying",
         op: "SoundPlaying",
         arity: 1,
@@ -408,6 +440,7 @@ mod tests {
             ActorSense {
                 name: "Player".to_string(),
                 position: [3.0, 7.0, 0.0],
+                local_position: [1.0, 2.0, 0.0],
                 ..Default::default()
             },
         );
@@ -438,5 +471,22 @@ mod tests {
             vec![Value::text("Player"), Value::text("X")],
         );
         assert_eq!(other_x.eval(), Ok(Evaluated::Number(3.0)));
+
+        // The parent-frame twins answer the local position instead, and
+        // complain about a missing actor in the same words.
+        let my_local = Value::op(Op::from_name("MyLocalPosition"), vec![Value::text("Y")]);
+        sense::with_actor("a1", || {
+            assert_eq!(my_local.eval(), Ok(Evaluated::Number(2.0)));
+        });
+        let other_local = Value::op(
+            Op::from_name("ActorLocalPosition"),
+            vec![Value::text("Player"), Value::text("X")],
+        );
+        assert_eq!(other_local.eval(), Ok(Evaluated::Number(1.0)));
+        let missing_local = Value::op(
+            Op::from_name("ActorLocalPosition"),
+            vec![Value::text("Nobody"), Value::text("X")],
+        );
+        assert!(missing_local.eval().is_err());
     }
 }

@@ -78,6 +78,14 @@ pub enum Visual {
         color: String,
         size: [f32; 2],
     },
+    /// A rigged model loaded from `path` (glTF/GLB/OBJ/FBX, relative to the
+    /// project folder). The runtime draws the file and falls back to a tinted
+    /// box while it loads or when it won't; the collider is that same box.
+    Model {
+        path: String,
+        tint: String,
+        scale: [f32; 3],
+    },
 }
 
 impl Visual {
@@ -90,6 +98,7 @@ impl Visual {
                 | Visual::Sphere { .. }
                 | Visual::Capsule { .. }
                 | Visual::Plane { .. }
+                | Visual::Model { .. }
         )
     }
 
@@ -101,6 +110,7 @@ impl Visual {
             | Visual::Sphere { color, .. }
             | Visual::Capsule { color, .. }
             | Visual::Plane { color, .. } => Some(color),
+            Visual::Model { tint, .. } => Some(tint),
             Visual::Image { .. } => None,
         }
     }
@@ -113,6 +123,7 @@ impl Visual {
             | Visual::Sphere { color, .. }
             | Visual::Capsule { color, .. }
             | Visual::Plane { color, .. } => *color = next,
+            Visual::Model { tint, .. } => *tint = next,
             Visual::Image { .. } => {}
         }
     }

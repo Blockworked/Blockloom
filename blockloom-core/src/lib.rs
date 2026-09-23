@@ -25,6 +25,8 @@
 //!   once a frame.
 //! - [`ui`] is the screen-space overlay a game builds out of blocks: what
 //!   kinds of element there are, where one sits, and what a block can change.
+//! - [`pipeline`] is the asset pipeline: model rigs, atlases, texture and
+//!   audio compression plans, and reimport tracking.
 //! - [`wire`] converts documents to and from the flat JSON shape the
 //!   blockstitch frontend speaks.
 
@@ -38,6 +40,7 @@ pub mod fields;
 pub mod library;
 pub mod nav;
 pub mod pack;
+pub mod pipeline;
 pub mod project;
 pub mod save;
 pub mod scene;
