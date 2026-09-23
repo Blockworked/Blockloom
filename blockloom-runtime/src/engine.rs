@@ -11,7 +11,7 @@ use blockloom_core::project::{Actor, Project};
 use blockloom_core::save::SaveData;
 use blockloom_core::scene::Mode;
 use blockloom_core::value::Evaluated;
-use blockloom_core::vm::{Lists, Variables, Vm};
+use blockloom_core::vm::{Dicts, Lists, Variables, Vm};
 use blockloom_protocol::EditorMessage;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -71,6 +71,7 @@ pub struct Engine {
     pub vm: Vm,
     pub variables: Variables,
     pub lists: Lists,
+    pub dicts: Dicts,
     /// Per-player values for this project's explicitly saved variables.
     pub save_data: SaveData,
     pub save_path: PathBuf,
@@ -150,13 +151,15 @@ impl Engine {
     pub fn new(incoming: Receiver<EditorMessage>, mode: Mode) -> Self {
         let variables = Variables::default();
         let lists = Lists::default();
+        let dicts = Dicts::default();
         Self {
             incoming,
             link: None,
             project: Project::starter("Untitled", mode),
-            vm: Vm::with_stores(variables.clone(), lists.clone()),
+            vm: Vm::with_stores(variables.clone(), lists.clone(), dicts.clone()),
             variables,
             lists,
+            dicts,
             save_data: SaveData::default(),
             save_path: PathBuf::new(),
             logic: None,

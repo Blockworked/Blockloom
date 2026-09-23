@@ -1,28 +1,34 @@
 //! Loading and running a built game's compiled block program.
 
-use blockloom_core::blocks::{ListItem, is_list_reporter, list_index, resolve_list_reporter};
+use blockloom_core::blocks::{
+    DictItem, ListItem, dict_remove, dict_set, is_dict_reporter, is_list_reporter, list_index,
+    parse_json_array, parse_json_object, resolve_dict_reporter, resolve_list_reporter,
+};
 use blockloom_core::codegen::{
     self, ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH,
     ACT_BROADCAST, ACT_CHANGE_POSITION, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR,
-    ACT_DELETE_ELEMENT, ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT,
-    ACT_LIST_ADD, ACT_LIST_CLEAR, ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE,
-    ACT_LIST_REVERSE, ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_POINT_TOWARDS,
-    ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH,
-    ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_FOCUS,
-    ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED,
-    ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY,
-    ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_TURN, AbiStr, AbiValue, LOGIC_ABI_VERSION, LogicHostApi,
-    READ_SENSE, READ_VARIABLE, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW,
-    SYM_LOGIC_PAUSE, SYM_LOGIC_RESET, SYM_LOGIC_TICK, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR,
-    VALUE_NUMBER, VALUE_TEXT,
+    ACT_DELETE_ELEMENT, ACT_DETACH, ACT_DICT_CLEAR, ACT_DICT_DELETE_KEY, ACT_DICT_SET, ACT_ERROR,
+    ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD,
+    ACT_LIST_CLEAR, ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE,
+    ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_PLAY_SOUND, ACT_POINT_TOWARDS,
+    ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY, ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV,
+    ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD,
+    ACT_SET_FOCUS, ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT,
+    ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME,
+    ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT,
+    ACT_STOP_SOUND, ACT_TURN, AbiStr, AbiValue, LOGIC_ABI_VERSION, LogicHostApi, READ_SENSE,
+    READ_VARIABLE, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE,
+    SYM_LOGIC_RESET, SYM_LOGIC_TICK, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER,
+    VALUE_TEXT,
 };
 use blockloom_core::components::CameraView;
 use blockloom_core::project::Project;
 use blockloom_core::scene::{Axis, BodyKind};
 use blockloom_core::sense;
+use blockloom_core::sound::SoundBus;
 use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp, UiTheme};
 use blockloom_core::value::{Evaluated, Op, Value, ext_operator};
-use blockloom_core::vm::{Effect, Event, Lists, Variables};
+use blockloom_core::vm::{Dicts, Effect, Event, Lists, Variables};
 use std::ffi::c_void;
 use std::path::Path;
 
@@ -176,12 +182,14 @@ impl LoadedLogic {
         wall: f64,
         variables: Variables,
         lists: Lists,
+        dicts: Dicts,
         effects: &mut Vec<Effect>,
         messages: &mut Vec<String>,
     ) {
         let mut context = Context {
             variables,
             lists,
+            dicts,
             effects,
             messages,
         };
@@ -223,6 +231,7 @@ fn missing_export() -> String {
 struct Context<'a> {
     variables: Variables,
     lists: Lists,
+    dicts: Dicts,
     effects: &'a mut Vec<Effect>,
     messages: &'a mut Vec<String>,
 }
@@ -279,6 +288,21 @@ extern "C" fn read(
                 let lists = context.lists.snapshot_for(actor);
                 return write_answer(
                     resolve_list_reporter(name, args, &lists).and_then(|value| value.eval()),
+                    out,
+                    text,
+                    capacity,
+                    needed,
+                );
+            }
+            // Dict reporters likewise, against the run's dicts.
+            if is_dict_reporter(&Op::from_name(name)) {
+                let args: Vec<Value> = args
+                    .iter()
+                    .map(|arg| value_from_abi(arg).into_value())
+                    .collect();
+                let dicts = context.dicts.snapshot_for(actor);
+                return write_answer(
+                    resolve_dict_reporter(name, args, &dicts).and_then(|value| value.eval()),
                     out,
                     text,
                     capacity,
@@ -436,6 +460,33 @@ extern "C" fn act(
         ACT_SET_COLOR => Effect::SetColor {
             actor,
             color: a.to_string(),
+        },
+        ACT_PLAY_SOUND => Effect::PlaySound {
+            actor,
+            sound: a.trim().to_string(),
+            volume: n0 as f32,
+            pitch: n1 as f32,
+            loop_: n2 != 0.0,
+            bus: bus_of(b),
+            at: (!c.is_empty()).then(|| c.to_string()),
+        },
+        ACT_STOP_SOUND => Effect::StopSound {
+            actor,
+            sound: a.trim().to_string(),
+        },
+        ACT_SET_SOUND_VOLUME => Effect::SetSoundVolume {
+            actor,
+            sound: a.trim().to_string(),
+            volume: n0 as f32,
+        },
+        ACT_SET_SOUND_PITCH => Effect::SetSoundPitch {
+            actor,
+            sound: a.trim().to_string(),
+            pitch: n0 as f32,
+        },
+        ACT_SET_BUS_VOLUME => Effect::SetBusVolume {
+            bus: bus_of(b),
+            volume: n0 as f32,
         },
         ACT_SET_FIELD => Effect::SetComponentField {
             actor,
@@ -610,6 +661,48 @@ extern "C" fn act(
                 .with_list_mut(&actor, a, |list| list.reverse());
             return;
         }
+        // Dict writes are the program's own state, like lists: they land
+        // directly and report nothing, so no effect leaves this match.
+        // `b` carries the key, `value` the item or JSON text.
+        ACT_DICT_SET => match DictItem::from_evaluated(value_from_abi(&value)) {
+            Some(item) => {
+                let key = b.to_string();
+                context
+                    .dicts
+                    .with_dict_mut(&actor, a, |dict| dict_set(dict, key, item));
+                return;
+            }
+            None => Effect::Error {
+                actor,
+                message: "dict values must be number or text".to_string(),
+            },
+        },
+        ACT_DICT_DELETE_KEY => {
+            context.dicts.with_dict_mut(&actor, a, |dict| {
+                dict_remove(dict, b);
+            });
+            return;
+        }
+        ACT_DICT_CLEAR => {
+            context.dicts.with_dict_mut(&actor, a, |dict| dict.clear());
+            return;
+        }
+        ACT_JSON_TO_DICT => match parse_json_object(&value_from_abi(&value).as_text()) {
+            Ok(entries) => {
+                context
+                    .dicts
+                    .with_dict_mut(&actor, a, |dict| *dict = entries);
+                return;
+            }
+            Err(message) => Effect::Error { actor, message },
+        },
+        ACT_JSON_TO_LIST => match parse_json_array(&value_from_abi(&value).as_text()) {
+            Ok(items) => {
+                context.lists.with_list_mut(&actor, a, |list| *list = items);
+                return;
+            }
+            Err(message) => Effect::Error { actor, message },
+        },
         ACT_ERROR => Effect::Error {
             actor,
             message: a.to_string(),
@@ -650,6 +743,13 @@ fn view_of(value: &str) -> CameraView {
         "ThirdPerson" => CameraView::ThirdPerson,
         _ => CameraView::Follow,
     }
+}
+
+/// A bus name off the wire into the bus it names. Unknown spellings read as
+/// the effects bus rather than refusing the play: a compiled program only
+/// ever sends what the emitter wrote, which is always one of the three.
+fn bus_of(value: &str) -> SoundBus {
+    SoundBus::parse(value).unwrap_or(SoundBus::Sfx)
 }
 
 #[cfg(test)]
@@ -706,6 +806,8 @@ mod tests {
         variables.load(&project);
         let lists = Lists::default();
         lists.load(&project);
+        let dicts = Dicts::default();
+        dicts.load(&project);
         let mut logic = LoadedLogic::load(&root).unwrap();
         logic.fire(Event::Started, &project);
         let mut effects = Vec::new();
@@ -715,6 +817,7 @@ mod tests {
             0.0,
             variables.clone(),
             lists.clone(),
+            dicts.clone(),
             &mut effects,
             &mut messages,
         );
@@ -791,6 +894,8 @@ mod tests {
         variables.load(&project);
         let lists = Lists::default();
         lists.load(&project);
+        let dicts = Dicts::default();
+        dicts.load(&project);
         let mut logic = LoadedLogic::load(&root).unwrap();
         logic.fire(Event::Started, &project);
 
@@ -801,6 +906,7 @@ mod tests {
             0.0,
             variables.clone(),
             lists.clone(),
+            dicts.clone(),
             &mut effects,
             &mut messages,
         );
@@ -820,6 +926,7 @@ mod tests {
             1.0 / 60.0,
             variables.clone(),
             lists.clone(),
+            dicts.clone(),
             &mut effects,
             &mut messages,
         );

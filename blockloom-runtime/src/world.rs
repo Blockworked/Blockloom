@@ -342,6 +342,8 @@ pub fn rebuild_world(
     mut textures: ResMut<Assets<Image>>,
     actors: Query<Entity, With<ActorId>>,
     cameras: Query<Entity, With<WorldCamera>>,
+    voices: Query<Entity, With<crate::sound::VoiceTag>>,
+    mut sound: ResMut<crate::sound::SoundState>,
     mut navmesh: Option<ResMut<NavMesh>>,
 ) {
     if !engine.rebuild {
@@ -355,6 +357,12 @@ pub fn rebuild_world(
     for entity in &cameras {
         commands.entity(entity).despawn();
     }
+    // Voices are neither actors nor cameras, so the passes above miss them:
+    // a rebuild starts from silence at the saved mix.
+    for entity in &voices {
+        commands.entity(entity).despawn();
+    }
+    sound.reset(project_sound(&engine));
     engine.entities.clear();
     engine.touching.clear();
     // Everything the last run made goes with it: Play starts from the
@@ -401,6 +409,9 @@ pub fn rebuild_world(
                     ..OrthographicProjection::default_2d()
                 }),
                 WorldCamera,
+                // The one listener positional voices pan against. It rides
+                // the camera, so what the player sees is what they hear.
+                bevy::audio::SpatialListener::default(),
             ));
             for actor in &project.actors {
                 let entity =
@@ -439,6 +450,11 @@ pub fn rebuild_world(
         nav.mode = project.world.mode;
     }
     open_scripts(&mut engine, &project);
+}
+
+/// The saved mix, for reseeding the runtime's live gains on a rebuild.
+fn project_sound(engine: &Engine) -> blockloom_core::sound::SoundMixer {
+    engine.project.world.sound
 }
 
 /// Opens every actor's compiled script. The editor builds them before Play,
@@ -584,6 +600,7 @@ fn script_lifetimes(engine: &mut Engine, asked: &mut crate::script::Asked) {
             if let Some(gone) = gone.as_deref() {
                 engine.variables.forget_actor(gone);
                 engine.lists.forget_actor(gone);
+                engine.dicts.forget_actor(gone);
                 if let Some(logic) = &mut engine.logic {
                     logic.deleted(gone);
                 }
@@ -610,6 +627,7 @@ fn clone_for_logic(engine: &mut Engine, running: &str, wanted: &str) -> Option<(
     let clone = engine.new_actor_id();
     engine.variables.copy_actor(&of, &clone);
     engine.lists.copy_actor(&of, &clone);
+    engine.dicts.copy_actor(&of, &clone);
     if let Some(logic) = &mut engine.logic {
         logic.cloned(&clone, &of);
     }
@@ -668,6 +686,7 @@ pub fn publish_sensors(
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     actors: Query<(&ActorId, &Transform, &Visibility, Option<&CustomComponents>)>,
+    sound: Res<crate::sound::SoundState>,
 ) {
     let now = time.elapsed_secs() as f64;
     let held: HashSet<String> = keys.get_pressed().filter_map(key_name).collect();
@@ -743,6 +762,8 @@ pub fn publish_sensors(
         actors: senses,
         ui: manager.senses(),
         ui_focus: manager.focus().unwrap_or_default().to_string(),
+        sounds: sound.playing(),
+        bus_volumes: sound.bus_volumes(),
     });
 
     // No world event queues while paused, so resuming never bursts.
@@ -1116,11 +1137,13 @@ pub fn step_vm(
     if engine.logic.is_some() {
         let variables = engine.variables.clone();
         let lists = engine.lists.clone();
+        let dicts = engine.dicts.clone();
         engine.logic.as_mut().expect("checked above").tick(
             now,
             wall,
             variables,
             lists,
+            dicts,
             &mut produced,
             &mut messages,
         );
@@ -2254,7 +2277,13 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         // Making, deleting and re-parenting an actor are `apply_lifetimes`'s
         // to carry out, and none of them is a change to a transform.
         Effect::SetGravity { .. }
+        | Effect::SetBusVolume { .. }
         | Effect::Stopped
+        // Sound is the sound module's to play, like UI is the overlay's.
+        | Effect::PlaySound { .. }
+        | Effect::StopSound { .. }
+        | Effect::SetSoundVolume { .. }
+        | Effect::SetSoundPitch { .. }
         | Effect::SetMouseLocked { .. }
         // Screen-space, so against no actor at all - `overlay` applies them.
         | Effect::ShowElement { .. }
@@ -2808,6 +2837,7 @@ mod tests {
         app.init_resource::<Messages<MouseMotion>>();
         app.init_resource::<Messages<WindowFocused>>();
         app.init_resource::<crate::ui::UiManager>();
+        app.init_resource::<crate::sound::SoundState>();
         app.insert_non_send(engine);
         let window_entity = app
             .world_mut()
@@ -3938,6 +3968,7 @@ mod tests {
         app.init_resource::<Messages<MouseMotion>>();
         app.init_resource::<Messages<WindowFocused>>();
         app.init_resource::<crate::ui::UiManager>();
+        app.init_resource::<crate::sound::SoundState>();
         app.insert_non_send(engine);
 
         let mut window = Window::default();
@@ -4363,6 +4394,7 @@ mod tests {
         app.init_resource::<Messages<MouseMotion>>();
         app.init_resource::<Messages<WindowFocused>>();
         app.init_resource::<crate::ui::UiManager>();
+        app.init_resource::<crate::sound::SoundState>();
         app.insert_non_send(engine);
         app.world_mut().spawn((Window::default(), PrimaryWindow));
         app.add_systems(Update, publish_sensors);

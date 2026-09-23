@@ -104,5 +104,19 @@ export const UI_THEME_OPTIONS = [
   { value: 'HighContrast', label: 'high contrast' },
 ];
 
+/** Which mixing bus a voice routes through. Kept in step with
+ * `blockloom_core::sound::SoundBus`. */
+export const SOUND_BUS_OPTIONS = [
+  { value: 'Master', label: 'master' },
+  { value: 'Music', label: 'music' },
+  { value: 'Sfx', label: 'sound effects' },
+];
+
+/** Whether a play block fires once or repeats. */
+export const SOUND_LOOP_OPTIONS = [
+  { value: 'false', label: 'once' },
+  { value: 'true', label: 'loop' },
+];
+
 /** The palette offers "mouse" alongside the actor names, same as the blocks do. */
 export const MOUSE_TARGET = 'mouse';

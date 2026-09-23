@@ -17,7 +17,7 @@ Obvious gaps already identified in the project notes:
       `set my parent to` place it there rather than leaving it where it
       stands. The offset is authored-only today, read once when the world is
       built.
-- [ ] Add sound playback and sound-related blocks.
+- [x] Add sound playback and sound-related blocks.
 - [x] Add lists and blocks for creating, reading, and changing list items.
 - [x] Add asset management UI for importing, organizing, previewing, replacing, and removing project assets.
 - [x] Show `say` as a speech bubble over its actor in the game world.
@@ -54,8 +54,8 @@ Obvious gaps already identified in the project notes:
 Phased by dependency and value per cost. Each phase unblocks the next.
 
 ### Phase 1 - Unblock real games, low risk
-- [ ] Lists plus dicts plus JSON: VM-only, everything else needs data structures.
-- [ ] Sound playback plus buses plus 2D/3D positional: isolated, huge completeness win.
+- [x] Lists plus dicts plus JSON: VM and compiled both, everything else needs data structures.
+- [x] Sound playback plus buses plus 2D/3D positional: isolated, huge completeness win.
 - [ ] Parent-space runtime API (`set parent`, local vs world query): finishes hierarchy work already started.
 - [ ] Physics queries: raycast/shapecast, layers/masks UI, trigger vs solid: required for platformers, AI, UI clicks.
 

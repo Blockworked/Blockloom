@@ -32,6 +32,8 @@ import {
   MOUSE_LOCK_OPTIONS,
   MOUSE_TARGET,
   ON_OFF_OPTIONS,
+  SOUND_BUS_OPTIONS,
+  SOUND_LOOP_OPTIONS,
   UI_ANCHOR_OPTIONS,
   UI_PROP_OPTIONS,
   UI_THEME_OPTIONS,
@@ -43,6 +45,7 @@ import {
   asValue,
   componentNames,
   customComponents,
+  dictNames,
   fieldLocation,
   listNames,
   variableNames,
@@ -119,6 +122,12 @@ function variableOptions(): Option[] {
  * ones. A command block writes whichever scope declares the chosen name. */
 function listOptions(): Option[] {
   return listNames(state.project, openActor.value).map(name => ({ value: name, label: name }));
+}
+
+/** Dict names the open actor can read: its own, then the project's shared
+ * ones. A command block writes whichever scope declares the chosen name. */
+function dictOptions(): Option[] {
+  return dictNames(state.project, openActor.value).map(name => ({ value: name, label: name }));
 }
 
 /** The open actor's custom components - the only ones a block can write, since
@@ -320,6 +329,61 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
     ],
   },
   SetColor: { head: [label('set color to'), value('ColorText', 'color')] },
+
+  // ── Sound ────────────────────────────────────────────────────────────────
+  PlaySound: {
+    head: [
+      label('play sound'),
+      value('SoundAsset', 'sound'),
+      label('volume'),
+      value('SoundVolume', 'volume'),
+      label('pitch'),
+      value('SoundPitch', 'pitch'),
+      flag('loop', SOUND_LOOP_OPTIONS),
+      label('on'),
+      { kind: 'dropdown', key: 'bus', options: SOUND_BUS_OPTIONS },
+    ],
+  },
+  PlaySoundAt: {
+    head: [
+      label('play sound'),
+      value('SoundAsset', 'sound'),
+      label('volume'),
+      value('SoundVolume', 'volume'),
+      label('pitch'),
+      value('SoundPitch', 'pitch'),
+      flag('loop', SOUND_LOOP_OPTIONS),
+      label('on'),
+      { kind: 'dropdown', key: 'bus', options: SOUND_BUS_OPTIONS },
+      label('at'),
+      value('SoundTarget', 'target'),
+    ],
+  },
+  StopSound: { head: [label('stop sound'), value('SoundAsset', 'sound')] },
+  SetSoundVolume: {
+    head: [
+      label('set volume of sound'),
+      value('SoundAsset', 'sound'),
+      label('to'),
+      value('SoundVolume', 'volume'),
+    ],
+  },
+  SetSoundPitch: {
+    head: [
+      label('set pitch of sound'),
+      value('SoundAsset', 'sound'),
+      label('to'),
+      value('SoundPitch', 'pitch'),
+    ],
+  },
+  SetBusVolume: {
+    head: [
+      label('set'),
+      { kind: 'dropdown', key: 'bus', options: SOUND_BUS_OPTIONS },
+      label('volume to'),
+      value('SoundVolume', 'volume'),
+    ],
+  },
 
   // ── Components ───────────────────────────────────────────────────────────
   SetComponentField: {
@@ -536,6 +600,45 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
   },
   ReverseList: {
     head: [label('reverse'), { kind: 'dropdown', key: 'name', options: listOptions, placeholder: 'list' }],
+  },
+  LoadJsonIntoList: {
+    head: [
+      label('load JSON'),
+      value('LoadJsonIntoListText', 'json'),
+      label('into'),
+      { kind: 'dropdown', key: 'name', options: listOptions, placeholder: 'list' },
+    ],
+  },
+
+  // ── Dicts ────────────────────────────────────────────────────────────────
+  SetDictValue: {
+    head: [
+      label('set'),
+      value('SetDictKey', 'key'),
+      label('of'),
+      { kind: 'dropdown', key: 'name', options: dictOptions, placeholder: 'dict' },
+      label('to'),
+      value('SetDictValue', 'value'),
+    ],
+  },
+  DeleteDictKey: {
+    head: [
+      label('delete'),
+      value('DeleteDictKey', 'key'),
+      label('of'),
+      { kind: 'dropdown', key: 'name', options: dictOptions, placeholder: 'dict' },
+    ],
+  },
+  DeleteAllOfDict: {
+    head: [label('delete all of'), { kind: 'dropdown', key: 'name', options: dictOptions, placeholder: 'dict' }],
+  },
+  LoadJsonIntoDict: {
+    head: [
+      label('load JSON'),
+      value('LoadJsonIntoDictText', 'json'),
+      label('into'),
+      { kind: 'dropdown', key: 'name', options: dictOptions, placeholder: 'dict' },
+    ],
   },
 
   // ── Custom blocks ────────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ use blockloom_core::components::CameraView;
 use blockloom_core::scene::Axis;
 use blockloom_core::script::abi::{self, HostApi, Str};
 use blockloom_core::sense;
+use blockloom_core::sound::{SoundBus, clamp_pitch, user_to_gain};
 use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp, UiTheme};
 use blockloom_core::value::Evaluated;
 use blockloom_core::vm::Effect;
@@ -280,6 +281,16 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
             Evaluated::Text(text) => text.trim().parse().ok(),
         },
         abi::READ_IS_CLONE => bool_as(me(actor)?.is_clone),
+        abi::READ_SOUND_PLAYING => {
+            bool_as(sense::read(|sensors| sensors.sounds.contains(a.trim())))
+        }
+        abi::READ_BUS_VOLUME => {
+            let bus = SoundBus::parse(a)?;
+            Some(
+                sense::read(|sensors| sensors.bus_volumes.get(&bus).copied().unwrap_or(100.0))
+                    as f64,
+            )
+        }
         abi::READ_ACTOR_COUNT => Some(sense::read(|sensors| sensors.count_named(a)) as f64),
         abi::READ_POSITION_OF => {
             let axis = axis_of(arg).index();
@@ -513,6 +524,90 @@ extern "C" fn act(
         abi::ACT_SET_PARENT => Effect::SetParent {
             actor,
             parent: a.trim().to_string(),
+        },
+        abi::ACT_PLAY_SOUND => {
+            let sound = a.trim().to_string();
+            if sound.is_empty() {
+                ctx.asked.effects.push(Effect::Error {
+                    actor: actor.clone(),
+                    message: "which sound should I play?".to_string(),
+                });
+                return;
+            }
+            let at = if c.trim().is_empty() {
+                Some(actor.clone())
+            } else {
+                // Id first, then name, the same order the blocks resolve in.
+                let wanted = c.trim();
+                let id = sense::read(|sensors| {
+                    if sensors.actors.contains_key(wanted) {
+                        Some(wanted.to_string())
+                    } else {
+                        sensors
+                            .actors
+                            .iter()
+                            .find(|(_, other)| other.name.eq_ignore_ascii_case(wanted))
+                            .map(|(id, _)| id.clone())
+                    }
+                });
+                match id {
+                    Some(id) => Some(id),
+                    None => {
+                        ctx.asked.effects.push(Effect::Error {
+                            actor: actor.clone(),
+                            message: format!("there's no actor named \"{c}\" to play at"),
+                        });
+                        return;
+                    }
+                }
+            };
+            Effect::PlaySound {
+                actor,
+                sound,
+                volume: user_to_gain(n0),
+                pitch: clamp_pitch(n1 as f32),
+                loop_: n2 != 0.0,
+                bus: SoundBus::parse(b).unwrap_or(SoundBus::Sfx),
+                at,
+            }
+        }
+        abi::ACT_STOP_SOUND => Effect::StopSound {
+            actor,
+            sound: a.trim().to_string(),
+        },
+        abi::ACT_SET_SOUND_VOLUME => {
+            let sound = a.trim().to_string();
+            if sound.is_empty() {
+                ctx.asked.effects.push(Effect::Error {
+                    actor: actor.clone(),
+                    message: "which sound's volume should I set?".to_string(),
+                });
+                return;
+            }
+            Effect::SetSoundVolume {
+                actor,
+                sound,
+                volume: user_to_gain(n0),
+            }
+        }
+        abi::ACT_SET_SOUND_PITCH => {
+            let sound = a.trim().to_string();
+            if sound.is_empty() {
+                ctx.asked.effects.push(Effect::Error {
+                    actor: actor.clone(),
+                    message: "which sound's pitch should I set?".to_string(),
+                });
+                return;
+            }
+            Effect::SetSoundPitch {
+                actor,
+                sound,
+                pitch: clamp_pitch(n0 as f32),
+            }
+        }
+        abi::ACT_SET_BUS_VOLUME => Effect::SetBusVolume {
+            bus: SoundBus::parse(a).unwrap_or(SoundBus::Sfx),
+            volume: user_to_gain(n0),
         },
         // The clone's own id isn't minted here: the VM registers it so the
         // copy's `when I start as a clone` strands have a scheduler slot,

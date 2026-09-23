@@ -31,7 +31,9 @@ import {
   House,
   Image as ImageIcon,
   Music,
+  Pause,
   Pencil,
+  Play,
   RefreshCw,
   Trash2,
   Upload,
@@ -67,6 +69,41 @@ import type { AssetEntry, AssetKind } from '../types';
 const entries = ref<AssetEntry[]>([]);
 const error = ref('');
 const busy = ref(false);
+/** The audio file previewing right now, by path. One at a time: starting
+ * another stops the first. */
+const previewing = ref<string | null>(null);
+let previewAudio: HTMLAudioElement | null = null;
+
+function stopPreview() {
+  previewAudio?.pause();
+  previewAudio = null;
+  previewing.value = null;
+}
+
+/** Clicking a sound's icon plays it in place, through the browser's own
+ * audio - the game runtime isn't involved. Click again to stop. */
+async function togglePreview(entry: AssetEntry) {
+  if (previewing.value === entry.path) {
+    stopPreview();
+    return;
+  }
+  stopPreview();
+  try {
+    const url = await readAsset(entry.path);
+    const audio = new Audio(url);
+    previewAudio = audio;
+    previewing.value = entry.path;
+    audio.onended = () => {
+      if (previewing.value === entry.path) stopPreview();
+    };
+    await audio.play();
+  } catch (err) {
+    console.error(err);
+    stopPreview();
+  }
+}
+
+onUnmounted(stopPreview);
 /** Image previews by `path@modified`, so a replaced file gets a fresh one. */
 const thumbnails = ref<Record<string, string>>({});
 
@@ -606,6 +643,14 @@ function startResize(e: PointerEvent) {
           <span class="asset-icon">
             <img v-if="thumbnail(entry)" :src="thumbnail(entry)!" alt="" class="asset-thumb">
             <component :is="ICONS[entry.kind]" v-else :size="22" />
+            <button
+              v-if="entry.kind === 'audio'"
+              class="asset-preview"
+              :title="previewing === entry.path ? 'Stop preview' : 'Preview this sound'"
+              @click.stop="togglePreview(entry)"
+            >
+              <component :is="previewing === entry.path ? Pause : Play" :size="12" />
+            </button>
           </span>
           <input
             v-if="isRenaming(entry)"

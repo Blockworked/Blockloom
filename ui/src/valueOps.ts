@@ -1,18 +1,21 @@
 // Blockloom's operator table: blockstitch's built-in arithmetic/text/logic
 // operators plus the sensing reporters `blockloom-core`'s `value` module
-// registers on the Rust side, plus blockstitch's list reporters. The lists
+// registers on the Rust side, plus blockstitch's list and dict reporters. The lists
 // must agree on `op` (the wire name) and on argument count; everything else
 // here is presentation.
 import type { OperatorKindSpec } from 'blockstitch';
 import {
+  DICT_EMPTY_OPTIONS,
+  DICT_NAME_OPTIONS,
   LIST_EMPTY_OPTIONS,
   LIST_NAME_OPTIONS,
+  dictReporterSpecs,
   listReporterSpecs,
 } from 'blockstitch';
-import { KEY_OPTIONS } from './constants';
+import { KEY_OPTIONS, SOUND_BUS_OPTIONS } from './constants';
 
-export { LIST_EMPTY_OPTIONS, LIST_NAME_OPTIONS };
-export { setListNameOptions } from 'blockstitch';
+export { DICT_EMPTY_OPTIONS, DICT_NAME_OPTIONS, LIST_EMPTY_OPTIONS, LIST_NAME_OPTIONS };
+export { setDictNameOptions, setListNameOptions } from 'blockstitch';
 
 const AXIS_OPTIONS = [
   { value: 'X', label: 'x' },
@@ -73,6 +76,8 @@ export const OPERATOR_GROUPS: { label: string; kinds: string[] }[] = [
       'DistanceTo',
       'ActorPosition',
       'ComponentField',
+      'SoundPlaying',
+      'BusVolume',
     ],
   },
   {
@@ -88,7 +93,11 @@ export const OPERATOR_GROUPS: { label: string; kinds: string[] }[] = [
   },
   {
     label: 'Lists',
-    kinds: ['ListItem', 'ListItemNumber', 'ListAmount', 'ListLength', 'ListContains', 'ListItemExists', 'ListIsEmpty'],
+    kinds: ['ListItem', 'ListItemNumber', 'ListAmount', 'ListLength', 'ListContains', 'ListItemExists', 'ListIsEmpty', 'ListAsJson'],
+  },
+  {
+    label: 'Dicts',
+    kinds: ['DictValue', 'DictHasKey', 'DictSize', 'DictKeys', 'DictAsJson', 'DictIsEmpty'],
   },
 ];
 
@@ -228,6 +237,25 @@ export const OPERATOR_KINDS: OperatorKindSpec[] = [
     suffix: 'position',
     enumArg: { index: 1, options: AXIS_OPTIONS },
   },
+  {
+    kind: 'SoundPlaying',
+    op: 'SoundPlaying',
+    arity: 1,
+    argTypes: ['text'],
+    resultType: 'bool',
+    prefix: 'is',
+    suffix: 'playing?',
+  },
+  {
+    kind: 'BusVolume',
+    op: 'BusVolume',
+    arity: 1,
+    argTypes: ['text'],
+    resultType: 'number',
+    prefix: 'volume of',
+    suffix: 'bus',
+    enumArg: { index: 0, options: SOUND_BUS_OPTIONS },
+  },
 
   // ── blockstitch's built-ins ─────────────────────────────────────────────
   { kind: 'Add', op: 'Add', arity: 2, argTypes: ['number', 'number'], resultType: 'number', infix: '+' },
@@ -318,6 +346,8 @@ export const OPERATOR_KINDS: OperatorKindSpec[] = [
   // List reporters live in blockstitch (`listReporterSpecs`) so every project
   // reuses the same blocks, dropdowns, and name-arg positions.
   ...(listReporterSpecs(LIST_NAME_OPTIONS, LIST_EMPTY_OPTIONS) as OperatorKindSpec[]),
+  // Dict reporters likewise (`dictReporterSpecs`).
+  ...(dictReporterSpecs(DICT_NAME_OPTIONS, DICT_EMPTY_OPTIONS) as OperatorKindSpec[]),
 ];
 
 export function specForKind(kind: string): OperatorKindSpec | undefined {

@@ -41,6 +41,25 @@ impl CameraView {
     }
 }
 
+/// Which mixing bus a sound routes through. `Master` scales everything;
+/// `Music` and `Sfx` scale their own voices on top of it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SoundBus {
+    Master,
+    Music,
+    Sfx,
+}
+
+impl SoundBus {
+    fn name(self) -> &'static str {
+        match self {
+            SoundBus::Master => "Master",
+            SoundBus::Music => "Music",
+            SoundBus::Sfx => "Sfx",
+        }
+    }
+}
+
 /// The actor this script is attached to.
 ///
 /// Reads answer from the frame the runtime is part-way through, and writes are
@@ -577,6 +596,106 @@ impl Actor {
             0.0,
             0.0,
         );
+    }
+
+    /// Plays a sound file from the project's assets as a global voice.
+    /// `volume` is 0-100, `pitch` is 1 for as recorded.
+    pub fn play_sound(&self, sound: &str, volume: f64, pitch: f64, loop_: bool, bus: SoundBus) {
+        self.act(
+            ACT_PLAY_SOUND,
+            Str::borrow(sound),
+            Str::borrow(bus.name()),
+            Str::EMPTY,
+            volume,
+            pitch,
+            if loop_ { 1.0 } else { 0.0 },
+        );
+    }
+
+    /// Plays a sound at an actor's place and follows it around, panned by
+    /// position and quieter with distance. An empty target means here.
+    pub fn play_sound_at(
+        &self,
+        sound: &str,
+        target: &str,
+        volume: f64,
+        pitch: f64,
+        loop_: bool,
+        bus: SoundBus,
+    ) {
+        self.act(
+            ACT_PLAY_SOUND,
+            Str::borrow(sound),
+            Str::borrow(bus.name()),
+            Str::borrow(target),
+            volume,
+            pitch,
+            if loop_ { 1.0 } else { 0.0 },
+        );
+    }
+
+    /// Stops the voices playing a sound file. Empty stops every sound.
+    pub fn stop_sound(&self, sound: &str) {
+        self.act(
+            ACT_STOP_SOUND,
+            Str::borrow(sound),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Retunes the voices already playing a sound file, 0-100.
+    pub fn set_sound_volume(&self, sound: &str, volume: f64) {
+        self.act(
+            ACT_SET_SOUND_VOLUME,
+            Str::borrow(sound),
+            Str::EMPTY,
+            Str::EMPTY,
+            volume,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Rebends the voices already playing a sound file. 1 is as recorded.
+    pub fn set_sound_pitch(&self, sound: &str, pitch: f64) {
+        self.act(
+            ACT_SET_SOUND_PITCH,
+            Str::borrow(sound),
+            Str::EMPTY,
+            Str::EMPTY,
+            pitch,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Moves a whole mixing bus, 0-100.
+    pub fn set_bus_volume(&self, bus: SoundBus, volume: f64) {
+        self.act(
+            ACT_SET_BUS_VOLUME,
+            Str::borrow(bus.name()),
+            Str::EMPTY,
+            Str::EMPTY,
+            volume,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Whether any voice is playing that file right now.
+    pub fn is_sound_playing(&self, sound: &str) -> bool {
+        self.number(READ_SOUND_PLAYING, Str::borrow(sound), Str::EMPTY, 0.0)
+            .is_some_and(|playing| playing != 0.0)
+    }
+
+    /// A mixing bus's live gain in 0-100. Unknown buses read as unity.
+    pub fn bus_volume(&self, bus: SoundBus) -> f64 {
+        self.number(READ_BUS_VOLUME, Str::borrow(bus.name()), Str::EMPTY, 0.0)
+            .unwrap_or(100.0)
     }
 
     /// Fires every `when I get` strand listening for it, in every actor.

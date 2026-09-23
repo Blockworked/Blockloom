@@ -11,7 +11,7 @@
 //! name and keeps it matched to the project's; where the folder sits is the
 //! user's choice, so [`crate::library`] remembers the ones it has opened.
 
-use crate::blocks::{ActorGraph, InstructionKind, ListDef, VariableDef};
+use crate::blocks::{ActorGraph, DictDef, InstructionKind, ListDef, VariableDef};
 use crate::components::{ActorComponent, CameraAttach, CameraView, Components};
 use crate::scene::{Mode, Physics, Placement, Visual, World};
 use crate::value::Evaluated;
@@ -225,6 +225,11 @@ pub struct Project {
     /// same name shadows this one for that actor.
     #[serde(default)]
     pub global_lists: Vec<ListDef>,
+    /// Dicts every actor can read and change - the shared half of the dict
+    /// model, parallel to [`Project::global_lists`]. An actor's own dict of
+    /// the same name shadows this one for that actor.
+    #[serde(default)]
+    pub global_dicts: Vec<DictDef>,
 }
 
 impl Project {
@@ -292,6 +297,7 @@ impl Project {
             actors: vec![player, ground],
             globals: Vec::new(),
             global_lists: Vec::new(),
+            global_dicts: Vec::new(),
         }
     }
 
@@ -636,6 +642,74 @@ impl Project {
             .actor(actor_id)
             .is_some_and(|actor| actor.graph.lists.iter().any(|list| list.name == name));
         !actor_owns && self.global_lists.iter().any(|list| list.name == name)
+    }
+
+    /// Declares a project-wide dict starting empty.
+    pub fn create_global_dict(&mut self, name: &str) -> Result<String, String> {
+        let trimmed = name.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("Dict name can't be empty".to_string());
+        }
+        if self.global_dicts.iter().any(|dict| dict.name == trimmed) {
+            return Err(format!("A dict named \"{trimmed}\" already exists"));
+        }
+        self.global_dicts.push(DictDef {
+            name: trimmed.clone(),
+            entries: Vec::new(),
+            editor_visible: false,
+            editor_x: 0,
+            editor_y: 0,
+        });
+        Ok(trimmed)
+    }
+
+    /// Renames a project-wide dict and every read of it, in every actor that
+    /// doesn't shadow it with its own dict of that name.
+    pub fn rename_global_dict(&mut self, old: &str, new: &str) -> Result<String, String> {
+        let trimmed = new.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("Dict name can't be empty".to_string());
+        }
+        if trimmed != old && self.global_dicts.iter().any(|dict| dict.name == trimmed) {
+            return Err(format!("A dict named \"{trimmed}\" already exists"));
+        }
+        let Some(dict) = self.global_dicts.iter_mut().find(|dict| dict.name == old) else {
+            return Err("Dict not found".to_string());
+        };
+        if trimmed == old {
+            return Ok(trimmed);
+        }
+        dict.name = trimmed.clone();
+        for actor in &mut self.actors {
+            // An actor with its own dict of that name reads its own, so its
+            // references must stay put.
+            if actor.graph.dicts.iter().any(|dict| dict.name == old) {
+                continue;
+            }
+            for strand in &mut actor.graph.strands {
+                for instruction in &mut strand.instructions {
+                    instruction.rename_dict(old, &trimmed);
+                }
+            }
+            for floating in &mut actor.graph.floating_values {
+                blockstitch_core::graph::rename_dict_in_value(&mut floating.value, old, &trimmed);
+            }
+        }
+        Ok(trimmed)
+    }
+
+    /// Drops a project-wide dict. Reads of it are left alone and default to
+    /// empty, the same as an actor's own removed dict.
+    pub fn remove_global_dict(&mut self, name: &str) {
+        self.global_dicts.retain(|dict| dict.name != name);
+    }
+
+    /// True if `name` is a shared dict rather than one of `actor_id`'s own.
+    pub fn is_global_dict(&self, actor_id: &str, name: &str) -> bool {
+        let actor_owns = self
+            .actor(actor_id)
+            .is_some_and(|actor| actor.graph.dicts.iter().any(|dict| dict.name == name));
+        !actor_owns && self.global_dicts.iter().any(|dict| dict.name == name)
     }
 
     /// Repairs and canonicalizes a just-loaded document, once.
@@ -1503,5 +1577,78 @@ mod tests {
         assert_eq!(read_of(&project.actors[0]), "line");
         assert_eq!(target_of(&project.actors[1]), "queue");
         assert_eq!(read_of(&project.actors[1]), "queue");
+    }
+
+    #[test]
+    fn shared_dicts_are_created_renamed_and_removed() {
+        let mut project = Project::starter("p", Mode::TwoD);
+        assert!(project.create_global_dict("  ").is_err());
+        project.create_global_dict("save").unwrap();
+        assert!(project.create_global_dict("save").is_err());
+
+        let id = project.actors[0].id.clone();
+        assert!(project.is_global_dict(&id, "save"));
+        project.rename_global_dict("save", "slot").unwrap();
+        assert!(project.is_global_dict(&id, "slot"));
+        assert!(project.rename_global_dict("slot", "slot").is_ok());
+        project.remove_global_dict("slot");
+        assert!(!project.is_global_dict(&id, "slot"));
+    }
+
+    #[test]
+    fn renaming_a_shared_dict_follows_reads_except_where_an_actor_shadows_it() {
+        let mut project = Project::starter("p", Mode::TwoD);
+        project.create_global_dict("save").unwrap();
+        let shadowing = project.actors[1].id.clone();
+        project
+            .actor_mut(&shadowing)
+            .unwrap()
+            .graph
+            .create_dict("save")
+            .unwrap();
+        for index in 0..2 {
+            let sets = Instruction::new(InstructionKind::SetDictValue {
+                key: crate::value::Value::text("hp"),
+                value: crate::value::Value::number(1.0),
+                name: "save".to_string(),
+            });
+            let reads = Instruction::new(InstructionKind::Say {
+                text: crate::value::Value::Op {
+                    op: crate::value::Op::from_name("DictValue"),
+                    args: vec![
+                        crate::value::Value::text("hp"),
+                        crate::value::Value::text("save"),
+                    ],
+                    saved: Box::new(crate::value::Value::number(0.0)),
+                },
+            });
+            project.actors[index]
+                .graph
+                .strands
+                .push(crate::blocks::Strand::with_instructions(
+                    0,
+                    0,
+                    vec![sets, reads],
+                ));
+        }
+        project.rename_global_dict("save", "slot").unwrap();
+
+        let target_of = |actor: &Actor| match &actor.graph.strands[0].instructions[0].kind {
+            InstructionKind::SetDictValue { name, .. } => name.clone(),
+            other => panic!("expected a set, got {other:?}"),
+        };
+        let read_of = |actor: &Actor| match &actor.graph.strands[0].instructions[1].kind {
+            InstructionKind::Say {
+                text: crate::value::Value::Op { args, .. },
+            } => match &args[1] {
+                crate::value::Value::Text { value } => value.clone(),
+                other => panic!("expected a dict name, got {other:?}"),
+            },
+            other => panic!("expected a say, got {other:?}"),
+        };
+        assert_eq!(target_of(&project.actors[0]), "slot");
+        assert_eq!(read_of(&project.actors[0]), "slot");
+        assert_eq!(target_of(&project.actors[1]), "save");
+        assert_eq!(read_of(&project.actors[1]), "save");
     }
 }

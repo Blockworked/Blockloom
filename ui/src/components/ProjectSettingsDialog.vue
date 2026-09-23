@@ -20,8 +20,9 @@ import {
   setLighting,
   setMode,
   setProjectIcon,
+  setSoundMixer,
 } from '../tauri';
-import type { CameraDto, LightingDto, Mode } from '../types';
+import type { CameraDto, LightingDto, Mode, SoundMixerDto } from '../types';
 
 const emit = defineEmits<{ close: [] }>();
 const iconPreview = ref('');
@@ -93,6 +94,22 @@ function writeCamera(next: Partial<CameraDto>) {
 function writeLighting(next: Partial<LightingDto>) {
   if (!state.project) return;
   void setLighting({ ...state.project.world.lighting, ...next }).catch((err: unknown) => console.error(err));
+}
+
+/** The saved mix is stored linear (1 is unity); the dialog speaks percent. */
+function mixerPct(value: number): number {
+  return Math.round((value ?? 1) * 100);
+}
+
+function writeMixer(next: Partial<SoundMixerDto>) {
+  if (!state.project) return;
+  const sound = state.project.world.sound ?? { master_volume: 1, music_volume: 1, sfx_volume: 1 };
+  void setSoundMixer({ ...sound, ...next }).catch((err: unknown) => console.error(err));
+}
+
+function writeBusVolume(key: 'master_volume' | 'music_volume' | 'sfx_volume', e: Event) {
+  const pct = Math.min(Math.max(num(e, 100), 0), 200);
+  writeMixer({ [key]: pct / 100 });
 }
 
 function setLightColor(e: Event) {
@@ -247,6 +264,43 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown));
           Where the 3D sun shines from (aimed at the origin), and how the scene's
           ambient light looks. Occlusion darkens creases where objects meet but
           costs GPU time. Applies on the next run of the game.
+        </p>
+      </section>
+
+      <section v-if="state.project" class="settings-section">
+        <h3 class="settings-section-title">Sound</h3>
+        <div class="settings-row">
+          <label>Master</label>
+          <input
+            type="range" min="0" max="200" step="1"
+            :value="mixerPct(state.project.world.sound?.master_volume ?? 1)"
+            @change="e => writeBusVolume('master_volume', e)"
+          >
+          <span class="settings-value">{{ mixerPct(state.project.world.sound?.master_volume ?? 1) }}%</span>
+        </div>
+        <div class="settings-row">
+          <label>Music</label>
+          <input
+            type="range" min="0" max="200" step="1"
+            :value="mixerPct(state.project.world.sound?.music_volume ?? 1)"
+            @change="e => writeBusVolume('music_volume', e)"
+          >
+          <span class="settings-value">{{ mixerPct(state.project.world.sound?.music_volume ?? 1) }}%</span>
+        </div>
+        <div class="settings-row">
+          <label>Effects</label>
+          <input
+            type="range" min="0" max="200" step="1"
+            :value="mixerPct(state.project.world.sound?.sfx_volume ?? 1)"
+            @change="e => writeBusVolume('sfx_volume', e)"
+          >
+          <span class="settings-value">{{ mixerPct(state.project.world.sound?.sfx_volume ?? 1) }}%</span>
+        </div>
+        <p class="settings-note">
+          The saved mix every voice plays through: master scales everything,
+          music and effects scale their own bus on top of it. A
+          `set bus volume` block moves the live mix without changing this.
+          Applies on the next run of the game.
         </p>
       </section>
 

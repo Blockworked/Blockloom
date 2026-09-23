@@ -9,6 +9,7 @@ import type {
   BuildResult,
   BuildTarget,
   CameraDto,
+  DictEntryDto,
   InstrPath,
   InstructionDto,
   LightingDto,
@@ -16,6 +17,7 @@ import type {
   Mode,
   PhysicsDto,
   PlacementDto,
+  SoundMixerDto,
   StateDto,
   ValueDto,
   ValueKind,
@@ -87,6 +89,7 @@ export const setGravity = (gravity: [number, number, number]) => invoke<void>('s
 export const setFixedRate = (fixedRate: number) => invoke<void>('set_fixed_rate', { fixedRate });
 export const setCamera = (camera: CameraDto) => invoke<void>('set_camera', { camera });
 export const setLighting = (lighting: LightingDto) => invoke<void>('set_lighting', { lighting });
+export const setSoundMixer = (mixer: SoundMixerDto) => invoke<void>('set_sound_mixer', { mixer });
 
 // ─── Actors ─────────────────────────────────────────────────────────────────
 export const selectActor = (actorId: string) => invoke<void>('select_actor', { actorId });
@@ -228,6 +231,17 @@ export const setListItems = (name: string, items: ListItemDto[]) =>
   invoke<void>('set_list_items', { name, items });
 export const setListEditorState = (name: string, visible: boolean, x: number, y: number) =>
   invoke<void>('set_list_editor_state', { name, visible, x, y });
+
+// A dict entry is a key with a literal number or text value - see `DictEntryDto`.
+export const createDict = (name: string, scope: 'actor' | 'global') =>
+  invoke<void>('create_dict', { name, scope });
+export const renameDict = (oldName: string, newName: string) =>
+  invoke<void>('rename_dict', { oldName, newName });
+export const deleteDict = (name: string) => invoke<void>('delete_dict', { name });
+export const setDictEntries = (name: string, entries: DictEntryDto[]) =>
+  invoke<void>('set_dict_entries', { name, entries });
+export const setDictEditorState = (name: string, visible: boolean, x: number, y: number) =>
+  invoke<void>('set_dict_editor_state', { name, visible, x, y });
 export const createBlock = (pieces: BlockPieceDto[], shape: BlockShapeDto, color: string) =>
   invoke<string>('create_block', { pieces, shape, color });
 export const editBlock = (blockId: string, pieces: BlockPieceDto[], shape: BlockShapeDto, color: string) =>

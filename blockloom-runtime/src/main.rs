@@ -26,6 +26,7 @@ mod logic;
 mod overlay;
 mod player;
 mod script;
+mod sound;
 mod ui;
 mod world;
 
@@ -70,6 +71,7 @@ fn main() {
     .init_resource::<PendingEffects>()
     .init_resource::<world::NavMesh>()
     .init_resource::<ui::UiManager>()
+    .init_resource::<sound::SoundState>()
     .insert_non_send(launch.into_engine())
     // Both of these only exist to talk to an editor, and a built game has
     // none: no corner status, no handshake.
@@ -90,6 +92,12 @@ fn main() {
                 dt: 1.0 / 60.0,
                 substeps: 1,
             });
+            // Positions are pixels in 2D, so the listener hears in hundreds:
+            // scale the world down to speaking distance for the pan to mean
+            // anything.
+            app.insert_resource(bevy::audio::DefaultSpatialScale(
+                bevy::audio::SpatialScale::new_2d(1.0 / 500.0),
+            ));
             app.add_plugins(bevy_rapier2d::prelude::RapierPhysicsPlugin::<
                 bevy_rapier2d::prelude::NoUserData,
             >::pixels_per_meter(dim2::PIXELS_PER_METER)
@@ -108,6 +116,7 @@ fn main() {
                         world::apply_common,
                         dim2::apply_effects,
                         world::apply_component_effects,
+                        sound::apply_sound_effects,
                         world::step_glides,
                         world::apply_cursor_lock,
                         world::clear_effects,
@@ -130,6 +139,7 @@ fn main() {
                         world::scroll_ui_lists,
                         world::detect_clicks,
                         world::publish_sensors,
+                        sound::maintain_voices,
                         world::interpolate_poses,
                         world::drive_camera,
                         overlay::update_speech_bubbles,
@@ -170,6 +180,7 @@ fn main() {
                         world::apply_common,
                         dim3::apply_effects,
                         world::apply_component_effects,
+                        sound::apply_sound_effects,
                         world::step_glides,
                         world::apply_cursor_lock,
                         world::clear_effects,
@@ -192,6 +203,7 @@ fn main() {
                         world::scroll_ui_lists,
                         world::detect_clicks,
                         world::publish_sensors,
+                        sound::maintain_voices,
                         world::interpolate_poses,
                         world::drive_camera,
                         overlay::update_speech_bubbles,

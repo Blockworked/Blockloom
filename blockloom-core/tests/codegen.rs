@@ -19,12 +19,13 @@
 //! tests make.
 
 use blockloom_core::blocks::{
-    BlockDef, BlockPiece, BlockShape, InputValueType, Instruction, InstructionKind as K, ListDef,
-    ListItem, Strand, VariableDef,
+    BlockDef, BlockPiece, BlockShape, DictDef, DictEntry, DictItem, InputValueType, Instruction,
+    InstructionKind as K, ListDef, ListItem, Strand, VariableDef,
 };
 use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::{Axis, Mode, Visual};
 use blockloom_core::sense::{ActorSense, Sensors, UiSense};
+use blockloom_core::sound::SoundBus;
 use blockloom_core::ui::{UiAnchor, UiProp, UiTheme};
 use blockloom_core::value::{Evaluated, Op, Value};
 use blockloom_core::vm::{Effect, Event, Vm};
@@ -94,6 +95,7 @@ use std::collections::HashMap;
 struct Recorder {
     vars: HashMap<String, Val>,
     lists: HashMap<String, Vec<Val>>,
+    dicts: HashMap<String, Vec<(String, Val)>>,
     /// Which tick is being run, so every line says when it happened and not
     /// just what order things came in.
     tick: usize,
@@ -177,6 +179,51 @@ impl Host for Recorder {
                 }
                 return;
             }
+            Act::SetDictValue { name, key, value } => {
+                match dict_item(value) {
+                    Some(item) => {
+                        if let Some(dict) = self.dicts.get_mut(*name) {
+                            dict_set_entry(dict, key.clone(), item);
+                        }
+                    }
+                    None => self.error(actor, "dict values must be number or text"),
+                }
+                return;
+            }
+            Act::DeleteDictKey { name, key } => {
+                if let Some(dict) = self.dicts.get_mut(*name) {
+                    dict.retain(|entry| &entry.0 != key);
+                }
+                return;
+            }
+            Act::DeleteAllOfDict { name } => {
+                if let Some(dict) = self.dicts.get_mut(*name) {
+                    dict.clear();
+                }
+                return;
+            }
+            Act::LoadJsonIntoDict { name, json } => {
+                match parse_json_object(&json.as_text()) {
+                    Ok(entries) => {
+                        if let Some(dict) = self.dicts.get_mut(*name) {
+                            *dict = entries;
+                        }
+                    }
+                    Err(message) => self.error(actor, &message),
+                }
+                return;
+            }
+            Act::LoadJsonIntoList { name, json } => {
+                match parse_json_array(&json.as_text()) {
+                    Ok(items) => {
+                        if let Some(list) = self.lists.get_mut(*name) {
+                            *list = items;
+                        }
+                    }
+                    Err(message) => self.error(actor, &message),
+                }
+                return;
+            }
             _ => {}
         }
         // `delete` is recorded against the actor it takes out of the run
@@ -193,6 +240,7 @@ impl Host for Recorder {
             | Act::DeleteElement { .. }
             | Act::SetFocus { .. }
             | Act::SetUiTheme { .. }
+            | Act::SetBusVolume { .. }
             | Act::SetPaused { .. } => String::new(),
             _ => actor.to_string(),
         };
@@ -282,6 +330,35 @@ impl Host for Recorder {
             "ListIsEmpty" => Ok(Val::Bool(
                 self.lists.get(&args[0].as_text()).map_or(true, Vec::is_empty),
             )),
+            "ListAsJson" => Ok(Val::Text(list_as_json(
+                self.lists.get(&args[0].as_text()).map_or(&[], Vec::as_slice),
+            ))),
+            // Dict reporters read the run's dicts, unknown names included:
+            // nothing declared reads as empty, exactly as it does on the VM.
+            "DictValue" => Ok(dict_find(
+                self.dicts.get(&args[1].as_text()).map_or(&[], Vec::as_slice),
+                &args[0].as_text(),
+            )
+            .cloned()
+            .unwrap_or(Val::Text(String::new()))),
+            "DictHasKey" => Ok(Val::Bool(
+                self.dicts
+                    .get(&args[0].as_text())
+                    .is_some_and(|dict| dict.iter().any(|entry| entry.0 == args[1].as_text())),
+            )),
+            "DictSize" => Ok(Val::Num(
+                dict_keys(self.dicts.get(&args[0].as_text()).map_or(&[], Vec::as_slice)).len()
+                    as f64,
+            )),
+            "DictIsEmpty" => Ok(Val::Bool(
+                self.dicts.get(&args[0].as_text()).map_or(true, Vec::is_empty),
+            )),
+            "DictKeys" => Ok(Val::Text(keys_as_json(&dict_keys(
+                self.dicts.get(&args[0].as_text()).map_or(&[], Vec::as_slice),
+            )))),
+            "DictAsJson" => Ok(Val::Text(dict_as_json(
+                self.dicts.get(&args[0].as_text()).map_or(&[], Vec::as_slice),
+            ))),
             other => Err(format!("unknown operator '{other}'")),
         }
     }
@@ -313,6 +390,400 @@ fn list_item(value: &Val) -> Option<Val> {
     match value {
         Val::Num(_) | Val::Text(_) => Some(value.clone()),
         Val::Bool(_) => None,
+    }
+}
+
+/// A value a dict can hold: the same literal-only rule as lists.
+fn dict_item(value: &Val) -> Option<Val> {
+    list_item(value)
+}
+
+/// Looks up `key`, last write wins when keys repeat.
+fn dict_find<'a>(dict: &'a [(String, Val)], key: &str) -> Option<&'a Val> {
+    dict.iter().rev().find(|entry| entry.0 == key).map(|entry| &entry.1)
+}
+
+/// Sets `key`, replacing the last entry with that key or pushing a new one.
+fn dict_set_entry(dict: &mut Vec<(String, Val)>, key: String, value: Val) {
+    if let Some(entry) = dict.iter_mut().rev().find(|entry| entry.0 == key) {
+        entry.1 = value;
+    } else {
+        dict.push((key, value));
+    }
+}
+
+/// Distinct keys in first-seen order, which is what `DictKeys` reports.
+fn dict_keys(dict: &[(String, Val)]) -> Vec<String> {
+    let mut keys = Vec::new();
+    for entry in dict {
+        if !keys.contains(&entry.0) {
+            keys.push(entry.0.clone());
+        }
+    }
+    keys
+}
+
+/// A number as JSON spells it: `3.0` stays `3.0`, never `3`.
+fn num_json(value: f64) -> String {
+    if !value.is_finite() {
+        return "null".to_string();
+    }
+    if value.fract() == 0.0 && value.abs() < 1e17 {
+        format!("{value:.1}")
+    } else {
+        format!("{value:?}")
+    }
+}
+
+/// A string as JSON spells it, with the same escapes `serde_json` writes.
+fn str_json(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0C}' => out.push_str("\\f"),
+            ch if (ch as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn val_json(value: &Val) -> String {
+    match value {
+        Val::Num(n) => num_json(*n),
+        Val::Text(s) => str_json(s),
+        Val::Bool(_) => "null".to_string(),
+    }
+}
+
+fn list_as_json(items: &[Val]) -> String {
+    let parts: Vec<String> = items.iter().map(val_json).collect();
+    format!("[{}]", parts.join(","))
+}
+
+fn dict_as_json(dict: &[(String, Val)]) -> String {
+    let parts: Vec<String> = dict
+        .iter()
+        .map(|entry| format!("{}:{}", str_json(&entry.0), val_json(&entry.1)))
+        .collect();
+    format!("{{{}}}", parts.join(","))
+}
+
+fn keys_as_json(keys: &[String]) -> String {
+    let parts: Vec<String> = keys.iter().map(|key| str_json(key)).collect();
+    format!("[{}]", parts.join(","))
+}
+
+/// A flat JSON value: only numbers and strings survive, and anything else
+/// (booleans, null, objects, arrays) is `Other` for the caller to refuse
+/// with the key or position attached.
+enum Flat {
+    Num(f64),
+    Str(String),
+    Other,
+}
+
+struct Parser<'a> {
+    text: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Parser<'a> {
+    fn ws(&mut self) {
+        while self.pos < self.text.len() && matches!(self.text[self.pos], b' ' | b'\t' | b'\n' | b'\r') {
+            self.pos += 1;
+        }
+    }
+
+    fn lit(&mut self, word: &str) -> bool {
+        if self.text[self.pos..].starts_with(word.as_bytes()) {
+            self.pos += word.len();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn string(&mut self) -> Option<String> {
+        if self.text.get(self.pos) != Some(&b'"') {
+            return None;
+        }
+        self.pos += 1;
+        let mut out = String::new();
+        loop {
+            let byte = *self.text.get(self.pos)?;
+            match byte {
+                b'"' => {
+                    self.pos += 1;
+                    return Some(out);
+                }
+                b'\\' => {
+                    self.pos += 1;
+                    match *self.text.get(self.pos)? {
+                        b'"' => out.push('"'),
+                        b'\\' => out.push('\\'),
+                        b'/' => out.push('/'),
+                        b'b' => out.push('\u{08}'),
+                        b'f' => out.push('\u{0C}'),
+                        b'n' => out.push('\n'),
+                        b'r' => out.push('\r'),
+                        b't' => out.push('\t'),
+                        b'u' => {
+                            let hex = std::str::from_utf8(self.text.get(self.pos + 1..self.pos + 5)?).ok()?;
+                            let unit = u32::from_str_radix(hex, 16).ok()?;
+                            self.pos += 4;
+                            let ch = if (0xD800..0xDC00).contains(&unit) {
+                                if self.text.get(self.pos + 1) == Some(&b'\\')
+                                    && self.text.get(self.pos + 2) == Some(&b'u')
+                                {
+                                    let low_hex = std::str::from_utf8(
+                                        self.text.get(self.pos + 3..self.pos + 7)?,
+                                    )
+                                    .ok()?;
+                                    let low = u32::from_str_radix(low_hex, 16).ok()?;
+                                    if !(0xDC00..0xE000).contains(&low) {
+                                        return None;
+                                    }
+                                    self.pos += 6;
+                                    char::from_u32(
+                                        0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00),
+                                    )?
+                                } else {
+                                    return None;
+                                }
+                            } else {
+                                char::from_u32(unit)?
+                            };
+                            out.push(ch);
+                        }
+                        _ => return None,
+                    }
+                    self.pos += 1;
+                }
+                0x00..=0x1F => return None,
+                _ => {
+                    let rest = std::str::from_utf8(&self.text[self.pos..]).ok()?;
+                    let ch = rest.chars().next()?;
+                    out.push(ch);
+                    self.pos += ch.len_utf8();
+                }
+            }
+        }
+    }
+
+    fn number(&mut self) -> Option<f64> {
+        let start = self.pos;
+        if self.text.get(self.pos) == Some(&b'-') {
+            self.pos += 1;
+        }
+        match self.text.get(self.pos) {
+            Some(b'0') => self.pos += 1,
+            Some(b'1'..=b'9') => {
+                while matches!(self.text.get(self.pos), Some(b'0'..=b'9')) {
+                    self.pos += 1;
+                }
+            }
+            _ => return None,
+        }
+        if self.text.get(self.pos) == Some(&b'.') {
+            self.pos += 1;
+            if !matches!(self.text.get(self.pos), Some(b'0'..=b'9')) {
+                return None;
+            }
+            while matches!(self.text.get(self.pos), Some(b'0'..=b'9')) {
+                self.pos += 1;
+            }
+        }
+        if matches!(self.text.get(self.pos), Some(b'e' | b'E')) {
+            self.pos += 1;
+            if matches!(self.text.get(self.pos), Some(b'+' | b'-')) {
+                self.pos += 1;
+            }
+            if !matches!(self.text.get(self.pos), Some(b'0'..=b'9')) {
+                return None;
+            }
+            while matches!(self.text.get(self.pos), Some(b'0'..=b'9')) {
+                self.pos += 1;
+            }
+        }
+        let text = std::str::from_utf8(self.text.get(start..self.pos)?).ok()?;
+        text.parse::<f64>().ok()
+    }
+
+    fn value(&mut self) -> Option<Flat> {
+        self.ws();
+        let flat = match self.text.get(self.pos)? {
+            b'"' => Flat::Str(self.string()?),
+            b'-' | b'0'..=b'9' => Flat::Num(self.number()?),
+            b't' => {
+                if !self.lit("true") {
+                    return None;
+                }
+                Flat::Other
+            }
+            b'f' => {
+                if !self.lit("false") {
+                    return None;
+                }
+                Flat::Other
+            }
+            b'n' => {
+                if !self.lit("null") {
+                    return None;
+                }
+                Flat::Other
+            }
+            b'{' | b'[' => Flat::Other,
+            _ => return None,
+        };
+        // Nested structures still have to scan cleanly, or trailing bytes
+        // would read as a second value.
+        self.ws();
+        Some(flat)
+    }
+
+    fn skip_nested(&mut self) -> bool {
+        let open = match self.text.get(self.pos) {
+            Some(b'{') => (b'{', b'}'),
+            Some(b'[') => (b'[', b']'),
+            _ => return false,
+        };
+        self.pos += 1;
+        let mut depth = 1;
+        let mut in_string = false;
+        while self.pos < self.text.len() {
+            let byte = self.text[self.pos];
+            if in_string {
+                if byte == b'\\' {
+                    self.pos += 1;
+                } else if byte == b'"' {
+                    in_string = false;
+                }
+            } else if byte == b'"' {
+                in_string = true;
+            } else if byte == open.0 {
+                depth += 1;
+            } else if byte == open.1 {
+                depth -= 1;
+                if depth == 0 {
+                    self.pos += 1;
+                    return true;
+                }
+            }
+            self.pos += 1;
+        }
+        false
+    }
+
+    fn flat_value(&mut self) -> Option<Flat> {
+        self.ws();
+        match self.text.get(self.pos) {
+            Some(b'{') | Some(b'[') => {
+                if self.skip_nested() {
+                    Some(Flat::Other)
+                } else {
+                    None
+                }
+            }
+            _ => self.value(),
+        }
+    }
+
+    fn end(&mut self) -> bool {
+        self.ws();
+        self.pos == self.text.len()
+    }
+}
+
+/// Parses a JSON object into dict entries, in document order. Only numbers
+/// and strings are valid values - anything else names its key, and anything
+/// that is not an object at all is refused whole.
+fn parse_json_object(text: &str) -> Result<Vec<(String, Val)>, String> {
+    let mut parser = Parser { text: text.as_bytes(), pos: 0 };
+    parser.ws();
+    if parser.text.get(parser.pos) != Some(&b'{') {
+        return Err("that text isn't a JSON object".to_string());
+    }
+    parser.pos += 1;
+    let mut entries = Vec::new();
+    parser.ws();
+    if parser.text.get(parser.pos) == Some(&b'}') {
+        parser.pos += 1;
+        return if parser.end() { Ok(entries) } else { Err("that text isn't a JSON object".to_string()) };
+    }
+    loop {
+        parser.ws();
+        let Some(key) = parser.string() else {
+            return Err("that text isn't a JSON object".to_string());
+        };
+        parser.ws();
+        if parser.text.get(parser.pos) != Some(&b':') {
+            return Err("that text isn't a JSON object".to_string());
+        }
+        parser.pos += 1;
+        let Some(flat) = parser.flat_value() else {
+            return Err("that text isn't a JSON object".to_string());
+        };
+        match flat {
+            Flat::Num(n) => entries.push((key, Val::Num(n))),
+            Flat::Str(s) => entries.push((key, Val::Text(s))),
+            Flat::Other => return Err(format!("{key:?} isn't a number or text")),
+        }
+        parser.ws();
+        match parser.text.get(parser.pos) {
+            Some(b',') => parser.pos += 1,
+            Some(b'}') => {
+                parser.pos += 1;
+                return if parser.end() { Ok(entries) } else { Err("that text isn't a JSON object".to_string()) };
+            }
+            _ => return Err("that text isn't a JSON object".to_string()),
+        }
+    }
+}
+
+/// Parses a JSON array into list items, in order. Only numbers and strings
+/// are valid elements - anything else names its 1-based position, and
+/// anything that is not an array at all is refused whole.
+fn parse_json_array(text: &str) -> Result<Vec<Val>, String> {
+    let mut parser = Parser { text: text.as_bytes(), pos: 0 };
+    parser.ws();
+    if parser.text.get(parser.pos) != Some(&b'[') {
+        return Err("that text isn't a JSON array".to_string());
+    }
+    parser.pos += 1;
+    let mut items = Vec::new();
+    parser.ws();
+    if parser.text.get(parser.pos) == Some(&b']') {
+        parser.pos += 1;
+        return if parser.end() { Ok(items) } else { Err("that text isn't a JSON array".to_string()) };
+    }
+    loop {
+        let Some(flat) = parser.flat_value() else {
+            return Err("that text isn't a JSON array".to_string());
+        };
+        match flat {
+            Flat::Num(n) => items.push(Val::Num(n)),
+            Flat::Str(s) => items.push(Val::Text(s)),
+            Flat::Other => {
+                return Err(format!("item {} isn't a number or text", items.len() + 1));
+            }
+        }
+        parser.ws();
+        match parser.text.get(parser.pos) {
+            Some(b',') => parser.pos += 1,
+            Some(b']') => {
+                parser.pos += 1;
+                return if parser.end() { Ok(items) } else { Err("that text isn't a JSON array".to_string()) };
+            }
+            _ => return Err("that text isn't a JSON array".to_string()),
+        }
     }
 }
 
@@ -368,6 +839,22 @@ fn line_of(act: &Act) -> String {
         Act::SetUiTheme { theme } => format!("SetUiTheme {theme}"),
         Act::SetPaused { paused } => format!("SetPaused {paused}"),
         Act::SaveVariable { name, clear } => format!("SaveVariable {name} {clear}"),
+        // Buses travel as text on the wire, so both halves spell them the
+        // same way: the enum's own name, which is what `SoundBus::name` is.
+        Act::PlaySound {
+            sound,
+            volume,
+            pitch,
+            loop_,
+            bus,
+            at,
+        } => format!("PlaySound {sound} {volume:?} {pitch:?} {loop_} {bus} {at:?}"),
+        Act::StopSound { sound } => format!("StopSound {sound}"),
+        Act::SetSoundVolume { sound, volume } => {
+            format!("SetSoundVolume {sound} {volume:?}")
+        }
+        Act::SetSoundPitch { sound, pitch } => format!("SetSoundPitch {sound} {pitch:?}"),
+        Act::SetBusVolume { bus, volume } => format!("SetBusVolume {bus} {volume:?}"),
         other => format!("{other:?}"),
     }
 }
@@ -384,12 +871,15 @@ fn shown(value: &Val) -> String {
 /// fixed tick, in the order they started, and the run ends when they are all
 /// done or one of them says `stop all`.
 fn main() {
-    let mut recorder = Recorder { vars: HashMap::new(), lists: HashMap::new(), tick: 0, out: Vec::new() };
+    let mut recorder = Recorder { vars: HashMap::new(), lists: HashMap::new(), dicts: HashMap::new(), tick: 0, out: Vec::new() };
     for (name, value) in seeded() {
         recorder.vars.insert(name.to_string(), value);
     }
     for (name, items) in seeded_lists() {
         recorder.lists.insert(name.to_string(), items);
+    }
+    for (name, entries) in seeded_dicts() {
+        recorder.dicts.insert(name.to_string(), entries);
     }
 
     // The program's own scheduler, which is what a built game runs on: one
@@ -511,6 +1001,34 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetFocus { id } => format!("|SetFocus {id}"),
         Effect::SetUiTheme { theme } => format!("|SetUiTheme {}", theme.index()),
         Effect::SetPaused { paused } => format!("|SetPaused {paused}"),
+        Effect::SetBusVolume { bus, volume } => {
+            format!("|SetBusVolume {} {volume:?}", bus.name())
+        }
+        Effect::PlaySound {
+            actor,
+            sound,
+            volume,
+            pitch,
+            loop_,
+            bus,
+            at,
+        } => format!(
+            "{actor}|PlaySound {sound} {volume:?} {pitch:?} {loop_} {} {at:?}",
+            bus.name()
+        ),
+        Effect::StopSound { actor, sound } => format!("{actor}|StopSound {sound}"),
+        Effect::SetSoundVolume {
+            actor,
+            sound,
+            volume,
+        } => format!("{actor}|SetSoundVolume {sound} {volume:?}"),
+        Effect::SetSoundPitch {
+            actor,
+            sound,
+            pitch,
+        } => {
+            format!("{actor}|SetSoundPitch {sound} {pitch:?}")
+        }
         Effect::SaveVariable { actor, name, clear } => {
             format!("{actor}|SaveVariable {name} {clear}")
         }
@@ -645,6 +1163,7 @@ fn project_with_headers(
             })
             .collect(),
         global_lists: Vec::new(),
+        global_dicts: Vec::new(),
     }
 }
 
@@ -712,14 +1231,38 @@ fn by_compiler(project: &Project, globals: &[(&str, Evaluated)], case: &str) -> 
             format!("({:?}, vec![{items}])", list.name)
         })
         .collect();
+    // The harness's dicts start where the document says too.
+    let dict_seed: Vec<String> = project
+        .actors
+        .iter()
+        .flat_map(|actor| actor.graph.dicts.iter())
+        .chain(project.global_dicts.iter())
+        .map(|dict| {
+            let entries = dict
+                .entries
+                .iter()
+                .map(|entry| {
+                    let value = match &entry.value {
+                        DictItem::Number(n) => format!("Val::Num({n:?}f64)"),
+                        DictItem::Text(s) => format!("Val::Text({s:?}.to_string())"),
+                    };
+                    format!("({:?}.to_string(), {value})", entry.key)
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("({:?}, vec![{entries}])", dict.name)
+        })
+        .collect();
     // The clock, and what the project's variables start at - which is what
     // the VM loads out of `globals`. The harness's `main` reads both.
     let source = format!(
         "{source}\n{HARNESS}\nfn seeded() -> Vec<(&'static str, Val)> {{ vec![{}] }}\n\
          fn seeded_lists() -> Vec<(&'static str, Vec<Val>)> {{ vec![{}] }}\n\
+         fn seeded_dicts() -> Vec<(&'static str, Vec<(String, Val)>)> {{ vec![{}] }}\n\
          const DT: f64 = {DT:?};\nconst TICKS: usize = {TICKS};\n",
         seed.join(", "),
-        list_seed.join(", ")
+        list_seed.join(", "),
+        dict_seed.join(", ")
     );
 
     let dir = std::env::temp_dir().join(format!("blockloom-codegen-{case}-{}", std::process::id()));
@@ -1071,6 +1614,48 @@ fn assert_lists(case: &str, bodies: Vec<Vec<K>>, lists: Vec<(String, Vec<ListIte
     assert_project(case, project, &[]);
 }
 
+/// A project with declared dicts seeded with entries: the VM loads them out
+/// of the document, and `by_compiler` seeds the harness's own copy from the
+/// same document, so the two halves start holding the same things.
+fn project_with_dicts(
+    bodies: Vec<Vec<K>>,
+    lists: Vec<(String, Vec<ListItem>)>,
+    dicts: Vec<(String, Vec<DictEntry>)>,
+) -> Project {
+    let mut project = project_with_lists(bodies, lists);
+    let actor = project.actors.first_mut().expect("one actor");
+    for (name, entries) in dicts {
+        actor.graph.dicts.push(DictDef {
+            name,
+            entries,
+            editor_visible: false,
+            editor_x: 0,
+            editor_y: 0,
+        });
+    }
+    project
+}
+
+fn assert_dicts(
+    case: &str,
+    bodies: Vec<Vec<K>>,
+    lists: Vec<(String, Vec<ListItem>)>,
+    dicts: Vec<(String, Vec<DictEntry>)>,
+) {
+    if !toolchain() {
+        return;
+    }
+    let project = project_with_dicts(bodies, lists, dicts);
+    assert_project(case, project, &[]);
+}
+
+fn dict_entry(key: &str, value: DictItem) -> DictEntry {
+    DictEntry {
+        key: key.to_string(),
+        value,
+    }
+}
+
 #[test]
 fn lists_hold_and_report_their_items_the_same_way() {
     assert_lists(
@@ -1193,6 +1778,147 @@ fn list_reporters_answer_the_same_including_the_edges() {
 }
 
 #[test]
+fn dicts_hold_and_report_their_values_the_same_way() {
+    assert_dicts(
+        "dict-values",
+        vec![vec![
+            K::SetDictValue {
+                key: Value::text("hp"),
+                name: "save".to_string(),
+                value: number(3.0),
+            },
+            K::SetDictValue {
+                key: Value::text("name"),
+                name: "save".to_string(),
+                value: Value::text("fox"),
+            },
+            K::Say {
+                text: op("DictValue", vec![Value::text("hp"), Value::text("save")]),
+            },
+            K::Say {
+                text: op("DictSize", vec![Value::text("save")]),
+            },
+            K::SetDictValue {
+                key: Value::text("hp"),
+                name: "save".to_string(),
+                value: number(4.0),
+            },
+            K::Say {
+                text: op("DictValue", vec![Value::text("hp"), Value::text("save")]),
+            },
+            K::Say {
+                text: op("DictKeys", vec![Value::text("save")]),
+            },
+            K::DeleteDictKey {
+                key: Value::text("name"),
+                name: "save".to_string(),
+            },
+            K::Say {
+                text: op("DictHasKey", vec![Value::text("save"), Value::text("name")]),
+            },
+            K::Say {
+                text: op("DictIsEmpty", vec![Value::text("save")]),
+            },
+            // A dict nothing declared reads empty, and so does a missing
+            // key. A boolean is not a value: reported, and dropped.
+            K::Say {
+                text: op("DictValue", vec![Value::text("mp"), Value::text("nobody")]),
+            },
+            K::Say {
+                text: op("DictSize", vec![Value::text("nobody")]),
+            },
+            K::SetDictValue {
+                key: Value::text("ok"),
+                name: "save".to_string(),
+                value: Value::Bool,
+            },
+            K::DeleteAllOfDict {
+                name: "save".to_string(),
+            },
+            K::Say {
+                text: op("DictSize", vec![Value::text("save")]),
+            },
+        ]],
+        Vec::new(),
+        // A seeded entry is replaced by the first write, so both halves
+        // still report exactly what the blocks wrote.
+        vec![(
+            "save".to_string(),
+            vec![dict_entry("hp", DictItem::Number(1.0))],
+        )],
+    );
+}
+
+#[test]
+fn dicts_and_lists_bridge_to_json_the_same_way() {
+    assert_dicts(
+        "json-bridge",
+        vec![vec![
+            K::SetDictValue {
+                key: Value::text("hp"),
+                name: "save".to_string(),
+                value: number(3.0),
+            },
+            K::SetDictValue {
+                key: Value::text("name"),
+                name: "save".to_string(),
+                value: Value::text("fox"),
+            },
+            K::Say {
+                text: op("DictAsJson", vec![Value::text("save")]),
+            },
+            K::AddToList {
+                value: number(7.0),
+                name: "items".to_string(),
+            },
+            K::Say {
+                text: op("ListAsJson", vec![Value::text("items")]),
+            },
+            K::LoadJsonIntoDict {
+                json: Value::text(r#"{"hp": 9, "title": "mage"}"#),
+                name: "save".to_string(),
+            },
+            K::Say {
+                text: op("DictValue", vec![Value::text("title"), Value::text("save")]),
+            },
+            K::Say {
+                text: op("DictAsJson", vec![Value::text("save")]),
+            },
+            K::LoadJsonIntoList {
+                json: Value::text(r#"[1, "two"]"#),
+                name: "items".to_string(),
+            },
+            K::Say {
+                text: op("ListAsJson", vec![Value::text("items")]),
+            },
+            // What isn't JSON reports and leaves the collection: an array
+            // for a dict, a non-array for a list, and a boolean hiding in
+            // an object for a dict.
+            K::LoadJsonIntoDict {
+                json: Value::text("[1, 2]"),
+                name: "save".to_string(),
+            },
+            K::LoadJsonIntoList {
+                json: Value::text("nope"),
+                name: "items".to_string(),
+            },
+            K::LoadJsonIntoDict {
+                json: Value::text(r#"{"ok": true}"#),
+                name: "save".to_string(),
+            },
+            K::Say {
+                text: op("DictAsJson", vec![Value::text("save")]),
+            },
+            K::Say {
+                text: op("ListAsJson", vec![Value::text("items")]),
+            },
+        ]],
+        vec![("items".to_string(), Vec::new())],
+        vec![("save".to_string(), Vec::new())],
+    );
+}
+
+#[test]
 fn the_rest_of_the_leaf_blocks_land_the_same() {
     assert_same(
         "leaves",
@@ -1229,6 +1955,56 @@ fn the_rest_of_the_leaf_blocks_land_the_same() {
             // so the compiled half has to ask the host the same thing.
             K::SetParent {
                 parent: Value::text("Friend"),
+            },
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn sounds_ask_for_the_same_things() {
+    assert_same(
+        "sounds",
+        vec![
+            K::PlaySound {
+                sound: Value::text("assets/sounds/jump.wav"),
+                volume: number(50.0),
+                pitch: number(2.0),
+                loop_: false,
+                bus: SoundBus::Sfx,
+            },
+            // An expression in a slot, a bus that isn't the default, and a
+            // target the VM resolves to an id before the effect leaves it.
+            K::PlaySoundAt {
+                sound: Value::text("assets/sounds/hum.wav"),
+                volume: op("Add", vec![number(40.0), number(60.0)]),
+                pitch: number(1.0),
+                loop_: true,
+                bus: SoundBus::Music,
+                target: Value::text("Player"),
+            },
+            // An empty sound reports on both sides rather than playing.
+            K::PlaySound {
+                sound: Value::text(""),
+                volume: number(100.0),
+                pitch: number(1.0),
+                loop_: false,
+                bus: SoundBus::Master,
+            },
+            K::SetSoundVolume {
+                sound: Value::text("assets/sounds/hum.wav"),
+                volume: number(25.0),
+            },
+            K::SetSoundPitch {
+                sound: Value::text("assets/sounds/hum.wav"),
+                pitch: op("Add", vec![number(1.0), number(0.5)]),
+            },
+            K::SetBusVolume {
+                bus: SoundBus::Music,
+                volume: number(80.0),
+            },
+            K::StopSound {
+                sound: Value::text(""),
             },
         ],
         &[],

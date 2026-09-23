@@ -464,6 +464,9 @@ pub fn spawn_scenery(
             Vec3::Y,
         ),
         crate::world::WorldCamera,
+        // The one listener positional voices pan against. It rides the
+        // camera, so what the player sees is what they hear.
+        bevy::audio::SpatialListener::default(),
     ));
     if lighting.ao_enabled {
         // SSAO needs multisampling off on the same camera, or `bevy_pbr`

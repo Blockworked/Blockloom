@@ -1,13 +1,19 @@
 // The frontend's one copy of backend state, replaced wholesale after commands
 // and on runtime state events. Nothing here is edited locally.
 import { computed, reactive, ref } from 'vue';
-import { configureListEditorPersistence } from 'blockstitch';
+import { configureDictEditorPersistence, configureListEditorPersistence } from 'blockstitch';
 import { emptyState, findActor, type StateDto } from './types';
-import { getAppVersion, getState, onStateUpdated, setListEditorState } from './tauri';
+import { getAppVersion, getState, onStateUpdated, setDictEditorState, setListEditorState } from './tauri';
 
 configureListEditorPersistence((name, visible, x, y) => {
   void setListEditorState(name, visible, x, y).catch(error => {
     console.error('Failed to save list editor state:', error);
+  });
+});
+
+configureDictEditorPersistence((name, visible, x, y) => {
+  void setDictEditorState(name, visible, x, y).catch(error => {
+    console.error('Failed to save dict editor state:', error);
   });
 });
 

@@ -59,6 +59,31 @@ function defaults(type: InstructionType): Record<string, unknown> {
       return { visible: true };
     case 'SetColor':
       return { color: textValue('#FFAB19') };
+    case 'PlaySound':
+      return {
+        sound: textValue('assets/sounds/sound.wav'),
+        volume: numberValue(100),
+        pitch: numberValue(1),
+        loop: false,
+        bus: 'Sfx',
+      };
+    case 'PlaySoundAt':
+      return {
+        sound: textValue('assets/sounds/sound.wav'),
+        volume: numberValue(100),
+        pitch: numberValue(1),
+        loop: false,
+        bus: 'Sfx',
+        target: textValue(''),
+      };
+    case 'StopSound':
+      return { sound: textValue('') };
+    case 'SetSoundVolume':
+      return { sound: textValue(''), volume: numberValue(100) };
+    case 'SetSoundPitch':
+      return { sound: textValue(''), pitch: numberValue(1) };
+    case 'SetBusVolume':
+      return { bus: 'Sfx', volume: numberValue(100) };
     case 'SetComponentField':
       return { component: '', field: '', value: numberValue(0) };
     case 'SetCameraView':
@@ -150,6 +175,16 @@ function defaults(type: InstructionType): Record<string, unknown> {
       return { name: '', index: numberValue(1), value: numberValue(0) };
     case 'ReverseList':
       return { name: '' };
+    case 'LoadJsonIntoList':
+      return { name: '', json: textValue('') };
+    case 'SetDictValue':
+      return { name: '', key: textValue(''), value: numberValue(0) };
+    case 'DeleteDictKey':
+      return { name: '', key: textValue('') };
+    case 'DeleteAllOfDict':
+      return { name: '' };
+    case 'LoadJsonIntoDict':
+      return { name: '', json: textValue('') };
     case 'HideElement':
     case 'DeleteElement':
       return { element: textValue('menu') };
@@ -187,6 +222,14 @@ const LIST_COMMAND_TYPES: InstructionType[] = [
   'InsertIntoList',
   'ReplaceItemOfList',
   'ReverseList',
+  'LoadJsonIntoList',
+];
+
+const DICT_COMMAND_TYPES: InstructionType[] = [
+  'SetDictValue',
+  'DeleteDictKey',
+  'DeleteAllOfDict',
+  'LoadJsonIntoDict',
 ];
 
 const LIST_OPERATOR_KINDS = [
@@ -197,21 +240,44 @@ const LIST_OPERATOR_KINDS = [
   'ListContains',
   'ListItemExists',
   'ListIsEmpty',
+  'ListAsJson',
+];
+
+const DICT_OPERATOR_KINDS = [
+  'DictValue',
+  'DictHasKey',
+  'DictSize',
+  'DictKeys',
+  'DictAsJson',
+  'DictIsEmpty',
 ];
 
 /** Keeps sidebar prefabs useful as soon as names arrive from the backend.
 // Only unselected or no-longer-valid palette targets are changed; blocks
 // already dropped onto the canvas are persisted separately and untouched. */
 export function syncPaletteListDefaults(names: string[]): void {
+  syncPaletteNameDefaults(names, LIST_COMMAND_TYPES, LIST_OPERATOR_KINDS);
+}
+
+/** Dict-name counterpart to [`syncPaletteListDefaults`]. */
+export function syncPaletteDictDefaults(names: string[]): void {
+  syncPaletteNameDefaults(names, DICT_COMMAND_TYPES, DICT_OPERATOR_KINDS);
+}
+
+function syncPaletteNameDefaults(
+  names: string[],
+  commandTypes: InstructionType[],
+  operatorKinds: string[],
+): void {
   const first = names[0];
   if (!first) return;
-  for (const type of LIST_COMMAND_TYPES) {
+  for (const type of commandTypes) {
     const instruction = paletteInstructions[type];
     if (typeof instruction.name !== 'string' || !names.includes(instruction.name)) {
       instruction.name = first;
     }
   }
-  for (const kind of LIST_OPERATOR_KINDS) {
+  for (const kind of operatorKinds) {
     const spec = specForKind(kind);
     const index = spec?.enumArg?.index;
     if (index === undefined) continue;

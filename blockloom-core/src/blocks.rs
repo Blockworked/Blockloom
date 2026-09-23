@@ -8,15 +8,18 @@
 
 use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
+use crate::sound::SoundBus;
 use crate::ui::{UiAnchor, UiProp, UiTheme};
 use crate::value::Value;
 use serde::{Deserialize, Serialize};
 
 pub use blockstitch_core::graph::{
-    BlockDef, BlockGraph, BlockKind, BlockPiece, BlockShape, Comment, FloatingValue,
-    InputValueType, ListDef, ListItem, VariableDef, default_block_color, is_list_reporter,
-    list_index, normalize_block_color, rename_list_in_value, resolve_list_reporter,
-    resolve_list_reporters,
+    BlockDef, BlockGraph, BlockKind, BlockPiece, BlockShape, Comment, DictDef, DictEntry, DictItem,
+    FloatingValue, InputValueType, ListDef, ListItem, VariableDef, default_block_color,
+    dict_lookup, dict_remove, dict_set, dict_to_json, is_dict_reporter, is_list_reporter,
+    list_index, list_to_json, normalize_block_color, parse_json_array, parse_json_object,
+    rename_dict_in_value, rename_list_in_value, resolve_dict_reporter, resolve_dict_reporters,
+    resolve_list_reporter, resolve_list_reporters,
 };
 
 /// One instruction on a canvas: a [`InstructionKind`] plus the stable id
@@ -162,6 +165,57 @@ pub enum InstructionKind {
     /// A `#RRGGBB` string. No-op on an image actor.
     SetColor {
         color: Value,
+    },
+
+    // ─── Sound ──────────────────────────────────────────────────────────────
+    /// Plays a sound file from the project's assets (`assets/sounds/jump.wav`)
+    /// as a global voice - no position, no panning. `volume` is 0-100,
+    /// `pitch` is 1 for as recorded, and `bus` is which mixing bus it routes
+    /// through. Every play is a new voice, so rapid replays overlap rather
+    /// than cut each other off.
+    PlaySound {
+        sound: Value,
+        volume: Value,
+        pitch: Value,
+        #[serde(rename = "loop")]
+        loop_: bool,
+        bus: SoundBus,
+    },
+    /// Plays a sound at an actor's place in the world and follows it around,
+    /// panned by where it stands relative to the camera and quieter with
+    /// distance. `target` names an actor by id or name; empty means here, at
+    /// whoever ran the block.
+    PlaySoundAt {
+        sound: Value,
+        volume: Value,
+        pitch: Value,
+        #[serde(rename = "loop")]
+        loop_: bool,
+        bus: SoundBus,
+        target: Value,
+    },
+    /// Stops the voices playing a sound file. An empty slot stops every sound
+    /// at once - the block equivalent of `stop all` for audio.
+    StopSound {
+        sound: Value,
+    },
+    /// Retunes the voices already playing a sound file - an engine hum that
+    /// follows the speed, a loop that ducks under dialogue. Future plays
+    /// still start at the volume their own block names.
+    SetSoundVolume {
+        sound: Value,
+        volume: Value,
+    },
+    /// Rebends the voices already playing a sound file. `1` is as recorded.
+    SetSoundPitch {
+        sound: Value,
+        pitch: Value,
+    },
+    /// Moves a whole mixing bus: every present and future voice routed through
+    /// it. `volume` is 0-100, like a play block's.
+    SetBusVolume {
+        bus: SoundBus,
+        volume: Value,
     },
 
     // ─── Components ─────────────────────────────────────────────────────────
@@ -463,6 +517,38 @@ pub enum InstructionKind {
         name: String,
     },
 
+    // ─── Dicts ──────────────────────────────────────────────────────────────
+    /// Sets `key` in a named dict to a number/text value. Replaces the entry
+    /// when the key exists, appends one when it does not. Bools are ignored.
+    SetDictValue {
+        key: Value,
+        name: String,
+        value: Value,
+    },
+    /// Removes `key` from a named dict. Missing keys are a no-op.
+    DeleteDictKey {
+        key: Value,
+        name: String,
+    },
+    /// Removes every entry from a named dict.
+    DeleteAllOfDict {
+        name: String,
+    },
+
+    // ─── JSON ───────────────────────────────────────────────────────────────
+    /// Parses `json` as a JSON object and loads it into a named dict,
+    /// replacing its entries. A parse error is reported and leaves the dict.
+    LoadJsonIntoDict {
+        json: Value,
+        name: String,
+    },
+    /// Parses `json` as a JSON array and loads it into a named list,
+    /// replacing its items. A parse error is reported and leaves the list.
+    LoadJsonIntoList {
+        json: Value,
+        name: String,
+    },
+
     // ─── Custom blocks ──────────────────────────────────────────────────────
     /// Runs a custom block's body inline, with `args` bound to its inputs.
     CallBlock {
@@ -503,6 +589,8 @@ impl BlockKind for InstructionKind {
             | K::SetComponentField { value: v, .. }
             | K::SetParent { parent: v }
             | K::DeleteActor { target: v }
+            | K::StopSound { sound: v }
+            | K::SetBusVolume { volume: v, .. }
             | K::Repeat { count: v, .. } => f(v, InputValueType::Any),
             K::GoTo { x, y, z }
             | K::ApplyImpulse { x, y, z }
@@ -529,6 +617,36 @@ impl BlockKind for InstructionKind {
                 f(x, InputValueType::Any);
                 f(y, InputValueType::Any);
                 f(z, InputValueType::Any);
+            }
+            K::PlaySound {
+                sound,
+                volume,
+                pitch,
+                ..
+            } => {
+                f(sound, InputValueType::Any);
+                f(volume, InputValueType::Any);
+                f(pitch, InputValueType::Any);
+            }
+            K::PlaySoundAt {
+                sound,
+                volume,
+                pitch,
+                target,
+                ..
+            } => {
+                f(sound, InputValueType::Any);
+                f(volume, InputValueType::Any);
+                f(pitch, InputValueType::Any);
+                f(target, InputValueType::Any);
+            }
+            K::SetSoundVolume { sound, volume } => {
+                f(sound, InputValueType::Any);
+                f(volume, InputValueType::Any);
+            }
+            K::SetSoundPitch { sound, pitch } => {
+                f(sound, InputValueType::Any);
+                f(pitch, InputValueType::Any);
             }
             // Every `show` block reads the same five slots, plus whatever
             // its own kind adds. Order matters: it is the order the VM and
@@ -655,6 +773,14 @@ impl BlockKind for InstructionKind {
                 f(index, InputValueType::Any);
                 f(value, InputValueType::Any);
             }
+            K::DeleteDictKey { key, .. } => f(key, InputValueType::Any),
+            K::SetDictValue { key, value, .. } => {
+                f(key, InputValueType::Any);
+                f(value, InputValueType::Any);
+            }
+            K::LoadJsonIntoDict { json, .. } | K::LoadJsonIntoList { json, .. } => {
+                f(json, InputValueType::Any)
+            }
             K::HideElement { element }
             | K::DeleteElement { element }
             | K::FocusElement { element } => f(element, InputValueType::Any),
@@ -699,6 +825,7 @@ impl BlockKind for InstructionKind {
             | K::SaveVariable { .. }
             | K::ClearSavedVariable { .. }
             | K::DeleteAllOfList { .. }
+            | K::DeleteAllOfDict { .. }
             | K::ReverseList { .. } => {}
         }
     }
@@ -760,7 +887,18 @@ impl BlockKind for InstructionKind {
             | InstructionKind::ShiftList { name, .. }
             | InstructionKind::InsertIntoList { name, .. }
             | InstructionKind::ReplaceItemOfList { name, .. }
-            | InstructionKind::ReverseList { name } => Some(name),
+            | InstructionKind::ReverseList { name }
+            | InstructionKind::LoadJsonIntoList { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
+    fn dict_target_mut(&mut self) -> Option<&mut String> {
+        match self {
+            InstructionKind::SetDictValue { name, .. }
+            | InstructionKind::DeleteDictKey { name, .. }
+            | InstructionKind::DeleteAllOfDict { name }
+            | InstructionKind::LoadJsonIntoDict { name, .. } => Some(name),
             _ => None,
         }
     }

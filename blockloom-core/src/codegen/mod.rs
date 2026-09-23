@@ -60,17 +60,19 @@ mod runtime;
 pub use runtime::{
     ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH, ACT_BROADCAST,
     ACT_CHANGE_POSITION, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR, ACT_DELETE_ELEMENT,
-    ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_LIST_ADD, ACT_LIST_CLEAR,
+    ACT_DETACH, ACT_DICT_CLEAR, ACT_DICT_DELETE_KEY, ACT_DICT_SET, ACT_ERROR, ACT_GLIDE, ACT_GO_TO,
+    ACT_HIDE_ELEMENT, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD, ACT_LIST_CLEAR,
     ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE, ACT_LIST_SHIFT, ACT_MOVE,
-    ACT_NAVIGATE_TO, ACT_POINT_TOWARDS, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY,
-    ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY,
-    ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED,
-    ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_UI_PROP,
-    ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_TURN, AbiStr,
-    AbiValue, Act, Actors, Entry, Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE,
-    READ_VARIABLE, Runner, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW,
-    SYM_LOGIC_PAUSE, SYM_LOGIC_RESET, SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL,
-    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
+    ACT_NAVIGATE_TO, ACT_PLAY_SOUND, ACT_POINT_TOWARDS, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY,
+    ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW,
+    ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_GRAVITY, ACT_SET_MASS,
+    ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE,
+    ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY,
+    ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_STOP_SOUND, ACT_TURN, AbiStr, AbiValue, Act, Actors,
+    Entry, Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner,
+    SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
+    SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
+    Val,
 };
 
 use crate::project::Project;
@@ -864,6 +866,78 @@ impl<'a> Pass<'a> {
             Action::Say(value) => reading(self.text(value)?, "Act::Say { text: slot }"),
             Action::SetVisible(visible) => act(format!("Act::SetVisible {{ visible: {visible} }}")),
             Action::SetColor(color) => reading(self.text(color)?, "Act::SetColor { color: slot }"),
+            // Sound slots read in row order, like every other block: sound,
+            // volume, pitch, then the target. An empty sound reports itself
+            // instead of playing, exactly as the VM does.
+            Action::PlaySound {
+                sound,
+                volume,
+                pitch,
+                loop_,
+                bus,
+            } => format!(
+                "    let sound = {}.trim().to_string();\n    let volume = sound_gain({});\n    \
+                 let pitch = sound_pitch({});\n    \
+                 if sound.is_empty() {{\n        h.error(&me, \"which sound should I play?\");\n    \
+                 }} else {{\n        \
+                 h.act(&me, Act::PlaySound {{ sound, volume, pitch, loop_: {loop_}, bus: {}, at: None }});\n    \
+                 }}\n",
+                self.text(sound)?,
+                self.number_f64(volume)?,
+                self.number(pitch)?,
+                name_of(bus),
+            ),
+            Action::PlaySoundAt {
+                sound,
+                volume,
+                pitch,
+                loop_,
+                bus,
+                target,
+            } => format!(
+                "    let sound = {}.trim().to_string();\n    let volume = sound_gain({});\n    \
+                 let pitch = sound_pitch({});\n    let wanted = {};\n    \
+                 if sound.is_empty() {{\n        h.error(&me, \"which sound should I play?\");\n    \
+                 }} else {{\n        \
+                 match actors.find(&me, &wanted) {{\n            \
+                 Some(at) => h.act(&me, Act::PlaySound {{ sound, volume, pitch, loop_: {loop_}, \
+                 bus: {}, at: Some(at.to_string()) }}),\n            \
+                 None => h.error(&me, &format!(\"there's no actor named \\\"{{wanted}}\\\" \
+                 to play at\")),\n        \
+                 }}\n    }}\n",
+                self.text(sound)?,
+                self.number_f64(volume)?,
+                self.number(pitch)?,
+                self.text(target)?,
+                name_of(bus),
+            ),
+            Action::StopSound { sound } => format!(
+                "    let sound = {}.trim().to_string();\n    \
+                 h.act(&me, Act::StopSound {{ sound }});\n",
+                self.text(sound)?
+            ),
+            Action::SetSoundVolume { sound, volume } => format!(
+                "    let sound = {}.trim().to_string();\n    let volume = sound_gain({});\n    \
+                 if sound.is_empty() {{\n        \
+                 h.error(&me, \"which sound's volume should I set?\");\n    \
+                 }} else {{\n        h.act(&me, Act::SetSoundVolume {{ sound, volume }});\n    }}\n",
+                self.text(sound)?,
+                self.number_f64(volume)?,
+            ),
+            Action::SetSoundPitch { sound, pitch } => format!(
+                "    let sound = {}.trim().to_string();\n    let pitch = sound_pitch({});\n    \
+                 if sound.is_empty() {{\n        \
+                 h.error(&me, \"which sound's pitch should I set?\");\n    \
+                 }} else {{\n        h.act(&me, Act::SetSoundPitch {{ sound, pitch }});\n    }}\n",
+                self.text(sound)?,
+                self.number(pitch)?,
+            ),
+            Action::SetBusVolume { bus, volume } => format!(
+                "    let volume = sound_gain({});\n    \
+                 h.act(&me, Act::SetBusVolume {{ bus: {}, volume }});\n",
+                self.number_f64(volume)?,
+                name_of(bus),
+            ),
             Action::SetComponentField {
                 component,
                 field,
@@ -1078,6 +1152,35 @@ impl<'a> Pass<'a> {
                  h.act(&me, Act::ReplaceItemOfList {{ name: {}, index, value }});\n",
                 self.number_f64(index)?,
                 self.evaluated(value)?,
+                literal(name)
+            ),
+            Action::SetDictValue { key, name, value } => format!(
+                "    let key = {};\n    let value = {};\n    \
+                 h.act(&me, Act::SetDictValue {{ name: {}, key, value }});\n",
+                self.text(key)?,
+                self.evaluated(value)?,
+                literal(name)
+            ),
+            Action::DeleteDictKey { key, name } => format!(
+                "    let key = {};\n    \
+                 h.act(&me, Act::DeleteDictKey {{ name: {}, key }});\n",
+                self.text(key)?,
+                literal(name)
+            ),
+            Action::DeleteAllOfDict { name } => act(format!(
+                "Act::DeleteAllOfDict {{ name: {} }}",
+                literal(name)
+            )),
+            Action::LoadJsonIntoDict { json, name } => format!(
+                "    let json = {};\n    \
+                 h.act(&me, Act::LoadJsonIntoDict {{ name: {}, json }});\n",
+                self.evaluated(json)?,
+                literal(name)
+            ),
+            Action::LoadJsonIntoList { json, name } => format!(
+                "    let json = {};\n    \
+                 h.act(&me, Act::LoadJsonIntoList {{ name: {}, json }});\n",
+                self.evaluated(json)?,
                 literal(name)
             ),
             Action::ReverseList { name } => {

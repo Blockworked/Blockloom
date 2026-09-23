@@ -790,12 +790,35 @@ body.asset-resizing {
 }
 
 .asset-tile .asset-icon {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 44px;
   height: 40px;
   color: var(--blockstitch-text-dim);
+}
+
+/* A sound's in-place preview: appears over the icon on hover. */
+.asset-tile .asset-preview {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--blockstitch-border);
+  border-radius: 50%;
+  background: var(--blockstitch-bg);
+  color: var(--blockstitch-text);
+  cursor: pointer;
+}
+
+.asset-tile:hover .asset-preview {
+  display: flex;
 }
 
 .asset-tile.folder .asset-icon {
@@ -1302,6 +1325,18 @@ body.asset-resizing {
 .settings-row.triple input {
   flex: 1 1 0;
   width: 0;
+}
+
+.settings-row input[type='range'] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-value {
+  flex: 0 0 44px;
+  text-align: right;
+  color: var(--blockstitch-text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .settings-note {

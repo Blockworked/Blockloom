@@ -4,6 +4,7 @@
 
 use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
+use crate::sound::SoundBus;
 use crate::ui::{UiElement, UiProp, UiTheme};
 use crate::value::Evaluated;
 use serde::{Deserialize, Serialize};
@@ -95,6 +96,42 @@ pub enum Effect {
     SetColor {
         actor: String,
         color: String,
+    },
+    /// Starts a voice for `sound` (a project-relative asset path, already
+    /// evaluated). `volume` is a linear gain, `pitch` a speed factor, `loop_`
+    /// whether it repeats. `at` is `None` for a global voice or the actor id
+    /// a positional one follows - resolved by the VM, so the host never
+    /// evaluates a `Value` itself.
+    PlaySound {
+        actor: String,
+        sound: String,
+        volume: f32,
+        pitch: f32,
+        loop_: bool,
+        bus: SoundBus,
+        at: Option<String>,
+    },
+    /// Stops the voices playing `sound`. Empty stops every voice at once.
+    StopSound {
+        actor: String,
+        sound: String,
+    },
+    /// Retunes the live voices playing `sound`.
+    SetSoundVolume {
+        actor: String,
+        sound: String,
+        volume: f32,
+    },
+    /// Rebends the live voices playing `sound`.
+    SetSoundPitch {
+        actor: String,
+        sound: String,
+        pitch: f32,
+    },
+    /// Moves a whole mixing bus. Window-global, like gravity: no actor.
+    SetBusVolume {
+        bus: SoundBus,
+        volume: f32,
     },
     /// Writes one field of one of the actor's custom components.
     SetComponentField {

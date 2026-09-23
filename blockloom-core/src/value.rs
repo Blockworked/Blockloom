@@ -10,6 +10,7 @@ pub use blockstitch_core::value::*;
 
 use crate::scene::Axis;
 use crate::sense;
+use crate::sound::{SoundBus, normalize_sound};
 
 fn text(value: &str) -> Value {
     Value::text(value)
@@ -330,6 +331,37 @@ static OPERATORS: &[ExtOperator] = &[
                     .ok_or_else(|| format!("there's no actor named \"{name}\""))?;
                 Ok(Evaluated::Number(actor.position[axis.index()] as f64))
             })
+        },
+    },
+    ExtOperator {
+        kind: "SoundPlaying",
+        op: "SoundPlaying",
+        arity: 1,
+        default_args: || vec![text("")],
+        // Whether any voice is playing that file right now. An empty slot
+        // asks about nothing in particular, so it answers no.
+        eval: |args| {
+            let sound = normalize_sound(&args[0].as_text());
+            Ok(Evaluated::Bool(sense::read(|sensors| {
+                sensors.sounds.contains(&sound)
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "BusVolume",
+        op: "BusVolume",
+        arity: 1,
+        default_args: || vec![text("Sfx")],
+        // The live gain of a mixing bus in 0-100, as the play blocks speak
+        // it. An unknown bus is a mistake worth reporting, not a silent zero.
+        eval: |args| {
+            let bus = args[0].as_text();
+            match SoundBus::parse(&bus) {
+                Some(bus) => Ok(Evaluated::Number(sense::read(|sensors| {
+                    sensors.bus_volumes.get(&bus).copied().unwrap_or(100.0)
+                }) as f64)),
+                None => Err(format!("there's no \"{bus}\" mixing bus")),
+            }
         },
     },
 ];

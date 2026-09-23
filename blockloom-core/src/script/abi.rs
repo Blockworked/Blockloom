@@ -94,6 +94,10 @@ pub const READ_UI_SHOWN: u32 = 20;
 /// `a` = an interface element's id. Whether the blocks have made one by that
 /// name at all - a hidden one still counts.
 pub const READ_UI_EXISTS: u32 = 21;
+/// `a` = an asset path. Whether any voice is playing that file right now.
+pub const READ_SOUND_PLAYING: u32 = 22;
+/// `a` = a bus name. Its live gain in 0-100, as the play blocks speak it.
+pub const READ_BUS_VOLUME: u32 = 23;
 
 // ─── What a script can read as text ────────────────────────────────────────
 
@@ -196,6 +200,17 @@ pub const ACT_UI_THEME: u32 = 34;
 pub const ACT_SAVE_VARIABLE: u32 = 35;
 /// `n0`, `n1`, `n2` = target; `n3` = speed in units per second.
 pub const ACT_NAVIGATE_TO: u32 = 37;
+/// `a` = asset path, `b` = bus name, `c` = followed actor id or empty for a
+/// global voice; `n0` = linear gain, `n1` = pitch, `n2` != 0 loops.
+pub const ACT_PLAY_SOUND: u32 = 38;
+/// `a` = asset path; empty stops every voice at once.
+pub const ACT_STOP_SOUND: u32 = 39;
+/// `a` = asset path; `n0` = linear gain.
+pub const ACT_SET_SOUND_VOLUME: u32 = 40;
+/// `a` = asset path; `n0` = pitch.
+pub const ACT_SET_SOUND_PITCH: u32 = 41;
+/// `a` = bus name; `n0` = linear gain.
+pub const ACT_SET_BUS_VOLUME: u32 = 42;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

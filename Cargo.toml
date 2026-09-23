@@ -19,7 +19,11 @@ version = "0.0.1"
 edition = "2024"
 
 [workspace.dependencies]
-blockstitch-core = { git = "https://github.com/Blockworked/blockstitch", rev = "5698449f" }
+blockstitch-core = {
+    #git = "https://github.com/Blockworked/blockstitch",
+    #rev = "eb9fa2cb"
+    path = "../blockstitch/crates/blockstitch-core"
+}
 tauri = { git = "https://github.com/Blockworked/tauri", rev = "769171ab" }
 tauri-build = { git = "https://github.com/Blockworked/tauri", rev = "769171ab", features = [] }
 tauri-runtime-cef = { git = "https://github.com/Blockworked/tauri", rev = "769171ab", default-features = false }

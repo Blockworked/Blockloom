@@ -3,9 +3,9 @@
 // into - a top bar, the actor list, the block palette and canvas, the
 // inspector, the asset tray and the run log.
 import { computed, onMounted, onUnmounted, watch } from 'vue';
-import { Canvas, ListEditorOverlay, activateListEditors, isListEditorOpen, setListEditorOpen } from 'blockstitch';
+import { Canvas, DictEditorOverlay, ListEditorOverlay, activateDictEditors, activateListEditors, isDictEditorOpen, isListEditorOpen, setDictEditorOpen, setListEditorOpen } from 'blockstitch';
 import { initState, openActor, state } from './store';
-import { redo, renameList, resetZoom, setListItems, undo } from './tauri';
+import { redo, renameDict, renameList, resetZoom, setDictEntries, setListItems, undo } from './tauri';
 import Dashboard from './components/Dashboard.vue';
 import TopBar from './components/TopBar.vue';
 import ActorList from './components/ActorList.vue';
@@ -26,13 +26,28 @@ const overlayLists = computed(() => {
   return [...own, ...shared].filter(list => isListEditorOpen(list.name));
 });
 
+// A dict's canvas monitor, for the open actor's own dicts and the project's
+// shared ones, with the same shadowing rule.
+const overlayDicts = computed(() => {
+  const own = openActor.value?.dicts ?? [];
+  const shared = (state.project?.global_dicts ?? []).filter(
+    dict => !own.some(candidate => candidate.name === dict.name),
+  );
+  return [...own, ...shared].filter(dict => isDictEditorOpen(dict.name));
+});
+
 watch(
   () => openActor.value?.id ?? null,
-  id =>
+  id => {
     activateListEditors(id, [
       ...(openActor.value?.lists ?? []),
       ...(state.project?.global_lists ?? []),
-    ]),
+    ]);
+    activateDictEditors(id, [
+      ...(openActor.value?.dicts ?? []),
+      ...(state.project?.global_dicts ?? []),
+    ]);
+  },
   { immediate: true },
 );
 
@@ -86,6 +101,14 @@ async function onKeydown(e: KeyboardEvent) {
                 :on-save-items="(name, items) => setListItems(name, items)"
                 :on-rename="(oldName, newName) => renameList(oldName, newName)"
                 :on-hide="name => setListEditorOpen(name, false)"
+              />
+              <DictEditorOverlay
+                v-for="dict in overlayDicts"
+                :key="dict.name"
+                :dict="dict"
+                :on-save-entries="(name, entries) => setDictEntries(name, entries)"
+                :on-rename="(oldName, newName) => renameDict(oldName, newName)"
+                :on-hide="name => setDictEditorOpen(name, false)"
               />
             </template>
             <template #context-menu>

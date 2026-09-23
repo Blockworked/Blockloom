@@ -10,16 +10,17 @@ import {
   sidebarWidth,
   type ValueNode,
 } from 'blockstitch';
-import { ListPanel, MakeListDialog } from 'blockstitch';
+import { DictPanel, ListPanel, MakeDictDialog, MakeListDialog } from 'blockstitch';
 import { COLLAPSED_PANEL_WIDTH, panels, setBlocksOpen } from '../panels';
 import { mode, openActor, state } from '../store';
-import { paletteInstructions, paletteValueFor, applyPaletteValueEdit, syncPaletteListDefaults } from '../paletteState';
-import { OPERATOR_GROUPS, setListNameOptions, specForKind } from '../valueOps';
-import { blockShapeReturnsValue, listNames, variableNames, type InstructionType } from '../types';
+import { paletteInstructions, paletteValueFor, applyPaletteValueEdit, syncPaletteDictDefaults, syncPaletteListDefaults } from '../paletteState';
+import { OPERATOR_GROUPS, setDictNameOptions, setListNameOptions, specForKind } from '../valueOps';
+import { blockShapeReturnsValue, dictNames, listNames, variableNames, type InstructionType } from '../types';
 import { openCreateVariableDialog, closeVariableDialog, variableDialog } from '../variableDialogs';
 import { closeListDialog, listDialog, openCreateListDialog } from '../listDialogs';
-import { openListMenu } from '../contextMenu';
-import { createList, renameList } from '../tauri';
+import { closeDictDialog, dictDialog, openCreateDictDialog } from '../dictDialogs';
+import { openDictMenu, openListMenu } from '../contextMenu';
+import { createDict, createList, renameDict, renameList } from '../tauri';
 import { blockDialog, closeBlockDialog, openCreateBlockDialog } from '../blockDialogs';
 import MakeVariableDialog from './MakeVariableDialog.vue';
 import MakeBlockDialog from './MakeBlockDialog.vue';
@@ -49,6 +50,10 @@ const BLOCK_GROUPS: { label: string; types: InstructionType[] }[] = [
   },
   { label: 'Physics', types: ['SetBody', 'ApplyImpulse', 'SetVelocity', 'SetGravity', 'SetDensity', 'SetMass'] },
   { label: 'Looks', types: ['Say', 'SetVisible', 'SetColor'] },
+  {
+    label: 'Sound',
+    types: ['PlaySound', 'PlaySoundAt', 'StopSound', 'SetSoundVolume', 'SetSoundPitch', 'SetBusVolume'],
+  },
   {
     label: 'Components',
     types: ['SetComponentField', 'SetCameraView', 'SetCameraPitch', 'SetCameraFov', 'AttachComponent', 'DetachComponent', 'SetParent'],
@@ -117,6 +122,27 @@ watchEffect(() => {
 async function submitListDialog(name: string, renameTarget: string | null | undefined): Promise<void> {
   if (renameTarget) await renameList(renameTarget, name);
   else await createList(name, listDialog.scope);
+}
+
+const actorDicts = computed(() => [...(openActor.value?.dicts ?? [])].sort((a, b) => a.name.localeCompare(b.name)));
+const sharedDicts = computed(() =>
+  [...(state.project?.global_dicts ?? [])]
+    .filter(dict => !actorDicts.value.some(own => own.name === dict.name))
+    .sort((a, b) => a.name.localeCompare(b.name)),
+);
+const hasDicts = computed(() => dictNames(state.project, openActor.value).length > 0);
+
+// The dict reporters' name dropdowns read live choices, so keep them pointed
+// at this actor's dicts as they are created, renamed, or deleted.
+watchEffect(() => {
+  const names = dictNames(state.project, openActor.value);
+  setDictNameOptions(names);
+  syncPaletteDictDefaults(names);
+});
+
+async function submitDictDialog(name: string, renameTarget: string | null | undefined): Promise<void> {
+  if (renameTarget) await renameDict(renameTarget, name);
+  else await createDict(name, dictDialog.scope);
 }
 
 // The palette derives a value block's hexagon-or-capsule shape from Blockloom's
@@ -240,6 +266,25 @@ function onContextMenu(event: MouseEvent) {
         <p v-else class="panel-note">A list holds numbers or text in order - a queue, a hand of cards, a high-score table.</p>
 
         <div class="panel-heading">
+          <span>This actor's dicts</span>
+          <button type="button" class="btn-small" @click="openCreateDictDialog('actor')">New</button>
+        </div>
+        <DictPanel :dicts="actorDicts" @menu="(name, event) => openDictMenu(event, name)" />
+        <div class="panel-heading">
+          <span>Shared dicts</span>
+          <button type="button" class="btn-small" @click="openCreateDictDialog('global')">New</button>
+        </div>
+        <DictPanel :dicts="sharedDicts" @menu="(name, event) => openDictMenu(event, name)" />
+        <div class="sidebar-palette" v-if="hasDicts">
+          <PaletteInstructionBlock type="SetDictValue" :instruction="paletteInstructions.SetDictValue" />
+          <PaletteInstructionBlock type="DeleteDictKey" :instruction="paletteInstructions.DeleteDictKey" />
+          <PaletteInstructionBlock type="DeleteAllOfDict" :instruction="paletteInstructions.DeleteAllOfDict" />
+          <PaletteInstructionBlock type="LoadJsonIntoDict" :instruction="paletteInstructions.LoadJsonIntoDict" />
+          <PaletteInstructionBlock type="LoadJsonIntoList" :instruction="paletteInstructions.LoadJsonIntoList" />
+        </div>
+        <p v-else class="panel-note">A dict holds numbers or text by key - a save slot, an inventory, a settings table.</p>
+
+        <div class="panel-heading">
           <span>My Blocks</span>
           <button type="button" class="btn-small" @click="openCreateBlockDialog()">Make a Block</button>
         </div>
@@ -272,6 +317,12 @@ function onContextMenu(event: MouseEvent) {
     :rename-target="listDialog.mode === 'rename' ? listDialog.renameTarget : null"
     :on-submit="submitListDialog"
     @close="closeListDialog"
+  />
+  <MakeDictDialog
+    v-if="dictDialog.mode"
+    :rename-target="dictDialog.mode === 'rename' ? dictDialog.renameTarget : null"
+    :on-submit="submitDictDialog"
+    @close="closeDictDialog"
   />
   <MakeBlockDialog
     v-if="blockDialog.mode"

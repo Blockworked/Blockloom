@@ -6,6 +6,7 @@
 //! half: which actor's script is being evaluated right now, so "x position"
 //! means the running actor's own.
 
+use crate::sound::SoundBus;
 use crate::value::Evaluated;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -77,6 +78,12 @@ pub struct Sensors {
     pub ui: HashMap<String, UiSense>,
     /// The text input holding the keyboard, by id, or empty for none.
     pub ui_focus: String,
+    /// Asset paths with at least one live voice, so `is sound playing?`
+    /// answers. Spelled the way the play blocks spell them.
+    pub sounds: HashSet<String>,
+    /// The live gain of each mixing bus, in 0-100 block scale. Seeded from
+    /// the saved mix and moved by `set bus volume` mid-run.
+    pub bus_volumes: HashMap<SoundBus, f32>,
 }
 
 impl Default for UiSense {

@@ -11,8 +11,8 @@ use crate::state::{
 use crate::{AppHandle, Backend};
 use blockloom_core::assets;
 use blockloom_core::blocks::{
-    ActorGraph, BlockPiece, BlockShape, Instruction, InstructionKind, ListItem,
-    normalize_block_color, resolve_list_reporters,
+    ActorGraph, BlockPiece, BlockShape, DictEntry, Instruction, InstructionKind, ListItem,
+    normalize_block_color, resolve_dict_reporters, resolve_list_reporters,
 };
 use blockloom_core::build;
 use blockloom_core::codegen;
@@ -21,6 +21,7 @@ use blockloom_core::library;
 use blockloom_core::project::{self, Actor, Project};
 use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, Visual};
 use blockloom_core::script;
+use blockloom_core::sound::SoundMixer;
 use blockloom_core::value::{Evaluated, Value};
 use blockstitch_core::editor::{ValueEdit, prune_value_buffers};
 use blockstitch_core::value::operator_kind;
@@ -95,6 +96,28 @@ fn lists_env(s: &AppState) -> HashMap<String, Vec<ListItem>> {
                 project
                     .actor(&actor)
                     .map(|actor| actor.graph.list_values())
+                    .unwrap_or_default(),
+            );
+            merged
+        }
+        _ => HashMap::new(),
+    }
+}
+
+/// The dict contents a reporter preview reads: the open actor's own, over
+/// the project's shared ones - the same shadowing rule a run uses.
+fn dicts_env(s: &AppState) -> HashMap<String, Vec<DictEntry>> {
+    match (s.project(), s.actor_id()) {
+        (Some(project), Some(actor)) => {
+            let mut merged: HashMap<String, Vec<DictEntry>> = project
+                .global_dicts
+                .iter()
+                .map(|dict| (dict.name.clone(), dict.entries.clone()))
+                .collect();
+            merged.extend(
+                project
+                    .actor(&actor)
+                    .map(|actor| actor.graph.dict_values())
                     .unwrap_or_default(),
             );
             merged
@@ -494,6 +517,29 @@ pub(crate) fn set_lighting(
             illuminance: lighting.illuminance.clamp(0.0, 200_000.0),
             ambient_brightness: lighting.ambient_brightness.clamp(0.0, 1000.0),
             ..lighting
+        };
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Sets the saved mix: one gain per bus, in linear 0-2. What the project
+/// settings dialog edits, and what a rebuilt world reseeds its live gains
+/// from. Clamped like a live write, so a stored mix can never blow out.
+pub(crate) fn set_sound_mixer(
+    state: &SharedState,
+    app: &AppHandle,
+    mixer: SoundMixer,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    if let Some(project) = s.project_mut() {
+        project.world.sound = SoundMixer {
+            master_volume: blockloom_core::sound::clamp_gain(mixer.master_volume),
+            music_volume: blockloom_core::sound::clamp_gain(mixer.music_volume),
+            sfx_volume: blockloom_core::sound::clamp_gain(mixer.sfx_volume),
         };
     }
     auto_save(&s);
@@ -1728,8 +1774,12 @@ pub(crate) fn preview_value(state: &SharedState, value: Value) -> Result<String,
     let s = lock(state)?;
     let env = env(&s);
     let lists = lists_env(&s);
-    Ok(resolve_list_reporters(&value.resolve_vars(&env), &lists)
-        .and_then(|resolved| resolved.eval())
+    let dicts = dicts_env(&s);
+    let resolved = value.resolve_vars(&env);
+    let resolved = resolve_list_reporters(&resolved, &lists).unwrap_or(resolved);
+    let resolved = resolve_dict_reporters(&resolved, &dicts).unwrap_or(resolved);
+    Ok(resolved
+        .eval()
         .map(|evaluated| evaluated.as_text())
         .unwrap_or_default())
 }
@@ -2116,7 +2166,170 @@ pub(crate) fn set_list_editor_state(
     result
 }
 
-// ─── Custom blocks ─────────────────────────────────────────────────────────
+// ─── Dicts ───────────────────────────────────────────────────────────────────
+
+/// `scope` is `"global"` for a project-wide dict, anything else for one
+/// private to the open actor.
+pub(crate) fn create_dict(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+    scope: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let global = scope == "global";
+    let result = if global {
+        match s.project_mut() {
+            Some(project) => project.create_global_dict(&name).map(|_| ()),
+            None => Ok(()),
+        }
+    } else {
+        match graph_mut(&mut s) {
+            Some(graph) => match graph.create_dict(&name) {
+                Ok(trimmed) => {
+                    if let Some(dict) = graph.dicts.iter_mut().find(|dict| dict.name == trimmed) {
+                        dict.editor_x = 36;
+                        dict.editor_y = 36;
+                    }
+                    Ok(())
+                }
+                Err(message) => Err(message),
+            },
+            None => Ok(()),
+        }
+    };
+    auto_save(&s);
+    emit(app, &s);
+    result
+}
+
+pub(crate) fn rename_dict(
+    state: &SharedState,
+    app: &AppHandle,
+    old_name: String,
+    new_name: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let owned_by_actor =
+        graph_mut(&mut s).is_some_and(|graph| graph.dicts.iter().any(|d| d.name == old_name));
+    let result = if owned_by_actor {
+        match graph_mut(&mut s) {
+            Some(graph) => graph.rename_dict(&old_name, &new_name).map(|_| ()),
+            None => Ok(()),
+        }
+    } else {
+        match s.project_mut() {
+            Some(project) => project.rename_global_dict(&old_name, &new_name).map(|_| ()),
+            None => Ok(()),
+        }
+    };
+    auto_save(&s);
+    emit(app, &s);
+    result
+}
+
+pub(crate) fn delete_dict(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let owned_by_actor =
+        graph_mut(&mut s).is_some_and(|graph| graph.dicts.iter().any(|d| d.name == name));
+    if owned_by_actor {
+        if let Some(graph) = graph_mut(&mut s) {
+            graph.remove_dict(&name);
+        }
+    } else if let Some(project) = s.project_mut() {
+        project.remove_global_dict(&name);
+    }
+    auto_save(&s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Replaces a dict's entries, wherever it lives. `DictEntry` values are
+/// literal-only by construction, which enforces the literal-only dict
+/// contract. Not undoable, the way typing into a canvas monitor isn't - the
+/// entries themselves are the edit.
+pub(crate) fn set_dict_entries(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+    entries: Vec<DictEntry>,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let owned_by_actor =
+        graph_mut(&mut s).is_some_and(|graph| graph.dicts.iter().any(|d| d.name == name));
+    let result = if owned_by_actor {
+        match graph_mut(&mut s) {
+            Some(graph) => graph.set_dict_entries(&name, entries),
+            None => Ok(()),
+        }
+    } else {
+        match s.project_mut() {
+            Some(project) => match project
+                .global_dicts
+                .iter_mut()
+                .find(|dict| dict.name == name)
+            {
+                Some(dict) => {
+                    dict.entries = entries;
+                    Ok(())
+                }
+                None => Err("Dict not found".to_string()),
+            },
+            None => Ok(()),
+        }
+    };
+    auto_save(&s);
+    emit(app, &s);
+    result
+}
+
+/// Saves whether a dict's editable canvas monitor is open and where it sits.
+/// A presentation preference rather than an undoable edit.
+pub(crate) fn set_dict_editor_state(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+    visible: bool,
+    x: i32,
+    y: i32,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let owned_by_actor =
+        graph_mut(&mut s).is_some_and(|graph| graph.dicts.iter().any(|d| d.name == name));
+    let result = if owned_by_actor {
+        match graph_mut(&mut s) {
+            Some(graph) => graph.set_dict_editor_state(&name, visible, x, y),
+            None => Ok(()),
+        }
+    } else {
+        match s.project_mut() {
+            Some(project) => match project
+                .global_dicts
+                .iter_mut()
+                .find(|dict| dict.name == name)
+            {
+                Some(dict) => {
+                    dict.editor_visible = visible;
+                    dict.editor_x = x.max(0);
+                    dict.editor_y = y.max(0);
+                    Ok(())
+                }
+                None => Err("Dict not found".to_string()),
+            },
+            None => Ok(()),
+        }
+    };
+    auto_save(&s);
+    emit(app, &s);
+    result
+}
 
 pub(crate) fn create_block(
     state: &SharedState,

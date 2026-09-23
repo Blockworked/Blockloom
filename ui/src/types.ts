@@ -10,7 +10,7 @@
 
 import type { ValueLocation, ValueNode } from 'blockstitch';
 import { fieldLocation as blockstitchFieldLocation, newId as blockstitchNewId } from 'blockstitch';
-import type { ListDef, ListItem } from 'blockstitch';
+import type { DictDef, DictEntry, ListDef, ListItem } from 'blockstitch';
 
 export type InstrPath = { index: number; slot?: number }[];
 
@@ -42,6 +42,12 @@ export const INSTRUCTION_TYPES = [
   'Say',
   'SetVisible',
   'SetColor',
+  'PlaySound',
+  'PlaySoundAt',
+  'StopSound',
+  'SetSoundVolume',
+  'SetSoundPitch',
+  'SetBusVolume',
   'SetComponentField',
   'SetCameraView',
   'SetCameraPitch',
@@ -92,6 +98,11 @@ export const INSTRUCTION_TYPES = [
   'InsertIntoList',
   'ReplaceItemOfList',
   'ReverseList',
+  'LoadJsonIntoList',
+  'SetDictValue',
+  'DeleteDictKey',
+  'DeleteAllOfDict',
+  'LoadJsonIntoDict',
   'CallBlock',
   'Return',
 ] as const;
@@ -274,6 +285,13 @@ export interface LightingDto {
   ao_enabled: boolean;
 }
 
+/** The saved mix: one linear gain per bus. */
+export interface SoundMixerDto {
+  master_volume: number;
+  music_volume: number;
+  sfx_volume: number;
+}
+
 export interface WorldDto {
   mode: Mode;
   background: string;
@@ -284,6 +302,7 @@ export interface WorldDto {
   camera: CameraDto;
   speech_bubble: SpeechBubbleStyleDto;
   lighting: LightingDto;
+  sound: SoundMixerDto;
 }
 
 export interface StrandDto {
@@ -319,6 +338,12 @@ export interface VariableDto {
 export type ListItemDto = ListItem;
 /** A named, ordered collection of literal items, with its canvas monitor state. */
 export type ListDto = ListDef;
+/** A literal-only dict value. Dicts never store expressions, booleans, or refs. */
+export type DictItemDto = DictEntry['value'];
+/** One key/value pair in a dict. */
+export type DictEntryDto = DictEntry;
+/** A named, keyed collection of literal values, with its canvas monitor state. */
+export type DictDto = DictDef;
 
 export type BlockPieceDto =
   | { kind: 'Label'; id: string; text: string }
@@ -344,6 +369,7 @@ export interface ActorDto {
   comments: CommentDto[];
   variables: VariableDto[];
   lists: ListDto[];
+  dicts: DictDto[];
   block_defs: BlockDefDto[];
 }
 
@@ -355,6 +381,7 @@ export interface ProjectDto {
   actors: ActorDto[];
   globals: VariableDto[];
   global_lists: ListDto[];
+  global_dicts: DictDto[];
 }
 
 // ─── Assets ────────────────────────────────────────────────────────────────
@@ -594,6 +621,18 @@ export function listNames(project: ProjectDto | null, actor: ActorDto | null): s
   const own = (actor?.lists ?? []).map(l => l.name).sort((a, b) => a.localeCompare(b));
   const shared = (project?.global_lists ?? [])
     .map(l => l.name)
+    .filter(name => !own.includes(name))
+    .sort((a, b) => a.localeCompare(b));
+  return [...own, ...shared];
+}
+
+/** Dict names the open actor can read: its own, then the project's shared
+ * ones, each group alphabetical. A name in both is the actor's - it shadows
+ * the shared one, the same rule variables and lists use. */
+export function dictNames(project: ProjectDto | null, actor: ActorDto | null): string[] {
+  const own = (actor?.dicts ?? []).map(d => d.name).sort((a, b) => a.localeCompare(b));
+  const shared = (project?.global_dicts ?? [])
+    .map(d => d.name)
     .filter(name => !own.includes(name))
     .sort((a, b) => a.localeCompare(b));
   return [...own, ...shared];

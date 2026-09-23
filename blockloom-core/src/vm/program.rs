@@ -9,6 +9,7 @@
 use crate::blocks::{ActorGraph, Instruction, InstructionKind};
 use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
+use crate::sound::SoundBus;
 use crate::ui::{UiAnchor, UiKind, UiProp, UiTheme};
 use crate::value::Value;
 use std::collections::HashMap;
@@ -93,6 +94,38 @@ pub enum Action {
     Say(Value),
     SetVisible(bool),
     SetColor(Value),
+    PlaySound {
+        sound: Value,
+        volume: Value,
+        pitch: Value,
+        loop_: bool,
+        bus: SoundBus,
+    },
+    /// An empty target plays at the running actor's own place.
+    PlaySoundAt {
+        sound: Value,
+        volume: Value,
+        pitch: Value,
+        loop_: bool,
+        bus: SoundBus,
+        target: Value,
+    },
+    /// An empty sound stops every voice at once.
+    StopSound {
+        sound: Value,
+    },
+    SetSoundVolume {
+        sound: Value,
+        volume: Value,
+    },
+    SetSoundPitch {
+        sound: Value,
+        pitch: Value,
+    },
+    SetBusVolume {
+        bus: SoundBus,
+        volume: Value,
+    },
     SetComponentField {
         component: String,
         field: String,
@@ -174,6 +207,26 @@ pub enum Action {
         value: Value,
     },
     ReverseList {
+        name: String,
+    },
+    SetDictValue {
+        key: Value,
+        name: String,
+        value: Value,
+    },
+    DeleteDictKey {
+        key: Value,
+        name: String,
+    },
+    DeleteAllOfDict {
+        name: String,
+    },
+    LoadJsonIntoDict {
+        json: Value,
+        name: String,
+    },
+    LoadJsonIntoList {
+        json: Value,
         name: String,
     },
 }
@@ -376,6 +429,49 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::Say { text } => steps.push(Step::Action(Action::Say(text.clone()))),
         K::SetVisible { visible } => steps.push(Step::Action(Action::SetVisible(*visible))),
         K::SetColor { color } => steps.push(Step::Action(Action::SetColor(color.clone()))),
+        K::PlaySound {
+            sound,
+            volume,
+            pitch,
+            loop_,
+            bus,
+        } => steps.push(Step::Action(Action::PlaySound {
+            sound: sound.clone(),
+            volume: volume.clone(),
+            pitch: pitch.clone(),
+            loop_: *loop_,
+            bus: *bus,
+        })),
+        K::PlaySoundAt {
+            sound,
+            volume,
+            pitch,
+            loop_,
+            bus,
+            target,
+        } => steps.push(Step::Action(Action::PlaySoundAt {
+            sound: sound.clone(),
+            volume: volume.clone(),
+            pitch: pitch.clone(),
+            loop_: *loop_,
+            bus: *bus,
+            target: target.clone(),
+        })),
+        K::StopSound { sound } => steps.push(Step::Action(Action::StopSound {
+            sound: sound.clone(),
+        })),
+        K::SetSoundVolume { sound, volume } => steps.push(Step::Action(Action::SetSoundVolume {
+            sound: sound.clone(),
+            volume: volume.clone(),
+        })),
+        K::SetSoundPitch { sound, pitch } => steps.push(Step::Action(Action::SetSoundPitch {
+            sound: sound.clone(),
+            pitch: pitch.clone(),
+        })),
+        K::SetBusVolume { bus, volume } => steps.push(Step::Action(Action::SetBusVolume {
+            bus: *bus,
+            volume: volume.clone(),
+        })),
         K::SetComponentField {
             component,
             field,
@@ -661,6 +757,26 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::ReverseList { name } => {
             steps.push(Step::Action(Action::ReverseList { name: name.clone() }))
         }
+        K::SetDictValue { key, name, value } => steps.push(Step::Action(Action::SetDictValue {
+            key: key.clone(),
+            name: name.clone(),
+            value: value.clone(),
+        })),
+        K::DeleteDictKey { key, name } => steps.push(Step::Action(Action::DeleteDictKey {
+            key: key.clone(),
+            name: name.clone(),
+        })),
+        K::DeleteAllOfDict { name } => {
+            steps.push(Step::Action(Action::DeleteAllOfDict { name: name.clone() }))
+        }
+        K::LoadJsonIntoDict { json, name } => steps.push(Step::Action(Action::LoadJsonIntoDict {
+            json: json.clone(),
+            name: name.clone(),
+        })),
+        K::LoadJsonIntoList { json, name } => steps.push(Step::Action(Action::LoadJsonIntoList {
+            json: json.clone(),
+            name: name.clone(),
+        })),
         K::Wait { duration } => steps.push(Step::Wait(duration.clone())),
         K::WaitUntil { condition } => steps.push(Step::WaitUntil(condition.clone())),
         K::CallBlock { block_id, args } => steps.push(Step::Call {

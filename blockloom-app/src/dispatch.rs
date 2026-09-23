@@ -7,6 +7,7 @@ use crate::state::{InstrPath, ValueLocation};
 use blockloom_core::blocks::{BlockPiece, BlockShape, Instruction};
 use blockloom_core::components::ActorComponent;
 use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, Visual};
+use blockloom_core::sound::SoundMixer;
 use blockloom_core::value::Value as BlockValue;
 use blockloom_core::wire;
 use serde::de::DeserializeOwned;
@@ -99,6 +100,10 @@ impl Backend {
             "set_lighting" => {
                 let lighting: Lighting = arg(&args, "lighting")?;
                 to_json(commands::set_lighting(state, app, lighting)?)
+            }
+            "set_sound_mixer" => {
+                let mixer: SoundMixer = arg(&args, "mixer")?;
+                to_json(commands::set_sound_mixer(state, app, mixer)?)
             }
 
             // ── Actors ─────────────────────────────────────────────────────
@@ -445,6 +450,36 @@ impl Backend {
                 )?)
             }
             "set_list_editor_state" => to_json(commands::set_list_editor_state(
+                state,
+                app,
+                arg(&args, "name")?,
+                arg(&args, "visible")?,
+                arg(&args, "x")?,
+                arg(&args, "y")?,
+            )?),
+            "create_dict" => to_json(commands::create_dict(
+                state,
+                app,
+                arg(&args, "name")?,
+                arg(&args, "scope").unwrap_or_else(|_| "actor".to_string()),
+            )?),
+            "rename_dict" => to_json(commands::rename_dict(
+                state,
+                app,
+                arg(&args, "oldName")?,
+                arg(&args, "newName")?,
+            )?),
+            "delete_dict" => to_json(commands::delete_dict(state, app, arg(&args, "name")?)?),
+            "set_dict_entries" => {
+                let entries: Vec<blockloom_core::blocks::DictEntry> = arg(&args, "entries")?;
+                to_json(commands::set_dict_entries(
+                    state,
+                    app,
+                    arg(&args, "name")?,
+                    entries,
+                )?)
+            }
+            "set_dict_editor_state" => to_json(commands::set_dict_editor_state(
                 state,
                 app,
                 arg(&args, "name")?,

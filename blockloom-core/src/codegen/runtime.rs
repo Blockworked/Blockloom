@@ -120,6 +120,37 @@ pub enum Act {
     SetColor {
         color: String,
     },
+    /// Starts a voice for `sound`, a project-relative asset path. `volume`
+    /// is a linear gain, `pitch` a speed factor. `at` is `None` for a global
+    /// voice or the id a positional one follows - already resolved, so the
+    /// host never evaluates anything.
+    PlaySound {
+        sound: String,
+        volume: f32,
+        pitch: f32,
+        loop_: bool,
+        bus: &'static str,
+        at: Option<String>,
+    },
+    /// Stops the voices playing `sound`. Empty stops every voice at once.
+    StopSound {
+        sound: String,
+    },
+    /// Retunes the live voices playing `sound`.
+    SetSoundVolume {
+        sound: String,
+        volume: f32,
+    },
+    /// Rebends the live voices playing `sound`.
+    SetSoundPitch {
+        sound: String,
+        pitch: f32,
+    },
+    /// Moves a whole mixing bus; window-global, like gravity.
+    SetBusVolume {
+        bus: &'static str,
+        volume: f32,
+    },
     SetComponentField {
         component: &'static str,
         field: &'static str,
@@ -248,6 +279,34 @@ pub enum Act {
     /// Reverses a named list in place.
     ReverseList {
         name: &'static str,
+    },
+    /// Sets `key` in a named dict to a number/text value. A boolean value
+    /// reports itself and is dropped, the way a bad slot is.
+    SetDictValue {
+        name: &'static str,
+        key: String,
+        value: Val,
+    },
+    /// Removes `key` from a named dict.
+    DeleteDictKey {
+        name: &'static str,
+        key: String,
+    },
+    /// Removes every entry from a named dict.
+    DeleteAllOfDict {
+        name: &'static str,
+    },
+    /// Parses a JSON object and loads it into a named dict. A parse error
+    /// reports itself and leaves the dict.
+    LoadJsonIntoDict {
+        name: &'static str,
+        json: Val,
+    },
+    /// Parses a JSON array and loads it into a named list. A parse error
+    /// reports itself and leaves the list.
+    LoadJsonIntoList {
+        name: &'static str,
+        json: Val,
     },
 }
 
@@ -802,7 +861,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 10;
+pub const LOGIC_ABI_VERSION: u32 = 11;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -883,6 +942,27 @@ pub const ACT_LIST_INSERT: u32 = 44;
 pub const ACT_LIST_REPLACE: u32 = 45;
 /// `a` = list name.
 pub const ACT_LIST_REVERSE: u32 = 46;
+/// `a` = dict name, `b` = key, `value` = what to set.
+pub const ACT_DICT_SET: u32 = 52;
+/// `a` = dict name, `b` = key to remove.
+pub const ACT_DICT_DELETE_KEY: u32 = 53;
+/// `a` = dict name.
+pub const ACT_DICT_CLEAR: u32 = 54;
+/// `a` = dict name, `value` = JSON object text to load.
+pub const ACT_JSON_TO_DICT: u32 = 55;
+/// `a` = list name, `value` = JSON array text to load.
+pub const ACT_JSON_TO_LIST: u32 = 56;
+/// `a` = asset path; `n0` = linear gain, `n1` = pitch; `n2` != 0 loops;
+/// `b` = bus name; `c` = followed actor id, or empty for a global voice.
+pub const ACT_PLAY_SOUND: u32 = 47;
+/// `a` = asset path; empty stops every voice at once.
+pub const ACT_STOP_SOUND: u32 = 48;
+/// `a` = asset path; `n0` = linear gain.
+pub const ACT_SET_SOUND_VOLUME: u32 = 49;
+/// `a` = asset path; `n0` = pitch.
+pub const ACT_SET_SOUND_PITCH: u32 = 50;
+/// `b` = bus name; `n0` = linear gain. Window-global, like gravity.
+pub const ACT_SET_BUS_VOLUME: u32 = 51;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1191,6 +1271,49 @@ impl Host for AbiHost {
             Act::SetColor { color } => {
                 self.act_wire(actor, ACT_SET_COLOR, &color, "", [0.0; 3], &zero)
             }
+            Act::PlaySound {
+                sound,
+                volume,
+                pitch,
+                loop_,
+                bus,
+                at,
+            } => self.act_many(
+                actor,
+                ACT_PLAY_SOUND,
+                &sound,
+                bus,
+                at.as_deref().unwrap_or(""),
+                &[volume as f64, pitch as f64, if loop_ { 1.0 } else { 0.0 }],
+                &zero,
+            ),
+            Act::StopSound { sound } => {
+                self.act_wire(actor, ACT_STOP_SOUND, &sound, "", [0.0; 3], &zero)
+            }
+            Act::SetSoundVolume { sound, volume } => self.act_wire(
+                actor,
+                ACT_SET_SOUND_VOLUME,
+                &sound,
+                "",
+                [volume as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetSoundPitch { sound, pitch } => self.act_wire(
+                actor,
+                ACT_SET_SOUND_PITCH,
+                &sound,
+                "",
+                [pitch as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetBusVolume { bus, volume } => self.act_wire(
+                actor,
+                ACT_SET_BUS_VOLUME,
+                "",
+                bus,
+                [volume as f64, 0.0, 0.0],
+                &zero,
+            ),
             Act::SetComponentField {
                 component,
                 field,
@@ -1339,6 +1462,21 @@ impl Host for AbiHost {
             Act::ReverseList { name } => {
                 self.act_wire(actor, ACT_LIST_REVERSE, name, "", [0.0; 3], &zero)
             }
+            Act::SetDictValue { name, key, value } => {
+                self.act_wire(actor, ACT_DICT_SET, name, &key, [0.0; 3], &value)
+            }
+            Act::DeleteDictKey { name, key } => {
+                self.act_wire(actor, ACT_DICT_DELETE_KEY, name, &key, [0.0; 3], &zero)
+            }
+            Act::DeleteAllOfDict { name } => {
+                self.act_wire(actor, ACT_DICT_CLEAR, name, "", [0.0; 3], &zero)
+            }
+            Act::LoadJsonIntoDict { name, json } => {
+                self.act_wire(actor, ACT_JSON_TO_DICT, name, "", [0.0; 3], &json)
+            }
+            Act::LoadJsonIntoList { name, json } => {
+                self.act_wire(actor, ACT_JSON_TO_LIST, name, "", [0.0; 3], &json)
+            }
         }
     }
 
@@ -1448,6 +1586,23 @@ pub fn too_deep(host: &mut dyn Host, actor: &str) -> Val {
 
 pub fn text(host: &mut dyn Host, actor: &str, value: R) -> String {
     evaluated(host, actor, value).as_text()
+}
+
+/// A 0-100 block volume into the linear gain an [`Act`] carries. Mirrors
+/// `blockloom_core::sound::user_to_gain`, which the VM calls instead -
+/// duplicated here because this file is pasted whole into generated programs
+/// that have no dependencies.
+pub fn sound_gain(volume: f64) -> f32 {
+    (volume as f32 / 100.0).clamp(0.0, 2.0)
+}
+
+/// A pitch slot into the playable range. Mirrors
+/// `blockloom_core::sound::clamp_pitch`, for the same reason.
+pub fn sound_pitch(pitch: f32) -> f32 {
+    if !pitch.is_finite() {
+        return 1.0;
+    }
+    pitch.clamp(0.125, 4.0)
 }
 
 /// A condition slot: an `if`, a `while`, a `wait until`. A bad one reports

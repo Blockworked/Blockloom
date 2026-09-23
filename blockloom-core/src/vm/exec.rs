@@ -9,9 +9,13 @@ use super::effect::Effect;
 use super::program::{Action, LoopKind, Program, Step, Trigger, compile};
 use crate::project::Project;
 use crate::sense;
+use crate::sound::{clamp_pitch, normalize_sound, user_to_gain};
 use crate::ui::{UiElement, UiKind};
 use crate::value::{Evaluated, Op, Value};
-use blockstitch_core::graph::{ListItem, is_list_reporter, list_index, resolve_list_reporter};
+use blockstitch_core::graph::{
+    DictEntry, DictItem, ListItem, dict_remove, dict_set, is_dict_reporter, is_list_reporter,
+    list_index, parse_json_array, parse_json_object, resolve_dict_reporter, resolve_list_reporter,
+};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -190,6 +194,82 @@ impl Lists {
     }
 }
 
+/// One scope's dicts, by name.
+pub type DictValues = HashMap<String, Vec<DictEntry>>;
+/// Every actor's own dicts, by actor id.
+pub type ActorDicts = HashMap<String, DictValues>;
+
+#[derive(Debug, Default)]
+struct DictState {
+    globals: DictValues,
+    actors: ActorDicts,
+}
+
+/// The live dicts of one run, parallel to [`Lists`]. An actor reads its own
+/// dict first, then the project's shared one - the same shadowing rule
+/// lists use - and writes land wherever the name was declared.
+#[derive(Debug, Clone, Default)]
+pub struct Dicts(Rc<RefCell<DictState>>);
+
+impl Dicts {
+    pub fn load(&self, project: &Project) {
+        let mut state = self.0.borrow_mut();
+        state.globals = project
+            .global_dicts
+            .iter()
+            .map(|dict| (dict.name.clone(), dict.entries.clone()))
+            .collect();
+        state.actors = project
+            .actors
+            .iter()
+            .map(|actor| (actor.id.clone(), actor.graph.dict_values()))
+            .collect();
+    }
+
+    /// What `actor` reads: its own dicts over the shared ones.
+    pub fn snapshot_for(&self, actor: &str) -> DictValues {
+        let state = self.0.borrow();
+        let mut merged = state.globals.clone();
+        if let Some(own) = state.actors.get(actor) {
+            merged.extend(own.clone());
+        }
+        merged
+    }
+
+    /// Mutates whichever scope declared `name` - the actor's own first, then
+    /// the shared one. A name nobody declared is a no-op, the way reading an
+    /// unknown dict answers empty.
+    pub fn with_dict_mut(&self, actor: &str, name: &str, f: impl FnOnce(&mut Vec<DictEntry>)) {
+        let mut state = self.0.borrow_mut();
+        if let Some(dict) = state
+            .actors
+            .get_mut(actor)
+            .and_then(|dicts| dicts.get_mut(name))
+        {
+            f(dict);
+            return;
+        }
+        if let Some(dict) = state.globals.get_mut(name) {
+            f(dict);
+        }
+    }
+
+    /// Gives `to` its own copy of `from`'s dicts, as they stand. A clone
+    /// starts life holding whatever its template held, and changes either
+    /// way after that.
+    pub fn copy_actor(&self, from: &str, to: &str) {
+        let mut state = self.0.borrow_mut();
+        let copied = state.actors.get(from).cloned().unwrap_or_default();
+        state.actors.insert(to.to_string(), copied);
+    }
+
+    /// Forgets an actor's own dicts. A deleted actor is gone for the rest of
+    /// the run, and so is what it was holding.
+    pub fn forget_actor(&self, actor: &str) {
+        self.0.borrow_mut().actors.remove(actor);
+    }
+}
+
 /// Steps one script may take in a single frame before being made to yield.
 /// Loops yield on their own; this only catches pathological straight-line code.
 pub const STEP_BUDGET: usize = 10_000;
@@ -307,6 +387,7 @@ pub struct Vm {
     deleted: Vec<String>,
     variables: Variables,
     lists: Lists,
+    dicts: Dicts,
     scripts: Vec<Script>,
     /// Events to start scripts for, drained at the top of the next tick.
     pending: Vec<Event>,
@@ -336,10 +417,10 @@ impl Vm {
     }
 
     pub fn with_variables(variables: Variables) -> Self {
-        Self::with_stores(variables, Lists::default())
+        Self::with_stores(variables, Lists::default(), Dicts::default())
     }
 
-    pub fn with_stores(variables: Variables, lists: Lists) -> Self {
+    pub fn with_stores(variables: Variables, lists: Lists, dicts: Dicts) -> Self {
         Self {
             programs: HashMap::new(),
             names: HashMap::new(),
@@ -348,6 +429,7 @@ impl Vm {
             deleted: Vec::new(),
             variables,
             lists,
+            dicts,
             scripts: Vec::new(),
             pending: Vec::new(),
             now: 0.0,
@@ -374,6 +456,7 @@ impl Vm {
         self.made = 0;
         self.variables.load(project);
         self.lists.load(project);
+        self.dicts.load(project);
         for actor in &project.actors {
             self.programs
                 .insert(actor.id.clone(), Rc::new(compile(&actor.graph)));
@@ -455,6 +538,10 @@ impl Vm {
 
     pub fn list_store(&self) -> Lists {
         self.lists.clone()
+    }
+
+    pub fn dict_store(&self) -> Dicts {
+        self.dicts.clone()
     }
 
     /// Whether the world is frozen. Set by the host from the `pause game`
@@ -967,6 +1054,130 @@ impl Vm {
                     color,
                 });
             }
+            // Sound slots read left to right as the row is written - a
+            // compiled program reads them in the same order, and a bad one
+            // complains in the same place.
+            Action::PlaySound {
+                sound,
+                volume,
+                pitch,
+                loop_,
+                bus,
+            } => {
+                let sound = normalize_sound(&self.eval(sound, actor, params, out).as_text());
+                let volume = user_to_gain(
+                    self.eval(volume, actor, params, out)
+                        .as_number()
+                        .unwrap_or(0.0),
+                );
+                let pitch = clamp_pitch(self.eval_f32(pitch, actor, params, out));
+                if sound.is_empty() {
+                    out.push(Effect::Error {
+                        actor: owner,
+                        message: "which sound should I play?".to_string(),
+                    });
+                } else {
+                    out.push(Effect::PlaySound {
+                        actor: owner,
+                        sound,
+                        volume,
+                        pitch,
+                        loop_: *loop_,
+                        bus: *bus,
+                        at: None,
+                    });
+                }
+            }
+            Action::PlaySoundAt {
+                sound,
+                volume,
+                pitch,
+                loop_,
+                bus,
+                target,
+            } => {
+                let sound = normalize_sound(&self.eval(sound, actor, params, out).as_text());
+                let volume = user_to_gain(
+                    self.eval(volume, actor, params, out)
+                        .as_number()
+                        .unwrap_or(0.0),
+                );
+                let pitch = clamp_pitch(self.eval_f32(pitch, actor, params, out));
+                let wanted = self.eval(target, actor, params, out).as_text();
+                if sound.is_empty() {
+                    out.push(Effect::Error {
+                        actor: owner,
+                        message: "which sound should I play?".to_string(),
+                    });
+                } else {
+                    match self.find_actor(actor, &wanted) {
+                        Some(at) => out.push(Effect::PlaySound {
+                            actor: owner,
+                            sound,
+                            volume,
+                            pitch,
+                            loop_: *loop_,
+                            bus: *bus,
+                            at: Some(at),
+                        }),
+                        None => out.push(Effect::Error {
+                            actor: owner,
+                            message: format!("there's no actor named \"{wanted}\" to play at"),
+                        }),
+                    }
+                }
+            }
+            Action::StopSound { sound } => {
+                let sound = normalize_sound(&self.eval(sound, actor, params, out).as_text());
+                out.push(Effect::StopSound {
+                    actor: owner,
+                    sound,
+                });
+            }
+            Action::SetSoundVolume { sound, volume } => {
+                let sound = normalize_sound(&self.eval(sound, actor, params, out).as_text());
+                let volume = user_to_gain(
+                    self.eval(volume, actor, params, out)
+                        .as_number()
+                        .unwrap_or(0.0),
+                );
+                if sound.is_empty() {
+                    out.push(Effect::Error {
+                        actor: owner,
+                        message: "which sound's volume should I set?".to_string(),
+                    });
+                } else {
+                    out.push(Effect::SetSoundVolume {
+                        actor: owner,
+                        sound,
+                        volume,
+                    });
+                }
+            }
+            Action::SetSoundPitch { sound, pitch } => {
+                let sound = normalize_sound(&self.eval(sound, actor, params, out).as_text());
+                let pitch = clamp_pitch(self.eval_f32(pitch, actor, params, out));
+                if sound.is_empty() {
+                    out.push(Effect::Error {
+                        actor: owner,
+                        message: "which sound's pitch should I set?".to_string(),
+                    });
+                } else {
+                    out.push(Effect::SetSoundPitch {
+                        actor: owner,
+                        sound,
+                        pitch,
+                    });
+                }
+            }
+            Action::SetBusVolume { bus, volume } => {
+                let volume = user_to_gain(
+                    self.eval(volume, actor, params, out)
+                        .as_number()
+                        .unwrap_or(0.0),
+                );
+                out.push(Effect::SetBusVolume { bus: *bus, volume });
+            }
             Action::SetComponentField {
                 component,
                 field,
@@ -1245,6 +1456,50 @@ impl Vm {
             Action::ReverseList { name } => {
                 self.lists.with_list_mut(actor, name, |list| list.reverse());
             }
+            Action::SetDictValue { key, name, value } => {
+                let key = self.eval(key, actor, params, out).as_text();
+                let value = self.eval(value, actor, params, out);
+                match DictItem::from_evaluated(value) {
+                    Some(item) => self
+                        .dicts
+                        .with_dict_mut(actor, name, |dict| dict_set(dict, key, item)),
+                    None => out.push(Effect::Error {
+                        actor: owner.clone(),
+                        message: "dict values must be number or text".to_string(),
+                    }),
+                }
+            }
+            Action::DeleteDictKey { key, name } => {
+                let key = self.eval(key, actor, params, out).as_text();
+                self.dicts.with_dict_mut(actor, name, |dict| {
+                    dict_remove(dict, &key);
+                });
+            }
+            Action::DeleteAllOfDict { name } => {
+                self.dicts.with_dict_mut(actor, name, |dict| dict.clear());
+            }
+            Action::LoadJsonIntoDict { json, name } => {
+                let json = self.eval(json, actor, params, out).as_text();
+                match parse_json_object(&json) {
+                    Ok(entries) => self
+                        .dicts
+                        .with_dict_mut(actor, name, |dict| *dict = entries),
+                    Err(message) => out.push(Effect::Error {
+                        actor: owner.clone(),
+                        message,
+                    }),
+                }
+            }
+            Action::LoadJsonIntoList { json, name } => {
+                let json = self.eval(json, actor, params, out).as_text();
+                match parse_json_array(&json) {
+                    Ok(items) => self.lists.with_list_mut(actor, name, |list| *list = items),
+                    Err(message) => out.push(Effect::Error {
+                        actor: owner.clone(),
+                        message,
+                    }),
+                }
+            }
         }
     }
 
@@ -1290,6 +1545,7 @@ impl Vm {
         }
         self.variables.copy_actor(template, &id);
         self.lists.copy_actor(template, &id);
+        self.dicts.copy_actor(template, &id);
         // A clone of a clone is a clone of the same authored actor.
         let root = self
             .clones
@@ -1309,6 +1565,7 @@ impl Vm {
         self.clones.remove(actor);
         self.variables.forget_actor(actor);
         self.lists.forget_actor(actor);
+        self.dicts.forget_actor(actor);
         self.pending
             .retain(|event| !matches!(event, Event::Cloned { actor: fresh } if fresh == actor));
         if !self.deleted.iter().any(|gone| gone == actor) {
@@ -1417,6 +1674,27 @@ impl Vm {
                 };
                 let lists = self.lists.snapshot_for(actor);
                 match resolve_list_reporter(&name, args, &lists) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        out.push(Effect::Error {
+                            actor: actor.to_string(),
+                            message,
+                        });
+                        Value::number(0.0)
+                    }
+                }
+            }
+            Value::Op { op, args, saved } if is_dict_reporter(op) => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.resolve(arg, actor, params, out))
+                    .collect::<Vec<_>>();
+                let name: Box<str> = match op {
+                    Op::Ext(name) => name.clone(),
+                    _ => unreachable!("validated by is_dict_reporter"),
+                };
+                let dicts = self.dicts.snapshot_for(actor);
+                match resolve_dict_reporter(&name, args, &dicts) {
                     Ok(value) => value,
                     Err(message) => {
                         out.push(Effect::Error {

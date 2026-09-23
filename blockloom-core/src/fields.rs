@@ -41,6 +41,10 @@ pub enum FieldId {
     Mass,
     SayText,
     ColorText,
+    SoundAsset,
+    SoundVolume,
+    SoundPitch,
+    SoundTarget,
     ComponentFieldValue,
     ParentTarget,
     NewActorName,
@@ -75,6 +79,11 @@ pub enum FieldId {
     InsertIntoListIndex,
     ReplaceItemOfListIndex,
     ReplaceItemOfListValue,
+    SetDictKey,
+    SetDictValue,
+    DeleteDictKey,
+    LoadJsonIntoDictText,
+    LoadJsonIntoListText,
     ReturnValue,
     CallArg(usize),
 }
@@ -100,6 +109,8 @@ impl FieldId {
             self,
             FieldId::SayText
                 | FieldId::ColorText
+                | FieldId::SoundAsset
+                | FieldId::SoundTarget
                 | FieldId::ParentTarget
                 | FieldId::NewActorName
                 | FieldId::DeleteTarget
@@ -150,6 +161,10 @@ impl std::fmt::Display for FieldId {
             FieldId::Mass => write!(f, "Mass"),
             FieldId::SayText => write!(f, "SayText"),
             FieldId::ColorText => write!(f, "ColorText"),
+            FieldId::SoundAsset => write!(f, "SoundAsset"),
+            FieldId::SoundVolume => write!(f, "SoundVolume"),
+            FieldId::SoundPitch => write!(f, "SoundPitch"),
+            FieldId::SoundTarget => write!(f, "SoundTarget"),
             FieldId::ComponentFieldValue => write!(f, "ComponentFieldValue"),
             FieldId::ParentTarget => write!(f, "ParentTarget"),
             FieldId::NewActorName => write!(f, "NewActorName"),
@@ -182,6 +197,11 @@ impl std::fmt::Display for FieldId {
             FieldId::InsertIntoListIndex => write!(f, "InsertIntoListIndex"),
             FieldId::ReplaceItemOfListIndex => write!(f, "ReplaceItemOfListIndex"),
             FieldId::ReplaceItemOfListValue => write!(f, "ReplaceItemOfListValue"),
+            FieldId::SetDictKey => write!(f, "SetDictKey"),
+            FieldId::SetDictValue => write!(f, "SetDictValue"),
+            FieldId::DeleteDictKey => write!(f, "DeleteDictKey"),
+            FieldId::LoadJsonIntoDictText => write!(f, "LoadJsonIntoDictText"),
+            FieldId::LoadJsonIntoListText => write!(f, "LoadJsonIntoListText"),
             FieldId::ReturnValue => write!(f, "ReturnValue"),
             FieldId::CallArg(i) => write!(f, "CallArg:{i}"),
         }
@@ -227,6 +247,10 @@ impl FromStr for FieldId {
             "Mass" => FieldId::Mass,
             "SayText" => FieldId::SayText,
             "ColorText" => FieldId::ColorText,
+            "SoundAsset" => FieldId::SoundAsset,
+            "SoundVolume" => FieldId::SoundVolume,
+            "SoundPitch" => FieldId::SoundPitch,
+            "SoundTarget" => FieldId::SoundTarget,
             "ComponentFieldValue" => FieldId::ComponentFieldValue,
             "ParentTarget" => FieldId::ParentTarget,
             "NewActorName" => FieldId::NewActorName,
@@ -259,6 +283,11 @@ impl FromStr for FieldId {
             "InsertIntoListIndex" => FieldId::InsertIntoListIndex,
             "ReplaceItemOfListIndex" => FieldId::ReplaceItemOfListIndex,
             "ReplaceItemOfListValue" => FieldId::ReplaceItemOfListValue,
+            "SetDictKey" => FieldId::SetDictKey,
+            "SetDictValue" => FieldId::SetDictValue,
+            "DeleteDictKey" => FieldId::DeleteDictKey,
+            "LoadJsonIntoDictText" => FieldId::LoadJsonIntoDictText,
+            "LoadJsonIntoListText" => FieldId::LoadJsonIntoListText,
             "ReturnValue" => FieldId::ReturnValue,
             _ => return Err(()),
         })
@@ -303,6 +332,19 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::SetMass { mass }, F::Mass) => Some(mass),
         (K::Say { text }, F::SayText) => Some(text),
         (K::SetColor { color }, F::ColorText) => Some(color),
+        (K::PlaySound { sound, .. }, F::SoundAsset)
+        | (K::PlaySoundAt { sound, .. }, F::SoundAsset)
+        | (K::StopSound { sound }, F::SoundAsset)
+        | (K::SetSoundVolume { sound, .. }, F::SoundAsset)
+        | (K::SetSoundPitch { sound, .. }, F::SoundAsset) => Some(sound),
+        (K::PlaySound { volume, .. }, F::SoundVolume)
+        | (K::PlaySoundAt { volume, .. }, F::SoundVolume)
+        | (K::SetSoundVolume { volume, .. }, F::SoundVolume)
+        | (K::SetBusVolume { volume, .. }, F::SoundVolume) => Some(volume),
+        (K::PlaySound { pitch, .. }, F::SoundPitch)
+        | (K::PlaySoundAt { pitch, .. }, F::SoundPitch)
+        | (K::SetSoundPitch { pitch, .. }, F::SoundPitch) => Some(pitch),
+        (K::PlaySoundAt { target, .. }, F::SoundTarget) => Some(target),
         (K::SetComponentField { value, .. }, F::ComponentFieldValue) => Some(value),
         (K::SetParent { parent }, F::ParentTarget) => Some(parent),
         (K::CreateActor { name, .. }, F::NewActorName) => Some(name),
@@ -394,6 +436,11 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::InsertIntoList { index, .. }, F::InsertIntoListIndex) => Some(index),
         (K::ReplaceItemOfList { index, .. }, F::ReplaceItemOfListIndex) => Some(index),
         (K::ReplaceItemOfList { value, .. }, F::ReplaceItemOfListValue) => Some(value),
+        (K::SetDictValue { key, .. }, F::SetDictKey) => Some(key),
+        (K::SetDictValue { value, .. }, F::SetDictValue) => Some(value),
+        (K::DeleteDictKey { key, .. }, F::DeleteDictKey) => Some(key),
+        (K::LoadJsonIntoDict { json, .. }, F::LoadJsonIntoDictText) => Some(json),
+        (K::LoadJsonIntoList { json, .. }, F::LoadJsonIntoListText) => Some(json),
         (K::Return { value }, F::ReturnValue) => Some(value),
         (K::CallBlock { args, .. }, F::CallArg(i)) => args.get_mut(i),
         _ => None,

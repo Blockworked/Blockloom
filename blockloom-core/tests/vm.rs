@@ -2,11 +2,13 @@
 //! rules `blockloom-runtime` relies on, checked without a window.
 
 use blockloom_core::blocks::{
-    BlockDef, BlockPiece, BlockShape, Instruction, InstructionKind, ListDef, ListItem, Strand,
+    BlockDef, BlockPiece, BlockShape, DictDef, DictEntry, DictItem, Instruction, InstructionKind,
+    ListDef, ListItem, Strand,
 };
 use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::{Axis, Mode, Visual};
 use blockloom_core::sense::Sensors;
+use blockloom_core::sound::SoundBus;
 use blockloom_core::value::{Evaluated, Op, Value};
 use blockloom_core::vm::{Effect, Event, Vm};
 
@@ -32,6 +34,7 @@ fn project_with(strands: Vec<Strand>) -> Project {
         actors: vec![actor],
         globals: Vec::new(),
         global_lists: Vec::new(),
+        global_dicts: Vec::new(),
     }
 }
 
@@ -590,6 +593,7 @@ fn project_with_two(first: Vec<Strand>, second: Vec<Strand>) -> Project {
         actors: vec![player, friend],
         globals: Vec::new(),
         global_lists: Vec::new(),
+        global_dicts: Vec::new(),
     }
 }
 
@@ -1339,4 +1343,460 @@ fn a_clone_starts_holding_what_its_template_held() {
     let mut vm = Harness::started(&project);
     vm.run(1);
     assert_eq!(says(&vm.run(1)), vec!["1".to_string()]);
+}
+
+// ─── Dicts ───────────────────────────────────────────────────────────────────
+
+fn dict_op(name: &str, args: Vec<Value>) -> Value {
+    Value::op(Op::from_name(name), args)
+}
+
+/// A project with one actor holding an empty dict called `save`.
+fn project_with_empty_dict(body: Vec<InstructionKind>) -> Project {
+    let mut project = project_with(vec![started(body)]);
+    project.actors[0].graph.dicts.push(DictDef {
+        name: "save".to_string(),
+        entries: Vec::new(),
+        editor_visible: false,
+        editor_x: 0,
+        editor_y: 0,
+    });
+    project
+}
+
+#[test]
+fn dict_blocks_write_read_and_remove_keys() {
+    let mut project = project_with_empty_dict(vec![
+        InstructionKind::SetDictValue {
+            key: Value::text("hp"),
+            name: "save".to_string(),
+            value: Value::number(3.0),
+        },
+        InstructionKind::SetDictValue {
+            key: Value::text("name"),
+            name: "save".to_string(),
+            value: Value::text("fox"),
+        },
+        InstructionKind::Say {
+            text: dict_op("DictValue", vec![Value::text("hp"), Value::text("save")]),
+        },
+        InstructionKind::Say {
+            text: dict_op("DictSize", vec![Value::text("save")]),
+        },
+        InstructionKind::SetDictValue {
+            key: Value::text("hp"),
+            name: "save".to_string(),
+            value: Value::number(4.0),
+        },
+        InstructionKind::Say {
+            text: dict_op("DictValue", vec![Value::text("hp"), Value::text("save")]),
+        },
+        InstructionKind::DeleteDictKey {
+            key: Value::text("name"),
+            name: "save".to_string(),
+        },
+        InstructionKind::Say {
+            text: dict_op("DictHasKey", vec![Value::text("save"), Value::text("name")]),
+        },
+        InstructionKind::Say {
+            text: dict_op("DictIsEmpty", vec![Value::text("save")]),
+        },
+        InstructionKind::DeleteAllOfDict {
+            name: "save".to_string(),
+        },
+        InstructionKind::Say {
+            text: dict_op("DictSize", vec![Value::text("save")]),
+        },
+    ]);
+    // A seeded entry is replaced by the first write, so the run still says
+    // exactly what the blocks wrote.
+    project.actors[0].graph.dicts[0].entries = vec![DictEntry {
+        key: "hp".to_string(),
+        value: DictItem::Number(1.0),
+    }];
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(
+        says(&effects),
+        ["3", "2", "4", "false", "false", "0"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    );
+    assert!(errors(&effects).is_empty());
+}
+
+#[test]
+fn a_missing_key_reads_empty_and_its_delete_is_quiet() {
+    let project = project_with_empty_dict(vec![
+        InstructionKind::Say {
+            text: dict_op("DictValue", vec![Value::text("mp"), Value::text("save")]),
+        },
+        InstructionKind::DeleteDictKey {
+            key: Value::text("mp"),
+            name: "save".to_string(),
+        },
+        InstructionKind::Say {
+            text: dict_op("DictValue", vec![Value::text("mp"), Value::text("nobody")]),
+        },
+        InstructionKind::SetDictValue {
+            key: Value::text("hp"),
+            name: "nobody".to_string(),
+            value: Value::number(1.0),
+        },
+    ]);
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(says(&effects), vec![String::new(), String::new()]);
+    assert!(errors(&effects).is_empty());
+}
+
+#[test]
+fn a_boolean_is_not_a_dict_value() {
+    let project = project_with_empty_dict(vec![InstructionKind::SetDictValue {
+        key: Value::text("ok"),
+        name: "save".to_string(),
+        value: Value::Bool,
+    }]);
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(errors(&effects), vec!["dict values must be number or text"]);
+}
+
+#[test]
+fn a_shared_dict_is_visible_to_every_actor_but_an_actors_own_shadows_it() {
+    let mut project = project_with_two(
+        vec![started(vec![InstructionKind::Say {
+            text: dict_op("DictValue", vec![Value::text("hp"), Value::text("shared")]),
+        }])],
+        vec![started(vec![InstructionKind::Say {
+            text: dict_op("DictValue", vec![Value::text("hp"), Value::text("shared")]),
+        }])],
+    );
+    project.create_global_dict("shared").unwrap();
+    project.global_dicts[0].entries = vec![DictEntry {
+        key: "hp".to_string(),
+        value: DictItem::Text("from everyone".to_string()),
+    }];
+    // The first actor carries its own dict of the same name, so it reads
+    // that one instead.
+    project.actors[0].graph.dicts.push(DictDef {
+        name: "shared".to_string(),
+        entries: vec![DictEntry {
+            key: "hp".to_string(),
+            value: DictItem::Text("mine".to_string()),
+        }],
+        editor_visible: false,
+        editor_x: 0,
+        editor_y: 0,
+    });
+    let effects = Harness::started(&project).run(1);
+    let mut said = says(&effects);
+    said.sort();
+    assert_eq!(said, vec!["from everyone".to_string(), "mine".to_string()]);
+}
+
+#[test]
+fn a_clone_starts_holding_whatever_dicts_its_template_held() {
+    let mut project = project_with(vec![
+        started(vec![
+            InstructionKind::SetDictValue {
+                key: Value::text("hp"),
+                name: "save".to_string(),
+                value: Value::number(3.0),
+            },
+            clone_of(""),
+        ]),
+        cloned(vec![InstructionKind::Say {
+            text: dict_op("DictValue", vec![Value::text("hp"), Value::text("save")]),
+        }]),
+    ]);
+    project.actors[0].graph.dicts.push(DictDef {
+        name: "save".to_string(),
+        entries: Vec::new(),
+        editor_visible: false,
+        editor_x: 0,
+        editor_y: 0,
+    });
+    let mut vm = Harness::started(&project);
+    vm.run(1);
+    assert_eq!(says(&vm.run(1)), vec!["3".to_string()]);
+}
+
+// ─── JSON ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn dicts_and_lists_bridge_to_json_text_and_back() {
+    let project = project_with_empty_dict(vec![
+        InstructionKind::SetDictValue {
+            key: Value::text("hp"),
+            name: "save".to_string(),
+            value: Value::number(3.0),
+        },
+        InstructionKind::SetDictValue {
+            key: Value::text("name"),
+            name: "save".to_string(),
+            value: Value::text("fox"),
+        },
+        InstructionKind::Say {
+            text: dict_op("DictAsJson", vec![Value::text("save")]),
+        },
+        InstructionKind::LoadJsonIntoDict {
+            json: Value::text(r#"{"hp": 9, "title": "mage"}"#),
+            name: "save".to_string(),
+        },
+        InstructionKind::Say {
+            text: dict_op("DictValue", vec![Value::text("title"), Value::text("save")]),
+        },
+        InstructionKind::Say {
+            text: dict_op("DictKeys", vec![Value::text("save")]),
+        },
+    ]);
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(
+        says(&effects),
+        vec![
+            r#"{"hp":3.0,"name":"fox"}"#.to_string(),
+            "mage".to_string(),
+            r#"["hp","title"]"#.to_string(),
+        ]
+    );
+    assert!(errors(&effects).is_empty());
+}
+
+#[test]
+fn a_list_bridges_to_json_text_and_back() {
+    let mut project = project_with_empty_list(vec![
+        InstructionKind::Say {
+            text: list_op("ListAsJson", vec![Value::text("items")]),
+        },
+        InstructionKind::LoadJsonIntoList {
+            json: Value::text(r#"[1, "two"]"#),
+            name: "items".to_string(),
+        },
+        InstructionKind::Say {
+            text: list_op("ListItem", vec![Value::number(2.0), Value::text("items")]),
+        },
+        InstructionKind::Say {
+            text: list_op("ListLength", vec![Value::text("items")]),
+        },
+    ]);
+    project.actors[0].graph.lists[0].items = vec![ListItem::Number(7.0)];
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(
+        says(&effects),
+        vec!["[7.0]".to_string(), "two".to_string(), "2".to_string()]
+    );
+    assert!(errors(&effects).is_empty());
+}
+
+#[test]
+fn loading_what_isnt_json_reports_and_leaves_the_collection() {
+    let project = project_with_empty_dict(vec![
+        InstructionKind::LoadJsonIntoDict {
+            json: Value::text("[1, 2]"),
+            name: "save".to_string(),
+        },
+        InstructionKind::LoadJsonIntoList {
+            json: Value::text("nope"),
+            name: "missing".to_string(),
+        },
+        InstructionKind::LoadJsonIntoDict {
+            json: Value::text(r#"{"ok": true}"#),
+            name: "save".to_string(),
+        },
+        InstructionKind::Say {
+            text: dict_op("DictSize", vec![Value::text("save")]),
+        },
+    ]);
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(says(&effects), vec!["0".to_string()]);
+    assert_eq!(
+        errors(&effects),
+        vec![
+            "that text isn't a JSON object",
+            "that text isn't a JSON array",
+            "\"ok\" isn't a number or text",
+        ]
+    );
+}
+
+// ─── Sound ──────────────────────────────────────────────────────────────────
+
+fn play_sound(sound: &str, volume: f64, pitch: f64) -> InstructionKind {
+    InstructionKind::PlaySound {
+        sound: Value::text(sound),
+        volume: Value::number(volume),
+        pitch: Value::number(pitch),
+        loop_: false,
+        bus: SoundBus::Sfx,
+    }
+}
+
+fn plays(effects: &[Effect]) -> Vec<(String, f32, f32, bool, Option<String>)> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::PlaySound {
+                sound,
+                volume,
+                pitch,
+                loop_,
+                at,
+                ..
+            } => Some((sound.clone(), *volume, *pitch, *loop_, at.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn playing_a_sound_reports_a_voice_with_block_scale_volumes() {
+    let project = project_with(vec![started(vec![play_sound(
+        "assets/sounds/jump.wav",
+        50.0,
+        2.0,
+    )])]);
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(
+        plays(&effects).len(),
+        1,
+        "one play block is one voice: {effects:?}"
+    );
+    let (sound, volume, pitch, loop_, at) = plays(&effects)[0].clone();
+    assert_eq!(sound, "assets/sounds/jump.wav");
+    assert_eq!(volume, 0.5);
+    assert_eq!(pitch, 2.0);
+    assert!(!loop_);
+    assert_eq!(at, None);
+}
+
+#[test]
+fn playing_nothing_reports_instead() {
+    let project = project_with(vec![started(vec![play_sound("   ", 100.0, 1.0)])]);
+    let effects = Harness::started(&project).run(1);
+    assert!(plays(&effects).is_empty());
+    assert_eq!(errors(&effects), vec!["which sound should I play?"]);
+}
+
+#[test]
+fn playing_at_an_actor_resolves_it_and_a_missing_one_reports() {
+    let at = |target: &str| InstructionKind::PlaySoundAt {
+        sound: Value::text("assets/sounds/hum.wav"),
+        volume: Value::number(100.0),
+        pitch: Value::number(1.0),
+        loop_: true,
+        bus: SoundBus::Music,
+        target: Value::text(target),
+    };
+    let project = project_with_two(
+        vec![started(vec![at("Friend")])],
+        vec![started(vec![at("Nobody"), at("")])],
+    );
+    let effects = Harness::started(&project).run(1);
+    let friend = project.actors[1].id.clone();
+    assert!(
+        plays(&effects).iter().any(|(sound, _, _, looped, at)| {
+            sound == "assets/sounds/hum.wav" && *looped && *at == Some(friend.clone())
+        }),
+        "a named actor resolves to its id: {effects:?}"
+    );
+    assert!(
+        errors(&effects)
+            .iter()
+            .any(|message| message.contains("Nobody")),
+        "a missing target reports: {effects:?}"
+    );
+}
+
+#[test]
+fn stopping_and_bus_moves_come_through_as_effects() {
+    let project = project_with(vec![started(vec![
+        InstructionKind::StopSound {
+            sound: Value::text(""),
+        },
+        InstructionKind::SetSoundVolume {
+            sound: Value::text("assets/sounds/hum.wav"),
+            volume: Value::number(25.0),
+        },
+        InstructionKind::SetBusVolume {
+            bus: SoundBus::Music,
+            volume: Value::number(80.0),
+        },
+    ])]);
+    let effects = Harness::started(&project).run(1);
+    assert!(
+        matches!(
+            &effects[0],
+            Effect::StopSound { sound, .. } if sound.is_empty()
+        ),
+        "empty stops everything: {effects:?}"
+    );
+    assert!(
+        matches!(
+            &effects[1],
+            Effect::SetSoundVolume { sound, volume, .. }
+            if sound == "assets/sounds/hum.wav" && *volume == 0.25
+        ),
+        "volumes travel as gains: {effects:?}"
+    );
+    assert!(
+        matches!(
+            &effects[2],
+            Effect::SetBusVolume { bus, volume }
+            if *bus == SoundBus::Music && *volume == 0.8
+        ),
+        "buses move whole: {effects:?}"
+    );
+}
+
+#[test]
+fn retuning_nothing_reports_instead() {
+    let project = project_with(vec![started(vec![
+        InstructionKind::SetSoundVolume {
+            sound: Value::text(""),
+            volume: Value::number(10.0),
+        },
+        InstructionKind::SetSoundPitch {
+            sound: Value::text(""),
+            pitch: Value::number(2.0),
+        },
+    ])]);
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(
+        errors(&effects),
+        vec![
+            "which sound's volume should I set?",
+            "which sound's pitch should I set?",
+        ]
+    );
+}
+
+#[test]
+fn the_sound_reporters_read_the_published_snapshot() {
+    use blockloom_core::sense;
+    use std::collections::{HashMap, HashSet};
+
+    let mut sounds = HashSet::new();
+    sounds.insert("assets/sounds/jump.wav".to_string());
+    let mut bus_volumes = HashMap::new();
+    bus_volumes.insert(SoundBus::Music, 75.0);
+    sense::publish(Sensors {
+        sounds,
+        bus_volumes,
+        ..Default::default()
+    });
+
+    let playing = Value::op(
+        Op::from_name("SoundPlaying"),
+        vec![Value::text("assets/sounds/jump.wav")],
+    );
+    assert_eq!(playing.eval(), Ok(Evaluated::Bool(true)));
+    let quiet = Value::op(
+        Op::from_name("SoundPlaying"),
+        vec![Value::text("assets/sounds/other.wav")],
+    );
+    assert_eq!(quiet.eval(), Ok(Evaluated::Bool(false)));
+
+    let music = Value::op(Op::from_name("BusVolume"), vec![Value::text("Music")]);
+    assert_eq!(music.eval(), Ok(Evaluated::Number(75.0)));
+    let missing = Value::op(Op::from_name("BusVolume"), vec![Value::text("Nope")]);
+    assert!(missing.eval().is_err());
 }

@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::sound::SoundMixer;
+
 /// Which dimension a project runs in. Blocks are written once and mean the
 /// obvious thing in both: a Z coordinate is simply ignored in `TwoD`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -388,6 +390,10 @@ pub struct World {
     pub speech_bubble: SpeechBubbleStyle,
     #[serde(default)]
     pub lighting: Lighting,
+    /// The saved mix: one gain per bus. What a `play sound` block's volumes
+    /// scale against, and what the project settings dialog edits.
+    #[serde(default)]
+    pub sound: SoundMixer,
 }
 
 fn default_background() -> String {
@@ -415,6 +421,7 @@ impl Default for World {
             camera: Camera::default(),
             speech_bubble: SpeechBubbleStyle::default(),
             lighting: Lighting::default(),
+            sound: SoundMixer::default(),
         }
     }
 }

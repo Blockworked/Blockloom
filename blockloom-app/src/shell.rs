@@ -274,6 +274,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             required: true,
         }],
     },
+    CommandSpec {
+        name: "set-sound-mixer",
+        cmd: "set_sound_mixer",
+        aliases: &["set_sound_mixer"],
+        summary: "Set the saved mix: master, music and effects gains, linear 0-2.",
+        args: &[ArgSpec {
+            name: "mixer",
+            ty: "object",
+            required: true,
+        }],
+    },
     // ── Actors ────────────────────────────────────────────────────────────
     CommandSpec {
         name: "select-actor",
@@ -1225,6 +1236,99 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         cmd: "set_list_editor_state",
         aliases: &["set_list_editor_state"],
         summary: "Show or hide a list's canvas editor and where it sits.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "visible",
+                ty: "bool",
+                required: true,
+            },
+            ArgSpec {
+                name: "x",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "y",
+                ty: "number",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "create-dict",
+        cmd: "create_dict",
+        aliases: &["create_dict"],
+        summary: "Make a global or actor-scoped dict.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "scope",
+                ty: "actor|global",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "rename-dict",
+        cmd: "rename_dict",
+        aliases: &["rename_dict"],
+        summary: "Rename a dict, wherever it lives.",
+        args: &[
+            ArgSpec {
+                name: "oldName",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "newName",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "delete-dict",
+        cmd: "delete_dict",
+        aliases: &["delete_dict"],
+        summary: "Delete a dict, wherever it lives.",
+        args: &[ArgSpec {
+            name: "name",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-dict-entries",
+        cmd: "set_dict_entries",
+        aliases: &["set_dict_entries"],
+        summary: "Replace a dict's entries with literal keys and number/text values.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "entries",
+                ty: "[{key, value: {kind: Number|Text, value}}]",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "set-dict-editor-state",
+        cmd: "set_dict_editor_state",
+        aliases: &["set_dict_editor_state"],
+        summary: "Show or hide a dict's canvas editor and where it sits.",
         args: &[
             ArgSpec {
                 name: "name",

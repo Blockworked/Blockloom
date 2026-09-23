@@ -17,7 +17,7 @@ mod program;
 
 pub use effect::Effect;
 pub use exec::{
-    ActorLists, ActorVariables, Event, ListValues, Lists, MAX_REPORTER_DEPTH, STEP_BUDGET,
-    VariableSnapshot, VariableValues, Variables, Vm,
+    ActorDicts, ActorLists, ActorVariables, DictValues, Dicts, Event, ListValues, Lists,
+    MAX_REPORTER_DEPTH, STEP_BUDGET, VariableSnapshot, VariableValues, Variables, Vm,
 };
 pub use program::{Action, Entry, LoopKind, Program, ShowElement, Step, Trigger, compile};
