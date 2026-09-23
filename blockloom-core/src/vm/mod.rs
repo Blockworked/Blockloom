@@ -20,4 +20,6 @@ pub use exec::{
     ActorDicts, ActorLists, ActorVariables, DictValues, Dicts, Event, ListValues, Lists,
     MAX_REPORTER_DEPTH, STEP_BUDGET, VariableSnapshot, VariableValues, Variables, Vm,
 };
-pub use program::{Action, Entry, LoopKind, Program, ShowElement, Step, Trigger, compile};
+pub use program::{
+    Action, Entry, LoopKind, Program, ShowElement, Step, Trigger, compile, temp_index, temp_var,
+};

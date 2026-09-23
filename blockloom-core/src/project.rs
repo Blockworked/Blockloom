@@ -505,6 +505,11 @@ impl Project {
         if trimmed.is_empty() {
             return Err("Variable name can't be empty".to_string());
         }
+        // `~` opens a runtime slot (`~t0` holds a reporter's value while it
+        // suspends), so no project variable may start with one.
+        if trimmed.starts_with('~') {
+            return Err("Variable name can't start with \"~\"".to_string());
+        }
         if self.globals.iter().any(|v| v.name == trimmed) {
             return Err(format!("A variable named \"{trimmed}\" already exists"));
         }
@@ -520,6 +525,9 @@ impl Project {
         let trimmed = new.trim().to_string();
         if trimmed.is_empty() {
             return Err("Variable name can't be empty".to_string());
+        }
+        if trimmed.starts_with('~') {
+            return Err("Variable name can't start with \"~\"".to_string());
         }
         if trimmed != old && self.globals.iter().any(|v| v.name == trimmed) {
             return Err(format!("A variable named \"{trimmed}\" already exists"));

@@ -380,11 +380,13 @@ in a flat slot the entry table sized and an `escape loop` is just a jump.
 One function covers a whole actor rather than one strand, because every strand
 and every custom block body live in one step list with one set of numbers, and
 a custom block called as a statement is a jump into somebody else's region with
-a return address pushed. The VM's `immediate` flag - a reporter body run to
-completion in place - becomes a second function over the same steps, with its
-own state, so a reporter may call another or itself and the strand's program
-counter never moves. Each actor is therefore emitted at most twice, however
-many custom blocks it has.
+a return address pushed. A reporter that can wait is an `Invoke` step with its
+value in a temp slot instead: the caller suspends while the body runs, so a
+`wait` in one sleeps the strand that asked. A reporter that cannot wait still
+runs to completion in place - the VM's `immediate` flag becomes a second
+function over the same steps, with its own state, so one of those may call
+another and the strand's program counter never moves. Each actor is therefore
+emitted at most twice, however many custom blocks it has.
 
 The rule it has to keep is that a compiled program and the VM ask the world for
 exactly the same things in the same order, on the same tick - including the
@@ -395,12 +397,16 @@ prints what each one asked for and which tick it asked on, and compares line
 for line. Add a block to the emitter and add a case there, or the two halves
 drift and a compiled game stops meaning what the played one meant.
 
-The one difference on purpose is the VM's per-tick step budget, which compiled
-strands don't count against. Every back edge belongs to a loop and every loop
-yields, so a compiled strand can't spin; the budget only catches ten thousand
-straight-line blocks in a row, and a counter on every block would cost what
-compiling was for. A reporter body does count, since nothing in one yields and
-the budget is the only thing that ends a runaway.
+The one difference on purpose is the VM's per-tick step budget, which a compiled
+strand only counts when it has to. Every back edge belongs to a loop and every
+loop yields, so a plain strand can't spin; the budget only ever catches ten
+thousand straight-line blocks in a row, and paying for a counter on every block
+to match it there would cost what compiling was for. A reporter body does
+count, since nothing in one yields and the budget is all that ends a runaway
+one. A recursive statement block is the other: a runaway there would spin
+inside a single tick where the VM hands the frame back, so one of those counts
+too. Each live call keeps its own loop counters and temp slots, saved and
+restored across the boundary, which is what lets a block call itself.
 
 `codegen/runtime.rs` is the support code a generated program is built on - the
 value type, the operators over it, the `State` a suspended strand is kept in,
@@ -420,13 +426,9 @@ call - is hoisted into a `let` ahead of the expression, because the VM resolves
 a whole tree before one operator runs: a reporter on the side `and` never reads
 still runs, and still does whatever it does to the world.
 
-What it won't compile is a custom block that can reach itself through statement
-calls - its loops would share one set of counters where the VM gives every
-invocation a frame. `Unsupported` refuses the whole project rather than
-emitting half of one, so whatever calls it can fall back to the VM knowing what
-sent it there. Nothing calls it yet: there is no scheduler on this side and no
-home for variables both halves can reach, so a build still ships the document
-and the runtime still plays it.
+`Unsupported` names the one thing this still will not do, so a build can fall
+back to the VM knowing what sent it there. Nothing uses it right now: every
+block compiles, so a build ships native logic and the runtime plays it.
 
 ### Frontend (`ui/`)
 
@@ -488,5 +490,3 @@ lands.
 - `say` shows as a camera-projected speech bubble over its actor in both 2D and
   3D, and is also recorded in the editor log. Bubble styling is saved on the
   world with an optional font asset path, which no inspector row exposes yet.
-- A reporter-shaped custom block runs to completion in place, so a `wait` inside
-  one passes straight through.

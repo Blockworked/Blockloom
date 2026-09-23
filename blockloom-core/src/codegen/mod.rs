@@ -24,7 +24,8 @@
 //! iteration of a loop - is an arm of its own that picks up where it left
 //! off. Loop nesting is known here rather than at run time, so a `repeat`
 //! keeps its tally in a flat slot and a `break` is a jump, where the VM
-//! needs a frame stack.
+//! needs a frame stack. Each live call keeps its own slots, saved and
+//! restored across the boundary, which is what lets a block call itself.
 //!
 //! One function covers a whole actor rather than one strand, because every
 //! strand and every custom block body live in one step list with one set of
@@ -34,12 +35,14 @@
 //! each actor is emitted at most twice however many reporters it has.
 //!
 //! The one place the two deliberately part company is the VM's per-tick step
-//! budget, which a compiled strand has no counter for. Every back edge is a
-//! loop's, and every loop yields, so a compiled strand can't spin - the
-//! budget only ever catches a strand of ten thousand straight-line blocks,
+//! budget, which a compiled strand only counts when it has to. Every back
+//! edge is a loop's, and every loop yields, so a compiled strand can't spin -
+//! the budget only ever catches a strand of ten thousand straight-line blocks,
 //! and paying for a counter on every block to match it there would cost the
 //! whole point of compiling. A reporter body is the exception and does count,
 //! since nothing in it yields and the budget is all that ends a runaway one.
+//! A recursive statement block is the other: a runaway there would spin inside
+//! a single tick where the VM hands the frame back, so one of those counts too.
 //!
 //! An actor is a value rather than a constant here: the emitted function is
 //! handed the id it is running under, so one function covers an authored
@@ -48,10 +51,6 @@
 //! the same table the VM keeps, for the same reason: `delete` names an actor
 //! the way every block does, and has to be answerable before the host has
 //! done anything about it.
-//!
-//! What it won't compile is a custom block that can reach itself through
-//! statement calls: [`Unsupported`] refuses the project rather than emitting
-//! half of it, so a build can fall back to the VM knowing exactly why.
 
 // Half of this is only ever used by the programs it is pasted into.
 #[allow(dead_code)]
@@ -384,6 +383,10 @@ struct Canvas<'a> {
     /// Whether anything in the project deletes an actor, which is what makes
     /// the after-every-act check worth emitting.
     deletes: bool,
+    /// Whether a custom block can reach itself through statement calls. One
+    /// of those needs a step budget, or a runaway would spin inside a single
+    /// tick where the VM would hand the frame back.
+    recursive: bool,
 }
 
 impl<'a> Canvas<'a> {
@@ -399,7 +402,7 @@ impl<'a> Canvas<'a> {
             .map(|def| (def.id.as_str(), def.input_names().collect()))
             .collect();
         let owner = owners(program);
-        refuse_recursion(program, &owner)?;
+        let recursive = has_recursion(program, &owner);
         Ok(Self {
             index,
             program,
@@ -407,6 +410,7 @@ impl<'a> Canvas<'a> {
             owner,
             plan: Plan::of(program),
             deletes,
+            recursive,
         })
     }
 
@@ -431,13 +435,11 @@ fn owners(program: &Program) -> HashMap<usize, &str> {
     owner
 }
 
-/// Refuses a custom block that can reach itself through statement calls.
-///
-/// Its loops would share one set of counters between the outer call and the
-/// inner one, where the VM gives every invocation a frame of its own.
-/// Reporters may recurse all they like: each runs on a state of its own, the
-/// same way the VM builds a fresh script for one.
-fn refuse_recursion(program: &Program, owner: &HashMap<usize, &str>) -> Emit<()> {
+/// True when a custom block can reach itself through statement calls. Each
+/// invocation keeps its own loop counters now, so this is allowed - but one
+/// of those needs a step budget, or a runaway would spin inside a single tick
+/// where the VM would hand the frame back.
+fn has_recursion(program: &Program, owner: &HashMap<usize, &str>) -> bool {
     let mut calls: HashMap<&str, Vec<&str>> = HashMap::new();
     for (pc, step) in program.steps.iter().enumerate() {
         if let (Step::Call { block_id, .. }, Some(from)) = (step, owner.get(&pc)) {
@@ -451,7 +453,7 @@ fn refuse_recursion(program: &Program, owner: &HashMap<usize, &str>) -> Emit<()>
         while let Some(block) = stack.pop() {
             for &next in calls.get(block).into_iter().flatten() {
                 if next == start {
-                    return Err(Unsupported::new("a custom block that calls itself"));
+                    return true;
                 }
                 if seen.insert(next) {
                     stack.push(next);
@@ -459,7 +461,7 @@ fn refuse_recursion(program: &Program, owner: &HashMap<usize, &str>) -> Emit<()>
             }
         }
     }
-    Ok(())
+    false
 }
 
 /// Where each arm begins, which loop a `break` leaves, and which slot a
@@ -509,14 +511,16 @@ impl Plan {
                 }
                 // Each of these hands the frame back, or can be jumped past.
                 // A `Call` is here for its return address, which has to be an
-                // arm the callee's `End` can land on.
+                // arm the callee's `End` can land on. An `Invoke` is the same:
+                // its callee may wait, so what follows has to be resumable.
                 Step::Wait(_)
                 | Step::Glide { .. }
                 | Step::Break
                 | Step::Continue
                 | Step::Return(_)
                 | Step::StopAll
-                | Step::Call { .. } => {
+                | Step::Call { .. }
+                | Step::Invoke { .. } => {
                     leaders.insert(pc + 1);
                 }
                 // Re-checked from the top every frame until it holds, so it
@@ -639,15 +643,30 @@ impl<'a> Pass<'a> {
         } else {
             // The actor is read off the state rather than written in: one
             // emitted function runs for the authored actor and for every
-            // clone of it.
-            format!(
-                "fn actor_{index}(h: &mut dyn Host, s: &mut State, actors: &mut Actors) {{\n    \
-                 let me = Rc::clone(&s.me);\n    \
-                 if !s.resume() {{\n        return;\n    }}\n    \
-                 loop {{\n        match s.pc {{\n{arms}            \
-                 _ => {{\n                s.finish();\n                return;\n            }}\n        \
-                 }}\n    }}\n}}\n\n"
-            )
+            // clone of it. A recursive block gets the same step budget the VM
+            // runs under, or a runaway would spin here where the VM yields.
+            if self.canvas.recursive {
+                format!(
+                    "fn actor_{index}(h: &mut dyn Host, s: &mut State, actors: &mut Actors) {{\n    \
+                     let me = Rc::clone(&s.me);\n    \
+                     if !s.resume() {{\n        return;\n    }}\n    \
+                     let mut budget = STEP_BUDGET;\n    \
+                     loop {{\n        \
+                     if budget == 0 {{\n            return;\n        }}\n        \
+                     budget -= 1;\n        match s.pc {{\n{arms}            \
+                     _ => {{\n                s.finish();\n                return;\n            }}\n        \
+                     }}\n    }}\n}}\n\n"
+                )
+            } else {
+                format!(
+                    "fn actor_{index}(h: &mut dyn Host, s: &mut State, actors: &mut Actors) {{\n    \
+                     let me = Rc::clone(&s.me);\n    \
+                     if !s.resume() {{\n        return;\n    }}\n    \
+                     loop {{\n        match s.pc {{\n{arms}            \
+                     _ => {{\n                s.finish();\n                return;\n            }}\n        \
+                     }}\n    }}\n}}\n\n"
+                )
+            }
         })
     }
 
@@ -759,6 +778,38 @@ impl<'a> Pass<'a> {
                     }
                 }
             }
+            Step::Invoke {
+                block_id,
+                args,
+                temp,
+            } => {
+                let temp = *temp;
+                let target = self.canvas.program.blocks.get(block_id.as_str()).copied();
+                match target {
+                    None => {
+                        format!("{PAD}s.store_temp({temp}, Val::Num(0.0));\n{PAD}s.pc = {next};\n")
+                    }
+                    Some(start) => {
+                        let bound = self.canvas.bound(block_id);
+                        let mut built = self.arguments(args, bound)?;
+                        built = format!("vec![{built}]");
+                        if self.immediate {
+                            // Never reached: a suspendable call never survives
+                            // lifting inside a value, so an immediate body has
+                            // no `Invoke` of its own to run.
+                            format!(
+                                "{PAD}s.store_temp({temp}, Val::Num(0.0));\n{PAD}s.pc = {next};\n"
+                            )
+                        } else {
+                            format!(
+                                "{PAD}let args = {built};\n\
+                                 {PAD}s.enter_invoke({next}, args, {temp});\n\
+                                 {PAD}s.pc = {start};\n"
+                            )
+                        }
+                    }
+                }
+            }
             // The slot is evaluated whoever is listening, so a bad one still
             // reports itself even when the value goes nowhere.
             Step::Return(value) => {
@@ -800,7 +851,8 @@ impl<'a> Pass<'a> {
     }
 
     /// Leaving a custom block: back to whoever called it, or out of here with
-    /// `result` when what called it was a reporter - or nothing at all.
+    /// `result` when what called it was a reporter - or nothing at all. An
+    /// `Invoke` caller gets the value in its temp slot on the way home.
     fn leave(&self, result: &str) -> String {
         let end = if self.immediate {
             format!("{PAD}    None => return {result},\n")
@@ -809,7 +861,12 @@ impl<'a> Pass<'a> {
                 "{PAD}    None => {{\n{PAD}        s.finish();\n{PAD}        return;\n{PAD}    }}\n"
             )
         };
-        format!("{PAD}match s.resume_at() {{\n{PAD}    Some(pc) => s.pc = pc,\n{end}{PAD}}}\n")
+        let call = if !self.immediate && result != "Val::Num(0.0)" {
+            format!("s.return_with({result})")
+        } else {
+            "s.resume_at()".to_string()
+        };
+        format!("{PAD}match {call} {{\n{PAD}    Some(pc) => s.pc = pc,\n{end}{PAD}}}\n")
     }
 
     /// A call's arguments, evaluated left to right and only as far as the
@@ -1312,8 +1369,13 @@ impl<'a> Pass<'a> {
             Value::Text { value } => format!("Ok(Val::Text({}.to_string()))", literal(value)),
             Value::Bool => "Ok(Val::Bool(false))".to_string(),
             Value::Var { name } => {
-                let read = format!("h.variable(&me, {})", literal(name));
-                format!("Ok({})", self.bind(prelude, read))
+                if let Some(index) = crate::vm::temp_index(name) {
+                    let read = format!("s.temp({index})");
+                    format!("Ok({})", self.bind(prelude, read))
+                } else {
+                    let read = format!("h.variable(&me, {})", literal(name));
+                    format!("Ok({})", self.bind(prelude, read))
+                }
             }
             Value::Param { name } => {
                 // Bound by position, because that is how the VM binds it. A

@@ -368,6 +368,61 @@ fn a_command_block_runs_inline_and_comes_back() {
 }
 
 #[test]
+fn a_wait_inside_a_reporter_suspends_its_caller() {
+    let block = BlockDef {
+        id: "b1".to_string(),
+        pieces: vec![BlockPiece::Label {
+            id: "l".to_string(),
+            text: "slow".to_string(),
+        }],
+        shape: BlockShape::ReturnsValue,
+        color: "#4C97FF".to_string(),
+    };
+    let call = Value::Call {
+        block_id: "b1".to_string(),
+        args: vec![],
+        branches: Vec::new(),
+        saved: Box::new(Value::number(0.0)),
+    };
+    let mut project = project_with(vec![
+        started(vec![InstructionKind::Say { text: call }, say("after")]),
+        Strand::with_instructions(
+            0,
+            0,
+            vec![
+                ins(InstructionKind::BlockHeader {
+                    block_id: "b1".to_string(),
+                }),
+                ins(say("before the wait")),
+                ins(InstructionKind::Wait {
+                    duration: Value::number(0.25),
+                }),
+                ins(say("after the wait")),
+                ins(InstructionKind::Return {
+                    value: Value::text("done"),
+                }),
+            ],
+        ),
+    ]);
+    project.actors[0].graph.block_defs.push(block);
+    let mut vm = Harness::started(&project);
+    // The reporter says on its way in, then sleeps with its caller.
+    assert_eq!(says(&vm.run(1)), vec!["before the wait".to_string()]);
+    assert!(says(&vm.run(2)).is_empty());
+    // Waking up runs the rest in order: the reporter's own say, then the
+    // caller's two, all on the same tick the wait finishes on.
+    assert_eq!(
+        says(&vm.run(3)),
+        vec![
+            "after the wait".to_string(),
+            "done".to_string(),
+            "after".to_string()
+        ]
+    );
+    assert!(!vm.vm.is_running());
+}
+
+#[test]
 fn stop_all_ends_every_script_including_the_one_that_asked() {
     let project = project_with(vec![
         started(vec![InstructionKind::Forever {

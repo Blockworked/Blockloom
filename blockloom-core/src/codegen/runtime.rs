@@ -745,10 +745,17 @@ pub const MAX_REPORTER_DEPTH: usize = 32;
 pub const STEP_BUDGET: usize = 10_000;
 
 /// One custom block being run as a statement: where to carry on afterwards,
-/// and what its inputs were bound to.
+/// what its inputs were bound to, and the caller's loop tallies. Each
+/// invocation keeps its own counters, the way the VM gives every call a frame
+/// of its own, so a block that calls itself doesn't trample its caller.
 pub struct CallFrame {
     return_pc: usize,
     params: Vec<Val>,
+    counters: Vec<i64>,
+    /// The caller's reporter temps, restored when this call leaves.
+    temps: Vec<Val>,
+    /// Where an `Invoke` stores its value in the caller, if anywhere.
+    temp: Option<usize>,
 }
 
 /// One run of one strand: where it is, and what it was in the middle of.
@@ -772,9 +779,12 @@ pub struct State {
     pub ui: bool,
     /// Iterations left, one slot per `repeat` in the actor. Loop nesting is
     /// known when the code is emitted, so this is a flat array rather than
-    /// the VM's frame stack. A custom block that could call itself is refused
-    /// at compile time, which is what makes one slot per loop enough.
+    /// the VM's frame stack - but one array per live call, saved and restored
+    /// across the boundary, which is what lets a block call itself.
     counters: Vec<i64>,
+    /// Reporter results waiting for the step that asked for them, one array
+    /// per live call for the same reason.
+    temps: Vec<Val>,
     /// Custom blocks entered as statements, innermost last.
     calls: Vec<CallFrame>,
 }
@@ -793,21 +803,65 @@ impl State {
             stopping: false,
             ui: false,
             counters: vec![0; counters],
+            temps: Vec::new(),
             calls: Vec::new(),
         }
     }
 
     pub fn enter_call(&mut self, return_pc: usize, params: Vec<Val>) {
-        self.calls.push(CallFrame { return_pc, params });
+        self.enter_call_with(return_pc, params, None);
+    }
+
+    /// The same, for an `Invoke`: `temp` is where the value lands in the
+    /// caller when the body returns or falls off its end.
+    pub fn enter_invoke(&mut self, return_pc: usize, params: Vec<Val>, temp: usize) {
+        self.enter_call_with(return_pc, params, Some(temp));
+    }
+
+    fn enter_call_with(&mut self, return_pc: usize, params: Vec<Val>, temp: Option<usize>) {
+        let width = self.counters.len();
+        let saved_counters = std::mem::replace(&mut self.counters, vec![0; width]);
+        let saved_temps = std::mem::take(&mut self.temps);
+        self.calls.push(CallFrame {
+            return_pc,
+            params,
+            counters: saved_counters,
+            temps: saved_temps,
+            temp,
+        });
     }
 
     /// Leaves the innermost custom block, answering the step to carry on at.
     /// `None` ends the run instead: either nothing called this, or what did
     /// was a reporter waiting on the value.
     pub fn resume_at(&mut self) -> Option<usize> {
+        self.leave_with(None)
+    }
+
+    /// The same, for a body that returns a value: an `Invoke` stores it in the
+    /// caller's temp slot on its way home.
+    pub fn return_with(&mut self, result: Val) -> Option<usize> {
+        self.leave_with(Some(result))
+    }
+
+    fn leave_with(&mut self, result: Option<Val>) -> Option<usize> {
         match self.calls.pop() {
-            Some(frame) if frame.return_pc != Self::RETURN => Some(frame.return_pc),
-            _ => None,
+            Some(frame) if frame.return_pc != Self::RETURN => {
+                self.counters = frame.counters;
+                self.temps = frame.temps;
+                if let (Some(temp), Some(value)) = (frame.temp, result) {
+                    self.store_temp(temp, value);
+                } else if let Some(temp) = frame.temp {
+                    self.store_temp(temp, Val::Num(0.0));
+                }
+                Some(frame.return_pc)
+            }
+            Some(frame) => {
+                self.counters = frame.counters;
+                self.temps = frame.temps;
+                None
+            }
+            None => None,
         }
     }
 
@@ -819,6 +873,19 @@ impl State {
             .and_then(|frame| frame.params.get(index))
             .cloned()
             .unwrap_or(Val::Num(0.0))
+    }
+
+    /// One of this invocation's reporter temps. Anything not yet invoked reads
+    /// as zero, as an unbound name does in the VM.
+    pub fn temp(&self, index: usize) -> Val {
+        self.temps.get(index).cloned().unwrap_or(Val::Num(0.0))
+    }
+
+    pub fn store_temp(&mut self, index: usize, value: Val) {
+        if self.temps.len() <= index {
+            self.temps.resize(index + 1, Val::Num(0.0));
+        }
+        self.temps[index] = value;
     }
 
     /// Whether there is anything to do this frame. A sleeping strand wakes on

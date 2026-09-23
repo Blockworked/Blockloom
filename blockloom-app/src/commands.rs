@@ -2175,6 +2175,11 @@ pub(crate) fn create_variable(
     name: String,
     scope: String,
 ) -> Result<(), String> {
+    // `~t0` holds a suspendable reporter's value while it sleeps, so no
+    // project variable may take the prefix.
+    if name.trim().starts_with('~') {
+        return Err("Variable name can't start with \"~\"".to_string());
+    }
     let mut s = lock(state)?;
     push_undo(&mut s);
     let global = scope == "global";
@@ -2200,6 +2205,9 @@ pub(crate) fn rename_variable(
     old_name: String,
     new_name: String,
 ) -> Result<(), String> {
+    if new_name.trim().starts_with('~') {
+        return Err("Variable name can't start with \"~\"".to_string());
+    }
     let mut s = lock(state)?;
     push_undo(&mut s);
     let owned_by_actor =

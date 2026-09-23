@@ -2751,42 +2751,50 @@ fn a_reporter_runs_even_on_the_side_a_short_circuit_never_reads() {
     );
 }
 
-/// Nothing in a reporter suspends: it runs to completion where it stands, so
-/// a `wait` in one passes straight through and a loop costs no ticks at all.
+/// A `wait` inside a reporter suspends its caller: the strand sleeps as long,
+/// and a loop in one costs its ticks the way any other loop does.
 #[test]
-fn nothing_inside_a_reporter_suspends() {
+fn a_wait_inside_a_reporter_suspends_its_caller() {
     assert_same_blocks(
-        "immediate",
+        "suspendable",
         vec![vec![
             K::Say {
                 text: call("b1", vec![]),
             },
             K::Say {
-                text: Value::text("same tick"),
+                text: Value::text("after"),
             },
         ]],
         vec![block(
             "b1",
             &[],
             vec![
+                K::Say {
+                    text: Value::text("round one"),
+                },
                 K::Wait {
-                    duration: number(5.0),
+                    duration: number(0.25),
+                },
+                K::Say {
+                    text: Value::text("round two"),
                 },
                 K::Repeat {
-                    count: number(3.0),
-                    body: vec![Instruction::new(K::Move { steps: number(1.0) })],
+                    count: number(2.0),
+                    body: vec![Instruction::new(K::Say {
+                        text: Value::text("loop"),
+                    })],
                 },
                 K::WaitUntil {
-                    condition: op("KeyDown", vec![Value::text("escape")]),
+                    condition: op("KeyDown", vec![Value::text("space")]),
                 },
                 K::Glide {
-                    seconds: number(2.0),
+                    seconds: number(0.2),
                     x: number(1.0),
                     y: number(2.0),
                     z: number(3.0),
                 },
                 K::Return {
-                    value: Value::text("straight through"),
+                    value: Value::text("done"),
                 },
             ],
         )],
@@ -2982,20 +2990,39 @@ fn sensing_on_both_sides_of_a_short_circuit_agrees() {
 }
 
 #[test]
-fn a_project_the_compiler_cant_do_is_refused_by_name() {
-    // Two blocks that call each other as statements. Their loops would share
-    // one set of counters where the VM gives every invocation a frame.
-    let project = project_with_blocks(
-        vec![vec![calling("b1", vec![])]],
-        vec![
-            block("b1", &[], vec![calling("b2", vec![])]),
-            block("b2", &[], vec![calling("b1", vec![])]),
-        ],
+fn recursive_statement_blocks_keep_their_own_loop_tallies() {
+    // Two blocks that call each other as statements. Each invocation keeps its
+    // own counters now, the way the VM gives every call a frame.
+    assert_same_blocks(
+        "recursivestatement",
+        vec![vec![
+            calling("countdown", vec![number(3.0)]),
+            K::Say {
+                text: Value::text("done"),
+            },
+        ]],
+        vec![block(
+            "countdown",
+            &["n"],
+            vec![
+                K::Say { text: param("n") },
+                K::If {
+                    condition: op("Gt", vec![param("n"), number(0.0)]),
+                    body: vec![Instruction::new(calling(
+                        "countdown",
+                        vec![op("Sub", vec![param("n"), number(1.0)])],
+                    ))],
+                },
+                K::Repeat {
+                    count: number(2.0),
+                    body: vec![Instruction::new(K::Say {
+                        text: op("Join", vec![Value::text("round "), param("n")]),
+                    })],
+                },
+            ],
+        )],
         &[],
     );
-    let error = blockloom_core::codegen::compile(&project)
-        .expect_err("a block that can reach itself is refused");
-    assert_eq!(error.what, "a custom block that calls itself");
 }
 
 /// A statement call inside a reporter's body. It runs on the reporter's own

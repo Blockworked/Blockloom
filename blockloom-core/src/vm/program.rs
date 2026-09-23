@@ -12,7 +12,7 @@ use crate::scene::{Axis, BodyKind};
 use crate::sound::SoundBus;
 use crate::ui::{UiAnchor, UiKind, UiProp, UiTheme};
 use crate::value::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// What starts a script.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -312,11 +312,32 @@ pub enum Step {
         block_id: String,
         args: Vec<Value>,
     },
+    /// Runs a reporter-shaped custom block that can suspend, storing its
+    /// value in the strand's `temp` slot. The args are already free of any
+    /// suspendable call, so binding them never suspends - the body does.
+    Invoke {
+        block_id: String,
+        args: Vec<Value>,
+        temp: usize,
+    },
     Return(Value),
     /// `stop all`.
     StopAll,
     /// End of a body: return from a call, or finish the script.
     End,
+}
+
+/// A reporter result slot, as a variable read. The `~` prefix is reserved for
+/// the runtime: the editor never writes it, so no project variable collides.
+pub fn temp_var(temp: usize) -> Value {
+    Value::Var {
+        name: format!("~t{temp}"),
+    }
+}
+
+/// True for a `~tN` slot made by [`temp_var`].
+pub fn temp_index(name: &str) -> Option<usize> {
+    name.strip_prefix("~t")?.parse().ok()
 }
 
 /// An actor's whole canvas, compiled.
@@ -379,6 +400,14 @@ pub fn compile(graph: &ActorGraph) -> Program {
             (_, None) => {}
         }
     }
+    // A reporter that waits suspends its caller, so its calls become `Invoke`
+    // steps with the value in a temp slot - the same program both halves run.
+    let bounds: HashMap<String, usize> = graph
+        .block_defs
+        .iter()
+        .map(|def| (def.id.clone(), def.input_names().count()))
+        .collect();
+    lift_suspendable_calls(&mut program, &bounds);
     program
 }
 
@@ -386,6 +415,624 @@ fn emit_body(steps: &mut Vec<Step>, body: &[Instruction]) {
     for instruction in body {
         emit(steps, &instruction.kind);
     }
+}
+
+// ─── Suspendable reporters ────────────────────────────────────────────────
+// A reporter-shaped custom block that waits suspends its caller, so a call to
+// one can't run to completion in place. Its calls become `Invoke` steps with
+// the value in a temp slot, in the order `resolve` would have walked them.
+
+fn step_is_suspending(step: &Step) -> bool {
+    matches!(
+        step,
+        Step::Wait(_) | Step::WaitUntil(_) | Step::Glide { .. }
+    )
+}
+
+fn calls_in_value(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::Call { block_id, args, .. } => {
+            out.push(block_id.clone());
+            for arg in args {
+                calls_in_value(arg, out);
+            }
+        }
+        Value::Op { args, .. } => {
+            for arg in args {
+                calls_in_value(arg, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn calls_in_step(step: &Step) -> Vec<String> {
+    let mut out = Vec::new();
+    match step {
+        Step::Action(action) => {
+            for value in action_values(action) {
+                calls_in_value(value, &mut out);
+            }
+        }
+        Step::JumpUnless { condition, .. } => calls_in_value(condition, &mut out),
+        Step::LoopBegin { kind, .. } => match kind {
+            LoopKind::Repeat(count) => calls_in_value(count, &mut out),
+            LoopKind::While(condition) => calls_in_value(condition, &mut out),
+            LoopKind::Forever => {}
+        },
+        Step::Wait(duration) => calls_in_value(duration, &mut out),
+        Step::WaitUntil(condition) => calls_in_value(condition, &mut out),
+        Step::Glide { seconds, target } => {
+            calls_in_value(seconds, &mut out);
+            for value in target {
+                calls_in_value(value, &mut out);
+            }
+        }
+        Step::Call { block_id, args } => {
+            out.push(block_id.clone());
+            for arg in args {
+                calls_in_value(arg, &mut out);
+            }
+        }
+        Step::Invoke { block_id, args, .. } => {
+            out.push(block_id.clone());
+            for arg in args {
+                calls_in_value(arg, &mut out);
+            }
+        }
+        Step::Return(value) => calls_in_value(value, &mut out),
+        _ => {}
+    }
+    out
+}
+
+// Every value slot a step reads, in the order the VM evaluates them.
+fn action_values(action: &Action) -> Vec<&Value> {
+    match action {
+        Action::Move(value)
+        | Action::SetScale(value)
+        | Action::Say(value)
+        | Action::SetColor(value)
+        | Action::StopSound { sound: value }
+        | Action::DeleteElement(value)
+        | Action::SetFocus(value)
+        | Action::SetParent(value)
+        | Action::DeleteActor(value) => vec![value],
+        Action::GoTo(target)
+        | Action::ApplyImpulse(target)
+        | Action::SetVelocity(target)
+        | Action::SetGravity(target) => target.iter().collect(),
+        Action::NavigateTo { target, speed } => {
+            let mut values: Vec<&Value> = target.iter().collect();
+            values.push(speed);
+            values
+        }
+        Action::ChangePosition { by, .. }
+        | Action::Turn { degrees: by, .. }
+        | Action::SetRotation { degrees: by, .. }
+        | Action::SetDensity(by)
+        | Action::SetMass(by)
+        | Action::SetCameraPitch(by)
+        | Action::SetCameraFov(by) => vec![by],
+        Action::PlaySound {
+            sound,
+            volume,
+            pitch,
+            ..
+        } => vec![sound, volume, pitch],
+        Action::PlaySoundAt {
+            sound,
+            volume,
+            pitch,
+            target,
+            ..
+        } => vec![sound, volume, pitch, target],
+        Action::SetSoundVolume { sound, volume } => vec![sound, volume],
+        Action::SetSoundPitch { sound, pitch } => vec![sound, pitch],
+        Action::SetBusVolume { volume, .. } => vec![volume],
+        Action::SetComponentField { value, .. } => vec![value],
+        Action::ShowElement(spec) => {
+            let mut values = vec![&spec.id, &spec.content];
+            if let Some([low, high]) = &spec.range {
+                values.push(low);
+                values.push(high);
+            }
+            if let Some(value) = &spec.value {
+                values.push(value);
+            }
+            values.push(&spec.offset[0]);
+            values.push(&spec.offset[1]);
+            values.push(&spec.size[0]);
+            values.push(&spec.size[1]);
+            values.push(&spec.parent);
+            values
+        }
+        Action::SetUiProp { id, value, .. } => vec![id, value],
+        Action::HideElement { id, .. } => vec![id],
+        Action::CreateActor { name, position } => {
+            let mut values = vec![name];
+            values.extend(position.iter());
+            values
+        }
+        Action::RumbleGamepad { strength, duration } => vec![strength, duration],
+        Action::BindAction { action, binding } => vec![action, binding],
+        Action::SetVariable { value, .. } | Action::ChangeVariable { value, .. } => vec![value],
+        Action::AddToList { value, .. } => vec![value],
+        Action::DeleteOfList { index, .. } => vec![index],
+        Action::ShiftList { amount, .. } => vec![amount],
+        Action::InsertIntoList { value, index, .. } => vec![value, index],
+        Action::ReplaceItemOfList { index, value, .. } => vec![index, value],
+        Action::SetDictValue { key, value, .. } => vec![key, value],
+        Action::DeleteDictKey { key, .. } => vec![key],
+        Action::LoadJsonIntoDict { json, .. } | Action::LoadJsonIntoList { json, .. } => {
+            vec![json]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn suspendable_blocks(program: &Program) -> HashSet<String> {
+    let mut ranges: HashMap<&str, (usize, usize)> = HashMap::new();
+    for (id, &start) in &program.blocks {
+        let mut end = start;
+        for (pc, step) in program.steps.iter().enumerate().skip(start) {
+            end = pc;
+            if matches!(step, Step::End) {
+                break;
+            }
+        }
+        ranges.insert(id.as_str(), (start, end));
+    }
+    let mut suspendable: HashSet<String> = HashSet::new();
+    for (id, (start, end)) in &ranges {
+        if program.steps[*start..=*end].iter().any(step_is_suspending) {
+            suspendable.insert(id.to_string());
+        }
+    }
+    loop {
+        let mut changed = false;
+        for (id, (start, end)) in &ranges {
+            if suspendable.contains(*id) {
+                continue;
+            }
+            let reaches = program.steps[*start..=*end]
+                .iter()
+                .flat_map(calls_in_step)
+                .any(|called| suspendable.contains(&called));
+            if reaches {
+                suspendable.insert(id.to_string());
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    suspendable
+}
+
+fn lift_value(
+    value: Value,
+    blocks: &HashMap<String, usize>,
+    suspendable: &HashSet<String>,
+    bounds: &HashMap<String, usize>,
+    next_temp: &mut usize,
+    invokes: &mut Vec<Step>,
+) -> Value {
+    match value {
+        Value::Call {
+            block_id,
+            args,
+            branches,
+            saved,
+        } => {
+            if !blocks.contains_key(&block_id) {
+                return Value::Call {
+                    block_id,
+                    args,
+                    branches,
+                    saved,
+                };
+            }
+            let bound = bounds.get(&block_id).copied().unwrap_or(0).min(args.len());
+            let mut lifted = Vec::with_capacity(args.len());
+            for (index, arg) in args.into_iter().enumerate() {
+                if index < bound {
+                    lifted.push(lift_value(
+                        arg,
+                        blocks,
+                        suspendable,
+                        bounds,
+                        next_temp,
+                        invokes,
+                    ));
+                } else {
+                    lifted.push(arg);
+                }
+            }
+            if suspendable.contains(&block_id) {
+                let temp = *next_temp;
+                *next_temp += 1;
+                invokes.push(Step::Invoke {
+                    block_id: block_id.clone(),
+                    args: lifted,
+                    temp,
+                });
+                temp_var(temp)
+            } else {
+                Value::Call {
+                    block_id,
+                    args: lifted,
+                    branches,
+                    saved,
+                }
+            }
+        }
+        Value::Op { op, args, saved } => {
+            let lifted = args
+                .into_iter()
+                .map(|arg| lift_value(arg, blocks, suspendable, bounds, next_temp, invokes))
+                .collect();
+            Value::Op {
+                op,
+                args: lifted,
+                saved,
+            }
+        }
+        other => other,
+    }
+}
+
+struct LiftCtx<'a> {
+    blocks: &'a HashMap<String, usize>,
+    suspendable: &'a HashSet<String>,
+    bounds: &'a HashMap<String, usize>,
+    next_temp: &'a mut usize,
+    invokes: &'a mut Vec<Step>,
+}
+
+fn lift_one(value: Value, ctx: &mut LiftCtx) -> Value {
+    lift_value(
+        value,
+        ctx.blocks,
+        ctx.suspendable,
+        ctx.bounds,
+        ctx.next_temp,
+        ctx.invokes,
+    )
+}
+
+fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
+    match action {
+        Action::Move(v) => Action::Move(lift_one(v, ctx)),
+        Action::GoTo(mut t) => {
+            for v in &mut t {
+                *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
+            }
+            Action::GoTo(t)
+        }
+        Action::NavigateTo { target, speed } => {
+            let mut t = target;
+            for v in &mut t {
+                *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
+            }
+            Action::NavigateTo {
+                target: t,
+                speed: lift_one(speed, ctx),
+            }
+        }
+        Action::ChangePosition { axis, by } => Action::ChangePosition {
+            axis,
+            by: lift_one(by, ctx),
+        },
+        Action::Turn { axis, degrees } => Action::Turn {
+            axis,
+            degrees: lift_one(degrees, ctx),
+        },
+        Action::SetRotation { axis, degrees } => Action::SetRotation {
+            axis,
+            degrees: lift_one(degrees, ctx),
+        },
+        Action::SetScale(v) => Action::SetScale(lift_one(v, ctx)),
+        Action::ApplyImpulse(mut t) => {
+            for v in &mut t {
+                *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
+            }
+            Action::ApplyImpulse(t)
+        }
+        Action::SetVelocity(mut t) => {
+            for v in &mut t {
+                *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
+            }
+            Action::SetVelocity(t)
+        }
+        Action::SetGravity(mut t) => {
+            for v in &mut t {
+                *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
+            }
+            Action::SetGravity(t)
+        }
+        Action::SetDensity(v) => Action::SetDensity(lift_one(v, ctx)),
+        Action::SetMass(v) => Action::SetMass(lift_one(v, ctx)),
+        Action::Say(v) => Action::Say(lift_one(v, ctx)),
+        Action::SetColor(v) => Action::SetColor(lift_one(v, ctx)),
+        Action::PlaySound {
+            sound,
+            volume,
+            pitch,
+            loop_,
+            bus,
+        } => Action::PlaySound {
+            sound: lift_one(sound, ctx),
+            volume: lift_one(volume, ctx),
+            pitch: lift_one(pitch, ctx),
+            loop_,
+            bus,
+        },
+        Action::PlaySoundAt {
+            sound,
+            volume,
+            pitch,
+            loop_,
+            bus,
+            target,
+        } => Action::PlaySoundAt {
+            sound: lift_one(sound, ctx),
+            volume: lift_one(volume, ctx),
+            pitch: lift_one(pitch, ctx),
+            loop_,
+            bus,
+            target: lift_one(target, ctx),
+        },
+        Action::StopSound { sound } => Action::StopSound {
+            sound: lift_one(sound, ctx),
+        },
+        Action::SetSoundVolume { sound, volume } => Action::SetSoundVolume {
+            sound: lift_one(sound, ctx),
+            volume: lift_one(volume, ctx),
+        },
+        Action::SetSoundPitch { sound, pitch } => Action::SetSoundPitch {
+            sound: lift_one(sound, ctx),
+            pitch: lift_one(pitch, ctx),
+        },
+        Action::SetBusVolume { bus, volume } => Action::SetBusVolume {
+            bus,
+            volume: lift_one(volume, ctx),
+        },
+        Action::SetComponentField {
+            component,
+            field,
+            value,
+        } => Action::SetComponentField {
+            component,
+            field,
+            value: lift_one(value, ctx),
+        },
+        Action::SetCameraPitch(v) => Action::SetCameraPitch(lift_one(v, ctx)),
+        Action::SetCameraFov(v) => Action::SetCameraFov(lift_one(v, ctx)),
+        Action::SetParent(v) => Action::SetParent(lift_one(v, ctx)),
+        Action::CreateActor { name, position } => {
+            let mut p = position;
+            for v in &mut p {
+                *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
+            }
+            Action::CreateActor {
+                name: lift_one(name, ctx),
+                position: p,
+            }
+        }
+        Action::DeleteActor(v) => Action::DeleteActor(lift_one(v, ctx)),
+        Action::RumbleGamepad { strength, duration } => Action::RumbleGamepad {
+            strength: lift_one(strength, ctx),
+            duration: lift_one(duration, ctx),
+        },
+        Action::BindAction { action, binding } => Action::BindAction {
+            action: lift_one(action, ctx),
+            binding: lift_one(binding, ctx),
+        },
+        Action::ShowElement(mut spec) => {
+            spec.id = lift_one(std::mem::replace(&mut spec.id, Value::Bool), ctx);
+            spec.content = lift_one(std::mem::replace(&mut spec.content, Value::Bool), ctx);
+            if let Some([low, high]) = spec.range.take() {
+                let low = lift_one(low, ctx);
+                let high = lift_one(high, ctx);
+                spec.range = Some([low, high]);
+            }
+            if let Some(value) = spec.value.take() {
+                spec.value = Some(lift_one(value, ctx));
+            }
+            spec.offset[0] = lift_one(std::mem::replace(&mut spec.offset[0], Value::Bool), ctx);
+            spec.offset[1] = lift_one(std::mem::replace(&mut spec.offset[1], Value::Bool), ctx);
+            spec.size[0] = lift_one(std::mem::replace(&mut spec.size[0], Value::Bool), ctx);
+            spec.size[1] = lift_one(std::mem::replace(&mut spec.size[1], Value::Bool), ctx);
+            spec.parent = lift_one(std::mem::replace(&mut spec.parent, Value::Bool), ctx);
+            Action::ShowElement(spec)
+        }
+        Action::SetUiProp { prop, id, value } => Action::SetUiProp {
+            prop,
+            id: lift_one(id, ctx),
+            value: lift_one(value, ctx),
+        },
+        Action::HideElement { id, all } => Action::HideElement {
+            id: lift_one(id, ctx),
+            all,
+        },
+        Action::DeleteElement(v) => Action::DeleteElement(lift_one(v, ctx)),
+        Action::SetFocus(v) => Action::SetFocus(lift_one(v, ctx)),
+        Action::SetVariable { name, value } => Action::SetVariable {
+            name,
+            value: lift_one(value, ctx),
+        },
+        Action::ChangeVariable { name, value } => Action::ChangeVariable {
+            name,
+            value: lift_one(value, ctx),
+        },
+        Action::AddToList { value, name } => Action::AddToList {
+            value: lift_one(value, ctx),
+            name,
+        },
+        Action::DeleteOfList { index, name } => Action::DeleteOfList {
+            index: lift_one(index, ctx),
+            name,
+        },
+        Action::ShiftList { name, amount } => Action::ShiftList {
+            name,
+            amount: lift_one(amount, ctx),
+        },
+        Action::InsertIntoList { value, index, name } => Action::InsertIntoList {
+            value: lift_one(value, ctx),
+            index: lift_one(index, ctx),
+            name,
+        },
+        Action::ReplaceItemOfList { index, name, value } => Action::ReplaceItemOfList {
+            index: lift_one(index, ctx),
+            name,
+            value: lift_one(value, ctx),
+        },
+        Action::SetDictValue { key, name, value } => Action::SetDictValue {
+            key: lift_one(key, ctx),
+            name,
+            value: lift_one(value, ctx),
+        },
+        Action::DeleteDictKey { key, name } => Action::DeleteDictKey {
+            key: lift_one(key, ctx),
+            name,
+        },
+        Action::LoadJsonIntoDict { json, name } => Action::LoadJsonIntoDict {
+            json: lift_one(json, ctx),
+            name,
+        },
+        Action::LoadJsonIntoList { json, name } => Action::LoadJsonIntoList {
+            json: lift_one(json, ctx),
+            name,
+        },
+        other => other,
+    }
+}
+
+fn lift_step(
+    step: Step,
+    blocks: &HashMap<String, usize>,
+    suspendable: &HashSet<String>,
+    bounds: &HashMap<String, usize>,
+    next_temp: &mut usize,
+) -> Vec<Step> {
+    let mut invokes = Vec::new();
+    let mut ctx = LiftCtx {
+        blocks,
+        suspendable,
+        bounds,
+        next_temp,
+        invokes: &mut invokes,
+    };
+    let rewritten = match step {
+        Step::Action(action) => Step::Action(lift_action(action, &mut ctx)),
+        Step::JumpUnless { condition, to } => Step::JumpUnless {
+            condition: lift_one(condition, &mut ctx),
+            to,
+        },
+        Step::LoopBegin { kind, end } => {
+            let kind = match kind {
+                LoopKind::Repeat(count) => LoopKind::Repeat(lift_one(count, &mut ctx)),
+                LoopKind::While(condition) => LoopKind::While(lift_one(condition, &mut ctx)),
+                LoopKind::Forever => LoopKind::Forever,
+            };
+            Step::LoopBegin { kind, end }
+        }
+        Step::Wait(duration) => Step::Wait(lift_one(duration, &mut ctx)),
+        Step::WaitUntil(condition) => Step::WaitUntil(lift_one(condition, &mut ctx)),
+        Step::Glide { seconds, target } => {
+            let seconds = lift_one(seconds, &mut ctx);
+            let mut t = target;
+            for v in &mut t {
+                *v = lift_one(std::mem::replace(v, Value::Bool), &mut ctx);
+            }
+            Step::Glide { seconds, target: t }
+        }
+        Step::Call { block_id, args } => {
+            if !blocks.contains_key(&block_id) {
+                Step::Call { block_id, args }
+            } else {
+                let bound = bounds.get(&block_id).copied().unwrap_or(0).min(args.len());
+                let mut lifted = Vec::with_capacity(args.len());
+                for (index, arg) in args.into_iter().enumerate() {
+                    if index < bound {
+                        lifted.push(lift_one(arg, &mut ctx));
+                    } else {
+                        lifted.push(arg);
+                    }
+                }
+                Step::Call {
+                    block_id,
+                    args: lifted,
+                }
+            }
+        }
+        Step::Return(value) => Step::Return(lift_one(value, &mut ctx)),
+        other => other,
+    };
+    invokes.push(rewritten);
+    invokes
+}
+
+fn lift_suspendable_calls(program: &mut Program, bounds: &HashMap<String, usize>) {
+    let suspendable = suspendable_blocks(program);
+    if suspendable.is_empty() {
+        return;
+    }
+    let used = program
+        .steps
+        .iter()
+        .flat_map(calls_in_step)
+        .any(|called| suspendable.contains(&called));
+    if !used {
+        return;
+    }
+    let mut next_temp = 0;
+    let mut expanded: Vec<Vec<Step>> = Vec::with_capacity(program.steps.len());
+    for step in std::mem::take(&mut program.steps) {
+        expanded.push(lift_step(
+            step,
+            &program.blocks,
+            &suspendable,
+            bounds,
+            &mut next_temp,
+        ));
+    }
+    let mut mapping = HashMap::new();
+    let mut next = 0;
+    for (old, group) in expanded.iter().enumerate() {
+        mapping.insert(old, next);
+        next += group.len();
+    }
+    let remap = |old: usize| -> usize { *mapping.get(&old).unwrap_or(&old) };
+    let mut steps = Vec::with_capacity(next);
+    for group in expanded {
+        for step in group {
+            steps.push(match step {
+                Step::Jump { to } => Step::Jump { to: remap(to) },
+                Step::JumpUnless { condition, to } => Step::JumpUnless {
+                    condition,
+                    to: remap(to),
+                },
+                Step::LoopBegin { kind, end } => Step::LoopBegin {
+                    kind,
+                    end: remap(end),
+                },
+                Step::LoopEnd { begin } => Step::LoopEnd {
+                    begin: remap(begin),
+                },
+                other => other,
+            });
+        }
+    }
+    for entry in &mut program.entries {
+        entry.pc = remap(entry.pc);
+    }
+    for start in program.blocks.values_mut() {
+        *start = remap(*start);
+    }
+    program.steps = steps;
 }
 
 fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {

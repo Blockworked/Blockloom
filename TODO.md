@@ -21,7 +21,7 @@ Obvious gaps already identified in the project notes:
 - [x] Add lists and blocks for creating, reading, and changing list items.
 - [x] Add asset management UI for importing, organizing, previewing, replacing, and removing project assets.
 - [x] Show `say` as a speech bubble over its actor in the game world.
-- [ ] Let reporter-shaped custom blocks suspend and resume when they contain `wait`.
+- [x] Let reporter-shaped custom blocks suspend and resume when they contain `wait`.
 - [x] Handle actors whose visual shape does not match the project's dimension, including a way to convert or replace the shape.
 - [x] Add project packaging so a finished game can be shared and run independently.
 - [x] Finish platform packaging with Windows executable icons, Linux launchers,
@@ -32,9 +32,8 @@ Obvious gaps already identified in the project notes:
 - [x] Compile a project's blocks into optimized native logic for a fast build,
       with a shared variable store, a stable C boundary, a player-side native
       scheduler, and a VM fallback when compilation is unavailable.
-- [ ] Compile recursive statement-shaped custom blocks. They are refused for
-      now because each invocation needs its own loop-counter slots. Recursive
-      reporter-shaped blocks already compile.
+- [x] Compile recursive statement-shaped custom blocks. Each invocation keeps
+      its own loop-counter slots now, the way the VM gives every call a frame.
 - [x] Add a save-data system so a finished game can persist the player's progress across runs, with a block API and a matching Rust script API.
 - [x] Redesign projects as folders: the app always starts on a Dashboard page for creating new projects and opening existing ones, with each project stored as a folder so it can hold assets.
 - [x] Add a component system built on Bevy's ECS components that turns all properties into components, with support for custom components and camera-attach components (for first-person / third-person cameras).
@@ -67,7 +66,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 
 ### Phase 3 - Dev productivity, before API surface explodes
 - [x] Script toolchain: ship rustc or graceful degrade plus highlight plus inline errors plus rust-analyzer Cargo project.
-- [ ] VM/codegen correctness: suspendable reporter `wait`, recursive statement blocks.
+- [x] VM/codegen correctness: suspendable reporter `wait`, recursive statement blocks.
 - [ ] Embedded preview: headless/offscreen runtime plus streamed viewport in editor with input forwarding, pause/step, resolution switch. Keeps separate-process split, no OS reparenting.
 - [ ] Visual world editor: edit-mode 2D/3D viewport with selection sync to ActorList/Inspector, drag to move plus rotate/scale gizmos, snapping, camera pan/zoom/orbit. Shares panel with embedded preview: Edit manipulates placement directly, Play streams runtime.
 - [ ] Editor: gizmos/snapping, prefab mode, scene search, log filter, frame stepper, profiler (draw calls, CPU/GPU/memory), playmode tests.

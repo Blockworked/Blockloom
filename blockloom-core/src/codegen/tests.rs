@@ -428,11 +428,12 @@ fn a_reporter_call_is_a_function_with_a_depth_guard() {
     assert!(source.contains("let mut budget = STEP_BUDGET;"), "{source}");
 }
 
-/// The one thing it won't do. The counters a `repeat` uses are picked when
-/// the code is written, so a second live invocation would share the first's.
+/// A block that calls itself keeps its own loop counters per invocation now,
+/// the way the VM gives every call a frame of its own - so this compiles, and
+/// the strand counts its steps the way the VM does.
 #[test]
-fn a_custom_block_that_can_reach_itself_is_refused_by_name() {
-    let error = compile(&with_block(
+fn a_custom_block_that_calls_itself_compiles_with_a_budget() {
+    let source = compile(&with_block(
         vec![K::CallBlock {
             block_id: "b1".to_string(),
             args: vec![],
@@ -442,8 +443,8 @@ fn a_custom_block_that_can_reach_itself_is_refused_by_name() {
             args: vec![],
         })],
     ))
-    .expect_err("a block that calls itself is refused");
-    assert_eq!(error.what, "a custom block that calls itself");
+    .expect("a block that calls itself compiles");
+    assert!(source.contains("let mut budget = STEP_BUDGET;"), "{source}");
 }
 
 /// A reporter, though, may: each call builds a state of its own, exactly as
