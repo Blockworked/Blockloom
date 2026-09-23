@@ -69,9 +69,13 @@ pub enum EditorMessage {
     /// Turns the embedded-preview sidecar on or off. When on, the runtime
     /// serves MJPEG on loopback and reports the port with
     /// [`RuntimeMessage::PreviewReady`]; the editor's viewport reads it
-    /// directly. Additive: the OS window stays up.
+    /// directly. Additive: the OS window stays up unless `headless` hides
+    /// it, in which case the hidden window keeps rendering the stream.
+    /// `headless` defaults to false so older editors still decode.
     Preview {
         enabled: bool,
+        #[serde(default)]
+        headless: bool,
     },
     /// Asks the preview stream to follow this size. The runtime resizes its
     /// window to match, so the stream is 1:1 with the viewport.
@@ -211,5 +215,18 @@ mod tests {
         let ready = RuntimeMessage::PreviewReady { port: 4129 };
         let line = encode(&ready);
         assert_eq!(decode::<RuntimeMessage>(&line), Some(Ok(ready)));
+    }
+
+    #[test]
+    fn preview_without_headless_defaults_to_windowed() {
+        // Editors from before the headless flag send no `headless` key.
+        let line = "{\"cmd\":\"preview\",\"enabled\":true}\n";
+        assert_eq!(
+            decode::<EditorMessage>(line),
+            Some(Ok(EditorMessage::Preview {
+                enabled: true,
+                headless: false,
+            }))
+        );
     }
 }

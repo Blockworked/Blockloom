@@ -148,6 +148,7 @@ fn main() {
                     (
                         world::pump_editor,
                         preview::apply_preview_resize,
+                        preview::apply_preview_visibility,
                         preview::drain_preview_inputs,
                         fx::despawn_fx,
                         world::rebuild_world,
@@ -230,6 +231,7 @@ fn main() {
                     (
                         world::pump_editor,
                         preview::apply_preview_resize,
+                        preview::apply_preview_visibility,
                         preview::drain_preview_inputs,
                         fx::despawn_fx,
                         world::rebuild_world,

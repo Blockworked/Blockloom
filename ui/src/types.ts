@@ -645,6 +645,8 @@ export interface StateDto {
   runtime_open: boolean;
   /** Whether the embedded preview viewport wants the sidecar stream. */
   preview_enabled: boolean;
+  /** Hides the runtime's OS window while the stream runs. */
+  preview_headless: boolean;
   /** The sidecar's loopback port, while it is serving. */
   preview_port: number | null;
   /** The size the viewport asked the stream to follow. */
@@ -669,6 +671,7 @@ export function emptyState(): StateDto {
     runtime_available: true,
     runtime_open: false,
     preview_enabled: false,
+    preview_headless: false,
     preview_port: null,
     preview_width: 480,
     preview_height: 270,

@@ -276,6 +276,11 @@ impl Backend {
                 app,
                 arg(&args, "enabled")?,
             )?),
+            "set_preview_headless" => to_json(commands::set_preview_headless(
+                state,
+                app,
+                arg(&args, "headless")?,
+            )?),
             "set_preview_size" => to_json(commands::set_preview_size(
                 state,
                 app,

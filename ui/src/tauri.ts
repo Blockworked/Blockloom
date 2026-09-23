@@ -216,6 +216,8 @@ export const closeRuntime = () => invoke<void>('close_runtime');
 // input; the port arrives on state as `preview_port`.
 export const setPreviewEnabled = (enabled: boolean) =>
   invoke<void>('set_preview_enabled', { enabled });
+export const setPreviewHeadless = (headless: boolean) =>
+  invoke<void>('set_preview_headless', { headless });
 export const setPreviewSize = (width: number, height: number) =>
   invoke<void>('set_preview_size', { width, height });
 export type PreviewInputDto =

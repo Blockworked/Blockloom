@@ -295,11 +295,15 @@ pub fn pump_editor(
                     engine.pause_after_tick = true;
                 }
             }
-            EditorMessage::Preview { enabled } => {
+            EditorMessage::Preview { enabled, headless } => {
                 let Some(preview) = preview.as_mut() else {
                     continue;
                 };
                 if enabled {
+                    // Recorded before serving so a re-sent toggle applies
+                    // while the sidecar stays up; visibility follows next
+                    // frame in `apply_preview_visibility`.
+                    preview.headless = headless;
                     match crate::preview::start_preview(preview) {
                         Some(port) => bridge::send(&RuntimeMessage::PreviewReady { port }),
                         None => bridge::send(&RuntimeMessage::PreviewStopped),
@@ -3279,7 +3283,10 @@ mod tests {
             })
             .unwrap();
         sender
-            .send(EditorMessage::Preview { enabled: true })
+            .send(EditorMessage::Preview {
+                enabled: true,
+                headless: false,
+            })
             .unwrap();
         app.update();
 

@@ -746,6 +746,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-preview-headless",
+        cmd: "set_preview_headless",
+        aliases: &["set_preview_headless", "preview-headless"],
+        summary: "Hide the game window while the preview stream runs.",
+        args: &[ArgSpec {
+            name: "headless",
+            ty: "bool",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-preview-size",
         cmd: "set_preview_size",
         aliases: &["set_preview_size", "preview-size"],

@@ -44,6 +44,8 @@ pub(crate) struct AppState {
     pub(crate) log: Vec<LogLine>,
     /// Whether the embedded preview viewport wants the sidecar stream.
     pub(crate) preview_enabled: bool,
+    /// Hides the runtime's OS window while the stream runs.
+    pub(crate) preview_headless: bool,
     /// The sidecar's loopback port, while it is serving.
     pub(crate) preview_port: Option<u16>,
     /// The size the viewport asked the stream to follow.
@@ -121,6 +123,8 @@ pub(crate) struct StateDto {
     pub(crate) runtime_open: bool,
     /// Whether the embedded preview viewport wants the sidecar stream.
     pub(crate) preview_enabled: bool,
+    /// Hides the runtime's OS window while the stream runs.
+    pub(crate) preview_headless: bool,
     /// The sidecar's loopback port, while it is serving. The viewport reads
     /// `http://127.0.0.1:{port}/preview.mjpg` directly.
     pub(crate) preview_port: Option<u16>,
@@ -188,6 +192,7 @@ pub(crate) fn state_dto(s: &AppState) -> StateDto {
         runtime_available: blockloom_protocol::runtime_path().exists(),
         runtime_open: s.runtime.is_some(),
         preview_enabled: s.preview_enabled,
+        preview_headless: s.preview_headless,
         preview_port: s.preview_port,
         preview_width: s.preview_width,
         preview_height: s.preview_height,

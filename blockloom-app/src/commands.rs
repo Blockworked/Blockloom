@@ -399,6 +399,7 @@ fn close_open_project(s: &mut AppState, save: bool) {
     s.paused = false;
     s.status = None;
     s.preview_enabled = false;
+    s.preview_headless = false;
     s.preview_port = None;
     s.log.clear();
 }
@@ -452,9 +453,11 @@ pub(crate) fn set_mode(
                 if loaded && started {
                     if s.preview_enabled {
                         let (width, height) = (s.preview_width, s.preview_height);
-                        if runtime
-                            .send(&blockloom_protocol::EditorMessage::Preview { enabled: true })
-                        {
+                        let headless = s.preview_headless;
+                        if runtime.send(&blockloom_protocol::EditorMessage::Preview {
+                            enabled: true,
+                            headless,
+                        }) {
                             runtime.send(&blockloom_protocol::EditorMessage::PreviewResize {
                                 width,
                                 height,
@@ -1064,8 +1067,12 @@ pub(crate) fn run_project(
     // The sidecar belongs to the process, so a fresh runtime re-enables it.
     if s.preview_enabled {
         let (width, height) = (s.preview_width, s.preview_height);
+        let headless = s.preview_headless;
         let runtime = s.runtime.as_mut().expect("checked above");
-        if runtime.send(&blockloom_protocol::EditorMessage::Preview { enabled: true }) {
+        if runtime.send(&blockloom_protocol::EditorMessage::Preview {
+            enabled: true,
+            headless,
+        }) {
             runtime.send(&blockloom_protocol::EditorMessage::PreviewResize { width, height });
         } else {
             s.preview_port = None;
@@ -1126,7 +1133,8 @@ pub(crate) fn close_runtime(state: &SharedState, app: &AppHandle) -> Result<(), 
 }
 
 /// Turns the embedded preview sidecar on or off. The runtime serves MJPEG on
-/// loopback and reports the port, which the viewport reads directly.
+/// loopback and reports the port, which the viewport reads directly. The
+/// window stays up unless headless mode hides it.
 pub(crate) fn set_preview_enabled(
     state: &SharedState,
     app: &AppHandle,
@@ -1138,8 +1146,9 @@ pub(crate) fn set_preview_enabled(
         s.preview_port = None;
     }
     let (width, height) = (s.preview_width, s.preview_height);
+    let headless = s.preview_headless;
     if let Some(runtime) = s.runtime.as_mut() {
-        if !runtime.send(&blockloom_protocol::EditorMessage::Preview { enabled }) {
+        if !runtime.send(&blockloom_protocol::EditorMessage::Preview { enabled, headless }) {
             s.runtime = None;
             s.running = false;
             s.paused = false;
@@ -1151,6 +1160,33 @@ pub(crate) fn set_preview_enabled(
         if enabled {
             runtime.send(&blockloom_protocol::EditorMessage::PreviewResize { width, height });
         }
+    }
+    emit(app, &s);
+    Ok(())
+}
+
+/// Hides the runtime's OS window while the preview stream runs, or brings it
+/// back. Re-sends the preview state when the sidecar is up, which applies
+/// live: starting the sidecar is idempotent, so the stream keeps serving.
+pub(crate) fn set_preview_headless(
+    state: &SharedState,
+    app: &AppHandle,
+    headless: bool,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    s.preview_headless = headless;
+    let (enabled, headless) = (s.preview_enabled, s.preview_headless);
+    if enabled
+        && let Some(runtime) = s.runtime.as_mut()
+        && !runtime.send(&blockloom_protocol::EditorMessage::Preview { enabled, headless })
+    {
+        s.runtime = None;
+        s.running = false;
+        s.paused = false;
+        s.status = None;
+        s.preview_port = None;
+        emit(app, &s);
+        return Err("Lost the connection to the game runtime".to_string());
     }
     emit(app, &s);
     Ok(())

@@ -68,7 +68,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 - [x] Script toolchain: ship rustc or graceful degrade plus highlight plus inline errors plus rust-analyzer Cargo project.
 - [x] VM/codegen correctness: suspendable reporter `wait`, recursive statement blocks.
 - [x] Embedded preview: sidecar MJPEG runtime plus streamed viewport in editor with input forwarding, pause/step, resolution switch. Keeps separate-process split, no OS reparenting. Additive: the OS window stays up beside the viewport.
-  - [ ] True headless/offscreen preview mode, so the stream doesn't need the OS window up beside it.
+  - [x] True headless/offscreen preview mode: a Headless toggle hides the OS window while the hidden window keeps rendering the stream. Windowed mode still keeps it up beside the viewport.
   - [ ] Stop the resolution switch from resizing the OS window: render the stream at its own size offscreen.
   - [ ] Forward scroll-wheel, touch/multitouch and gamepad through the viewport, not just mouse, keys and text.
   - [ ] Honor `lock mouse` inside the preview (pointer lock + raw deltas) instead of absolute positions only.
