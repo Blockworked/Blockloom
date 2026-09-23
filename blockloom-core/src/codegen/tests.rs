@@ -399,6 +399,7 @@ fn a_reporter_call_is_a_function_with_a_depth_guard() {
             text: Value::Call {
                 block_id: "b1".to_string(),
                 args: vec![Value::number(2.0)],
+                branches: Vec::new(),
                 saved: Box::new(Value::number(0.0)),
             },
         }],
@@ -454,6 +455,7 @@ fn a_reporter_may_call_itself() {
             text: Value::Call {
                 block_id: "b1".to_string(),
                 args: vec![],
+                branches: Vec::new(),
                 saved: Box::new(Value::number(0.0)),
             },
         }],
@@ -461,6 +463,7 @@ fn a_reporter_may_call_itself() {
             value: Value::Call {
                 block_id: "b1".to_string(),
                 args: vec![],
+                branches: Vec::new(),
                 saved: Box::new(Value::number(0.0)),
             },
         })],

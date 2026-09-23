@@ -2,7 +2,7 @@
 //! rules `blockloom-runtime` relies on, checked without a window.
 
 use blockloom_core::blocks::{
-    BlockDef, BlockPiece, BlockShape, Instruction, InstructionKind, Strand,
+    BlockDef, BlockPiece, BlockShape, Instruction, InstructionKind, ListDef, ListItem, Strand,
 };
 use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::{Axis, Mode, Visual};
@@ -31,6 +31,7 @@ fn project_with(strands: Vec<Strand>) -> Project {
         },
         actors: vec![actor],
         globals: Vec::new(),
+        global_lists: Vec::new(),
     }
 }
 
@@ -294,6 +295,7 @@ fn a_reporter_block_returns_a_value_into_the_slot_that_called_it() {
     let call = Value::Call {
         block_id: "b1".to_string(),
         args: vec![Value::number(21.0)],
+        branches: Vec::new(),
         saved: Box::new(Value::number(0.0)),
     };
     let mut project = project_with(vec![
@@ -587,6 +589,7 @@ fn project_with_two(first: Vec<Strand>, second: Vec<Strand>) -> Project {
         },
         actors: vec![player, friend],
         globals: Vec::new(),
+        global_lists: Vec::new(),
     }
 }
 
@@ -1124,4 +1127,216 @@ fn hiding_and_deleting_name_the_element_the_block_meant() {
             },
         ]
     );
+}
+
+// ─── Lists ───────────────────────────────────────────────────────────────────
+
+fn list_op(name: &str, args: Vec<Value>) -> Value {
+    Value::op(Op::from_name(name), args)
+}
+
+/// A project with one actor holding an empty list called `items`.
+fn project_with_empty_list(body: Vec<InstructionKind>) -> Project {
+    let mut project = project_with(vec![started(body)]);
+    project.actors[0].graph.lists.push(ListDef {
+        name: "items".to_string(),
+        items: Vec::new(),
+        editor_visible: false,
+        editor_x: 0,
+        editor_y: 0,
+    });
+    project
+}
+
+#[test]
+fn list_blocks_append_read_and_remove_items() {
+    let project = project_with_empty_list(vec![
+        InstructionKind::AddToList {
+            value: Value::text("a"),
+            name: "items".to_string(),
+        },
+        InstructionKind::AddToList {
+            value: Value::number(2.0),
+            name: "items".to_string(),
+        },
+        InstructionKind::Say {
+            text: list_op("ListItem", vec![Value::number(2.0), Value::text("items")]),
+        },
+        InstructionKind::Say {
+            text: list_op("ListLength", vec![Value::text("items")]),
+        },
+        InstructionKind::DeleteOfList {
+            index: Value::number(1.0),
+            name: "items".to_string(),
+        },
+        InstructionKind::Say {
+            text: list_op("ListItem", vec![Value::number(1.0), Value::text("items")]),
+        },
+    ]);
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(
+        says(&effects),
+        vec!["2".to_string(), "2".to_string(), "2".to_string()]
+    );
+    assert!(errors(&effects).is_empty());
+}
+
+#[test]
+fn list_edits_and_reporters_share_the_same_rules() {
+    let mut project = project_with(vec![started(vec![
+        InstructionKind::InsertIntoList {
+            value: Value::text("z"),
+            index: Value::number(1.0),
+            name: "letters".to_string(),
+        },
+        InstructionKind::ReplaceItemOfList {
+            index: Value::number(3.0),
+            name: "letters".to_string(),
+            value: Value::text("c"),
+        },
+        InstructionKind::ShiftList {
+            name: "letters".to_string(),
+            amount: Value::number(1.0),
+        },
+        InstructionKind::ReverseList {
+            name: "letters".to_string(),
+        },
+        InstructionKind::Say {
+            text: list_op(
+                "ListItemNumber",
+                vec![Value::text("z"), Value::text("letters")],
+            ),
+        },
+        InstructionKind::Say {
+            text: list_op("ListAmount", vec![Value::text("a"), Value::text("letters")]),
+        },
+        InstructionKind::Say {
+            text: list_op(
+                "ListContains",
+                vec![Value::text("letters"), Value::text("q")],
+            ),
+        },
+        InstructionKind::Say {
+            text: list_op(
+                "ListItemExists",
+                vec![Value::number(4.0), Value::text("letters")],
+            ),
+        },
+        InstructionKind::Say {
+            text: list_op("ListIsEmpty", vec![Value::text("letters")]),
+        },
+        InstructionKind::DeleteAllOfList {
+            name: "letters".to_string(),
+        },
+        InstructionKind::Say {
+            text: list_op("ListLength", vec![Value::text("letters")]),
+        },
+    ])]);
+    project.actors[0].graph.lists.push(ListDef {
+        name: "letters".to_string(),
+        items: vec![
+            ListItem::Text("a".to_string()),
+            ListItem::Text("b".to_string()),
+        ],
+        editor_visible: false,
+        editor_x: 0,
+        editor_y: 0,
+    });
+    // [a, b] -> insert z at 1 -> [z, a, b] -> replace 3 with c -> [z, a, c]
+    // -> shift by 1 -> [c, z, a] -> reverse -> [a, z, c].
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(
+        says(&effects),
+        ["2", "1", "false", "false", "false", "0"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    );
+    assert!(errors(&effects).is_empty());
+}
+
+#[test]
+fn an_unknown_list_is_empty_and_its_writes_are_quiet() {
+    let project = project_with_empty_list(vec![
+        InstructionKind::Say {
+            text: list_op("ListItem", vec![Value::number(1.0), Value::text("nobody")]),
+        },
+        InstructionKind::Say {
+            text: list_op("ListLength", vec![Value::text("nobody")]),
+        },
+        InstructionKind::DeleteOfList {
+            index: Value::number(1.0),
+            name: "nobody".to_string(),
+        },
+        InstructionKind::AddToList {
+            value: Value::number(1.0),
+            name: "nobody".to_string(),
+        },
+    ]);
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(says(&effects), vec![String::new(), "0".to_string()]);
+    assert!(errors(&effects).is_empty());
+}
+
+#[test]
+fn a_boolean_is_not_a_list_item() {
+    let project = project_with_empty_list(vec![InstructionKind::AddToList {
+        value: Value::Bool,
+        name: "items".to_string(),
+    }]);
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(errors(&effects), vec!["list items must be number or text"]);
+}
+
+#[test]
+fn a_shared_list_is_visible_to_every_actor_but_an_actors_own_shadows_it() {
+    let mut project = project_with_two(
+        vec![started(vec![InstructionKind::Say {
+            text: list_op("ListItem", vec![Value::number(1.0), Value::text("shared")]),
+        }])],
+        vec![started(vec![InstructionKind::Say {
+            text: list_op("ListItem", vec![Value::number(1.0), Value::text("shared")]),
+        }])],
+    );
+    project.create_global_list("shared").unwrap();
+    project.global_lists[0].items = vec![ListItem::Text("from everyone".to_string())];
+    // The first actor carries its own list of the same name, so it reads
+    // that one instead.
+    project.actors[0].graph.lists.push(ListDef {
+        name: "shared".to_string(),
+        items: vec![ListItem::Text("mine".to_string())],
+        editor_visible: false,
+        editor_x: 0,
+        editor_y: 0,
+    });
+    let effects = Harness::started(&project).run(1);
+    let mut said = says(&effects);
+    said.sort();
+    assert_eq!(said, vec!["from everyone".to_string(), "mine".to_string()]);
+}
+
+#[test]
+fn a_clone_starts_holding_what_its_template_held() {
+    let mut project = project_with(vec![
+        started(vec![
+            InstructionKind::AddToList {
+                value: Value::text("kept"),
+                name: "items".to_string(),
+            },
+            clone_of(""),
+        ]),
+        cloned(vec![InstructionKind::Say {
+            text: list_op("ListLength", vec![Value::text("items")]),
+        }]),
+    ]);
+    project.actors[0].graph.lists.push(ListDef {
+        name: "items".to_string(),
+        items: Vec::new(),
+        editor_visible: false,
+        editor_x: 0,
+        editor_y: 0,
+    });
+    let mut vm = Harness::started(&project);
+    vm.run(1);
+    assert_eq!(says(&vm.run(1)), vec!["1".to_string()]);
 }

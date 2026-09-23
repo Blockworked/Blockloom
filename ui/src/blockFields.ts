@@ -44,6 +44,7 @@ import {
   componentNames,
   customComponents,
   fieldLocation,
+  listNames,
   variableNames,
   type InstrPath,
   type InstructionDto,
@@ -112,6 +113,12 @@ function collisionOptions(): Option[] {
 
 function variableOptions(): Option[] {
   return variableNames(state.project, openActor.value).map(name => ({ value: name, label: name }));
+}
+
+/** List names the open actor can read: its own, then the project's shared
+ * ones. A command block writes whichever scope declares the chosen name. */
+function listOptions(): Option[] {
+  return listNames(state.project, openActor.value).map(name => ({ value: name, label: name }));
 }
 
 /** The open actor's custom components - the only ones a block can write, since
@@ -477,6 +484,58 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
   },
   ClearSavedVariable: {
     head: [label('clear saved'), { kind: 'dropdown', key: 'name', options: variableOptions, placeholder: 'variable' }],
+  },
+
+  // ── Lists ────────────────────────────────────────────────────────────────
+  AddToList: {
+    head: [
+      label('add'),
+      value('AddToListValue', 'value'),
+      label('to'),
+      { kind: 'dropdown', key: 'name', options: listOptions, placeholder: 'list' },
+    ],
+  },
+  DeleteOfList: {
+    head: [
+      label('delete item'),
+      value('DeleteOfListIndex', 'index'),
+      label('of'),
+      { kind: 'dropdown', key: 'name', options: listOptions, placeholder: 'list' },
+    ],
+  },
+  DeleteAllOfList: {
+    head: [label('delete all of'), { kind: 'dropdown', key: 'name', options: listOptions, placeholder: 'list' }],
+  },
+  ShiftList: {
+    head: [
+      label('shift'),
+      { kind: 'dropdown', key: 'name', options: listOptions, placeholder: 'list' },
+      label('by'),
+      value('ShiftListAmount', 'amount'),
+    ],
+  },
+  InsertIntoList: {
+    head: [
+      label('insert'),
+      value('InsertIntoListValue', 'value'),
+      label('at'),
+      value('InsertIntoListIndex', 'index'),
+      label('of'),
+      { kind: 'dropdown', key: 'name', options: listOptions, placeholder: 'list' },
+    ],
+  },
+  ReplaceItemOfList: {
+    head: [
+      label('replace item'),
+      value('ReplaceItemOfListIndex', 'index'),
+      label('of'),
+      { kind: 'dropdown', key: 'name', options: listOptions, placeholder: 'list' },
+      label('with'),
+      value('ReplaceItemOfListValue', 'value'),
+    ],
+  },
+  ReverseList: {
+    head: [label('reverse'), { kind: 'dropdown', key: 'name', options: listOptions, placeholder: 'list' }],
   },
 
   // ── Custom blocks ────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@
 // at startup so every `icon="..."` string in its own chrome resolves too.
 import type { Component } from 'vue';
 import {
+  ArrowLeft,
   ArrowRight,
   Asterisk,
   Blocks,
@@ -116,6 +117,7 @@ export const ICONS: Record<string, Component> = {
   'corner-down-right': CornerDownRight,
   'corner-up-left': CornerUpLeft,
   'corner-up-right': CornerUpRight,
+  'arrow-left': ArrowLeft,
   'arrow-right': ArrowRight,
   layers: Layers,
   'layout-panel-top': LayoutPanelTop,
@@ -215,6 +217,13 @@ export const BLOCK_ICONS: Record<InstructionType, string> = {
   ChangeVariable: 'trending-up',
   SaveVariable: 'save',
   ClearSavedVariable: 'trash',
+  AddToList: 'plus',
+  DeleteOfList: 'trash',
+  DeleteAllOfList: 'trash',
+  ShiftList: 'arrow-left',
+  InsertIntoList: 'plus',
+  ReplaceItemOfList: 'repeat',
+  ReverseList: 'rotate-cw',
   CallBlock: 'blocks',
   Return: 'corner-down-right',
 };
@@ -291,6 +300,13 @@ export const BLOCK_LABELS: Record<InstructionType, string> = {
   ChangeVariable: 'change a variable',
   SaveVariable: 'save a variable',
   ClearSavedVariable: 'clear a saved variable',
+  AddToList: 'add to a list',
+  DeleteOfList: 'delete a list item',
+  DeleteAllOfList: 'clear a list',
+  ShiftList: 'shift a list',
+  InsertIntoList: 'insert into a list',
+  ReplaceItemOfList: 'replace a list item',
+  ReverseList: 'reverse a list',
   CallBlock: 'my block',
   Return: 'return',
 };

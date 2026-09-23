@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // The palette: every block, grouped, plus the value blocks, the variables and
 // "My Blocks". Dragging anything out of here drops a copy of it onto the canvas.
-import { computed } from 'vue';
+import { computed, watchEffect } from 'vue';
 import { ChevronLeft, ChevronRight, Trash2 } from 'lucide-vue-next';
 import {
   PaletteInstructionBlock,
@@ -10,12 +10,16 @@ import {
   sidebarWidth,
   type ValueNode,
 } from 'blockstitch';
+import { ListPanel, MakeListDialog } from 'blockstitch';
 import { COLLAPSED_PANEL_WIDTH, panels, setBlocksOpen } from '../panels';
 import { mode, openActor, state } from '../store';
-import { paletteInstructions, paletteValueFor, applyPaletteValueEdit } from '../paletteState';
-import { OPERATOR_GROUPS, specForKind } from '../valueOps';
-import { blockShapeReturnsValue, variableNames, type InstructionType } from '../types';
+import { paletteInstructions, paletteValueFor, applyPaletteValueEdit, syncPaletteListDefaults } from '../paletteState';
+import { OPERATOR_GROUPS, setListNameOptions, specForKind } from '../valueOps';
+import { blockShapeReturnsValue, listNames, variableNames, type InstructionType } from '../types';
 import { openCreateVariableDialog, closeVariableDialog, variableDialog } from '../variableDialogs';
+import { closeListDialog, listDialog, openCreateListDialog } from '../listDialogs';
+import { openListMenu } from '../contextMenu';
+import { createList, renameList } from '../tauri';
 import { blockDialog, closeBlockDialog, openCreateBlockDialog } from '../blockDialogs';
 import MakeVariableDialog from './MakeVariableDialog.vue';
 import MakeBlockDialog from './MakeBlockDialog.vue';
@@ -93,6 +97,27 @@ const globalVariables = computed(() =>
     .sort(),
 );
 const hasVariables = computed(() => variableNames(state.project, openActor.value).length > 0);
+
+const actorLists = computed(() => [...(openActor.value?.lists ?? [])].sort((a, b) => a.name.localeCompare(b.name)));
+const sharedLists = computed(() =>
+  [...(state.project?.global_lists ?? [])]
+    .filter(list => !actorLists.value.some(own => own.name === list.name))
+    .sort((a, b) => a.name.localeCompare(b.name)),
+);
+const hasLists = computed(() => listNames(state.project, openActor.value).length > 0);
+
+// The list reporters' name dropdowns read live choices, so keep them pointed
+// at this actor's lists as they are created, renamed, or deleted.
+watchEffect(() => {
+  const names = listNames(state.project, openActor.value);
+  setListNameOptions(names);
+  syncPaletteListDefaults(names);
+});
+
+async function submitListDialog(name: string, renameTarget: string | null | undefined): Promise<void> {
+  if (renameTarget) await renameList(renameTarget, name);
+  else await createList(name, listDialog.scope);
+}
 
 // The palette derives a value block's hexagon-or-capsule shape from Blockloom's
 // own operator table, so it can never disagree with what the canvas draws once
@@ -194,6 +219,27 @@ function onContextMenu(event: MouseEvent) {
         <p v-else class="panel-note">A variable remembers a number or some text - a score, a level, a name.</p>
 
         <div class="panel-heading">
+          <span>This actor's lists</span>
+          <button type="button" class="btn-small" @click="openCreateListDialog('actor')">New</button>
+        </div>
+        <ListPanel :lists="actorLists" @menu="(name, event) => openListMenu(event, name)" />
+        <div class="panel-heading">
+          <span>Shared lists</span>
+          <button type="button" class="btn-small" @click="openCreateListDialog('global')">New</button>
+        </div>
+        <ListPanel :lists="sharedLists" @menu="(name, event) => openListMenu(event, name)" />
+        <div class="sidebar-palette" v-if="hasLists">
+          <PaletteInstructionBlock type="AddToList" :instruction="paletteInstructions.AddToList" />
+          <PaletteInstructionBlock type="DeleteOfList" :instruction="paletteInstructions.DeleteOfList" />
+          <PaletteInstructionBlock type="DeleteAllOfList" :instruction="paletteInstructions.DeleteAllOfList" />
+          <PaletteInstructionBlock type="ShiftList" :instruction="paletteInstructions.ShiftList" />
+          <PaletteInstructionBlock type="InsertIntoList" :instruction="paletteInstructions.InsertIntoList" />
+          <PaletteInstructionBlock type="ReplaceItemOfList" :instruction="paletteInstructions.ReplaceItemOfList" />
+          <PaletteInstructionBlock type="ReverseList" :instruction="paletteInstructions.ReverseList" />
+        </div>
+        <p v-else class="panel-note">A list holds numbers or text in order - a queue, a hand of cards, a high-score table.</p>
+
+        <div class="panel-heading">
           <span>My Blocks</span>
           <button type="button" class="btn-small" @click="openCreateBlockDialog()">Make a Block</button>
         </div>
@@ -220,6 +266,12 @@ function onContextMenu(event: MouseEvent) {
     v-if="variableDialog.mode"
     :rename-target="variableDialog.mode === 'rename' ? variableDialog.renameTarget : null"
     @close="closeVariableDialog"
+  />
+  <MakeListDialog
+    v-if="listDialog.mode"
+    :rename-target="listDialog.mode === 'rename' ? listDialog.renameTarget : null"
+    :on-submit="submitListDialog"
+    @close="closeListDialog"
   />
   <MakeBlockDialog
     v-if="blockDialog.mode"

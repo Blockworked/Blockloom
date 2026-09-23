@@ -60,16 +60,17 @@ mod runtime;
 pub use runtime::{
     ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH, ACT_BROADCAST,
     ACT_CHANGE_POSITION, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR, ACT_DELETE_ELEMENT,
-    ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_MOVE, ACT_NAVIGATE_TO,
-    ACT_POINT_TOWARDS, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH,
-    ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_FOCUS,
-    ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED,
-    ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY,
-    ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_TURN, AbiStr, AbiValue, Act, Actors, Entry, Host,
-    LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI,
-    SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
-    SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER,
-    VALUE_TEXT, Val,
+    ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_LIST_ADD, ACT_LIST_CLEAR,
+    ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE, ACT_LIST_SHIFT, ACT_MOVE,
+    ACT_NAVIGATE_TO, ACT_POINT_TOWARDS, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY,
+    ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY,
+    ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED,
+    ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_UI_PROP,
+    ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_TURN, AbiStr,
+    AbiValue, Act, Actors, Entry, Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE,
+    READ_VARIABLE, Runner, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW,
+    SYM_LOGIC_PAUSE, SYM_LOGIC_RESET, SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL,
+    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
 };
 
 use crate::project::Project;
@@ -1043,6 +1044,45 @@ impl<'a> Pass<'a> {
                 self.number_f64(value)?,
                 name_literal = literal(name)
             ),
+            // List writes go through `Act` rather than the host's own state:
+            // the host owns the lists, so a new one is a new `Act` the way a
+            // new world verb is, never a change to the `Host` trait.
+            Action::AddToList { name, value } => reading(
+                self.evaluated(value)?,
+                &format!("Act::AddToList {{ name: {}, value: slot }}", literal(name)),
+            ),
+            Action::DeleteOfList { index, name } => reading(
+                self.number_f64(index)?,
+                &format!(
+                    "Act::DeleteOfList {{ name: {}, index: slot }}",
+                    literal(name)
+                ),
+            ),
+            Action::DeleteAllOfList { name } => act(format!(
+                "Act::DeleteAllOfList {{ name: {} }}",
+                literal(name)
+            )),
+            Action::ShiftList { name, amount } => reading(
+                self.number_f64(amount)?,
+                &format!("Act::ShiftList {{ name: {}, amount: slot }}", literal(name)),
+            ),
+            Action::InsertIntoList { value, index, name } => format!(
+                "    let value = {};\n    let index = {};\n    \
+                 h.act(&me, Act::InsertIntoList {{ name: {}, index, value }});\n",
+                self.evaluated(value)?,
+                self.number_f64(index)?,
+                literal(name)
+            ),
+            Action::ReplaceItemOfList { index, name, value } => format!(
+                "    let index = {};\n    let value = {};\n    \
+                 h.act(&me, Act::ReplaceItemOfList {{ name: {}, index, value }});\n",
+                self.number_f64(index)?,
+                self.evaluated(value)?,
+                literal(name)
+            ),
+            Action::ReverseList { name } => {
+                act(format!("Act::ReverseList {{ name: {} }}", literal(name)))
+            }
         };
         Ok(format!("{line}{}", self.check_deleted(next)))
     }

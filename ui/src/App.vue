@@ -2,10 +2,10 @@
 // Two pages: the Dashboard the app starts on, and the editor a project opens
 // into - a top bar, the actor list, the block palette and canvas, the
 // inspector, the asset tray and the run log.
-import { onMounted, onUnmounted } from 'vue';
-import { Canvas } from 'blockstitch';
-import { initState, state } from './store';
-import { redo, resetZoom, undo } from './tauri';
+import { computed, onMounted, onUnmounted, watch } from 'vue';
+import { Canvas, ListEditorOverlay, activateListEditors, isListEditorOpen, setListEditorOpen } from 'blockstitch';
+import { initState, openActor, state } from './store';
+import { redo, renameList, resetZoom, setListItems, undo } from './tauri';
 import Dashboard from './components/Dashboard.vue';
 import TopBar from './components/TopBar.vue';
 import ActorList from './components/ActorList.vue';
@@ -14,6 +14,27 @@ import InspectorPanel from './components/InspectorPanel.vue';
 import AssetTray from './components/AssetTray.vue';
 import RunLog from './components/RunLog.vue';
 import ContextMenu from './components/ContextMenu.vue';
+
+// A list's canvas monitor, for the open actor's own lists and the project's
+// shared ones. An actor's own list shadows a shared one of the same name,
+// the same rule blocks read by.
+const overlayLists = computed(() => {
+  const own = openActor.value?.lists ?? [];
+  const shared = (state.project?.global_lists ?? []).filter(
+    list => !own.some(candidate => candidate.name === list.name),
+  );
+  return [...own, ...shared].filter(list => isListEditorOpen(list.name));
+});
+
+watch(
+  () => openActor.value?.id ?? null,
+  id =>
+    activateListEditors(id, [
+      ...(openActor.value?.lists ?? []),
+      ...(state.project?.global_lists ?? []),
+    ]),
+  { immediate: true },
+);
 
 onMounted(() => {
   void initState();
@@ -57,6 +78,16 @@ async function onKeydown(e: KeyboardEvent) {
         <div class="editor-content-area">
           <BlockSidebar />
           <Canvas>
+            <template #overlay>
+              <ListEditorOverlay
+                v-for="list in overlayLists"
+                :key="list.name"
+                :list="list"
+                :on-save-items="(name, items) => setListItems(name, items)"
+                :on-rename="(oldName, newName) => renameList(oldName, newName)"
+                :on-hide="name => setListEditorOpen(name, false)"
+              />
+            </template>
             <template #context-menu>
               <ContextMenu />
             </template>

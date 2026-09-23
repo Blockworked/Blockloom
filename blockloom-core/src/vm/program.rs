@@ -148,6 +148,34 @@ pub enum Action {
         name: String,
         value: Value,
     },
+    AddToList {
+        value: Value,
+        name: String,
+    },
+    DeleteOfList {
+        index: Value,
+        name: String,
+    },
+    DeleteAllOfList {
+        name: String,
+    },
+    ShiftList {
+        name: String,
+        amount: Value,
+    },
+    InsertIntoList {
+        value: Value,
+        index: Value,
+        name: String,
+    },
+    ReplaceItemOfList {
+        index: Value,
+        name: String,
+        value: Value,
+    },
+    ReverseList {
+        name: String,
+    },
 }
 
 /// What a `show` block asks for, before any of it is evaluated. The slots
@@ -361,9 +389,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::SetCameraPitch { degrees } => {
             steps.push(Step::Action(Action::SetCameraPitch(degrees.clone())))
         }
-        K::SetCameraFov { fov } => {
-            steps.push(Step::Action(Action::SetCameraFov(fov.clone())))
-        }
+        K::SetCameraFov { fov } => steps.push(Step::Action(Action::SetCameraFov(fov.clone()))),
         K::AttachComponent { component } => steps.push(Step::Action(Action::AttachComponent(
             component.trim().to_string(),
         ))),
@@ -603,6 +629,38 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             name: name.clone(),
             value: value.clone(),
         })),
+        K::AddToList { value, name } => steps.push(Step::Action(Action::AddToList {
+            value: value.clone(),
+            name: name.clone(),
+        })),
+        K::DeleteOfList { index, name } => steps.push(Step::Action(Action::DeleteOfList {
+            index: index.clone(),
+            name: name.clone(),
+        })),
+        K::DeleteAllOfList { name } => {
+            steps.push(Step::Action(Action::DeleteAllOfList { name: name.clone() }))
+        }
+        K::ShiftList { name, amount } => steps.push(Step::Action(Action::ShiftList {
+            name: name.clone(),
+            amount: amount.clone(),
+        })),
+        K::InsertIntoList { value, index, name } => {
+            steps.push(Step::Action(Action::InsertIntoList {
+                value: value.clone(),
+                index: index.clone(),
+                name: name.clone(),
+            }))
+        }
+        K::ReplaceItemOfList { index, name, value } => {
+            steps.push(Step::Action(Action::ReplaceItemOfList {
+                index: index.clone(),
+                name: name.clone(),
+                value: value.clone(),
+            }))
+        }
+        K::ReverseList { name } => {
+            steps.push(Step::Action(Action::ReverseList { name: name.clone() }))
+        }
         K::Wait { duration } => steps.push(Step::Wait(duration.clone())),
         K::WaitUntil { condition } => steps.push(Step::WaitUntil(condition.clone())),
         K::CallBlock { block_id, args } => steps.push(Step::Call {

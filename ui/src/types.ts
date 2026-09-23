@@ -10,6 +10,7 @@
 
 import type { ValueLocation, ValueNode } from 'blockstitch';
 import { fieldLocation as blockstitchFieldLocation, newId as blockstitchNewId } from 'blockstitch';
+import type { ListDef, ListItem } from 'blockstitch';
 
 export type InstrPath = { index: number; slot?: number }[];
 
@@ -84,6 +85,13 @@ export const INSTRUCTION_TYPES = [
   'ChangeVariable',
   'SaveVariable',
   'ClearSavedVariable',
+  'AddToList',
+  'DeleteOfList',
+  'DeleteAllOfList',
+  'ShiftList',
+  'InsertIntoList',
+  'ReplaceItemOfList',
+  'ReverseList',
   'CallBlock',
   'Return',
 ] as const;
@@ -307,6 +315,11 @@ export interface VariableDto {
   value: { kind: 'Number' | 'Text' | 'Bool'; value?: number | string | boolean };
 }
 
+/** A literal-only list item. Lists never store expressions, booleans, or refs. */
+export type ListItemDto = ListItem;
+/** A named, ordered collection of literal items, with its canvas monitor state. */
+export type ListDto = ListDef;
+
 export type BlockPieceDto =
   | { kind: 'Label'; id: string; text: string }
   | { kind: 'Input'; id: string; name: string; value_type: 'Any' | 'Bool' };
@@ -330,6 +343,7 @@ export interface ActorDto {
   floating_values: FloatingValueDto[];
   comments: CommentDto[];
   variables: VariableDto[];
+  lists: ListDto[];
   block_defs: BlockDefDto[];
 }
 
@@ -340,6 +354,7 @@ export interface ProjectDto {
   world: WorldDto;
   actors: ActorDto[];
   globals: VariableDto[];
+  global_lists: ListDto[];
 }
 
 // ─── Assets ────────────────────────────────────────────────────────────────
@@ -570,4 +585,16 @@ export function variableNames(project: ProjectDto | null, actor: ActorDto | null
     .filter(name => !own.includes(name))
     .sort((a, b) => a.localeCompare(b));
   return [...own, ...globals];
+}
+
+/** List names the open actor can read: its own, then the project's shared
+ * ones, each group alphabetical. A name in both is the actor's - it shadows
+ * the shared one, the same rule variables use. */
+export function listNames(project: ProjectDto | null, actor: ActorDto | null): string[] {
+  const own = (actor?.lists ?? []).map(l => l.name).sort((a, b) => a.localeCompare(b));
+  const shared = (project?.global_lists ?? [])
+    .map(l => l.name)
+    .filter(name => !own.includes(name))
+    .sort((a, b) => a.localeCompare(b));
+  return [...own, ...shared];
 }

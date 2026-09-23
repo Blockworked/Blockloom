@@ -19,8 +19,8 @@
 //! tests make.
 
 use blockloom_core::blocks::{
-    BlockDef, BlockPiece, BlockShape, InputValueType, Instruction, InstructionKind as K, Strand,
-    VariableDef,
+    BlockDef, BlockPiece, BlockShape, InputValueType, Instruction, InstructionKind as K, ListDef,
+    ListItem, Strand, VariableDef,
 };
 use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::{Axis, Mode, Visual};
@@ -93,6 +93,7 @@ use std::collections::HashMap;
 
 struct Recorder {
     vars: HashMap<String, Val>,
+    lists: HashMap<String, Vec<Val>>,
     /// Which tick is being run, so every line says when it happened and not
     /// just what order things came in.
     tick: usize,
@@ -101,6 +102,83 @@ struct Recorder {
 
 impl Host for Recorder {
     fn act(&mut self, actor: &str, act: Act) {
+        // List writes are the program's own state, like variables: they
+        // land silently rather than as transcript lines, and a name nothing
+        // declared is a no-op.
+        match &act {
+            Act::AddToList { name, value } => {
+                match list_item(value) {
+                    Some(item) => {
+                        if let Some(list) = self.lists.get_mut(*name) {
+                            list.push(item);
+                        }
+                    }
+                    None => self.error(actor, "list items must be number or text"),
+                }
+                return;
+            }
+            Act::DeleteOfList { name, index } => {
+                if let Some(list) = self.lists.get_mut(*name) {
+                    if let Some(at) = list_index_pos(*index, list.len(), false) {
+                        list.remove(at);
+                    }
+                }
+                return;
+            }
+            Act::DeleteAllOfList { name } => {
+                if let Some(list) = self.lists.get_mut(*name) {
+                    list.clear();
+                }
+                return;
+            }
+            Act::ShiftList { name, amount } => {
+                if let Some(list) = self.lists.get_mut(*name) {
+                    if !list.is_empty() {
+                        let len = list.len();
+                        let distance = amount.round() as isize;
+                        if distance >= 0 {
+                            list.rotate_right(distance as usize % len);
+                        } else {
+                            list.rotate_left(distance.unsigned_abs() % len);
+                        }
+                    }
+                }
+                return;
+            }
+            Act::InsertIntoList { name, index, value } => {
+                match list_item(value) {
+                    Some(item) => {
+                        if let Some(list) = self.lists.get_mut(*name) {
+                            if let Some(at) = list_index_pos(*index, list.len(), true) {
+                                list.insert(at, item);
+                            }
+                        }
+                    }
+                    None => self.error(actor, "list items must be number or text"),
+                }
+                return;
+            }
+            Act::ReplaceItemOfList { name, index, value } => {
+                match list_item(value) {
+                    Some(item) => {
+                        if let Some(list) = self.lists.get_mut(*name) {
+                            if let Some(at) = list_index_pos(*index, list.len(), false) {
+                                list[at] = item;
+                            }
+                        }
+                    }
+                    None => self.error(actor, "list items must be number or text"),
+                }
+                return;
+            }
+            Act::ReverseList { name } => {
+                if let Some(list) = self.lists.get_mut(*name) {
+                    list.reverse();
+                }
+                return;
+            }
+            _ => {}
+        }
         // `delete` is recorded against the actor it takes out of the run
         // rather than the one that asked, because that is who the VM's own
         // effect is about.
@@ -153,6 +231,57 @@ impl Host for Recorder {
                 }
                 Ok(Val::Num(axis_of(&args[1], [10.0, -2.0, 0.0])))
             }
+            // List reporters read the run's lists, unknown names included:
+            // nothing declared reads as empty, exactly as it does on the VM.
+            "ListItem" => {
+                let list = self.lists.get(&args[1].as_text());
+                let len = list.map_or(0, Vec::len);
+                let index = args[0].as_number().unwrap_or(0.0);
+                Ok(list_index_pos(index, len, false)
+                    .and_then(|at| list.and_then(|list| list.get(at)).cloned())
+                    .unwrap_or(Val::Text(String::new())))
+            }
+            "ListItemNumber" => {
+                let needle = list_item(&args[0])
+                    .ok_or_else(|| "list items must be number or text".to_string())?;
+                Ok(Val::Num(
+                    self.lists
+                        .get(&args[1].as_text())
+                        .map_or(0, |list| {
+                            list.iter().position(|item| item == &needle).map_or(0, |at| at + 1)
+                        }) as f64,
+                ))
+            }
+            "ListAmount" => {
+                let needle = list_item(&args[0])
+                    .ok_or_else(|| "list items must be number or text".to_string())?;
+                Ok(Val::Num(
+                    self.lists
+                        .get(&args[1].as_text())
+                        .map_or(0, |list| list.iter().filter(|item| *item == &needle).count())
+                        as f64,
+                ))
+            }
+            "ListLength" => Ok(Val::Num(
+                self.lists.get(&args[0].as_text()).map_or(0, Vec::len) as f64
+            )),
+            "ListContains" => {
+                let needle = list_item(&args[1])
+                    .ok_or_else(|| "list items must be number or text".to_string())?;
+                Ok(Val::Bool(
+                    self.lists
+                        .get(&args[0].as_text())
+                        .is_some_and(|list| list.contains(&needle)),
+                ))
+            }
+            "ListItemExists" => {
+                let len = self.lists.get(&args[1].as_text()).map_or(0, Vec::len);
+                let index = args[0].as_number().unwrap_or(0.0);
+                Ok(Val::Bool(list_index_pos(index, len, false).is_some()))
+            }
+            "ListIsEmpty" => Ok(Val::Bool(
+                self.lists.get(&args[0].as_text()).map_or(true, Vec::is_empty),
+            )),
             other => Err(format!("unknown operator '{other}'")),
         }
     }
@@ -175,6 +304,15 @@ fn axis_of(value: &Val, position: [f64; 3]) -> f64 {
         "Y" | "y" => position[1],
         "Z" | "z" => position[2],
         _ => position[0],
+    }
+}
+
+/// A value a list can hold: numbers and text only, the way the VM's own
+/// items reject a boolean.
+fn list_item(value: &Val) -> Option<Val> {
+    match value {
+        Val::Num(_) | Val::Text(_) => Some(value.clone()),
+        Val::Bool(_) => None,
     }
 }
 
@@ -246,9 +384,12 @@ fn shown(value: &Val) -> String {
 /// fixed tick, in the order they started, and the run ends when they are all
 /// done or one of them says `stop all`.
 fn main() {
-    let mut recorder = Recorder { vars: HashMap::new(), tick: 0, out: Vec::new() };
+    let mut recorder = Recorder { vars: HashMap::new(), lists: HashMap::new(), tick: 0, out: Vec::new() };
     for (name, value) in seeded() {
         recorder.vars.insert(name.to_string(), value);
+    }
+    for (name, items) in seeded_lists() {
+        recorder.lists.insert(name.to_string(), items);
     }
 
     // The program's own scheduler, which is what a built game runs on: one
@@ -411,6 +552,7 @@ fn call(id: &str, args: Vec<Value>) -> Value {
     Value::Call {
         block_id: id.to_string(),
         args,
+        branches: Vec::new(),
         // What the editor shows while the call isn't being run; never read.
         saved: Box::new(Value::number(0.0)),
     }
@@ -502,6 +644,7 @@ fn project_with_headers(
                 value: value.clone(),
             })
             .collect(),
+        global_lists: Vec::new(),
     }
 }
 
@@ -549,12 +692,34 @@ fn by_compiler(project: &Project, globals: &[(&str, Evaluated)], case: &str) -> 
         .iter()
         .map(|(name, value)| format!("({name:?}, {})", as_val(value)))
         .collect();
+    // The harness's lists start where the document says, which is what the
+    // VM loads out of the same document.
+    let list_seed: Vec<String> = project
+        .actors
+        .iter()
+        .flat_map(|actor| actor.graph.lists.iter())
+        .chain(project.global_lists.iter())
+        .map(|list| {
+            let items = list
+                .items
+                .iter()
+                .map(|item| match item {
+                    ListItem::Number(n) => format!("Val::Num({n:?}f64)"),
+                    ListItem::Text(s) => format!("Val::Text({s:?}.to_string())"),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("({:?}, vec![{items}])", list.name)
+        })
+        .collect();
     // The clock, and what the project's variables start at - which is what
     // the VM loads out of `globals`. The harness's `main` reads both.
     let source = format!(
         "{source}\n{HARNESS}\nfn seeded() -> Vec<(&'static str, Val)> {{ vec![{}] }}\n\
+         fn seeded_lists() -> Vec<(&'static str, Vec<Val>)> {{ vec![{}] }}\n\
          const DT: f64 = {DT:?};\nconst TICKS: usize = {TICKS};\n",
-        seed.join(", ")
+        seed.join(", "),
+        list_seed.join(", ")
     );
 
     let dir = std::env::temp_dir().join(format!("blockloom-codegen-{case}-{}", std::process::id()));
@@ -877,6 +1042,153 @@ fn variables_read_and_write_the_same_way() {
             },
         ],
         &[("score", Evaluated::Number(4.0))],
+    );
+}
+
+/// A project with declared lists seeded with items: the VM loads them out
+/// of the document, and `by_compiler` seeds the harness's own copy from the
+/// same document, so the two halves start holding the same things.
+fn project_with_lists(bodies: Vec<Vec<K>>, lists: Vec<(String, Vec<ListItem>)>) -> Project {
+    let mut project = project_with_blocks(bodies, Vec::new(), &[]);
+    let actor = project.actors.first_mut().expect("one actor");
+    for (name, items) in lists {
+        actor.graph.lists.push(ListDef {
+            name,
+            items,
+            editor_visible: false,
+            editor_x: 0,
+            editor_y: 0,
+        });
+    }
+    project
+}
+
+fn assert_lists(case: &str, bodies: Vec<Vec<K>>, lists: Vec<(String, Vec<ListItem>)>) {
+    if !toolchain() {
+        return;
+    }
+    let project = project_with_lists(bodies, lists);
+    assert_project(case, project, &[]);
+}
+
+#[test]
+fn lists_hold_and_report_their_items_the_same_way() {
+    assert_lists(
+        "list-items",
+        vec![vec![
+            K::AddToList {
+                value: Value::text("first"),
+                name: "items".to_string(),
+            },
+            K::AddToList {
+                value: number(7.0),
+                name: "items".to_string(),
+            },
+            K::Say {
+                text: op("ListItem", vec![number(1.0), Value::text("items")]),
+            },
+            K::Say {
+                text: op("ListLength", vec![Value::text("items")]),
+            },
+            K::DeleteOfList {
+                index: number(1.0),
+                name: "items".to_string(),
+            },
+            K::Say {
+                text: op("ListItem", vec![number(1.0), Value::text("items")]),
+            },
+            K::InsertIntoList {
+                value: Value::text("zero"),
+                index: number(1.0),
+                name: "items".to_string(),
+            },
+            K::ReplaceItemOfList {
+                index: number(2.0),
+                name: "items".to_string(),
+                value: number(8.0),
+            },
+            K::ShiftList {
+                name: "items".to_string(),
+                amount: number(1.0),
+            },
+            K::ReverseList {
+                name: "items".to_string(),
+            },
+            K::Say {
+                text: op("ListItem", vec![number(1.0), Value::text("items")]),
+            },
+            K::Say {
+                text: op("ListLength", vec![Value::text("items")]),
+            },
+            K::DeleteAllOfList {
+                name: "items".to_string(),
+            },
+            K::Say {
+                text: op("ListIsEmpty", vec![Value::text("items")]),
+            },
+        ]],
+        vec![("items".to_string(), Vec::new())],
+    );
+}
+
+#[test]
+fn list_reporters_answer_the_same_including_the_edges() {
+    assert_lists(
+        "list-reporters",
+        vec![vec![
+            K::Say {
+                text: op(
+                    "ListItemNumber",
+                    vec![Value::text("b"), Value::text("letters")],
+                ),
+            },
+            K::Say {
+                text: op("ListAmount", vec![Value::text("a"), Value::text("letters")]),
+            },
+            K::Say {
+                text: op(
+                    "ListContains",
+                    vec![Value::text("letters"), Value::text("c")],
+                ),
+            },
+            K::Say {
+                text: op("ListItemExists", vec![number(2.0), Value::text("letters")]),
+            },
+            K::Say {
+                text: op("ListItemExists", vec![number(9.0), Value::text("letters")]),
+            },
+            // A list nothing declared reads empty, and so does a missing item.
+            K::Say {
+                text: op("ListItem", vec![number(1.0), Value::text("nobody")]),
+            },
+            K::Say {
+                text: op("ListLength", vec![Value::text("nobody")]),
+            },
+            K::Say {
+                text: op("ListIsEmpty", vec![Value::text("nobody")]),
+            },
+            // An out-of-range change is nothing at all, and a boolean is not
+            // an item: reported, and dropped.
+            K::DeleteOfList {
+                index: number(9.0),
+                name: "letters".to_string(),
+            },
+            K::AddToList {
+                value: Value::Bool,
+                name: "letters".to_string(),
+            },
+            K::Say {
+                text: op("ListLength", vec![Value::text("letters")]),
+            },
+        ]],
+        vec![(
+            "letters".to_string(),
+            vec![
+                ListItem::Text("a".to_string()),
+                ListItem::Text("b".to_string()),
+                ListItem::Text("a".to_string()),
+            ],
+        )],
     );
 }
 

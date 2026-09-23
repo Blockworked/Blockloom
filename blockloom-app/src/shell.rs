@@ -1156,6 +1156,99 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "create-list",
+        cmd: "create_list",
+        aliases: &["create_list"],
+        summary: "Make a global or actor-scoped list.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "scope",
+                ty: "actor|global",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "rename-list",
+        cmd: "rename_list",
+        aliases: &["rename_list"],
+        summary: "Rename a list, wherever it lives.",
+        args: &[
+            ArgSpec {
+                name: "oldName",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "newName",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "delete-list",
+        cmd: "delete_list",
+        aliases: &["delete_list"],
+        summary: "Delete a list, wherever it lives.",
+        args: &[ArgSpec {
+            name: "name",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-list-items",
+        cmd: "set_list_items",
+        aliases: &["set_list_items"],
+        summary: "Replace a list's items with literal numbers/text.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "items",
+                ty: "[{kind: Number|Text, value}]",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "set-list-editor-state",
+        cmd: "set_list_editor_state",
+        aliases: &["set_list_editor_state"],
+        summary: "Show or hide a list's canvas editor and where it sits.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "visible",
+                ty: "bool",
+                required: true,
+            },
+            ArgSpec {
+                name: "x",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "y",
+                ty: "number",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
         name: "create-block",
         cmd: "create_block",
         aliases: &["create_block"],

@@ -583,6 +583,7 @@ fn script_lifetimes(engine: &mut Engine, asked: &mut crate::script::Asked) {
             let gone = named_or_self(engine, &actor, &wanted);
             if let Some(gone) = gone.as_deref() {
                 engine.variables.forget_actor(gone);
+                engine.lists.forget_actor(gone);
                 if let Some(logic) = &mut engine.logic {
                     logic.deleted(gone);
                 }
@@ -608,6 +609,7 @@ fn clone_for_logic(engine: &mut Engine, running: &str, wanted: &str) -> Option<(
     let of = named_or_self(engine, running, wanted)?;
     let clone = engine.new_actor_id();
     engine.variables.copy_actor(&of, &clone);
+    engine.lists.copy_actor(&of, &clone);
     if let Some(logic) = &mut engine.logic {
         logic.cloned(&clone, &of);
     }
@@ -1113,10 +1115,12 @@ pub fn step_vm(
     let mut messages = Vec::new();
     if engine.logic.is_some() {
         let variables = engine.variables.clone();
+        let lists = engine.lists.clone();
         engine.logic.as_mut().expect("checked above").tick(
             now,
             wall,
             variables,
+            lists,
             &mut produced,
             &mut messages,
         );
@@ -2646,8 +2650,7 @@ mod tests {
         let rig = app.world().entity(actor).get::<CameraRig>().unwrap();
         assert_eq!(rig.0.fov, 90.0);
         assert!(
-            !app
-                .world()
+            !app.world()
                 .non_send::<Engine>()
                 .has_component("player", "Body")
         );

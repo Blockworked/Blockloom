@@ -18,7 +18,7 @@ Obvious gaps already identified in the project notes:
       stands. The offset is authored-only today, read once when the world is
       built.
 - [ ] Add sound playback and sound-related blocks.
-- [ ] Add lists and blocks for creating, reading, and changing list items.
+- [x] Add lists and blocks for creating, reading, and changing list items.
 - [x] Add asset management UI for importing, organizing, previewing, replacing, and removing project assets.
 - [x] Show `say` as a speech bubble over its actor in the game world.
 - [ ] Let reporter-shaped custom blocks suspend and resume when they contain `wait`.

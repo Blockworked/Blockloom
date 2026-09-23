@@ -213,6 +213,42 @@ pub enum Act {
         name: &'static str,
         clear: bool,
     },
+    /// Appends a number/text value to a named list. A boolean value reports
+    /// itself and is dropped, the way a bad slot is.
+    AddToList {
+        name: &'static str,
+        value: Val,
+    },
+    /// Removes the 1-based item at `index` from a named list.
+    DeleteOfList {
+        name: &'static str,
+        index: f64,
+    },
+    /// Removes every item from a named list.
+    DeleteAllOfList {
+        name: &'static str,
+    },
+    /// Rotates a named list by `amount` positions.
+    ShiftList {
+        name: &'static str,
+        amount: f64,
+    },
+    /// Inserts a number/text value at the 1-based `index` in a named list.
+    InsertIntoList {
+        name: &'static str,
+        index: f64,
+        value: Val,
+    },
+    /// Replaces the 1-based item at `index` in a named list.
+    ReplaceItemOfList {
+        name: &'static str,
+        index: f64,
+        value: Val,
+    },
+    /// Reverses a named list in place.
+    ReverseList {
+        name: &'static str,
+    },
 }
 
 /// One compiled strand, and what starts it. The trigger travels as text for
@@ -766,7 +802,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 9;
+pub const LOGIC_ABI_VERSION: u32 = 10;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -833,6 +869,20 @@ pub const ACT_SET_UI_THEME: u32 = 36;
 pub const ACT_SAVE_VARIABLE: u32 = 37;
 /// `n0`, `n1`, `n2` = target; `n3` = speed in units per second.
 pub const ACT_NAVIGATE_TO: u32 = 39;
+/// `a` = list name, `value` = what to append.
+pub const ACT_LIST_ADD: u32 = 40;
+/// `a` = list name; `n0` = 1-based item to remove.
+pub const ACT_LIST_DELETE: u32 = 41;
+/// `a` = list name.
+pub const ACT_LIST_CLEAR: u32 = 42;
+/// `a` = list name; `n0` = positions to rotate by.
+pub const ACT_LIST_SHIFT: u32 = 43;
+/// `a` = list name; `n0` = 1-based position, `value` = what to insert.
+pub const ACT_LIST_INSERT: u32 = 44;
+/// `a` = list name; `n0` = 1-based position, `value` = its replacement.
+pub const ACT_LIST_REPLACE: u32 = 45;
+/// `a` = list name.
+pub const ACT_LIST_REVERSE: u32 = 46;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1268,6 +1318,27 @@ impl Host for AbiHost {
                 [if clear { 1.0 } else { 0.0 }, 0.0, 0.0],
                 &zero,
             ),
+            Act::AddToList { name, value } => {
+                self.act_wire(actor, ACT_LIST_ADD, name, "", [0.0; 3], &value)
+            }
+            Act::DeleteOfList { name, index } => {
+                self.act_wire(actor, ACT_LIST_DELETE, name, "", [index, 0.0, 0.0], &zero)
+            }
+            Act::DeleteAllOfList { name } => {
+                self.act_wire(actor, ACT_LIST_CLEAR, name, "", [0.0; 3], &zero)
+            }
+            Act::ShiftList { name, amount } => {
+                self.act_wire(actor, ACT_LIST_SHIFT, name, "", [amount, 0.0, 0.0], &zero)
+            }
+            Act::InsertIntoList { name, index, value } => {
+                self.act_wire(actor, ACT_LIST_INSERT, name, "", [index, 0.0, 0.0], &value)
+            }
+            Act::ReplaceItemOfList { name, index, value } => {
+                self.act_wire(actor, ACT_LIST_REPLACE, name, "", [index, 0.0, 0.0], &value)
+            }
+            Act::ReverseList { name } => {
+                self.act_wire(actor, ACT_LIST_REVERSE, name, "", [0.0; 3], &zero)
+            }
         }
     }
 
@@ -1335,6 +1406,22 @@ pub fn ui_blank(kind: usize, flag: bool) -> Val {
         5 => Val::Num(0.0),
         2 => Val::Bool(false),
         _ => Val::Text(String::new()),
+    }
+}
+
+/// A Scratch-style 1-based list position as a vector offset. An insert may
+/// target the slot just past the final item; every other list command needs
+/// an item that is already there. The same rule blockstitch's `list_index`
+/// keeps for the VM, so the two halves agree about every edge.
+pub fn list_index_pos(index: f64, len: usize, allow_end: bool) -> Option<usize> {
+    if !index.is_finite() || index < 1.0 {
+        return None;
+    }
+    let at = index.floor() as usize - 1;
+    if at < len || (allow_end && at == len) {
+        Some(at)
+    } else {
+        None
     }
 }
 

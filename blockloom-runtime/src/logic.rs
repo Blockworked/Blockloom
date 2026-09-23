@@ -1,25 +1,28 @@
 //! Loading and running a built game's compiled block program.
 
+use blockloom_core::blocks::{ListItem, is_list_reporter, list_index, resolve_list_reporter};
 use blockloom_core::codegen::{
     self, ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH,
     ACT_BROADCAST, ACT_CHANGE_POSITION, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR,
-    ACT_DELETE_ELEMENT, ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_MOVE,
-    ACT_NAVIGATE_TO, ACT_POINT_TOWARDS, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_FOV,
-    ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD,
-    ACT_SET_FOCUS, ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT,
-    ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_UI_PROP, ACT_SET_UI_THEME,
-    ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_TURN, AbiStr, AbiValue,
-    LOGIC_ABI_VERSION, LogicHostApi, READ_SENSE, READ_VARIABLE, SYM_LOGIC_ABI, SYM_LOGIC_FIRE,
-    SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET, SYM_LOGIC_TICK,
-    TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
+    ACT_DELETE_ELEMENT, ACT_DETACH, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT,
+    ACT_LIST_ADD, ACT_LIST_CLEAR, ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE,
+    ACT_LIST_REVERSE, ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_POINT_TOWARDS,
+    ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH,
+    ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_FOCUS,
+    ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED,
+    ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY,
+    ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_TURN, AbiStr, AbiValue, LOGIC_ABI_VERSION, LogicHostApi,
+    READ_SENSE, READ_VARIABLE, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW,
+    SYM_LOGIC_PAUSE, SYM_LOGIC_RESET, SYM_LOGIC_TICK, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR,
+    VALUE_NUMBER, VALUE_TEXT,
 };
 use blockloom_core::components::CameraView;
 use blockloom_core::project::Project;
 use blockloom_core::scene::{Axis, BodyKind};
 use blockloom_core::sense;
 use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp, UiTheme};
-use blockloom_core::value::{Evaluated, ext_operator};
-use blockloom_core::vm::{Effect, Event, Variables};
+use blockloom_core::value::{Evaluated, Op, Value, ext_operator};
+use blockloom_core::vm::{Effect, Event, Lists, Variables};
 use std::ffi::c_void;
 use std::path::Path;
 
@@ -172,11 +175,13 @@ impl LoadedLogic {
         now: f64,
         wall: f64,
         variables: Variables,
+        lists: Lists,
         effects: &mut Vec<Effect>,
         messages: &mut Vec<String>,
     ) {
         let mut context = Context {
             variables,
+            lists,
             effects,
             messages,
         };
@@ -217,6 +222,7 @@ fn missing_export() -> String {
 
 struct Context<'a> {
     variables: Variables,
+    lists: Lists,
     effects: &'a mut Vec<Effect>,
     messages: &'a mut Vec<String>,
 }
@@ -263,6 +269,22 @@ extern "C" fn read(
     let answer = match what {
         READ_VARIABLE => Ok(context.variables.read(actor, name)),
         READ_SENSE => {
+            // List reporters arrive here like any other `Op::Ext` sensing
+            // reporter, but read the run's lists rather than the world.
+            if is_list_reporter(&Op::from_name(name)) {
+                let args: Vec<Value> = args
+                    .iter()
+                    .map(|arg| value_from_abi(arg).into_value())
+                    .collect();
+                let lists = context.lists.snapshot_for(actor);
+                return write_answer(
+                    resolve_list_reporter(name, args, &lists).and_then(|value| value.eval()),
+                    out,
+                    text,
+                    capacity,
+                    needed,
+                );
+            }
             let Some(operator) = ext_operator(name) else {
                 return ABI_MISSING;
             };
@@ -514,6 +536,80 @@ extern "C" fn act(
             name: a.to_string(),
             clear: n0 != 0.0,
         },
+        // List writes are the program's own state, like variables: they land
+        // directly and report nothing, so no effect leaves this match.
+        ACT_LIST_ADD => match ListItem::from_evaluated(value_from_abi(&value)) {
+            Some(item) => {
+                context
+                    .lists
+                    .with_list_mut(&actor, a, |list| list.push(item));
+                return;
+            }
+            None => Effect::Error {
+                actor,
+                message: "list items must be number or text".to_string(),
+            },
+        },
+        ACT_LIST_DELETE => {
+            context.lists.with_list_mut(&actor, a, |list| {
+                if let Some(at) = list_index(n0, list.len(), false) {
+                    list.remove(at);
+                }
+            });
+            return;
+        }
+        ACT_LIST_CLEAR => {
+            context.lists.with_list_mut(&actor, a, |list| list.clear());
+            return;
+        }
+        ACT_LIST_SHIFT => {
+            context.lists.with_list_mut(&actor, a, |list| {
+                if !list.is_empty() {
+                    let len = list.len();
+                    let distance = n0.round() as isize;
+                    if distance >= 0 {
+                        list.rotate_right(distance as usize % len);
+                    } else {
+                        list.rotate_left(distance.unsigned_abs() % len);
+                    }
+                }
+            });
+            return;
+        }
+        ACT_LIST_INSERT => match ListItem::from_evaluated(value_from_abi(&value)) {
+            Some(item) => {
+                context.lists.with_list_mut(&actor, a, |list| {
+                    if let Some(at) = list_index(n0, list.len(), true) {
+                        list.insert(at, item);
+                    }
+                });
+                return;
+            }
+            None => Effect::Error {
+                actor,
+                message: "list items must be number or text".to_string(),
+            },
+        },
+        ACT_LIST_REPLACE => match ListItem::from_evaluated(value_from_abi(&value)) {
+            Some(item) => {
+                context.lists.with_list_mut(&actor, a, |list| {
+                    if let Some(at) = list_index(n0, list.len(), false) {
+                        list[at] = item;
+                    }
+                });
+                return;
+            }
+            None => Effect::Error {
+                actor,
+                message: "list items must be number or text".to_string(),
+            },
+        },
+        ACT_LIST_REVERSE => {
+            context
+                .lists
+                .with_list_mut(&actor, a, |list| list.reverse());
+            return;
+        }
         ACT_ERROR => Effect::Error {
             actor,
             message: a.to_string(),
@@ -608,11 +704,20 @@ mod tests {
         codegen::compile_for(&project, &root, None).unwrap();
         let variables = Variables::default();
         variables.load(&project);
+        let lists = Lists::default();
+        lists.load(&project);
         let mut logic = LoadedLogic::load(&root).unwrap();
         logic.fire(Event::Started, &project);
         let mut effects = Vec::new();
         let mut messages = Vec::new();
-        logic.tick(0.0, 0.0, variables.clone(), &mut effects, &mut messages);
+        logic.tick(
+            0.0,
+            0.0,
+            variables.clone(),
+            lists.clone(),
+            &mut effects,
+            &mut messages,
+        );
 
         assert_eq!(
             effects,
@@ -684,12 +789,21 @@ mod tests {
         codegen::compile_for(&project, &root, None).unwrap();
         let variables = Variables::default();
         variables.load(&project);
+        let lists = Lists::default();
+        lists.load(&project);
         let mut logic = LoadedLogic::load(&root).unwrap();
         logic.fire(Event::Started, &project);
 
         let mut effects = Vec::new();
         let mut messages = Vec::new();
-        logic.tick(0.0, 0.0, variables.clone(), &mut effects, &mut messages);
+        logic.tick(
+            0.0,
+            0.0,
+            variables.clone(),
+            lists.clone(),
+            &mut effects,
+            &mut messages,
+        );
         let clone = match effects.as_slice() {
             [Effect::CreateClone { actor, clone, of }] => {
                 assert_eq!(actor, "a1");
@@ -705,6 +819,7 @@ mod tests {
             1.0 / 60.0,
             1.0 / 60.0,
             variables.clone(),
+            lists.clone(),
             &mut effects,
             &mut messages,
         );

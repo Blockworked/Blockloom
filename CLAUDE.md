@@ -607,7 +607,7 @@ lands.
 
 ### Known gaps
 
-- No sounds or value lists.
+- No sounds.
 - The interface has three global themes plus per-element overrides and
   scrollable UI lists. Variables persist only when a `save variable` block or
   the matching script call writes them to per-player save data.

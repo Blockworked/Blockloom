@@ -10,7 +10,8 @@ use super::program::{Action, LoopKind, Program, Step, Trigger, compile};
 use crate::project::Project;
 use crate::sense;
 use crate::ui::{UiElement, UiKind};
-use crate::value::{Evaluated, Value};
+use crate::value::{Evaluated, Op, Value};
+use blockstitch_core::graph::{ListItem, is_list_reporter, list_index, resolve_list_reporter};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -110,6 +111,82 @@ impl Variables {
             globals: state.globals.clone(),
             actors: state.actors.clone(),
         }
+    }
+}
+
+/// One scope's lists, by name.
+pub type ListValues = HashMap<String, Vec<ListItem>>;
+/// Every actor's own lists, by actor id.
+pub type ActorLists = HashMap<String, ListValues>;
+
+#[derive(Debug, Default)]
+struct ListState {
+    globals: ListValues,
+    actors: ActorLists,
+}
+
+/// The live lists of one run, parallel to [`Variables`]. An actor reads its
+/// own list first, then the project's shared one - the same shadowing rule
+/// variables use - and writes land wherever the name was declared.
+#[derive(Debug, Clone, Default)]
+pub struct Lists(Rc<RefCell<ListState>>);
+
+impl Lists {
+    pub fn load(&self, project: &Project) {
+        let mut state = self.0.borrow_mut();
+        state.globals = project
+            .global_lists
+            .iter()
+            .map(|list| (list.name.clone(), list.items.clone()))
+            .collect();
+        state.actors = project
+            .actors
+            .iter()
+            .map(|actor| (actor.id.clone(), actor.graph.list_values()))
+            .collect();
+    }
+
+    /// What `actor` reads: its own lists over the shared ones.
+    pub fn snapshot_for(&self, actor: &str) -> ListValues {
+        let state = self.0.borrow();
+        let mut merged = state.globals.clone();
+        if let Some(own) = state.actors.get(actor) {
+            merged.extend(own.clone());
+        }
+        merged
+    }
+
+    /// Mutates whichever scope declared `name` - the actor's own first, then
+    /// the shared one. A name nobody declared is a no-op, the way reading an
+    /// unknown list answers empty.
+    pub fn with_list_mut(&self, actor: &str, name: &str, f: impl FnOnce(&mut Vec<ListItem>)) {
+        let mut state = self.0.borrow_mut();
+        if let Some(list) = state
+            .actors
+            .get_mut(actor)
+            .and_then(|lists| lists.get_mut(name))
+        {
+            f(list);
+            return;
+        }
+        if let Some(list) = state.globals.get_mut(name) {
+            f(list);
+        }
+    }
+
+    /// Gives `to` its own copy of `from`'s lists, as they stand. A clone
+    /// starts life holding whatever its template held, and changes either
+    /// way after that.
+    pub fn copy_actor(&self, from: &str, to: &str) {
+        let mut state = self.0.borrow_mut();
+        let copied = state.actors.get(from).cloned().unwrap_or_default();
+        state.actors.insert(to.to_string(), copied);
+    }
+
+    /// Forgets an actor's own lists. A deleted actor is gone for the rest of
+    /// the run, and so is what it was holding.
+    pub fn forget_actor(&self, actor: &str) {
+        self.0.borrow_mut().actors.remove(actor);
     }
 }
 
@@ -229,6 +306,7 @@ pub struct Vm {
     /// of it, and the one that ran the block stops where it stands.
     deleted: Vec<String>,
     variables: Variables,
+    lists: Lists,
     scripts: Vec<Script>,
     /// Events to start scripts for, drained at the top of the next tick.
     pending: Vec<Event>,
@@ -258,6 +336,10 @@ impl Vm {
     }
 
     pub fn with_variables(variables: Variables) -> Self {
+        Self::with_stores(variables, Lists::default())
+    }
+
+    pub fn with_stores(variables: Variables, lists: Lists) -> Self {
         Self {
             programs: HashMap::new(),
             names: HashMap::new(),
@@ -265,6 +347,7 @@ impl Vm {
             clones: HashMap::new(),
             deleted: Vec::new(),
             variables,
+            lists,
             scripts: Vec::new(),
             pending: Vec::new(),
             now: 0.0,
@@ -290,6 +373,7 @@ impl Vm {
         self.paused = false;
         self.made = 0;
         self.variables.load(project);
+        self.lists.load(project);
         for actor in &project.actors {
             self.programs
                 .insert(actor.id.clone(), Rc::new(compile(&actor.graph)));
@@ -367,6 +451,10 @@ impl Vm {
 
     pub fn variable_store(&self) -> Variables {
         self.variables.clone()
+    }
+
+    pub fn list_store(&self) -> Lists {
+        self.lists.clone()
     }
 
     /// Whether the world is frozen. Set by the host from the `pause game`
@@ -905,10 +993,7 @@ impl Vm {
             }
             Action::SetCameraFov(fov) => {
                 let fov = self.eval_f32(fov, actor, params, out);
-                out.push(Effect::SetCameraFov {
-                    actor: owner,
-                    fov,
-                });
+                out.push(Effect::SetCameraFov { actor: owner, fov });
             }
             Action::AttachComponent(component) => out.push(Effect::AttachComponent {
                 actor: owner,
@@ -1078,6 +1163,88 @@ impl Vm {
                 let current = self.read_var(actor, name).as_number().unwrap_or(0.0);
                 self.write_var(actor, name, Evaluated::Number(current + delta));
             }
+            Action::AddToList { value, name } => {
+                let value = self.eval(value, actor, params, out);
+                match ListItem::from_evaluated(value) {
+                    Some(item) => self
+                        .lists
+                        .with_list_mut(actor, name, |list| list.push(item)),
+                    None => out.push(Effect::Error {
+                        actor: owner.clone(),
+                        message: "list items must be number or text".to_string(),
+                    }),
+                }
+            }
+            Action::DeleteOfList { index, name } => {
+                let index = self
+                    .eval(index, actor, params, out)
+                    .as_number()
+                    .unwrap_or(0.0);
+                self.lists.with_list_mut(actor, name, |list| {
+                    if let Some(at) = list_index(index, list.len(), false) {
+                        list.remove(at);
+                    }
+                });
+            }
+            Action::DeleteAllOfList { name } => {
+                self.lists.with_list_mut(actor, name, |list| list.clear());
+            }
+            Action::ShiftList { name, amount } => {
+                let amount = self
+                    .eval(amount, actor, params, out)
+                    .as_number()
+                    .unwrap_or(0.0);
+                self.lists.with_list_mut(actor, name, |list| {
+                    if !list.is_empty() {
+                        let len = list.len();
+                        let distance = amount.round() as isize;
+                        if distance >= 0 {
+                            list.rotate_right(distance as usize % len);
+                        } else {
+                            list.rotate_left(distance.unsigned_abs() % len);
+                        }
+                    }
+                });
+            }
+            Action::InsertIntoList { value, index, name } => {
+                let value = self.eval(value, actor, params, out);
+                let index = self
+                    .eval(index, actor, params, out)
+                    .as_number()
+                    .unwrap_or(0.0);
+                match ListItem::from_evaluated(value) {
+                    Some(item) => self.lists.with_list_mut(actor, name, |list| {
+                        if let Some(at) = list_index(index, list.len(), true) {
+                            list.insert(at, item);
+                        }
+                    }),
+                    None => out.push(Effect::Error {
+                        actor: owner.clone(),
+                        message: "list items must be number or text".to_string(),
+                    }),
+                }
+            }
+            Action::ReplaceItemOfList { index, name, value } => {
+                let index = self
+                    .eval(index, actor, params, out)
+                    .as_number()
+                    .unwrap_or(0.0);
+                let value = self.eval(value, actor, params, out);
+                match ListItem::from_evaluated(value) {
+                    Some(item) => self.lists.with_list_mut(actor, name, |list| {
+                        if let Some(at) = list_index(index, list.len(), false) {
+                            list[at] = item;
+                        }
+                    }),
+                    None => out.push(Effect::Error {
+                        actor: owner.clone(),
+                        message: "list items must be number or text".to_string(),
+                    }),
+                }
+            }
+            Action::ReverseList { name } => {
+                self.lists.with_list_mut(actor, name, |list| list.reverse());
+            }
         }
     }
 
@@ -1109,7 +1276,7 @@ impl Vm {
 
     /// Gives a fresh clone of `template` everything the scheduler needs: the
     /// same compiled program, the same name, the same custom-block inputs,
-    /// and a copy of the template's variables as they stand.
+    /// and a copy of the template's variables and lists as they stand.
     fn register_clone(&mut self, template: &str) -> String {
         let id = self.new_actor_id();
         if let Some(program) = self.programs.get(template).map(Rc::clone) {
@@ -1122,6 +1289,7 @@ impl Vm {
             self.block_inputs.insert(id.clone(), inputs);
         }
         self.variables.copy_actor(template, &id);
+        self.lists.copy_actor(template, &id);
         // A clone of a clone is a clone of the same authored actor.
         let root = self
             .clones
@@ -1140,6 +1308,7 @@ impl Vm {
         self.block_inputs.remove(actor);
         self.clones.remove(actor);
         self.variables.forget_actor(actor);
+        self.lists.forget_actor(actor);
         self.pending
             .retain(|event| !matches!(event, Event::Cloned { actor: fresh } if fresh == actor));
         if !self.deleted.iter().any(|gone| gone == actor) {
@@ -1237,6 +1406,27 @@ impl Vm {
                 .cloned()
                 .unwrap_or(Evaluated::Number(0.0))
                 .into_value(),
+            Value::Op { op, args, saved } if is_list_reporter(op) => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.resolve(arg, actor, params, out))
+                    .collect::<Vec<_>>();
+                let name: Box<str> = match op {
+                    Op::Ext(name) => name.clone(),
+                    _ => unreachable!("validated by is_list_reporter"),
+                };
+                let lists = self.lists.snapshot_for(actor);
+                match resolve_list_reporter(&name, args, &lists) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        out.push(Effect::Error {
+                            actor: actor.to_string(),
+                            message,
+                        });
+                        Value::number(0.0)
+                    }
+                }
+            }
             Value::Op { op, args, saved } => Value::Op {
                 op: op.clone(),
                 args: args

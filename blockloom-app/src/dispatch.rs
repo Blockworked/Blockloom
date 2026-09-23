@@ -422,6 +422,36 @@ impl Backend {
             "delete_variable" => {
                 to_json(commands::delete_variable(state, app, arg(&args, "name")?)?)
             }
+            "create_list" => to_json(commands::create_list(
+                state,
+                app,
+                arg(&args, "name")?,
+                arg(&args, "scope").unwrap_or_else(|_| "actor".to_string()),
+            )?),
+            "rename_list" => to_json(commands::rename_list(
+                state,
+                app,
+                arg(&args, "oldName")?,
+                arg(&args, "newName")?,
+            )?),
+            "delete_list" => to_json(commands::delete_list(state, app, arg(&args, "name")?)?),
+            "set_list_items" => {
+                let items: Vec<blockloom_core::blocks::ListItem> = arg(&args, "items")?;
+                to_json(commands::set_list_items(
+                    state,
+                    app,
+                    arg(&args, "name")?,
+                    items,
+                )?)
+            }
+            "set_list_editor_state" => to_json(commands::set_list_editor_state(
+                state,
+                app,
+                arg(&args, "name")?,
+                arg(&args, "visible")?,
+                arg(&args, "x")?,
+                arg(&args, "y")?,
+            )?),
             "create_block" => {
                 let pieces: Vec<BlockPiece> = arg(&args, "pieces")?;
                 let shape: BlockShape = arg(&args, "shape")?;

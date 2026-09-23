@@ -9,6 +9,7 @@ export type ContextMenuType =
   | 'block'
   | 'canvas'
   | 'variable'
+  | 'list'
   | 'myBlock'
   | 'paletteInstruction'
   | 'paletteValue'
@@ -24,6 +25,7 @@ export const contextMenu = reactive({
   canvasX: 0,
   canvasY: 0,
   variableName: '',
+  listName: '',
   blockId: '',
   paletteInstructionType: '',
   paletteVariantId: undefined as string | undefined,
@@ -57,6 +59,13 @@ export function openVariableMenu(e: MouseEvent, name: string): void {
   openAt(e);
   contextMenu.type = 'variable';
   contextMenu.variableName = name;
+}
+
+export function openListMenu(e: MouseEvent, name: string): void {
+  e.preventDefault();
+  openAt(e);
+  contextMenu.type = 'list';
+  contextMenu.listName = name;
 }
 
 export function openMyBlockMenu(e: MouseEvent, blockId: string): void {

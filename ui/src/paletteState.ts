@@ -3,6 +3,7 @@
 // out. Editing a prefab never touches the backend - there's no strand behind a
 // palette entry - which is why this state lives here rather than in the store.
 import { reactive } from 'vue';
+import { isOneBasedListIndexArg } from 'blockstitch';
 import { INSTRUCTION_TYPES, newId, numberValue, parseParamKind, textValue } from './types';
 import type { InstructionDto, InstructionType, ValueDto, ValueKind } from './types';
 import { OPERATOR_KINDS, specForKind } from './valueOps';
@@ -135,6 +136,20 @@ function defaults(type: InstructionType): Record<string, unknown> {
     case 'SaveVariable':
     case 'ClearSavedVariable':
       return { name: '' };
+    case 'AddToList':
+      return { name: '', value: numberValue(0) };
+    case 'DeleteOfList':
+      return { name: '', index: numberValue(1) };
+    case 'DeleteAllOfList':
+      return { name: '' };
+    case 'ShiftList':
+      return { name: '', amount: numberValue(1) };
+    case 'InsertIntoList':
+      return { name: '', value: numberValue(0), index: numberValue(1) };
+    case 'ReplaceItemOfList':
+      return { name: '', index: numberValue(1), value: numberValue(0) };
+    case 'ReverseList':
+      return { name: '' };
     case 'HideElement':
     case 'DeleteElement':
       return { element: textValue('menu') };
@@ -164,6 +179,51 @@ export function defaultInstruction(type: InstructionType): InstructionDto {
   return { id: newId(), type, ...defaults(type) };
 }
 
+const LIST_COMMAND_TYPES: InstructionType[] = [
+  'AddToList',
+  'DeleteOfList',
+  'DeleteAllOfList',
+  'ShiftList',
+  'InsertIntoList',
+  'ReplaceItemOfList',
+  'ReverseList',
+];
+
+const LIST_OPERATOR_KINDS = [
+  'ListItem',
+  'ListItemNumber',
+  'ListAmount',
+  'ListLength',
+  'ListContains',
+  'ListItemExists',
+  'ListIsEmpty',
+];
+
+/** Keeps sidebar prefabs useful as soon as names arrive from the backend.
+// Only unselected or no-longer-valid palette targets are changed; blocks
+// already dropped onto the canvas are persisted separately and untouched. */
+export function syncPaletteListDefaults(names: string[]): void {
+  const first = names[0];
+  if (!first) return;
+  for (const type of LIST_COMMAND_TYPES) {
+    const instruction = paletteInstructions[type];
+    if (typeof instruction.name !== 'string' || !names.includes(instruction.name)) {
+      instruction.name = first;
+    }
+  }
+  for (const kind of LIST_OPERATOR_KINDS) {
+    const spec = specForKind(kind);
+    const index = spec?.enumArg?.index;
+    if (index === undefined) continue;
+    const held = paletteValues[kind];
+    if (held?.kind !== 'Op') continue;
+    const current = held.args[index];
+    if (current?.kind !== 'Text' || !names.includes(current.value)) {
+      held.args[index] = textValue(first);
+    }
+  }
+}
+
 export const paletteInstructions: Record<InstructionType, InstructionDto> = reactive(
   Object.fromEntries(INSTRUCTION_TYPES.map(type => [type, defaultInstruction(type)])) as Record<
     InstructionType,
@@ -186,6 +246,9 @@ function defaultArg(kind: string, index: number): ValueDto {
   const spec = specForKind(kind);
   if (!spec) return numberValue(0);
   if (spec.enumArg?.index === index) return textValue(spec.enumArg.options[0].value);
+  // List item slots are one-based, matching the command-block defaults and
+  // the backend's operator construction.
+  if (isOneBasedListIndexArg(kind, index)) return numberValue(1);
   if (spec.argTypes[index] === 'bool') return blankBool();
   return spec.argTypes[index] === 'text' ? textValue('') : numberValue(0);
 }

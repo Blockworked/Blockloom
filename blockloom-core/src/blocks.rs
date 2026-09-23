@@ -14,7 +14,9 @@ use serde::{Deserialize, Serialize};
 
 pub use blockstitch_core::graph::{
     BlockDef, BlockGraph, BlockKind, BlockPiece, BlockShape, Comment, FloatingValue,
-    InputValueType, VariableDef, default_block_color, normalize_block_color,
+    InputValueType, ListDef, ListItem, VariableDef, default_block_color, is_list_reporter,
+    list_index, normalize_block_color, rename_list_in_value, resolve_list_reporter,
+    resolve_list_reporters,
 };
 
 /// One instruction on a canvas: a [`InstructionKind`] plus the stable id
@@ -424,6 +426,43 @@ pub enum InstructionKind {
         value: Value,
     },
 
+    // ─── Lists ──────────────────────────────────────────────────────────────
+    /// Appends a number/text value to a named list. Boolean values are ignored.
+    AddToList {
+        value: Value,
+        name: String,
+    },
+    /// Removes the 1-based item at `index` from a named list.
+    DeleteOfList {
+        index: Value,
+        name: String,
+    },
+    /// Removes every item from a named list.
+    DeleteAllOfList {
+        name: String,
+    },
+    /// Rotates a named list by `amount` positions (positive is toward the end).
+    ShiftList {
+        name: String,
+        amount: Value,
+    },
+    /// Inserts a number/text value at the 1-based `index` in a named list.
+    InsertIntoList {
+        value: Value,
+        index: Value,
+        name: String,
+    },
+    /// Replaces the 1-based item at `index` in a named list with a literal.
+    ReplaceItemOfList {
+        index: Value,
+        name: String,
+        value: Value,
+    },
+    /// Reverses a named list in place.
+    ReverseList {
+        name: String,
+    },
+
     // ─── Custom blocks ──────────────────────────────────────────────────────
     /// Runs a custom block's body inline, with `args` bound to its inputs.
     CallBlock {
@@ -459,6 +498,7 @@ impl BlockKind for InstructionKind {
             | K::SetCameraPitch { degrees: v, .. }
             | K::SetCameraFov { fov: v, .. }
             | K::ChangeVariable { value: v, .. }
+            | K::AddToList { value: v, .. }
             | K::Return { value: v }
             | K::SetComponentField { value: v, .. }
             | K::SetParent { parent: v }
@@ -605,6 +645,16 @@ impl BlockKind for InstructionKind {
                 f(id, InputValueType::Any);
                 f(value, InputValueType::Any);
             }
+            K::DeleteOfList { index, .. } => f(index, InputValueType::Any),
+            K::ShiftList { amount, .. } => f(amount, InputValueType::Any),
+            K::InsertIntoList { value, index, .. } => {
+                f(value, InputValueType::Any);
+                f(index, InputValueType::Any);
+            }
+            K::ReplaceItemOfList { index, value, .. } => {
+                f(index, InputValueType::Any);
+                f(value, InputValueType::Any);
+            }
             K::HideElement { element }
             | K::DeleteElement { element }
             | K::FocusElement { element } => f(element, InputValueType::Any),
@@ -647,7 +697,9 @@ impl BlockKind for InstructionKind {
             | K::ResumeGame
             | K::SetUiTheme { .. }
             | K::SaveVariable { .. }
-            | K::ClearSavedVariable { .. } => {}
+            | K::ClearSavedVariable { .. }
+            | K::DeleteAllOfList { .. }
+            | K::ReverseList { .. } => {}
         }
     }
 
@@ -696,6 +748,19 @@ impl BlockKind for InstructionKind {
         match self {
             InstructionKind::SetVariable { name, .. }
             | InstructionKind::ChangeVariable { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
+    fn list_target_mut(&mut self) -> Option<&mut String> {
+        match self {
+            InstructionKind::AddToList { name, .. }
+            | InstructionKind::DeleteOfList { name, .. }
+            | InstructionKind::DeleteAllOfList { name }
+            | InstructionKind::ShiftList { name, .. }
+            | InstructionKind::InsertIntoList { name, .. }
+            | InstructionKind::ReplaceItemOfList { name, .. }
+            | InstructionKind::ReverseList { name } => Some(name),
             _ => None,
         }
     }

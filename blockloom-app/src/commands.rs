@@ -11,7 +11,8 @@ use crate::state::{
 use crate::{AppHandle, Backend};
 use blockloom_core::assets;
 use blockloom_core::blocks::{
-    ActorGraph, BlockPiece, BlockShape, Instruction, InstructionKind, normalize_block_color,
+    ActorGraph, BlockPiece, BlockShape, Instruction, InstructionKind, ListItem,
+    normalize_block_color, resolve_list_reporters,
 };
 use blockloom_core::build;
 use blockloom_core::codegen;
@@ -76,6 +77,28 @@ fn graph_mut(s: &mut AppState) -> Option<&mut ActorGraph> {
 fn env(s: &AppState) -> HashMap<String, Evaluated> {
     match (s.project(), s.actor_id()) {
         (Some(project), Some(actor)) => project.env_for(&actor),
+        _ => HashMap::new(),
+    }
+}
+
+/// The list contents a reporter preview reads: the open actor's own, over
+/// the project's shared ones - the same shadowing rule a run uses.
+fn lists_env(s: &AppState) -> HashMap<String, Vec<ListItem>> {
+    match (s.project(), s.actor_id()) {
+        (Some(project), Some(actor)) => {
+            let mut merged: HashMap<String, Vec<ListItem>> = project
+                .global_lists
+                .iter()
+                .map(|list| (list.name.clone(), list.items.clone()))
+                .collect();
+            merged.extend(
+                project
+                    .actor(&actor)
+                    .map(|actor| actor.graph.list_values())
+                    .unwrap_or_default(),
+            );
+            merged
+        }
         _ => HashMap::new(),
     }
 }
@@ -1704,9 +1727,9 @@ pub(crate) fn put_value(
 pub(crate) fn preview_value(state: &SharedState, value: Value) -> Result<String, String> {
     let s = lock(state)?;
     let env = env(&s);
-    Ok(value
-        .resolve_vars(&env)
-        .eval()
+    let lists = lists_env(&s);
+    Ok(resolve_list_reporters(&value.resolve_vars(&env), &lists)
+        .and_then(|resolved| resolved.eval())
         .map(|evaluated| evaluated.as_text())
         .unwrap_or_default())
 }
@@ -1926,6 +1949,171 @@ pub(crate) fn delete_variable(
     auto_save(&s);
     emit(app, &s);
     Ok(())
+}
+
+// ─── Lists ───────────────────────────────────────────────────────────────────
+
+/// `scope` is `"global"` for a project-wide list, anything else for one
+/// private to the open actor.
+pub(crate) fn create_list(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+    scope: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let global = scope == "global";
+    let result = if global {
+        match s.project_mut() {
+            Some(project) => project.create_global_list(&name).map(|_| ()),
+            None => Ok(()),
+        }
+    } else {
+        match graph_mut(&mut s) {
+            Some(graph) => match graph.create_list(&name) {
+                Ok(trimmed) => {
+                    if let Some(list) = graph.lists.iter_mut().find(|list| list.name == trimmed) {
+                        list.editor_x = 36;
+                        list.editor_y = 36;
+                    }
+                    Ok(())
+                }
+                Err(message) => Err(message),
+            },
+            None => Ok(()),
+        }
+    };
+    auto_save(&s);
+    emit(app, &s);
+    result
+}
+
+pub(crate) fn rename_list(
+    state: &SharedState,
+    app: &AppHandle,
+    old_name: String,
+    new_name: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let owned_by_actor =
+        graph_mut(&mut s).is_some_and(|graph| graph.lists.iter().any(|l| l.name == old_name));
+    let result = if owned_by_actor {
+        match graph_mut(&mut s) {
+            Some(graph) => graph.rename_list(&old_name, &new_name).map(|_| ()),
+            None => Ok(()),
+        }
+    } else {
+        match s.project_mut() {
+            Some(project) => project.rename_global_list(&old_name, &new_name).map(|_| ()),
+            None => Ok(()),
+        }
+    };
+    auto_save(&s);
+    emit(app, &s);
+    result
+}
+
+pub(crate) fn delete_list(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let owned_by_actor =
+        graph_mut(&mut s).is_some_and(|graph| graph.lists.iter().any(|l| l.name == name));
+    if owned_by_actor {
+        if let Some(graph) = graph_mut(&mut s) {
+            graph.remove_list(&name);
+        }
+    } else if let Some(project) = s.project_mut() {
+        project.remove_global_list(&name);
+    }
+    auto_save(&s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Replaces a list's items, wherever it lives. `ListItem` is literal-only by
+/// construction, which enforces the literal-only list contract. Not undoable,
+/// the way typing into a canvas monitor isn't - the items themselves are the
+/// edit.
+pub(crate) fn set_list_items(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+    items: Vec<ListItem>,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let owned_by_actor =
+        graph_mut(&mut s).is_some_and(|graph| graph.lists.iter().any(|l| l.name == name));
+    let result = if owned_by_actor {
+        match graph_mut(&mut s) {
+            Some(graph) => graph.set_list_items(&name, items),
+            None => Ok(()),
+        }
+    } else {
+        match s.project_mut() {
+            Some(project) => match project
+                .global_lists
+                .iter_mut()
+                .find(|list| list.name == name)
+            {
+                Some(list) => {
+                    list.items = items;
+                    Ok(())
+                }
+                None => Err("List not found".to_string()),
+            },
+            None => Ok(()),
+        }
+    };
+    auto_save(&s);
+    emit(app, &s);
+    result
+}
+
+/// Saves whether a list's editable canvas monitor is open and where it sits.
+/// A presentation preference rather than an undoable edit.
+pub(crate) fn set_list_editor_state(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+    visible: bool,
+    x: i32,
+    y: i32,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let owned_by_actor =
+        graph_mut(&mut s).is_some_and(|graph| graph.lists.iter().any(|l| l.name == name));
+    let result = if owned_by_actor {
+        match graph_mut(&mut s) {
+            Some(graph) => graph.set_list_editor_state(&name, visible, x, y),
+            None => Ok(()),
+        }
+    } else {
+        match s.project_mut() {
+            Some(project) => match project
+                .global_lists
+                .iter_mut()
+                .find(|list| list.name == name)
+            {
+                Some(list) => {
+                    list.editor_visible = visible;
+                    list.editor_x = x.max(0);
+                    list.editor_y = y.max(0);
+                    Ok(())
+                }
+                None => Err("List not found".to_string()),
+            },
+            None => Ok(()),
+        }
+    };
+    auto_save(&s);
+    emit(app, &s);
+    result
 }
 
 // ─── Custom blocks ─────────────────────────────────────────────────────────

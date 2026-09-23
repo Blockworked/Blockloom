@@ -1,9 +1,18 @@
 // Blockloom's operator table: blockstitch's built-in arithmetic/text/logic
 // operators plus the sensing reporters `blockloom-core`'s `value` module
-// registers on the Rust side. The two lists must agree on `op` (the wire name)
-// and on argument count; everything else here is presentation.
+// registers on the Rust side, plus blockstitch's list reporters. The lists
+// must agree on `op` (the wire name) and on argument count; everything else
+// here is presentation.
 import type { OperatorKindSpec } from 'blockstitch';
+import {
+  LIST_EMPTY_OPTIONS,
+  LIST_NAME_OPTIONS,
+  listReporterSpecs,
+} from 'blockstitch';
 import { KEY_OPTIONS } from './constants';
+
+export { LIST_EMPTY_OPTIONS, LIST_NAME_OPTIONS };
+export { setListNameOptions } from 'blockstitch';
 
 const AXIS_OPTIONS = [
   { value: 'X', label: 'x' },
@@ -76,6 +85,10 @@ export const OPERATOR_GROUPS: { label: string; kinds: string[] }[] = [
   {
     label: 'Text',
     kinds: ['Join', 'Join3', 'Length', 'LetterOf', 'IndexOf', 'LastIndexOf', 'Case', 'NewLine', 'Tab', 'CurrentTime'],
+  },
+  {
+    label: 'Lists',
+    kinds: ['ListItem', 'ListItemNumber', 'ListAmount', 'ListLength', 'ListContains', 'ListItemExists', 'ListIsEmpty'],
   },
 ];
 
@@ -302,6 +315,9 @@ export const OPERATOR_KINDS: OperatorKindSpec[] = [
     prefix: 'current',
     enumArg: { index: 0, options: CURRENT_TIME_OPTIONS },
   },
+  // List reporters live in blockstitch (`listReporterSpecs`) so every project
+  // reuses the same blocks, dropdowns, and name-arg positions.
+  ...(listReporterSpecs(LIST_NAME_OPTIONS, LIST_EMPTY_OPTIONS) as OperatorKindSpec[]),
 ];
 
 export function specForKind(kind: string): OperatorKindSpec | undefined {

@@ -12,6 +12,7 @@ import type {
   InstrPath,
   InstructionDto,
   LightingDto,
+  ListItemDto,
   Mode,
   PhysicsDto,
   PlacementDto,
@@ -217,6 +218,16 @@ export const createVariable = (name: string, scope: 'actor' | 'global') =>
 export const renameVariable = (oldName: string, newName: string) =>
   invoke<void>('rename_variable', { oldName, newName });
 export const deleteVariable = (name: string) => invoke<void>('delete_variable', { name });
+// A list item is a literal number or text - see `ListItemDto` in types.ts.
+export const createList = (name: string, scope: 'actor' | 'global') =>
+  invoke<void>('create_list', { name, scope });
+export const renameList = (oldName: string, newName: string) =>
+  invoke<void>('rename_list', { oldName, newName });
+export const deleteList = (name: string) => invoke<void>('delete_list', { name });
+export const setListItems = (name: string, items: ListItemDto[]) =>
+  invoke<void>('set_list_items', { name, items });
+export const setListEditorState = (name: string, visible: boolean, x: number, y: number) =>
+  invoke<void>('set_list_editor_state', { name, visible, x, y });
 export const createBlock = (pieces: BlockPieceDto[], shape: BlockShapeDto, color: string) =>
   invoke<string>('create_block', { pieces, shape, color });
 export const editBlock = (blockId: string, pieces: BlockPieceDto[], shape: BlockShapeDto, color: string) =>

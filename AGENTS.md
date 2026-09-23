@@ -442,7 +442,7 @@ lands.
 
 ### Known gaps
 
-- No clones (`create clone of myself`), no sounds, no lists.
+- No clones (`create clone of myself`), no sounds.
 - A build carries no icon of its own and is a folder rather than an installer
   or one file; macOS gets that same folder rather than an `.app` bundle.
 - Building for another platform needs its player staged by hand, and a scripted

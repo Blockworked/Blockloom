@@ -68,6 +68,13 @@ pub enum FieldId {
     RepeatCount,
     SetVariableValue,
     ChangeVariableValue,
+    AddToListValue,
+    DeleteOfListIndex,
+    ShiftListAmount,
+    InsertIntoListValue,
+    InsertIntoListIndex,
+    ReplaceItemOfListIndex,
+    ReplaceItemOfListValue,
     ReturnValue,
     CallArg(usize),
 }
@@ -76,7 +83,14 @@ impl FieldId {
     /// Only a loop count is whole-numbers-only; every coordinate, duration
     /// and factor in the engine is fractional.
     pub fn requires_integer(self) -> bool {
-        matches!(self, FieldId::RepeatCount)
+        matches!(
+            self,
+            FieldId::RepeatCount
+                | FieldId::DeleteOfListIndex
+                | FieldId::ShiftListAmount
+                | FieldId::InsertIntoListIndex
+                | FieldId::ReplaceItemOfListIndex
+        )
     }
 
     /// Slots that hold text rather than a number, so a blank restores to an
@@ -161,6 +175,13 @@ impl std::fmt::Display for FieldId {
             FieldId::RepeatCount => write!(f, "RepeatCount"),
             FieldId::SetVariableValue => write!(f, "SetVariableValue"),
             FieldId::ChangeVariableValue => write!(f, "ChangeVariableValue"),
+            FieldId::AddToListValue => write!(f, "AddToListValue"),
+            FieldId::DeleteOfListIndex => write!(f, "DeleteOfListIndex"),
+            FieldId::ShiftListAmount => write!(f, "ShiftListAmount"),
+            FieldId::InsertIntoListValue => write!(f, "InsertIntoListValue"),
+            FieldId::InsertIntoListIndex => write!(f, "InsertIntoListIndex"),
+            FieldId::ReplaceItemOfListIndex => write!(f, "ReplaceItemOfListIndex"),
+            FieldId::ReplaceItemOfListValue => write!(f, "ReplaceItemOfListValue"),
             FieldId::ReturnValue => write!(f, "ReturnValue"),
             FieldId::CallArg(i) => write!(f, "CallArg:{i}"),
         }
@@ -231,6 +252,13 @@ impl FromStr for FieldId {
             "RepeatCount" => FieldId::RepeatCount,
             "SetVariableValue" => FieldId::SetVariableValue,
             "ChangeVariableValue" => FieldId::ChangeVariableValue,
+            "AddToListValue" => FieldId::AddToListValue,
+            "DeleteOfListIndex" => FieldId::DeleteOfListIndex,
+            "ShiftListAmount" => FieldId::ShiftListAmount,
+            "InsertIntoListValue" => FieldId::InsertIntoListValue,
+            "InsertIntoListIndex" => FieldId::InsertIntoListIndex,
+            "ReplaceItemOfListIndex" => FieldId::ReplaceItemOfListIndex,
+            "ReplaceItemOfListValue" => FieldId::ReplaceItemOfListValue,
             "ReturnValue" => FieldId::ReturnValue,
             _ => return Err(()),
         })
@@ -359,6 +387,13 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::Repeat { count, .. }, F::RepeatCount) => Some(count),
         (K::SetVariable { value, .. }, F::SetVariableValue) => Some(value),
         (K::ChangeVariable { value, .. }, F::ChangeVariableValue) => Some(value),
+        (K::AddToList { value, .. }, F::AddToListValue) => Some(value),
+        (K::DeleteOfList { index, .. }, F::DeleteOfListIndex) => Some(index),
+        (K::ShiftList { amount, .. }, F::ShiftListAmount) => Some(amount),
+        (K::InsertIntoList { value, .. }, F::InsertIntoListValue) => Some(value),
+        (K::InsertIntoList { index, .. }, F::InsertIntoListIndex) => Some(index),
+        (K::ReplaceItemOfList { index, .. }, F::ReplaceItemOfListIndex) => Some(index),
+        (K::ReplaceItemOfList { value, .. }, F::ReplaceItemOfListValue) => Some(value),
         (K::Return { value }, F::ReturnValue) => Some(value),
         (K::CallBlock { args, .. }, F::CallArg(i)) => args.get_mut(i),
         _ => None,

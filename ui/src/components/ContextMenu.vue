@@ -28,11 +28,14 @@ import {
   createComment,
   deleteBlock,
   deleteInstruction,
+  deleteList,
   deleteVariable,
   pasteInstructions,
   setCommentCollapsed,
 } from '../tauri';
 import { openRenameVariableDialog } from '../variableDialogs';
+import { openRenameListDialog } from '../listDialogs';
+import { forgetListEditor } from 'blockstitch';
 import { openEditBlockDialog } from '../blockDialogs';
 import { findBlockDef, type InstructionDto } from '../types';
 
@@ -141,6 +144,25 @@ const items = computed<ContextMenuItem[]>(() => {
           icon: Trash2,
           danger: true,
           onSelect: () => void deleteVariable(contextMenu.variableName),
+        },
+      ];
+    case 'list':
+      return [
+        {
+          key: 'rename',
+          label: `Rename "${contextMenu.listName}"`,
+          icon: Pencil,
+          onSelect: () => openRenameListDialog(contextMenu.listName),
+        },
+        {
+          key: 'delete',
+          label: `Delete "${contextMenu.listName}"`,
+          icon: Trash2,
+          danger: true,
+          onSelect: () => {
+            forgetListEditor(contextMenu.listName);
+            void deleteList(contextMenu.listName);
+          },
         },
       ];
     case 'myBlock': {

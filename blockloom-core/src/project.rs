@@ -11,7 +11,7 @@
 //! name and keeps it matched to the project's; where the folder sits is the
 //! user's choice, so [`crate::library`] remembers the ones it has opened.
 
-use crate::blocks::{ActorGraph, InstructionKind, VariableDef};
+use crate::blocks::{ActorGraph, InstructionKind, ListDef, VariableDef};
 use crate::components::{ActorComponent, CameraAttach, CameraView, Components};
 use crate::scene::{Mode, Physics, Placement, Visual, World};
 use crate::value::Evaluated;
@@ -220,6 +220,11 @@ pub struct Project {
     /// Variables every actor can read and write - see the module docs.
     #[serde(default)]
     pub globals: Vec<VariableDef>,
+    /// Lists every actor can read and change - the shared half of the list
+    /// model, parallel to [`Project::globals`]. An actor's own list of the
+    /// same name shadows this one for that actor.
+    #[serde(default)]
+    pub global_lists: Vec<ListDef>,
 }
 
 impl Project {
@@ -286,6 +291,7 @@ impl Project {
             world,
             actors: vec![player, ground],
             globals: Vec::new(),
+            global_lists: Vec::new(),
         }
     }
 
@@ -410,7 +416,10 @@ impl Project {
         }
         // Dropping an actor where it already stands changes nothing: the
         // level-mate after it is already `before` (empty means last).
-        let current = self.actor(id).and_then(|actor| actor.parent()).unwrap_or_default();
+        let current = self
+            .actor(id)
+            .and_then(|actor| actor.parent())
+            .unwrap_or_default();
         if current == parent {
             let level: Vec<&str> = self
                 .actors
@@ -559,6 +568,74 @@ impl Project {
             .actor(actor_id)
             .is_some_and(|actor| actor.graph.variables.iter().any(|v| v.name == name));
         !actor_owns && self.globals.iter().any(|v| v.name == name)
+    }
+
+    /// Declares a project-wide list starting empty.
+    pub fn create_global_list(&mut self, name: &str) -> Result<String, String> {
+        let trimmed = name.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("List name can't be empty".to_string());
+        }
+        if self.global_lists.iter().any(|list| list.name == trimmed) {
+            return Err(format!("A list named \"{trimmed}\" already exists"));
+        }
+        self.global_lists.push(ListDef {
+            name: trimmed.clone(),
+            items: Vec::new(),
+            editor_visible: false,
+            editor_x: 0,
+            editor_y: 0,
+        });
+        Ok(trimmed)
+    }
+
+    /// Renames a project-wide list and every read of it, in every actor that
+    /// doesn't shadow it with its own list of that name.
+    pub fn rename_global_list(&mut self, old: &str, new: &str) -> Result<String, String> {
+        let trimmed = new.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("List name can't be empty".to_string());
+        }
+        if trimmed != old && self.global_lists.iter().any(|list| list.name == trimmed) {
+            return Err(format!("A list named \"{trimmed}\" already exists"));
+        }
+        let Some(list) = self.global_lists.iter_mut().find(|list| list.name == old) else {
+            return Err("List not found".to_string());
+        };
+        if trimmed == old {
+            return Ok(trimmed);
+        }
+        list.name = trimmed.clone();
+        for actor in &mut self.actors {
+            // An actor with its own list of that name reads its own, so its
+            // references must stay put.
+            if actor.graph.lists.iter().any(|list| list.name == old) {
+                continue;
+            }
+            for strand in &mut actor.graph.strands {
+                for instruction in &mut strand.instructions {
+                    instruction.rename_list(old, &trimmed);
+                }
+            }
+            for floating in &mut actor.graph.floating_values {
+                blockstitch_core::graph::rename_list_in_value(&mut floating.value, old, &trimmed);
+            }
+        }
+        Ok(trimmed)
+    }
+
+    /// Drops a project-wide list. Reads of it are left alone and default to
+    /// empty, the same as an actor's own removed list.
+    pub fn remove_global_list(&mut self, name: &str) {
+        self.global_lists.retain(|list| list.name != name);
+    }
+
+    /// True if `name` is a shared list rather than one of `actor_id`'s own.
+    pub fn is_global_list(&self, actor_id: &str, name: &str) -> bool {
+        let actor_owns = self
+            .actor(actor_id)
+            .is_some_and(|actor| actor.graph.lists.iter().any(|list| list.name == name));
+        !actor_owns && self.global_lists.iter().any(|list| list.name == name)
     }
 
     /// Repairs and canonicalizes a just-loaded document, once.
@@ -1268,18 +1345,43 @@ mod tests {
         }
 
         // Reordering the top level: Prop first.
-        assert!(project.move_actor(&prop, "", &player).is_ok_and(|moved| moved));
-        assert_eq!(order(&project), vec![prop.clone(), player.clone(), ground.clone()]);
+        assert!(
+            project
+                .move_actor(&prop, "", &player)
+                .is_ok_and(|moved| moved)
+        );
+        assert_eq!(
+            order(&project),
+            vec![prop.clone(), player.clone(), ground.clone()]
+        );
 
         // Dropping it where it already is changes nothing.
-        assert!(project.move_actor(&prop, "", &player).is_ok_and(|moved| !moved));
-        assert_eq!(order(&project), vec![prop.clone(), player.clone(), ground.clone()]);
+        assert!(
+            project
+                .move_actor(&prop, "", &player)
+                .is_ok_and(|moved| !moved)
+        );
+        assert_eq!(
+            order(&project),
+            vec![prop.clone(), player.clone(), ground.clone()]
+        );
 
         // Hanging it off Ground puts it at the end of that level.
-        assert!(project.move_actor(&prop, &ground, "").is_ok_and(|moved| moved));
-        assert_eq!(project.actor(&prop).unwrap().parent(), Some(ground.as_str()));
+        assert!(
+            project
+                .move_actor(&prop, &ground, "")
+                .is_ok_and(|moved| moved)
+        );
+        assert_eq!(
+            project.actor(&prop).unwrap().parent(),
+            Some(ground.as_str())
+        );
         // Its level-mate order follows the document.
-        assert!(project.move_actor(&player, &ground, &prop).is_ok_and(|moved| moved));
+        assert!(
+            project
+                .move_actor(&player, &ground, &prop)
+                .is_ok_and(|moved| moved)
+        );
         let level: Vec<String> = project
             .actors
             .iter()
@@ -1314,7 +1416,10 @@ mod tests {
         // root, not one of Player's (empty) level.
         assert!(project.move_actor(&player, &ground, &ground).is_err());
         // Nothing above failed halfway.
-        assert_eq!(project.actor(&player).unwrap().parent(), Some(ground.as_str()));
+        assert_eq!(
+            project.actor(&player).unwrap().parent(),
+            Some(ground.as_str())
+        );
     }
 
     #[test]
@@ -1326,5 +1431,77 @@ mod tests {
 
         let solid = Actor::blank("Bullet", Mode::ThreeD);
         assert!(matches!(solid.visual(), Some(Visual::Cuboid { .. })));
+    }
+
+    #[test]
+    fn shared_lists_are_created_renamed_and_removed() {
+        let mut project = Project::starter("p", Mode::TwoD);
+        assert!(project.create_global_list("  ").is_err());
+        project.create_global_list("queue").unwrap();
+        assert!(project.create_global_list("queue").is_err());
+
+        let id = project.actors[0].id.clone();
+        assert!(project.is_global_list(&id, "queue"));
+        project.rename_global_list("queue", "line").unwrap();
+        assert!(project.is_global_list(&id, "line"));
+        assert!(project.rename_global_list("line", "line").is_ok());
+        project.remove_global_list("line");
+        assert!(!project.is_global_list(&id, "line"));
+    }
+
+    #[test]
+    fn renaming_a_shared_list_follows_reads_except_where_an_actor_shadows_it() {
+        let mut project = Project::starter("p", Mode::TwoD);
+        project.create_global_list("queue").unwrap();
+        let shadowing = project.actors[1].id.clone();
+        project
+            .actor_mut(&shadowing)
+            .unwrap()
+            .graph
+            .create_list("queue")
+            .unwrap();
+        for index in 0..2 {
+            let adds = Instruction::new(InstructionKind::AddToList {
+                value: crate::value::Value::number(1.0),
+                name: "queue".to_string(),
+            });
+            let reads = Instruction::new(InstructionKind::Say {
+                text: crate::value::Value::Op {
+                    op: crate::value::Op::from_name("ListItem"),
+                    args: vec![
+                        crate::value::Value::number(1.0),
+                        crate::value::Value::text("queue"),
+                    ],
+                    saved: Box::new(crate::value::Value::number(0.0)),
+                },
+            });
+            project.actors[index]
+                .graph
+                .strands
+                .push(crate::blocks::Strand::with_instructions(
+                    0,
+                    0,
+                    vec![adds, reads],
+                ));
+        }
+        project.rename_global_list("queue", "line").unwrap();
+
+        let target_of = |actor: &Actor| match &actor.graph.strands[0].instructions[0].kind {
+            InstructionKind::AddToList { name, .. } => name.clone(),
+            other => panic!("expected an add, got {other:?}"),
+        };
+        let read_of = |actor: &Actor| match &actor.graph.strands[0].instructions[1].kind {
+            InstructionKind::Say {
+                text: crate::value::Value::Op { args, .. },
+            } => match &args[1] {
+                crate::value::Value::Text { value } => value.clone(),
+                other => panic!("expected a list name, got {other:?}"),
+            },
+            other => panic!("expected a say, got {other:?}"),
+        };
+        assert_eq!(target_of(&project.actors[0]), "line");
+        assert_eq!(read_of(&project.actors[0]), "line");
+        assert_eq!(target_of(&project.actors[1]), "queue");
+        assert_eq!(read_of(&project.actors[1]), "queue");
     }
 }
