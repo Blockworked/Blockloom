@@ -8,6 +8,7 @@
 
 pub use blockstitch_core::value::*;
 
+use crate::physics_query;
 use crate::scene::Axis;
 use crate::sense;
 use crate::sound::{SoundBus, normalize_sound};
@@ -16,12 +17,20 @@ fn text(value: &str) -> Value {
     Value::text(value)
 }
 
+fn number(value: f64) -> Value {
+    Value::number(value)
+}
+
 fn axis_of(arg: Option<&Evaluated>) -> Axis {
     match arg.map(Evaluated::as_text).unwrap_or_default().as_str() {
         "Y" | "y" => Axis::Y,
         "Z" | "z" => Axis::Z,
         _ => Axis::X,
     }
+}
+
+fn num(arg: Option<&Evaluated>) -> f64 {
+    arg.and_then(|value| value.as_number().ok()).unwrap_or(0.0)
 }
 
 /// The running actor, or an error naming the reason there isn't one - a
@@ -111,6 +120,166 @@ static OPERATORS: &[ExtOperator] = &[
         arity: 0,
         default_args: Vec::new,
         eval: |_| Ok(Evaluated::Bool(sense::read(|s| s.mouse_locked))),
+    },
+    ExtOperator {
+        kind: "MouseButtonDown",
+        op: "MouseButtonDown",
+        arity: 1,
+        default_args: || vec![text("right")],
+        // Which mouse button is down: left, right or middle. Left is what
+        // `mouse down?` has always meant.
+        eval: |args| {
+            let button = args[0].as_text().trim().to_lowercase();
+            Ok(Evaluated::Bool(sense::read(|s| {
+                if button == "left" {
+                    s.mouse_down
+                } else {
+                    s.mouse_buttons.contains(&button)
+                }
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "ActionDown",
+        op: "ActionDown",
+        arity: 1,
+        default_args: || vec![text("Jump")],
+        // Whether the named input action is held right now, however its
+        // bindings say it: keys, mouse buttons, pad buttons or sticks.
+        eval: |args| {
+            let name = args[0].as_text();
+            Ok(Evaluated::Bool(sense::read(|s| {
+                s.actions
+                    .iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case(name.trim()))
+                    .is_some_and(|(_, action)| action.held)
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "ActionPressed",
+        op: "ActionPressed",
+        arity: 1,
+        default_args: || vec![text("Jump")],
+        // True only on the frame the action went down.
+        eval: |args| {
+            let name = args[0].as_text();
+            Ok(Evaluated::Bool(sense::read(|s| {
+                s.actions
+                    .iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case(name.trim()))
+                    .is_some_and(|(_, action)| action.pressed)
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "ActionReleased",
+        op: "ActionReleased",
+        arity: 1,
+        default_args: || vec![text("Jump")],
+        // True only on the frame the action went up.
+        eval: |args| {
+            let name = args[0].as_text();
+            Ok(Evaluated::Bool(sense::read(|s| {
+                s.actions
+                    .iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case(name.trim()))
+                    .is_some_and(|(_, action)| action.released)
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "ActionValue",
+        op: "ActionValue",
+        arity: 1,
+        default_args: || vec![text("Left")],
+        // The strongest binding's analog value: 0/1 for buttons, -1..1 for
+        // a whole stick axis, 0..1 for a directed half.
+        eval: |args| {
+            let name = args[0].as_text();
+            Ok(Evaluated::Number(sense::read(|s| {
+                s.actions
+                    .iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case(name.trim()))
+                    .map(|(_, action)| action.value as f64)
+                    .unwrap_or(0.0)
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "TouchCount",
+        op: "TouchCount",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| Ok(Evaluated::Number(sense::read(|s| s.touches.len() as f64))),
+    },
+    ExtOperator {
+        kind: "TouchX",
+        op: "TouchX",
+        arity: 1,
+        default_args: || vec![text("1")],
+        // The 1-based touch point's world x. Out of range reads as zero
+        // rather than an error, since fingers come and go every frame.
+        eval: |args| {
+            let index = args[0].as_number().unwrap_or(0.0) as usize;
+            Ok(Evaluated::Number(sense::read(|s| {
+                index
+                    .checked_sub(1)
+                    .and_then(|i| s.touches.get(i))
+                    .map(|touch| touch.position[0] as f64)
+                    .unwrap_or(0.0)
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "TouchY",
+        op: "TouchY",
+        arity: 1,
+        default_args: || vec![text("1")],
+        eval: |args| {
+            let index = args[0].as_number().unwrap_or(0.0) as usize;
+            Ok(Evaluated::Number(sense::read(|s| {
+                index
+                    .checked_sub(1)
+                    .and_then(|i| s.touches.get(i))
+                    .map(|touch| touch.position[1] as f64)
+                    .unwrap_or(0.0)
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "GamepadConnected",
+        op: "GamepadConnected",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| Ok(Evaluated::Bool(sense::read(|s| s.gamepad_connected))),
+    },
+    ExtOperator {
+        kind: "GamepadAxis",
+        op: "GamepadAxis",
+        arity: 1,
+        default_args: || vec![text("LeftStickX")],
+        // A live stick or trigger value, -1..1. Unknown names read as zero.
+        eval: |args| {
+            let axis = crate::input::normalize_pad_axis(&args[0].as_text());
+            Ok(Evaluated::Number(
+                sense::read(|s| s.gamepad_axes.get(&axis).copied().unwrap_or(0.0)) as f64,
+            ))
+        },
+    },
+    ExtOperator {
+        kind: "GamepadButtonDown",
+        op: "GamepadButtonDown",
+        arity: 1,
+        default_args: || vec![text("South")],
+        // Whether the named pad button is held. Most games read this
+        // through an action instead, so remapping keeps working.
+        eval: |args| {
+            let button = crate::input::normalize_pad_button(&args[0].as_text());
+            Ok(Evaluated::Bool(sense::read(|s| {
+                s.gamepad_buttons.contains(&button)
+            })))
+        },
     },
     ExtOperator {
         kind: "Timer",
@@ -396,6 +565,142 @@ static OPERATORS: &[ExtOperator] = &[
             }
         },
     },
+    ExtOperator {
+        kind: "IsTrigger",
+        op: "IsTrigger",
+        arity: 1,
+        default_args: || vec![text("")],
+        // Whether an actor's collider is a trigger: it senses without
+        // pushing. Empty names the running actor itself.
+        eval: |args| {
+            let target = args[0].as_text();
+            if target.trim().is_empty() {
+                return Ok(Evaluated::Bool(me()?.trigger));
+            }
+            sense::read(|sensors| {
+                let actor = sensors
+                    .find(&target)
+                    .ok_or_else(|| format!("there's no actor named \"{target}\""))?;
+                Ok(Evaluated::Bool(actor.trigger))
+            })
+        },
+    },
+    ExtOperator {
+        kind: "CollisionLayer",
+        op: "CollisionLayer",
+        arity: 1,
+        default_args: || vec![text("")],
+        // Which layer an actor lives on, 1-8. Empty names the running actor.
+        eval: |args| {
+            let target = args[0].as_text();
+            if target.trim().is_empty() {
+                return Ok(Evaluated::Number(me()?.layer as f64));
+            }
+            sense::read(|sensors| {
+                let actor = sensors
+                    .find(&target)
+                    .ok_or_else(|| format!("there's no actor named \"{target}\""))?;
+                Ok(Evaluated::Number(actor.layer as f64))
+            })
+        },
+    },
+    ExtOperator {
+        kind: "RayHit",
+        op: "RayHit",
+        arity: 6,
+        default_args: || {
+            vec![
+                number(0.0),
+                number(0.0),
+                number(0.0),
+                number(100.0),
+                number(0.0),
+                number(0.0),
+            ]
+        },
+        // The first body a segment hits, by name, or empty for nothing.
+        // Bodies only; the querier itself is skipped; layers filter by the
+        // running actor's own mask, or not at all outside a run.
+        eval: |args| {
+            let from = [
+                num(args.first()) as f32,
+                num(args.get(1)) as f32,
+                num(args.get(2)) as f32,
+            ];
+            let to = [
+                num(args.get(3)) as f32,
+                num(args.get(4)) as f32,
+                num(args.get(5)) as f32,
+            ];
+            Ok(Evaluated::Text(sense::read(|sensors| {
+                let skip = sense::current_actor();
+                let mask = physics_query::query_mask(sensors, skip.as_deref());
+                physics_query::ray_hit(sensors, from, to, skip.as_deref(), mask)
+                    .and_then(|(id, _)| sensors.actors.get(&id).map(|actor| actor.name.clone()))
+                    .unwrap_or_default()
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "RayDistance",
+        op: "RayDistance",
+        arity: 6,
+        default_args: || {
+            vec![
+                number(0.0),
+                number(0.0),
+                number(0.0),
+                number(100.0),
+                number(0.0),
+                number(0.0),
+            ]
+        },
+        // How far along the segment the first hit sits, or -1 for nothing.
+        eval: |args| {
+            let from = [
+                num(args.first()) as f32,
+                num(args.get(1)) as f32,
+                num(args.get(2)) as f32,
+            ];
+            let to = [
+                num(args.get(3)) as f32,
+                num(args.get(4)) as f32,
+                num(args.get(5)) as f32,
+            ];
+            Ok(Evaluated::Number(sense::read(|sensors| {
+                let skip = sense::current_actor();
+                let mask = physics_query::query_mask(sensors, skip.as_deref());
+                physics_query::ray_hit(sensors, from, to, skip.as_deref(), mask)
+                    .map(|(_, distance)| distance as f64)
+                    .unwrap_or(-1.0)
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "CircleHit",
+        op: "CircleHit",
+        arity: 4,
+        default_args: || vec![number(0.0), number(0.0), number(0.0), number(10.0)],
+        // The nearest body a ball overlaps, by name, or empty. The shape-cast
+        // half of the query pair: a ground check is a small ball underfoot.
+        eval: |args| {
+            let center = [
+                num(args.first()) as f32,
+                num(args.get(1)) as f32,
+                num(args.get(2)) as f32,
+            ];
+            let radius = num(args.get(3)) as f32;
+            Ok(Evaluated::Text(sense::read(|sensors| {
+                let skip = sense::current_actor();
+                let mask = physics_query::query_mask(sensors, skip.as_deref());
+                physics_query::overlap_circle(sensors, center, radius, skip.as_deref(), mask)
+                    .into_iter()
+                    .next()
+                    .and_then(|id| sensors.actors.get(&id).map(|actor| actor.name.clone()))
+                    .unwrap_or_default()
+            })))
+        },
+    },
 ];
 
 /// Teaches blockstitch about [`OPERATORS`]. Idempotent; called from
@@ -488,5 +793,113 @@ mod tests {
             vec![Value::text("Nobody"), Value::text("X")],
         );
         assert!(missing_local.eval().is_err());
+    }
+
+    #[test]
+    fn physics_queries_read_bodies_through_the_snapshot() {
+        use crate::sense::ColliderShape;
+        register_blockloom_operators();
+        let mut sensors = Sensors::default();
+        sensors.actors.insert(
+            "me".to_string(),
+            ActorSense {
+                name: "Hero".to_string(),
+                position: [0.0, 0.0, 0.0],
+                has_body: true,
+                trigger: true,
+                layer: 2,
+                shape: ColliderShape::Box {
+                    half: [1.0, 1.0, 1.0],
+                },
+                ..Default::default()
+            },
+        );
+        sensors.actors.insert(
+            "wall".to_string(),
+            ActorSense {
+                name: "Wall".to_string(),
+                position: [5.0, 0.0, 0.0],
+                has_body: true,
+                shape: ColliderShape::Box {
+                    half: [1.0, 1.0, 1.0],
+                },
+                ..Default::default()
+            },
+        );
+        sense::publish(sensors);
+
+        // Empty names the running actor: a trigger coin says so about
+        // itself, and a wall says otherwise.
+        let trigger = Value::op(Op::from_name("IsTrigger"), vec![Value::text("")]);
+        sense::with_actor("me", || {
+            assert_eq!(trigger.eval(), Ok(Evaluated::Bool(true)));
+        });
+        sense::with_actor("wall", || {
+            assert_eq!(trigger.eval(), Ok(Evaluated::Bool(false)));
+        });
+        let wall_trigger = Value::op(Op::from_name("IsTrigger"), vec![Value::text("Wall")]);
+        assert_eq!(wall_trigger.eval(), Ok(Evaluated::Bool(false)));
+        let missing = Value::op(Op::from_name("IsTrigger"), vec![Value::text("Nobody")]);
+        assert!(missing.eval().is_err());
+
+        let layer = Value::op(Op::from_name("CollisionLayer"), vec![Value::text("")]);
+        sense::with_actor("me", || {
+            assert_eq!(layer.eval(), Ok(Evaluated::Number(2.0)));
+        });
+
+        // A ray past the wall names it and measures to its near face; a
+        // ray at the sky names nothing and measures -1.
+        let hit = Value::op(
+            Op::from_name("RayHit"),
+            vec![
+                Value::number(0.0),
+                Value::number(0.0),
+                Value::number(0.0),
+                Value::number(20.0),
+                Value::number(0.0),
+                Value::number(0.0),
+            ],
+        );
+        sense::with_actor("me", || {
+            assert_eq!(hit.eval(), Ok(Evaluated::Text("Wall".to_string())));
+        });
+        let distance = Value::op(
+            Op::from_name("RayDistance"),
+            vec![
+                Value::number(0.0),
+                Value::number(0.0),
+                Value::number(0.0),
+                Value::number(20.0),
+                Value::number(0.0),
+                Value::number(0.0),
+            ],
+        );
+        sense::with_actor("me", || {
+            assert_eq!(distance.eval(), Ok(Evaluated::Number(4.0)));
+        });
+        let sky = Value::op(
+            Op::from_name("RayHit"),
+            vec![
+                Value::number(0.0),
+                Value::number(50.0),
+                Value::number(0.0),
+                Value::number(20.0),
+                Value::number(50.0),
+                Value::number(0.0),
+            ],
+        );
+        assert_eq!(sky.eval(), Ok(Evaluated::Text(String::new())));
+
+        // A ball over the wall names it; a ball in the sky names nothing.
+        let circle = Value::op(
+            Op::from_name("CircleHit"),
+            vec![
+                Value::number(5.0),
+                Value::number(0.0),
+                Value::number(0.0),
+                Value::number(2.0),
+            ],
+        );
+        assert_eq!(circle.eval(), Ok(Evaluated::Text("Wall".to_string())));
     }
 }

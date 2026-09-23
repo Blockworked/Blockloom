@@ -91,6 +91,12 @@ fn obstacle_of(mode: Mode, actor: &crate::project::Actor) -> Option<Footprint> {
         (false, Visual::Rect { size, .. }) => ([pos[0], pos[1]], [size[0] / 2.0, size[1] / 2.0]),
         (false, Visual::Circle { radius, .. }) => ([pos[0], pos[1]], [*radius, *radius]),
         (false, Visual::Image { size, .. }) => ([pos[0], pos[1]], [size[0] / 2.0, size[1] / 2.0]),
+        // A solid tilemap blocks as its whole slab; a decorative one lets
+        // paths through.
+        (false, Visual::Tilemap { tilemap }) if tilemap.solid => {
+            let size = tilemap.size();
+            ([pos[0], pos[1]], [size[0] / 2.0, size[1] / 2.0])
+        }
         _ => return None,
     };
     if half[0] < 1e-4 || half[1] < 1e-4 {
@@ -215,7 +221,10 @@ pub fn next_step(path: &[[f32; 2]], from: [f32; 2], max_step: f32) -> [f32; 2] {
     if dist <= max_step || dist < 1e-6 {
         [tx, tz]
     } else {
-        [from[0] + dx / dist * max_step, from[1] + dz / dist * max_step]
+        [
+            from[0] + dx / dist * max_step,
+            from[1] + dz / dist * max_step,
+        ]
     }
 }
 

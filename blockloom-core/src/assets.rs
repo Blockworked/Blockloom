@@ -29,6 +29,7 @@ pub enum AssetKind {
     Font,
     Model,
     Script,
+    Shader,
     Text,
     Other,
 }
@@ -132,6 +133,7 @@ pub fn kind_of(name: &str) -> AssetKind {
         "ttf" | "otf" => AssetKind::Font,
         "gltf" | "glb" | "obj" | "fbx" => AssetKind::Model,
         "rs" => AssetKind::Script,
+        "wgsl" | "shader" | "hlsl" => AssetKind::Shader,
         "txt" | "json" | "toml" | "md" | "csv" | "ron" | "yaml" | "yml" => AssetKind::Text,
         _ => AssetKind::Other,
     }

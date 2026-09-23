@@ -4,6 +4,7 @@ import { invoke, listen, getVersion } from './bridge';
 import type {
   ActorComponentDto,
   AssetEntry,
+  AtlasLayoutDto,
   BlockPieceDto,
   BlockShapeDto,
   BuildResult,
@@ -16,7 +17,9 @@ import type {
   ListItemDto,
   Mode,
   PhysicsDto,
+  PipelineReportDto,
   PlacementDto,
+  PostProcessDto,
   SoundMixerDto,
   StateDto,
   ValueDto,
@@ -90,6 +93,7 @@ export const setFixedRate = (fixedRate: number) => invoke<void>('set_fixed_rate'
 export const setCamera = (camera: CameraDto) => invoke<void>('set_camera', { camera });
 export const setLighting = (lighting: LightingDto) => invoke<void>('set_lighting', { lighting });
 export const setSoundMixer = (mixer: SoundMixerDto) => invoke<void>('set_sound_mixer', { mixer });
+export const setPostProcess = (post: PostProcessDto) => invoke<void>('set_post_process', { post });
 
 // ─── Actors ─────────────────────────────────────────────────────────────────
 export const selectActor = (actorId: string) => invoke<void>('select_actor', { actorId });
@@ -183,6 +187,16 @@ export const deleteAsset = (path: string) => invoke<void>('delete_asset', { path
 export const readAsset = (path: string) => invoke<string>('read_asset', { path });
 /** Pops the native file manager open on the folder this asset lives in. */
 export const openAssetLocation = (path: string) => invoke<void>('open_asset_location', { path });
+/** What the pipeline makes of one asset: rig counts, texture/audio plan, dirt. */
+export const inspectAsset = (path: string) => invoke<PipelineReportDto>('inspect_asset', { path });
+/** Every asset with its pipeline report and reimport dirt. */
+export const pipelineStatus = () => invoke<PipelineReportDto[]>('pipeline_status');
+/** Re-inspects assets and refreshes fingerprints; empty paths means everything dirty. */
+export const reimportAssets = (paths: string[]) =>
+  invoke<PipelineReportDto[]>('reimport_assets', { paths });
+/** Lays images into one atlas sheet plan without writing files. */
+export const packAtlas = (paths: string[], maxSize?: number, padding?: number) =>
+  invoke<AtlasLayoutDto>('pack_atlas', { paths, maxSize, padding });
 
 /** Asks which files to import. Resolves to `null` if the dialog was
  * cancelled. */

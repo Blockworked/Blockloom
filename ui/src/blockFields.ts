@@ -34,6 +34,7 @@ import {
   ON_OFF_OPTIONS,
   SOUND_BUS_OPTIONS,
   SOUND_LOOP_OPTIONS,
+  TRIGGER_OPTIONS,
   UI_ANCHOR_OPTIONS,
   UI_PROP_OPTIONS,
   UI_THEME_OPTIONS,
@@ -313,6 +314,20 @@ export const BLOCK_SPECS: Record<InstructionType, BlockSpec> = {
   SetGravity: { head: vector('set world gravity', ['GravityX', 'GravityY', 'GravityZ'], ['x', 'y', 'z']) },
   SetDensity: { head: [label('set density to'), value('Density', 'density')] },
   SetMass: { head: [label('set mass to'), value('Mass', 'mass')] },
+  SetTrigger: {
+    head: [
+      label('make me'),
+      {
+        kind: 'dropdown',
+        key: 'trigger',
+        options: TRIGGER_OPTIONS,
+        encode: chosen => chosen === 'true',
+        decode: stored => (stored === true ? 'true' : 'false'),
+      },
+    ],
+  },
+  SetCollisionLayer: { head: [label('set my collision layer to'), value('TriggerLayer', 'layer')] },
+  SetCollisionMask: { head: [label('set my collision mask to'), value('TriggerMask', 'mask')] },
 
   // ── Looks ────────────────────────────────────────────────────────────────
   Say: { head: [label('say'), value('SayText', 'text')] },

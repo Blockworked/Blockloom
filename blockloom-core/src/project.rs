@@ -11,7 +11,7 @@
 //! name and keeps it matched to the project's; where the folder sits is the
 //! user's choice, so [`crate::library`] remembers the ones it has opened.
 
-use crate::blocks::{ActorGraph, DictDef, InstructionKind, ListDef, VariableDef};
+use crate::blocks::{ActorGraph, BlockKind, DictDef, InstructionKind, ListDef, VariableDef};
 use crate::components::{ActorComponent, CameraAttach, CameraView, Components};
 use crate::scene::{Mode, Physics, Placement, Visual, World};
 use crate::value::Evaluated;
@@ -121,6 +121,7 @@ impl From<ActorRepr> for Actor {
             if !components.contains("Render") {
                 components.0.push(ActorComponent::Render {
                     visible: visible.unwrap_or(true),
+                    layer: 0,
                 });
             }
             if !components.contains("Body")
@@ -239,6 +240,7 @@ impl Project {
         let mut world = World {
             mode,
             gravity: World::default_gravity(mode),
+            input: crate::input::InputConfig::starter(),
             ..World::default()
         };
         let (player, ground) = if mode.is_3d() {
@@ -716,6 +718,7 @@ impl Project {
     pub fn normalize(&mut self) {
         self.migrate_camera_follow();
         self.prune_parents();
+        self.world.input.normalize();
         for actor in &mut self.actors {
             actor.graph.migrate_bool_slots();
             actor.graph.normalize_block_colors();
@@ -779,6 +782,57 @@ impl Project {
         }
     }
 
+    /// Declares a named input action with no bindings.
+    pub fn create_input_action(&mut self, name: &str) -> Result<String, String> {
+        self.world.input.add_action(name)
+    }
+
+    /// Renames an input action and every block that names it: the
+    /// `when action pressed` header, the `bind`/`clear` slots holding plain
+    /// text, and the action reporter args.
+    pub fn rename_input_action(&mut self, old: &str, new: &str) -> Result<String, String> {
+        let renamed = self.world.input.rename_action(old, new)?;
+        for actor in &mut self.actors {
+            actor.graph.walk_instructions_mut(&mut |ins| {
+                match &mut ins.kind {
+                    InstructionKind::WhenActionPressed { action }
+                        if action.eq_ignore_ascii_case(old) =>
+                    {
+                        *action = renamed.clone();
+                    }
+                    InstructionKind::BindAction { action, .. } => {
+                        if let crate::value::Value::Text { value: text } = action
+                            && text.eq_ignore_ascii_case(old)
+                        {
+                            *text = renamed.clone();
+                        }
+                    }
+                    InstructionKind::ClearActionBindings { action } => {
+                        if let crate::value::Value::Text { value: text } = action
+                            && text.eq_ignore_ascii_case(old)
+                        {
+                            *text = renamed.clone();
+                        }
+                    }
+                    _ => {}
+                }
+                ins.kind.visit_values_mut(&mut |value, _| {
+                    rename_action_in_value(value, old, &renamed);
+                });
+            });
+            for floating in &mut actor.graph.floating_values {
+                rename_action_in_value(&mut floating.value, old, &renamed);
+            }
+        }
+        Ok(renamed)
+    }
+
+    /// Drops an input action. Blocks naming it are left alone and read as
+    /// unheld, the same as an unknown key.
+    pub fn remove_input_action(&mut self, name: &str) -> bool {
+        self.world.input.remove_action(name)
+    }
+
     /// Points every asset path that named `from` at `to` instead, so renaming
     /// a sprite in the asset tray doesn't leave the actor using it blank.
     /// `from` may be a folder, in which case everything under it follows.
@@ -801,12 +855,51 @@ impl Project {
                     ActorComponent::Look {
                         visual: Visual::Image { path, .. } | Visual::Model { path, .. },
                     } => repoint(path),
+                    ActorComponent::Look {
+                        visual: Visual::Tilemap { tilemap },
+                    } => repoint(&mut tilemap.tileset),
+                    ActorComponent::Material { material } => {
+                        repoint(&mut material.albedo_texture);
+                    }
                     ActorComponent::Script { path } => repoint(path),
                     _ => {}
                 }
             }
         }
         changed
+    }
+}
+
+/// Renames an action where a value tree means one: the first arg of the
+/// four action reporters. Anything else - a bare text slot, a `say` arg -
+/// is left alone, so a binding that happens to share the spelling keeps it.
+fn rename_action_in_value(value: &mut crate::value::Value, old: &str, new: &str) {
+    match value {
+        crate::value::Value::Op { op, args, saved } => {
+            let is_action = matches!(
+                op.name(),
+                "ActionDown" | "ActionPressed" | "ActionReleased" | "ActionValue"
+            );
+            for (index, arg) in args.iter_mut().enumerate() {
+                if is_action
+                    && index == 0
+                    && let crate::value::Value::Text { value: text } = arg
+                    && text.eq_ignore_ascii_case(old)
+                {
+                    *text = new.to_string();
+                } else {
+                    rename_action_in_value(arg, old, new);
+                }
+            }
+            rename_action_in_value(saved, old, new);
+        }
+        crate::value::Value::Call { args, saved, .. } => {
+            for arg in args.iter_mut() {
+                rename_action_in_value(arg, old, new);
+            }
+            rename_action_in_value(saved, old, new);
+        }
+        _ => {}
     }
 }
 
@@ -844,6 +937,10 @@ fn visual_for_mode(visual: &Visual, mode: Mode) -> Visual {
     const PIXELS_PER_METRE: f32 = 100.0;
 
     if visual.is_3d() == mode.is_3d() {
+        return visual.clone();
+    }
+    // A tilemap renders in both dimensions, so it never converts.
+    if let Visual::Tilemap { .. } = visual {
         return visual.clone();
     }
     match visual {
@@ -887,6 +984,11 @@ fn visual_for_mode(visual: &Visual, mode: Mode) -> Visual {
         Visual::Model { tint, scale, .. } => Visual::Rect {
             color: tint.clone(),
             size: [scale[0] * PIXELS_PER_METRE, scale[1] * PIXELS_PER_METRE],
+        },
+        // Reached only when a hand-edited document disagrees with itself;
+        // the early return above keeps every real tilemap as it is.
+        Visual::Tilemap { tilemap } => Visual::Tilemap {
+            tilemap: tilemap.clone(),
         },
     }
 }

@@ -385,6 +385,31 @@ body.panel-resizing {
   line-height: 1.5;
 }
 
+/* The eight layer bits an actor's collision mask names. Off bits read as
+   dim; the row stays one line so the Body section doesn't grow. */
+.mask-grid {
+  display: flex;
+  gap: 4px;
+  flex: 1 1 auto;
+}
+
+.mask-bit {
+  flex: 1 1 0;
+  height: var(--blockstitch-btn-h-sm);
+  border: 1px solid var(--blockstitch-border);
+  border-radius: var(--blockstitch-radius);
+  background: var(--blockstitch-bg);
+  color: var(--blockstitch-text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.mask-bit.on {
+  background: var(--blockstitch-accent-dim, #2b3f5e);
+  color: inherit;
+  border-color: var(--blockstitch-accent, #4c97ff);
+}
+
 /* ── Components ──────────────────────────────────────────────────────────── */
 
 /* A component heading only shows its remove button on hover, so the panel

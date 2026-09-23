@@ -39,6 +39,8 @@ pub enum FieldId {
     GravityZ,
     Density,
     Mass,
+    TriggerLayer,
+    TriggerMask,
     SayText,
     ColorText,
     SoundAsset,
@@ -84,6 +86,10 @@ pub enum FieldId {
     DeleteDictKey,
     LoadJsonIntoDictText,
     LoadJsonIntoListText,
+    RumbleStrength,
+    RumbleDuration,
+    ActionName,
+    ActionBinding,
     ReturnValue,
     CallArg(usize),
 }
@@ -114,6 +120,8 @@ impl FieldId {
                 | FieldId::ParentTarget
                 | FieldId::NewActorName
                 | FieldId::DeleteTarget
+                | FieldId::ActionName
+                | FieldId::ActionBinding
                 | FieldId::UiId
                 | FieldId::UiContent
                 | FieldId::UiParent
@@ -131,6 +139,8 @@ impl std::fmt::Display for FieldId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FieldId::MoveSteps => write!(f, "MoveSteps"),
+            FieldId::TriggerLayer => write!(f, "TriggerLayer"),
+            FieldId::TriggerMask => write!(f, "TriggerMask"),
             FieldId::GoToX => write!(f, "GoToX"),
             FieldId::GoToY => write!(f, "GoToY"),
             FieldId::GoToZ => write!(f, "GoToZ"),
@@ -202,6 +212,10 @@ impl std::fmt::Display for FieldId {
             FieldId::DeleteDictKey => write!(f, "DeleteDictKey"),
             FieldId::LoadJsonIntoDictText => write!(f, "LoadJsonIntoDictText"),
             FieldId::LoadJsonIntoListText => write!(f, "LoadJsonIntoListText"),
+            FieldId::RumbleStrength => write!(f, "RumbleStrength"),
+            FieldId::RumbleDuration => write!(f, "RumbleDuration"),
+            FieldId::ActionName => write!(f, "ActionName"),
+            FieldId::ActionBinding => write!(f, "ActionBinding"),
             FieldId::ReturnValue => write!(f, "ReturnValue"),
             FieldId::CallArg(i) => write!(f, "CallArg:{i}"),
         }
@@ -217,6 +231,8 @@ impl FromStr for FieldId {
         }
         Ok(match s {
             "MoveSteps" => FieldId::MoveSteps,
+            "TriggerLayer" => FieldId::TriggerLayer,
+            "TriggerMask" => FieldId::TriggerMask,
             "GoToX" => FieldId::GoToX,
             "GoToY" => FieldId::GoToY,
             "GoToZ" => FieldId::GoToZ,
@@ -288,6 +304,10 @@ impl FromStr for FieldId {
             "DeleteDictKey" => FieldId::DeleteDictKey,
             "LoadJsonIntoDictText" => FieldId::LoadJsonIntoDictText,
             "LoadJsonIntoListText" => FieldId::LoadJsonIntoListText,
+            "RumbleStrength" => FieldId::RumbleStrength,
+            "RumbleDuration" => FieldId::RumbleDuration,
+            "ActionName" => FieldId::ActionName,
+            "ActionBinding" => FieldId::ActionBinding,
             "ReturnValue" => FieldId::ReturnValue,
             _ => return Err(()),
         })
@@ -330,6 +350,8 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::SetGravity { z, .. }, F::GravityZ) => Some(z),
         (K::SetDensity { density }, F::Density) => Some(density),
         (K::SetMass { mass }, F::Mass) => Some(mass),
+        (K::SetCollisionLayer { layer }, F::TriggerLayer) => Some(layer),
+        (K::SetCollisionMask { mask }, F::TriggerMask) => Some(mask),
         (K::Say { text }, F::SayText) => Some(text),
         (K::SetColor { color }, F::ColorText) => Some(color),
         (K::PlaySound { sound, .. }, F::SoundAsset)
@@ -441,6 +463,11 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::DeleteDictKey { key, .. }, F::DeleteDictKey) => Some(key),
         (K::LoadJsonIntoDict { json, .. }, F::LoadJsonIntoDictText) => Some(json),
         (K::LoadJsonIntoList { json, .. }, F::LoadJsonIntoListText) => Some(json),
+        (K::RumbleGamepad { strength, .. }, F::RumbleStrength) => Some(strength),
+        (K::RumbleGamepad { duration, .. }, F::RumbleDuration) => Some(duration),
+        (K::BindAction { action, .. }, F::ActionName)
+        | (K::ClearActionBindings { action }, F::ActionName) => Some(action),
+        (K::BindAction { binding, .. }, F::ActionBinding) => Some(binding),
         (K::Return { value }, F::ReturnValue) => Some(value),
         (K::CallBlock { args, .. }, F::CallArg(i)) => args.get_mut(i),
         _ => None,

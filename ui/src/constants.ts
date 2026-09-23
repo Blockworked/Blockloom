@@ -34,6 +34,24 @@ export const BODY_OPTIONS = [
   { value: 'Kinematic', label: 'kinematic' },
 ];
 
+/** Whether a collider pushes back or only senses overlap. */
+export const TRIGGER_OPTIONS = [
+  { value: 'false', label: 'solid' },
+  { value: 'true', label: 'a trigger' },
+];
+
+/** The eight collision layers, Godot-style. */
+export const LAYER_OPTIONS = [
+  { value: '1', label: '1' },
+  { value: '2', label: '2' },
+  { value: '3', label: '3' },
+  { value: '4', label: '4' },
+  { value: '5', label: '5' },
+  { value: '6', label: '6' },
+  { value: '7', label: '7' },
+  { value: '8', label: '8' },
+];
+
 /** How an attached camera frames its actor. In a 2D project all three mean
  * "centre on the actor", so the block still reads sensibly either way. */
 export const CAMERA_VIEW_OPTIONS = [

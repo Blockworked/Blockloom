@@ -57,7 +57,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 - [x] Lists plus dicts plus JSON: VM and compiled both, everything else needs data structures.
 - [x] Sound playback plus buses plus 2D/3D positional: isolated, huge completeness win.
 - [x] Parent-space runtime API (`set parent`, local vs world query): finishes hierarchy work already started.
-- [ ] Physics queries: raycast/shapecast, layers/masks UI, trigger vs solid: required for platformers, AI, UI clicks.
+- [x] Physics queries: raycast/shapecast, layers/masks UI, trigger vs solid: required for platformers, AI, UI clicks.
 
 ### Phase 2 - Ship a complete single-player game
 - [ ] Input actions plus remapping, gamepad/rumble, touch/multitouch, mouse lock.

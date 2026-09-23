@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 12;
+pub const ABI_VERSION: u32 = 14;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -104,6 +104,35 @@ pub const READ_LOCAL_POSITION: u32 = 24;
 /// `a` = another actor's name, `arg` = axis. Its place in its own parent's
 /// frame, likewise the world position when it hangs off nothing.
 pub const READ_LOCAL_POSITION_OF: u32 = 25;
+/// `a` = actor name, empty for this actor. Whether its collider only senses.
+pub const READ_IS_TRIGGER: u32 = 26;
+/// `a` = actor name, empty for this actor. Which layer it lives on, 1-8.
+pub const READ_COLLISION_LAYER: u32 = 27;
+/// `a` = "x1 y1 z1", `b` = "x2 y2 z2". How far along the segment the first
+/// body sits, or [`MISSING`] for nothing. Z is ignored in a 2D project.
+pub const READ_RAY_DISTANCE: u32 = 28;
+/// `a` = "x y z", `b` = radius. Nearest body a ball overlaps, by name.
+pub const READ_CIRCLE_HIT_OF: u32 = 29;
+/// `a` = action name. Whether it is held right now.
+pub const READ_ACTION_DOWN: u32 = 30;
+/// `a` = action name. True only on the frame it went down.
+pub const READ_ACTION_PRESSED: u32 = 31;
+/// `a` = action name. True only on the frame it went up.
+pub const READ_ACTION_RELEASED: u32 = 32;
+/// `a` = action name. The strongest binding's analog value.
+pub const READ_ACTION_VALUE: u32 = 33;
+/// How many fingers are down.
+pub const READ_TOUCH_COUNT: u32 = 34;
+/// `arg` = 1-based touch index. Its world position on one axis.
+pub const READ_TOUCH: u32 = 35;
+/// Whether at least one gamepad is connected.
+pub const READ_GAMEPAD_CONNECTED: u32 = 36;
+/// `a` = axis name. A live stick or trigger value, -1..1.
+pub const READ_GAMEPAD_AXIS: u32 = 37;
+/// `a` = button name. Whether that pad button is held.
+pub const READ_GAMEPAD_BUTTON: u32 = 38;
+/// `a` = `left`, `right` or `middle`. Whether that mouse button is held.
+pub const READ_MOUSE_BUTTON: u32 = 39;
 
 // ─── What a script can read as text ────────────────────────────────────────
 
@@ -123,6 +152,11 @@ pub const TEXT_UI_VALUE: u32 = 6;
 pub const TEXT_UI_TEXT: u32 = 7;
 /// The id of the text input holding the keyboard, or [`MISSING`] for none.
 pub const TEXT_UI_FOCUS: u32 = 8;
+/// `a` = "x1 y1 z1", `b` = "x2 y2 z2". The first body a segment hits, by
+/// name, or [`MISSING`] for nothing.
+pub const TEXT_RAY_HIT: u32 = 9;
+/// `a` = "x y z", `b` = radius. The nearest body a ball overlaps, by name.
+pub const TEXT_CIRCLE_HIT: u32 = 10;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -217,6 +251,19 @@ pub const ACT_SET_SOUND_VOLUME: u32 = 40;
 pub const ACT_SET_SOUND_PITCH: u32 = 41;
 /// `a` = bus name; `n0` = linear gain.
 pub const ACT_SET_BUS_VOLUME: u32 = 42;
+/// `n0` != 0 senses overlap without pushing back.
+pub const ACT_SET_TRIGGER: u32 = 43;
+/// `n0` = layer 1-8.
+pub const ACT_SET_COLLISION_LAYER: u32 = 44;
+/// `n0` = bitmask of the layers the actor pairs with.
+pub const ACT_SET_COLLISION_MASK: u32 = 45;
+/// `n0` = strength 0-100, `n1` = seconds. Rumbles every connected gamepad;
+/// zero of either stops instead.
+pub const ACT_RUMBLE_GAMEPAD: u32 = 46;
+/// `a` = action, `b` = binding text. Adds one binding for the rest of the run.
+pub const ACT_BIND_ACTION: u32 = 47;
+/// `a` = action. Forgets every binding for the rest of the run.
+pub const ACT_CLEAR_ACTION_BINDINGS: u32 = 48;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

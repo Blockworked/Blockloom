@@ -11,6 +11,8 @@
 //! - [`project`] is the saved document: a [`scene::World`] plus one canvas
 //!   per actor, and the folder it is saved in.
 //! - [`library`] is the set of project folders the Dashboard lists.
+//! - [`material`] is the look beyond flat colors: surface materials, shader
+//!   graphs, particles, trails and tilemaps.
 //! - [`assets`] is the files inside one of those folders, which the editor's
 //!   asset tray lists and the runtime loads images and fonts from.
 //! - [`pack`] is that document again, as a built game carries it, and
@@ -37,9 +39,12 @@ pub mod codegen;
 pub mod components;
 mod distribution;
 pub mod fields;
+pub mod input;
 pub mod library;
+pub mod material;
 pub mod nav;
 pub mod pack;
+pub mod physics_query;
 pub mod pipeline;
 pub mod project;
 pub mod save;

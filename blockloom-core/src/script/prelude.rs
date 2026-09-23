@@ -246,6 +246,79 @@ impl Actor {
         )
     }
 
+    /// Whether a mouse button is held: `left`, `right` or `middle`.
+    pub fn mouse_button_down(&self, button: &str) -> bool {
+        self.number(READ_MOUSE_BUTTON, Str::borrow(button), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
+    /// Whether a named input action is held right now.
+    pub fn action_down(&self, action: &str) -> bool {
+        self.number(READ_ACTION_DOWN, Str::borrow(action), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
+    /// True only on the frame the action went down.
+    pub fn action_pressed(&self, action: &str) -> bool {
+        self.number(READ_ACTION_PRESSED, Str::borrow(action), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
+    /// True only on the frame the action went up.
+    pub fn action_released(&self, action: &str) -> bool {
+        self.number(READ_ACTION_RELEASED, Str::borrow(action), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
+    /// The strongest binding's analog value: 0/1 for buttons, -1..1 for a
+    /// whole stick axis, 0..1 for a directed half.
+    pub fn action_value(&self, action: &str) -> f32 {
+        self.number(READ_ACTION_VALUE, Str::borrow(action), Str::EMPTY, 0.0)
+            .unwrap_or(0.0) as f32
+    }
+
+    /// How many fingers are down right now.
+    pub fn touch_count(&self) -> usize {
+        self.number(READ_TOUCH_COUNT, Str::EMPTY, Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            .max(0.0) as usize
+    }
+
+    /// The 1-based touch point's world position. Out of range reads as zero.
+    pub fn touch(&self, index: usize) -> (f32, f32) {
+        (
+            self.number(READ_TOUCH, Str::EMPTY, Str::EMPTY, index as f64 * 2.0)
+                .unwrap_or(0.0) as f32,
+            self.number(READ_TOUCH, Str::EMPTY, Str::EMPTY, index as f64 * 2.0 + 1.0)
+                .unwrap_or(0.0) as f32,
+        )
+    }
+
+    /// Whether at least one gamepad is connected.
+    pub fn gamepad_connected(&self) -> bool {
+        self.number(READ_GAMEPAD_CONNECTED, Str::EMPTY, Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
+    /// A live stick or trigger value, -1..1. Unknown names read as zero.
+    pub fn gamepad_axis(&self, axis: &str) -> f32 {
+        self.number(READ_GAMEPAD_AXIS, Str::borrow(axis), Str::EMPTY, 0.0)
+            .unwrap_or(0.0) as f32
+    }
+
+    /// Whether the named pad button is held. Most games read this through
+    /// an action instead, so remapping keeps working.
+    pub fn gamepad_button_down(&self, button: &str) -> bool {
+        self.number(READ_GAMEPAD_BUTTON, Str::borrow(button), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
     pub fn touching(&self, actor: &str) -> bool {
         self.number(READ_TOUCHING, Str::borrow(actor), Str::EMPTY, 0.0)
             .unwrap_or(0.0)
@@ -254,6 +327,99 @@ impl Actor {
 
     pub fn touching_anything(&self) -> bool {
         self.touching("")
+    }
+
+    /// Whether an actor's collider only senses overlap. Empty names this one.
+    pub fn is_trigger(&self, actor: &str) -> bool {
+        self.number(READ_IS_TRIGGER, Str::borrow(actor), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
+    pub fn am_trigger(&self) -> bool {
+        self.is_trigger("")
+    }
+
+    /// Which layer an actor lives on, 1-8. Empty names this one.
+    pub fn collision_layer(&self, actor: &str) -> u8 {
+        self.number(READ_COLLISION_LAYER, Str::borrow(actor), Str::EMPTY, 0.0)
+            .unwrap_or(1.0)
+            .round()
+            .clamp(1.0, 8.0) as u8
+    }
+
+    pub fn my_collision_layer(&self) -> u8 {
+        self.collision_layer("")
+    }
+
+    /// The first body a segment hits, by name, or `None`. Bodies only; this
+    /// actor itself is skipped; layers filter by this actor's own mask.
+    pub fn ray_hit(&self, from: (f32, f32, f32), to: (f32, f32, f32)) -> Option<String> {
+        self.text(
+            TEXT_RAY_HIT,
+            Str::borrow(&format!("{} {} {}", from.0, from.1, from.2)),
+            Str::borrow(&format!("{} {} {}", to.0, to.1, to.2)),
+        )
+    }
+
+    /// How far along the segment the first hit sits, or `None` for nothing.
+    pub fn ray_distance(&self, from: (f32, f32, f32), to: (f32, f32, f32)) -> Option<f32> {
+        self.number(
+            READ_RAY_DISTANCE,
+            Str::borrow(&format!("{} {} {}", from.0, from.1, from.2)),
+            Str::borrow(&format!("{} {} {}", to.0, to.1, to.2)),
+            0.0,
+        )
+        .map(|distance| distance as f32)
+    }
+
+    /// The nearest body a ball overlaps, by name, or `None`. A ground check
+    /// is a small ball underfoot.
+    pub fn circle_hit(&self, at: (f32, f32, f32), radius: f32) -> Option<String> {
+        self.text(
+            TEXT_CIRCLE_HIT,
+            Str::borrow(&format!("{} {} {}", at.0, at.1, at.2)),
+            Str::borrow(&radius.to_string()),
+        )
+    }
+
+    /// Whether the collider pushes back (solid) or only senses (trigger).
+    pub fn set_trigger(&self, trigger: bool) {
+        self.act(
+            ACT_SET_TRIGGER,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            if trigger { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Which layer the actor lives on, 1-8.
+    pub fn set_collision_layer(&self, layer: u8) {
+        self.act(
+            ACT_SET_COLLISION_LAYER,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            layer.clamp(1, 8) as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Bitmask of the layers the actor pairs with, 0-255.
+    pub fn set_collision_mask(&self, mask: u8) {
+        self.act(
+            ACT_SET_COLLISION_MASK,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            mask as f64,
+            0.0,
+            0.0,
+        );
     }
 
     pub fn distance_to(&self, actor: &str) -> f32 {
@@ -792,6 +958,47 @@ impl Actor {
             Str::EMPTY,
             Str::EMPTY,
             if locked { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Rumbles every connected gamepad at 0-100 strength for seconds.
+    /// Zero of either stops instead.
+    pub fn rumble_gamepad(&self, strength: f32, duration: f32) {
+        self.act(
+            ACT_RUMBLE_GAMEPAD,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            strength as f64,
+            duration as f64,
+            0.0,
+        );
+    }
+
+    /// Adds one binding (`space`, `mouse:left`, `gamepad:south`) to an
+    /// action for the rest of the run. What a settings screen calls.
+    pub fn bind_action(&self, action: &str, binding: &str) {
+        self.act(
+            ACT_BIND_ACTION,
+            Str::borrow(action),
+            Str::borrow(binding),
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Forgets every binding an action has for the rest of the run.
+    pub fn clear_action_bindings(&self, action: &str) {
+        self.act(
+            ACT_CLEAR_ACTION_BINDINGS,
+            Str::borrow(action),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
             0.0,
             0.0,
         );

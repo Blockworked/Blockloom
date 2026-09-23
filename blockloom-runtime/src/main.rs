@@ -22,7 +22,9 @@ mod bridge;
 mod dim2;
 mod dim3;
 mod engine;
+mod fx;
 mod logic;
+mod materials;
 mod overlay;
 mod player;
 mod script;
@@ -72,10 +74,15 @@ fn main() {
     .init_resource::<world::NavMesh>()
     .init_resource::<ui::UiManager>()
     .init_resource::<sound::SoundState>()
-    .insert_non_send(launch.into_engine())
+    .init_resource::<fx::FxCache>()
+    .insert_non_send(launch.into_engine());
+    // Custom shader materials plus the tilemap material. Every dimension
+    // registers all three, so systems can take their asset stores
+    // unconditionally; an unused plugin costs nothing at runtime.
+    materials::register(&mut app);
     // Both of these only exist to talk to an editor, and a built game has
     // none: no corner status, no handshake.
-    .add_systems(
+    app.add_systems(
         Startup,
         (overlay::spawn, announce_ready).run_if(bridge::editor_attached),
     );
@@ -118,6 +125,8 @@ fn main() {
                         world::apply_component_effects,
                         sound::apply_sound_effects,
                         world::step_glides,
+                        world::apply_input_effects,
+                        world::apply_rumble,
                         world::apply_cursor_lock,
                         world::clear_effects,
                     )
@@ -142,6 +151,11 @@ fn main() {
                         sound::maintain_voices,
                         world::interpolate_poses,
                         world::drive_camera,
+                        fx::emit_particles,
+                        fx::step_particles,
+                        fx::snapshot_trails,
+                        fx::step_ghosts,
+                        materials::tick_graph_time,
                         overlay::update_speech_bubbles,
                         world::report_status.run_if(bridge::editor_attached),
                         overlay::update_status.run_if(bridge::editor_attached),
@@ -182,6 +196,8 @@ fn main() {
                         world::apply_component_effects,
                         sound::apply_sound_effects,
                         world::step_glides,
+                        world::apply_input_effects,
+                        world::apply_rumble,
                         world::apply_cursor_lock,
                         world::clear_effects,
                     )
@@ -206,6 +222,11 @@ fn main() {
                         sound::maintain_voices,
                         world::interpolate_poses,
                         world::drive_camera,
+                        fx::emit_particles,
+                        fx::step_particles,
+                        fx::snapshot_trails,
+                        fx::step_ghosts,
+                        materials::tick_graph_time,
                         overlay::update_speech_bubbles,
                         world::report_status.run_if(bridge::editor_attached),
                         overlay::update_status.run_if(bridge::editor_attached),

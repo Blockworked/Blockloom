@@ -26,7 +26,7 @@ import {
 } from '../tauri';
 import AssetDrop from './AssetDrop.vue';
 import ScriptDialog from './ScriptDialog.vue';
-import { BODY_OPTIONS, CAMERA_VIEW_OPTIONS } from '../constants';
+import { BODY_OPTIONS, CAMERA_VIEW_OPTIONS, LAYER_OPTIONS } from '../constants';
 import {
   ADDABLE_COMPONENTS,
   actorParent,
@@ -35,6 +35,7 @@ import {
   actorVisual,
   componentName,
   shapesFor,
+  withPhysicsDefaults,
   type ActorComponentDto,
   type CameraAttachDto,
   type ComponentFieldDto,
@@ -146,7 +147,16 @@ function visualOf(component: ActorComponentDto): VisualDto {
 }
 
 function physicsOf(component: ActorComponentDto): PhysicsDto {
-  return component.component === 'Body' ? component.physics : actorPhysics(actor.value);
+  return component.component === 'Body'
+    ? withPhysicsDefaults(component.physics)
+    : actorPhysics(actor.value);
+}
+
+/** Toggles one layer bit in the actor's collision mask. */
+function toggleMaskBit(component: ActorComponentDto, layer: number) {
+  const bit = 1 << (layer - 1);
+  const mask = physicsOf(component).collision_mask ^ bit;
+  writePhysics(component, { collision_mask: mask });
 }
 
 function cameraOf(component: ActorComponentDto): CameraAttachDto {
@@ -421,7 +431,7 @@ function blankComponent(name: ComponentName): ActorComponentDto | null {
     case 'Body':
       return {
         component: 'Body',
-        physics: { body: 'Dynamic', gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5, density: 1, mass: null },
+        physics: { body: 'Dynamic', gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5, density: 1, mass: null, trigger: false, collision_layer: 1, collision_mask: 255 },
       };
     case 'Camera':
       return {
@@ -668,6 +678,36 @@ function remove(name: string) {
                 :model-value="physicsOf(component).lock_rotation"
                 @update:model-value="v => writePhysics(component, { lock_rotation: v })"
               />
+            </div>
+            <div class="panel-row">
+              <label>Trigger</label>
+              <SwitchControl
+                :model-value="physicsOf(component).trigger"
+                @update:model-value="v => writePhysics(component, { trigger: v })"
+              />
+            </div>
+            <div class="panel-row">
+              <label>Layer</label>
+              <AppDropdown
+                :options="LAYER_OPTIONS"
+                :model-value="String(physicsOf(component).collision_layer)"
+                @update:model-value="layer => writePhysics(component, { collision_layer: Number(layer) })"
+              />
+            </div>
+            <div class="panel-row">
+              <label>Hits</label>
+              <div class="mask-grid">
+                <button
+                  v-for="layer in 8"
+                  :key="layer"
+                  class="mask-bit"
+                  :class="{ on: (physicsOf(component).collision_mask & (1 << (layer - 1))) !== 0 }"
+                  :title="`layer ${layer}`"
+                  @click="toggleMaskBit(component, layer)"
+                >
+                  {{ layer }}
+                </button>
+              </div>
             </div>
           </template>
         </template>

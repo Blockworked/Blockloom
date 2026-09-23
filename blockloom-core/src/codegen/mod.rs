@@ -58,21 +58,23 @@
 mod runtime;
 
 pub use runtime::{
-    ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH, ACT_BROADCAST,
-    ACT_CHANGE_POSITION, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR, ACT_DELETE_ELEMENT,
-    ACT_DETACH, ACT_DICT_CLEAR, ACT_DICT_DELETE_KEY, ACT_DICT_SET, ACT_ERROR, ACT_GLIDE, ACT_GO_TO,
-    ACT_HIDE_ELEMENT, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD, ACT_LIST_CLEAR,
-    ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE, ACT_LIST_SHIFT, ACT_MOVE,
-    ACT_NAVIGATE_TO, ACT_PLAY_SOUND, ACT_POINT_TOWARDS, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY,
-    ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW,
-    ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_GRAVITY, ACT_SET_MASS,
+    ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH, ACT_BIND_ACTION,
+    ACT_BROADCAST, ACT_CHANGE_POSITION, ACT_CLEAR_ACTION_BINDINGS, ACT_CREATE_ACTOR,
+    ACT_CREATE_CLONE, ACT_DELETE_ACTOR, ACT_DELETE_ELEMENT, ACT_DETACH, ACT_DICT_CLEAR,
+    ACT_DICT_DELETE_KEY, ACT_DICT_SET, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT,
+    ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD, ACT_LIST_CLEAR, ACT_LIST_DELETE,
+    ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE, ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO,
+    ACT_PLAY_SOUND, ACT_POINT_TOWARDS, ACT_RUMBLE_GAMEPAD, ACT_SAVE_VARIABLE, ACT_SAY,
+    ACT_SET_BODY, ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH,
+    ACT_SET_CAMERA_VIEW, ACT_SET_COLLISION_LAYER, ACT_SET_COLLISION_MASK, ACT_SET_COLOR,
+    ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_GRAVITY, ACT_SET_MASS,
     ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE,
-    ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY,
-    ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_STOP_SOUND, ACT_TURN, AbiStr, AbiValue, Act, Actors,
-    Entry, Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner,
-    SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
-    SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
-    Val,
+    ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME,
+    ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_STOP_SOUND, ACT_TURN, AbiStr,
+    AbiValue, Act, Actors, Entry, Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE,
+    READ_VARIABLE, Runner, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW,
+    SYM_LOGIC_PAUSE, SYM_LOGIC_RESET, SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL,
+    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
 };
 
 use crate::project::Project;
@@ -343,6 +345,8 @@ fn trigger_name(trigger: &crate::vm::Trigger) -> &'static str {
         Trigger::Collision { .. } => "Collision",
         Trigger::Message(_) => "Message",
         Trigger::Cloned => "Cloned",
+        Trigger::ActionPressed(_) => "Action",
+        Trigger::Touched => "Touched",
         Trigger::UiClicked(_) => "UiClicked",
         Trigger::UiChanged(_) => "UiChanged",
     }
@@ -355,7 +359,8 @@ fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
         Trigger::Collision { with } => with.clone(),
         Trigger::Message(name) => name.clone(),
         Trigger::UiClicked(id) | Trigger::UiChanged(id) => id.clone(),
-        Trigger::Started | Trigger::Clicked | Trigger::Cloned => String::new(),
+        Trigger::ActionPressed(action) => action.clone(),
+        Trigger::Started | Trigger::Clicked | Trigger::Cloned | Trigger::Touched => String::new(),
     }
 }
 
@@ -863,6 +868,15 @@ impl<'a> Pass<'a> {
                 reading(self.number(density)?, "Act::SetDensity { density: slot }")
             }
             Action::SetMass(mass) => reading(self.number(mass)?, "Act::SetMass { mass: slot }"),
+            Action::SetTrigger(trigger) => act(format!("Act::SetTrigger {{ trigger: {trigger} }}")),
+            Action::SetCollisionLayer(layer) => reading(
+                self.number(layer)?,
+                "Act::SetCollisionLayer { layer: (slot as i32).clamp(1, 8) as u8 }",
+            ),
+            Action::SetCollisionMask(mask) => reading(
+                self.number(mask)?,
+                "Act::SetCollisionMask { mask: (slot as i32).clamp(0, 255) as u8 }",
+            ),
             Action::Say(value) => reading(self.text(value)?, "Act::Say { text: slot }"),
             Action::SetVisible(visible) => act(format!("Act::SetVisible {{ visible: {visible} }}")),
             Action::SetColor(color) => reading(self.text(color)?, "Act::SetColor { color: slot }"),
@@ -1009,6 +1023,22 @@ impl<'a> Pass<'a> {
             Action::SetMouseLocked(locked) => {
                 act(format!("Act::SetMouseLocked {{ locked: {locked} }}"))
             }
+            Action::RumbleGamepad { strength, duration } => format!(
+                "    h.act(&me, Act::RumbleGamepad {{ strength: ({} as f32).clamp(0.0, 100.0), \
+                 duration: ({} as f32).max(0.0) }});\n",
+                self.number(strength)?,
+                self.number(duration)?,
+            ),
+            Action::BindAction { action, binding } => format!(
+                "    h.act(&me, Act::BindAction {{ action: {}.trim().to_string(), \
+                 binding: {}.trim().to_string() }});\n",
+                self.text(action)?,
+                self.text(binding)?,
+            ),
+            Action::ClearActionBindings { action } => format!(
+                "    h.act(&me, Act::ClearActionBindings {{ action: {}.trim().to_string() }});\n",
+                self.text(action)?,
+            ),
             // The interface. Every slot is hoisted into a `let` first, in
             // the order the VM evaluates them, because reading a slot
             // borrows the host and so does handing it something to do.

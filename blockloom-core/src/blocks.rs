@@ -43,6 +43,14 @@ pub enum InstructionKind {
     WhenKeyPressed {
         key: String,
     },
+    /// Runs every time the named input action goes down. An action groups
+    /// keys, mouse buttons and gamepad inputs under one name, so one strand
+    /// answers a jump however the player says it.
+    WhenActionPressed {
+        action: String,
+    },
+    /// Runs when a finger touches the screen. The touch reporters say where.
+    WhenTouched,
     /// Runs when this actor is clicked.
     WhenClicked,
     /// Runs when this actor starts touching `with` (an actor name, or an
@@ -152,6 +160,22 @@ pub enum InstructionKind {
     /// An explicit body mass; set, it wins over [`SetDensity`] and the shape.
     SetMass {
         mass: Value,
+    },
+    /// Whether this actor's collider pushes back (solid) or only senses
+    /// overlap (trigger). A trigger still fires `when I touch` and answers
+    /// `touching?`, which is what a coin or a goal zone wants.
+    SetTrigger {
+        trigger: bool,
+    },
+    /// Which collision layer the actor lives on, 1-8. Two bodies only pair
+    /// when each one's mask names the other's layer.
+    SetCollisionLayer {
+        layer: Value,
+    },
+    /// Bitmask of the layers this actor pairs with, 0-255 (bit `n - 1` for
+    /// layer `n`). Raycasts use the running actor's own mask as their filter.
+    SetCollisionMask {
+        mask: Value,
     },
 
     // ─── Looks ──────────────────────────────────────────────────────────────
@@ -471,6 +495,25 @@ pub enum InstructionKind {
     SetMouseLocked {
         locked: bool,
     },
+    // ─── Input ────────────────────────────────────────────────────────────
+    /// Rumbles connected gamepads at `strength` (0-100) for `duration`
+    /// seconds. Does nothing with no gamepad attached.
+    RumbleGamepad {
+        strength: Value,
+        duration: Value,
+    },
+    /// Adds one binding (`space`, `mouse:left`, `gamepad:south`,
+    /// `gamepad:leftstickx-`) to the named input action for the rest of the
+    /// run. What a settings screen calls to remap a key.
+    BindAction {
+        action: Value,
+        binding: Value,
+    },
+    /// Forgets every binding an action has for the rest of the run. Pair
+    /// with `bind` to replace a mapping rather than add to it.
+    ClearActionBindings {
+        action: Value,
+    },
 
     // ─── Variables ──────────────────────────────────────────────────────────
     SetVariable {
@@ -580,6 +623,8 @@ impl BlockKind for InstructionKind {
             | K::SetScale { factor: v }
             | K::SetDensity { density: v }
             | K::SetMass { mass: v }
+            | K::SetCollisionLayer { layer: v }
+            | K::SetCollisionMask { mask: v }
             | K::Say { text: v }
             | K::SetColor { color: v }
             | K::Wait { duration: v }
@@ -798,8 +843,19 @@ impl BlockKind for InstructionKind {
                     f(arg, InputValueType::Any);
                 }
             }
+            K::RumbleGamepad { strength, duration } => {
+                f(strength, InputValueType::Any);
+                f(duration, InputValueType::Any);
+            }
+            K::BindAction { action, binding } => {
+                f(action, InputValueType::Any);
+                f(binding, InputValueType::Any);
+            }
+            K::ClearActionBindings { action } => f(action, InputValueType::Any),
             K::WhenStarted
             | K::WhenKeyPressed { .. }
+            | K::WhenActionPressed { .. }
+            | K::WhenTouched
             | K::WhenClicked
             | K::WhenCollision { .. }
             | K::WhenMessage { .. }
@@ -808,6 +864,7 @@ impl BlockKind for InstructionKind {
             | K::CreateClone { .. }
             | K::PointTowards { .. }
             | K::SetBody { .. }
+            | K::SetTrigger { .. }
             | K::SetCameraView { .. }
             | K::AttachComponent { .. }
             | K::DetachComponent { .. }
@@ -838,6 +895,8 @@ impl BlockKind for InstructionKind {
             self,
             InstructionKind::WhenStarted
                 | InstructionKind::WhenKeyPressed { .. }
+                | InstructionKind::WhenActionPressed { .. }
+                | InstructionKind::WhenTouched
                 | InstructionKind::WhenClicked
                 | InstructionKind::WhenCollision { .. }
                 | InstructionKind::WhenMessage { .. }

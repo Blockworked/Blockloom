@@ -20,7 +20,7 @@ use blockloom_core::components::{ActorComponent, Components};
 use blockloom_core::library;
 use blockloom_core::pipeline;
 use blockloom_core::project::{self, Actor, Project};
-use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, Visual};
+use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, PostProcess, Visual};
 use blockloom_core::script;
 use blockloom_core::sound::SoundMixer;
 use blockloom_core::value::{Evaluated, Value};
@@ -544,8 +544,31 @@ pub(crate) fn set_lighting(
             ambient_color,
             illuminance: lighting.illuminance.clamp(0.0, 200_000.0),
             ambient_brightness: lighting.ambient_brightness.clamp(0.0, 1000.0),
+            shadow_map_size: lighting.shadow_map_size.clamp(512, 8192),
+            shadow_bias: lighting.shadow_bias.clamp(0.0, 0.5),
             ..lighting
         };
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Sets the post-process on the world camera: exposure, tonemapping, bloom
+/// and vignette. What the project settings dialog edits; the runtime seeds
+/// its camera components from it on every rebuild.
+pub(crate) fn set_post_process(
+    state: &SharedState,
+    app: &AppHandle,
+    post: PostProcess,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut post = post;
+    post.normalize();
+    if let Some(project) = s.project_mut() {
+        project.world.post = post;
     }
     auto_save(&s);
     sync_runtime(&mut s);
@@ -953,6 +976,14 @@ fn default_visual(shape: &str) -> Option<Visual> {
             color: "#3E4A5B".to_string(),
             size: [20.0, 20.0],
         },
+        "Model" => Visual::Model {
+            path: String::new(),
+            tint: "#4C97FF".to_string(),
+            scale: [1.0, 1.0, 1.0],
+        },
+        "Tilemap" => Visual::Tilemap {
+            tilemap: blockloom_core::material::Tilemap::default(),
+        },
         _ => return None,
     })
 }
@@ -966,6 +997,8 @@ fn shape_label(shape: &str) -> &str {
         "Sphere" => "Ball",
         "Capsule" => "Body",
         "Plane" => "Ground",
+        "Model" => "Model",
+        "Tilemap" => "Tiles",
         other => other,
     }
 }

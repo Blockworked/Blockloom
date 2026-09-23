@@ -28,6 +28,10 @@ pub enum Trigger {
     Message(String),
     /// A fresh clone starting up, in the clone itself.
     Cloned,
+    /// The named input action went down.
+    ActionPressed(String),
+    /// A finger touched the screen.
+    Touched,
     /// An interface element was clicked, by its id.
     UiClicked(String),
     /// An input element was changed, by its id.
@@ -91,6 +95,9 @@ pub enum Action {
     SetGravity([Value; 3]),
     SetDensity(Value),
     SetMass(Value),
+    SetTrigger(bool),
+    SetCollisionLayer(Value),
+    SetCollisionMask(Value),
     Say(Value),
     SetVisible(bool),
     SetColor(Value),
@@ -149,6 +156,20 @@ pub enum Action {
     Broadcast(String),
     /// Grabs or frees the pointer; window-global, like gravity.
     SetMouseLocked(bool),
+    /// Rumbles connected gamepads: 0-100 strength for seconds.
+    RumbleGamepad {
+        strength: Value,
+        duration: Value,
+    },
+    /// Adds one binding to an action for the rest of the run.
+    BindAction {
+        action: Value,
+        binding: Value,
+    },
+    /// Forgets every binding an action has for the rest of the run.
+    ClearActionBindings {
+        action: Value,
+    },
     /// Makes or updates one interface element. Boxed because it names nine
     /// slots where no other block names more than four, and every `Step` in
     /// a program is as big as the biggest one.
@@ -329,6 +350,10 @@ pub fn compile(graph: &ActorGraph) -> Program {
                 Some(Trigger::Message(name.trim().to_string()))
             }
             InstructionKind::WhenCloned => Some(Trigger::Cloned),
+            InstructionKind::WhenActionPressed { action } => Some(Trigger::ActionPressed(
+                crate::input::normalize_action(action).to_lowercase(),
+            )),
+            InstructionKind::WhenTouched => Some(Trigger::Touched),
             InstructionKind::WhenUiClicked { element } => {
                 Some(Trigger::UiClicked(element.trim().to_string()))
             }
@@ -370,6 +395,8 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         // already stripped; a stray one is skipped rather than run.
         K::WhenStarted
         | K::WhenKeyPressed { .. }
+        | K::WhenActionPressed { .. }
+        | K::WhenTouched
         | K::WhenClicked
         | K::WhenCollision { .. }
         | K::WhenMessage { .. }
@@ -426,6 +453,13 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         ]))),
         K::SetDensity { density } => steps.push(Step::Action(Action::SetDensity(density.clone()))),
         K::SetMass { mass } => steps.push(Step::Action(Action::SetMass(mass.clone()))),
+        K::SetTrigger { trigger } => steps.push(Step::Action(Action::SetTrigger(*trigger))),
+        K::SetCollisionLayer { layer } => {
+            steps.push(Step::Action(Action::SetCollisionLayer(layer.clone())))
+        }
+        K::SetCollisionMask { mask } => {
+            steps.push(Step::Action(Action::SetCollisionMask(mask.clone())))
+        }
         K::Say { text } => steps.push(Step::Action(Action::Say(text.clone()))),
         K::SetVisible { visible } => steps.push(Step::Action(Action::SetVisible(*visible))),
         K::SetColor { color } => steps.push(Step::Action(Action::SetColor(color.clone()))),
@@ -503,6 +537,21 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::DeleteActor { target } => steps.push(Step::Action(Action::DeleteActor(target.clone()))),
         K::Broadcast { name } => steps.push(Step::Action(Action::Broadcast(name.clone()))),
         K::SetMouseLocked { locked } => steps.push(Step::Action(Action::SetMouseLocked(*locked))),
+        K::RumbleGamepad { strength, duration } => {
+            steps.push(Step::Action(Action::RumbleGamepad {
+                strength: strength.clone(),
+                duration: duration.clone(),
+            }))
+        }
+        K::BindAction { action, binding } => steps.push(Step::Action(Action::BindAction {
+            action: action.clone(),
+            binding: binding.clone(),
+        })),
+        K::ClearActionBindings { action } => {
+            steps.push(Step::Action(Action::ClearActionBindings {
+                action: action.clone(),
+            }))
+        }
 
         K::ShowPanel {
             element: id,

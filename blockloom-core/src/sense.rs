@@ -6,6 +6,7 @@
 //! half: which actor's script is being evaluated right now, so "x position"
 //! means the running actor's own.
 
+use crate::input::ActionSense;
 use crate::sound::SoundBus;
 use crate::value::Evaluated;
 use std::cell::RefCell;
@@ -39,6 +40,40 @@ pub struct ActorSense {
     /// name then field name. Live values, not the authored ones: a block that
     /// wrote a field last frame reads its own number back.
     pub components: HashMap<String, HashMap<String, Evaluated>>,
+    /// False for an actor with no `Body`: ray and overlap queries skip it,
+    /// the way the solver does.
+    pub has_body: bool,
+    /// True for a sensor collider: it fires touches without pushing back.
+    pub trigger: bool,
+    /// The layer the actor lives on, 1-8.
+    pub layer: u8,
+    /// Bitmask of the layers this actor pairs with. A query fired from this
+    /// actor only sees actors its own mask names.
+    pub mask: u8,
+    /// What the actor collides (and raycasts) with, in world units.
+    pub shape: ColliderShape,
+}
+
+/// What shape an actor collides (and raycasts) with, in world units and
+/// axis-aligned. Rotation is ignored on purpose: a spun actor still queries
+/// against its unrotated box, which is what a platformer's ground check wants.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ColliderShape {
+    /// Nothing to hit: no body, or a visual with no collider in this mode.
+    #[default]
+    None,
+    /// Half-extents in x/y (2D) or x/y/z (3D).
+    Box { half: [f32; 3] },
+    /// A disc (2D) or ball (3D).
+    Ball { radius: f32 },
+}
+
+/// One touch point, as the touch reporters see it: where it is in world
+/// units, in the same frame as `mouse`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct TouchSense {
+    pub id: u64,
+    pub position: [f32; 2],
 }
 
 /// One interface element, as the reporter blocks see it. An element the
@@ -77,6 +112,21 @@ pub struct Sensors {
     /// Whether the pointer is grabbed and hidden for first-person play.
     pub mouse_locked: bool,
     pub mouse_down: bool,
+    /// Held mouse buttons by name: `left`, `right`, `middle`. `mouse_down` is
+    /// the left one, kept so old blocks keep meaning what they meant.
+    pub mouse_buttons: HashSet<String>,
+    /// Named input actions this frame, by action name as authored.
+    pub actions: HashMap<String, ActionSense>,
+    /// Live touch points in world units, in press order. Empty with no
+    /// fingers down; more than one is a multitouch.
+    pub touches: Vec<TouchSense>,
+    /// True when at least one gamepad is connected.
+    pub gamepad_connected: bool,
+    /// Live stick and trigger values by canonical axis name
+    /// (`leftstickx`, ...). What `gamepad axis` reads.
+    pub gamepad_axes: HashMap<String, f32>,
+    /// Held gamepad buttons by canonical name (`south`, `dpadup`, ...).
+    pub gamepad_buttons: HashSet<String>,
     pub actors: HashMap<String, ActorSense>,
     /// Every interface element the blocks have made, by id.
     pub ui: HashMap<String, UiSense>,
@@ -115,6 +165,11 @@ impl Default for ActorSense {
             touching: HashSet::new(),
             attached: HashSet::new(),
             components: HashMap::new(),
+            has_body: false,
+            trigger: false,
+            layer: 1,
+            mask: 0xFF,
+            shape: ColliderShape::None,
         }
     }
 }

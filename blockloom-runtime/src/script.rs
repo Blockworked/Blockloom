@@ -225,6 +225,71 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
             Some(sense::read(|sensors| sensors.mouse_delta[index]) as f64)
         }
         abi::READ_MOUSE_LOCKED => bool_as(sense::read(|sensors| sensors.mouse_locked)),
+        abi::READ_MOUSE_BUTTON => {
+            let button = a.trim().to_lowercase();
+            bool_as(sense::read(|sensors| {
+                if button == "left" {
+                    sensors.mouse_down
+                } else {
+                    sensors.mouse_buttons.contains(&button)
+                }
+            }))
+        }
+        abi::READ_ACTION_DOWN => bool_as(sense::read(|sensors| {
+            sensors
+                .actions
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(a.trim()))
+                .is_some_and(|(_, action)| action.held)
+        })),
+        abi::READ_ACTION_PRESSED => bool_as(sense::read(|sensors| {
+            sensors
+                .actions
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(a.trim()))
+                .is_some_and(|(_, action)| action.pressed)
+        })),
+        abi::READ_ACTION_RELEASED => bool_as(sense::read(|sensors| {
+            sensors
+                .actions
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(a.trim()))
+                .is_some_and(|(_, action)| action.released)
+        })),
+        abi::READ_ACTION_VALUE => Some(sense::read(|sensors| {
+            sensors
+                .actions
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(a.trim()))
+                .map(|(_, action)| action.value as f64)
+                .unwrap_or(0.0)
+        })),
+        abi::READ_TOUCH_COUNT => Some(sense::read(|sensors| sensors.touches.len() as f64)),
+        abi::READ_TOUCH => {
+            // Even args are x, odd are y, of the 1-based index they halve to.
+            let slot = arg as usize;
+            let (index, axis) = (slot / 2, slot % 2);
+            Some(sense::read(|sensors| {
+                index
+                    .checked_sub(1)
+                    .and_then(|i| sensors.touches.get(i))
+                    .map(|touch| touch.position[axis] as f64)
+                    .unwrap_or(0.0)
+            }))
+        }
+        abi::READ_GAMEPAD_CONNECTED => {
+            bool_as(sense::read(|sensors| sensors.gamepad_connected))
+        }
+        abi::READ_GAMEPAD_AXIS => {
+            let axis = blockloom_core::input::normalize_pad_axis(a);
+            Some(sense::read(|sensors| {
+                sensors.gamepad_axes.get(&axis).copied().unwrap_or(0.0) as f64
+            }))
+        }
+        abi::READ_GAMEPAD_BUTTON => {
+            let button = blockloom_core::input::normalize_pad_button(a);
+            bool_as(sense::read(|sensors| sensors.gamepad_buttons.contains(&button)))
+        }
         abi::READ_GAME_PAUSED => bool_as(sense::read(|sensors| sensors.paused)),
         abi::READ_UI_SHOWN => bool_as(sense::read(|sensors| {
             sensors
@@ -309,8 +374,46 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
                     .map(|other| other.local_position[axis] as f64)
             })
         }
+        abi::READ_IS_TRIGGER => {
+            let target = trigger_target(actor, a)?;
+            Some(if target { 1.0 } else { 0.0 })
+        }
+        abi::READ_COLLISION_LAYER => {
+            let layer = if a.trim().is_empty() {
+                me(actor)?.layer
+            } else {
+                sense::read(|sensors| sensors.find(a.trim()).map(|found| found.layer))?
+            };
+            Some(layer as f64)
+        }
+        abi::READ_RAY_DISTANCE => {
+            let from = parse_triple(a)?;
+            let to = parse_triple(b)?;
+            sense::read(|sensors| {
+                let mask = blockloom_core::physics_query::query_mask(sensors, Some(actor));
+                blockloom_core::physics_query::ray_hit(sensors, from, to, Some(actor), mask)
+                    .map(|(_, distance)| distance as f64)
+            })
+        }
         _ => None,
     }
+}
+
+/// Whether `target` is a trigger: empty names the running actor itself.
+fn trigger_target(running: &str, target: &str) -> Option<bool> {
+    if target.trim().is_empty() {
+        return Some(me(running)?.trigger);
+    }
+    sense::read(|sensors| sensors.find(target.trim()).map(|found| found.trigger))
+}
+
+/// Three space-separated numbers, as the prelude sends a point across.
+fn parse_triple(text: &str) -> Option<[f32; 3]> {
+    let mut numbers = text.split_whitespace().map(|part| part.parse::<f32>());
+    let x = numbers.next()?.ok()?;
+    let y = numbers.next()?.ok()?;
+    let z = numbers.next()?.ok()?;
+    Some([x, y, z])
 }
 
 extern "C" fn read_text(
@@ -353,6 +456,36 @@ extern "C" fn read_text(
         abi::TEXT_UI_FOCUS => {
             sense::read(|sensors| Some(sensors.ui_focus.clone()).filter(|id| !id.is_empty()))
         }
+        abi::TEXT_RAY_HIT => (|| {
+            let from = parse_triple(a)?;
+            let to = parse_triple(b)?;
+            sense::read(|sensors| {
+                let mask = blockloom_core::physics_query::query_mask(sensors, Some(ctx.actor));
+                blockloom_core::physics_query::ray_hit(sensors, from, to, Some(ctx.actor), mask)
+                    .and_then(|(id, _)| sensors.actors.get(&id))
+                    .map(|actor| actor.name.clone())
+                    .filter(|name| !name.is_empty())
+            })
+        })(),
+        abi::TEXT_CIRCLE_HIT => (|| {
+            let at = parse_triple(a)?;
+            let radius = b.trim().parse::<f32>().ok()?;
+            sense::read(|sensors| {
+                let mask = blockloom_core::physics_query::query_mask(sensors, Some(ctx.actor));
+                blockloom_core::physics_query::overlap_circle(
+                    sensors,
+                    at,
+                    radius,
+                    Some(ctx.actor),
+                    mask,
+                )
+                .into_iter()
+                .next()
+                .and_then(|id| sensors.actors.get(&id))
+                .map(|actor| actor.name.clone())
+                .filter(|name| !name.is_empty())
+            })
+        })(),
         _ => None,
     };
     let Some(answer) = answer else {
@@ -436,6 +569,18 @@ extern "C" fn act(
         abi::ACT_SET_VELOCITY => Effect::SetVelocity {
             actor,
             velocity: vector,
+        },
+        abi::ACT_SET_TRIGGER => Effect::SetTrigger {
+            actor,
+            trigger: n0 != 0.0,
+        },
+        abi::ACT_SET_COLLISION_LAYER => Effect::SetCollisionLayer {
+            actor,
+            layer: (n0.round() as i32).clamp(1, 8) as u8,
+        },
+        abi::ACT_SET_COLLISION_MASK => Effect::SetCollisionMask {
+            actor,
+            mask: (n0.round() as i32).clamp(0, 255) as u8,
         },
         abi::ACT_SAY => Effect::Say {
             actor,
@@ -530,6 +675,19 @@ extern "C" fn act(
         abi::ACT_SET_PAUSED => Effect::SetPaused { paused: n0 != 0.0 },
         abi::ACT_STOP_ALL => Effect::Stopped,
         abi::ACT_SET_MOUSE_LOCKED => Effect::SetMouseLocked { locked: n0 != 0.0 },
+        abi::ACT_RUMBLE_GAMEPAD => Effect::RumbleGamepad {
+            strength: (n0 as f32).clamp(0.0, 100.0),
+            duration: (n1 as f32).max(0.0),
+        },
+        abi::ACT_BIND_ACTION => Effect::BindAction {
+            actor,
+            action: a.trim().to_string(),
+            binding: b.trim().to_string(),
+        },
+        abi::ACT_CLEAR_ACTION_BINDINGS => Effect::ClearActionBindings {
+            actor,
+            action: a.trim().to_string(),
+        },
         abi::ACT_SET_PARENT => Effect::SetParent {
             actor,
             parent: a.trim().to_string(),

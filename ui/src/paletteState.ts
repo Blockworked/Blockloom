@@ -53,6 +53,12 @@ function defaults(type: InstructionType): Record<string, unknown> {
       return { density: numberValue(1) };
     case 'SetMass':
       return { mass: numberValue(1) };
+    case 'SetTrigger':
+      return { trigger: false };
+    case 'SetCollisionLayer':
+      return { layer: numberValue(1) };
+    case 'SetCollisionMask':
+      return { mask: numberValue(255) };
     case 'Say':
       return { text: textValue('Hello!') };
     case 'SetVisible':

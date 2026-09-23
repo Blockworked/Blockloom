@@ -3,9 +3,11 @@
 //! pixel, which is why gravity defaults to a few hundred of them.
 
 use crate::engine::{Engine, PendingEffects, PhysicsPose, PrevPose};
+use crate::materials::{GraphMaterial2d, custom_quad_size};
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::sprite::{ColorMaterial, MeshMaterial2d, Mesh2d};
 use bevy_rapier2d::prelude as rp;
 use blockloom_core::project::Actor;
 use blockloom_core::scene::{BodyKind, Visual};
@@ -24,6 +26,12 @@ fn collider_for(visual: &Visual) -> Option<rp::Collider> {
             Some(rp::Collider::cuboid(size[0] / 2.0, size[1] / 2.0))
         }
         Visual::Circle { radius, .. } => Some(rp::Collider::ball(*radius)),
+        // A solid tilemap collides as its whole slab; a decorative one lets
+        // bodies pass through.
+        Visual::Tilemap { tilemap } if tilemap.solid => {
+            let size = tilemap.size();
+            Some(rp::Collider::cuboid(size[0] / 2.0, size[1] / 2.0))
+        }
         _ => None,
     }
 }
@@ -85,18 +93,135 @@ fn sprite_for(
     }
 }
 
-/// Spawns one actor, or nothing if its visual belongs to the other dimension.
+/// Spawns one actor, or nothing if its visual belongs to the other dimension
+/// or a tilemap is empty. A custom-shaded actor renders on a quad through
+/// the graph material; a tilemap through its own mesh; everything else
+/// through the sprite pipeline.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_actor(
     commands: &mut Commands,
     actor: &Actor,
     dir: Option<&Path>,
     assets: &AssetServer,
     textures: &mut Assets<Image>,
+    meshes: &mut Assets<Mesh>,
+    graph_materials: &mut Assets<GraphMaterial2d>,
+    tile_materials: &mut Assets<ColorMaterial>,
 ) -> Option<Entity> {
-    let sprite = sprite_for(actor.visual()?, dir, assets, textures)?;
-    let mut entity = commands.spawn((crate::world::actor_bundle(actor), sprite));
+    let visual = actor.visual()?.clone();
+    match &visual {
+        Visual::Tilemap { tilemap } if tilemap.build_mesh().is_empty() => return None,
+        _ if shader_of(actor).is_some() && custom_quad_size(&visual).is_none() => return None,
+        _ if shader_of(actor).is_none() && sprite_for(&visual, dir, assets, textures).is_none() => {
+            return None;
+        }
+        _ => {}
+    }
+    let mut entity = commands.spawn(crate::world::actor_bundle(actor));
+    // The sort layer rides on z, leaving the authored depth alone.
+    let (transform, pose, prev) = spawn_pose(actor);
+    entity.insert((transform, pose, prev));
+    let id = entity.id();
+    match &visual {
+        Visual::Tilemap { tilemap } => {
+            crate::materials::spawn_tilemap_2d(
+                commands,
+                id,
+                tilemap,
+                dir,
+                assets,
+                meshes,
+                tile_materials,
+            );
+        }
+        _ if shader_of(actor).is_some() => {
+            insert_graph(commands, id, actor, dir, assets, meshes, graph_materials);
+        }
+        _ => {
+            entity.insert(sprite_for(&visual, dir, assets, textures).expect("checked above"));
+        }
+    }
     insert_body(&mut entity, actor);
-    Some(entity.id())
+    Some(id)
+}
+
+/// The spawn transform: placement plus the sort layer, so a higher layer
+/// draws on top without touching the authored z.
+fn spawn_pose(actor: &Actor) -> (Transform, PhysicsPose, PrevPose) {
+    let mut transform = crate::world::transform_for(actor);
+    transform.translation.z += actor.components.layer() as f32;
+    (transform, PhysicsPose(transform), PrevPose(transform))
+}
+
+/// The actor's custom effect, if it carries a Material with a shader.
+fn shader_of(actor: &Actor) -> Option<blockloom_core::material::GraphEffect> {
+    actor
+        .components
+        .material()
+        .and_then(|material| material.shader.clone())
+}
+
+/// Render a custom-shaded look on a quad through the graph material. The
+/// image look keeps its texture under the effect; the circle look renders
+/// its quad round.
+#[allow(clippy::too_many_arguments)]
+fn insert_graph(
+    commands: &mut Commands,
+    entity: Entity,
+    actor: &Actor,
+    dir: Option<&Path>,
+    assets: &AssetServer,
+    meshes: &mut Assets<Mesh>,
+    graph_materials: &mut Assets<GraphMaterial2d>,
+) {
+    let Some(effect) = shader_of(actor) else {
+        return;
+    };
+    let visual = actor.visual().cloned();
+    let size = visual
+        .as_ref()
+        .and_then(custom_quad_size)
+        .unwrap_or(Vec2::new(64.0, 64.0));
+    let tint = visual
+        .as_ref()
+        .and_then(|visual| visual.color())
+        .map(crate::world::parse_color)
+        .unwrap_or(Color::WHITE);
+    let texture = match visual {
+        Some(Visual::Image { path, .. }) => {
+            Some(assets.load(crate::world::asset_path(dir, &path)))
+        }
+        _ => None,
+    };
+    let rounded = matches!(visual, Some(Visual::Circle { .. }));
+    let secondary = crate::world::parse_color(&effect.color);
+    let mesh = meshes.add(Mesh::from(bevy::math::primitives::Rectangle::new(
+        size.x, size.y,
+    )));
+    commands.entity(entity).insert((
+        Mesh2d(mesh),
+        MeshMaterial2d(graph_materials.add(crate::materials::graph_material_2d(
+            &effect, tint, secondary, texture, rounded,
+        ))),
+    ));
+}
+
+/// Drop whatever the look currently draws with: sprite, graph quad, tilemap
+/// child, or any mix a mid-run attach sequence left behind.
+fn remove_drawn(
+    commands: &mut Commands,
+    id: Entity,
+    tiles: &Query<&crate::materials::TilemapMesh>,
+) {
+    commands.entity(id).remove::<Sprite>();
+    commands.entity(id).remove::<Mesh2d>();
+    commands.entity(id).remove::<MeshMaterial2d<GraphMaterial2d>>();
+    if let Ok(marker) = tiles.get(id) {
+        commands.entity(marker.0).despawn();
+        commands
+            .entity(id)
+            .remove::<crate::materials::TilemapMesh>();
+    }
 }
 
 fn insert_body(entity: &mut EntityCommands, actor: &Actor) {
@@ -115,10 +240,38 @@ fn insert_body(entity: &mut EntityCommands, actor: &Actor) {
             rp::Restitution::coefficient(physics.restitution),
             rp::Friction::coefficient(physics.friction),
             mass_properties(physics),
+            groups_for(physics.layer(), physics.collision_mask),
         ));
+        if physics.trigger {
+            entity.insert(rp::Sensor);
+        }
         if physics.lock_rotation {
             entity.insert(rp::LockedAxes::ROTATION_LOCKED);
         }
+    }
+}
+
+/// The rapier filter for one actor's layer and mask. Both the collision and
+/// the solver halves, so a filtered pair neither reports nor pushes.
+fn groups_for(layer: u8, mask: u8) -> (rp::CollisionGroups, rp::SolverGroups) {
+    let layer = layer.clamp(1, 8);
+    let memberships = rp::Group::from_bits(1 << (layer - 1)).unwrap_or(rp::Group::ALL);
+    let filters = rp::Group::from_bits(mask as u32).unwrap_or(rp::Group::ALL);
+    (
+        rp::CollisionGroups::new(memberships, filters),
+        rp::SolverGroups::new(memberships, filters),
+    )
+}
+
+/// Applies a live filter change to an entity: the sensor marker on or off,
+/// and both group halves rewritten.
+fn apply_filter(entity: &mut EntityCommands, layer: u8, mask: u8, trigger: bool) {
+    let (collision, solver) = groups_for(layer, mask);
+    entity.insert((collision, solver));
+    if trigger {
+        entity.insert(rp::Sensor);
+    } else {
+        entity.remove::<rp::Sensor>();
     }
 }
 
@@ -158,6 +311,10 @@ pub fn apply_effects(
     mut sprites: Query<&mut Sprite>,
     assets: Res<AssetServer>,
     mut textures: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut graph_materials: ResMut<Assets<GraphMaterial2d>>,
+    mut tile_materials: ResMut<Assets<ColorMaterial>>,
+    tiles: Query<&crate::materials::TilemapMesh>,
 ) {
     if !engine.running || engine.paused {
         // Still apply gravity while idle so the config is correct on Play.
@@ -293,6 +450,8 @@ pub fn apply_effects(
                 }
             }
             Effect::SetColor { actor, color } => {
+                // Sprites only: a custom-shaded actor keeps its graph tint,
+                // which the material owns rather than the color block.
                 if let Some(mut sprite) = engine
                     .entities
                     .get(actor)
@@ -308,10 +467,23 @@ pub fn apply_effects(
                 let Some(visual) = engine.actor(actor).and_then(|a| a.visual()).cloned() else {
                     continue;
                 };
+                let (layer, mask, trigger) = engine.filter_of(actor);
+                let (collision, solver) = groups_for(layer, mask);
                 let mut entity = commands.entity(id);
                 match (body_for(*body), collider_for(&visual)) {
                     (Some(rigid_body), Some(collider)) => {
-                        entity.insert((rigid_body, collider, rp::ActiveEvents::COLLISION_EVENTS));
+                        entity.insert((
+                            rigid_body,
+                            collider,
+                            rp::ActiveEvents::COLLISION_EVENTS,
+                            collision,
+                            solver,
+                        ));
+                        if trigger {
+                            entity.insert(rp::Sensor);
+                        } else {
+                            entity.remove::<rp::Sensor>();
+                        }
                         // Rebase the pose slider so a fresh body starts
                         // interpolating from where it actually is.
                         if let Ok(transform) = transforms.get(id) {
@@ -324,6 +496,30 @@ pub fn apply_effects(
                     }
                 }
             }
+            Effect::SetTrigger { actor, trigger } => {
+                let Some(id) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                engine.set_filter(actor, None, None, Some(*trigger));
+                let (layer, mask, trigger) = engine.filter_of(actor);
+                apply_filter(&mut commands.entity(id), layer, mask, trigger);
+            }
+            Effect::SetCollisionLayer { actor, layer } => {
+                let Some(id) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                engine.set_filter(actor, Some(*layer), None, None);
+                let (layer, mask, trigger) = engine.filter_of(actor);
+                apply_filter(&mut commands.entity(id), layer, mask, trigger);
+            }
+            Effect::SetCollisionMask { actor, mask } => {
+                let Some(id) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                engine.set_filter(actor, None, Some(*mask), None);
+                let (layer, mask, trigger) = engine.filter_of(actor);
+                apply_filter(&mut commands.entity(id), layer, mask, trigger);
+            }
             // A body or a look arriving or leaving mid-run needs this
             // dimension's own pipeline; `world::apply_component_effects`
             // owns everything else about the same effect.
@@ -333,22 +529,101 @@ pub fn apply_effects(
                 };
                 match component.as_str() {
                     "Body" => {
-                        if let Some(authored) = engine.actor(actor) {
-                            insert_body(&mut commands.entity(entity), authored);
+                        if engine.actor(actor).is_some() {
+                            let (layer, mask, trigger) = engine.filter_of(actor);
+                            // insert_body reads the authored document; the
+                            // live filter is re-applied after so a mid-run
+                            // trigger/layer change survives a re-attach.
+                            if let Some(authored) = engine.actor(actor).cloned() {
+                                insert_body(&mut commands.entity(entity), &authored);
+                            }
+                            apply_filter(&mut commands.entity(entity), layer, mask, trigger);
                         }
                     }
                     "Look" => {
-                        let Some(sprite) =
-                            engine
-                                .actor(actor)
-                                .and_then(|a| a.visual())
-                                .and_then(|visual| {
-                                    sprite_for(visual, dir.as_deref(), &assets, &mut textures)
-                                })
-                        else {
+                        let Some(authored) = engine.actor(actor).cloned() else {
                             continue;
                         };
-                        commands.entity(entity).insert(sprite);
+                        remove_drawn(&mut commands, entity, &tiles);
+                        match authored.visual() {
+                            Some(Visual::Tilemap { tilemap }) => {
+                                crate::materials::spawn_tilemap_2d(
+                                    &mut commands,
+                                    entity,
+                                    tilemap,
+                                    dir.as_deref(),
+                                    &assets,
+                                    &mut meshes,
+                                    &mut tile_materials,
+                                );
+                            }
+                            Some(_) if shader_of(&authored).is_some() => {
+                                insert_graph(
+                                    &mut commands,
+                                    entity,
+                                    &authored,
+                                    dir.as_deref(),
+                                    &assets,
+                                    &mut meshes,
+                                    &mut graph_materials,
+                                );
+                            }
+                            Some(visual) => {
+                                if let Some(sprite) =
+                                    sprite_for(visual, dir.as_deref(), &assets, &mut textures)
+                                {
+                                    commands.entity(entity).insert(sprite);
+                                }
+                            }
+                            None => {}
+                        }
+                    }
+                    "Material" => {
+                        // A custom shader swaps the sprite for a graph quad;
+                        // plain PBR props need lighting, so 2D leaves the
+                        // sprite exactly as it is.
+                        let Some(authored) = engine.actor(actor).cloned() else {
+                            continue;
+                        };
+                        remove_drawn(&mut commands, entity, &tiles);
+                        if shader_of(&authored).is_some() {
+                            insert_graph(
+                                &mut commands,
+                                entity,
+                                &authored,
+                                dir.as_deref(),
+                                &assets,
+                                &mut meshes,
+                                &mut graph_materials,
+                            );
+                        } else if let Some(visual) = authored.visual() {
+                            // A tilemap re-spawns its mesh; anything else its
+                            // sprite. Whatever the look draws with, the
+                            // material attach rebuilds it from scratch.
+                            match visual {
+                                Visual::Tilemap { tilemap } => {
+                                    crate::materials::spawn_tilemap_2d(
+                                        &mut commands,
+                                        entity,
+                                        tilemap,
+                                        dir.as_deref(),
+                                        &assets,
+                                        &mut meshes,
+                                        &mut tile_materials,
+                                    );
+                                }
+                                _ => {
+                                    if let Some(sprite) = sprite_for(
+                                        visual,
+                                        dir.as_deref(),
+                                        &assets,
+                                        &mut textures,
+                                    ) {
+                                        commands.entity(entity).insert(sprite);
+                                    }
+                                }
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -366,7 +641,32 @@ pub fn apply_effects(
                     // Nothing to draw, but the actor is still there to be
                     // moved, sensed and given a look again.
                     "Look" => {
-                        entity.remove::<Sprite>();
+                        remove_drawn(&mut commands, entity.id(), &tiles);
+                    }
+                    // Back to the plain sprite pipeline.
+                    "Material" => {
+                        remove_drawn(&mut commands, entity.id(), &tiles);
+                        match engine.actor(actor).and_then(|a| a.visual()) {
+                            Some(Visual::Tilemap { tilemap }) => {
+                                crate::materials::spawn_tilemap_2d(
+                                    &mut commands,
+                                    entity.id(),
+                                    tilemap,
+                                    dir.as_deref(),
+                                    &assets,
+                                    &mut meshes,
+                                    &mut tile_materials,
+                                );
+                            }
+                            Some(visual) => {
+                                if let Some(sprite) =
+                                    sprite_for(visual, dir.as_deref(), &assets, &mut textures)
+                                {
+                                    commands.entity(entity.id()).insert(sprite);
+                                }
+                            }
+                            None => {}
+                        }
                     }
                     _ => {}
                 }

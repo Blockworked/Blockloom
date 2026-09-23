@@ -145,6 +145,19 @@ pub struct Engine {
     /// here, so solver-driven things (a ball off a collision, an impulse)
     /// keep their inertia.
     pub driven: HashSet<String>,
+    /// Live collision filter per actor: (layer, mask, trigger). Seeded from
+    /// the document on every rebuild and moved by the `set trigger` /
+    /// `set collision` blocks, so queries read this run's values rather than
+    /// the authored ones.
+    pub physics_filter: HashMap<String, (u8, u8, bool)>,
+    /// Run-scoped input remaps: lowercase action name -> bindings. Seeded
+    /// empty on every rebuild; the `bind`/`clear` blocks move it from there,
+    /// so a settings screen remaps for this run without touching the
+    /// document.
+    pub input_overrides: HashMap<String, Vec<blockloom_core::input::InputBinding>>,
+    /// Whether each action was held last frame, by lowercase name. What
+    /// turns a held action into a one-frame `pressed`/`released`.
+    pub prev_action_held: HashMap<String, bool>,
 }
 
 impl Engine {
@@ -184,6 +197,9 @@ impl Engine {
             parents: HashMap::new(),
             last_created: HashMap::new(),
             driven: HashSet::new(),
+            physics_filter: HashMap::new(),
+            input_overrides: HashMap::new(),
+            prev_action_held: HashMap::new(),
         }
     }
 
@@ -211,6 +227,60 @@ impl Engine {
         self.attached
             .get(actor)
             .is_some_and(|held| held.contains(component))
+    }
+
+    /// This run's collision filter for `actor`: live overrides first, then
+    /// what the document authored. Always clamped, so a stray value can't
+    /// shift a bit out of the mask.
+    pub fn filter_of(&self, id: &str) -> (u8, u8, bool) {
+        if let Some(filter) = self.physics_filter.get(id) {
+            return *filter;
+        }
+        match self.actor(id) {
+            Some(actor) => {
+                let physics = actor.physics();
+                (physics.layer(), physics.collision_mask, physics.trigger)
+            }
+            None => (1, 0xFF, false),
+        }
+    }
+
+    /// Records a mid-run filter change, keeping the two halves the effect
+    /// didn't name.
+    pub fn set_filter(&mut self, id: &str, layer: Option<u8>, mask: Option<u8>, trigger: Option<bool>) {
+        let (old_layer, old_mask, old_trigger) = self.filter_of(id);
+        self.physics_filter.insert(
+            id.to_string(),
+            (
+                layer.unwrap_or(old_layer).clamp(1, 8),
+                mask.unwrap_or(old_mask),
+                trigger.unwrap_or(old_trigger),
+            ),
+        );
+    }
+
+    /// This run's bindings for an action: a `bind`/`clear` override first,
+    /// then what the document authored. `None` for an action nobody defined.
+    pub fn effective_bindings(
+        &self,
+        action: &str,
+    ) -> Option<Vec<blockloom_core::input::InputBinding>> {
+        let key = action.trim().to_lowercase();
+        if let Some(bindings) = self.input_overrides.get(&key) {
+            return Some(bindings.clone());
+        }
+        self.project
+            .world
+            .input
+            .find(action)
+            .map(|found| found.bindings.clone())
+    }
+
+    /// Clears every run-scoped remap and edge, so a fresh Play starts from
+    /// the document again.
+    pub fn reset_input_run(&mut self) {
+        self.input_overrides.clear();
+        self.prev_action_held.clear();
     }
 
     /// Seconds since the green flag, which is what the `timer` reporter reads.

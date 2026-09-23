@@ -2,6 +2,7 @@
 //! the effects that need a 3D physics engine attached. A 3D unit is a metre.
 
 use crate::engine::{Engine, PendingEffects, PhysicsPose, PrevPose};
+use crate::materials::GraphMaterial3d;
 use bevy::ecs::system::EntityCommands;
 use bevy::pbr::ScreenSpaceAmbientOcclusion;
 use bevy::prelude::*;
@@ -11,6 +12,7 @@ use blockloom_core::project::Actor;
 use blockloom_core::scene::{BodyKind, Visual};
 use blockloom_core::vm::Effect;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 /// How thick a `plane` actor is made, since a real half-space can't be moved
 /// or clicked the way every other actor can.
@@ -38,22 +40,47 @@ fn collider_for(visual: &Visual) -> Option<rp::Collider> {
             scale[1] / 2.0,
             scale[2] / 2.0,
         )),
+        // A solid tilemap collides as one slab; a decorative one lets
+        // bodies pass through.
+        Visual::Tilemap { tilemap } if tilemap.solid => {
+            let size = tilemap.size();
+            Some(rp::Collider::cuboid(
+                size[0] / 2.0,
+                size[1] / 2.0,
+                PLANE_THICKNESS / 2.0,
+            ))
+        }
         _ => None,
     }
 }
 
 fn mesh_for(visual: &Visual) -> Option<Mesh> {
-    Some(match visual {
-        Visual::Cuboid { size, .. } => Cuboid::new(size[0], size[1], size[2]).into(),
-        Visual::Sphere { radius, .. } => Sphere::new(*radius).into(),
-        Visual::Capsule { radius, height, .. } => Capsule3d::new(*radius, *height).into(),
-        Visual::Plane { size, .. } => Cuboid::new(size[0], PLANE_THICKNESS, size[1]).into(),
+    match visual {
+        Visual::Cuboid { size, .. } => Some(Cuboid::new(size[0], size[1], size[2]).into()),
+        Visual::Sphere { radius, .. } => Some(Sphere::new(*radius).into()),
+        Visual::Capsule { radius, height, .. } => {
+            Some(Capsule3d::new(*radius, *height).into())
+        }
+        Visual::Plane { size, .. } => {
+            Some(Cuboid::new(size[0], PLANE_THICKNESS, size[1]).into())
+        }
         // Placeholder until the glTF scene streams in (see ModelSource):
         // a tinted box at the authored scale, so a missing rig is visible
         // rather than invisible.
-        Visual::Model { scale, .. } => Cuboid::new(scale[0], scale[1], scale[2]).into(),
-        _ => return None,
-    })
+        Visual::Model { scale, .. } => {
+            Some(Cuboid::new(scale[0], scale[1], scale[2]).into())
+        }
+        // An empty tilemap draws nothing: let the unseen fallback take it.
+        Visual::Tilemap { tilemap } => {
+            let built = tilemap.build_mesh();
+            if built.is_empty() {
+                None
+            } else {
+                Some(crate::materials::tilemesh_to_bevy(&built))
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Where a `Visual::Model` actor's file lives. The placeholder box spawns
@@ -61,33 +88,101 @@ fn mesh_for(visual: &Visual) -> Option<Mesh> {
 #[derive(Component, Debug, Clone)]
 pub struct ModelSource(pub String);
 
-/// Spawns one actor, or nothing if its visual belongs to the other dimension.
+/// Spawns one actor, or nothing if its visual belongs to the other dimension
+/// or a tilemap is empty. A custom-shaded actor renders through the graph
+/// material; a tilemap through its textured mesh; a material-carrying actor
+/// through its PBR properties; everything else through flat color.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_actor(
     commands: &mut Commands,
     actor: &Actor,
+    dir: Option<&Path>,
+    assets: &AssetServer,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    graph_materials: &mut Assets<GraphMaterial3d>,
 ) -> Option<Entity> {
-    let visual = actor.visual()?;
-    let mesh = mesh_for(visual)?;
-    let color = visual
-        .color()
-        .map(crate::world::parse_color)
-        .unwrap_or(Color::WHITE);
+    let visual = actor.visual()?.clone();
+    let mesh = mesh_for(&visual)?;
     let mut entity = commands.spawn((
         crate::world::actor_bundle(actor),
         Mesh3d(meshes.add(mesh)),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: color,
-            perceptual_roughness: 0.6,
-            ..default()
-        })),
     ));
-    if let Visual::Model { path, .. } = visual {
+    insert_surface(
+        commands,
+        entity.id(),
+        actor,
+        &visual,
+        dir,
+        assets,
+        materials,
+        graph_materials,
+    );
+    if let Visual::Model { path, .. } = &visual {
         entity.insert(ModelSource(path.clone()));
     }
     insert_body(&mut entity, actor);
     Some(entity.id())
+}
+
+/// The actor's surface: graph effect, tilemap texture, or PBR properties.
+#[allow(clippy::too_many_arguments)]
+fn insert_surface(
+    commands: &mut Commands,
+    id: Entity,
+    actor: &Actor,
+    visual: &Visual,
+    dir: Option<&Path>,
+    assets: &AssetServer,
+    materials: &mut Assets<StandardMaterial>,
+    graph_materials: &mut Assets<GraphMaterial3d>,
+) {
+    let color = visual
+        .color()
+        .map(crate::world::parse_color)
+        .unwrap_or(Color::WHITE);
+    let material = actor.components.material();
+    if let Some(effect) = material.and_then(|material| material.shader.as_ref()) {
+        let secondary = crate::world::parse_color(&effect.color);
+        commands.entity(id).insert(MeshMaterial3d(graph_materials.add(
+            crate::materials::graph_material_3d(effect, color, secondary, None),
+        )));
+        return;
+    }
+    if let Visual::Tilemap { tilemap } = visual {
+        let texture = if tilemap.tileset.trim().is_empty() {
+            None
+        } else {
+            Some(assets.load(crate::world::asset_path(dir, tilemap.tileset.trim())))
+        };
+        commands.entity(id).insert(MeshMaterial3d(materials.add(
+            StandardMaterial {
+                base_color: Color::WHITE,
+                base_color_texture: texture,
+                alpha_mode: AlphaMode::Blend,
+                cull_mode: None,
+                ..default()
+            },
+        )));
+        return;
+    }
+    let standard = match material {
+        Some(material) => crate::materials::surface_standard(material, color, dir, assets),
+        None => StandardMaterial {
+            base_color: color,
+            perceptual_roughness: 0.6,
+            ..default()
+        },
+    };
+    commands.entity(id).insert(MeshMaterial3d(materials.add(standard)));
+}
+
+/// Drop whatever surface the actor renders with: standard or graph.
+fn remove_surface(commands: &mut Commands, id: Entity) {
+    commands
+        .entity(id)
+        .remove::<MeshMaterial3d<StandardMaterial>>();
+    commands.entity(id).remove::<MeshMaterial3d<GraphMaterial3d>>();
 }
 
 /// Gives an actor the rigid body its `Body` component asks for, with the
@@ -110,9 +205,35 @@ fn insert_body(entity: &mut EntityCommands, actor: &Actor) {
         rp::Restitution::coefficient(physics.restitution),
         rp::Friction::coefficient(physics.friction),
         mass_properties(physics),
+        groups_for(physics.layer(), physics.collision_mask),
     ));
+    if physics.trigger {
+        entity.insert(rp::Sensor);
+    }
     if physics.lock_rotation {
         entity.insert(rp::LockedAxes::ROTATION_LOCKED);
+    }
+}
+
+/// The rapier filter for one actor's layer and mask, on both halves so a
+/// filtered pair neither reports nor pushes.
+fn groups_for(layer: u8, mask: u8) -> (rp::CollisionGroups, rp::SolverGroups) {
+    let layer = layer.clamp(1, 8);
+    let memberships = rp::Group::from_bits(1 << (layer - 1)).unwrap_or(rp::Group::ALL);
+    let filters = rp::Group::from_bits(mask as u32).unwrap_or(rp::Group::ALL);
+    (
+        rp::CollisionGroups::new(memberships, filters),
+        rp::SolverGroups::new(memberships, filters),
+    )
+}
+
+fn apply_filter(entity: &mut EntityCommands, layer: u8, mask: u8, trigger: bool) {
+    let (collision, solver) = groups_for(layer, mask);
+    entity.insert((collision, solver));
+    if trigger {
+        entity.insert(rp::Sensor);
+    } else {
+        entity.remove::<rp::Sensor>();
     }
 }
 
@@ -151,6 +272,8 @@ pub fn apply_effects(
     surfaces: Query<&MeshMaterial3d<StandardMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    assets: Res<AssetServer>,
+    mut graph_materials: ResMut<Assets<GraphMaterial3d>>,
 ) {
     if !engine.running || engine.paused {
         // Still apply gravity while idle so the config is correct on Play.
@@ -164,6 +287,7 @@ pub fn apply_effects(
         return;
     }
     let dt = time.delta_secs().max(1.0 / 1000.0);
+    let dir = engine.project_dir.clone();
     // Dynamic actors a walk verb drives this tick. Whoever was driven last
     // tick but isn't now just let go: brake them below.
     let mut driven: HashSet<String> = HashSet::new();
@@ -295,10 +419,23 @@ pub fn apply_effects(
                 let Some(visual) = engine.actor(actor).and_then(|a| a.visual()).cloned() else {
                     continue;
                 };
+                let (layer, mask, trigger) = engine.filter_of(actor);
+                let (collision, solver) = groups_for(layer, mask);
                 let mut entity = commands.entity(id);
                 match (body_for(*body), collider_for(&visual)) {
                     (Some(rigid_body), Some(collider)) => {
-                        entity.insert((rigid_body, collider, rp::ActiveEvents::COLLISION_EVENTS));
+                        entity.insert((
+                            rigid_body,
+                            collider,
+                            rp::ActiveEvents::COLLISION_EVENTS,
+                            collision,
+                            solver,
+                        ));
+                        if trigger {
+                            entity.insert(rp::Sensor);
+                        } else {
+                            entity.remove::<rp::Sensor>();
+                        }
                         // Rebase the pose slider so a fresh body starts
                         // interpolating from where it actually is.
                         if let Ok(transform) = transforms.get(id) {
@@ -311,6 +448,30 @@ pub fn apply_effects(
                     }
                 }
             }
+            Effect::SetTrigger { actor, trigger } => {
+                let Some(id) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                engine.set_filter(actor, None, None, Some(*trigger));
+                let (layer, mask, trigger) = engine.filter_of(actor);
+                apply_filter(&mut commands.entity(id), layer, mask, trigger);
+            }
+            Effect::SetCollisionLayer { actor, layer } => {
+                let Some(id) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                engine.set_filter(actor, Some(*layer), None, None);
+                let (layer, mask, trigger) = engine.filter_of(actor);
+                apply_filter(&mut commands.entity(id), layer, mask, trigger);
+            }
+            Effect::SetCollisionMask { actor, mask } => {
+                let Some(id) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                engine.set_filter(actor, None, Some(*mask), None);
+                let (layer, mask, trigger) = engine.filter_of(actor);
+                apply_filter(&mut commands.entity(id), layer, mask, trigger);
+            }
             // A body or a look arriving or leaving mid-run needs this
             // dimension's own pipeline; `world::apply_component_effects`
             // owns everything else about the same effect.
@@ -318,30 +479,55 @@ pub fn apply_effects(
                 let Some(entity) = engine.entities.get(actor).copied() else {
                     continue;
                 };
-                let Some(authored) = engine.actor(actor) else {
+                let Some(authored) = engine.actor(actor).cloned() else {
                     continue;
                 };
                 match component.as_str() {
-                    "Body" => insert_body(&mut commands.entity(entity), authored),
+                    "Body" => {
+                        insert_body(&mut commands.entity(entity), &authored);
+                        let (layer, mask, trigger) = engine.filter_of(actor);
+                        apply_filter(&mut commands.entity(entity), layer, mask, trigger);
+                    }
                     "Look" => {
-                        let Some(visual) = authored.visual() else {
+                        let Some(visual) = authored.visual().cloned() else {
                             continue;
                         };
-                        let Some(mesh) = mesh_for(visual) else {
+                        let Some(mesh) = mesh_for(&visual) else {
                             continue;
                         };
-                        let color = visual
-                            .color()
-                            .map(crate::world::parse_color)
-                            .unwrap_or(Color::WHITE);
-                        commands.entity(entity).insert((
-                            Mesh3d(meshes.add(mesh)),
-                            MeshMaterial3d(materials.add(StandardMaterial {
-                                base_color: color,
-                                perceptual_roughness: 0.6,
-                                ..default()
-                            })),
-                        ));
+                        commands.entity(entity).insert(Mesh3d(meshes.add(mesh)));
+                        insert_surface(
+                            &mut commands,
+                            entity,
+                            &authored,
+                            &visual,
+                            dir.as_deref(),
+                            &assets,
+                            &mut materials,
+                            &mut graph_materials,
+                        );
+                    }
+                    "Material" => {
+                        // Rebuild the surface from scratch: whatever it drew
+                        // with before, it now draws with the authored look
+                        // plus the authored material.
+                        let Some(visual) = authored.visual().cloned() else {
+                            continue;
+                        };
+                        if mesh_for(&visual).is_none() {
+                            continue;
+                        }
+                        remove_surface(&mut commands, entity);
+                        insert_surface(
+                            &mut commands,
+                            entity,
+                            &authored,
+                            &visual,
+                            dir.as_deref(),
+                            &assets,
+                            &mut materials,
+                            &mut graph_materials,
+                        );
                     }
                     _ => {}
                 }
@@ -360,7 +546,27 @@ pub fn apply_effects(
                     // moved, sensed and given a look again.
                     "Look" => {
                         entity.remove::<Mesh3d>();
-                        entity.remove::<MeshMaterial3d<StandardMaterial>>();
+                        remove_surface(&mut commands, entity.id());
+                    }
+                    // Back to the plain standard surface.
+                    "Material" => {
+                        let Some(authored) = engine.actor(actor).cloned() else {
+                            continue;
+                        };
+                        let Some(visual) = authored.visual().cloned() else {
+                            continue;
+                        };
+                        remove_surface(&mut commands, entity.id());
+                        insert_surface(
+                            &mut commands,
+                            entity.id(),
+                            &authored,
+                            &visual,
+                            dir.as_deref(),
+                            &assets,
+                            &mut materials,
+                            &mut graph_materials,
+                        );
                     }
                     _ => {}
                 }
@@ -466,10 +672,13 @@ pub fn record_poses(mut posed: Query<(&Transform, &mut PhysicsPose, &mut PrevPos
 /// A light and a camera, so a fresh 3D project isn't a black window. The
 /// light and the ambient come from the project's lighting settings; AO is a
 /// component on the camera, so it is only there when the project asks for it.
+/// Post-process rides the camera the same way: exposure and tonemapping
+/// always, bloom and vignette only when enabled.
 pub fn spawn_scenery(
     commands: &mut Commands,
     camera: &blockloom_core::scene::Camera,
     lighting: &blockloom_core::scene::Lighting,
+    post: &blockloom_core::scene::PostProcess,
 ) {
     let mut camera_entity = commands.spawn((
         Camera3d::default(),
@@ -485,11 +694,21 @@ pub fn spawn_scenery(
         // The one listener positional voices pan against. It rides the
         // camera, so what the player sees is what they hear.
         bevy::audio::SpatialListener::default(),
+        bevy::camera::Exposure {
+            ev100: post.exposure_ev,
+        },
+        crate::world::tonemapping_of(post.tonemapping),
     ));
     if lighting.ao_enabled {
         // SSAO needs multisampling off on the same camera, or `bevy_pbr`
         // logs a mismatch error and skips the effect.
         camera_entity.insert((ScreenSpaceAmbientOcclusion::default(), Msaa::Off));
+    }
+    if post.bloom_enabled {
+        camera_entity.insert(crate::world::bloom_of(post));
+    }
+    if post.vignette_strength > 0.0 {
+        camera_entity.insert(crate::world::vignette_of(post.vignette_strength));
     }
     // A zero direction has nowhere to point, so fall back to straight down.
     let dir = lighting.light_direction;
@@ -503,13 +722,30 @@ pub fn spawn_scenery(
             color: crate::world::parse_color(&lighting.light_color),
             illuminance: lighting.illuminance.max(0.0),
             shadow_maps_enabled: true,
+            shadow_depth_bias: lighting.shadow_bias,
             ..default()
         },
         Transform::from_translation(from).looking_at(Vec3::ZERO, Vec3::Y),
     ));
+    // Shadow map size is a resource, not a light field: one size for every
+    // cascade. Powers of two only; anything else falls back to 2048.
+    commands.insert_resource(bevy::light::DirectionalLightShadowMap {
+        size: shadow_map_size(lighting.shadow_map_size),
+    });
     commands.insert_resource(GlobalAmbientLight {
         color: crate::world::parse_color(&lighting.ambient_color),
         brightness: lighting.ambient_brightness.max(0.0),
         ..default()
     });
+}
+
+/// Snap a shadow map size to the powers of two Bevy accepts.
+fn shadow_map_size(size: u32) -> usize {
+    const SIZES: &[usize] = &[512, 1024, 2048, 4096, 8192];
+    let wanted = size.max(512) as usize;
+    SIZES
+        .iter()
+        .copied()
+        .min_by_key(|candidate| candidate.abs_diff(wanted))
+        .unwrap_or(2048)
 }

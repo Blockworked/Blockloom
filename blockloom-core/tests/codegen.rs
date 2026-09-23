@@ -299,6 +299,28 @@ impl Host for Recorder {
                 }
                 Ok(Val::Num(axis_of(&args[1], [4.0, -1.0, 0.0])))
             }
+            // Nobody in the harness world has a body, so no ray or ball
+            // ever finds one, and nobody is a trigger - mirroring what the
+            // VM reads off the same published snapshot.
+            "IsTrigger" => {
+                let name = args[0].as_text();
+                if name == "Player" || name == "Friend" {
+                    Ok(Val::Bool(false))
+                } else {
+                    Err(format!("there's no actor named \"{name}\""))
+                }
+            }
+            "CollisionLayer" => {
+                let name = args[0].as_text();
+                if name == "Player" || name == "Friend" {
+                    Ok(Val::Num(1.0))
+                } else {
+                    Err(format!("there's no actor named \"{name}\""))
+                }
+            }
+            "RayHit" => Ok(Val::Text(String::new())),
+            "RayDistance" => Ok(Val::Num(-1.0)),
+            "CircleHit" => Ok(Val::Text(String::new())),
             // List reporters read the run's lists, unknown names included:
             // nothing declared reads as empty, exactly as it does on the VM.
             "ListItem" => {
@@ -834,6 +856,9 @@ fn line_of(act: &Act) -> String {
         }
         Act::DeleteActor { .. } => "DeleteActor".to_string(),
         Act::SetBody { body } => format!("SetBody {body}"),
+        Act::SetTrigger { trigger } => format!("SetTrigger {trigger}"),
+        Act::SetCollisionLayer { layer } => format!("SetCollisionLayer {layer}"),
+        Act::SetCollisionMask { mask } => format!("SetCollisionMask {mask}"),
         Act::ShowElement {
             id,
             kind,
@@ -875,6 +900,12 @@ fn line_of(act: &Act) -> String {
         }
         Act::SetSoundPitch { sound, pitch } => format!("SetSoundPitch {sound} {pitch:?}"),
         Act::SetBusVolume { bus, volume } => format!("SetBusVolume {bus} {volume:?}"),
+        Act::RumbleGamepad {
+            strength,
+            duration,
+        } => format!("RumbleGamepad {strength:?} {duration:?}"),
+        Act::BindAction { action, binding } => format!("BindAction {action} {binding}"),
+        Act::ClearActionBindings { action } => format!("ClearActionBindings {action}"),
         other => format!("{other:?}"),
     }
 }
@@ -985,6 +1016,9 @@ fn line_of(effect: &Effect) -> Option<String> {
         // both halves say about it.
         Effect::DeleteActor { actor } => format!("{actor}|DeleteActor"),
         Effect::SetBody { actor, body } => format!("{actor}|SetBody {body:?}"),
+        Effect::SetTrigger { actor, trigger } => format!("{actor}|SetTrigger {trigger}"),
+        Effect::SetCollisionLayer { actor, layer } => format!("{actor}|SetCollisionLayer {layer}"),
+        Effect::SetCollisionMask { actor, mask } => format!("{actor}|SetCollisionMask {mask}"),
         Effect::Error { actor, message } => format!("{actor}|Error {message}"),
         // The world's own doing rather than the program's, and nothing the
         // compiled half is asked to produce.
@@ -1023,6 +1057,17 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetPaused { paused } => format!("|SetPaused {paused}"),
         Effect::SetBusVolume { bus, volume } => {
             format!("|SetBusVolume {} {volume:?}", bus.name())
+        }
+        Effect::RumbleGamepad { strength, duration } => {
+            format!("|RumbleGamepad {strength:?} {duration:?}")
+        }
+        Effect::BindAction {
+            actor,
+            action,
+            binding,
+        } => format!("{actor}|BindAction {action} {binding}"),
+        Effect::ClearActionBindings { actor, action } => {
+            format!("{actor}|ClearActionBindings {action}")
         }
         Effect::PlaySound {
             actor,
@@ -3348,6 +3393,57 @@ fn every_reporter_over_an_element_answers_the_same_on_both_sides() {
             // An id nothing answers to is reported once and stands a blank
             // in its place, the same way a missing actor is.
             say_value(op("UiText", vec![Value::text("nothing")])),
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn physics_filters_and_queries_land_the_same_way() {
+    assert_same(
+        "physics-queries",
+        vec![
+            K::SetTrigger { trigger: true },
+            K::SetTrigger { trigger: false },
+            K::SetCollisionLayer { layer: number(3.0) },
+            K::SetCollisionMask {
+                mask: number(255.0),
+            },
+            // A bad layer is clamped, not refused, on both sides.
+            K::SetCollisionLayer {
+                layer: number(99.0),
+            },
+            // Reporters over the harness world: no bodies there, so every
+            // ray and ball finds nothing, and nobody is a trigger.
+            say_value(op("IsTrigger", vec![Value::text("Player")])),
+            say_value(op("IsTrigger", vec![Value::text("Nobody")])),
+            say_value(op("CollisionLayer", vec![Value::text("Player")])),
+            say_value(op(
+                "RayHit",
+                vec![
+                    number(0.0),
+                    number(0.0),
+                    number(0.0),
+                    number(20.0),
+                    number(0.0),
+                    number(0.0),
+                ],
+            )),
+            say_value(op(
+                "RayDistance",
+                vec![
+                    number(0.0),
+                    number(0.0),
+                    number(0.0),
+                    number(20.0),
+                    number(0.0),
+                    number(0.0),
+                ],
+            )),
+            say_value(op(
+                "CircleHit",
+                vec![number(3.0), number(7.0), number(0.0), number(5.0)],
+            )),
         ],
         &[],
     );

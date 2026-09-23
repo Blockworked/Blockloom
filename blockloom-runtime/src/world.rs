@@ -19,15 +19,19 @@ use crate::engine::{
 };
 use crate::{bridge, dim2, dim3};
 use bevy::input::ButtonState;
+use bevy::input::gamepad::{Gamepad, GamepadAxis, GamepadButton, GamepadRumbleIntensity, GamepadRumbleRequest};
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
+use bevy::input::touch::Touches;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
 use blockloom_core::components::CameraView;
 use blockloom_core::nav;
 use blockloom_core::project::Actor;
 use blockloom_core::scene::{Axis, BodyKind, Mode, Visual};
-use blockloom_core::sense::{ActorSense, Sensors, normalize_key};
+use blockloom_core::input::{LiveInput, normalize_pad_axis, normalize_pad_button};
+use blockloom_core::input::ActionSense;
+use blockloom_core::sense::{ActorSense, Sensors, TouchSense, normalize_key};
 use blockloom_core::ui::UiKind;
 use blockloom_core::value::Evaluated;
 use blockloom_core::vm::{Effect, Event};
@@ -60,6 +64,45 @@ pub fn parse_color(hex: &str) -> Color {
     match Srgba::hex(hex) {
         Ok(color) => color.into(),
         Err(_) => Color::srgb(1.0, 0.0, 1.0),
+    }
+}
+
+/// The project's tonemapper as the camera component. TonyMcMapface is
+/// Bevy's own default, so spelling it out changes nothing for old projects.
+pub fn tonemapping_of(
+    name: blockloom_core::scene::TonemapName,
+) -> bevy::core_pipeline::tonemapping::Tonemapping {
+    use blockloom_core::scene::TonemapName;
+    use bevy::core_pipeline::tonemapping::Tonemapping;
+    match name {
+        TonemapName::None => Tonemapping::None,
+        TonemapName::Reinhard => Tonemapping::Reinhard,
+        TonemapName::ReinhardLuminance => Tonemapping::ReinhardLuminance,
+        TonemapName::AcesFitted => Tonemapping::AcesFitted,
+        TonemapName::TonyMcMapface => Tonemapping::TonyMcMapface,
+        TonemapName::Filmic => Tonemapping::BlenderFilmic,
+    }
+}
+
+/// Bloom from the project's post settings: threshold and intensity are the
+/// two dials a game usefully turns.
+pub fn bloom_of(post: &blockloom_core::scene::PostProcess) -> bevy::post_process::bloom::Bloom {
+    bevy::post_process::bloom::Bloom {
+        intensity: post.bloom_intensity,
+        prefilter: bevy::post_process::bloom::BloomPrefilter {
+            threshold: post.bloom_threshold,
+            ..default()
+        },
+        ..default()
+    }
+}
+
+/// Vignette from a single strength dial. Radius and softness stay at
+/// Bevy's defaults; games tune how dark the corners get.
+pub fn vignette_of(strength: f32) -> bevy::post_process::effect_stack::Vignette {
+    bevy::post_process::effect_stack::Vignette {
+        intensity: strength.clamp(0.0, 1.0),
+        ..default()
     }
 }
 
@@ -345,6 +388,11 @@ pub fn rebuild_world(
     voices: Query<Entity, With<crate::sound::VoiceTag>>,
     mut sound: ResMut<crate::sound::SoundState>,
     mut navmesh: Option<ResMut<NavMesh>>,
+    particles: Query<Entity, With<crate::fx::Particle>>,
+    ghosts: Query<Entity, With<crate::fx::Ghost>>,
+    mut graph_materials_2d: ResMut<Assets<crate::materials::GraphMaterial2d>>,
+    mut graph_materials_3d: ResMut<Assets<crate::materials::GraphMaterial3d>>,
+    mut tile_materials: ResMut<Assets<bevy::sprite::ColorMaterial>>,
 ) {
     if !engine.rebuild {
         return;
@@ -362,9 +410,15 @@ pub fn rebuild_world(
     for entity in &voices {
         commands.entity(entity).despawn();
     }
+    // Particles and ghosts belong to the last run, not the document.
+    for entity in particles.iter().chain(ghosts.iter()) {
+        commands.entity(entity).despawn();
+    }
     sound.reset(project_sound(&engine));
     engine.entities.clear();
     engine.touching.clear();
+    // Remaps last exactly as long as the run, like everything else live.
+    engine.reset_input_run();
     // Everything the last run made goes with it: Play starts from the
     // document, which is the one thing a clone was never in.
     engine.spawned.clear();
@@ -393,6 +447,20 @@ pub fn rebuild_world(
             (actor.id.clone(), held)
         })
         .collect();
+    // Live collision filters start as the document authored them; the `set
+    // trigger` / `set collision` blocks move them from there.
+    engine.physics_filter = engine
+        .project
+        .actors
+        .iter()
+        .map(|actor| {
+            let physics = actor.physics();
+            (
+                actor.id.clone(),
+                (physics.layer(), physics.collision_mask, physics.trigger),
+            )
+        })
+        .collect();
 
     let mut project = engine.project.clone();
     // A child authored in its parent's frame is put where that works out to,
@@ -402,7 +470,8 @@ pub fn rebuild_world(
     clear_color.0 = parse_color(&project.world.background);
     match dimension.0 {
         Mode::TwoD => {
-            commands.spawn((
+            let post = project.world.post.clone();
+            let mut camera_entity = commands.spawn((
                 Camera2d,
                 Projection::Orthographic(OrthographicProjection {
                     scale: 1.0 / project.world.camera.zoom.max(0.05),
@@ -412,12 +481,31 @@ pub fn rebuild_world(
                 // The one listener positional voices pan against. It rides
                 // the camera, so what the player sees is what they hear.
                 bevy::audio::SpatialListener::default(),
+                bevy::camera::Exposure {
+                    ev100: post.exposure_ev,
+                },
+                tonemapping_of(post.tonemapping),
             ));
+            if post.bloom_enabled {
+                camera_entity.insert(bloom_of(&post));
+            }
+            if post.vignette_strength > 0.0 {
+                camera_entity.insert(vignette_of(post.vignette_strength));
+            }
             for actor in &project.actors {
-                let entity =
-                    dim2::spawn_actor(&mut commands, actor, dir.as_deref(), &assets, &mut textures)
-                        .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::TwoD));
+                let entity = dim2::spawn_actor(
+                    &mut commands,
+                    actor,
+                    dir.as_deref(),
+                    &assets,
+                    &mut textures,
+                    &mut meshes,
+                    &mut graph_materials_2d,
+                    &mut tile_materials,
+                )
+                .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::TwoD));
                 attach_camera(&mut commands, actor, entity);
+                crate::fx::insert_fx_state(&mut commands, actor, entity);
                 engine.entities.insert(actor.id.clone(), entity);
             }
         }
@@ -426,11 +514,21 @@ pub fn rebuild_world(
                 &mut commands,
                 &project.world.camera,
                 &project.world.lighting,
+                &project.world.post,
             );
             for actor in &project.actors {
-                let entity = dim3::spawn_actor(&mut commands, actor, &mut meshes, &mut materials)
-                    .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::ThreeD));
+                let entity = dim3::spawn_actor(
+                    &mut commands,
+                    actor,
+                    dir.as_deref(),
+                    &assets,
+                    &mut meshes,
+                    &mut materials,
+                    &mut graph_materials_3d,
+                )
+                .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::ThreeD));
                 attach_camera(&mut commands, actor, entity);
+                crate::fx::insert_fx_state(&mut commands, actor, entity);
                 engine.entities.insert(actor.id.clone(), entity);
             }
         }
@@ -681,6 +779,8 @@ pub fn publish_sensors(
     dimension: Res<Dimension>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
+    pads: Query<&Gamepad>,
+    touches: Res<Touches>,
     mut motion: MessageReader<MouseMotion>,
     mut focus: MessageReader<WindowFocused>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -733,6 +833,9 @@ pub fn publish_sensors(
             .map(|parent| local_of(parent, transform.translation))
             .unwrap_or(transform.translation.to_array());
         let (rx, ry, rz) = transform.rotation.to_euler(EulerRot::XYZ);
+        let (layer, mask, trigger) = engine.filter_of(&id.0);
+        let has_body = engine.has_component(&id.0, "Body");
+        let shape = collider_shape(&engine, &id.0, dimension.0, transform);
         senses.insert(
             id.0.clone(),
             ActorSense {
@@ -751,6 +854,11 @@ pub fn publish_sensors(
                 touching: engine.touching.get(&id.0).cloned().unwrap_or_default(),
                 attached: engine.attached.get(&id.0).cloned().unwrap_or_default(),
                 components: custom.map(|custom| custom.0.clone()).unwrap_or_default(),
+                has_body,
+                trigger,
+                layer,
+                mask,
+                shape,
             },
         );
     }
@@ -763,6 +871,114 @@ pub fn publish_sensors(
     // A focused text input owns the keyboard: while one does, game strands
     // see no keys at all, so typing a name never also fires the gun.
     let typing = manager.focus().is_some();
+    let keys_live = if typing { HashSet::new() } else { held };
+
+    // Gamepads: every connected pad feeds one shared state, strongest wins.
+    let mut pad_buttons: HashSet<String> = HashSet::new();
+    let mut pad_axes: HashMap<String, f32> = HashMap::new();
+    let mut pad_count = 0;
+    for pad in &pads {
+        pad_count += 1;
+        for button in GamepadButton::all() {
+            if pad.pressed(button) {
+                pad_buttons.insert(pad_button_name(button));
+            }
+        }
+        for axis in GamepadAxis::all() {
+            if let Some(value) = pad.get(axis) {
+                let name = pad_axis_name(axis);
+                let kept = pad_axes.get(&name).copied().unwrap_or(0.0);
+                if value.abs() > kept.abs() {
+                    pad_axes.insert(name, value);
+                }
+            }
+        }
+    }
+    // Pad buttons and sticks keep working while typing: only the keyboard
+    // belongs to the text input, so a gamepad pause button still pauses.
+    let mut mouse_buttons: HashSet<String> = HashSet::new();
+    if focused && buttons.pressed(MouseButton::Left) {
+        mouse_buttons.insert("left".to_string());
+    }
+    if focused && buttons.pressed(MouseButton::Right) {
+        mouse_buttons.insert("right".to_string());
+    }
+    if focused && buttons.pressed(MouseButton::Middle) {
+        mouse_buttons.insert("middle".to_string());
+    }
+    let live = LiveInput {
+        keys: keys_live.clone(),
+        mouse: mouse_buttons.clone(),
+        pad_buttons: pad_buttons.clone(),
+        axes: pad_axes.clone(),
+    };
+
+    // Named actions, with run-scoped remaps winning over the document.
+    // Pressed/released are edges against last frame's held.
+    let mut actions: HashMap<String, ActionSense> = HashMap::new();
+    let mut fired_actions: Vec<String> = Vec::new();
+    for action in &engine.project.world.input.actions {
+        let bindings = engine
+            .input_overrides
+            .get(&action.name.to_lowercase())
+            .cloned()
+            .unwrap_or_else(|| action.bindings.clone());
+        let scoped = blockloom_core::input::InputAction {
+            name: action.name.clone(),
+            bindings,
+        };
+        let held_now = live.action_held(&scoped);
+        let value = live.action_value(&scoped);
+        let was = engine
+            .prev_action_held
+            .get(&action.name.to_lowercase())
+            .copied()
+            .unwrap_or(false);
+        let pressed = held_now && !was;
+        let released = !held_now && was;
+        engine
+            .prev_action_held
+            .insert(action.name.to_lowercase(), held_now);
+        actions.insert(
+            action.name.clone(),
+            ActionSense {
+                held: held_now,
+                pressed,
+                released,
+                value,
+            },
+        );
+        if pressed {
+            fired_actions.push(action.name.to_lowercase());
+        }
+    }
+    // Remapped-away actions leave no stale edge behind.
+    engine.prev_action_held.retain(|name, _| {
+        engine
+            .project
+            .world
+            .input
+            .find(name)
+            .is_some()
+    });
+
+    // Touches in world units, press order. Unfocused windows read none, the
+    // same gate the pointer delta keeps.
+    let mut touch_points: Vec<TouchSense> = Vec::new();
+    let mut touch_started = false;
+    if focused {
+        for touch in touches.iter() {
+            if let Some(point) =
+                screen_to_world(dimension.0, touch.position(), &windows, &cameras)
+            {
+                touch_points.push(TouchSense {
+                    id: touch.id(),
+                    position: point,
+                });
+            }
+        }
+        touch_started = touches.iter_just_pressed().next().is_some();
+    }
 
     blockloom_core::sense::publish(Sensors {
         time: engine.run_time(now),
@@ -770,11 +986,17 @@ pub fn publish_sensors(
         // clock on a pause menu keeps ticking.
         wall_time: (now - engine.started_at).max(0.0),
         paused: engine.paused,
-        keys: if typing { HashSet::new() } else { held },
+        keys: keys_live,
         mouse,
         mouse_delta,
         mouse_locked,
         mouse_down: focused && buttons.pressed(MouseButton::Left),
+        mouse_buttons,
+        actions,
+        touches: touch_points,
+        gamepad_connected: pad_count > 0,
+        gamepad_axes: pad_axes,
+        gamepad_buttons: pad_buttons,
         actors: senses,
         ui: manager.senses(),
         ui_focus: manager.focus().unwrap_or_default().to_string(),
@@ -792,7 +1014,54 @@ pub fn publish_sensors(
             }
             engine.fire(Event::Key(key));
         }
+        if !engine.paused {
+            for action in fired_actions {
+                engine.fire(Event::Action(action));
+            }
+            if touch_started {
+                engine.fire(Event::Touched);
+            }
+        }
     }
+}
+
+/// Canonical sensor spelling of a pad button.
+fn pad_button_name(button: GamepadButton) -> String {
+    normalize_pad_button(match button {
+        GamepadButton::South => "south",
+        GamepadButton::East => "east",
+        GamepadButton::North => "north",
+        GamepadButton::West => "west",
+        GamepadButton::C => "c",
+        GamepadButton::Z => "z",
+        GamepadButton::LeftTrigger => "lefttrigger",
+        GamepadButton::LeftTrigger2 => "lefttrigger2",
+        GamepadButton::RightTrigger => "righttrigger",
+        GamepadButton::RightTrigger2 => "righttrigger2",
+        GamepadButton::Select => "select",
+        GamepadButton::Start => "start",
+        GamepadButton::Mode => "mode",
+        GamepadButton::LeftThumb => "leftthumb",
+        GamepadButton::RightThumb => "rightthumb",
+        GamepadButton::DPadUp => "dpadup",
+        GamepadButton::DPadDown => "dpaddown",
+        GamepadButton::DPadLeft => "dpadleft",
+        GamepadButton::DPadRight => "dpadright",
+        GamepadButton::Other(n) => return format!("other{n}"),
+    })
+}
+
+/// Canonical sensor spelling of a pad axis.
+fn pad_axis_name(axis: GamepadAxis) -> String {
+    normalize_pad_axis(match axis {
+        GamepadAxis::LeftStickX => "leftstickx",
+        GamepadAxis::LeftStickY => "leftsticky",
+        GamepadAxis::LeftZ => "leftz",
+        GamepadAxis::RightStickX => "rightstickx",
+        GamepadAxis::RightStickY => "rightsticky",
+        GamepadAxis::RightZ => "rightz",
+        GamepadAxis::Other(n) => return format!("other{n}"),
+    })
 }
 
 /// Where the pointer is in world units: straight out in 2D, and where it meets
@@ -805,14 +1074,26 @@ fn mouse_world_position(
 ) -> Option<[f32; 2]> {
     let window = windows.iter().next()?;
     let cursor = window.cursor_position()?;
+    screen_to_world(mode, cursor, windows, cameras)
+}
+
+/// The same projection for a touch point: a finger names the same place the
+/// pointer would at those window coordinates.
+fn screen_to_world(
+    mode: Mode,
+    screen: Vec2,
+    windows: &Query<&Window, With<PrimaryWindow>>,
+    cameras: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
+) -> Option<[f32; 2]> {
+    let _ = windows.iter().next()?;
     let (camera, camera_transform) = cameras.iter().next()?;
     match mode {
         Mode::TwoD => {
-            let point = camera.viewport_to_world_2d(camera_transform, cursor).ok()?;
+            let point = camera.viewport_to_world_2d(camera_transform, screen).ok()?;
             Some([point.x, point.y])
         }
         Mode::ThreeD => {
-            let ray = camera.viewport_to_world(camera_transform, cursor).ok()?;
+            let ray = camera.viewport_to_world(camera_transform, screen).ok()?;
             let distance = ray.intersect_plane(Vec3::ZERO, InfinitePlane3d::new(Vec3::Y))?;
             let point = ray.get_point(distance);
             Some([point.x, point.z])
@@ -1102,6 +1383,10 @@ fn half_extents(visual: &Visual) -> Vec2 {
             Vec2::new(size[0] / 2.0, size[1] / 2.0)
         }
         Visual::Circle { radius, .. } => Vec2::splat(*radius),
+        Visual::Tilemap { tilemap } => {
+            let size = tilemap.size();
+            Vec2::new(size[0] / 2.0, size[1] / 2.0)
+        }
         _ => Vec2::ZERO,
     }
 }
@@ -1117,8 +1402,94 @@ fn half_extents3(visual: &Visual) -> Vec3 {
         // A model's extents are its authored scale until the glTF scene
         // loads and reports its own bounds.
         Visual::Model { scale, .. } => Vec3::new(scale[0] / 2.0, scale[1] / 2.0, scale[2] / 2.0),
+        // A wall map's face: width, height, no depth.
+        Visual::Tilemap { tilemap } => {
+            let size = tilemap.size();
+            Vec3::new(size[0] / 2.0, size[1] / 2.0, 0.1)
+        }
         _ => Vec3::ZERO,
     }
+}
+
+/// What a physics query sees: the actor's collider in world units, or
+/// nothing for an actor with no body. Scale is folded in; rotation is not,
+/// so a spun actor still queries against its unrotated box.
+fn collider_shape(
+    engine: &Engine,
+    id: &str,
+    mode: Mode,
+    transform: &Transform,
+) -> blockloom_core::sense::ColliderShape {
+    use blockloom_core::sense::ColliderShape;
+    if !engine.has_component(id, "Body") {
+        return ColliderShape::None;
+    }
+    let Some(actor) = engine.actor(id) else {
+        return ColliderShape::None;
+    };
+    let Some(visual) = actor.visual() else {
+        return ColliderShape::None;
+    };
+    let scale = transform.scale.abs();
+    match (visual, mode) {
+        (Visual::Circle { radius, .. }, Mode::TwoD) => {
+            let radius = radius * scale.max_element().max(0.0);
+            (radius > 0.0).then_some(ColliderShape::Ball { radius })
+        }
+        (Visual::Sphere { radius, .. }, Mode::ThreeD) => {
+            let radius = radius * scale.max_element().max(0.0);
+            (radius > 0.0).then_some(ColliderShape::Ball { radius })
+        }
+        (Visual::Rect { size, .. } | Visual::Image { size, .. }, Mode::TwoD) => {
+            let half = [
+                size[0] / 2.0 * scale.x.max(0.0),
+                size[1] / 2.0 * scale.y.max(0.0),
+                0.0,
+            ];
+            (half[0] > 0.0 && half[1] > 0.0).then_some(ColliderShape::Box { half })
+        }
+        (Visual::Cuboid { size, .. }, Mode::ThreeD) => {
+            let half = [
+                size[0] / 2.0 * scale.x.max(0.0),
+                size[1] / 2.0 * scale.y.max(0.0),
+                size[2] / 2.0 * scale.z.max(0.0),
+            ];
+            (half[0] > 0.0 && half[1] > 0.0 && half[2] > 0.0)
+                .then_some(ColliderShape::Box { half })
+        }
+        (Visual::Capsule { radius, height, .. }, Mode::ThreeD) => {
+            let half = [
+                radius * scale.x.max(0.0),
+                (height / 2.0 + radius) * scale.y.max(0.0),
+                radius * scale.z.max(0.0),
+            ];
+            (half[0] > 0.0 && half[1] > 0.0).then_some(ColliderShape::Box { half })
+        }
+        (Visual::Plane { size, .. }, Mode::ThreeD) => {
+            let half = [size[0] / 2.0 * scale.x.max(0.0), 0.1, size[1] / 2.0 * scale.z.max(0.0)];
+            (half[0] > 0.0 && half[2] > 0.0).then_some(ColliderShape::Box { half })
+        }
+        (Visual::Model { scale: size, .. }, Mode::ThreeD) => {
+            let half = [
+                size[0] / 2.0 * scale.x.max(0.0),
+                size[1] / 2.0 * scale.y.max(0.0),
+                size[2] / 2.0 * scale.z.max(0.0),
+            ];
+            (half[0] > 0.0 && half[1] > 0.0 && half[2] > 0.0)
+                .then_some(ColliderShape::Box { half })
+        }
+        (Visual::Tilemap { tilemap }, Mode::TwoD) if tilemap.solid => {
+            let size = tilemap.size();
+            let half = [
+                size[0] / 2.0 * scale.x.max(0.0),
+                size[1] / 2.0 * scale.y.max(0.0),
+                0.0,
+            ];
+            (half[0] > 0.0 && half[1] > 0.0).then_some(ColliderShape::Box { half })
+        }
+        _ => None,
+    }
+    .unwrap_or(ColliderShape::None)
 }
 
 /// The world-space point a speech bubble should sit over. The bubble itself is
@@ -1601,11 +1972,11 @@ fn camera_of(engine: &Engine, actor: &str) -> Option<blockloom_core::components:
     )
 }
 
-/// Components that aren't this module's to attach: a body and a look need the
-/// dimension's own pipeline, so `dim2`/`dim3` pick those up from the same
-/// effect list.
+/// Components that aren't this module's to attach: bodies, looks and
+/// materials need the dimension's own pipeline, so `dim2`/`dim3` pick those
+/// up from the same effect list.
 fn is_dimensions_own(component: &str) -> bool {
-    matches!(component, "Body" | "Look")
+    matches!(component, "Body" | "Look" | "Material")
 }
 
 fn attach(
@@ -1683,6 +2054,18 @@ fn attach(
             };
             set_parent(engine, actor, &parent, transforms);
         }
+        // Emitters and trails run while attached: hanging one starts the
+        // spray, and the state is what the FX systems read.
+        "Emitter" => {
+            commands
+                .entity(entity)
+                .insert(crate::fx::EmitterState::fresh());
+        }
+        "Trail" => {
+            commands
+                .entity(entity)
+                .insert(crate::fx::TrailState::fresh());
+        }
         // Anything else is a custom component: it comes back with the fields
         // the editor gave it, or empty if the project never had one.
         name => {
@@ -1746,6 +2129,14 @@ fn detach(
         "Parent" => {
             engine.parents.remove(actor);
         }
+        // Taking the spray or the trail away stops it: live particles and
+        // ghosts fade out on their own rather than vanishing mid-flight.
+        "Emitter" => {
+            commands.entity(entity).remove::<crate::fx::EmitterState>();
+        }
+        "Trail" => {
+            commands.entity(entity).remove::<crate::fx::TrailState>();
+        }
         name => {
             if let Ok(mut custom) = customs.get_mut(entity) {
                 custom.0.remove(name);
@@ -1774,6 +2165,9 @@ pub fn apply_lifetimes(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut textures: ResMut<Assets<Image>>,
+    mut graph_materials_2d: ResMut<Assets<crate::materials::GraphMaterial2d>>,
+    mut graph_materials_3d: ResMut<Assets<crate::materials::GraphMaterial3d>>,
+    mut tile_materials: ResMut<Assets<bevy::sprite::ColorMaterial>>,
     live: Query<(&Visibility, Option<&CustomComponents>)>,
     mut transforms: Query<&mut Transform>,
 ) {
@@ -1790,6 +2184,11 @@ pub fn apply_lifetimes(
                 if let Some(entity) = engine.entities.get(of).copied() {
                     if let Ok(transform) = transforms.get(entity) {
                         copy.components.set_placement(placement_of(transform));
+                        // The live z carries the sort layer, and the spawner
+                        // re-adds it: take it back off so a clone of a layered
+                        // actor doesn't sort twice as high.
+                        copy.components.placement_mut().position[2] -=
+                            copy.components.layer() as f32;
                     }
                     if let Ok((visibility, custom)) = live.get(entity) {
                         copy.components
@@ -1813,6 +2212,9 @@ pub fn apply_lifetimes(
                     &mut meshes,
                     &mut materials,
                     &mut textures,
+                    &mut graph_materials_2d,
+                    &mut graph_materials_3d,
+                    &mut tile_materials,
                     copy,
                 );
             }
@@ -1834,6 +2236,9 @@ pub fn apply_lifetimes(
                     &mut meshes,
                     &mut materials,
                     &mut textures,
+                    &mut graph_materials_2d,
+                    &mut graph_materials_3d,
+                    &mut tile_materials,
                     made,
                 );
             }
@@ -1878,15 +2283,36 @@ fn spawn_runtime_actor(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     textures: &mut Assets<Image>,
+    graph_materials_2d: &mut Assets<crate::materials::GraphMaterial2d>,
+    graph_materials_3d: &mut Assets<crate::materials::GraphMaterial3d>,
+    tile_materials: &mut Assets<bevy::sprite::ColorMaterial>,
     actor: Actor,
 ) {
     let dir = engine.project_dir.clone();
     let entity = match mode {
-        Mode::TwoD => dim2::spawn_actor(commands, &actor, dir.as_deref(), assets, textures),
-        Mode::ThreeD => dim3::spawn_actor(commands, &actor, meshes, materials),
+        Mode::TwoD => dim2::spawn_actor(
+            commands,
+            &actor,
+            dir.as_deref(),
+            assets,
+            textures,
+            meshes,
+            graph_materials_2d,
+            tile_materials,
+        ),
+        Mode::ThreeD => dim3::spawn_actor(
+            commands,
+            &actor,
+            dir.as_deref(),
+            assets,
+            meshes,
+            materials,
+            graph_materials_3d,
+        ),
     }
     .unwrap_or_else(|| spawn_unseen(commands, &actor, mode));
     attach_camera(commands, &actor, entity);
+    crate::fx::insert_fx_state(commands, &actor, entity);
     // One camera in the world: a clone of the actor holding it takes it.
     if actor.camera().is_some() {
         claim_camera(commands, engine, &actor.id);
@@ -1897,6 +2323,11 @@ fn spawn_runtime_actor(
         .map(|component| component.name().to_string())
         .collect();
     engine.attached.insert(actor.id.clone(), held);
+    let physics = actor.physics();
+    engine.physics_filter.insert(
+        actor.id.clone(),
+        (physics.layer(), physics.collision_mask, physics.trigger),
+    );
     if let Some(parent) = actor.parent() {
         engine.parents.insert(actor.id.clone(), parent.to_string());
     }
@@ -1954,6 +2385,7 @@ fn delete_actor(commands: &mut Commands, engine: &mut Engine, actor: &str) {
     engine.spawned.remove(actor);
     engine.clones.remove(actor);
     engine.attached.remove(actor);
+    engine.physics_filter.remove(actor);
     engine.touching.remove(actor);
     engine.speech.remove(actor);
     engine.scripts.remove(actor);
@@ -2257,6 +2689,97 @@ pub fn clear_effects(mut effects: ResMut<PendingEffects>) {
     effects.0.clear();
 }
 
+/// Carries out run-scoped input remaps. A `bind` adds one binding to an
+/// action's override, a `clear` empties it; both last exactly as long as the
+/// run. Unknown actions and unparseable bindings are reported, not applied.
+pub fn apply_input_effects(mut engine: NonSendMut<Engine>, effects: Res<PendingEffects>) {
+    if !engine.running {
+        return;
+    }
+    for effect in &effects.0 {
+        match effect {
+            Effect::BindAction {
+                actor, action, binding,
+            } => {
+                let Some(found) = engine.project.world.input.find(action).map(|found| found.name.clone()) else {
+                    crate::bridge::send(&RuntimeMessage::Error {
+                        actor: actor.clone(),
+                        message: format!("there's no input action named \"{action}\""),
+                    });
+                    continue;
+                };
+                match blockloom_core::input::parse_binding(binding) {
+                    Some(parsed) => {
+                        let key = found.to_lowercase();
+                        let entry = engine.input_overrides.entry(key).or_insert_with(|| {
+                            engine
+                                .project
+                                .world
+                                .input
+                                .find(&found)
+                                .map(|found| found.bindings.clone())
+                                .unwrap_or_default()
+                        });
+                        let text = parsed.text();
+                        if !entry.iter().any(|held| held.text() == text) {
+                            entry.push(parsed);
+                        }
+                    }
+                    None => {
+                        crate::bridge::send(&RuntimeMessage::Error {
+                            actor: actor.clone(),
+                            message: format!("\"{binding}\" isn't a binding"),
+                        });
+                    }
+                }
+            }
+            Effect::ClearActionBindings { action, actor } => {
+                let Some(found) = engine.project.world.input.find(action).map(|found| found.name.clone()) else {
+                    crate::bridge::send(&RuntimeMessage::Error {
+                        actor: actor.clone(),
+                        message: format!("there's no input action named \"{action}\""),
+                    });
+                    continue;
+                };
+                engine.input_overrides.insert(found.to_lowercase(), Vec::new());
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Rumbles every connected gamepad. A zero strength or duration stops
+/// instead, so `rumble 0 for 0` is a stop block.
+pub fn apply_rumble(
+    engine: NonSend<Engine>,
+    effects: Res<PendingEffects>,
+    pads: Query<Entity, With<Gamepad>>,
+    mut rumbles: MessageWriter<GamepadRumbleRequest>,
+) {
+    if !engine.running || engine.paused {
+        return;
+    }
+    for effect in &effects.0 {
+        if let Effect::RumbleGamepad { strength, duration } = effect {
+            for entity in &pads {
+                if *strength <= 0.0 || *duration <= 0.0 {
+                    rumbles.write(GamepadRumbleRequest::Stop { gamepad: entity });
+                } else {
+                    let clamped = (strength / 100.0).clamp(0.0, 1.0);
+                    rumbles.write(GamepadRumbleRequest::Add {
+                        gamepad: entity,
+                        duration: std::time::Duration::from_secs_f32(duration.max(0.0)),
+                        intensity: GamepadRumbleIntensity {
+                            strong_motor: clamped,
+                            weak_motor: clamped,
+                        },
+                    });
+                }
+            }
+        }
+    }
+}
+
 /// Carries out pointer lock requests, and guarantees a stopped run never
 /// keeps the user's mouse: locking only means anything while running, so a
 /// fresh Play always starts unlocked.
@@ -2332,6 +2855,9 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetVelocity { actor, .. }
         | Effect::SetDensity { actor, .. }
         | Effect::SetMass { actor, .. }
+        | Effect::SetTrigger { actor, .. }
+        | Effect::SetCollisionLayer { actor, .. }
+        | Effect::SetCollisionMask { actor, .. }
         | Effect::Say { actor, .. }
         | Effect::SetVisible { actor, .. }
         | Effect::SetColor { actor, .. }
@@ -2341,11 +2867,14 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetCameraFov { actor, .. }
         | Effect::AttachComponent { actor, .. }
         | Effect::DetachComponent { actor, .. }
+        | Effect::BindAction { actor, .. }
+        | Effect::ClearActionBindings { actor, .. }
         | Effect::Error { actor, .. } => Some(actor),
         // Making, deleting and re-parenting an actor are `apply_lifetimes`'s
         // to carry out, and none of them is a change to a transform.
         Effect::SetGravity { .. }
         | Effect::SetBusVolume { .. }
+        | Effect::RumbleGamepad { .. }
         | Effect::Stopped
         // Sound is the sound module's to play, like UI is the overlay's.
         | Effect::PlaySound { .. }
@@ -2906,6 +3435,7 @@ mod tests {
         app.init_resource::<Messages<WindowFocused>>();
         app.init_resource::<crate::ui::UiManager>();
         app.init_resource::<crate::sound::SoundState>();
+        app.init_resource::<bevy::input::touch::Touches>();
         app.insert_non_send(engine);
         let window_entity = app
             .world_mut()
@@ -4137,6 +4667,7 @@ mod tests {
         app.init_resource::<Messages<WindowFocused>>();
         app.init_resource::<crate::ui::UiManager>();
         app.init_resource::<crate::sound::SoundState>();
+        app.init_resource::<bevy::input::touch::Touches>();
         app.insert_non_send(engine);
 
         let mut window = Window::default();
@@ -4563,6 +5094,7 @@ mod tests {
         app.init_resource::<Messages<WindowFocused>>();
         app.init_resource::<crate::ui::UiManager>();
         app.init_resource::<crate::sound::SoundState>();
+        app.init_resource::<bevy::input::touch::Touches>();
         app.insert_non_send(engine);
         app.world_mut().spawn((Window::default(), PrimaryWindow));
         app.add_systems(Update, publish_sensors);

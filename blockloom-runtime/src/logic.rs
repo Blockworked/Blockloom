@@ -12,14 +12,15 @@ use blockloom_core::codegen::{
     ACT_LIST_CLEAR, ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE,
     ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_PLAY_SOUND, ACT_POINT_TOWARDS,
     ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY, ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV,
-    ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_FIELD,
-    ACT_SET_FOCUS, ACT_SET_GRAVITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT,
-    ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME,
-    ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT,
-    ACT_STOP_SOUND, ACT_TURN, AbiStr, AbiValue, LOGIC_ABI_VERSION, LogicHostApi, READ_SENSE,
-    READ_VARIABLE, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE,
-    SYM_LOGIC_RESET, SYM_LOGIC_TICK, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER,
-    VALUE_TEXT,
+    ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_COLOR, ACT_SET_COLLISION_LAYER,
+    ACT_SET_COLLISION_MASK, ACT_SET_DENSITY, ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_GRAVITY,
+    ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_ROTATION,
+    ACT_SET_SCALE, ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_TRIGGER, ACT_SET_UI_PROP,
+    ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_STOP_SOUND, ACT_TURN,
+    ACT_BIND_ACTION, ACT_CLEAR_ACTION_BINDINGS, ACT_RUMBLE_GAMEPAD,
+    AbiStr, AbiValue, LOGIC_ABI_VERSION, LogicHostApi, READ_SENSE, READ_VARIABLE, SYM_LOGIC_ABI,
+    SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET, SYM_LOGIC_TICK,
+    TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
 };
 use blockloom_core::components::CameraView;
 use blockloom_core::project::Project;
@@ -139,6 +140,8 @@ impl LoadedLogic {
             }
             Event::UiClicked { id } => self.fire_raw("UiClicked", "", &id, ""),
             Event::UiChanged { id, .. } => self.fire_raw("UiChanged", "", &id, ""),
+            Event::Action(action) => self.fire_raw("Action", "", &action, ""),
+            Event::Touched => self.fire_raw("Touched", "", "", ""),
             // The program makes its own clones and starts their strands
             // itself, so nothing outside it queues one. A script's clone
             // comes through `cloned` below instead.
@@ -448,6 +451,31 @@ extern "C" fn act(
         ACT_SET_MASS => Effect::SetMass {
             actor,
             mass: n0 as f32,
+        },
+        ACT_SET_TRIGGER => Effect::SetTrigger {
+            actor,
+            trigger: n0 != 0.0,
+        },
+        ACT_SET_COLLISION_LAYER => Effect::SetCollisionLayer {
+            actor,
+            layer: (n0.round() as i32).clamp(1, 8) as u8,
+        },
+        ACT_SET_COLLISION_MASK => Effect::SetCollisionMask {
+            actor,
+            mask: (n0.round() as i32).clamp(0, 255) as u8,
+        },
+        ACT_RUMBLE_GAMEPAD => Effect::RumbleGamepad {
+            strength: (n0 as f32).clamp(0.0, 100.0),
+            duration: (n1 as f32).max(0.0),
+        },
+        ACT_BIND_ACTION => Effect::BindAction {
+            actor,
+            action: a.trim().to_string(),
+            binding: b.trim().to_string(),
+        },
+        ACT_CLEAR_ACTION_BINDINGS => Effect::ClearActionBindings {
+            actor,
+            action: a.trim().to_string(),
         },
         ACT_SAY => Effect::Say {
             actor,

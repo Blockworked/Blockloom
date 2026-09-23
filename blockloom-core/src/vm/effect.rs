@@ -84,6 +84,21 @@ pub enum Effect {
         actor: String,
         mass: f32,
     },
+    /// Whether the actor's collider pushes back or only senses overlap.
+    SetTrigger {
+        actor: String,
+        trigger: bool,
+    },
+    /// Which layer the actor lives on, 1-8.
+    SetCollisionLayer {
+        actor: String,
+        layer: u8,
+    },
+    /// Bitmask of the layers the actor pairs with.
+    SetCollisionMask {
+        actor: String,
+        mask: u8,
+    },
     /// A speech bubble over the actor; an empty text clears it.
     Say {
         actor: String,
@@ -199,6 +214,22 @@ pub enum Effect {
     /// like gravity: no actor.
     SetMouseLocked {
         locked: bool,
+    },
+    /// Rumbles connected gamepads. Window-global: no actor.
+    RumbleGamepad {
+        strength: f32,
+        duration: f32,
+    },
+    /// Adds one binding to an action for the rest of the run.
+    BindAction {
+        actor: String,
+        action: String,
+        binding: String,
+    },
+    /// Forgets every binding an action has for the rest of the run.
+    ClearActionBindings {
+        actor: String,
+        action: String,
     },
     /// Makes an interface element, or updates the one that id already names.
     /// Screen-space, so no actor - the block's owner is only ever who to

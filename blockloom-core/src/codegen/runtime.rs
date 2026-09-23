@@ -111,6 +111,26 @@ pub enum Act {
     SetMass {
         mass: f32,
     },
+    SetTrigger {
+        trigger: bool,
+    },
+    SetCollisionLayer {
+        layer: u8,
+    },
+    SetCollisionMask {
+        mask: u8,
+    },
+    RumbleGamepad {
+        strength: f32,
+        duration: f32,
+    },
+    BindAction {
+        action: String,
+        binding: String,
+    },
+    ClearActionBindings {
+        action: String,
+    },
     Say {
         text: String,
     },
@@ -567,6 +587,8 @@ impl Runner {
             let matches = match (entry.trigger, kind) {
                 ("Started", "Started") => true,
                 ("Key", "Key") | ("Message", "Message") => entry.detail == detail,
+                ("Action", "Action") => entry.detail == detail,
+                ("Touched", "Touched") => true,
                 ("UiClicked", "UiClicked") | ("UiChanged", "UiChanged") => entry.detail == detail,
                 ("Clicked", "Clicked") => entry.actor == &*template,
                 ("Collision", "Collision") => {
@@ -861,7 +883,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 11;
+pub const LOGIC_ABI_VERSION: u32 = 12;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -963,6 +985,18 @@ pub const ACT_SET_SOUND_VOLUME: u32 = 49;
 pub const ACT_SET_SOUND_PITCH: u32 = 50;
 /// `b` = bus name; `n0` = linear gain. Window-global, like gravity.
 pub const ACT_SET_BUS_VOLUME: u32 = 51;
+/// `n0` != 0 senses overlap without pushing back.
+pub const ACT_SET_TRIGGER: u32 = 57;
+/// `n0` = layer 1-8.
+pub const ACT_SET_COLLISION_LAYER: u32 = 58;
+/// `n0` = bitmask of the layers the actor pairs with.
+pub const ACT_SET_COLLISION_MASK: u32 = 59;
+/// `n0` = strength 0-100, `n1` = seconds. Window-global: no actor.
+pub const ACT_RUMBLE_GAMEPAD: u32 = 60;
+/// `a` = action, `b` = binding text.
+pub const ACT_BIND_ACTION: u32 = 61;
+/// `a` = action.
+pub const ACT_CLEAR_ACTION_BINDINGS: u32 = 62;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1259,6 +1293,49 @@ impl Host for AbiHost {
             Act::SetMass { mass } => {
                 self.act_wire(actor, ACT_SET_MASS, "", "", [mass as f64, 0.0, 0.0], &zero)
             }
+            Act::SetTrigger { trigger } => self.act_wire(
+                actor,
+                ACT_SET_TRIGGER,
+                "",
+                "",
+                [if trigger { 1.0 } else { 0.0 }, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetCollisionLayer { layer } => self.act_wire(
+                actor,
+                ACT_SET_COLLISION_LAYER,
+                "",
+                "",
+                [layer as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetCollisionMask { mask } => self.act_wire(
+                actor,
+                ACT_SET_COLLISION_MASK,
+                "",
+                "",
+                [mask as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::RumbleGamepad { strength, duration } => self.act_wire(
+                actor,
+                ACT_RUMBLE_GAMEPAD,
+                "",
+                "",
+                [strength as f64, duration as f64, 0.0],
+                &zero,
+            ),
+            Act::BindAction { action, binding } => {
+                self.act_wire(actor, ACT_BIND_ACTION, &action, &binding, [0.0; 3], &zero)
+            }
+            Act::ClearActionBindings { action } => self.act_wire(
+                actor,
+                ACT_CLEAR_ACTION_BINDINGS,
+                &action,
+                "",
+                [0.0; 3],
+                &zero,
+            ),
             Act::Say { text } => self.act_wire(actor, ACT_SAY, &text, "", [0.0; 3], &zero),
             Act::SetVisible { visible } => self.act_wire(
                 actor,

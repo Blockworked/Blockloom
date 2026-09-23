@@ -285,6 +285,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             required: true,
         }],
     },
+    CommandSpec {
+        name: "set-post-process",
+        cmd: "set_post_process",
+        aliases: &["set_post_process"],
+        summary: "Set the camera's post: exposure, tonemapping, bloom and vignette.",
+        args: &[ArgSpec {
+            name: "post",
+            ty: "object",
+            required: true,
+        }],
+    },
     // ── Actors ────────────────────────────────────────────────────────────
     CommandSpec {
         name: "select-actor",

@@ -297,6 +297,10 @@ pub enum Event {
     Cloned {
         actor: String,
     },
+    /// The named input action went down, in lowercase action spelling.
+    Action(String),
+    /// A finger touched the screen.
+    Touched,
     /// An interface element was clicked.
     UiClicked {
         id: String,
@@ -653,6 +657,8 @@ impl Vm {
             }
             (Trigger::Message(want), Event::Message(got)) => want == got,
             (Trigger::Cloned, Event::Cloned { actor: fresh }) => fresh == actor,
+            (Trigger::ActionPressed(want), Event::Action(got)) => want == got,
+            (Trigger::Touched, Event::Touched) => true,
             (Trigger::UiClicked(want), Event::UiClicked { id }) => want == id,
             (Trigger::UiChanged(want), Event::UiChanged { id, .. }) => want == id,
             _ => false,
@@ -1039,6 +1045,24 @@ impl Vm {
                 let mass = self.eval_f32(mass, actor, params, out);
                 out.push(Effect::SetMass { actor: owner, mass });
             }
+            Action::SetTrigger(trigger) => out.push(Effect::SetTrigger {
+                actor: owner,
+                trigger: *trigger,
+            }),
+            Action::SetCollisionLayer(layer) => {
+                let layer = self.eval_f32(layer, actor, params, out).round() as u8;
+                out.push(Effect::SetCollisionLayer {
+                    actor: owner,
+                    layer: layer.clamp(1, 8),
+                });
+            }
+            Action::SetCollisionMask(mask) => {
+                let mask = self.eval_f32(mask, actor, params, out).round() as i32;
+                out.push(Effect::SetCollisionMask {
+                    actor: owner,
+                    mask: mask.clamp(0, 255) as u8,
+                });
+            }
             Action::Say(text) => {
                 let text = self.eval(text, actor, params, out).as_text();
                 out.push(Effect::Say { actor: owner, text });
@@ -1361,6 +1385,36 @@ impl Vm {
                 clear: *clear,
             }),
             Action::SetMouseLocked(locked) => out.push(Effect::SetMouseLocked { locked: *locked }),
+            Action::RumbleGamepad { strength, duration } => {
+                let strength = self
+                    .eval_f32(strength, actor, params, out)
+                    .clamp(0.0, 100.0);
+                let duration = self.eval_f32(duration, actor, params, out).max(0.0);
+                out.push(Effect::RumbleGamepad { strength, duration });
+            }
+            Action::BindAction { action, binding } => {
+                let name = self.eval(action, actor, params, out).as_text();
+                let binding = self.eval(binding, actor, params, out).as_text();
+                if crate::input::parse_binding(&binding).is_none() {
+                    out.push(Effect::Error {
+                        actor: owner,
+                        message: format!("\"{binding}\" isn't a binding"),
+                    });
+                } else {
+                    out.push(Effect::BindAction {
+                        actor: owner,
+                        action: name.trim().to_string(),
+                        binding: binding.trim().to_string(),
+                    });
+                }
+            }
+            Action::ClearActionBindings { action } => {
+                let name = self.eval(action, actor, params, out).as_text();
+                out.push(Effect::ClearActionBindings {
+                    actor: owner,
+                    action: name.trim().to_string(),
+                });
+            }
             Action::SetVariable { name, value } => {
                 let value = self.eval(value, actor, params, out);
                 self.write_var(actor, name, value);

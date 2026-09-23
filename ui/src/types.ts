@@ -39,6 +39,9 @@ export const INSTRUCTION_TYPES = [
   'SetGravity',
   'SetDensity',
   'SetMass',
+  'SetTrigger',
+  'SetCollisionLayer',
+  'SetCollisionMask',
   'Say',
   'SetVisible',
   'SetColor',
@@ -161,14 +164,17 @@ export type VisualDto =
   | { shape: 'Cuboid'; color: string; size: [number, number, number] }
   | { shape: 'Sphere'; color: string; radius: number }
   | { shape: 'Capsule'; color: string; radius: number; height: number }
-  | { shape: 'Plane'; color: string; size: [number, number] };
+  | { shape: 'Plane'; color: string; size: [number, number] }
+  | { shape: 'Model'; path: string; tint: string; scale: [number, number, number] }
+  | { shape: 'Tilemap'; tilemap: TilemapDto };
 
 export type VisualShape = VisualDto['shape'];
 
 /** Which shapes belong to which dimension - the editor greys out the others
- * rather than hiding them, so switching modes never silently drops an actor. */
-export const SHAPES_2D: VisualShape[] = ['Rect', 'Circle', 'Image'];
-export const SHAPES_3D: VisualShape[] = ['Cuboid', 'Sphere', 'Capsule', 'Plane'];
+ * rather than hiding them, so switching modes never silently drops an actor.
+ * Model and Tilemap render in both. */
+export const SHAPES_2D: VisualShape[] = ['Rect', 'Circle', 'Image', 'Tilemap'];
+export const SHAPES_3D: VisualShape[] = ['Cuboid', 'Sphere', 'Capsule', 'Plane', 'Model', 'Tilemap'];
 
 export function shapesFor(mode: Mode): VisualShape[] {
   return mode === 'ThreeD' ? SHAPES_3D : SHAPES_2D;
@@ -190,6 +196,12 @@ export interface PhysicsDto {
   density: number;
   /** An explicit body mass; null lets the shape and `density` decide. */
   mass: number | null;
+  /** A trigger senses overlap without pushing back; a solid resolves contacts. */
+  trigger: boolean;
+  /** Which collision layer the actor lives on, 1-8. */
+  collision_layer: number;
+  /** Bitmask of the layers it pairs with, 0-255. */
+  collision_mask: number;
 }
 
 /** Where the camera stands when no actor is holding it. An actor's `Camera`
@@ -224,19 +236,26 @@ export interface ComponentFieldDto {
   value: EvaluatedDto;
 }
 
-/** One component on an actor. The built-in five are what the engine reads;
+/** One component on an actor. The built-ins are what the engine reads;
  * `Custom` is a bag of values the project invented, which blocks read and
  * write by name. */
 export type ActorComponentDto =
   | { component: 'Place'; placement: PlacementDto }
   | { component: 'Look'; visual: VisualDto }
-  | { component: 'Render'; visible: boolean }
+  | { component: 'Render'; visible: boolean; layer?: number }
   | { component: 'Body'; physics: PhysicsDto }
   | { component: 'Camera'; camera: CameraAttachDto }
   /** A Rust file under the project's assets/scripts, compiled on Play. */
   | { component: 'Script'; path: string }
   /** The actor this one hangs off, by id, so the two move together. */
   | { component: 'Parent'; parent: string; offset: [number, number, number] | null }
+  /** What the surface is made of: PBR properties plus an optional custom
+   * shader effect. */
+  | { component: 'Material'; material: SurfaceMaterialDto }
+  /** A particle emitter: sparks, smoke, splash. */
+  | { component: 'Emitter'; emitter: ParticleSpecDto }
+  /** A motion trail: fading snapshots of where the actor just was. */
+  | { component: 'Trail'; trail: TrailSpecDto }
   | { component: 'Custom'; name: string; fields: ComponentFieldDto[] };
 
 export type ComponentName = ActorComponentDto['component'];
@@ -250,6 +269,9 @@ export const ADDABLE_COMPONENTS: ComponentName[] = [
   'Camera',
   'Script',
   'Parent',
+  'Material',
+  'Emitter',
+  'Trail',
   'Custom',
 ];
 
@@ -283,6 +305,85 @@ export interface LightingDto {
   ambient_brightness: number;
   /** Screen-space ambient occlusion on the 3D camera. */
   ao_enabled: boolean;
+  /** Shadow map size per cascade in pixels; snapped to a power of two. */
+  shadow_map_size: number;
+  /** Depth bias against shadow acne. */
+  shadow_bias: number;
+}
+
+export type TonemapName =
+  | 'None'
+  | 'Reinhard'
+  | 'ReinhardLuminance'
+  | 'AcesFitted'
+  | 'TonyMcMapface'
+  | 'Filmic';
+
+/** Post-process on the world camera: exposure, tonemapping, bloom and
+ * vignette. Neutral by default, so old projects look the same. */
+export interface PostProcessDto {
+  /** Camera exposure in EV100; 9.7 is the engine default, lower is brighter. */
+  exposure_ev: number;
+  tonemapping: TonemapName;
+  bloom_enabled: boolean;
+  bloom_threshold: number;
+  bloom_intensity: number;
+  /** Darkened corners, 0 for off. */
+  vignette_strength: number;
+}
+
+/** A surface material: PBR properties plus an optional custom effect. */
+export interface SurfaceMaterialDto {
+  metallic: number;
+  roughness: number;
+  emissive: string;
+  emissive_energy: number;
+  /** Albedo texture path; empty means none. */
+  albedo_texture: string;
+  double_sided: boolean;
+  shader: GraphEffectDto | null;
+}
+
+export type EffectMode = 'Solid' | 'Wave' | 'Plasma' | 'Pulse' | 'Dissolve';
+
+/** A custom surface effect: which motion, how fast, how strong, and the
+ * second color it plays against the look's own tint. */
+export interface GraphEffectDto {
+  mode: EffectMode;
+  speed: number;
+  strength: number;
+  color: string;
+}
+
+export interface ParticleSpecDto {
+  rate: number;
+  lifetime: number;
+  speed: number;
+  spread: number;
+  gravity_scale: number;
+  size_start: number;
+  size_end: number;
+  color_start: string;
+  color_end: string;
+  max: number;
+}
+
+export interface TrailSpecDto {
+  interval: number;
+  life: number;
+  color: string;
+}
+
+export interface TilemapDto {
+  tileset: string;
+  tile_size: [number, number];
+  width: number;
+  height: number;
+  sheet_columns: number;
+  sheet_rows: number;
+  /** Row-major tile indices, -1 for empty. */
+  tiles: number[];
+  solid: boolean;
 }
 
 /** The saved mix: one linear gain per bus. */
@@ -303,6 +404,7 @@ export interface WorldDto {
   speech_bubble: SpeechBubbleStyleDto;
   lighting: LightingDto;
   sound: SoundMixerDto;
+  post?: PostProcessDto;
 }
 
 export interface StrandDto {
@@ -395,6 +497,7 @@ export type AssetKind =
   | 'font'
   | 'model'
   | 'script'
+  | 'shader'
   | 'text'
   | 'other';
 
@@ -408,6 +511,33 @@ export interface AssetEntry {
   modified: number;
   /** The project document itself, which can't be renamed, moved or deleted. */
   protected: boolean;
+}
+
+/** What the pipeline makes of one asset: what it is, what import would do,
+ * and whether it changed since import. */
+export interface PipelineReportDto {
+  path: string;
+  kind: AssetKind;
+  dirty: boolean;
+  summary: string;
+  warnings: string[];
+}
+
+/** Where one sprite landed in a packed atlas sheet, with normalized UVs. */
+export interface AtlasEntryDto {
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  uv: [number, number, number, number];
+}
+
+/** A packed sprite sheet: one texture bind for many small sprites. */
+export interface AtlasLayoutDto {
+  width: number;
+  height: number;
+  entries: AtlasEntryDto[];
 }
 
 // ─── Run state ─────────────────────────────────────────────────────────────
@@ -544,8 +674,25 @@ export function actorPlacement(actor: ActorDto | null): PlacementDto {
 /** The actor's physics, or the inert default when it has no `Body`. */
 export function actorPhysics(actor: ActorDto | null): PhysicsDto {
   const body = findComponent(actor, 'Body');
-  if (body?.component === 'Body') return body.physics;
-  return { body: 'None', gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5, density: 1, mass: null };
+  if (body?.component === 'Body') return withPhysicsDefaults(body.physics);
+  return { body: 'None', gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5, density: 1, mass: null, trigger: false, collision_layer: 1, collision_mask: 255 };
+}
+
+/** A document written before triggers and layers fills them in here, so the
+ * inspector never reads `undefined` off an old project. */
+export function withPhysicsDefaults(physics: Partial<PhysicsDto> & { body: BodyKind }): PhysicsDto {
+  return {
+    gravity_scale: 1,
+    lock_rotation: false,
+    restitution: 0,
+    friction: 0.5,
+    density: 1,
+    mass: null,
+    trigger: false,
+    collision_layer: 1,
+    collision_mask: 255,
+    ...physics,
+  };
 }
 
 /** The actor this one hangs off, by id, or null when it hangs off nothing. */

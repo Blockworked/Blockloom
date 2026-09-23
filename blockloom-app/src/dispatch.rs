@@ -6,7 +6,7 @@ use crate::commands;
 use crate::state::{InstrPath, ValueLocation};
 use blockloom_core::blocks::{BlockPiece, BlockShape, Instruction};
 use blockloom_core::components::ActorComponent;
-use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, Visual};
+use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, PostProcess, Visual};
 use blockloom_core::sound::SoundMixer;
 use blockloom_core::value::Value as BlockValue;
 use blockloom_core::wire;
@@ -104,6 +104,10 @@ impl Backend {
             "set_sound_mixer" => {
                 let mixer: SoundMixer = arg(&args, "mixer")?;
                 to_json(commands::set_sound_mixer(state, app, mixer)?)
+            }
+            "set_post_process" => {
+                let post: PostProcess = arg(&args, "post")?;
+                to_json(commands::set_post_process(state, app, post)?)
             }
 
             // ── Actors ─────────────────────────────────────────────────────

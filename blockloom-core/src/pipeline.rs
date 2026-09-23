@@ -44,7 +44,13 @@ pub enum ModelFormat {
 impl ModelFormat {
     /// From a file extension alone, before reading any bytes.
     pub fn from_extension(name: &str) -> Self {
-        match name.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+        match name
+            .rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_lowercase()
+            .as_str()
+        {
             "gltf" => ModelFormat::Gltf,
             "glb" => ModelFormat::Glb,
             "fbx" => ModelFormat::Fbx,
@@ -91,7 +97,11 @@ impl ModelInfo {
             ModelFormat::Unknown => "model",
         };
         let mut parts = vec![
-            format!("{} mesh{}", self.meshes, if self.meshes == 1 { "" } else { "es" }),
+            format!(
+                "{} mesh{}",
+                self.meshes,
+                if self.meshes == 1 { "" } else { "es" }
+            ),
             format!(
                 "{} material{}",
                 self.materials,
@@ -177,7 +187,9 @@ pub fn inspect_model(name: &str, bytes: &[u8]) -> Result<ModelInfo, String> {
         ModelFormat::Gltf => inspect_gltf_bytes(name, bytes),
         ModelFormat::Obj => Ok(inspect_obj(bytes)),
         ModelFormat::Fbx => Ok(inspect_fbx(name, bytes)),
-        ModelFormat::Unknown => Err(format!("{name} isn't a model Blockloom loads (.gltf, .glb, .obj, .fbx)")),
+        ModelFormat::Unknown => Err(format!(
+            "{name} isn't a model Blockloom loads (.gltf, .glb, .obj, .fbx)"
+        )),
     }
 }
 
@@ -192,26 +204,34 @@ pub fn inspect_model_file(path: &Path) -> Result<ModelInfo, String> {
 }
 
 fn inspect_gltf_bytes(name: &str, bytes: &[u8]) -> Result<ModelInfo, String> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|_| format!("{name} isn't UTF-8 glTF JSON"))?;
-    inspect_gltf_value(name, &serde_json::from_str(text).map_err(|e| format!("{name}: bad glTF JSON: {e}"))?)
+    let text = std::str::from_utf8(bytes).map_err(|_| format!("{name} isn't UTF-8 glTF JSON"))?;
+    inspect_gltf_value(
+        name,
+        &serde_json::from_str(text).map_err(|e| format!("{name}: bad glTF JSON: {e}"))?,
+    )
 }
 
 fn inspect_glb(name: &str, bytes: &[u8]) -> Result<ModelInfo, String> {
     if bytes.len() < 20 {
         return Err(format!("{name} is too short to be a .glb"));
     }
-    let json_len =
-        u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+    let json_len = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
     let json_start: usize = 20;
     let json_end = json_start.saturating_add(json_len).min(bytes.len());
     let text = std::str::from_utf8(&bytes[json_start..json_end])
         .map_err(|_| format!("{name}: bad glTF JSON chunk"))?;
-    inspect_gltf_value(name, &serde_json::from_str(text).map_err(|e| format!("{name}: bad glTF JSON: {e}"))?)
+    inspect_gltf_value(
+        name,
+        &serde_json::from_str(text).map_err(|e| format!("{name}: bad glTF JSON: {e}"))?,
+    )
 }
 
 fn count(value: &serde_json::Value, key: &str) -> usize {
-    value.get(key).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0)
+    value
+        .get(key)
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0)
 }
 
 fn inspect_gltf_value(name: &str, value: &serde_json::Value) -> Result<ModelInfo, String> {
@@ -282,7 +302,11 @@ fn inspect_obj(bytes: &[u8]) -> ModelInfo {
 fn inspect_fbx(name: &str, bytes: &[u8]) -> ModelInfo {
     let mut warnings = Vec::new();
     let binary = bytes.starts_with(b"Kaydara FBX Binary");
-    let text = if binary { String::new() } else { String::from_utf8_lossy(bytes).into_owned() };
+    let text = if binary {
+        String::new()
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    };
     // Cheap heuristics: count the node types a game cares about. Exact
     // counts need the full FBX tree; import-time only needs the shape.
     let (meshes, materials, animations, skins) = if binary {
@@ -295,7 +319,12 @@ fn inspect_fbx(name: &str, bytes: &[u8]) -> ModelInfo {
                 materials += 1;
             }
         }
-        (meshes.min(4096), materials.min(4096), 0, usize::from(bytes.windows(8).any(|w| w == b"Deformer")))
+        (
+            meshes.min(4096),
+            materials.min(4096),
+            0,
+            usize::from(bytes.windows(8).any(|w| w == b"Deformer")),
+        )
     } else {
         (
             text.matches("Geometry:").count(),
@@ -305,7 +334,9 @@ fn inspect_fbx(name: &str, bytes: &[u8]) -> ModelInfo {
         )
     };
     if !binary && !text.contains("FBXHeader") && !text.contains("FbxHeader") {
-        warnings.push(format!("{name}: no FBX header found, counts are approximate"));
+        warnings.push(format!(
+            "{name}: no FBX header found, counts are approximate"
+        ));
     }
     if meshes == 0 {
         warnings.push("no geometry found: nothing to draw".to_string());
@@ -471,7 +502,9 @@ pub fn inspect_audio(name: &str, bytes: &[u8]) -> Result<AudioInfo, String> {
             bytes: bytes.len() as u64,
         });
     }
-    if bytes.starts_with(b"ID3") || (bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] & 0xE0 == 0xE0) {
+    if bytes.starts_with(b"ID3")
+        || (bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] & 0xE0 == 0xE0)
+    {
         let duration = bytes.len() as f32 / 16_000.0;
         return Ok(AudioInfo {
             format: "mp3".to_string(),
@@ -484,7 +517,9 @@ pub fn inspect_audio(name: &str, bytes: &[u8]) -> Result<AudioInfo, String> {
     if ext == "wav" {
         return Err(format!("{name} isn't a WAV Blockloom can read"));
     }
-    Err(format!("{name} isn't audio Blockloom loads (.wav, .ogg, .mp3, .flac)"))
+    Err(format!(
+        "{name} isn't audio Blockloom loads (.wav, .ogg, .mp3, .flac)"
+    ))
 }
 
 fn u16le(bytes: &[u8], at: usize) -> u16 {
@@ -520,7 +555,11 @@ fn inspect_wav(ext: &str, bytes: &[u8]) -> Result<AudioInfo, String> {
     let bytes_per_frame = channels as u32 * (bits as u32 / 8).max(1);
     let frames = data_len / bytes_per_frame.max(1);
     Ok(AudioInfo {
-        format: if ext.is_empty() { "wav".to_string() } else { ext.to_string() },
+        format: if ext.is_empty() {
+            "wav".to_string()
+        } else {
+            ext.to_string()
+        },
         channels,
         sample_rate,
         duration_secs: frames as f32 / sample_rate as f32,
@@ -612,14 +651,21 @@ impl AtlasLayout {
 /// first, rows left to right, sheet grows down. `padding` keeps bleeding
 /// sprites from sampling their neighbour; `max_size` caps the sheet (2048
 /// is safe on weak GPUs). Errors when one sprite alone exceeds the cap.
-pub fn pack_atlas(inputs: &[AtlasInput], max_size: u32, padding: u32) -> Result<AtlasLayout, String> {
+pub fn pack_atlas(
+    inputs: &[AtlasInput],
+    max_size: u32,
+    padding: u32,
+) -> Result<AtlasLayout, String> {
     if inputs.is_empty() {
         return Err("nothing to pack".to_string());
     }
     let max_size = max_size.max(64);
     let mut sorted = inputs.to_vec();
     sorted.sort_by(|a, b| {
-        b.height.cmp(&a.height).then_with(|| b.width.cmp(&a.width)).then_with(|| a.name.cmp(&b.name))
+        b.height
+            .cmp(&a.height)
+            .then_with(|| b.width.cmp(&a.width))
+            .then_with(|| a.name.cmp(&b.name))
     });
     for input in &sorted {
         if input.width == 0 || input.height == 0 {
@@ -647,7 +693,14 @@ pub fn pack_atlas(inputs: &[AtlasInput], max_size: u32, padding: u32) -> Result<
         let mut row_end: HashMap<usize, u32> = HashMap::new();
         for (placed_index, x, y) in &placements {
             let shelf = shelves.iter().position(|(sy, _)| *sy == *y).unwrap_or(0);
-            row_end.insert(shelf, row_end.get(&shelf).copied().unwrap_or(0).max(x + sorted[*placed_index].width + padding * 2));
+            row_end.insert(
+                shelf,
+                row_end
+                    .get(&shelf)
+                    .copied()
+                    .unwrap_or(0)
+                    .max(x + sorted[*placed_index].width + padding * 2),
+            );
         }
         for (shelf, (y, height)) in shelves.iter().enumerate() {
             if h > *height {
@@ -698,7 +751,11 @@ pub fn pack_atlas(inputs: &[AtlasInput], max_size: u32, padding: u32) -> Result<
         })
         .collect();
     entries.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(AtlasLayout { width, height, entries })
+    Ok(AtlasLayout {
+        width,
+        height,
+        entries,
+    })
 }
 
 // ─── Reimport tracking ───────────────────────────────────────────────────
@@ -739,7 +796,10 @@ impl Default for ImportSettings {
 
 impl ImportSettings {
     fn fingerprint(&self) -> u32 {
-        let text = format!("{}:{}:{}", self.texture_max, self.audio_quality, self.atlas_max);
+        let text = format!(
+            "{}:{}:{}",
+            self.texture_max, self.audio_quality, self.atlas_max
+        );
         crc32(&text.as_bytes())
     }
 }
@@ -937,6 +997,10 @@ fn describe(relative: &str, kind: crate::assets::AssetKind, bytes: &[u8]) -> (St
             }
             Err(error) => (error.clone(), vec![error]),
         },
+        crate::assets::AssetKind::Shader => (
+            format!("{} bytes, custom shader source", bytes.len()),
+            Vec::new(),
+        ),
         _ => (
             format!("{} bytes, no pipeline step", bytes.len()),
             Vec::new(),
@@ -1132,9 +1196,21 @@ mod tests {
     #[test]
     fn the_shelf_packer_lays_rows_without_overlap() {
         let inputs = vec![
-            AtlasInput { name: "b".to_string(), width: 64, height: 64 },
-            AtlasInput { name: "a".to_string(), width: 32, height: 32 },
-            AtlasInput { name: "c".to_string(), width: 100, height: 16 },
+            AtlasInput {
+                name: "b".to_string(),
+                width: 64,
+                height: 64,
+            },
+            AtlasInput {
+                name: "a".to_string(),
+                width: 32,
+                height: 32,
+            },
+            AtlasInput {
+                name: "c".to_string(),
+                width: 100,
+                height: 16,
+            },
         ];
         let layout = pack_atlas(&inputs, 256, 1).unwrap();
         assert_eq!(layout.entries.len(), 3);
@@ -1157,7 +1233,11 @@ mod tests {
 
     #[test]
     fn an_oversize_sprite_refuses_the_sheet() {
-        let inputs = vec![AtlasInput { name: "bg".to_string(), width: 5000, height: 10 }];
+        let inputs = vec![AtlasInput {
+            name: "bg".to_string(),
+            width: 5000,
+            height: 10,
+        }];
         assert!(pack_atlas(&inputs, 2048, 0).is_err());
     }
 

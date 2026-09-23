@@ -15,6 +15,7 @@
 //! project invents - `Health { hp, armour }` - which blocks, scripts and the
 //! inspector all read and write by name.
 
+use crate::material::{ParticleSpec, SurfaceMaterial, TrailSpec};
 use crate::scene::{Physics, Placement, Visual};
 use crate::value::Evaluated;
 use serde::{Deserialize, Serialize};
@@ -22,7 +23,7 @@ use serde::{Deserialize, Serialize};
 /// The components every project knows about by name. A custom component
 /// can't take one of these names.
 pub const BUILT_IN_NAMES: &[&str] = &[
-    "Place", "Look", "Render", "Body", "Camera", "Script", "Parent",
+    "Place", "Look", "Render", "Body", "Camera", "Script", "Parent", "Material", "Emitter", "Trail",
 ];
 
 /// One component on an actor. Serialized internally-tagged, so a component
@@ -35,8 +36,14 @@ pub enum ActorComponent {
     Place { placement: Placement },
     /// What the actor looks like, and so what shape it collides with.
     Look { visual: Visual },
-    /// Whether the actor is drawn. Absent means visible.
-    Render { visible: bool },
+    /// Whether the actor is drawn, and how it sorts. Absent means visible
+    /// on layer 0. In 2D a higher layer draws on top: the final depth is
+    /// the placement's z plus the layer.
+    Render {
+        visible: bool,
+        #[serde(default)]
+        layer: i32,
+    },
     /// A rigid body and collider. Absent means blocks move the actor and
     /// nothing else does.
     Body { physics: Physics },
@@ -65,6 +72,14 @@ pub enum ActorComponent {
         #[serde(default)]
         fields: Vec<ComponentField>,
     },
+    /// What the surface is made of: PBR properties and optional custom
+    /// shader effect. Absent means flat color or plain image.
+    Material { material: SurfaceMaterial },
+    /// A particle emitter: sparks, smoke, splash. Runs while attached, so
+    /// `detach` doubles as the stop button for a burst.
+    Emitter { emitter: ParticleSpec },
+    /// A motion trail: fading snapshots of where the actor just was.
+    Trail { trail: TrailSpec },
 }
 
 impl ActorComponent {
@@ -78,6 +93,9 @@ impl ActorComponent {
             ActorComponent::Camera { .. } => "Camera",
             ActorComponent::Script { .. } => "Script",
             ActorComponent::Parent { .. } => "Parent",
+            ActorComponent::Material { .. } => "Material",
+            ActorComponent::Emitter { .. } => "Emitter",
+            ActorComponent::Trail { .. } => "Trail",
             ActorComponent::Custom { name, .. } => name,
         }
     }
@@ -184,7 +202,10 @@ impl Components {
                 placement: Placement::default(),
             },
             ActorComponent::Look { visual },
-            ActorComponent::Render { visible: true },
+            ActorComponent::Render {
+                visible: true,
+                layer: 0,
+            },
         ])
     }
 
@@ -295,13 +316,51 @@ impl Components {
     /// Whether the actor is drawn. An actor with no `Render` is visible.
     pub fn visible(&self) -> bool {
         match self.get("Render") {
-            Some(ActorComponent::Render { visible }) => *visible,
+            Some(ActorComponent::Render { visible, .. }) => *visible,
             _ => true,
         }
     }
 
     pub fn set_visible(&mut self, visible: bool) {
-        self.insert(ActorComponent::Render { visible });
+        let layer = self.layer();
+        self.insert(ActorComponent::Render { visible, layer });
+    }
+
+    /// The 2D sort layer. An actor with no `Render` sorts on layer 0.
+    pub fn layer(&self) -> i32 {
+        match self.get("Render") {
+            Some(ActorComponent::Render { layer, .. }) => *layer,
+            _ => 0,
+        }
+    }
+
+    pub fn set_layer(&mut self, layer: i32) {
+        let visible = self.visible();
+        self.insert(ActorComponent::Render { visible, layer });
+    }
+
+    /// The surface material, if the actor carries one.
+    pub fn material(&self) -> Option<&SurfaceMaterial> {
+        match self.get("Material") {
+            Some(ActorComponent::Material { material }) => Some(material),
+            _ => None,
+        }
+    }
+
+    /// The particle emitter, if the actor carries one.
+    pub fn emitter(&self) -> Option<&ParticleSpec> {
+        match self.get("Emitter") {
+            Some(ActorComponent::Emitter { emitter }) => Some(emitter),
+            _ => None,
+        }
+    }
+
+    /// The motion trail, if the actor carries one.
+    pub fn trail(&self) -> Option<&TrailSpec> {
+        match self.get("Trail") {
+            Some(ActorComponent::Trail { trail }) => Some(trail),
+            _ => None,
+        }
     }
 
     pub fn camera(&self) -> Option<&CameraAttach> {

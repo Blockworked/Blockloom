@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::input::InputConfig;
 use crate::sound::SoundMixer;
 
 /// Which dimension a project runs in. Blocks are written once and mean the
@@ -86,11 +87,17 @@ pub enum Visual {
         tint: String,
         scale: [f32; 3],
     },
+    /// A tilemap: a grid of tiles over one tileset image (see
+    /// [`crate::material::Tilemap`]). Flat in 2D, a standing wall in 3D.
+    Tilemap {
+        tilemap: crate::material::Tilemap,
+    },
 }
 
 impl Visual {
     /// True for the 3D visuals - a project in the wrong mode still loads,
-    /// and the runtime just won't have anything to draw it with.
+    /// and the runtime just won't have anything to draw it with. A tilemap
+    /// renders in both, so it counts as neither for mode switches.
     pub fn is_3d(&self) -> bool {
         matches!(
             self,
@@ -111,7 +118,7 @@ impl Visual {
             | Visual::Capsule { color, .. }
             | Visual::Plane { color, .. } => Some(color),
             Visual::Model { tint, .. } => Some(tint),
-            Visual::Image { .. } => None,
+            Visual::Image { .. } | Visual::Tilemap { .. } => None,
         }
     }
 
@@ -124,7 +131,7 @@ impl Visual {
             | Visual::Capsule { color, .. }
             | Visual::Plane { color, .. } => *color = next,
             Visual::Model { tint, .. } => *tint = next,
-            Visual::Image { .. } => {}
+            Visual::Image { .. } | Visual::Tilemap { .. } => {}
         }
     }
 }
@@ -169,6 +176,28 @@ pub struct Physics {
     /// weighs this however big it is. `None` lets shape and density decide.
     #[serde(default)]
     pub mass: Option<f32>,
+    /// A trigger collider senses overlap without pushing back: it still fires
+    /// `when I touch` and answers `touching?`, but the solver never resolves
+    /// a contact against it. What a coin, a goal zone or a vision cone wants.
+    #[serde(default)]
+    pub trigger: bool,
+    /// Which collision layer the actor lives on, 1-8. The solver only pairs
+    /// two bodies when each one's mask names the other's layer, so walls can
+    /// ignore the player while the player's feet still raycast against them.
+    #[serde(default = "default_layer")]
+    pub collision_layer: u8,
+    /// Bitmask of the layers this actor collides (and raycasts) with, bit
+    /// `n - 1` for layer `n`. `255` is every layer.
+    #[serde(default = "default_mask")]
+    pub collision_mask: u8,
+}
+
+fn default_layer() -> u8 {
+    1
+}
+
+fn default_mask() -> u8 {
+    0xFF
 }
 
 fn one() -> f32 {
@@ -193,7 +222,40 @@ impl Default for Physics {
             friction: 0.5,
             density: 1.0,
             mass: None,
+            trigger: false,
+            collision_layer: 1,
+            collision_mask: 0xFF,
         }
+    }
+}
+
+/// Eight layers, Godot-style: an actor lives on exactly one, and its mask
+/// names which ones it pairs with.
+pub const COLLISION_LAYERS: u8 = 8;
+
+impl Physics {
+    /// The actor's layer clamped to 1-8, so a stray document value can't
+    /// shift a bit out of the mask.
+    pub fn layer(self) -> u8 {
+        self.collision_layer.clamp(1, COLLISION_LAYERS)
+    }
+
+    /// The rapier membership bit for [`Physics::layer`].
+    pub fn layer_bits(self) -> u32 {
+        1 << (self.layer() - 1)
+    }
+
+    /// Whether this actor's mask names `layer`.
+    pub fn sees_layer(self, layer: u8) -> bool {
+        let layer = layer.clamp(1, COLLISION_LAYERS);
+        self.collision_mask & (1 << (layer - 1)) != 0
+    }
+
+    /// Whether two physics settings would interact: each one's mask names
+    /// the other's layer. Raycasts use the querier's half; the solver uses
+    /// both.
+    pub fn interacts(self, other_layer: u8) -> bool {
+        self.sees_layer(other_layer)
     }
 }
 
@@ -347,6 +409,15 @@ pub struct Lighting {
     /// it costs GPU time and changes the look of existing projects.
     #[serde(default)]
     pub ao_enabled: bool,
+    /// Shadow map size per cascade, in pixels. Must be a power of two;
+    /// larger is crisper and hungrier. Bevy's own default is 2048.
+    #[serde(default = "default_shadow_map_size")]
+    pub shadow_map_size: u32,
+    /// Depth bias fighting shadow acne. Small positive values lift the
+    /// shadow off the surface; too much makes shadows detach. The normal
+    /// bias stays at Bevy's own default.
+    #[serde(default = "default_shadow_bias")]
+    pub shadow_bias: f32,
 }
 
 fn default_light_direction() -> [f32; 3] {
@@ -367,6 +438,14 @@ fn default_ambient_brightness() -> f32 {
     80.0
 }
 
+fn default_shadow_map_size() -> u32 {
+    2048
+}
+
+fn default_shadow_bias() -> f32 {
+    0.02
+}
+
 impl Default for Lighting {
     fn default() -> Self {
         Self {
@@ -376,7 +455,118 @@ impl Default for Lighting {
             ambient_color: default_light_color(),
             ambient_brightness: default_ambient_brightness(),
             ao_enabled: false,
+            shadow_map_size: default_shadow_map_size(),
+            shadow_bias: default_shadow_bias(),
         }
+    }
+}
+
+/// Which tonemapper the camera ends with. Bevy's default is TonyMcMapface,
+/// so keeping that default means an old project looks exactly like it used
+/// to; the rest are looks to choose on purpose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum TonemapName {
+    None,
+    Reinhard,
+    ReinhardLuminance,
+    AcesFitted,
+    #[default]
+    TonyMcMapface,
+    Filmic,
+}
+
+impl TonemapName {
+    /// Every mapper, in the order the project settings dialog lists them.
+    pub const ALL: &[TonemapName] = &[
+        TonemapName::TonyMcMapface,
+        TonemapName::None,
+        TonemapName::Reinhard,
+        TonemapName::ReinhardLuminance,
+        TonemapName::AcesFitted,
+        TonemapName::Filmic,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            TonemapName::None => "None",
+            TonemapName::Reinhard => "Reinhard",
+            TonemapName::ReinhardLuminance => "ReinhardLuminance",
+            TonemapName::AcesFitted => "AcesFitted",
+            TonemapName::TonyMcMapface => "TonyMcMapface",
+            TonemapName::Filmic => "Filmic",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<TonemapName> {
+        match name.trim() {
+            "None" => Some(TonemapName::None),
+            "Reinhard" => Some(TonemapName::Reinhard),
+            "ReinhardLuminance" => Some(TonemapName::ReinhardLuminance),
+            "AcesFitted" => Some(TonemapName::AcesFitted),
+            "TonyMcMapface" => Some(TonemapName::TonyMcMapface),
+            "Filmic" => Some(TonemapName::Filmic),
+            _ => None,
+        }
+    }
+}
+
+/// Post-process on the world camera, in both dimensions. Everything off or
+/// neutral reads exactly like no post pass, so old projects don't change.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PostProcess {
+    /// Camera exposure in EV100. 9.7 is Bevy's own default; lower is brighter.
+    #[serde(default = "default_exposure")]
+    pub exposure_ev: f32,
+    #[serde(default)]
+    pub tonemapping: TonemapName,
+    /// Bloom: emissive surfaces and bright lights glow.
+    #[serde(default)]
+    pub bloom_enabled: bool,
+    #[serde(default = "default_bloom_threshold")]
+    pub bloom_threshold: f32,
+    #[serde(default = "default_bloom_intensity")]
+    pub bloom_intensity: f32,
+    /// Vignette: darkened corners, 0 for off.
+    #[serde(default)]
+    pub vignette_strength: f32,
+}
+
+fn default_exposure() -> f32 {
+    9.7
+}
+
+fn default_bloom_threshold() -> f32 {
+    1.0
+}
+
+fn default_bloom_intensity() -> f32 {
+    0.15
+}
+
+impl Default for PostProcess {
+    fn default() -> Self {
+        Self {
+            exposure_ev: default_exposure(),
+            tonemapping: TonemapName::default(),
+            bloom_enabled: false,
+            bloom_threshold: default_bloom_threshold(),
+            bloom_intensity: default_bloom_intensity(),
+            vignette_strength: 0.0,
+        }
+    }
+}
+
+impl PostProcess {
+    pub fn normalize(&mut self) {
+        self.exposure_ev = self.exposure_ev.clamp(0.0, 20.0);
+        self.bloom_threshold = self.bloom_threshold.max(0.0);
+        self.bloom_intensity = self.bloom_intensity.clamp(0.0, 1.0);
+        self.vignette_strength = self.vignette_strength.clamp(0.0, 1.0);
+    }
+
+    /// True when any pass would change a pixel.
+    pub fn is_active(&self) -> bool {
+        *self != PostProcess::default()
     }
 }
 
@@ -405,6 +595,14 @@ pub struct World {
     /// scale against, and what the project settings dialog edits.
     #[serde(default)]
     pub sound: SoundMixer,
+    /// Named input actions and the bindings that drive them. What the
+    /// `action` reporters read and `when action pressed` fires on.
+    #[serde(default)]
+    pub input: InputConfig,
+    /// Post-process on the world camera: exposure, tonemapping, bloom and
+    /// vignette. Neutral by default, so old projects look the same.
+    #[serde(default)]
+    pub post: PostProcess,
 }
 
 fn default_background() -> String {
@@ -433,6 +631,8 @@ impl Default for World {
             speech_bubble: SpeechBubbleStyle::default(),
             lighting: Lighting::default(),
             sound: SoundMixer::default(),
+            input: InputConfig::default(),
+            post: PostProcess::default(),
         }
     }
 }
@@ -471,9 +671,39 @@ mod tests {
         world.lighting.light_direction = [4.0, 10.0, -6.0];
         world.lighting.illuminance = 5000.0;
         world.lighting.ao_enabled = true;
+        world.lighting.shadow_map_size = 1024;
+        world.lighting.shadow_bias = 0.05;
 
         let json = serde_json::to_string(&world).unwrap();
         assert_eq!(serde_json::from_str::<World>(&json).unwrap(), world);
+    }
+
+    #[test]
+    fn an_older_world_gets_neutral_post_and_shadow_defaults() {
+        let world: World = serde_json::from_str("{}").unwrap();
+        assert_eq!(world.post, PostProcess::default());
+        assert!(!world.post.is_active());
+        assert_eq!(world.lighting.shadow_map_size, 2048);
+        for name in ["None", "Reinhard", "AcesFitted", "TonyMcMapface", "Filmic"] {
+            assert!(TonemapName::parse(name).is_some(), "{name}");
+        }
+        assert_eq!(TonemapName::parse("nope"), None);
+    }
+
+    #[test]
+    fn post_process_round_trip_and_clamps() {
+        let mut post = PostProcess {
+            exposure_ev: 99.0,
+            bloom_enabled: true,
+            vignette_strength: 2.0,
+            ..PostProcess::default()
+        };
+        post.normalize();
+        assert_eq!(post.exposure_ev, 20.0);
+        assert_eq!(post.vignette_strength, 1.0);
+        assert!(post.is_active());
+        let json = serde_json::to_string(&post).unwrap();
+        assert_eq!(serde_json::from_str::<PostProcess>(&json).unwrap(), post);
     }
 
     #[test]
@@ -494,6 +724,28 @@ mod tests {
         assert_eq!(physics.friction, 0.2);
         assert_eq!(physics.density, 1.0);
         assert_eq!(physics.mass, None);
+    }
+
+    #[test]
+    fn an_old_physics_is_a_solid_on_layer_one_seeing_everything() {
+        let physics: Physics = serde_json::from_str(r#"{"body": "Dynamic"}"#).unwrap();
+        assert!(!physics.trigger);
+        assert_eq!(physics.collision_layer, 1);
+        assert_eq!(physics.collision_mask, 0xFF);
+        assert_eq!(physics.layer(), 1);
+        assert!(physics.sees_layer(8));
+    }
+
+    #[test]
+    fn layers_clamp_and_masks_filter() {
+        let physics = Physics {
+            collision_layer: 99,
+            collision_mask: 0b0000_0010,
+            ..Physics::default()
+        };
+        assert_eq!(physics.layer(), 8);
+        assert!(!physics.sees_layer(1));
+        assert!(physics.sees_layer(2));
     }
 
     #[test]

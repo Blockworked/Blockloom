@@ -48,7 +48,7 @@ const BLOCK_GROUPS: { label: string; types: InstructionType[] }[] = [
     label: 'Motion',
     types: ['Move', 'GoTo', 'NavigateTo', 'ChangePosition', 'Glide', 'Turn', 'SetRotation', 'PointTowards', 'SetScale'],
   },
-  { label: 'Physics', types: ['SetBody', 'ApplyImpulse', 'SetVelocity', 'SetGravity', 'SetDensity', 'SetMass'] },
+  { label: 'Physics', types: ['SetBody', 'ApplyImpulse', 'SetVelocity', 'SetGravity', 'SetDensity', 'SetMass', 'SetTrigger', 'SetCollisionLayer', 'SetCollisionMask'] },
   { label: 'Looks', types: ['Say', 'SetVisible', 'SetColor'] },
   {
     label: 'Sound',
