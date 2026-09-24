@@ -12,9 +12,20 @@ path = "src/main.rs"
 blockloom-core = { path = "../blockloom-core" }
 blockloom-protocol = { path = "../blockloom-protocol" }
 polyanya.workspace = true
-# The tray calls ogg/wav/mp3/flac all audio, so the runtime decodes all of
-# them: vorbis already rides with bevy's default `audio` feature.
-bevy = { workspace = true, features = ["wav", "mp3", "flac"] }
+bevy = { workspace = true, features = [
+    "wav",
+    "mp3",
+    "flac",
+    "bmp",
+    "dds",
+    "gif",
+    "jpeg",
+    "png",
+    "tga",
+    "webp",
+    "ktx2",
+    "basis-universal"
+] }
 bevy_rapier2d.workspace = true
 bevy_rapier3d.workspace = true
 image.workspace = true

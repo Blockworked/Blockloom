@@ -370,6 +370,14 @@ impl Backend {
                 arg(&args, "targetId")?,
                 arg::<InstrPath>(&args, "path")?,
             )?),
+            "merge_tail" => to_json(commands::merge_tail(
+                state,
+                app,
+                arg(&args, "strandId")?,
+                arg::<InstrPath>(&args, "path")?,
+                arg(&args, "targetId")?,
+                arg::<InstrPath>(&args, "targetPath")?,
+            )?),
 
             // ── Values ─────────────────────────────────────────────────────
             "edit_value_field" => to_json(commands::edit_value_field(

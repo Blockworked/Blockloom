@@ -1017,6 +1017,34 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             },
         ],
     },
+    CommandSpec {
+        name: "merge-tail",
+        cmd: "merge_tail",
+        aliases: &["merge_tail"],
+        summary: "Move a stack's tail from a path onto another stack at a path.",
+        args: &[
+            ArgSpec {
+                name: "strandId",
+                ty: "id",
+                required: true,
+            },
+            ArgSpec {
+                name: "path",
+                ty: "[{index, slot?}] address",
+                required: true,
+            },
+            ArgSpec {
+                name: "targetId",
+                ty: "id",
+                required: true,
+            },
+            ArgSpec {
+                name: "targetPath",
+                ty: "[{index, slot?}] address",
+                required: true,
+            },
+        ],
+    },
     // ── Canvas: values ────────────────────────────────────────────────────
     CommandSpec {
         name: "edit-value-field",

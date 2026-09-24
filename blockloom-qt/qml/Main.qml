@@ -1,0 +1,109 @@
+import QtQuick
+import QtQuick.Controls
+import com.blockworked.Blockstitch 1.0
+import com.blockworked.Blockloom 1.0
+
+// Two pages: the Dashboard the app starts on, and the editor a project opens
+// into. `appState` is the one copy of backend state, replaced wholesale
+// whenever the backend publishes a new snapshot; nothing here edits it.
+ApplicationWindow {
+    id: root
+    width: 1480
+    height: 920
+    minimumWidth: 1000
+    minimumHeight: 640
+    visible: true
+    title: appState.project ? appState.project.name + " - Blockloom" : "Blockloom"
+    color: Theme.window
+
+    // Keep every control on the app theme instead of the system palette.
+    palette {
+        window: Theme.panel; windowText: Theme.text; base: Theme.field; text: Theme.text
+        button: Theme.panelRaised; buttonText: Theme.text; highlight: Theme.accent; highlightedText: "white"
+        placeholderText: Theme.textDim; toolTipBase: Theme.panelRaised; toolTipText: Theme.text
+        mid: Theme.border; dark: Theme.borderSoft; light: Theme.panelRaised; shadow: "#000000"
+    }
+
+    property var appState: ({
+        library: [], default_project_location: "", project_path: null, project: null, selected_actor: null,
+        can_undo: false, can_redo: false, invalid_field_buffers: [], running: false, paused: false, status: null,
+        log: [], runtime_available: true, runtime_open: false, preview_enabled: false, preview_headless: false,
+        preview_port: null, preview_width: 480, preview_height: 270
+    })
+    readonly property var openActor: Blocks.actor
+    // The tray entry being dragged onto an asset box, and the boxes that take one.
+    property var assetDrag: null
+    property var assetTargets: []
+
+    readonly property string previewFrame: bridge.previewFrame
+    readonly property string appVersion: bridge.appVersion
+    function watchPreview(port) { bridge.watchPreview(port); }
+
+    // ─── Talking to the backend ────────────────────────────────────────────
+    property var pending: ({})
+    property int nextToken: 1
+    // Runs a backend command. `done(result)` on success; a failure goes to
+    // `failed(error)`, or to the error bar when no handler was given.
+    function invoke(command, args, done, failed) {
+        const token = nextToken++;
+        pending[token] = { command: command, done: done, failed: failed };
+        bridge.invokeCommand(token, command, JSON.stringify(args || {}));
+    }
+    function showError(text) { errorBar.text = String(text); errorBar.visible = true; errorTimer.restart(); }
+    function toFileUrl(path) {
+        if (!path) return "";
+        const p = String(path).replace(/\\/g, "/");
+        return p.startsWith("/") ? "file://" + p : "file:///" + p;
+    }
+    function fromFileUrl(url) {
+        let s = decodeURIComponent(String(url));
+        if (s.startsWith("file:///") && /^file:\/\/\/[A-Za-z]:/.test(s)) return s.slice(8);
+        return s.startsWith("file://") ? s.slice(7) : s;
+    }
+    // An asset path relative to the open project folder, as a file URL.
+    function assetUrl(path) { return path && appState.project_path ? toFileUrl(appState.project_path + "/" + path) : ""; }
+
+    AppBridge {
+        id: bridge
+        onStateJsonChanged: {
+            try { root.appState = JSON.parse(stateJson); }
+            catch (error) { console.warn("Invalid Blockloom state", error); return; }
+            Blocks.appState = root.appState;
+        }
+        onReplied: (token, response) => {
+            const call = root.pending[token];
+            delete root.pending[token];
+            let reply;
+            try { reply = JSON.parse(response); } catch (error) { reply = { ok: false, error: String(error) }; }
+            if (reply.ok) { if (call && call.done) call.done(reply.result); }
+            else if (call && call.failed) call.failed(reply.error);
+            else { console.warn((call ? call.command : "command") + " failed:", reply.error); root.showError(reply.error); }
+        }
+    }
+    Component.onCompleted: bridge.start()
+    onClosing: bridge.shutdown()
+
+    // Undo and redo, unless a text field wants the keys for itself.
+    Shortcut { sequences: [StandardKey.Undo]; enabled: !!root.appState.project; onActivated: root.invoke("undo") }
+    Shortcut { sequences: [StandardKey.Redo, "Ctrl+Y"]; enabled: !!root.appState.project; onActivated: root.invoke("redo") }
+    Shortcut { sequences: [StandardKey.Save]; enabled: !!root.appState.project; onActivated: root.invoke("save_project") }
+
+    Loader {
+        id: pageLoader
+        anchors.fill: parent
+        sourceComponent: root.appState.project ? editorComponent : dashboardComponent
+    }
+    Component { id: dashboardComponent; Dashboard { app: root } }
+    Component { id: editorComponent; EditorPage { app: root } }
+
+    Rectangle {
+        id: errorBar
+        property alias text: errorText.text
+        visible: false
+        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+        height: Math.max(38, errorText.implicitHeight + 16); color: "#4b2225"; z: 200
+        Text { id: errorText; anchors.left: parent.left; anchors.right: closeError.left; anchors.margins: 14; anchors.verticalCenter: parent.verticalCenter; color: "#ffb5b5"; font.pixelSize: 13; wrapMode: Text.WordWrap }
+        BwButton { id: closeError; anchors.right: parent.right; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter; iconName: "x"; text: ""; flat: true; implicitWidth: 28; implicitHeight: 28; onClicked: errorBar.visible = false }
+        Timer { id: errorTimer; interval: 8000; onTriggered: errorBar.visible = false }
+    }
+}

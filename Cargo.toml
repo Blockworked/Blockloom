@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "src-tauri",
+    "blockloom-qt",
     "blockloom-app",
     "blockloom-core",
     "blockloom-protocol",
@@ -9,6 +9,7 @@ members = [
 resolver = "2"
 
 default-members = [
+    "blockloom-qt",
     "blockloom-app",
     "blockloom-core",
     "blockloom-protocol",
@@ -24,9 +25,6 @@ blockstitch-core = {
     #rev = "eb9fa2cb"
     path = "../blockstitch/crates/blockstitch-core"
 }
-tauri = { git = "https://github.com/Blockworked/tauri", rev = "769171ab" }
-tauri-build = { git = "https://github.com/Blockworked/tauri", rev = "769171ab", features = [] }
-tauri-runtime-cef = { git = "https://github.com/Blockworked/tauri", rev = "769171ab", default-features = false }
 bevy = "0.19.1"
 bevy_rapier2d = "0.36.0"
 bevy_rapier3d = "0.36.0"
@@ -42,20 +40,12 @@ base64 = "0.22.1"
 glam = "0.32"
 polyanya = { version = "0.17", default-features = false }
 libloading = "0.9.0"
-rfd = "0.17.2"
 axum = { version = "0.8.9", features = ["ws"] }
 tower-http = { version = "0.7.1", features = ["cors"] }
 image = { version = "0.25.10", default-features = false, features = ["bmp", "dds", "gif", "jpeg", "png", "tga", "webp"] }
 ico = "0.5.0"
 flate2 = "1.1.10"
 crc32fast = "1.5.2"
-
-# The CEF runtime and the `cef` bindings are forks, pinned the same way
-# Blockwork pins them - see that repo's Cargo.toml.
-[patch.crates-io]
-cef = { git = "https://github.com/Blockworked/cef-rs", rev = "b8fad92" }
-cef-dll-sys = { git = "https://github.com/Blockworked/cef-rs", rev = "b8fad92" }
-dpi = { git = "https://github.com/tauri-apps/winit-gtk4", branch = "master" }
 
 # The runtime process renders a live game world; a debug-speed Bevy is
 # unusable, so its dependencies stay optimized even in a debug build.

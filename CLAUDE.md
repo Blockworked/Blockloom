@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Blockloom is a Tauri desktop app (Windows/Linux/macOS) for building games out
+Blockloom is a Qt/QML desktop app (Windows/Linux/macOS) for building games out
 of blocks - a Scratch-style block editor driving a real game world, in 2D or
 in 3D. A project is a world plus a set of actors, each with its own block
 canvas; pressing Play opens the world in a Bevy window and runs those blocks
@@ -33,48 +33,35 @@ defaults.
 - NEVER use em-dashes (-) in comments, code, docs, or commit messages. Use a normal hyphen (-) instead.
 - Write comments like a human: short and terse, 1-2 lines. State what and why briefly. No multi-paragraph essays, no history lessons ("Previously..."), no dangling "see X docs" pointers unless X exists.
 
-### Frontend (`ui/`, Vue 3 + TypeScript + Vite, pnpm)
+### Frontend (`blockloom-qt/qml/`, QML)
 
-You almost never need to build the frontend by hand: `src-tauri/build.rs` runs
-`pnpm install && pnpm run build` before *every* `cargo build`/`cargo run`
-(debug or release), so `ui/dist` is always current. Manual commands, if needed:
-
-```bash
-cd ui && pnpm run build   # vue-tsc --noEmit && vite build
-cd ui && pnpm run dev     # Vite alone (see dev-bridge below to make it functional)
-```
+The QML is compiled into the binary by `blockloom-qt/build.rs` (cxx-qt's
+`CxxQtBuilder` + qmlcachegen), so a plain `cargo build` picks up every edit.
+It needs Qt 6 with Quick, QuickControls2, QuickDialogs2 and Multimedia; use
+Qt 6's `qml`/`qmlls` (`/usr/lib/qt6/bin` on Arch), not Qt 5's. A new `.qml`
+file must also be listed in `build.rs`'s `QmlModule`.
 
 ### Local `blockstitch` development
 
-`blockstitch` is a separate sibling repo with two halves, both shared with any
-other app built on the same block editor and both pinned to the same commit:
+`blockstitch` is a separate sibling repo shared with any other app built on
+the same block editor. Two halves of it are used here:
 
-- the Vue component/theming library, a git dependency in `ui/package.json`;
 - `crates/blockstitch-core`, the Rust backend (value system, document model,
-  editor operations), a git dependency in the root `Cargo.toml`.
+  editor operations), a git dependency in the root `Cargo.toml`;
+- the QML block canvas and controls (`blockstitch-qml`, module
+  `com.blockworked.Blockstitch`), a path dependency on `../blockstitch` in
+  `blockloom-qt/Cargo.toml`, so that checkout has to exist beside this one.
 
-To iterate on either half locally without hand-patching `node_modules`:
+To build against a local checkout of the Rust half too:
 
 ```bash
 just blockstitch-local [path]        # default path: ../../blockstitch, relative to ui/
-just blockstitch-published [commit]  # restore the pinned commit, or move both halves to a new one
+just blockstitch-published [commit]  # restore the pinned commit, or move to a new one
 ```
 
-### Browser-driven dev workflow (`dev-bridge`)
-
-```bash
-just dev-backend    # the real backend + an HTTP/WS bridge on 127.0.0.1:4128
-just dev-ui         # Vite alone; then open http://localhost:1420
-```
-
-`ui/src/bridge.ts` picks between the real Tauri `invoke` and this HTTP bridge
-based on whether `window.__TAURI_INTERNALS__` exists, so the same frontend code
-runs against the real backend in a plain browser tab - no relaunching the CEF
-window after every UI tweak. Both paths end in `Backend::dispatch`
-(`blockloom-app/src/dispatch.rs`), so a new command added to
-`blockloom-app/src/commands.rs` only needs an arm there (argument names in
-camelCase, as the frontend sends them) to be reachable from either. Play works
-from the browser too: the backend spawns the same runtime process.
+The old Vue frontend (`ui/`) and its Tauri shell (`src-tauri/`) are still in
+the tree but out of the workspace, as are the browser dev bridge recipes
+(`just dev-backend`/`dev-ui`) that serve it. Nothing new goes there.
 
 ### AI/CLI shell (`blockloom-shell`)
 
@@ -124,25 +111,24 @@ Build/test with `cd mcp && pnpm install && pnpm run build && pnpm test`.
 
 Two processes: the editor window, and the game world.
 
-- **`src-tauri`** (package `blockloom`) - the editor window and the app's entry
-  point. Uses a custom CEF runtime (`tauri-runtime-cef` + the `cef` crate, both
-  forks pinned via git `rev`/`[patch.crates-io]` in the root `Cargo.toml`)
-  instead of Tauri's default wry/webview. It owns `blockloom-app` directly -
-  there is no daemon - and forwards every frontend command through its one
-  `call` command. Command responses include the resulting state directly;
-  runtime-only changes are also sent through the `state-updated` event. Only
-  window-local things live here (`reset_zoom`, the `.blockloom` file dialogs,
-  the pre-paint background color in `theme.rs`).
+- **`blockloom-qt`** (package `blockloom`) - the editor window and the app's
+  entry point: Qt Quick over cxx-qt. It owns `blockloom-app` directly - there
+  is no daemon. `src/app_bridge.rs` is the one QObject QML talks to:
+  `invokeCommand` runs a `Backend::dispatch` command on a worker thread, in
+  order, and answers with `replied(token, {ok, result, error})`; state the
+  backend publishes lands in the `stateJson` property, coalesced per burst.
+  `src/preview.rs` follows the runtime's MJPEG preview stream into
+  `previewFrame`.
 - **`blockloom-app`** - the backend: `src/commands.rs` holds every command,
   `src/dispatch.rs` maps command names + JSON args onto them, `src/state.rs`
   holds `SharedState`/`AppState` and the snapshot the frontend gets, and
-  `src/runtime.rs` is the game runtime's leash. No Tauri dependency, so the
+  `src/runtime.rs` is the game runtime's leash. No Qt dependency, so the
   dev bridge (`src/bin/devserver.rs`, feature `dev-bridge`) hosts the same code.
   Commands publish changes through `AppHandle`, a plain callback the host
   supplies.
 - **`blockloom-runtime`** - the game world: a Bevy app that renders one project
   and runs its blocks. A separate process because Bevy needs its own window and
-  event loop and the editor's CEF runtime already owns one. `--mode 2d|3d`
+  event loop and the editor's Qt one already owns the process. `--mode 2d|3d`
   decides which physics/render pipeline is built, so the editor restarts it when
   a project switches dimension. `src/world.rs` holds the dimension-agnostic
   systems, `src/dim2.rs`/`src/dim3.rs` the sprite/`bevy_rapier2d` and
@@ -568,26 +554,24 @@ Pointer lock is fully manual: game code unlocks around a menu and re-locks on
 close. The one safety net is that showing a modal while the pointer is locked
 logs a warning, since a locked hidden cursor can't press anything.
 
-### Frontend (`ui/`)
+### Frontend (`blockloom-qt/qml/`)
 
-Vue 3 + TypeScript + Vite, package-managed with pnpm. `src-tauri/tauri.conf.json`
-points `frontendDist` at `ui/dist`. Key files: `store.ts` (the one copy of
-backend state), `tauri.ts` (one function per command) over `bridge.ts` (the
-Tauri/dev-bridge switch), `blockstitchSetup.ts` (the single wiring point into
-blockstitch), and `blockFields.ts`, which is where a block's row comes from:
-every block is described once as a list of pieces (a label, a value slot, a
-dropdown, a nested body) and two factories turn that into the canvas component
-and the sidebar-prefab component. **Adding a block means adding a variant to
-`InstructionKind`, a row to `BLOCK_SPECS`, an icon and label in `icons.ts`, a
+`Main.qml` holds the one copy of backend state (`appState`, parsed from
+`bridge.stateJson`) and `invoke(command, args, done, failed)`, which every
+other file calls. `Blocks.qml` (a singleton) is the single wiring point into
+blockstitch and where a block's row comes from: every block is described once
+as a list of pieces (a label, a value slot, a dropdown, a text field) and
+registered with blockstitch's `BlockRegistry`, which both the canvas and the
+palette read. **Adding a block means adding a variant to `InstructionKind`, a
+row and an icon in `Blocks.qml`'s `buildRows()`, a label in its `labels`, a
 field id if it has value slots, and a `Step`/`Effect` if it does something
-new** - not a pair of `.vue` files. The
-two blocks whose row comes from a `BlockDef` rather than their type
-(`BlockHeader`, `CallBlock`) are still hand-written, in `components/fields/`.
+new** - not a new QML file. `BlockHeader` and `CallBlock` take their row from
+a `BlockDef` rather than their type, which blockstitch draws itself.
 
-The asset tray along the bottom (`components/AssetTray.vue`) is a file manager
+The asset tray along the bottom (`AssetTray.qml`) is a file manager
 over the project folder: it lists, makes, imports, renames, moves and deletes
-files, and an asset dragged out of it lands on any input wrapped in
-`AssetDrop.vue` (the Look component's Image, the Script component's path).
+files, and an asset dragged out of it lands on any
+`AssetField.qml` (the Look component's Image, the Script component's path).
 Asset paths are relative to the project folder with forward slashes
 (`assets/sprites/player.png`), the same spelling `Script` uses, and
 `Project::repoint_asset` follows a renamed or moved file through the document
@@ -605,7 +589,7 @@ lists; names and dimensions are read back off disk, never cached there. With
 under it. `blockloom-core/src/library.rs` is that list, including the one-time
 migration of pre-folder `<id>.blockloom` files.
 
-The app opens on the Dashboard (`ui/src/components/Dashboard.vue`); the editor
+The app opens on the Dashboard (`Dashboard.qml`); the editor
 appears once a project is open, and `state.project` being null is what decides
 which of the two shows. Every edit is still written to disk right after it
 lands.

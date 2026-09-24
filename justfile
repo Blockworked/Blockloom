@@ -15,7 +15,6 @@ TARGET := "target/release/blockloom"
 [windows]
 TARGET := "target/release/blockloom.exe"
 
-CEF_DIR := "target/release"
 LIBDIR := "/usr/lib/blockloom"
 
 mkdir-cargo := if os() == "windows" { 'if not exist .cargo mkdir .cargo' } else { 'mkdir -p .cargo' }
@@ -120,33 +119,18 @@ blockstitch-published commit="":
 
 [linux]
 install:
-    # The binary's RUNPATH is `$ORIGIN`, so the CEF runtime payload (libcef.so,
-    # the GL/Vulkan shims, *.pak, icudtl.dat, locales/, ...) has to live beside
-    # it in a private libdir rather than in /usr/bin.
+    # The editor starts `blockloom-runtime` from beside itself, so both live
+    # in a private libdir with a symlink on the PATH.
     sudo install -Dm0755 {{TARGET}} {{LIBDIR}}/blockloom
-    sudo install -Dm0755 {{CEF_DIR}}/blockloom-runtime {{LIBDIR}}/blockloom-runtime
-    sudo install -Dm0755 {{CEF_DIR}}/libcef.so {{LIBDIR}}/libcef.so
-    sudo install -Dm0755 {{CEF_DIR}}/libEGL.so {{LIBDIR}}/libEGL.so
-    sudo install -Dm0755 {{CEF_DIR}}/libGLESv2.so {{LIBDIR}}/libGLESv2.so
-    sudo install -Dm0755 {{CEF_DIR}}/libvk_swiftshader.so {{LIBDIR}}/libvk_swiftshader.so
-    sudo install -Dm0755 {{CEF_DIR}}/libvulkan.so.1 {{LIBDIR}}/libvulkan.so.1
-    sudo install -Dm0755 {{CEF_DIR}}/chrome-sandbox {{LIBDIR}}/chrome-sandbox
-    sudo install -Dm0644 {{CEF_DIR}}/vk_swiftshader_icd.json {{LIBDIR}}/vk_swiftshader_icd.json
-    sudo install -Dm0644 {{CEF_DIR}}/icudtl.dat {{LIBDIR}}/icudtl.dat
-    sudo install -Dm0644 {{CEF_DIR}}/v8_context_snapshot.bin {{LIBDIR}}/v8_context_snapshot.bin
-    sudo install -Dm0644 {{CEF_DIR}}/chrome_100_percent.pak {{LIBDIR}}/chrome_100_percent.pak
-    sudo install -Dm0644 {{CEF_DIR}}/chrome_200_percent.pak {{LIBDIR}}/chrome_200_percent.pak
-    sudo install -Dm0644 {{CEF_DIR}}/resources.pak {{LIBDIR}}/resources.pak
-    sudo rm -rf {{LIBDIR}}/locales
-    sudo cp -r {{CEF_DIR}}/locales {{LIBDIR}}/locales
+    sudo install -Dm0755 target/release/blockloom-runtime {{LIBDIR}}/blockloom-runtime
     sudo ln -sf {{LIBDIR}}/blockloom /usr/bin/blockloom
-    sudo install -Dm0644 res/blockloom.desktop /usr/share/applications/blockloom.desktop
+    sudo install -Dm0644 res/blockloom.desktop /usr/share/applications/com.blockworked.Blockloom.desktop
     sudo install -Dm0644 res/icons/blockloom.png /usr/share/icons/hicolor/256x256/apps/blockloom.png
 
 [linux]
 uninstall:
     sudo rm -rf {{LIBDIR}}
-    sudo rm -f /usr/bin/blockloom /usr/share/applications/blockloom.desktop /usr/share/icons/hicolor/256x256/apps/blockloom.png
+    sudo rm -f /usr/bin/blockloom /usr/share/applications/com.blockworked.Blockloom.desktop /usr/share/applications/blockloom.desktop /usr/share/icons/hicolor/256x256/apps/blockloom.png
 
 [linux]
 replace: build uninstall install

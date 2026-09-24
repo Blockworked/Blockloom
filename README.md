@@ -24,20 +24,19 @@ just build     # everything: the editor and the game runtime
 just run
 ```
 
-Requires Rust (2024 edition), `pnpm`, and the usual GTK/CEF build dependencies
-for Tauri on Linux. Build the whole workspace: the editor launches the
+Requires Rust (2024 edition), Qt 6 (Quick, Quick Controls 2, Quick Dialogs 2,
+Multimedia), and a `blockstitch` checkout beside this one. Build the whole workspace: the editor launches the
 `blockloom-runtime` binary from beside itself.
 
 ## Layout
 
 | Crate | What it is |
 | --- | --- |
-| `src-tauri` (`blockloom`) | the editor window, on a CEF runtime |
+| `blockloom-qt` (`blockloom`) | the editor window, in Qt Quick |
 | `blockloom-app` | every command the editor issues, and the state it edits |
 | `blockloom-runtime` | the game world: a Bevy app running the blocks |
 | `blockloom-core` | the shared engine: scene, blocks, VM, project files |
 | `blockloom-protocol` | the editor-to-runtime wire format |
-| `ui/` | the editor frontend (Vue 3), built on `blockstitch` |
 
 The block editor itself - canvas, dragging, snapping, the value expression
 system - is [blockstitch](https://github.com/Blockworked/blockstitch), shared

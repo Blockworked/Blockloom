@@ -2088,6 +2088,28 @@ pub(crate) fn merge_strand(
     result
 }
 
+/// Moves the tail at and after `path` in `strand_id` into `target_id` at
+/// `target_path` in one step - the Qt canvas's attach-on-drop for part of a
+/// stack, with no split-then-merge round trip.
+pub(crate) fn merge_tail(
+    state: &SharedState,
+    app: &AppHandle,
+    strand_id: String,
+    path: InstrPath,
+    target_id: String,
+    target_path: InstrPath,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let result = match graph_mut(&mut s) {
+        Some(graph) => graph.merge_tail(&strand_id, &path, &target_id, &target_path),
+        None => Ok(()),
+    };
+    auto_save(&s);
+    emit(app, &s);
+    result
+}
+
 // ─── Canvas: values ────────────────────────────────────────────────────────
 
 pub(crate) fn edit_value_field(
