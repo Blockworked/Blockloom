@@ -659,7 +659,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "export-shader",
         cmd: "export_shader",
         aliases: &["export_shader"],
-        summary: "Write an actor's custom effect out as a .wgsl asset and draw with that file from now on.",
+        summary: "Write an actor's custom effect out as a .wesl asset and draw with that file from now on.",
         args: &[
             A,
             ArgSpec {
@@ -673,7 +673,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "check-shader",
         cmd: "check_shader",
         aliases: &["check_shader"],
-        summary: "Check the .wgsl file an actor's effect draws with, and log the verdict.",
+        summary: "Check the .wesl file an actor's effect draws with, and log the verdict.",
         args: &[A],
     },
     // ── Scripts ───────────────────────────────────────────────────────────

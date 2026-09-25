@@ -457,7 +457,7 @@ doesn't press the green flag itself in a rendering world: `engine.starting`
 holds it (reported to the editor as running) and `warm_up` calls
 `world::begin_run` when the window closes, so a built player's first frame
 is warm too. A bare test world (`engine.prewarm` false) starts on the spot.
-At build time `build::check_shaders` compiles every `.wgsl` surface file the
+At build time `build::check_shaders` compiles every `.wesl` surface file the
 project draws with, and a broken one fails the build. Counts reach the
 profiler as `streaming/*`.
 
@@ -476,18 +476,23 @@ rects. Animated tiles cycle their frames on the wall clock;
 `materials::animate_tiles` rewrites only the mesh's UVs when a frame turns.
 
 A custom effect's `GraphEffect::starter_graph` is the uniform path spelled as
-graph nodes, so `export_shader` writes it to a `.wgsl` asset that draws the
-same thing. An effect whose `source` names a `.wgsl` file draws with that
-file's `graph_main(uv, time)`: `materials::surface_shader` wraps it in
-`material::SURFACE_BINDINGS` and swaps it in through the material's
-`specialize`. `check_surface_wgsl` validates a file with naga against those
-same bindings, so the editor and the GPU agree on what compiles.
+graph nodes, so `export_shader` writes it to a `.wesl` asset that draws the
+same thing. An effect whose `source` names a `.wesl` file draws with that
+file's `graph_main(uv, time)`: `material::surface_module` wraps it in the
+dimension's head, `SURFACE_BINDINGS` and fragment tail, hoisting the file's
+own imports up beside the head's (WESL wants every import before the first
+declaration), and `materials::surface_shader` swaps that in through the
+material's `specialize`. `check_surface_wesl` parses the same module, refuses
+names the wrapper already has and imports the dimension hasn't loaded, and
+runs naga's full type check when the file has no imports, so the editor and
+the GPU agree on what compiles.
 
 The built-in shaders (`src/shaders/*.wesl`) and that wrapper are WESL, since
 Bevy 0.20 hands plain WGSL to wgpu untouched: imports are `import
 bevy_pbr::render::...`, shader defs are `@if(DEF)`, and the bind group is
-`constants::MATERIAL_BIND_GROUP`. A user's surface file stays plain WGSL with
-no imports; only the wrapper around it imports Bevy's modules.
+`constants::MATERIAL_BIND_GROUP`. A user's surface file is WESL too and may
+import Bevy's own modules (`bevy_pbr` in 3D, `bevy_sprite_render` in 2D);
+a project's other files aren't modules, so `package::`/`super::` are refused.
 
 ### How a project runs
 

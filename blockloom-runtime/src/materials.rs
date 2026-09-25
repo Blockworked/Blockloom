@@ -8,7 +8,7 @@
 //! never needs the actor to do anything. A textured look keeps its image
 //! under the effect; a circle look renders its quad round.
 //!
-//! An effect whose `source` names a `.wgsl` asset draws with that file
+//! An effect whose `source` names a `.wesl` asset draws with that file
 //! instead: [`surface_shader`] wraps the file's `graph_main` in the same
 //! bindings and fragment entry the ubershader has, and the material's
 //! `specialize` swaps it in as the fragment shader, per material.
@@ -318,74 +318,6 @@ impl Material for GraphMaterial3d {
     }
 }
 
-/// The imports and fragment entry a project surface shader is wrapped in,
-/// per dimension. The bindings between them are core's, the same text the
-/// editor checks a file against.
-const SURFACE_2D_HEAD: &str = "\
-import bevy_sprite_render::mesh2d::{
-    vertex_output::VertexOutput,
-    view_bindings::view,
-};
-@if(TONEMAP_IN_SHADER)
-import bevy_core_pipeline::tonemapping;
-@if(SRGB_OUTPUT)
-import bevy_render::color_operations::linear_to_srgb;
-@if(OKLAB_OUTPUT)
-import bevy_render::color_operations::linear_rgb_to_oklab;
-";
-
-const SURFACE_2D_TAIL: &str = "\
-@fragment
-fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
-    if (flags.y > 0.5 && length((mesh.uv - 0.5) * 2.0) > 1.0) {
-        discard;
-    }
-    var output_color = graph_main(mesh.uv, params.w);
-    @if(TONEMAP_IN_SHADER)
-    output_color = tonemapping::tone_mapping(output_color, view.color_grading);
-    @if(SRGB_OUTPUT)
-    output_color = vec4(linear_to_srgb(output_color.rgb), output_color.a);
-    @if(OKLAB_OUTPUT)
-    output_color = vec4(linear_rgb_to_oklab(output_color.rgb), output_color.a);
-    return output_color;
-}
-";
-
-const SURFACE_3D_HEAD: &str = "\
-import bevy_pbr::render::{
-    forward_io::{VertexOutput, FragmentOutput},
-    mesh_view_bindings::view,
-};
-@if(TONEMAP_IN_SHADER)
-import bevy_core_pipeline::tonemapping;
-";
-
-const SURFACE_3D_TAIL: &str = "\
-@fragment
-fn fragment(mesh: VertexOutput) -> FragmentOutput {
-    surface_position = mesh.world_position.xyz;
-    surface_normal = mesh.world_normal;
-    var uv = mesh.uv;
-    if (uv_options.y > 0.5) {
-        let p = mesh.world_position.xyz * uv_options.z;
-        let n = abs(mesh.world_normal);
-        if (n.x >= n.y && n.x >= n.z) {
-            uv = p.yz;
-        } else if (n.y >= n.z) {
-            uv = p.xz;
-        } else {
-            uv = p.xy;
-        }
-    }
-    var output_color = graph_main(uv, params.w);
-    @if(TONEMAP_IN_SHADER)
-    output_color = tonemapping::tone_mapping(output_color, view.color_grading);
-    var out: FragmentOutput;
-    out.color = output_color;
-    return out;
-}
-";
-
 /// The shader an effect's `source` file compiles to, or `None` for the
 /// built-in ubershader. A file that won't read or doesn't check is reported
 /// against the actor and falls back to the ubershader, so a typo shows up in
@@ -420,27 +352,18 @@ pub fn surface_shader(
             return None;
         }
     };
-    if let Err(error) = blockloom_core::material::check_surface_wgsl(&text) {
+    if let Err(error) = blockloom_core::material::check_surface_wesl(&text, dim3) {
         report(format!("{source} doesn't compile:\n{error}"));
         return None;
     }
-    let (head, tail) = if dim3 {
-        (SURFACE_3D_HEAD, SURFACE_3D_TAIL)
-    } else {
-        (SURFACE_2D_HEAD, SURFACE_2D_TAIL)
-    };
-    let full = format!(
-        "{head}\n{}\n{text}\n{tail}",
-        blockloom_core::material::SURFACE_BINDINGS
-    );
+    let full = blockloom_core::material::surface_module(&text, dim3);
     let mut low = std::collections::hash_map::DefaultHasher::new();
     full.hash(&mut low);
     let mut high = std::collections::hash_map::DefaultHasher::new();
     ("blockloom-surface", &full).hash(&mut high);
     let uuid = bevy::asset::uuid::Uuid::from_u64_pair(high.finish(), low.finish());
     let handle = Handle::<Shader>::from(uuid);
-    // The wrapper imports Bevy's modules, so it is WESL even though the
-    // user's file is plain WGSL. The path is a module name, so no file name.
+    // The path is a module name, so no file name.
     let shader = Shader::from_wesl(full, format!("blockloom_surface/s{}.wesl", uuid.simple()));
     let id = handle.id();
     commands.queue(move |world: &mut World| {

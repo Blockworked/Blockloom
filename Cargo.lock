@@ -2388,6 +2388,8 @@ dependencies = [
  "serde_json",
  "tracing",
  "uuid",
+ "wesl",
+ "wgsl-parse",
  "windows-sys 0.61.2",
 ]
 

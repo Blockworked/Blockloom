@@ -122,7 +122,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 - [x] Materials/custom WGSL plus shader graph lite, particles/trails, post-process, shadows/HDR, 2D sorting layers, tilemap/terrain.
 - [x] Load glTF scenes for Model looks (a ModelSource loader with rig playback from the parsed animations) instead of placeholder boxes.
 - [x] Bake atlas layouts into sheets at build time - pack_atlas is plan-only today - and let a tilemap animate tiles and collide per-tile rather than as one slab.
-- [x] Close the custom-shader loop: export a shader graph to a .wgsl asset, and let hand-authored WGSL drive the live material instead of only the uniform path.
+- [x] Close the custom-shader loop: export a shader graph to a .wesl asset, and let hand-authored WESL drive the live material instead of only the uniform path.
 - [x] World-space material texturing (fixes stretched textures on large brushes,
       first-person walls and floors first): per-material texture transform
       (tiling X/Y, offset, rotation), sampler choice (Repeat/Mirror/Clamp plus
@@ -198,7 +198,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         placeholders for loading 3D looks and sprite fade-in in 2D, and a
         warm-up window after every rebuild that draws everything unculled and
         holds the green flag until loads and pipeline compiles settle. Builds
-        validate every `.wgsl` surface file first.
+        validate every `.wesl` surface file first.
   - [x] GPU measurement: per-pass timestamp queries plus render-target memory
         accounting, surfaced in the profiler (completes the render half of the open
         Phase 3 profiler item). No Phase 5 budget is enforceable without it.
@@ -217,7 +217,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         `Environment.exposure` is the single EV value every pass reads; writers
         resolve by precedence (director track beats post auto-exposure beats
         manual EV), so the four exposure dials below never fight.
-  - [ ] Shared shader library and pass plumbing: common WGSL chunks (hash, noise,
+  - [ ] Shared shader library and pass plumbing: common WESL chunks (hash, noise,
         FBM, scattering helpers, standard UBO layout) plus one FP16 working-target
         set with a half-res scratch pair and bilateral upsample, used by both
         dimensions. Stops volumetrics, fog and SSR from each rolling their own.

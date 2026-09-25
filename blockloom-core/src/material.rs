@@ -8,11 +8,11 @@
 //!   runtime applies the PBR half to its `StandardMaterial`; both dimensions
 //!   render a custom graph through the shared ubershader (`GraphMaterial2d` /
 //!   `GraphMaterial3d`), driven by the authored [`GraphEffect`] params.
-//! - [`ShaderGraph`] is shader-graph lite: a few nodes that emit a real WGSL
+//! - [`ShaderGraph`] is shader-graph lite: a few nodes that emit a real WESL
 //!   `graph_main(uv, time)` function. [`GraphEffect::starter_graph`] is the
-//!   uniform path spelled as nodes, so exporting one to a `.wgsl` asset draws
+//!   uniform path spelled as nodes, so exporting one to a `.wesl` asset draws
 //!   exactly what the inspector showed; pointing [`GraphEffect::source`] at a
-//!   `.wgsl` file (exported or hand-written) makes it drive the live material.
+//!   `.wesl` file (exported or hand-written) makes it drive the live material.
 //! - [`ParticleSpec`] and [`TrailSpec`] describe emitters and motion trails.
 //!   The runtime simulates them on the CPU with capped entity pools.
 //! - [`Tilemap`] is a grid of tiles over one tileset image, with
@@ -242,7 +242,7 @@ pub struct GraphEffect {
     /// The second color: wave crests, plasma swirls, pulse peaks.
     #[serde(default = "default_effect_color")]
     pub color: String,
-    /// A `.wgsl` asset defining `graph_main(uv, time)`, relative to the
+    /// A `.wesl` asset defining `graph_main(uv, time)`, relative to the
     /// project folder. Set, it draws the surface instead of `mode`; empty
     /// keeps the built-in uniform path.
     #[serde(default)]
@@ -526,7 +526,7 @@ impl GraphNode {
         }
     }
 
-    fn wgsl(&self) -> String {
+    fn wesl(&self) -> String {
         match *self {
             GraphNode::Const { color } => format!(
                 "vec4<f32>({:.6}, {:.6}, {:.6}, {:.6})",
@@ -599,7 +599,7 @@ impl ShaderGraph {
     /// Emit `graph_main(uv, time)`, the fragment body the runtime's
     /// ubershader shares its math with. Nodes come out topologically, so
     /// forward references still read correctly.
-    pub fn to_wgsl(&self) -> Result<String, String> {
+    pub fn to_wesl(&self) -> Result<String, String> {
         self.validate()?;
         let mut order = Vec::new();
         let mut done = vec![false; self.nodes.len()];
@@ -611,33 +611,35 @@ impl ShaderGraph {
         for index in order {
             body.push_str(&format!(
                 "    let n{index} = {};\n",
-                self.nodes[index].wgsl()
+                self.nodes[index].wesl()
             ));
         }
         body.push_str(&format!("    return n{};\n}}", self.output));
         Ok(body)
     }
 
-    /// The graph as a `.wgsl` asset: the contract as a comment, then the
+    /// The graph as a `.wesl` asset: the contract as a comment, then the
     /// function. What [`GraphEffect::source`] points at after an export.
-    pub fn to_wgsl_asset(&self) -> Result<String, String> {
-        Ok(format!("{SURFACE_CONTRACT}\n{}\n", self.to_wgsl()?))
+    pub fn to_wesl_asset(&self) -> Result<String, String> {
+        Ok(format!("{SURFACE_CONTRACT}\n{}\n", self.to_wesl()?))
     }
 }
 
-/// What a surface `.wgsl` asset has to provide, and what it can read. Heads
+/// What a surface `.wesl` asset has to provide, and what it can read. Heads
 /// every exported file, so a hand edit starts from the rules.
 pub const SURFACE_CONTRACT: &str = "\
-// Blockloom surface shader.
+// Blockloom surface shader (WESL).
 // Define `fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32>`, returning the
-// surface's color (alpha 0 is see-through). Plain WGSL, no #import.
+// surface's color (alpha 0 is see-through). `import` statements may open the
+// file, for Bevy's own shader modules: bevy_pbr in 3D, bevy_sprite_render in
+// 2D. Other files in the project aren't modules and can't be imported.
 // In scope: `tint` and `secondary` (vec4 colors), `params` (mode, speed,
 // strength, time), and `base_color(uv)`, the look's tint times its image.
 // The runtime passes box-projected UVs when the material enables projection.
 ";
 
 /// The uniforms and helper every surface shader is compiled against. The
-/// runtime's template and [`check_surface_wgsl`] share this text, so what the
+/// runtime's template and [`check_surface_wesl`] share this text, so what the
 /// editor accepts is what the GPU gets. `constants::MATERIAL_BIND_GROUP` is Bevy's.
 pub const SURFACE_BINDINGS: &str = "\
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> tint: vec4<f32>;
@@ -676,37 +678,343 @@ fn base_color(uv: vec2<f32>) -> vec4<f32> {
 }
 ";
 
-/// Parse and validate a surface shader the way the GPU will see it, with
-/// line numbers that match the file: the bindings go after the source,
-/// which WGSL allows. An error comes back as naga's own report.
-pub fn check_surface_wgsl(source: &str) -> Result<(), String> {
+/// The imports and fragment entry a surface shader is wrapped in, per
+/// dimension. [`surface_module`] puts the bindings and the file between them.
+pub const SURFACE_2D_HEAD: &str = "\
+import bevy_sprite_render::mesh2d::{
+    vertex_output::VertexOutput,
+    view_bindings::view,
+};
+@if(TONEMAP_IN_SHADER)
+import bevy_core_pipeline::tonemapping;
+@if(SRGB_OUTPUT)
+import bevy_render::color_operations::linear_to_srgb;
+@if(OKLAB_OUTPUT)
+import bevy_render::color_operations::linear_rgb_to_oklab;
+";
+
+pub const SURFACE_2D_TAIL: &str = "\
+@fragment
+fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
+    if (flags.y > 0.5 && length((mesh.uv - 0.5) * 2.0) > 1.0) {
+        discard;
+    }
+    var output_color = graph_main(mesh.uv, params.w);
+    @if(TONEMAP_IN_SHADER)
+    output_color = tonemapping::tone_mapping(output_color, view.color_grading);
+    @if(SRGB_OUTPUT)
+    output_color = vec4(linear_to_srgb(output_color.rgb), output_color.a);
+    @if(OKLAB_OUTPUT)
+    output_color = vec4(linear_rgb_to_oklab(output_color.rgb), output_color.a);
+    return output_color;
+}
+";
+
+pub const SURFACE_3D_HEAD: &str = "\
+import bevy_pbr::render::{
+    forward_io::{VertexOutput, FragmentOutput},
+    mesh_view_bindings::view,
+};
+@if(TONEMAP_IN_SHADER)
+import bevy_core_pipeline::tonemapping;
+";
+
+pub const SURFACE_3D_TAIL: &str = "\
+@fragment
+fn fragment(mesh: VertexOutput) -> FragmentOutput {
+    surface_position = mesh.world_position.xyz;
+    surface_normal = mesh.world_normal;
+    var uv = mesh.uv;
+    if (uv_options.y > 0.5) {
+        let p = mesh.world_position.xyz * uv_options.z;
+        let n = abs(mesh.world_normal);
+        if (n.x >= n.y && n.x >= n.z) {
+            uv = p.yz;
+        } else if (n.y >= n.z) {
+            uv = p.xz;
+        } else {
+            uv = p.xy;
+        }
+    }
+    var output_color = graph_main(uv, params.w);
+    @if(TONEMAP_IN_SHADER)
+    output_color = tonemapping::tone_mapping(output_color, view.color_grading);
+    var out: FragmentOutput;
+    out.color = output_color;
+    return out;
+}
+";
+
+/// The whole module the GPU compiles for a surface file: its imports join
+/// the wrapper's at the top, since WESL wants every import before the first
+/// declaration, then its directives, the bindings, the rest of it, and the
+/// fragment entry. The file's lines keep their numbers inside the body.
+pub fn surface_module(source: &str, dim3: bool) -> String {
+    let (head, tail) = if dim3 {
+        (SURFACE_3D_HEAD, SURFACE_3D_TAIL)
+    } else {
+        (SURFACE_2D_HEAD, SURFACE_2D_TAIL)
+    };
+    let header = split_header(source);
+    format!(
+        "{}\n{head}\n{}\n{SURFACE_BINDINGS}\n{}\n{tail}",
+        header.imports, header.directives, header.body
+    )
+}
+
+/// A surface file split at its first declaration.
+struct Header {
+    imports: String,
+    directives: String,
+    /// The file with the import and directive statements blanked out, so its
+    /// line numbers still match.
+    body: String,
+}
+
+/// Picks the leading `import` and directive statements (`enable`, `requires`,
+/// `diagnostic`) off a file, attributes such as `@if(...)` included.
+fn split_header(source: &str) -> Header {
+    let bytes = source.as_bytes();
+    let trivia = |mut i: usize| loop {
+        if bytes.get(i).is_some_and(|b| b.is_ascii_whitespace()) {
+            i += 1;
+        } else if source[i..].starts_with("//") {
+            i = source[i..].find('\n').map_or(bytes.len(), |n| i + n);
+        } else if source[i..].starts_with("/*") {
+            let mut depth = 0;
+            while i < bytes.len() {
+                if source[i..].starts_with("/*") {
+                    depth += 1;
+                    i += 2;
+                } else if source[i..].starts_with("*/") {
+                    depth -= 1;
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+        } else {
+            return i;
+        }
+    };
+    let word_end = |i: usize| {
+        i + source[i..]
+            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .unwrap_or(source.len() - i)
+    };
+    let mut header = Header {
+        imports: String::new(),
+        directives: String::new(),
+        body: String::new(),
+    };
+    let mut blank = Vec::new();
+    let mut pos = 0;
+    loop {
+        let start = trivia(pos);
+        let mut i = start;
+        // Attributes: `@name` and an optional parenthesised argument list.
+        while bytes.get(i) == Some(&b'@') {
+            i = trivia(word_end(i + 1));
+            if bytes.get(i) == Some(&b'(') {
+                let mut depth = 0;
+                while i < bytes.len() {
+                    match bytes[i] {
+                        b'(' => depth += 1,
+                        b')' => depth -= 1,
+                        _ => {}
+                    }
+                    i += 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                i = trivia(i);
+            }
+        }
+        let keyword = &source[i..word_end(i)];
+        if !matches!(keyword, "import" | "enable" | "requires" | "diagnostic") {
+            break;
+        }
+        let mut depth = 0i32;
+        let mut end = i;
+        while end < bytes.len() {
+            match bytes[end] {
+                b'{' | b'(' => depth += 1,
+                b'}' | b')' => depth -= 1,
+                b';' if depth <= 0 => break,
+                _ => {}
+            }
+            end += 1;
+        }
+        end = (end + 1).min(bytes.len());
+        let statement = &source[start..end];
+        let into = if keyword == "import" {
+            &mut header.imports
+        } else {
+            &mut header.directives
+        };
+        into.push_str(statement);
+        into.push('\n');
+        blank.push(start..end);
+        pos = end;
+    }
+    let mut last = 0;
+    for range in blank {
+        header.body.push_str(&source[last..range.start]);
+        header
+            .body
+            .extend(source[range.clone()].chars().filter(|&ch| ch == '\n'));
+        last = range.end;
+    }
+    header.body.push_str(&source[last..]);
+    header
+}
+
+/// Parse and validate a surface shader the way the GPU will see it. Syntax
+/// errors and the naga check carry line numbers that match the file: naga
+/// sees the bindings after the source, which WGSL allows. A file without
+/// `import` statements gets naga's full type check; one with imports gets
+/// WESL syntax, the contract and a clash check against the wrapper, and its
+/// types are checked when Play compiles it on the GPU, since imported
+/// modules only resolve there. An error comes back ready to log.
+pub fn check_surface_wesl(source: &str, dim3: bool) -> Result<(), String> {
+    use std::borrow::Cow;
+    use std::collections::HashSet;
+    use wesl::syntax::{
+        GlobalDeclaration, ImportContent, ImportStatement, PathOrigin, TranslationUnit,
+    };
+    use wgsl_parse::SyntaxNode;
+    use wgsl_parse::syntax::AttributeNode;
+
+    fn condcomp(attrs: &[AttributeNode]) -> bool {
+        attrs
+            .iter()
+            .any(|attr| attr.is_if() || attr.is_elif() || attr.is_else())
+    }
+    fn import_names(content: &ImportContent, names: &mut Vec<String>) {
+        match content {
+            ImportContent::Item(item) => {
+                names.push(item.rename.as_ref().unwrap_or(&item.ident).to_string())
+            }
+            ImportContent::Collection(items) => {
+                for item in items {
+                    import_names(&item.content, names);
+                }
+            }
+        }
+    }
+    // Every global name a unit declares, `@if` branches included or not.
+    fn global_names(unit: &TranslationUnit, branches: bool) -> Vec<String> {
+        let mut names = Vec::new();
+        for import in &unit.imports {
+            if branches || !condcomp(import.attributes()) {
+                import_names(&import.content, &mut names);
+            }
+        }
+        for item in &unit.global_declarations {
+            if branches || !condcomp(item.attributes()) {
+                names.extend(item.ident().map(|ident| ident.to_string()));
+            }
+        }
+        names
+    }
+    // The package an import reaches into, or an error for one that can't
+    // resolve from a surface file.
+    fn package(import: &ImportStatement) -> Result<String, String> {
+        match import.path.as_ref().map(|path| &path.origin) {
+            Some(PathOrigin::Package(name)) => Ok(name.clone()),
+            Some(PathOrigin::Absolute | PathOrigin::Relative(_)) => Err(
+                "`package::` and `super::` imports don't resolve: a surface file can only import Bevy's shader modules"
+                    .to_string(),
+            ),
+            None => Ok(match &import.content {
+                ImportContent::Item(item) => item.ident.to_string(),
+                ImportContent::Collection(items) => {
+                    items.first().and_then(|item| item.path.first()).cloned().unwrap_or_default()
+                }
+            }),
+        }
+    }
+    let parse = |text: &str| -> Result<TranslationUnit, String> {
+        text.parse().map_err(|error: wgsl_parse::Error| {
+            error.with_source(Cow::Borrowed(text)).to_string()
+        })
+    };
+
     if source
         .lines()
         .any(|line| line.trim_start().starts_with("#import"))
     {
-        return Err("a surface shader is plain WGSL: #import isn't available".to_string());
+        return Err(
+            "`#import` is the old syntax: WESL spells it `import bevy_pbr::forward_io::VertexOutput;` and it has to come before any declaration"
+                .to_string(),
+        );
     }
-    let full = format!(
-        "{source}\n{}\n@fragment\nfn blockloom_check(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {{\n    return graph_main(uv, params.w);\n}}\n",
-        SURFACE_BINDINGS.replace("constants::MATERIAL_BIND_GROUP", "2")
-    );
-    let module =
-        naga::front::wgsl::parse_str(&full).map_err(|error| error.emit_to_string(&full))?;
-    let graph_main = module
-        .functions
+    let unit = parse(source)?;
+    let graph_main = unit
+        .global_declarations
         .iter()
-        .find(|(_, function)| function.name.as_deref() == Some("graph_main"))
-        .map(|(_, function)| function)
+        .find_map(|item| match item.node() {
+            GlobalDeclaration::Function(function) if function.ident.to_string() == "graph_main" => {
+                Some(function)
+            }
+            _ => None,
+        })
         .ok_or("the shader has no graph_main(uv, time) function")?;
-    if graph_main.arguments.len() != 2 {
+    if graph_main.parameters.len() != 2 {
         return Err("graph_main takes exactly (uv: vec2<f32>, time: f32)".to_string());
     }
-    naga::valid::Validator::new(
-        naga::valid::ValidationFlags::all(),
-        naga::valid::Capabilities::default(),
-    )
-    .validate(&module)
-    .map_err(|error| error.emit_to_string(&full))?;
+
+    // Imports have to name a module this dimension's pipeline has loaded.
+    let (other, here) = if dim3 {
+        ("bevy_sprite_render", "3D")
+    } else {
+        ("bevy_pbr", "2D")
+    };
+    for import in &unit.imports {
+        let package = package(import)?;
+        if package == other || (dim3 && package == "bevy_sprite") {
+            return Err(format!("`{package}` isn't available to a {here} surface shader"));
+        }
+    }
+
+    // Names can't clash with each other or with anything the wrapper brings
+    // in. The file's own `@if` branches may reuse a name, since only one lands.
+    let wrapper: HashSet<String> =
+        global_names(&parse(&surface_module("", dim3))?, true).into_iter().collect();
+    let mut seen = HashSet::new();
+    for name in global_names(&unit, false) {
+        if !seen.insert(name.clone()) {
+            return Err(format!("duplicate declaration of `{name}`"));
+        }
+    }
+    for name in global_names(&unit, true) {
+        if wrapper.contains(&name) {
+            return Err(format!(
+                "`{name}` is already declared by the surface wrapper; pick another name"
+            ));
+        }
+    }
+    // The module the GPU gets has to parse too, hoisted imports and all.
+    parse(&surface_module(source, dim3))?;
+
+    if unit.imports.is_empty() {
+        let full = format!(
+            "{source}\n{}\n@fragment\nfn blockloom_check(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {{\n    return graph_main(uv, params.w);\n}}\n",
+            SURFACE_BINDINGS.replace("constants::MATERIAL_BIND_GROUP", "2")
+        );
+        let module =
+            naga::front::wgsl::parse_str(&full).map_err(|error| error.emit_to_string(&full))?;
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .map_err(|error| error.emit_to_string(&full))?;
+    }
     Ok(())
 }
 
@@ -1307,22 +1615,24 @@ mod tests {
             };
             let graph = effect.starter_graph();
             graph.validate().unwrap();
-            let wgsl = graph.to_wgsl().unwrap();
+            let wesl = graph.to_wesl().unwrap();
             assert!(
-                wgsl.contains("fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32>"),
+                wesl.contains("fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32>"),
                 "{mode:?}"
             );
-            assert!(wgsl.contains("return n"), "{mode:?}");
+            assert!(wesl.contains("return n"), "{mode:?}");
             // The exported asset is one the live material will take.
-            check_surface_wgsl(&graph.to_wgsl_asset().unwrap())
-                .unwrap_or_else(|error| panic!("{mode:?}: {error}"));
+            for dim3 in [false, true] {
+                check_surface_wesl(&graph.to_wesl_asset().unwrap(), dim3)
+                    .unwrap_or_else(|error| panic!("{mode:?}: {error}"));
+            }
         }
         let wave = GraphEffect {
             mode: EffectMode::Wave,
             ..GraphEffect::default()
         }
         .starter_graph()
-        .to_wgsl()
+        .to_wesl()
         .unwrap();
         assert!(wave.contains("sin(") && wave.contains("params.y"));
         let dissolve = GraphEffect {
@@ -1330,7 +1640,7 @@ mod tests {
             ..GraphEffect::default()
         }
         .starter_graph()
-        .to_wgsl()
+        .to_wesl()
         .unwrap();
         assert!(dissolve.contains("fract(") && dissolve.contains("step("));
         assert!(dissolve.contains("smoothstep("));
@@ -1340,16 +1650,63 @@ mod tests {
     fn hand_written_surface_shaders_are_checked_against_the_file() {
         let good = "fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> {\n    \
                     return mix(base_color(uv), secondary, fract(time));\n}\n";
-        check_surface_wgsl(good).unwrap();
+        check_surface_wesl(good, true).unwrap();
         let missing = "fn other(uv: vec2<f32>) -> vec4<f32> { return tint; }\n";
-        assert!(check_surface_wgsl(missing).is_err());
+        assert!(check_surface_wesl(missing, true).is_err());
         let typo = "fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> {\n    return tnit;\n}\n";
-        let error = check_surface_wgsl(typo).unwrap_err();
+        let error = check_surface_wesl(typo, true).unwrap_err();
         // The report points at the user's own line 2, not the appended stub.
         assert!(error.contains(":2:"), "{error}");
         let wrong = "fn graph_main(uv: vec2<f32>) -> vec4<f32> { return tint; }\n";
-        assert!(check_surface_wgsl(wrong).is_err());
-        assert!(check_surface_wgsl("#import bevy_pbr::forward_io\n").is_err());
+        assert!(check_surface_wesl(wrong, true).is_err());
+        let undeclared = "fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> {\n    \
+                    return no_such_helper(uv);\n}\n";
+        assert!(check_surface_wesl(undeclared, true).is_err());
+        let old = "#import bevy_pbr::forward_io\n";
+        assert!(check_surface_wesl(old, true).unwrap_err().contains("WESL"));
+        // The wrapper's own names are taken.
+        let clash = "fn fragment() {}\n\
+                     fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> { return tint; }\n";
+        assert!(check_surface_wesl(clash, true).is_err());
+    }
+
+    #[test]
+    fn surface_imports_join_the_wrappers() {
+        let imported = "// noise helpers\n\
+                        @if(TONEMAP_IN_SHADER)\n\
+                        import bevy_pbr::utils::{\n    PI,\n    rand_f,\n};\n\
+                        import bevy_render::maths::PI_2;\n\
+                        fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> {\n    \
+                        return base_color(uv) * PI_2;\n}\n";
+        check_surface_wesl(imported, true).unwrap();
+        // What the GPU gets parses, with every import ahead of the bindings.
+        let module = surface_module(imported, true);
+        let unit: wesl::syntax::TranslationUnit = module.parse().unwrap();
+        assert_eq!(unit.imports.len(), 4);
+        // The file's lines keep their numbers inside the body.
+        let header = split_header(imported);
+        assert_eq!(header.body.lines().count(), imported.lines().count());
+        assert!(header.body.lines().nth(7).unwrap().starts_with("fn graph_main"));
+
+        // Importing what the wrapper already imports clashes on the GPU.
+        let twice = "import bevy_pbr::forward_io::VertexOutput;\n\
+                     fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> { return tint; }\n";
+        assert!(check_surface_wesl(twice, true).is_err());
+        // Each dimension only has its own pipeline's modules.
+        let pbr = "import bevy_pbr::utils::PI;\n\
+                   fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> { return tint; }\n";
+        check_surface_wesl(pbr, true).unwrap();
+        assert!(check_surface_wesl(pbr, false).is_err());
+        // A project's own files aren't modules.
+        let local = "import package::noise::hash;\n\
+                     fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> { return tint; }\n";
+        assert!(check_surface_wesl(local, true).is_err());
+        // Directives follow every import.
+        let directive = "enable f16;\n\
+                         fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> { return tint; }\n";
+        let module = surface_module(directive, false);
+        assert!(module.find("enable f16;").unwrap() > module.rfind("import ").unwrap());
+        let _: wesl::syntax::TranslationUnit = module.parse().unwrap();
     }
 
     #[test]
@@ -1382,8 +1739,8 @@ mod tests {
             ],
             output: 0,
         };
-        let wgsl = forward.to_wgsl().unwrap();
-        assert!(wgsl.find("let n1").unwrap() < wgsl.find("let n0").unwrap());
+        let wesl = forward.to_wesl().unwrap();
+        assert!(wesl.find("let n1").unwrap() < wesl.find("let n0").unwrap());
     }
 
     #[test]

@@ -619,12 +619,12 @@ Rectangle {
                 InspectorRow { label: "Speed"; Layout.fillWidth: true; NumberField { value: mat.m.shader ? mat.m.shader.speed : 1; fallback: 1; onCommitted: n => root.writeShader(mat.c, { speed: n }) } }
                 InspectorRow { label: "Strength"; Layout.fillWidth: true; NumberField { value: mat.m.shader ? mat.m.shader.strength : 0.5; fallback: 0.5; onCommitted: n => root.writeShader(mat.c, { strength: n }) } }
                 InspectorRow { label: "Color"; Layout.fillWidth: true; ColorField { value: mat.m.shader ? mat.m.shader.color : "#FFFFFF"; onPicked: col => root.writeShader(mat.c, { color: col }) } Item { Layout.fillWidth: true } }
-                InspectorRow { label: "WGSL"; Layout.fillWidth: true
+                InspectorRow { label: "WESL"; Layout.fillWidth: true
                     AssetField { app: root.app; accept: ["shader"]; value: mat.m.shader && mat.m.shader.source ? mat.m.shader.source : ""; placeholderText: "Built-in motion"
                         onCommitted: p => root.writeShader(mat.c, { source: p.trim() }) } }
                 RowLayout {
                     Layout.leftMargin: 84; spacing: 4
-                    BwButton { text: "Export WGSL"; iconName: "file-code"; implicitHeight: 28; font.pixelSize: 12
+                    BwButton { text: "Export WESL"; iconName: "file-code"; implicitHeight: 28; font.pixelSize: 12
                         enabled: !(mat.m.shader && mat.m.shader.source)
                         onClicked: root.app.invoke("export_shader", { actorId: root.actor.id }) }
                     BwButton { text: "Check"; implicitHeight: 28; font.pixelSize: 12
@@ -634,7 +634,7 @@ Rectangle {
                 Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                     text: mat.m.shader && mat.m.shader.source
                         ? "The file's graph_main(uv, time) draws this surface; Motion is ignored. Speed, Strength and Color still reach it as params and secondary."
-                        : "Export writes the motion out as a .wgsl file and draws with it, ready to edit by hand." }
+                        : "Export writes the motion out as a .wesl file and draws with it, ready to edit by hand." }
             }
             Text { visible: !root.is3d && mat.m.shader === null; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Metallic, roughness and glow need 3D lighting; in 2D they rest until a custom effect is switched on." }

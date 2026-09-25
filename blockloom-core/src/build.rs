@@ -335,7 +335,7 @@ pub fn build(
     })
 }
 
-/// Validates every `.wgsl` surface file the project's looks draw with, the
+/// Validates every `.wesl` surface file the project's looks draw with, the
 /// way the GPU will compile it. The player warms its pipelines before its
 /// first frame, so a file that won't compile has to stop the build here
 /// rather than reach a player's screen.
@@ -349,6 +349,7 @@ pub fn check_shaders(project: &Project, project_dir: &Path) -> Result<usize, Str
         .collect();
     sources.sort_unstable();
     sources.dedup();
+    let dim3 = project.world.mode.is_3d();
     let mut errors = Vec::new();
     for source in &sources {
         let verdict = crate::assets::resolve(project_dir, source)
@@ -356,7 +357,7 @@ pub fn check_shaders(project: &Project, project_dir: &Path) -> Result<usize, Str
             .and_then(|full| {
                 std::fs::read_to_string(&full).map_err(|error| format!("couldn't be read: {error}"))
             })
-            .and_then(|text| crate::material::check_surface_wgsl(&text));
+            .and_then(|text| crate::material::check_surface_wesl(&text, dim3));
         if let Err(error) = verdict {
             errors.push(format!("{source}: {error}"));
         }
@@ -778,13 +779,13 @@ mod tests {
         let (mut project, project_dir, player) = a_project(&root);
         std::fs::create_dir_all(project_dir.join("assets/shaders")).unwrap();
         std::fs::write(
-            project_dir.join("assets/shaders/bad.wgsl"),
+            project_dir.join("assets/shaders/bad.wesl"),
             "fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> { return nope; }",
         )
         .unwrap();
         let material = SurfaceMaterial {
             shader: Some(GraphEffect {
-                source: "assets/shaders/bad.wgsl".into(),
+                source: "assets/shaders/bad.wesl".into(),
                 ..GraphEffect::default()
             }),
             ..SurfaceMaterial::default()
@@ -795,11 +796,11 @@ mod tests {
         let out = root.join("out");
 
         let error = build(&project, &project_dir, a_target(), &player, &out, false).unwrap_err();
-        assert!(error.contains("assets/shaders/bad.wgsl"), "{error}");
+        assert!(error.contains("assets/shaders/bad.wesl"), "{error}");
         assert!(!out.exists());
 
         std::fs::write(
-            project_dir.join("assets/shaders/bad.wgsl"),
+            project_dir.join("assets/shaders/bad.wesl"),
             "fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> { return tint; }",
         )
         .unwrap();

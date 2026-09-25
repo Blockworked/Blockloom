@@ -1768,7 +1768,7 @@ pub(crate) fn pack_atlas(
     pipeline::pack_atlas(&inputs, max_size.unwrap_or(2048), padding.unwrap_or(1))
 }
 
-/// Writes an actor's custom effect out as a `.wgsl` asset and points the
+/// Writes an actor's custom effect out as a `.wesl` asset and points the
 /// effect at it, so from then on the file draws the surface and editing it
 /// changes what Play shows. It exports the effect's own graph, so nothing
 /// on screen moves. Answers the file's path. Never overwrites a file: an
@@ -1805,8 +1805,8 @@ pub(crate) fn export_shader(
         }
         None => {
             let stem = format!("assets/shaders/{}", project::folder_name(&actor.name));
-            std::iter::once(format!("{stem}.wgsl"))
-                .chain((2..).map(|n| format!("{stem} {n}.wgsl")))
+            std::iter::once(format!("{stem}.wesl"))
+                .chain((2..).map(|n| format!("{stem} {n}.wesl")))
                 .find(|candidate| {
                     assets::resolve(&dir, candidate).is_some_and(|full| !full.exists())
                 })
@@ -1818,16 +1818,16 @@ pub(crate) fn export_shader(
     if full.exists() {
         return Err(format!("{path} already exists"));
     }
-    let wgsl = GraphEffect {
+    let wesl = GraphEffect {
         source: String::new(),
         ..effect.clone()
     }
     .starter_graph()
-    .to_wgsl_asset()?;
+    .to_wesl_asset()?;
     if let Some(parent) = full.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
-    std::fs::write(&full, wgsl).map_err(|e| format!("{}: {e}", full.display()))?;
+    std::fs::write(&full, wesl).map_err(|e| format!("{}: {e}", full.display()))?;
     effect.source = path.clone();
     push_undo(&mut s);
     if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
@@ -1841,7 +1841,7 @@ pub(crate) fn export_shader(
     Ok(path)
 }
 
-/// Checks the `.wgsl` file an actor's effect draws with, the way Play will,
+/// Checks the `.wesl` file an actor's effect draws with, the way Play will,
 /// and logs the verdict against the actor.
 pub(crate) fn check_shader(
     state: &SharedState,
@@ -1861,12 +1861,13 @@ pub(crate) fn check_shader(
         .and_then(|material| material.shader.as_ref())
         .map(|effect| effect.source.clone())
         .filter(|source| !source.is_empty())
-        .ok_or("This actor's effect doesn't read a .wgsl file")?;
+        .ok_or("This actor's effect doesn't read a .wesl file")?;
+    let dim3 = s.project().is_some_and(|p| p.world.mode.is_3d());
     let full = assets::resolve(&dir, &source)
         .ok_or_else(|| format!("\"{source}\" isn't a path in this project"))?;
     let verdict = std::fs::read_to_string(&full)
         .map_err(|e| format!("couldn't read {source}: {e}"))
-        .and_then(|text| blockloom_core::material::check_surface_wgsl(&text));
+        .and_then(|text| blockloom_core::material::check_surface_wesl(&text, dim3));
     let line = match verdict {
         Ok(()) => LogLine {
             kind: "say".to_string(),
