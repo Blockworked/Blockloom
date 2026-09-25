@@ -175,7 +175,9 @@ fn view_of(value: f64) -> CameraView {
 /// own number off the call; everything else takes the blank its kind means.
 fn ui_start(kind: UiKind, flag: bool, value: f64) -> Evaluated {
     match kind {
-        UiKind::Slider => Evaluated::Number(value),
+        UiKind::Slider | UiKind::Progress | UiKind::RadialProgress | UiKind::Scrollbar => {
+            Evaluated::Number(value)
+        }
         other => UiElement::blank(other, flag),
     }
 }

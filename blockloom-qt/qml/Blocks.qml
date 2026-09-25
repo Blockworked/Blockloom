@@ -36,7 +36,7 @@ QtObject {
     readonly property var visibleOptions: [{value:"true",label:"show"},{value:"false",label:"hide"}]
     readonly property var mouseLockOptions: [{value:"true",label:"lock"},{value:"false",label:"unlock"}]
     readonly property var uiAnchorOptions: [{value:"TopLeft",label:"top left"},{value:"Top",label:"top"},{value:"TopRight",label:"top right"},{value:"Left",label:"left"},{value:"Center",label:"centre"},{value:"Right",label:"right"},{value:"BottomLeft",label:"bottom left"},{value:"Bottom",label:"bottom"},{value:"BottomRight",label:"bottom right"}]
-    readonly property var uiPropOptions: [{value:"Text",label:"text"},{value:"TextColor",label:"text color"},{value:"TextSize",label:"text size"},{value:"Background",label:"background"},{value:"Width",label:"width"},{value:"Height",label:"height"},{value:"Visible",label:"visible"},{value:"CornerRadius",label:"corner radius"},{value:"Padding",label:"padding"},{value:"Modal",label:"modal"},{value:"Min",label:"min"},{value:"Max",label:"max"},{value:"Value",label:"value"},{value:"Step",label:"step"},{value:"Allow",label:"allow"},{value:"MaxLength",label:"max length"}]
+    readonly property var uiPropOptions: [{value:"Text",label:"text"},{value:"TextColor",label:"text color"},{value:"TextSize",label:"text size"},{value:"Background",label:"background"},{value:"Width",label:"width"},{value:"Height",label:"height"},{value:"Visible",label:"visible"},{value:"CornerRadius",label:"corner radius"},{value:"Padding",label:"padding"},{value:"Modal",label:"modal"},{value:"Min",label:"min"},{value:"Max",label:"max"},{value:"Value",label:"value"},{value:"Step",label:"step"},{value:"Allow",label:"allow"},{value:"MaxLength",label:"max length"},{value:"Layout",label:"Layout"},{value:"Style",label:"Style"},{value:"Bind",label:"Bind"},{value:"Items",label:"Items"},{value:"Scroll",label:"Scroll"},{value:"SelectedIndex",label:"SelectedIndex"},{value:"Theme",label:"Theme"},{value:"Enabled",label:"Enabled"},{value:"Tooltip",label:"Tooltip"},{value:"WorldActor",label:"WorldActor"},{value:"Transition",label:"Transition"}]
     readonly property var modalOptions: [{value:"false",label:"floating"},{value:"true",label:"modal"}]
     readonly property var onOffOptions: [{value:"true",label:"on"},{value:"false",label:"off"}]
     readonly property var uiThemeOptions: [{value:"Dark",label:"dark"},{value:"Light",label:"light"},{value:"HighContrast",label:"high contrast"}]
@@ -114,7 +114,7 @@ QtObject {
 
     readonly property var icons: ({
         WhenStarted:"flag", WhenKeyPressed:"keyboard", WhenActionPressed:"gamepad-2", WhenTouched:"pointer", WhenClicked:"mouse-pointer-click",
-        WhenCollision:"crosshair", WhenMessage:"radio", WhenCloned:"copy", WhenUiClicked:"square-mouse-pointer", WhenUiChanged:"sliders-horizontal",
+        WhenCollision:"crosshair", WhenMessage:"radio", WhenCloned:"copy", WhenUiEvent:"square-mouse-pointer", WhenUiClicked:"square-mouse-pointer", WhenUiChanged:"sliders-horizontal",
         BlockHeader:"blocks", Move:"arrow-right", GoTo:"move", NavigateTo:"navigation", ChangePosition:"move-3d", Glide:"wind", Turn:"rotate-cw",
         SetRotation:"rotate-cw", PointTowards:"target", SetScale:"maximize", SetBody:"boxes", SetTrigger:"ghost", SetCollisionLayer:"layers",
         SetCollisionMask:"filter", ApplyImpulse:"zap", SetVelocity:"trending-up", SetGravity:"cloud", SetDensity:"weight", SetMass:"weight",
@@ -125,7 +125,7 @@ QtObject {
         Repeat:"repeat", Forever:"infinity", While:"repeat", EscapeLoop:"log-out", ContinueLoop:"skip-forward", Broadcast:"radio", StopAll:"octagon",
         SetMouseLocked:"lock", RumbleGamepad:"vibrate", BindAction:"keyboard", ClearActionBindings:"eraser", ShowPanel:"layout-panel-top",
         ShowLabel:"type", ShowButton:"square-mouse-pointer", ShowImage:"image", ShowInput:"text-cursor-input", ShowSlider:"sliders-horizontal",
-        ShowToggle:"toggle-left", ShowList:"list-checks", SetUiTheme:"palette", SetUiProp:"list-checks", HideElement:"eye", HideAllUi:"eye",
+        ShowWidget:"layout-grid", ShowToggle:"toggle-left", ShowList:"list-checks", SetUiTheme:"palette", BindUi:"list-checks", SetUiItems:"list-checks", ScrollUi:"list-checks", SetElementTheme:"list-checks", SetUiProp:"list-checks", HideElement:"eye", HideAllUi:"eye",
         DeleteElement:"trash-2", FocusElement:"text-select", ClearFocus:"text-select", PauseGame:"pause", ResumeGame:"play", SetVariable:"asterisk",
         ChangeVariable:"trending-up", SaveVariable:"save", ClearSavedVariable:"trash-2", AddToList:"plus", DeleteOfList:"trash-2",
         DeleteAllOfList:"trash-2", ShiftList:"arrow-left", InsertIntoList:"plus", ReplaceItemOfList:"repeat", ReverseList:"rotate-cw",
@@ -147,6 +147,7 @@ QtObject {
             WhenCollision: header([lb("when I touch"), dd("with", () => [{ value: "", label: "anything" }].concat(actorOptions(false)), { placeholder: "anything" })]),
             WhenMessage: header([lb("when I get"), field("name", "message")]),
             WhenCloned: header([lb("when I start as a clone")]),
+            WhenUiEvent: header([lb("when"), field("element", "element id"), dd("event", () => opts(["press", "release", "hover", "leave", "drag", "scroll", "focus"]))]),
             WhenUiClicked: header([lb("when"), field("element", "element id"), lb("clicked")]),
             WhenUiChanged: header([lb("when"), field("element", "element id"), lb("changed")]),
             Broadcast: row([lb("broadcast"), field("name", "message")]),
@@ -221,8 +222,13 @@ QtObject {
             ShowInput: row(showRow("show text input", "placeholder")),
             ShowSlider: row(showRow("show slider", "", [lb("min"), slot("UiMin", "min"), lb("max"), slot("UiMax", "max"), lb("value"), slot("UiValue", "value")])),
             ShowToggle: row(showRow("show toggle", "label", [flag("on", onOffOptions)])),
+            ShowWidget: row([lb("show"), dd("kind", () => opts(["VerticalBox", "HorizontalBox", "Grid", "Canvas", "WrapBox", "SizeBox", "Spacer", "Progress", "RadialProgress", "ListView", "Tabs", "Select", "Scrollbar", "RichText", "Tooltip"])), slot("UiId", "element"), slot("UiContent", "text")].concat(placement())),
             ShowList: row([lb("show list"), slot("UiId", "element")].concat(placement())),
             SetUiTheme: row([lb("set ui theme"), dd("theme", uiThemeOptions)]),
+            BindUi: row([lb("bind"), slot("UiTarget", "element"), lb("to"), slot("UiPropValue", "value")]),
+            SetUiItems: row([lb("set items of"), slot("UiTarget", "element"), lb("to"), slot("UiPropValue", "value")]),
+            ScrollUi: row([lb("scroll"), slot("UiTarget", "element"), lb("to"), slot("UiPropValue", "value")]),
+            SetElementTheme: row([lb("set theme of"), slot("UiTarget", "element"), lb("to"), slot("UiPropValue", "value")]),
             SetUiProp: row([lb("set"), dd("prop", uiPropOptions), lb("of"), slot("UiTarget", "element"), lb("to"), slot("UiPropValue", "value")]),
             HideElement: row([lb("hide"), slot("UiTarget", "element")]),
             HideAllUi: row([lb("hide all ui")]),
@@ -324,6 +330,7 @@ QtObject {
         case "RumbleGamepad": return { strength: num(100), duration: num(0.5) };
         case "BindAction": return { action: txt("Jump"), binding: txt("space") };
         case "ClearActionBindings": return { action: txt("Jump") };
+        case "WhenUiEvent": return { element: "my-button", event: "hover" };
         case "WhenUiClicked": case "WhenUiChanged": return { element: "my-button" };
         case "ShowPanel": return Object.assign(uiPlacement("Center"), { element: txt("menu"), title: txt("Menu"), modal: true });
         case "ShowLabel": return Object.assign(uiPlacement("TopLeft"), { element: txt("score"), text: txt("Score: 0") });
@@ -332,8 +339,13 @@ QtObject {
         case "ShowInput": return Object.assign(uiPlacement("Center"), { element: txt("name"), placeholder: txt("your name") });
         case "ShowSlider": return Object.assign(uiPlacement("Center"), { element: txt("volume"), min: num(0), max: num(100), value: num(50) });
         case "ShowToggle": return Object.assign(uiPlacement("Center"), { element: txt("shadows"), label: txt("Shadows"), on: true });
+        case "ShowWidget": return Object.assign(uiPlacement("TopLeft"), { kind: "VerticalBox", element: txt("widget"), text: txt("") });
         case "ShowList": return Object.assign(uiPlacement("Center"), { element: txt("items"), width: num(280), height: num(240) });
         case "SetUiTheme": return { theme: "Dark" };
+        case "BindUi": return { element: txt("widget"), value: txt("[]") };
+        case "SetUiItems": return { element: txt("widget"), value: txt("[]") };
+        case "ScrollUi": return { element: txt("widget"), value: txt("0") };
+        case "SetElementTheme": return { element: txt("widget"), value: txt("Dark") };
         case "SetUiProp": return { prop: "Text", element: txt("score"), value: txt("") };
         case "SaveVariable": case "ClearSavedVariable": return { name: variableNames()[0] || "" };
         case "AddToList": return { name: listNames()[0] || "", value: num(0) };
@@ -379,6 +391,7 @@ QtObject {
         Timer: { prefix: "timer", result: "number", arity: 0 },
         UiValue: { prefix: "value of", result: "number", arity: 1, args: ["text"] },
         UiText: { prefix: "text of", result: "text", arity: 1, args: ["text"] },
+        UiSelectedIndex: { prefix: "selected index of", result: "number", arity: 1, args: ["text"] },
         UiShown: { prefix: "is", suffix: "shown?", result: "bool", arity: 1, args: ["text"] },
         UiExists: { prefix: "does", suffix: "exist?", result: "bool", arity: 1, args: ["text"] },
         UiFocus: { prefix: "focused element", result: "text", arity: 0 },
@@ -426,7 +439,7 @@ QtObject {
     // Palette groups, the way the sidebar shows them.
     readonly property var operatorGroups: [
         { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","ActorPosition","ActorLocalPosition","ComponentField","SoundPlaying","BusVolume","Atmosphere"] },
-        { label: "Interface", kinds: ["UiValue","UiText","UiShown","UiExists","UiFocus","GamePaused"] },
+        { label: "Interface", kinds: ["UiSelectedIndex","UiValue","UiText","UiShown","UiExists","UiFocus","GamePaused"] },
         { label: "Actors", kinds: ["IsClone","MyParent","NewActor","ActorCount"] },
         { label: "Maths", kinds: ["Add","Sub","Mul","Div","Mod","Round","Math","Random"] },
         { label: "Comparing", kinds: ["Eq","Neq","Gt","Lt","Gte","Lte","And","Or","Not","True","False"] },
@@ -435,14 +448,14 @@ QtObject {
     readonly property var listOperatorKinds: ["ListItem","ListItemNumber","ListAmount","ListLength","ListContains","ListItemExists","ListIsEmpty","ListAsJson"]
     readonly property var dictOperatorKinds: ["DictValue","DictHasKey","DictSize","DictKeys","DictAsJson","DictIsEmpty"]
     readonly property var blockGroups: [
-        { label: "Events", types: ["WhenStarted","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenUiClicked","WhenUiChanged","Broadcast"] },
+        { label: "Events", types: ["WhenStarted","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenUiEvent","WhenUiClicked","WhenUiChanged","Broadcast"] },
         { label: "Motion", types: ["Move","GoTo","NavigateTo","ChangePosition","Glide","Turn","SetRotation","PointTowards","SetScale"] },
         { label: "Physics", types: ["SetBody","ApplyImpulse","SetVelocity","SetGravity","SetDensity","SetMass","SetTrigger","SetCollisionLayer","SetCollisionMask"] },
         { label: "Looks", types: ["Say","SetVisible","SetColor","SetExposure","SetLightIntensity","BurstParticles","SetEmitterDial","SetTrailEnabled"] },
         { label: "Sound", types: ["PlaySound","PlaySoundAt","StopSound","SetSoundVolume","SetSoundPitch","SetBusVolume"] },
         { label: "Components", types: ["SetComponentField","SetCameraView","SetCameraPitch","SetCameraFov","AttachComponent","DetachComponent","SetParent"] },
         { label: "Actors", types: ["CreateClone","CreateActor","DeleteActor"] },
-        { label: "Interface", types: ["ShowPanel","ShowLabel","ShowButton","ShowImage","ShowInput","ShowSlider","ShowToggle","ShowList","SetUiTheme","SetUiProp","HideElement","HideAllUi","DeleteElement","FocusElement","ClearFocus","PauseGame","ResumeGame"] },
+        { label: "Interface", types: ["ShowWidget","ShowPanel","ShowLabel","ShowButton","ShowImage","ShowInput","ShowSlider","ShowToggle","ShowList","SetUiTheme","BindUi","SetUiItems","ScrollUi","SetElementTheme","SetUiProp","HideElement","HideAllUi","DeleteElement","FocusElement","ClearFocus","PauseGame","ResumeGame"] },
         { label: "Control", types: ["Wait","WaitUntil","If","IfElse","Repeat","Forever","While","EscapeLoop","ContinueLoop","StopAll","SetMouseLocked"] },
         { label: "Input", types: ["RumbleGamepad","BindAction","ClearActionBindings"] }
     ]
@@ -484,7 +497,7 @@ QtObject {
     readonly property var labels: ({
         WhenStarted:"when the project starts", WhenKeyPressed:"when a key is pressed", WhenActionPressed:"when an input action is pressed",
         WhenTouched:"when the screen is touched", WhenClicked:"when I am clicked", WhenCollision:"when I touch", WhenMessage:"when I get a message",
-        WhenCloned:"when I start as a clone", WhenUiClicked:"when an element is clicked", WhenUiChanged:"when an input is changed",
+        WhenUiEvent:"when an interface event occurs", WhenCloned:"when I start as a clone", WhenUiClicked:"when an element is clicked", WhenUiChanged:"when an input is changed",
         BlockHeader:"block definition", Move:"move forward", GoTo:"go to", NavigateTo:"navigate to", ChangePosition:"change position",
         Glide:"glide to", Turn:"turn", SetRotation:"point in direction", PointTowards:"point towards", SetScale:"set size", SetBody:"set body",
         SetTrigger:"make me solid or a trigger", SetCollisionLayer:"set my collision layer", SetCollisionMask:"set my collision mask",
@@ -498,7 +511,7 @@ QtObject {
         SetMouseLocked:"lock or unlock the mouse", RumbleGamepad:"rumble the gamepad", BindAction:"bind an input to an action",
         ClearActionBindings:"clear all bindings of an action", ShowPanel:"show a panel", ShowLabel:"show a label", ShowButton:"show a button",
         ShowImage:"show an image", ShowInput:"show a text input", ShowSlider:"show a slider", ShowToggle:"show a toggle",
-        ShowList:"show a scrollable list", SetUiTheme:"set the ui theme", SetUiProp:"set an element property", HideElement:"hide an element",
+        ShowWidget:"show a widget", ShowList:"show a scrollable list", SetUiTheme:"set the ui theme", BindUi:"bind widget to value", SetUiItems:"set items of widget to value", ScrollUi:"scroll widget to value", SetElementTheme:"set theme of widget to value", SetUiProp:"set an element property", HideElement:"hide an element",
         HideAllUi:"hide all ui", DeleteElement:"delete an element", FocusElement:"focus an input", ClearFocus:"clear the focus",
         PauseGame:"pause the game", ResumeGame:"resume the game", SetVariable:"set a variable", ChangeVariable:"change a variable",
         SaveVariable:"save a variable", ClearSavedVariable:"clear a saved variable", AddToList:"add to a list", DeleteOfList:"delete a list item",

@@ -606,7 +606,9 @@ impl Runner {
                 ("Key", "Key") | ("Message", "Message") => entry.detail == detail,
                 ("Action", "Action") => entry.detail == detail,
                 ("Touched", "Touched") => true,
-                ("UiClicked", "UiClicked") | ("UiChanged", "UiChanged") => entry.detail == detail,
+                ("UiEvent", "UiEvent")
+                | ("UiClicked", "UiClicked")
+                | ("UiChanged", "UiChanged") => entry.detail == detail,
                 ("Clicked", "Clicked") => entry.actor == &*template,
                 ("Collision", "Collision") => {
                     entry.actor == &*template
@@ -731,7 +733,7 @@ impl Entry {
     /// while the game is paused - a pause menu's own buttons have to work -
     /// and it sleeps against the wall clock rather than the frozen one.
     pub fn is_ui(&self) -> bool {
-        matches!(self.trigger, "UiClicked" | "UiChanged")
+        matches!(self.trigger, "UiEvent" | "UiClicked" | "UiChanged")
     }
 
     /// A fresh run of this strand under `actor`, ready for the first
@@ -967,7 +969,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 14;
+pub const LOGIC_ABI_VERSION: u32 = 15;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;

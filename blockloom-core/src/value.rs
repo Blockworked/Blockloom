@@ -301,6 +301,13 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |_| Ok(Evaluated::Bool(sense::read(|s| s.paused))),
     },
     ExtOperator {
+        kind: "UiSelectedIndex",
+        op: "UiSelectedIndex",
+        arity: 1,
+        default_args: || vec![text("")],
+        eval: |args| element(&args[0].as_text(), |e| e.value.clone()),
+    },
+    ExtOperator {
         kind: "UiValue",
         op: "UiValue",
         arity: 1,

@@ -29,9 +29,34 @@ pub enum UiKind {
     Toggle,
     /// A bounded vertical stack whose children can be scrolled.
     List,
+    VerticalBox,
+    HorizontalBox,
+    Grid,
+    Canvas,
+    WrapBox,
+    SizeBox,
+    Spacer,
+    Progress,
+    RadialProgress,
+    ListView,
+    Tabs,
+    Select,
+    Scrollbar,
+    RichText,
+    Tooltip,
 }
 
 impl UiKind {
+    pub fn scrollable(self) -> bool {
+        matches!(self, Self::List | Self::ListView)
+    }
+    pub fn selectable(self) -> bool {
+        matches!(self, Self::ListView | Self::Tabs | Self::Select)
+    }
+    pub fn focusable(self) -> bool {
+        self.is_input() || self == Self::Button
+    }
+
     pub fn index(self) -> usize {
         match self {
             UiKind::Panel => 0,
@@ -42,6 +67,21 @@ impl UiKind {
             UiKind::Slider => 5,
             UiKind::Toggle => 6,
             UiKind::List => 7,
+            UiKind::VerticalBox => 8,
+            UiKind::HorizontalBox => 9,
+            UiKind::Grid => 10,
+            UiKind::Canvas => 11,
+            UiKind::WrapBox => 12,
+            UiKind::SizeBox => 13,
+            UiKind::Spacer => 14,
+            UiKind::Progress => 15,
+            UiKind::RadialProgress => 16,
+            UiKind::ListView => 17,
+            UiKind::Tabs => 18,
+            UiKind::Select => 19,
+            UiKind::Scrollbar => 20,
+            UiKind::RichText => 21,
+            UiKind::Tooltip => 22,
         }
     }
 
@@ -54,6 +94,22 @@ impl UiKind {
             5 => UiKind::Slider,
             6 => UiKind::Toggle,
             7 => UiKind::List,
+            8 => UiKind::VerticalBox,
+            9 => UiKind::HorizontalBox,
+            10 => UiKind::Grid,
+            11 => UiKind::Canvas,
+            12 => UiKind::WrapBox,
+            13 => UiKind::SizeBox,
+            14 => UiKind::Spacer,
+            15 => UiKind::Progress,
+            16 => UiKind::RadialProgress,
+            17 => UiKind::ListView,
+            18 => UiKind::Tabs,
+            19 => UiKind::Select,
+            20 => UiKind::Scrollbar,
+            21 => UiKind::RichText,
+            22 => UiKind::Tooltip,
+
             _ => UiKind::Panel,
         }
     }
@@ -61,7 +117,16 @@ impl UiKind {
     /// True for the three that a person can change, and so the three that
     /// `when (id) changed` and `value of (id)` mean anything for.
     pub fn is_input(self) -> bool {
-        matches!(self, UiKind::Input | UiKind::Slider | UiKind::Toggle)
+        matches!(
+            self,
+            UiKind::Input
+                | UiKind::Slider
+                | UiKind::Toggle
+                | UiKind::Select
+                | UiKind::Tabs
+                | UiKind::ListView
+                | UiKind::Scrollbar
+        )
     }
 }
 
@@ -194,6 +259,17 @@ pub enum UiProp {
     Allow,
     /// How many characters a text input holds. Zero means no ceiling.
     MaxLength,
+    Layout,
+    Style,
+    Bind,
+    Items,
+    Scroll,
+    SelectedIndex,
+    Theme,
+    Enabled,
+    Tooltip,
+    WorldActor,
+    Transition,
 }
 
 impl UiProp {
@@ -215,6 +291,17 @@ impl UiProp {
         UiProp::Step,
         UiProp::Allow,
         UiProp::MaxLength,
+        UiProp::Layout,
+        UiProp::Style,
+        UiProp::Bind,
+        UiProp::Items,
+        UiProp::Scroll,
+        UiProp::SelectedIndex,
+        UiProp::Theme,
+        UiProp::Enabled,
+        UiProp::Tooltip,
+        UiProp::WorldActor,
+        UiProp::Transition,
     ];
 
     /// The wire name, which is also what the ABI carries and what the
@@ -237,6 +324,17 @@ impl UiProp {
             UiProp::Step => "Step",
             UiProp::Allow => "Allow",
             UiProp::MaxLength => "MaxLength",
+            UiProp::Layout => "Layout",
+            UiProp::Style => "Style",
+            UiProp::Bind => "Bind",
+            UiProp::Items => "Items",
+            UiProp::Scroll => "Scroll",
+            UiProp::SelectedIndex => "SelectedIndex",
+            UiProp::Theme => "Theme",
+            UiProp::Enabled => "Enabled",
+            UiProp::Tooltip => "Tooltip",
+            UiProp::WorldActor => "WorldActor",
+            UiProp::Transition => "Transition",
         }
     }
 
@@ -351,6 +449,7 @@ pub fn snap(range: [f32; 2], step: f32, value: f64) -> f64 {
 /// `width`/`height` of zero mean "as big as the content needs". `parent`
 /// empty means the element hangs off the window rather than another element.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct UiElement {
     pub id: String,
     pub kind: UiKind,
@@ -395,7 +494,13 @@ impl UiElement {
     pub fn initial_value(kind: UiKind, value: &Evaluated) -> Evaluated {
         match kind {
             UiKind::Toggle => Evaluated::Bool(value.as_bool()),
-            UiKind::Slider => Evaluated::Number(value.as_number().unwrap_or(0.0)),
+            UiKind::Slider
+            | UiKind::Progress
+            | UiKind::RadialProgress
+            | UiKind::Scrollbar
+            | UiKind::Tabs
+            | UiKind::Select
+            | UiKind::ListView => Evaluated::Number(value.as_number().unwrap_or(0.0)),
             // A button reports whether it is being held; the rest report
             // their own text, which is the only thing they have to say.
             UiKind::Button => Evaluated::Bool(false),
@@ -409,7 +514,13 @@ impl UiElement {
     pub fn blank(kind: UiKind, flag: bool) -> Evaluated {
         match kind {
             UiKind::Toggle => Evaluated::Bool(flag),
-            UiKind::Slider => Evaluated::Number(0.0),
+            UiKind::Slider
+            | UiKind::Progress
+            | UiKind::RadialProgress
+            | UiKind::Scrollbar
+            | UiKind::Tabs
+            | UiKind::Select
+            | UiKind::ListView => Evaluated::Number(0.0),
             UiKind::Button => Evaluated::Bool(false),
             _ => Evaluated::Text(String::new()),
         }
@@ -422,7 +533,7 @@ mod tests {
 
     #[test]
     fn kinds_and_anchors_round_trip_through_their_wire_index() {
-        for index in 0..8 {
+        for index in 0..23 {
             assert_eq!(UiKind::from_index(index).index(), index);
         }
         for index in 0..9 {
@@ -532,3 +643,7 @@ mod tests {
         assert!(!UiKind::Button.is_input());
     }
 }
+
+#[path = "ui_framework.rs"]
+mod framework;
+pub use framework::*;

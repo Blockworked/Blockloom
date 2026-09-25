@@ -393,6 +393,7 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         // The interface blocks. Their shared slots answer to one id each,
         // whichever `show` block is asking.
         (K::ShowPanel { element, .. }, F::UiId)
+        | (K::ShowWidget { element, .. }, F::UiId)
         | (K::ShowLabel { element, .. }, F::UiId)
         | (K::ShowButton { element, .. }, F::UiId)
         | (K::ShowImage { element, .. }, F::UiId)
@@ -401,6 +402,7 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         | (K::ShowToggle { element, .. }, F::UiId)
         | (K::ShowList { element, .. }, F::UiId) => Some(element),
         (K::ShowPanel { title: slot, .. }, F::UiContent)
+        | (K::ShowWidget { text: slot, .. }, F::UiContent)
         | (K::ShowLabel { text: slot, .. }, F::UiContent)
         | (K::ShowButton { label: slot, .. }, F::UiContent)
         | (K::ShowImage { asset: slot, .. }, F::UiContent)
@@ -412,6 +414,7 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         )
         | (K::ShowToggle { label: slot, .. }, F::UiContent) => Some(slot),
         (K::ShowPanel { x, .. }, F::UiX)
+        | (K::ShowWidget { x, .. }, F::UiX)
         | (K::ShowLabel { x, .. }, F::UiX)
         | (K::ShowButton { x, .. }, F::UiX)
         | (K::ShowImage { x, .. }, F::UiX)
@@ -420,6 +423,7 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         | (K::ShowToggle { x, .. }, F::UiX)
         | (K::ShowList { x, .. }, F::UiX) => Some(x),
         (K::ShowPanel { y, .. }, F::UiY)
+        | (K::ShowWidget { y, .. }, F::UiY)
         | (K::ShowLabel { y, .. }, F::UiY)
         | (K::ShowButton { y, .. }, F::UiY)
         | (K::ShowImage { y, .. }, F::UiY)
@@ -428,6 +432,7 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         | (K::ShowToggle { y, .. }, F::UiY)
         | (K::ShowList { y, .. }, F::UiY) => Some(y),
         (K::ShowPanel { width, .. }, F::UiWidth)
+        | (K::ShowWidget { width, .. }, F::UiWidth)
         | (K::ShowLabel { width, .. }, F::UiWidth)
         | (K::ShowButton { width, .. }, F::UiWidth)
         | (K::ShowImage { width, .. }, F::UiWidth)
@@ -436,6 +441,7 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         | (K::ShowToggle { width, .. }, F::UiWidth)
         | (K::ShowList { width, .. }, F::UiWidth) => Some(width),
         (K::ShowPanel { height, .. }, F::UiHeight)
+        | (K::ShowWidget { height, .. }, F::UiHeight)
         | (K::ShowLabel { height, .. }, F::UiHeight)
         | (K::ShowButton { height, .. }, F::UiHeight)
         | (K::ShowImage { height, .. }, F::UiHeight)
@@ -444,6 +450,7 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         | (K::ShowToggle { height, .. }, F::UiHeight)
         | (K::ShowList { height, .. }, F::UiHeight) => Some(height),
         (K::ShowPanel { parent, .. }, F::UiParent)
+        | (K::ShowWidget { parent, .. }, F::UiParent)
         | (K::ShowLabel { parent, .. }, F::UiParent)
         | (K::ShowButton { parent, .. }, F::UiParent)
         | (K::ShowImage { parent, .. }, F::UiParent)
@@ -454,11 +461,19 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::ShowSlider { min, .. }, F::UiMin) => Some(min),
         (K::ShowSlider { max, .. }, F::UiMax) => Some(max),
         (K::ShowSlider { value, .. }, F::UiValue) => Some(value),
-        (K::SetUiProp { element, .. }, F::UiTarget)
+        (K::BindUi { element, .. }, F::UiTarget)
+        | (K::SetUiItems { element, .. }, F::UiTarget)
+        | (K::ScrollUi { element, .. }, F::UiTarget)
+        | (K::SetElementTheme { element, .. }, F::UiTarget)
+        | (K::SetUiProp { element, .. }, F::UiTarget)
         | (K::HideElement { element }, F::UiTarget)
         | (K::DeleteElement { element }, F::UiTarget)
         | (K::FocusElement { element }, F::UiTarget) => Some(element),
-        (K::SetUiProp { value, .. }, F::UiPropValue) => Some(value),
+        (K::BindUi { value, .. }, F::UiPropValue)
+        | (K::SetUiItems { value, .. }, F::UiPropValue)
+        | (K::ScrollUi { value, .. }, F::UiPropValue)
+        | (K::SetElementTheme { value, .. }, F::UiPropValue)
+        | (K::SetUiProp { value, .. }, F::UiPropValue) => Some(value),
         (K::Wait { duration }, F::WaitDuration) => Some(duration),
         (K::WaitUntil { condition }, F::WaitUntilCondition) => Some(condition),
         (K::If { condition, .. }, F::Condition) => Some(condition),

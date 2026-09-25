@@ -302,6 +302,10 @@ pub enum Event {
     /// A finger touched the screen.
     Touched,
     /// An interface element was clicked.
+    UiEvent {
+        id: String,
+        event: String,
+    },
     UiClicked {
         id: String,
     },
@@ -318,7 +322,10 @@ impl Event {
     /// True for an event the interface raised. A strand one of these starts
     /// keeps running while the game is paused.
     pub fn is_ui(&self) -> bool {
-        matches!(self, Event::UiClicked { .. } | Event::UiChanged { .. })
+        matches!(
+            self,
+            Event::UiEvent { .. } | Event::UiClicked { .. } | Event::UiChanged { .. }
+        )
     }
 }
 
@@ -666,6 +673,13 @@ impl Vm {
             (Trigger::Cloned, Event::Cloned { actor: fresh }) => fresh == actor,
             (Trigger::ActionPressed(want), Event::Action(got)) => want == got,
             (Trigger::Touched, Event::Touched) => true,
+            (
+                Trigger::UiEvent {
+                    id: want,
+                    event: kind,
+                },
+                Event::UiEvent { id, event },
+            ) => want == id && kind == event,
             (Trigger::UiClicked(want), Event::UiClicked { id }) => want == id,
             (Trigger::UiChanged(want), Event::UiChanged { id, .. }) => want == id,
             _ => false,

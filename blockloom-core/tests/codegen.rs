@@ -3728,3 +3728,47 @@ fn escape_toggles_a_pause_menu_on_both_sides() {
         "{case}: escape while paused never ran its strand"
     );
 }
+
+#[test]
+fn framework_widgets_and_property_blocks_match_native_logic() {
+    let mut blocks = Vec::new();
+    for i in 8..23 {
+        blocks.push(K::ShowWidget {
+            kind: blockloom_core::ui::UiKind::from_index(i),
+            element: Value::text(format!("widget{i}")),
+            text: Value::text("caption"),
+            anchor: UiAnchor::TopLeft,
+            x: number(10.),
+            y: number(20.),
+            width: number(180.),
+            height: number(40.),
+            parent: Value::text(""),
+        });
+    }
+    blocks.extend([
+        K::BindUi {
+            element: Value::text("widget15"),
+            value: Value::text(
+                r#"[{"property":"Value","source":{"Variable":{"actor":"","name":"health"}}}]"#,
+            ),
+        },
+        K::SetUiItems {
+            element: Value::text("widget17"),
+            value: Value::text(r#"["Sword","Shield"]"#),
+        },
+        K::ScrollUi {
+            element: Value::text("widget17"),
+            value: number(96.),
+        },
+        K::SetElementTheme {
+            element: Value::text("widget17"),
+            value: Value::text("Light"),
+        },
+        K::SetUiProp {
+            element: Value::text("widget8"),
+            prop: UiProp::Layout,
+            value: Value::text(r#"{"columns":3,"gap":12}"#),
+        },
+    ]);
+    assert_same("interface-framework", blocks, &[]);
+}

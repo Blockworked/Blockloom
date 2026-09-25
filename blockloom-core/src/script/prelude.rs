@@ -1147,6 +1147,12 @@ impl Actor {
 
     /// A slider's number, or a toggle as `1.0`/`0.0`. Zero for an id nothing
     /// answers to.
+    pub fn bind_ui(&self, id: &str, bindings_json: &str) { self.set_ui_text(id, "Bind", bindings_json); }
+    pub fn set_ui_items(&self, id: &str, items_json: &str) { self.set_ui_text(id, "Items", items_json); }
+    pub fn scroll_ui_to(&self, id: &str, offset: f64) { self.set_ui(id, "Scroll", offset); }
+    pub fn ui_selected_index(&self, id: &str) -> f64 { self.ui_value(id) }
+    pub fn set_widget_theme(&self, id: &str, theme: &str) { self.set_ui_text(id, "Theme", theme); }
+
     pub fn ui_value(&self, id: &str) -> f64 {
         self.number(READ_UI_VALUE, Str::borrow(id), Str::EMPTY, 0.0)
             .unwrap_or(0.0)
@@ -1288,6 +1294,22 @@ pub enum UiKind {
     Slider = 5,
     Toggle = 6,
     List = 7,
+    VerticalBox = 8,
+    HorizontalBox = 9,
+    Grid = 10,
+    Canvas = 11,
+    WrapBox = 12,
+    SizeBox = 13,
+    Spacer = 14,
+    Progress = 15,
+    RadialProgress = 16,
+    ListView = 17,
+    Tabs = 18,
+    Select = 19,
+    Scrollbar = 20,
+    RichText = 21,
+    Tooltip = 22,
+
 }
 
 #[repr(u32)]

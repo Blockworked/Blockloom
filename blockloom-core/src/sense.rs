@@ -347,8 +347,16 @@ pub fn publish(sensors: Sensors) {
     SENSORS.with(|slot| *slot.borrow_mut() = sensors);
 }
 
-/// Replaces just the atmosphere slot. The host calls it at the head of each
-/// fixed tick, so a tick that runs between two frames still reads its own.
+/// Samples the retained interface before either block scheduler runs.
+pub fn publish_ui(ui: HashMap<String, UiSense>, focus: String) {
+    SENSORS.with(|snapshot| {
+        let mut s = snapshot.borrow_mut();
+        s.ui = ui;
+        s.ui_focus = focus;
+    });
+}
+
+/// Samples the atmosphere at the head of each fixed tick.
 pub fn publish_atmosphere(atmosphere: AtmosphereSense) {
     SENSORS.with(|slot| slot.borrow_mut().atmosphere = atmosphere);
 }

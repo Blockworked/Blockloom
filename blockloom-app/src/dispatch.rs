@@ -102,6 +102,19 @@ impl Backend {
                 let lighting: Lighting = arg(&args, "lighting")?;
                 to_json(commands::set_lighting(state, app, lighting)?)
             }
+            "save_interface_asset" => {
+                to_json(commands::save_interface_asset(state, arg(&args, "name")?)?)
+            }
+            "load_interface_asset" => to_json(commands::load_interface_asset(
+                state,
+                app,
+                arg(&args, "path")?,
+            )?),
+            "set_interface" => to_json(commands::set_interface(
+                state,
+                app,
+                arg(&args, "document")?,
+            )?),
             "set_sound_mixer" => {
                 let mixer: SoundMixer = arg(&args, "mixer")?;
                 to_json(commands::set_sound_mixer(state, app, mixer)?)

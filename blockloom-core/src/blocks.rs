@@ -9,7 +9,7 @@
 use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
 use crate::sound::SoundBus;
-use crate::ui::{UiAnchor, UiProp, UiTheme};
+use crate::ui::{UiAnchor, UiKind, UiProp, UiTheme};
 use crate::value::Value;
 use serde::{Deserialize, Serialize};
 
@@ -81,6 +81,10 @@ pub enum InstructionKind {
     ///
     /// Spelled `element` rather than `id` because a flattened instruction
     /// already carries its own `id` on the wire - see [`crate::wire`].
+    WhenUiEvent {
+        element: String,
+        event: String,
+    },
     WhenUiClicked {
         element: String,
     },
@@ -428,6 +432,17 @@ pub enum InstructionKind {
         parent: Value,
     },
     /// A vertical container with a clipped, wheel-scrollable viewport.
+    ShowWidget {
+        kind: UiKind,
+        element: Value,
+        text: Value,
+        anchor: UiAnchor,
+        x: Value,
+        y: Value,
+        width: Value,
+        height: Value,
+        parent: Value,
+    },
     ShowList {
         element: Value,
         anchor: UiAnchor,
@@ -444,6 +459,22 @@ pub enum InstructionKind {
     /// Writes one property of an existing element. A property that means
     /// nothing for that kind is ignored, and an id nothing answers to is an
     /// error the run log shows.
+    BindUi {
+        element: Value,
+        value: Value,
+    },
+    SetUiItems {
+        element: Value,
+        value: Value,
+    },
+    ScrollUi {
+        element: Value,
+        value: Value,
+    },
+    SetElementTheme {
+        element: Value,
+        value: Value,
+    },
     SetUiProp {
         prop: UiProp,
         element: Value,
@@ -758,6 +789,16 @@ impl BlockKind for InstructionKind {
                 parent,
                 ..
             }
+            | K::ShowWidget {
+                element: id,
+                text: content,
+                x,
+                y,
+                width,
+                height,
+                parent,
+                ..
+            }
             | K::ShowButton {
                 element: id,
                 label: content,
@@ -844,7 +885,11 @@ impl BlockKind for InstructionKind {
                 f(height, InputValueType::Any);
                 f(parent, InputValueType::Any);
             }
-            K::SetUiProp {
+            K::BindUi { element: id, value }
+            | K::SetUiItems { element: id, value }
+            | K::ScrollUi { element: id, value }
+            | K::SetElementTheme { element: id, value }
+            | K::SetUiProp {
                 element: id, value, ..
             } => {
                 f(id, InputValueType::Any);
@@ -915,6 +960,7 @@ impl BlockKind for InstructionKind {
             | K::Broadcast { .. }
             | K::StopAll
             | K::SetMouseLocked { .. }
+            | K::WhenUiEvent { .. }
             | K::WhenUiClicked { .. }
             | K::WhenUiChanged { .. }
             | K::HideAllUi
@@ -941,6 +987,7 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenCollision { .. }
                 | InstructionKind::WhenMessage { .. }
                 | InstructionKind::WhenCloned
+                | InstructionKind::WhenUiEvent { .. }
                 | InstructionKind::WhenUiClicked { .. }
                 | InstructionKind::WhenUiChanged { .. }
                 | InstructionKind::BlockHeader { .. }

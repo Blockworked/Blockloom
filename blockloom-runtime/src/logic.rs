@@ -140,6 +140,9 @@ impl LoadedLogic {
                     .unwrap_or("");
                 self.fire_raw("Collision", &actor, &with, other_name);
             }
+            Event::UiEvent { id, event } => {
+                self.fire_raw("UiEvent", "", &format!("{event}\n{id}"), "")
+            }
             Event::UiClicked { id } => self.fire_raw("UiClicked", "", &id, ""),
             Event::UiChanged { id, .. } => self.fire_raw("UiChanged", "", &id, ""),
             Event::Action(action) => self.fire_raw("Action", "", &action, ""),

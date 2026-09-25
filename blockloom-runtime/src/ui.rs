@@ -13,7 +13,10 @@
 
 use bevy::prelude::*;
 use blockloom_core::sense::UiSense;
-use blockloom_core::ui::{UiAllow, UiAnchor, UiElement, UiKind, UiProp, UiTheme};
+use blockloom_core::ui::{
+    UiAllow, UiAnchor, UiBinding, UiDocument, UiElement, UiKind, UiLayout, UiPaint, UiProp,
+    UiStyles, UiTheme, UiWidget,
+};
 use blockloom_core::value::Evaluated;
 use std::collections::HashMap;
 
@@ -86,6 +89,22 @@ pub struct UiNode {
     /// looked. Properties live here rather than on the effect because an
     /// effect is gone by the end of the fixed step that produced it.
     pub dirty: bool,
+    pub layout: Option<UiLayout>,
+    pub styles: UiStyles,
+    pub bindings: Vec<UiBinding>,
+    pub items: Vec<String>,
+    pub scroll: f32,
+    pub scroll_dirty: bool,
+    pub enabled: bool,
+    pub theme: Option<UiTheme>,
+    pub tooltip: String,
+    pub world_actor: String,
+    pub hovered: bool,
+    pub pressed: bool,
+    pub transition: f32,
+    pub collection_range: Option<(usize, usize)>,
+    pub collection_dirty: bool,
+    pub expanded: bool,
 }
 
 impl UiNode {
@@ -122,9 +141,89 @@ pub struct UiManager {
     /// Elements whose entity has to go.
     dropped: Vec<Entity>,
     theme: UiTheme,
+    pub navigation: Option<String>,
+    pub binding_writes: Vec<(UiBinding, Evaluated)>,
+    pub document: UiDocument,
+    pub canvas_scale: f32,
+    pub canvas_origin: Vec2,
 }
 
 impl UiManager {
+    pub fn ids(&self) -> &[String] {
+        &self.order
+    }
+    pub fn get_mut(&mut self, id: &str) -> Option<&mut UiNode> {
+        self.nodes.get_mut(id)
+    }
+    pub fn load(&mut self, document: &UiDocument) {
+        self.clear();
+        self.document = document.clone();
+        self.set_theme(document.theme);
+        for widget in &document.widgets {
+            self.show_widget(widget.clone());
+        }
+    }
+    pub fn show_widget(&mut self, widget: UiWidget) {
+        let id = widget.element.id.clone();
+        self.show(widget.element);
+        if let Some(n) = self.nodes.get_mut(&id) {
+            n.layout = widget.layout;
+            let base = self
+                .document
+                .styles
+                .get(&widget.class)
+                .cloned()
+                .unwrap_or_default();
+            n.styles = UiStyles {
+                normal: widget.style.normal.over(&base.normal),
+                hover: widget.style.hover.over(&base.hover),
+                pressed: widget.style.pressed.over(&base.pressed),
+                disabled: widget.style.disabled.over(&base.disabled),
+                focused: widget.style.focused.over(&base.focused),
+            };
+            n.bindings = widget.bindings;
+            n.items = widget.items;
+            n.tooltip = widget.tooltip;
+            n.world_actor = widget.world_actor;
+        }
+    }
+    pub fn bubble(&self, id: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut current = id;
+        while let Some(n) = self.nodes.get(current) {
+            if result.iter().any(|s| s == current) {
+                break;
+            }
+            result.push(current.to_string());
+            if n.modal {
+                break;
+            }
+            current = &n.parent;
+        }
+        result
+    }
+    pub fn paint(&self, node: &UiNode) -> UiPaint {
+        let state = if !node.enabled {
+            &node.styles.disabled
+        } else if node.pressed {
+            &node.styles.pressed
+        } else if self.navigation.as_deref() == Some(&node.spec.id)
+            || self.focus() == Some(&node.spec.id)
+        {
+            &node.styles.focused
+        } else if node.hovered {
+            &node.styles.hover
+        } else {
+            &node.styles.normal
+        };
+        let mut paint = state.over(&node.styles.normal);
+        paint.background = node.style.background.clone().or(paint.background);
+        paint.text_color = node.style.text_color.clone().or(paint.text_color);
+        paint.text_size = node.style.text_size.or(paint.text_size);
+        paint.radius = node.style.corner_radius.or(paint.radius);
+        paint
+    }
+
     pub fn get(&self, id: &str) -> Option<&UiNode> {
         self.nodes.get(id)
     }
@@ -152,6 +251,9 @@ impl UiManager {
     pub fn senses(&self) -> HashMap<String, UiSense> {
         self.nodes
             .iter()
+            .filter(|(id, _)| {
+                !id.contains("::row:") && !id.ends_with("::extent") && id.as_str() != "__tooltip"
+            })
             .map(|(id, node)| {
                 (
                     id.clone(),
@@ -173,11 +275,32 @@ impl UiManager {
         if id.is_empty() {
             return false;
         }
+        if self.subtree(&id).contains(&spec.parent) {
+            return false;
+        }
+        if self
+            .nodes
+            .get(&id)
+            .is_some_and(|n| n.kind != spec.kind || n.parent != spec.parent)
+        {
+            for child in self.subtree(&id).into_iter().skip(1) {
+                if let Some(node) = self.nodes.get_mut(&child) {
+                    node.entity = Entity::PLACEHOLDER;
+                    node.dirty = true;
+                    if !self.pending.contains(&child) {
+                        self.pending.push(child);
+                    }
+                }
+            }
+        }
         match self.nodes.get_mut(&id) {
             Some(node) if node.kind == spec.kind && node.parent == spec.parent => {
                 // The same element again: a HUD strand rebuilding itself.
                 // Only its own value is left alone, since a person may have
                 // moved it since.
+                if node.spec == spec && node.visible {
+                    return false;
+                }
                 node.modal = spec.modal;
                 node.visible = true;
                 node.range = spec.range;
@@ -206,6 +329,22 @@ impl UiManager {
                         spec,
                         style: UiStyle::default(),
                         dirty: true,
+                        layout: None,
+                        styles: UiStyles::default(),
+                        bindings: vec![],
+                        items: vec![],
+                        scroll: 0.,
+                        scroll_dirty: false,
+                        enabled: true,
+                        theme: None,
+                        tooltip: String::new(),
+                        world_actor: String::new(),
+                        hovered: false,
+                        pressed: false,
+                        transition: 0.,
+                        collection_range: None,
+                        collection_dirty: true,
+                        expanded: false,
                     },
                 );
                 self.pending.push(id);
@@ -260,6 +399,8 @@ impl UiManager {
         self.pending.clear();
         self.focus = None;
         self.theme = UiTheme::default();
+        self.navigation = None;
+        self.binding_writes.clear();
     }
 
     /// An element and everything flowing inside it, parents first.
@@ -319,9 +460,17 @@ impl UiManager {
     /// `rect_of` hands back each element's screen rectangle, which is what
     /// the caller reads off Bevy's computed layout.
     pub fn hit(&self, point: Vec2, rect_of: impl Fn(&UiNode) -> Option<Rect>) -> Option<&UiNode> {
+        let modal = self.order.iter().rev().find(|id| {
+            self.nodes
+                .get(*id)
+                .is_some_and(|n| n.modal && self.shown(n))
+        });
         self.order.iter().rev().find_map(|id| {
+            if modal.is_some_and(|m| !self.bubble(id).contains(m)) {
+                return None;
+            }
             let node = self.nodes.get(id)?;
-            if !self.shown(node) || node.entity == Entity::PLACEHOLDER {
+            if !node.enabled || !self.shown(node) || node.entity == Entity::PLACEHOLDER {
                 return None;
             }
             if !rect_of(node).is_some_and(|rect| rect.contains(point)) {
@@ -333,7 +482,10 @@ impl UiManager {
                 let Some(above) = self.nodes.get(parent) else {
                     break;
                 };
-                if above.kind == UiKind::List
+                if !above.enabled {
+                    return None;
+                }
+                if above.kind.scrollable()
                     && !rect_of(above).is_some_and(|rect| rect.contains(point))
                 {
                     return None;
@@ -350,7 +502,7 @@ impl UiManager {
         let mut node = self.nodes.get(id)?;
         let mut guard = 0;
         loop {
-            if node.kind == UiKind::List {
+            if node.kind.scrollable() {
                 return Some(node);
             }
             if node.parent.is_empty() || guard > self.order.len() {
@@ -364,12 +516,73 @@ impl UiManager {
     /// Writes one property. Answers what the sensed value became, when the
     /// property is one that changes it.
     pub fn set(&mut self, id: &str, prop: UiProp, value: &Evaluated) -> bool {
+        if prop == UiProp::Visible
+            && !value.as_bool()
+            && self
+                .focus
+                .as_ref()
+                .is_some_and(|focus| self.subtree(id).contains(focus))
+        {
+            self.focus_on(None);
+        }
         let Some(node) = self.nodes.get_mut(id) else {
             return false;
         };
+        let unchanged = match prop {
+            UiProp::Text => node.style.text.as_deref() == Some(&value.as_text()),
+            UiProp::Value => node.value == settled(node, value),
+            UiProp::Visible => node.visible == value.as_bool(),
+            UiProp::Enabled => node.enabled == value.as_bool(),
+            _ => false,
+        };
+        if unchanged {
+            return true;
+        }
         let number = |value: &Evaluated| value.as_number().unwrap_or(0.0) as f32;
         node.dirty = true;
         match prop {
+            UiProp::Layout => {
+                if let Ok(layout) = serde_json::from_str(&value.as_text()) {
+                    if node.layout.as_ref() != Some(&layout) {
+                        node.collection_dirty = true;
+                    }
+                    node.layout = Some(layout);
+                }
+            }
+            UiProp::Style => {
+                if let Ok(style) = serde_json::from_str(&value.as_text()) {
+                    node.styles = style;
+                }
+            }
+            UiProp::Bind => {
+                if let Ok(bindings) = serde_json::from_str(&value.as_text()) {
+                    node.bindings = bindings;
+                }
+            }
+            UiProp::Items => {
+                if let Ok(items) = serde_json::from_str::<Vec<String>>(&value.as_text()) {
+                    node.items = items;
+                    node.collection_dirty = true;
+                    node.value = Evaluated::Number(0.);
+                }
+            }
+            UiProp::Scroll => {
+                node.scroll = number(value).max(0.);
+                node.scroll_dirty = true;
+            }
+            UiProp::SelectedIndex => {
+                node.value = Evaluated::Number(
+                    (number(value).max(0.) as usize).min(node.items.len()) as f64,
+                );
+            }
+            UiProp::Theme => {
+                node.theme =
+                    serde_json::from_value(serde_json::Value::String(value.as_text())).ok();
+            }
+            UiProp::Enabled => node.enabled = value.as_bool(),
+            UiProp::Tooltip => node.tooltip = value.as_text(),
+            UiProp::WorldActor => node.world_actor = value.as_text(),
+            UiProp::Transition => node.transition = number(value).clamp(0., 10.),
             UiProp::Visible => {
                 let visible = value.as_bool();
                 node.visible = visible;
@@ -418,6 +631,18 @@ impl UiManager {
         if next == node.value {
             return None;
         }
+        for binding in &node.bindings {
+            if binding.two_way
+                && matches!(
+                    binding.property,
+                    UiProp::Value | UiProp::Text | UiProp::SelectedIndex
+                )
+            {
+                if let Some(value) = binding.converter.write(&next) {
+                    self.binding_writes.push((binding.clone(), value));
+                }
+            }
+        }
         node.value = next.clone();
         node.dirty = true;
         Some(next)
@@ -427,7 +652,12 @@ impl UiManager {
     /// isn't one drops focus instead, so clicking away releases the keys.
     pub fn focus_on(&mut self, id: Option<&str>) {
         let next = match id {
-            Some(id) if self.nodes.get(id).is_some_and(|n| n.kind == UiKind::Input) => {
+            Some(id)
+                if self
+                    .nodes
+                    .get(id)
+                    .is_some_and(|n| n.kind == UiKind::Input && n.enabled && self.shown(n)) =>
+            {
                 Some(id.to_string())
             }
             _ => None,
@@ -507,7 +737,18 @@ pub fn slider_at(range: [f32; 2], step: f32, fraction: f32) -> f64 {
 /// and on a slider inside its own ends and on its own step.
 fn settled(node: &UiNode, value: &Evaluated) -> Evaluated {
     let next = UiElement::initial_value(node.kind, value);
-    if node.kind != UiKind::Slider {
+    if node.kind.selectable() {
+        return Evaluated::Number(
+            next.as_number()
+                .unwrap_or(0.)
+                .round()
+                .clamp(0., node.items.len() as f64),
+        );
+    }
+    if !matches!(
+        node.kind,
+        UiKind::Slider | UiKind::Scrollbar | UiKind::Progress | UiKind::RadialProgress
+    ) {
         return next;
     }
     Evaluated::Number(blockloom_core::ui::snap(
@@ -578,12 +819,34 @@ pub fn node_for(spec: &UiElement, parented: bool) -> Node {
         node.margin = at.margin;
     }
     match spec.kind {
-        UiKind::Panel | UiKind::List => {
+        UiKind::Panel
+        | UiKind::List
+        | UiKind::VerticalBox
+        | UiKind::HorizontalBox
+        | UiKind::Grid
+        | UiKind::Canvas
+        | UiKind::WrapBox
+        | UiKind::SizeBox
+        | UiKind::ListView
+        | UiKind::Tabs => {
             node.flex_direction = FlexDirection::Column;
             node.row_gap = Val::Px(PANEL_GAP);
             node.padding = UiRect::all(Val::Px(PANEL_PADDING));
             node.align_items = AlignItems::Stretch;
-            if spec.kind == UiKind::List {
+            if matches!(
+                spec.kind,
+                UiKind::HorizontalBox | UiKind::WrapBox | UiKind::Tabs
+            ) {
+                node.flex_direction = FlexDirection::Row;
+            }
+            if spec.kind == UiKind::WrapBox {
+                node.flex_wrap = FlexWrap::Wrap;
+            }
+            if spec.kind == UiKind::Grid {
+                node.display = Display::Grid;
+                node.grid_template_columns = RepeatedGridTrack::flex(2, 1.);
+            }
+            if spec.kind.scrollable() {
                 node.overflow = Overflow::scroll_y();
                 if spec.size[0] <= 0.0 {
                     node.width = Val::Px(280.0);
@@ -593,10 +856,10 @@ pub fn node_for(spec: &UiElement, parented: bool) -> Node {
                 }
             }
         }
-        UiKind::Label => {
+        UiKind::Label | UiKind::RichText | UiKind::Tooltip => {
             node.padding = UiRect::all(Val::Px(2.0));
         }
-        UiKind::Button | UiKind::Input => {
+        UiKind::Button | UiKind::Input | UiKind::Select => {
             node.padding = UiRect::all(Val::Px(WIDGET_PADDING));
             node.justify_content = if spec.kind == UiKind::Button {
                 JustifyContent::Center
@@ -605,7 +868,7 @@ pub fn node_for(spec: &UiElement, parented: bool) -> Node {
             };
             node.align_items = AlignItems::Center;
         }
-        UiKind::Slider => {
+        UiKind::Slider | UiKind::Scrollbar | UiKind::Progress | UiKind::RadialProgress => {
             node.height = Val::Px(if spec.size[1] > 0.0 {
                 spec.size[1]
             } else {
@@ -619,7 +882,7 @@ pub fn node_for(spec: &UiElement, parented: bool) -> Node {
             node.align_items = AlignItems::Center;
             node.padding = UiRect::all(Val::Px(WIDGET_PADDING));
         }
-        UiKind::Image => {}
+        UiKind::Image | UiKind::Spacer => {}
     }
     node
 }
@@ -649,11 +912,11 @@ pub fn background_for(theme: UiTheme, kind: UiKind, focused: bool) -> Color {
         ),
     };
     match kind {
-        UiKind::Panel | UiKind::List => panel,
+        UiKind::Panel | UiKind::List | UiKind::ListView | UiKind::Tooltip => panel,
         UiKind::Button | UiKind::Toggle => button,
         UiKind::Input if focused => focused_input,
         UiKind::Input => input,
-        UiKind::Slider | UiKind::Label | UiKind::Image => Color::NONE,
+        _ => Color::NONE,
     }
 }
 
@@ -724,6 +987,14 @@ pub fn text_of(node: &UiNode) -> String {
                 typed
             }
         }
+        UiKind::Select => node
+            .value
+            .as_number()
+            .ok()
+            .and_then(|v| (v as usize).checked_sub(1))
+            .and_then(|i| node.items.get(i))
+            .cloned()
+            .unwrap_or_else(|| node.spec.content.clone()),
         UiKind::Slider => String::new(),
         _ => written.unwrap_or_else(|| node.spec.content.clone()),
     }
@@ -1087,5 +1358,74 @@ mod tests {
         assert_eq!(text_of(manager.get("name").unwrap()), "your name");
         manager.changed("name", Evaluated::Text("Ada".to_string()));
         assert_eq!(text_of(manager.get("name").unwrap()), "Ada");
+    }
+}
+
+pub fn layout_node(element: &UiNode, canvas: bool) -> Node {
+    use blockloom_core::ui::{UiAlign, UiLength};
+    let mut node = node_for(&element.spec, !element.parent.is_empty() && !canvas);
+    if element.kind == UiKind::Spacer {
+        node.flex_shrink = 0.;
+    }
+    if let Some(layout) = &element.layout {
+        let length = |v| match v {
+            UiLength::Auto => Val::Auto,
+            UiLength::Px(n) => Val::Px(n.max(0.)),
+            UiLength::Percent(n) => Val::Percent(n.max(0.)),
+        };
+        if layout.width != UiLength::Auto {
+            node.width = length(layout.width);
+        }
+        if layout.height != UiLength::Auto {
+            node.height = length(layout.height);
+        }
+        node.min_width = Val::Px(layout.min_size[0].max(0.));
+        node.min_height = Val::Px(layout.min_size[1].max(0.));
+        if layout.max_size[0] > 0. {
+            node.max_width = Val::Px(layout.max_size[0]);
+        }
+        if layout.max_size[1] > 0. {
+            node.max_height = Val::Px(layout.max_size[1]);
+        }
+        node.padding = edges(layout.padding);
+        node.margin = edges(layout.margin);
+        node.row_gap = Val::Px(layout.gap);
+        node.column_gap = Val::Px(layout.gap);
+        node.flex_grow = layout.grow.max(0.);
+        node.align_items = match layout.align {
+            UiAlign::Stretch => AlignItems::Stretch,
+            UiAlign::Start => AlignItems::Start,
+            UiAlign::Center => AlignItems::Center,
+            UiAlign::End => AlignItems::End,
+        };
+        if element.kind == UiKind::Grid {
+            node.grid_template_columns = RepeatedGridTrack::flex(layout.columns.clamp(1, 256), 1.);
+        }
+        if layout.absolute {
+            node.position_type = PositionType::Absolute;
+            node.left = Val::Px(element.spec.offset[0]);
+            node.top = Val::Px(element.spec.offset[1]);
+        }
+    }
+    if let Some(width) = element.style.width {
+        node.width = Val::Px(width);
+    }
+    if let Some(height) = element.style.height {
+        node.height = Val::Px(height);
+    }
+    if let Some(padding) = element.style.padding {
+        node.padding = UiRect::all(Val::Px(padding));
+    }
+    if !element.visible {
+        node.display = Display::None;
+    }
+    node
+}
+fn edges([left, top, right, bottom]: [f32; 4]) -> UiRect {
+    UiRect {
+        left: Val::Px(left),
+        top: Val::Px(top),
+        right: Val::Px(right),
+        bottom: Val::Px(bottom),
     }
 }

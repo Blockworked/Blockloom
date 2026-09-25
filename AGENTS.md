@@ -151,7 +151,8 @@ it is a child process.
   calls each value slot), `project.rs` (the saved document and the folder it
   lives in), `library.rs` (the project folders the Dashboard lists),
   `assets.rs` (the files inside one of those folders, which the asset tray
-  manages and the runtime loads images and fonts from), `pack.rs` (that
+  manages and the runtime loads images and fonts from), `pipeline/` (what
+  import makes of each of those files - see Import roles below), `pack.rs` (that
   document again, as a built game carries it) with `build.rs` (what lays a
   build out), `vm/` (the block VM), `codegen/` (the same blocks as Rust
   instead),
@@ -315,8 +316,10 @@ Bevy runs headless there: no winit, one update per frame the view presents
 (`embed::paced` waits on `FrameExchange::presented`, which the view calls on
 every swap and keeps asking for while a world runs; 50 ms at most, so a hidden
 view still hears the editor), and synchronous pipeline compilation, since async compile tasks outliving the
-device crash NVIDIA at exit. Cameras render at `GAME_SIZE` (960x720) - the
-whole game, scaled to fit the view - into a ring of three Vulkan images
+device crash NVIDIA at exit. Cameras render at the view's real pixel size
+(`FrameExchange::resize`, debounced by the view, since each size is a new
+ring; a fixed resolution picked in the Game tab is sent as is at scale 1),
+with `UiScale` and the 2D projection following the view's pixel density, into a ring of three Vulkan images
 exported as dma-bufs (`embed.rs`, raw `ash` under wgpu). `FrameExchange` hands
 slots between the world and the view: the world never draws into the one
 being shown or waiting to be. The C++ `GameView` item imports the ring through
@@ -338,8 +341,13 @@ binding on each status or `say` stuttered the view. `RunLog.qml` appends by
 `log.total` rather than rebuilding its list.
 
 Input is `PreviewInput`, as it is for the MJPEG preview: keys, buttons,
-position, text, plus `focus` (which, once sent, decides whether the game is
-focused, and releases held keys when lost) and `mouse_delta`. A windowless
+position, text, scroll, touch, plus `focus` (which, once sent, decides whether
+the game is focused, and releases held keys and fingers when lost) and
+`mouse_delta`. Keys travel by physical position: the view turns Qt's
+`nativeScanCode` into a `KeyCode` name through `blockloom_protocol::keys`,
+falling back to Qt's key name where there is no scan code (macOS). Scroll and
+touch become Bevy's own `MouseWheel`/`TouchInput` messages in
+`preview::drain_preview_inputs`. A windowless
 world answers `lock mouse` with `RuntimeMessage::PointerLock`; the view then
 locks the pointer while it has the keyboard - Wayland pointer constraints and
 relative pointer (the generated glue is vendored in `blockloom-qt/src/wayland/`),
@@ -348,6 +356,239 @@ a click takes it back.
 
 `BLOCKLOOM_RUNTIME=process` forces the child process and MJPEG preview on
 Linux too. Windows and macOS have no GPU sharing yet.
+
+### Scene view
+
+While nothing runs, the Game view is a scene view over the same world:
+loaded, never started, and seen through an editor camera instead of the
+game's. `commands::open_world` brings a world up for it when the tab is shown
+(embedded, or with the preview on), so editing never waits for Play.
+`blockloom-runtime/src/edit.rs` is all of it: `SceneEditor` holds the camera
+(a flying one in 3D, pan and zoom in 2D), the selection and any drag.
+
+Input is the same forwarded `PreviewInput` a game reads, but `edit::interact`
+takes it in order ahead of the game's systems, so a press and its release in
+one frame still make a click. A click picks the actor under the pointer
+(nearest along the ray in 3D, topmost in 2D) and reports `Picked`; a drag on
+it or on the gizmo's handles moves the entity's pose live, and the release
+reports `Placed`. `commands::place_from_view` writes that into the document
+as one undo step, which reloads the world like any other edit. A child placed
+in its parent's frame reports its new `offset` too, since that, not `Place`,
+is what the world builds it from, and such children follow a dragged parent
+live.
+
+The tool, snapping and steps are `blockloom_protocol::SceneView`, an editor
+preference kept in QML `Settings` and re-sent to every world that comes up,
+as is the selection (`EditorMessage::Select`). `Place` has a uniform
+`scale` (the size blocks read and write) and a per-axis `stretch` in the
+actor's own frame; the scale tool's axis handles move the stretch and its
+centre handle the size. Handles are gizmo lines in their own `HandleGizmos`
+group, drawn over the world. In 3D the editor holds the view's pointer lock
+while the right button is down, so looking around reads raw motion.
+
+### Instancing and batching
+
+`blockloom-runtime/src/batching.rs`, 3D only. A plain surface (no graph
+shader, no box projection, not a tilemap) draws through `InstancedMaterial`:
+the shared material is keyed by `surface_key`, the surface minus color and
+UV transform, and those two ride per actor in one storage buffer indexed by
+its `MeshTag` (`InstanceTable`, slot 0 the identity). So `set color` writes a
+slot rather than making a material, and same-mesh actors stay one draw.
+
+`batch_meshes` (PostUpdate) merges what instancing can't group: actors with
+no body or a fixed one that hold still for `settle_frames` merge per
+streaming cell and surface, on a `CellTasks` background task (members draw
+themselves until it lands), and one that moves after merging draws itself for
+the rest of the run; small movers merge per surface every frame. A batched
+actor keeps its entity and only loses its own draw, through
+`RenderLayers::none()`. Merged meshes bake tint and UVs into vertex colors and
+UVs. `BatchPolicy` holds every threshold. Counts reach the profiler as
+`batching/*` render metrics.
+
+### LOD and occlusion
+
+`blockloom-runtime/src/culling.rs`, 3D only. `LodGroup` is the one LOD
+selector: levels of a screen-size threshold (bounding diameter over viewport
+height) plus an optional mesh, picked with a hysteresis band in `select_lod`
+and announced by `LodChanged`; below the last level the entity leaves the main
+view. Content hands it levels (`RenderCache::lod` does spheres and capsules)
+rather than selecting its own, and batching leaves LOD'd actors instanced.
+
+`cull_views` runs between Bevy's frustum pass and
+`MarkNewlyHiddenEntitiesInvisible`, removing LOD-culled and occluded meshes
+from the world camera's `VisibleEntities` only, so shadows are untouched.
+Occlusion is a software Hi-Z: the camera-facing faces of solid, opaque
+`Occluder` boxes (cuboid and plane actors) are rasterized, eroded a texel and
+reduced to a max-depth pyramid. Bevy's GPU `OcclusionCulling` and GPU frustum
+culling (`NoCpuCulling`) are camera toggles in `OcclusionPolicy`. Counts reach
+the profiler as `culling/*`.
+
+### GPU measurement
+
+`blockloom-runtime/src/gpu.rs`. Bevy's `RenderDiagnosticsPlugin` times each
+pass; `gpu.rs` adds one timestamp pair around the whole frame (an encoder
+pushed in `RenderGraphSystems::Begin` and one before `Submit`, read back a few
+frames later) as `gpu/frame`. Every `MEMORY_EVERY` frames it sorts the wgpu
+allocator's report into `Kind`s by allocation label (`Kind::of`), so a new
+render target needs a label that sorts, not code. Without a report (Metal) it
+sizes the views' own textures instead. All of it reaches the profiler as
+`gpu/*` and `memory/*`.
+
+### Loading and streaming
+
+`blockloom-runtime/src/streaming.rs`. `StreamingCells` is the one cell system:
+XZ cells around the world camera with a hysteresis band, admitted nearest
+first under a per-frame budget and announced as `CellEntered`/`CellLeft`
+messages (a rebuild sends every cell as left). Content streams by being a
+payload: it reacts to those messages and does its work through `CellTasks`,
+which runs on the async compute pool and holds the cell as loading until the
+task lands. Terrain chunks and the like belong there, not in a second system.
+
+A look whose files are still loading gets `Loading`: a flat `Placeholder`
+child in 3D (Bevy draws nothing for a material whose texture isn't in yet),
+and a `FadeIn` on the sprite in 2D once the image lands. A model's own box is
+its placeholder already.
+
+Every rebuild opens a `Warmup` window: everything with bounds is drawn
+unculled (`NoFrustumCulling`, and `cull_views` stands down), so every pipeline
+compiles now rather than when a thing first turns up on screen. It closes
+after a few quiet frames with no loads, no loading cells and no pipelines in
+the render world's backlog (`PipelineBacklog`), or at its timeout. Start
+doesn't press the green flag itself in a rendering world: `engine.starting`
+holds it (reported to the editor as running) and `warm_up` calls
+`world::begin_run` when the window closes, so a built player's first frame
+is warm too. A bare test world (`engine.prewarm` false) starts on the spot.
+At build time `build::check_shaders` compiles every `.wesl` surface file the
+project draws with, and a broken one fails the build. Counts reach the
+profiler as `streaming/*`.
+
+### Environment
+
+`blockloom-runtime/src/environment.rs`. `Environment` is the one resource
+the background, sun, ambient, AO, exposure and post come from: each frame
+`blend_environment` starts from the project's `World` settings, lays
+`EnvironmentVolumes` over them by weight (numbers and colors lerp, switches
+flip at half weight), and resolves exposure through `ExposureClaims`
+(director beats auto-exposure beats the manual EV). `apply_environment`
+writes it onto the world camera, the sun and `ClearColor` when it changes or
+a rebuild spawns new ones, and it is extracted to the render world. Passes
+read `Environment`, never `project.world.lighting`/`post`; the rebuild only
+spawns a bare camera and sun.
+
+### HDR frame and lights
+
+Every world camera carries `Hdr` (`environment::apply_environment`), bloom or
+not: the scene renders linear FP16 and only the tonemapper at the end makes
+display values, so lights, sky and emissives can pass 1.0. Exposure stays the
+one EV on `Environment`; `set exposure to` (and a script's `set_exposure`)
+takes `ExposureClaims::director` for the rest of the run, and the atmosphere
+slot's `exposure` reading reports the resolved value.
+
+`blockloom-runtime/src/hdr.rs` is the Game view's exposure debug views, a
+Bevy `FullscreenMaterial` per dimension that reads the exposed image before
+tonemapping: false color (bands of stops around middle grey, with the
+tonemapper forced to `None` so the bands stay true) and a clipping zebra over
+anything past paper white. The choice is `SceneView::debug_view`, an editor
+preference that applies while a game runs too.
+
+A `Light` component is a point or spot light in lumens with a range in
+metres, 3D only. `lights::sync_lights` reconciles each actor's light against
+`engine.attached`, the authored spec and `engine.light_intensity` (what
+`set my light to` wrote this run), and hangs it on a child entity, since
+batching hides a merged actor through an empty `RenderLayers`.
+
+The GPU half is checked by the ignored tests in `embed.rs` (`cargo test -p
+blockloom-runtime -- --ignored embed`), which read pixels back from a real
+world: false color in both dimensions, and a lamp that still lights the
+floor after batching.
+
+### Shader library and pass plumbing
+
+`blockloom-core/src/shader_lib.rs` holds Blockloom's own WESL modules
+(`src/shaders/`): `hash` (PCG), `noise` (value, gradient, Worley), `fbm`,
+`scattering` (phase functions, Beer, per-step integral) and `frame`, the
+standard per-view `FrameUniforms`. They live in core so the editor's shader
+check can link them; `shader_lib::validate` links a module against them and
+runs naga, which is how their tests (and the runtime's shader tests) check
+them without a GPU. The runtime registers each as `blockloom::<name>`
+(`blockloom-runtime/src/passes.rs`), so built-in passes and surface files
+import them like Bevy's.
+
+`passes.rs` is also the shared pass plumbing, both dimensions. A camera
+asks for it with `WorkingTargets` (like `DepthPrepass`); the render world then
+gives the view a `WorkingTargetSet` (one full-res `Rgba16Float` target and a
+half-res scratch pair, labelled `working_*`), `ViewFrameUniforms` into the one
+`FrameUniformBuffer` filled from the extracted `Environment`, and
+`ViewUpsample`'s bilateral upsample pipelines, queued up front so warm-up
+compiles them. `passes::upsample` draws scratch onto a full-res target,
+guided by the 3D depth prepass (plain bilinear in 2D). A half-res texel
+stands for the full-res pixel at twice its coordinate (`frame::full_texel`).
+Nothing asks for `WorkingTargets` yet; Phase 5's passes are the consumers.
+
+### Import roles, probes and the atmosphere slot
+
+The asset pipeline (`blockloom-core/src/pipeline/`) inspects, plans and
+fingerprints every file. An `ImportRole` says what a file imports *as*:
+texture, HDR (`.hdr`/`.exr`, planned as BC6H), volume (`.cube` LUTs, or an
+image strip of slices), heightmap (16-bit images, `.r16`/`.r32`), IES profile,
+or light cookie. The extension picks one; a PNG heightmap or cookie is an
+override kept in `.blockloom/pipeline.json` (`set-import-role`), and changing
+a role dirties the asset. Each role's decoder is its own submodule, and a pass
+reads files through `pipeline::load_volume`/`load_heightmap`/`load_ies` rather
+than parsing them itself. A new format extends a role here, not a second
+importer.
+
+`blockloom-runtime/src/probes.rs` is probe capture as a service, 3D only:
+`ProbeService::request` spawns six 90° FP16 face cameras (`FACES` is cubemap
+order, with Bevy's z flip), announces `ProbeCaptured` after a couple of
+frames, and with `readback` assembles the faces into a cube image. HDRI
+baking, reflection probes and water reflections are requests with different
+defaults (`ProbeRequest::hdri`/`reflection`/`water`); none owns cameras.
+
+`Sensors::atmosphere` is the snapshot's sun/wind/fog/weather slot, versioned
+by `ATMOSPHERE_VERSION`. `atmosphere::sample_atmosphere` writes it at the head
+of every fixed tick, before any scheduler, from the blended `Environment` and
+`AtmosphereSources` (which Phase 5's wind and weather systems fill), and
+`publish_sensors` copies that sample rather than resampling, so a frame
+between ticks reads what the tick read. Every reader goes through
+`AtmosphereSense::field`: the `Atmosphere` reporter (VM, and compiled logic
+through `sense`) and a script's `atmosphere()` (`READ_ATMOSPHERE`). A new
+reading is one arm there, one entry in `ATMOSPHERE_FIELDS` and the reporter's
+dropdown in `Blocks.qml`.
+
+### Models, tilemaps and surface shaders
+
+A `Visual::Model` draws its glTF/GLB file's first scene as a child of the
+actor (`blockloom-runtime/src/model.rs`), scaled by the look's `scale`, and
+loops the animation the look names (the file's first when empty). The
+authored box stands in until the scene is ready, stays for OBJ/FBX or a file
+that won't load, and is always what the actor collides as. `ModelCache` keeps
+loaded files alive across rebuilds so an edit doesn't flash the box.
+
+A solid tilemap collides per tile, as the merged rects of
+`Tilemap::solid_rects` (minus its `passable` tiles), and nav blocks the same
+rects. Animated tiles cycle their frames on the wall clock;
+`materials::animate_tiles` rewrites only the mesh's UVs when a frame turns.
+
+A custom effect's `GraphEffect::starter_graph` is the uniform path spelled as
+graph nodes, so `export_shader` writes it to a `.wesl` asset that draws the
+same thing. An effect whose `source` names a `.wesl` file draws with that
+file's `graph_main(uv, time)`: `material::surface_module` wraps it in the
+dimension's head, `SURFACE_BINDINGS` and fragment tail, hoisting the file's
+own imports up beside the head's (WESL wants every import before the first
+declaration), and `materials::surface_shader` swaps that in through the
+material's `specialize`. `check_surface_wesl` parses the same module, refuses
+names the wrapper already has and imports the dimension hasn't loaded, and
+runs naga's full type check when the file has no imports, so the editor and
+the GPU agree on what compiles.
+
+The built-in shaders (`src/shaders/*.wesl`) and that wrapper are WESL, since
+Bevy 0.20 hands plain WGSL to wgpu untouched: imports are `import
+bevy_pbr::render::...`, shader defs are `@if(DEF)`, and the bind group is
+`constants::MATERIAL_BIND_GROUP`. A user's surface file is WESL too and may
+import Blockloom's library (`blockloom::fbm`, ...) and Bevy's own modules
+(`bevy_pbr` in 3D, `bevy_sprite_render` in 2D);
+a project's other files aren't modules, so `package::`/`super::` are refused.
 
 ### How a project runs
 
@@ -413,6 +654,7 @@ Pond Game/
   game/
     game.pack          the document, and the format version it was written at
     assets/...         the project's assets, minus the script sources
+    .blockloom/atlas.* the Image looks baked into one sprite sheet
     .blockloom/build/  native blocks and script libraries
 ```
 
@@ -690,3 +932,5 @@ lands.
   world with an optional font asset path, which no inspector row exposes yet.
 - A reporter-shaped custom block runs to completion in place, so a `wait` inside
   one passes straight through.
+- The scene view's camera starts over whenever the world does (a dimension
+  switch, reopening a project).

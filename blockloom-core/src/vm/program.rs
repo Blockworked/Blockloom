@@ -33,6 +33,10 @@ pub enum Trigger {
     /// A finger touched the screen.
     Touched,
     /// An interface element was clicked, by its id.
+    UiEvent {
+        id: String,
+        event: String,
+    },
     UiClicked(String),
     /// An input element was changed, by its id.
     UiChanged(String),
@@ -44,7 +48,10 @@ impl Trigger {
     /// buttons would be dead - and it runs on the wall clock, so a blink on
     /// a paused menu still blinks.
     pub fn is_ui(&self) -> bool {
-        matches!(self, Trigger::UiClicked(_) | Trigger::UiChanged(_))
+        matches!(
+            self,
+            Trigger::UiEvent { .. } | Trigger::UiClicked(_) | Trigger::UiChanged(_)
+        )
     }
 }
 
@@ -383,6 +390,10 @@ pub fn compile(graph: &ActorGraph) -> Program {
                 crate::input::normalize_action(action).to_lowercase(),
             )),
             InstructionKind::WhenTouched => Some(Trigger::Touched),
+            InstructionKind::WhenUiEvent { element, event } => Some(Trigger::UiEvent {
+                id: element.trim().into(),
+                event: event.clone(),
+            }),
             InstructionKind::WhenUiClicked { element } => {
                 Some(Trigger::UiClicked(element.trim().to_string()))
             }
@@ -1066,6 +1077,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenCollision { .. }
         | K::WhenMessage { .. }
         | K::WhenCloned
+        | K::WhenUiEvent { .. }
         | K::WhenUiClicked { .. }
         | K::WhenUiChanged { .. }
         | K::BlockHeader { .. } => {}
@@ -1391,6 +1403,19 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             parent,
             *on,
         )),
+        K::ShowWidget {
+            kind,
+            element,
+            text,
+            anchor,
+            x,
+            y,
+            width,
+            height,
+            parent,
+        } => steps.push(show(
+            *kind, element, text, None, *anchor, x, y, width, height, parent, false,
+        )),
         K::ShowList {
             element: id,
             anchor,
@@ -1413,6 +1438,26 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             false,
         )),
         K::SetUiTheme { theme } => steps.push(Step::Action(Action::SetUiTheme(*theme))),
+        K::BindUi { element, value } => steps.push(Step::Action(Action::SetUiProp {
+            prop: crate::ui::UiProp::Bind,
+            id: element.clone(),
+            value: value.clone(),
+        })),
+        K::SetUiItems { element, value } => steps.push(Step::Action(Action::SetUiProp {
+            prop: crate::ui::UiProp::Items,
+            id: element.clone(),
+            value: value.clone(),
+        })),
+        K::ScrollUi { element, value } => steps.push(Step::Action(Action::SetUiProp {
+            prop: crate::ui::UiProp::Scroll,
+            id: element.clone(),
+            value: value.clone(),
+        })),
+        K::SetElementTheme { element, value } => steps.push(Step::Action(Action::SetUiProp {
+            prop: crate::ui::UiProp::Theme,
+            id: element.clone(),
+            value: value.clone(),
+        })),
         K::SetUiProp {
             prop,
             element,

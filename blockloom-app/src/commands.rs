@@ -3286,3 +3286,43 @@ pub(crate) fn clear_log(state: &SharedState, app: &AppHandle) -> Result<(), Stri
     emit(app, &s);
     Ok(())
 }
+
+/// Saves the designer document as one undoable edit.
+pub(crate) fn set_interface(
+    state: &SharedState,
+    app: &AppHandle,
+    document: blockloom_core::ui::UiDocument,
+) -> Result<(), String> {
+    document.validate()?;
+    let mut s = lock(state)?;
+    if s.project().is_none() {
+        return Err("No project is open".into());
+    }
+    push_undo(&mut s);
+    s.project_mut().unwrap().world.interface = document;
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+pub(crate) fn save_interface_asset(state: &SharedState, name: String) -> Result<String, String> {
+    let s = lock(state)?;
+    let document = &s.project().ok_or("No project is open")?.world.interface;
+    let text = serde_json::to_string_pretty(document).map_err(|e| e.to_string())?;
+    assets::create_file(&project_dir(&s)?, "assets/ui", &name, &text)
+}
+pub(crate) fn load_interface_asset(
+    state: &SharedState,
+    app: &AppHandle,
+    path: String,
+) -> Result<(), String> {
+    let document = {
+        let s = lock(state)?;
+        let full =
+            assets::resolve(&project_dir(&s)?, &path).ok_or("Invalid interface asset path")?;
+        let text = std::fs::read_to_string(full).map_err(|e| e.to_string())?;
+        serde_json::from_str(&text).map_err(|e| format!("Invalid interface: {e}"))?
+    };
+    set_interface(state, app, document)
+}

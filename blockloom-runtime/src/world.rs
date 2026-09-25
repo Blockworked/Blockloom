@@ -283,7 +283,20 @@ pub fn pump_editor(
                 }
                 engine.touching.clear();
                 engine.speech.clear();
-                manager.clear();
+                let document = match engine.project_dir.as_deref() {
+                    Some(dir) => engine.project.world.interface.with_stylesheets(dir),
+                    None => Ok(engine.project.world.interface.clone()),
+                };
+                match document {
+                    Ok(document) => manager.load(&document),
+                    Err(message) => {
+                        bridge::send(&RuntimeMessage::Error {
+                            actor: String::new(),
+                            message,
+                        });
+                        manager.load(&engine.project.world.interface);
+                    }
+                }
                 engine.rebuild = true;
                 engine.paused = false;
                 engine.pause_began = None;
@@ -1360,7 +1373,7 @@ pub fn detect_clicks(
         // A drag on a slider and a press on a toggle are changes, not
         // clicks - though both also count as a click on the element.
         let changed = match kind {
-            UiKind::Slider => screen_rect(&laid_out, entity).and_then(|rect| {
+            UiKind::Slider | UiKind::Scrollbar => screen_rect(&laid_out, entity).and_then(|rect| {
                 let width = rect.width().max(1.0);
                 let fraction = (cursor.x - rect.min.x) / width;
                 let at = crate::ui::slider_at(range, step, fraction);
@@ -1372,7 +1385,13 @@ pub fn detect_clicks(
             }
             _ => None,
         };
-        engine.fire(Event::UiClicked { id: id.clone() });
+        if kind != UiKind::Toggle {
+            crate::ui_systems::activate(&mut manager, &mut engine, &id);
+        } else {
+            for target in manager.bubble(&id) {
+                engine.fire(Event::UiClicked { id: target });
+            }
+        }
         if let Some(value) = changed {
             engine.fire(Event::UiChanged { id, value });
         }
@@ -1447,6 +1466,7 @@ pub fn detect_clicks(
 /// list, and clipped children cannot receive clicks or wheel input outside its
 /// viewport because `UiManager::hit` checks list ancestors.
 pub fn scroll_ui_lists(
+    mut engine: NonSendMut<Engine>,
     mut wheels: MessageReader<MouseWheel>,
     windows: Query<&Window, With<PrimaryWindow>>,
     manager: Res<crate::ui::UiManager>,
@@ -1477,6 +1497,7 @@ pub fn scroll_ui_lists(
     let Some(list) = manager.scroll_owner(&hit.spec.id) else {
         return;
     };
+    crate::ui_systems::emit_event(&manager, &mut engine, &list.spec.id, "scroll");
     let Ok((mut position, node, computed)) = scrolls.get_mut(list.entity) else {
         return;
     };
@@ -1503,7 +1524,7 @@ fn world_takes_clicks(engine: &Engine, manager: &crate::ui::UiManager) -> bool {
 
 /// Where one interface element's box ended up on screen, from the layout
 /// Bevy computed this frame. `None` for an element nothing has drawn yet.
-fn screen_rect(
+pub(crate) fn screen_rect(
     laid_out: &Query<(&ComputedNode, &UiGlobalTransform)>,
     entity: Entity,
 ) -> Option<Rect> {
@@ -1513,6 +1534,10 @@ fn screen_rect(
         return None;
     }
     let centre = transform.translation;
+    let size = Vec2::new(
+        transform.matrix2.x_axis.abs().dot(size),
+        transform.matrix2.y_axis.abs().dot(size),
+    );
     Some(Rect::from_center_size(centre, size))
 }
 

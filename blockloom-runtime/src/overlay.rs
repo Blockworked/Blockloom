@@ -17,6 +17,9 @@ use blockloom_protocol::RuntimeMessage;
 use std::collections::HashSet;
 
 #[derive(Component)]
+pub struct UiRadialSegment(pub String, pub f32);
+
+#[derive(Component)]
 pub struct OverlayText;
 
 #[derive(Component)]
@@ -291,11 +294,16 @@ type Styled<'a> = (&'a mut Node, &'a mut BackgroundColor);
 
 /// Which entities that means: the element itself, not the two pieces inside
 /// one that follow its value rather than its style.
-type OwnNode = (Without<UiSliderFill>, Without<UiToggleLamp>);
+type OwnNode = (
+    Without<UiSliderFill>,
+    Without<UiToggleLamp>,
+    Without<UiRadialSegment>,
+);
 
 /// The text inside an element, and everything a `set` can do to it. Named
 /// because a Bevy query of four components is a mouthful in a signature.
 type Words<'a> = (
+    Entity,
     &'a UiElementText,
     &'a mut Text,
     &'a mut TextFont,
@@ -326,7 +334,8 @@ pub fn draw_ui(
     // asking for the same `Node` and `BackgroundColor` at once.
     mut nodes: Query<Styled, OwnNode>,
     mut labels: Query<Words>,
-    mut fills: Query<(&UiSliderFill, &mut Node)>,
+    mut fills: Query<(&UiSliderFill, &mut Node), Without<UiRadialSegment>>,
+    mut radials: Query<(&UiRadialSegment, &mut Node), Without<UiSliderFill>>,
     mut lamps: Query<(&UiToggleLamp, &mut BackgroundColor)>,
 ) {
     despawn_dropped(&mut commands, &mut manager);
@@ -357,6 +366,7 @@ pub fn draw_ui(
                         // Over the world and the speech bubbles both.
                         GlobalZIndex(40),
                         UiRoot,
+                        UiTransform::default(),
                     ))
                     .id()
             })
@@ -400,52 +410,153 @@ pub fn draw_ui(
             unseen.push(id);
             continue;
         };
-        node.display = if element.visible {
-            Display::Flex
+        let canvas = manager
+            .get(&element.parent)
+            .is_some_and(|n| n.kind == UiKind::Canvas);
+        let old_size = (node.width, node.height);
+        *node = crate::ui::layout_node(element, canvas);
+        if element.transition > 0. {
+            node.display = if element.kind == UiKind::Grid {
+                Display::Grid
+            } else {
+                Display::Flex
+            };
+        }
+        if manager.get(&element.parent).is_some_and(|n| {
+            matches!(
+                n.kind,
+                UiKind::HorizontalBox | UiKind::WrapBox | UiKind::Grid | UiKind::Tabs
+            )
+        }) && element.spec.size[0] <= 0.
+            && element.style.width.is_none()
+            && element
+                .layout
+                .as_ref()
+                .is_none_or(|l| l.width == blockloom_core::ui::UiLength::Auto)
+        {
+            node.width = Val::Auto;
+        }
+        let paint = manager.paint(element);
+        let local_theme = element.theme.unwrap_or(theme);
+        let target = paint
+            .background
+            .as_ref()
+            .map(|hex| world::parse_color(hex))
+            .unwrap_or_else(|| crate::ui::background_for(local_theme, element.kind, id == focused));
+        if element.transition > 0. {
+            commands
+                .entity(element.entity)
+                .insert(crate::ui_systems::UiTween {
+                    start: background.0,
+                    end: target,
+                    elapsed: 0.,
+                    duration: element.transition,
+                    width: (old_size.0, node.width),
+                    height: (old_size.1, node.height),
+                    hide: !element.visible,
+                });
         } else {
-            Display::None
-        };
-        if let Some(width) = element.style.width {
-            node.width = Val::Px(width);
+            *background = BackgroundColor(target);
         }
-        if let Some(height) = element.style.height {
-            node.height = Val::Px(height);
-        }
-        if let Some(padding) = element.style.padding {
-            node.padding = UiRect::all(Val::Px(padding));
-        }
-        // A top-level element is placed against its anchor; a parented one
-        // flows after its siblings and has no coordinates at all.
-        if element.parent.is_empty() {
-            let at = crate::ui::anchoring(element.spec.anchor, element.spec.offset);
-            node.left = at.left;
-            node.top = at.top;
-            node.margin = at.margin;
-        }
-        *background = BackgroundColor(match &element.style.background {
-            Some(hex) => world::parse_color(hex),
-            None => crate::ui::background_for(theme, element.kind, id == focused),
-        });
         node.border_radius = BorderRadius::all(Val::Px(
-            element
-                .style
-                .corner_radius
-                .unwrap_or_else(crate::ui::corner_radius),
+            paint.radius.unwrap_or_else(crate::ui::corner_radius),
         ));
-
+        node.border = UiRect::all(Val::Px(paint.border_width.unwrap_or(0.).max(0.)));
+        commands.entity(element.entity).insert(BorderColor::all(
+            paint
+                .border_color
+                .as_ref()
+                .map(|hex| world::parse_color(hex))
+                .unwrap_or(Color::NONE),
+        ));
+        commands.entity(element.entity).insert(BoxShadow(
+            paint
+                .shadow
+                .as_ref()
+                .map(|hex| {
+                    vec![ShadowStyle {
+                        color: world::parse_color(hex),
+                        x_offset: Val::Px(2.),
+                        y_offset: Val::Px(3.),
+                        blur_radius: Val::Px(8.),
+                        ..default()
+                    }]
+                })
+                .unwrap_or_default(),
+        ));
+        if element.parent.is_empty() || canvas {
+            let at = crate::ui::anchoring(element.spec.anchor, element.spec.offset);
+            commands
+                .entity(element.entity)
+                .insert(UiTransform::from_translation(at.self_shift));
+        }
+        if element.kind == UiKind::Image && !element.spec.content.trim().is_empty() {
+            commands
+                .entity(element.entity)
+                .insert(ImageNode::new(assets.load(world::asset_path(
+                    dir.as_deref(),
+                    element.spec.content.trim(),
+                ))));
+        }
         let wanted = crate::ui::text_of(element);
-        for (owner, mut text, mut font, mut color) in &mut labels {
+        for (text_entity, owner, mut text, mut font, mut color) in &mut labels {
             if owner.0 != id {
                 continue;
             }
-            if text.0 != wanted {
+            if element.kind == UiKind::RichText {
+                text.0.clear();
+                commands.entity(text_entity).despawn_children();
+                commands.entity(text_entity).with_children(|root| {
+                    for run in blockloom_core::ui::rich_text(&wanted) {
+                        root.spawn((
+                            TextSpan::new(run.text),
+                            TextFont {
+                                font_size: FontSize::Px(paint.text_size.unwrap_or(16.)),
+                                weight: if run.bold {
+                                    bevy::text::FontWeight::BOLD
+                                } else {
+                                    bevy::text::FontWeight::NORMAL
+                                },
+                                style: if run.italic {
+                                    bevy::text::FontStyle::Italic
+                                } else {
+                                    bevy::text::FontStyle::Normal
+                                },
+                                ..default()
+                            },
+                            TextColor(
+                                run.color
+                                    .as_ref()
+                                    .map(|c| world::parse_color(c))
+                                    .unwrap_or_else(|| crate::ui::text_color(local_theme)),
+                            ),
+                        ));
+                    }
+                });
+            } else if text.0 != wanted {
                 text.0.clone_from(&wanted);
             }
-            font.font_size =
-                FontSize::Px(element.style.text_size.unwrap_or_else(crate::ui::text_size));
-            *color = TextColor(match &element.style.text_color {
+            font.font_size = FontSize::Px(paint.text_size.unwrap_or_else(crate::ui::text_size));
+            if !paint.fonts.is_empty() {
+                font.font = bevy::text::FontSource::List(
+                    paint
+                        .fonts
+                        .iter()
+                        .map(|f| {
+                            if f.starts_with("assets/") {
+                                bevy::text::FontSource::Handle(
+                                    assets.load(world::asset_path(dir.as_deref(), f)),
+                                )
+                            } else {
+                                bevy::text::FontSource::Family(f.clone().into())
+                            }
+                        })
+                        .collect(),
+                );
+            }
+            *color = TextColor(match &paint.text_color {
                 Some(hex) => world::parse_color(hex),
-                None => crate::ui::text_color(theme),
+                None => crate::ui::text_color(local_theme),
             });
         }
         // A slider's fill and a toggle's lamp are the only two whose look is
@@ -454,6 +565,15 @@ pub fn draw_ui(
         for (owner, mut bar) in &mut fills {
             if owner.0 == id {
                 bar.width = Val::Percent(fraction * 100.0);
+            }
+        }
+        for (segment, mut part) in &mut radials {
+            if segment.0 == id {
+                part.display = if segment.1 <= fraction {
+                    Display::Flex
+                } else {
+                    Display::None
+                };
             }
         }
         let on = element.value.as_bool();
@@ -488,13 +608,14 @@ fn spawn_element(
 ) -> Entity {
     let id = node.spec.id.clone();
     let parented = !node.parent.is_empty();
-    let base = crate::ui::node_for(&node.spec, parented);
+    let base = crate::ui::layout_node(node, false);
     let mut entity = commands.spawn((
         Name::new(format!("ui: {id}")),
         base,
         BackgroundColor(crate::ui::background_for(theme, node.kind, focused)),
+        UiTransform::default(),
     ));
-    if node.kind == UiKind::List {
+    if node.kind.scrollable() {
         entity.insert(ScrollPosition::default());
     }
     // A top-level element takes its anchor's share of its own size back off,
@@ -513,7 +634,7 @@ fn spawn_element(
                 entity.insert(ImageNode::new(assets.load(world::asset_path(dir, path))));
             }
         }
-        UiKind::Slider => {
+        UiKind::Slider | UiKind::Progress | UiKind::Scrollbar => {
             let value = id.clone();
             entity.with_children(|parent| {
                 parent
@@ -544,6 +665,35 @@ fn spawn_element(
                     });
             });
         }
+        UiKind::RadialProgress => {
+            entity.with_children(|parent| {
+                for i in 0..64 {
+                    let angle = i as f32 * std::f32::consts::TAU / 64.;
+                    parent.spawn((
+                        UiRadialSegment(id.clone(), (i + 1) as f32 / 64.),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Percent(48. + angle.sin() * 40.),
+                            top: Val::Percent(48. - angle.cos() * 40.),
+                            width: Val::Percent(4.),
+                            height: Val::Percent(12.),
+                            ..default()
+                        },
+                        UiTransform::from_rotation(Rot2::radians(angle)),
+                        BackgroundColor(crate::ui::accent(theme)),
+                    ));
+                }
+            });
+        }
+        UiKind::Spacer
+        | UiKind::Canvas
+        | UiKind::VerticalBox
+        | UiKind::HorizontalBox
+        | UiKind::Grid
+        | UiKind::WrapBox
+        | UiKind::SizeBox
+        | UiKind::ListView
+        | UiKind::Tabs => {}
         UiKind::Toggle => {
             let lamp = id.clone();
             let caption = id.clone();

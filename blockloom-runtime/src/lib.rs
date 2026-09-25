@@ -48,6 +48,7 @@ mod script;
 mod sound;
 mod streaming;
 mod ui;
+mod ui_systems;
 mod world;
 
 use bevy::asset::{AssetPlugin, UnapprovedPathMode};
@@ -164,7 +165,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     dim2::sync_pause,
                     dim2::sync_timestep,
                     (world::restore_poses, atmosphere::sample_atmosphere).chain(),
-                    world::step_vm,
+                    (ui_systems::bindings, world::step_vm).chain(),
                     (world::step_scripts, ai::tick).chain(),
                     overlay::apply_ui_effects,
                     world::apply_saved_data,
@@ -204,7 +205,18 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     )
                         .chain(),
                     dim2::relay_collisions,
-                    overlay::draw_ui,
+                    (
+                        ui_systems::canvas,
+                        ui_systems::collections,
+                        ui_systems::hover,
+                        ui_systems::navigation,
+                        ui_systems::touch,
+                        ui_systems::project_widgets,
+                        overlay::draw_ui,
+                        ui_systems::animate,
+                        ui_systems::atlas,
+                    )
+                        .chain(),
                     world::type_into_focused_input,
                     world::scroll_ui_lists,
                     world::detect_clicks,
@@ -275,7 +287,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         dim3::sync_pause,
                         dim3::sync_timestep,
                         (world::restore_poses, atmosphere::sample_atmosphere).chain(),
-                        world::step_vm,
+                        (ui_systems::bindings, world::step_vm).chain(),
                         (world::step_scripts, ai::tick).chain(),
                         overlay::apply_ui_effects,
                         world::apply_saved_data,
@@ -316,7 +328,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         )
                             .chain(),
                         dim3::relay_collisions,
-                        overlay::draw_ui,
+                        (ui_systems::canvas, ui_systems::collections, ui_systems::hover, ui_systems::navigation, ui_systems::touch, ui_systems::project_widgets, overlay::draw_ui, ui_systems::animate, ui_systems::atlas).chain(),
                         world::type_into_focused_input,
                         world::scroll_ui_lists,
                         world::detect_clicks,

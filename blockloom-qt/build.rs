@@ -20,6 +20,7 @@ fn main() {
                 "qml/Dashboard.qml",
                 "qml/NewProjectDialog.qml",
                 "qml/EditorPage.qml",
+                "qml/UiDesigner.qml",
                 "qml/TopBar.qml",
                 "qml/ActorList.qml",
                 "qml/BlockSidebar.qml",

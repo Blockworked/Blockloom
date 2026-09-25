@@ -755,7 +755,8 @@ impl Project {
         }
         self.world.input.normalize();
         for actor in &mut self.actors {
-            if let Some(ActorComponent::Material { material }) = actor.components.get_mut("Material")
+            if let Some(ActorComponent::Material { material }) =
+                actor.components.get_mut("Material")
             {
                 material.normalize();
             }
@@ -884,6 +885,31 @@ impl Project {
                 changed = true;
             }
         };
+        for path in &mut self.world.interface.stylesheets {
+            repoint(path);
+        }
+        for widget in self
+            .world
+            .interface
+            .widgets
+            .iter_mut()
+            .chain(self.world.interface.prefabs.values_mut().flatten())
+        {
+            if widget.element.kind == crate::ui::UiKind::Image {
+                repoint(&mut widget.element.content);
+            }
+            for paint in [
+                &mut widget.style.normal,
+                &mut widget.style.hover,
+                &mut widget.style.pressed,
+                &mut widget.style.disabled,
+                &mut widget.style.focused,
+            ] {
+                for font in &mut paint.fonts {
+                    repoint(font);
+                }
+            }
+        }
         repoint(&mut self.icon);
         if let Some(font) = self.world.speech_bubble.font_asset.as_mut() {
             repoint(font);

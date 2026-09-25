@@ -286,6 +286,39 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "save-interface-asset",
+        cmd: "save_interface_asset",
+        aliases: &["save_interface_asset"],
+        summary: "Save the interface to a reusable JSON asset in assets/ui.",
+        args: &[ArgSpec {
+            name: "name",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "load-interface-asset",
+        cmd: "load_interface_asset",
+        aliases: &["load_interface_asset"],
+        summary: "Load an interface JSON asset as one undoable edit.",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-interface",
+        cmd: "set_interface",
+        aliases: &["set_interface"],
+        summary: "Save the interface designer document, including widgets, styles, bindings and prefabs.",
+        args: &[ArgSpec {
+            name: "document",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-sound-mixer",
         cmd: "set_sound_mixer",
         aliases: &["set_sound_mixer"],

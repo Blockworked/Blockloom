@@ -347,6 +347,7 @@ fn trigger_name(trigger: &crate::vm::Trigger) -> &'static str {
         Trigger::Cloned => "Cloned",
         Trigger::ActionPressed(_) => "Action",
         Trigger::Touched => "Touched",
+        Trigger::UiEvent { .. } => "UiEvent",
         Trigger::UiClicked(_) => "UiClicked",
         Trigger::UiChanged(_) => "UiChanged",
     }
@@ -358,6 +359,7 @@ fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
         Trigger::KeyPressed(key) => key.clone(),
         Trigger::Collision { with } => with.clone(),
         Trigger::Message(name) => name.clone(),
+        Trigger::UiEvent { id, event } => format!("{event}\n{id}"),
         Trigger::UiClicked(id) | Trigger::UiChanged(id) => id.clone(),
         Trigger::ActionPressed(action) => action.clone(),
         Trigger::Started | Trigger::Clicked | Trigger::Cloned | Trigger::Touched => String::new(),
