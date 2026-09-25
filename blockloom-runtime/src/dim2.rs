@@ -12,6 +12,22 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite_render::{ColorMaterial, MeshMaterial2d};
 use bevy_rapier2d::prelude as rp;
 
+/// Bevy loads `mesh2d::bindings` on the asset server after startup, and every
+/// 2D pipeline imports it; building before it lands logs an unresolved import.
+pub fn sprite_shaders_ready(
+    mut ready: Local<bool>,
+    shaders: Res<Assets<bevy::shader::Shader>>,
+) -> bool {
+    if !*ready {
+        *ready = shaders.iter().any(|(_, shader)| {
+            shader
+                .path
+                .ends_with("bevy_sprite_render/mesh2d/bindings.wesl")
+        });
+    }
+    *ready
+}
+
 /// Static collider whose top face supports falling actors.
 #[derive(Component)]
 pub struct OneWayPlatform;

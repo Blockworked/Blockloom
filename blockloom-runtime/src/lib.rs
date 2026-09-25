@@ -183,7 +183,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     preview::apply_preview_visibility,
                     preview::drain_preview_inputs,
                     fx::despawn_fx,
-                    world::rebuild_world,
+                    world::rebuild_world.run_if(dim2::sprite_shaders_ready),
                     dim2::relay_collisions,
                     overlay::draw_ui,
                     world::type_into_focused_input,
