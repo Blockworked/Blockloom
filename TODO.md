@@ -544,7 +544,112 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           preset, auto-drop rule (if sky pass over N ms for M frames, drop one LOD).
           Build dialog lists which target keeps volumetrics and why.
 
-### Phase 6 - Scale and ecosystem, do last
+### Phase 6 - 2D games, parity look and feel (2D-first, uses Phase 2 and Phase 4 footing)
+- [ ] 2D animation stack (builds on the open Phase 2 tweens/sprite-animation item; this is the 2D-specific half):
+  - [ ] Flipbooks: image-strip or atlas-page ranges per clip, fps plus per-frame
+        durations, loop/ping-pong/once modes, events on frame marker. API: `play
+        clip _`, `set animation speed to`, reporters `current clip`, `current frame`.
+  - [ ] Skeletal/bone 2D rigs: import from common 2D rig formats, bone transform
+        hierarchy with IK-lite (two-bone), slot attachments that swap sprites,
+        skin tint per slot. Falls back to flipbook when no rig is present.
+  - [ ] 9-slice/stretchable panels and sprite stacking: borders that do not stretch,
+        center tiling modes, per-layer offset for stacked 2.5D sprites.
+  - [ ] Animation player/state machine for 2D: states with transitions on variable
+        or event, blend/crossfade time, root-motion toggle that moves the actor.
+        Shared with the Phase 2 player, not a second implementation.
+  - [ ] Sprite dials: flip X/Y, per-sprite material overrides (tint, palette swap
+        index, outline width/color), sorting layer plus order-in-layer plus
+        Y-sort toggle for top-down depth. Fixed-tick sampling so VM and codegen agree.
+- [ ] Tilemaps and level building (builds on the Phase 4 per-tile collision and
+      animated tiles; this is authoring plus runtime):
+  - [ ] Autotile and brushes: bitmask/edge autotile rules per tileset, scatter
+        brush with density and jitter, fill/line/rect tools, animated-tile paint
+        with frame sync. Tileset import keeps collision, passable and animated
+        flags from Phase 4.
+  - [ ] Parallax layers: ordered background/foreground layers with scroll factor
+        0-2 per axis, wrap/repeat toggle, camera-distance dimming. Layers render
+        behind or in front of actors by sorting layer.
+  - [ ] Level structure: multi-tilemap scenes, room/zone bounds with camera handoff,
+        spawn points plus checkpoints, kill zones and ladders/water volumes as
+        tile regions. Rooms stream through the Phase 4 cell system as payloads,
+        not a second streamer.
+  - [ ] Editor: tile paint/erase/pick, collision overlay view, parallax preview
+        while the camera moves, tileset slice viewer. Stats line: tiles, draw
+        batches, colliding rects.
+  - [ ] Blocks and scripts: `paint tile _ at`, `tile at x y`, `set parallax of
+        layer _ to`, `room containing _`, event `when actor enters room _`.
+- [ ] 2D lighting and look (the 2D half of the Phase 5 HDR chain; reads the same
+      blended `Environment` exposure, never a second EV):
+  - [ ] 2D lights: point/spot/ambient per sorting layer, color times intensity,
+        range in pixels/meters, normal-map toggle for beveled sprites. Shadows
+        as projected 2D occluders from solid tiles and circle/rect actors.
+  - [ ] Day/night and glow: ambient tint ramp tied to time-of-day director,
+        emissive/glow sprites that pass 1.0 into bloom, light flicker noise for
+        torches and neon.
+  - [ ] 2D post: pixelation (fixed pixel size), palette quantize, outline/edge
+        detect, CRT scanline/vignette preset, dither toggle. Order fixed after
+        tonemap; debug splits per effect.
+  - [ ] Normal-map authoring: height-to-normal bake on import, strength dial,
+        preview thumbnail with a movable light dot.
+  - [ ] Blocks and scripts: `set ambient light to`, `set light intensity of _ to`,
+        `set pixelation to`, reporters `light level at x y`, `is night?`.
+- [ ] 2D camera (pixel-correct, deterministic):
+  - [ ] Follow: target actor, deadzone rect, lookahead by velocity, smoothing time,
+        axis locks. One camera per project like 3D, attached through the existing
+        Camera component.
+  - [ ] Bounds and zoom: confine rect plus soft edge push-in, zoom by height in
+        world units with pixel-snap toggle for pixel art, rotation for top-down
+        tilt effects.
+  - [ ] Shake and kicks: trauma 0-1 with Perlin offset/rotation noise and decay,
+        impulse `shake camera by _`, hitstop freeze frames that pause world strands
+        but not UI strands (same rule as `pause game`).
+  - [ ] Parallax and split: camera drives parallax layers above, pixel-perfect
+        toggle that snaps to whole pixels at integer zoom, split-screen for two
+        players as two viewports over one world (later; single camera first).
+  - [ ] Blocks and scripts: `set camera target to`, `set camera bounds/zoom/shake
+        to`, reporters `camera x/y/zoom`, event `when camera reaches bounds`.
+- [ ] 2D physics and movement (builds on rapier2d, joints and one-way platforms
+      from Phase 4; this is feel plus helpers):
+  - [ ] Platformer controller tuning: run accel/decel, air control factor, jump
+        velocity plus variable jump height, coyote time, jump buffering, slope
+        slide limit, step-up height for stairs.
+  - [ ] Helpers: moving platforms that carry riders (parent-space delta like the
+        actor hierarchy, not parenting), ladders/climb volumes, conveyor belts
+        by surface tangent speed, top-down friction/acceleration preset.
+  - [ ] Water and hazards: buoyancy volumes with drag and splash hook, spike/hurt
+        volumes with knockback and invulnerability frames.
+  - [ ] Blocks and scripts: `set move speed/jump height/coyote time to`, `is _
+        grounded/on wall/in water?`, `launch _ by x y`, event `when _ lands`.
+        Sampled on fixed tick so replays stay deterministic.
+- [ ] 2D effects and juice (the 2D path through the Phase 4 particle/trail blocks
+      plus screen feedback):
+  - [ ] Particles in 2D: sprite-sheet flipbook particles, spawn burst/rate shapes
+        (point/line/box/circle), velocity plus drag plus gravity scale, color and
+        size over life curves, soft-edge fade near tile collision.
+  - [ ] Trails and feedback: ribbon trails behind fast actors, ghost afterimages
+        with lifetime (reuse the existing ghost path), floating damage text,
+        squash-and-stretch scale pops on land/hit.
+  - [ ] Screen transitions: fade/wipe/circle wipes between rooms, flash frames,
+        slow-mo timeScale curve plus hitstop (same clock rule as cinematics: wall
+        clock when paused, fixed tick when running).
+  - [ ] Weather lite in 2D: rain/snow/leaf particle presets tied to the weather
+        director coverage value, splash rings on ground hit, wind push from the
+        global wind asset.
+  - [ ] Blocks and scripts: `burst particles _ at`, `trail _ on/off`, `flash
+        screen _`, `pop _`, reporters `particle count`, `is screen shaking?`.
+- [ ] Editor, preview and scaling for 2D:
+  - [ ] 2D inspector tabs: Sprite/Anim/Tiles/Light/Camera, live aspect preview
+        thumbnail, flipbook strip viewer (scrub frames, see hitboxes), parallax
+        layer stack view.
+  - [ ] Viewport: pixel grid plus onion-skin ghosts for animation, tile collision
+        overlay, light radius gizmos, camera bounds plus deadzone rect, parallax
+        depth ruler.
+  - [ ] Quality: per-platform sprite atlas budget, particle and decal pool caps
+        with LRU steal shared with Phase 5, resolution scale for 2D post, auto-drop
+        rule (if frame over N ms for M frames, drop particle density one step).
+        Build dialog lists which target keeps 2D lights/shadows and why.
+
+### Phase 7 - Scale and ecosystem, do last
 - [ ] Multiplayer: headless server, replication, lobbies, rollback.
 - [ ] Deploy: Web/WASM, Android/iOS signing, console path, auto-updater/DLC/addressables.
 - [ ] Ecosystem: analytics/crash, achievements/IAP hooks, plugin API, asset store, collab/VCS, docs/LTS.
