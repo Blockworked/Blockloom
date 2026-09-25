@@ -623,6 +623,36 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "SceneLuminance",
+        op: "SceneLuminance",
+        arity: 0,
+        default_args: Vec::new,
+        // Sampled with the air on the fixed tick, so every scheduler agrees.
+        eval: |_| {
+            Ok(Evaluated::Number(
+                sense::read(|s| s.atmosphere.luminance) as f64
+            ))
+        },
+    },
+    ExtOperator {
+        kind: "IsHdrDisplay",
+        op: "IsHdrDisplay",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| Ok(Evaluated::Bool(sense::read(|s| s.atmosphere.hdr_display))),
+    },
+    ExtOperator {
+        kind: "PeakBrightness",
+        op: "PeakBrightness",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| {
+            Ok(Evaluated::Number(
+                sense::read(|s| s.atmosphere.peak_brightness) as f64,
+            ))
+        },
+    },
+    ExtOperator {
         kind: "IsTrigger",
         op: "IsTrigger",
         arity: 1,

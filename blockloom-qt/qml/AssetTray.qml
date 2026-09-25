@@ -323,6 +323,8 @@ Rectangle {
         BwMenuItem { visible: root.canRole("heightmap"); iconName: "trending-up"; text: "Import as heightmap"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "heightmap" }) }
         BwMenuItem { visible: root.canRole("cookie"); iconName: "sun"; text: "Import as light cookie"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "cookie" }) }
         BwMenuItem { visible: root.canRole("volume"); iconName: "layers"; text: "Import as volume strip"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "volume" }) }
+        BwMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "hdr"; iconName: "sun"; text: "Exposure bias…"
+            onTriggered: { biasDialog.entry = root.menuEntry; const r = root.report(root.menuEntry); biasDialog.ev = r && r.exposure_bias ? r.exposure_bias : 0; biasDialog.open(); } }
         BwMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "folder"; iconName: "folder"; text: "Open"; onTriggered: root.goTo(root.menuEntry.path) }
         BwMenuItem { visible: !!root.menuEntry; iconName: "pencil"; text: "Rename"; onTriggered: root.startRename(root.menuEntry) }
         BwMenuItem { visible: !!root.menuEntry && root.path.length > 0; iconName: "upload"; text: "Move up one folder"; onTriggered: root.run("move_asset", { path: root.menuEntry.path, parent: root.parentOf(root.parentOf(root.menuEntry.path)) }) }
@@ -335,6 +337,19 @@ Rectangle {
         standardButtons: Dialog.Yes | Dialog.Cancel
         Text { color: Theme.text; text: deleteDialog.entry ? "Delete " + (deleteDialog.entry.kind === "folder" ? "“" + deleteDialog.entry.name + "” and everything in it" : "“" + deleteDialog.entry.name + "”") + "?\n\nThis cannot be undone." : "" }
         onAccepted: if (entry) root.run("delete_asset", { path: entry.path })
+    }
+    BwDialog {
+        id: biasDialog
+        property var entry: null
+        property real ev: 0
+        title: "Exposure bias"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        ColumnLayout {
+            spacing: 8
+            Text { color: Theme.textDim; font.pixelSize: 12; text: biasDialog.entry ? "Stops to brighten (or, below zero, darken) “" + biasDialog.entry.name + "” by, wherever it is used." : "" }
+            NumberField { Layout.preferredWidth: 120; value: biasDialog.ev; fallback: 0; onCommitted: n => biasDialog.ev = Math.min(Math.max(n, -16), 16) }
+        }
+        onAccepted: if (entry) root.run("set_exposure_bias", { path: entry.path, ev: ev })
     }
     FileDialog {
         id: importDialog

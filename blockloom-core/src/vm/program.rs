@@ -126,6 +126,9 @@ pub enum Action {
     SetAnimationSpeed(Value),
     SetExposure(Value),
     SetLightIntensity(Value),
+    SetEmissiveStrength(Value),
+    SetHdrOutput(bool),
+    SetPeakBrightness(Value),
     SetBody(BodyKind),
     ApplyImpulse([Value; 3]),
     SetVelocity([Value; 3]),
@@ -583,6 +586,8 @@ fn action_values(action: &Action) -> Vec<&Value> {
         | Action::SetScale(value)
         | Action::SetExposure(value)
         | Action::SetLightIntensity(value)
+        | Action::SetEmissiveStrength(value)
+        | Action::SetPeakBrightness(value)
         | Action::Say(value)
         | Action::SetColor(value)
         | Action::StopSound { sound: value }
@@ -838,6 +843,8 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         Action::SetScale(v) => Action::SetScale(lift_one(v, ctx)),
         Action::SetExposure(v) => Action::SetExposure(lift_one(v, ctx)),
         Action::SetLightIntensity(v) => Action::SetLightIntensity(lift_one(v, ctx)),
+        Action::SetEmissiveStrength(v) => Action::SetEmissiveStrength(lift_one(v, ctx)),
+        Action::SetPeakBrightness(v) => Action::SetPeakBrightness(lift_one(v, ctx)),
         Action::ApplyImpulse(mut t) => {
             for v in &mut t {
                 *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
@@ -1312,6 +1319,13 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::SetExposure { ev } => steps.push(Step::Action(Action::SetExposure(ev.clone()))),
         K::SetLightIntensity { intensity } => {
             steps.push(Step::Action(Action::SetLightIntensity(intensity.clone())))
+        }
+        K::SetEmissiveStrength { strength } => {
+            steps.push(Step::Action(Action::SetEmissiveStrength(strength.clone())))
+        }
+        K::SetHdrOutput { enabled } => steps.push(Step::Action(Action::SetHdrOutput(*enabled))),
+        K::SetPeakBrightness { nits } => {
+            steps.push(Step::Action(Action::SetPeakBrightness(nits.clone())))
         }
         K::SetBody { body } => steps.push(Step::Action(Action::SetBody(*body))),
         K::ApplyImpulse { x, y, z } => steps.push(Step::Action(Action::ApplyImpulse([

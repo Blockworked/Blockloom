@@ -111,6 +111,19 @@ pub enum Effect {
         actor: String,
         intensity: f32,
     },
+    /// How strongly the actor's surface glows, times its emissive tint.
+    SetEmissiveStrength {
+        actor: String,
+        strength: f32,
+    },
+    /// HDR output on or off for the rest of the run. World-global.
+    SetHdrOutput {
+        enabled: bool,
+    },
+    /// The display's peak brightness in nits for the rest of the run.
+    SetPeakBrightness {
+        nits: f32,
+    },
     SetBody {
         actor: String,
         body: BodyKind,

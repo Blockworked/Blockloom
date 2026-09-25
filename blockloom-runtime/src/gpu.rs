@@ -160,6 +160,8 @@ pub struct MemorySample {
     pub allocated: Option<u64>,
     /// Bytes it has reserved from the driver, free space included.
     pub reserved: Option<u64>,
+    /// FP16 color targets, a share of `Color`: what rendering HDR costs.
+    pub hdr: u64,
 }
 
 impl MemorySample {
@@ -401,6 +403,10 @@ fn sample_memory(
         }
         None => views.sample(),
     };
+    let sample = MemorySample {
+        hdr: views.hdr_bytes(),
+        ..sample
+    };
     shared.0.lock().unwrap().memory = Some(sample);
 }
 
@@ -413,6 +419,27 @@ struct ViewTextures<'w, 's> {
 }
 
 impl ViewTextures<'_, '_> {
+    /// The views' FP16 color targets, each counted once. Labels don't say a
+    /// format, so this reads the textures even when the allocator reports.
+    fn hdr_bytes(&self) -> u64 {
+        let mut seen = HashSet::new();
+        let mut bytes = 0;
+        let mut count = |texture: &wgpu::Texture| {
+            if texture.format() == wgpu::TextureFormat::Rgba16Float && seen.insert(texture.clone())
+            {
+                bytes += texture_bytes(texture);
+            }
+        };
+        for target in &self.targets {
+            count(target.main_texture());
+            count(target.main_texture_other());
+            if let Some(sampled) = target.sampled_main_texture() {
+                count(sampled);
+            }
+        }
+        bytes
+    }
+
     /// Every view's targets, each texture counted once however many views
     /// share it.
     fn sample(&self) -> MemorySample {
@@ -515,6 +542,7 @@ impl GpuReport<'_> {
         if let Some(sample) = memory.sample {
             metrics.push(("memory/exact", f64::from(u8::from(sample.exact)), "flag"));
             metrics.push(("memory/targets", sample.targets() as f64, "bytes"));
+            metrics.push(("memory/targets/hdr", sample.hdr as f64, "bytes"));
             for kind in Kind::ALL {
                 if sample.exact || kind.is_target() {
                     metrics.push((kind.metric(), sample.get(kind) as f64, "bytes"));

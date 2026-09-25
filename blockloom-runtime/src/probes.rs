@@ -349,7 +349,7 @@ fn despawn(commands: &mut Commands, cameras: &[Entity; 6]) {
 }
 
 /// Strips readback row padding: wgpu copies rows 256-byte aligned.
-fn unpad_rows(data: &[u8], width: u32, height: u32) -> Vec<u8> {
+pub(crate) fn unpad_rows(data: &[u8], width: u32, height: u32) -> Vec<u8> {
     let row = (width * FACE_TEXEL_BYTES) as usize;
     let padded = row.next_multiple_of(256);
     if padded == row {

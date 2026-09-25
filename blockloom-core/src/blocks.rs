@@ -201,6 +201,20 @@ pub enum InstructionKind {
     SetLightIntensity {
         intensity: Value,
     },
+    /// Sets how strongly this actor's surface glows, as a multiple of its
+    /// emissive tint (its look color when the tint is black). 3D only.
+    SetEmissiveStrength {
+        strength: Value,
+    },
+    /// Turns HDR output on or off for the rest of the run, where the
+    /// display offers it. Window-global.
+    SetHdrOutput {
+        enabled: bool,
+    },
+    /// Sets the display's peak brightness in nits for the rest of the run.
+    SetPeakBrightness {
+        nits: Value,
+    },
 
     // ─── Physics ────────────────────────────────────────────────────────────
     SetBody {
@@ -735,6 +749,8 @@ impl BlockKind for InstructionKind {
             | K::SetScale { factor: v }
             | K::SetExposure { ev: v }
             | K::SetLightIntensity { intensity: v }
+            | K::SetEmissiveStrength { strength: v }
+            | K::SetPeakBrightness { nits: v }
             | K::SetDensity { density: v }
             | K::SetMass { mass: v }
             | K::SetCollisionLayer { layer: v }
@@ -1026,6 +1042,7 @@ impl BlockKind for InstructionKind {
             | K::SetTrailEnabled { .. }
             | K::StopTweens
             | K::StopAnimation
+            | K::SetHdrOutput { .. }
             | K::Forever { .. }
             | K::EscapeLoop
             | K::ContinueLoop

@@ -7,7 +7,9 @@ use crate::state::{InstrPath, ValueLocation};
 use blockloom_core::blocks::{BlockPiece, BlockShape, Instruction};
 use blockloom_core::components::ActorComponent;
 use blockloom_core::nav::NavSettings;
-use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, PostProcess, Visual};
+use blockloom_core::scene::{
+    Camera, DisplayOutput, Lighting, Mode, Physics, Placement, PostProcess, Visual,
+};
 use blockloom_core::sound::SoundMixer;
 use blockloom_core::value::Value as BlockValue;
 use blockloom_core::wire;
@@ -92,6 +94,7 @@ impl Backend {
                 arg(&args, "path")?,
                 arg(&args, "target").ok().flatten(),
                 arg(&args, "fast").ok().flatten(),
+                arg(&args, "hdr").ok().flatten(),
             )?),
 
             // ── The world ──────────────────────────────────────────────────
@@ -134,6 +137,10 @@ impl Backend {
             "set_sound_mixer" => {
                 let mixer: SoundMixer = arg(&args, "mixer")?;
                 to_json(commands::set_sound_mixer(state, app, mixer)?)
+            }
+            "set_display_output" => {
+                let display: DisplayOutput = arg(&args, "display")?;
+                to_json(commands::set_display_output(state, app, display)?)
             }
             "set_post_process" => {
                 let post: PostProcess = arg(&args, "post")?;
@@ -240,6 +247,11 @@ impl Backend {
                 arg(&args, "path")?,
                 arg(&args, "role")?,
             )?),
+            "set_exposure_bias" => to_json(commands::set_exposure_bias(
+                state,
+                arg(&args, "path")?,
+                arg(&args, "ev")?,
+            )?),
             "reimport_assets" => to_json(commands::reimport_assets(
                 state,
                 arg(&args, "paths").unwrap_or_default(),
@@ -324,6 +336,7 @@ impl Backend {
                 arg::<blockloom_protocol::SceneView>(&args, "view")?,
             )?),
             "frame_selected" => to_json(commands::frame_selected(state)?),
+            "capture_exr" => to_json(commands::capture_exr(state)?),
             "set_preview_enabled" => to_json(commands::set_preview_enabled(
                 state,
                 app,

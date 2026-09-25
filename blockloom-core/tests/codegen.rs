@@ -132,6 +132,9 @@ fn publish_world() {
     sensors.gamepad_axes.insert("leftstickx".to_string(), 0.5);
     sensors.gamepad_buttons.insert("south".to_string());
     sensors.atmosphere.wind_speed = 3.0;
+    sensors.atmosphere.luminance = 42.0;
+    sensors.atmosphere.hdr_display = true;
+    sensors.atmosphere.peak_brightness = 600.0;
     blockloom_core::sense::publish(sensors);
 }
 
@@ -290,6 +293,8 @@ impl Host for Recorder {
             | Act::SetUiTheme { .. }
             | Act::SetBusVolume { .. }
             | Act::SetExposure { .. }
+            | Act::SetHdrOutput { .. }
+            | Act::SetPeakBrightness { .. }
             | Act::SetPaused { .. } => String::new(),
             _ => actor.to_string(),
         };
@@ -357,6 +362,9 @@ impl Host for Recorder {
                 "volume" | "hint"
             ))),
             "UiFocus" => Ok(Val::Text("name".to_string())),
+            "SceneLuminance" => Ok(Val::Num(42.0)),
+            "IsHdrDisplay" => Ok(Val::Bool(true)),
+            "PeakBrightness" => Ok(Val::Num(600.0)),
             "Atmosphere" => match args[0].as_text().as_str() {
                 "wind speed" => Ok(Val::Num(3.0)),
                 other => Err(format!("the atmosphere has no \"{other}\" reading")),
@@ -952,6 +960,9 @@ fn line_of(act: &Act) -> String {
         Act::SetScale { factor } => format!("SetScale {factor:?}"),
         Act::SetExposure { ev } => format!("SetExposure {ev:?}"),
         Act::SetLightIntensity { intensity } => format!("SetLightIntensity {intensity:?}"),
+        Act::SetEmissiveStrength { strength } => format!("SetEmissiveStrength {strength:?}"),
+        Act::SetHdrOutput { enabled } => format!("SetHdrOutput {enabled}"),
+        Act::SetPeakBrightness { nits } => format!("SetPeakBrightness {nits:?}"),
         Act::Say { text } => format!("Say {text}"),
         Act::SetColor { color } => format!("SetColor {color}"),
         Act::SetVisible { visible } => format!("SetVisible {visible}"),
@@ -1146,6 +1157,11 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetLightIntensity { actor, intensity } => {
             format!("{actor}|SetLightIntensity {intensity:?}")
         }
+        Effect::SetEmissiveStrength { actor, strength } => {
+            format!("{actor}|SetEmissiveStrength {strength:?}")
+        }
+        Effect::SetHdrOutput { enabled } => format!("|SetHdrOutput {enabled}"),
+        Effect::SetPeakBrightness { nits } => format!("|SetPeakBrightness {nits:?}"),
         Effect::Say { actor, text } => format!("{actor}|Say {text}"),
         Effect::SetColor { actor, color } => format!("{actor}|SetColor {color}"),
         Effect::SetVisible { actor, visible } => format!("{actor}|SetVisible {visible}"),
@@ -1650,6 +1666,14 @@ fn arithmetic_lands_on_the_same_numbers() {
             K::SetLightIntensity {
                 intensity: Value::text("bright"),
             },
+            K::SetEmissiveStrength {
+                strength: op("Div", vec![number(5.0), number(2.0)]),
+            },
+            K::SetHdrOutput { enabled: true },
+            K::SetPeakBrightness {
+                nits: op("Add", vec![number(600.0), number(400.0)]),
+            },
+            K::SetHdrOutput { enabled: false },
             K::Move {
                 steps: op("Math", vec![Value::text("Sqrt"), number(2.0)]),
             },
@@ -1808,6 +1832,15 @@ fn sensing_reads_the_same_world() {
             },
             K::Say {
                 text: op("Atmosphere", vec![Value::text("humidity")]),
+            },
+            K::Say {
+                text: op("SceneLuminance", vec![]),
+            },
+            K::Say {
+                text: op("IsHdrDisplay", vec![]),
+            },
+            K::Say {
+                text: op("PeakBrightness", vec![]),
             },
             K::ChangePosition {
                 axis: Axis::X,

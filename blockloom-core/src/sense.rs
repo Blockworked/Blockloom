@@ -192,6 +192,12 @@ pub struct AtmosphereSense {
     pub temperature: f32,
     /// The camera's EV100 after every claim on it: lower is brighter.
     pub exposure: f32,
+    /// Mean scene luminance the camera sees, in nits, before exposure.
+    pub luminance: f32,
+    /// Whether frames are going out as HDR right now.
+    pub hdr_display: bool,
+    /// The peak brightness the HDR tone curve aims at, in nits.
+    pub peak_brightness: f32,
 }
 
 impl Default for AtmosphereSense {
@@ -213,6 +219,9 @@ impl Default for AtmosphereSense {
             wetness: 0.0,
             temperature: 20.0,
             exposure: 9.7,
+            luminance: 0.0,
+            hdr_display: false,
+            peak_brightness: 1000.0,
         }
     }
 }
@@ -236,6 +245,9 @@ pub const ATMOSPHERE_FIELDS: &[&str] = &[
     "wetness",
     "temperature",
     "exposure",
+    "luminance",
+    "hdr",
+    "peak brightness",
 ];
 
 impl AtmosphereSense {
@@ -264,6 +276,15 @@ impl AtmosphereSense {
             "wetness" => self.wetness,
             "temperature" => self.temperature,
             "exposure" | "ev" => self.exposure,
+            "luminance" | "sceneluminance" => self.luminance,
+            "hdr" | "hdrdisplay" => {
+                if self.hdr_display {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            "peakbrightness" | "peak" => self.peak_brightness,
             _ => return None,
         };
         Some(value as f64)

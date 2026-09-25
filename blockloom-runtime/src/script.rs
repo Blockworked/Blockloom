@@ -819,6 +819,12 @@ extern "C" fn act(
             actor,
             speed: n0 as f32,
         },
+        abi::ACT_SET_EMISSIVE_STRENGTH => Effect::SetEmissiveStrength {
+            actor,
+            strength: n0 as f32,
+        },
+        abi::ACT_SET_HDR_OUTPUT => Effect::SetHdrOutput { enabled: n0 != 0.0 },
+        abi::ACT_SET_PEAK_BRIGHTNESS => Effect::SetPeakBrightness { nits: n0 as f32 },
         abi::ACT_SET_BUS_VOLUME => Effect::SetBusVolume {
             bus: SoundBus::parse(a).unwrap_or(SoundBus::Sfx),
             volume: user_to_gain(n0),

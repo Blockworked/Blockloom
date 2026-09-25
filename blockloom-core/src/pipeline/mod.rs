@@ -26,6 +26,7 @@
 //!   keeps. Each role's decoder lives in its own submodule and the `load_*`
 //!   functions are what a pass reads a file through.
 
+pub mod bc6h;
 pub mod hdr;
 pub mod height;
 pub mod ies;
@@ -933,6 +934,12 @@ impl ImportRole {
     }
 }
 
+/// Where a build puts an HDR sky baked to a BC6H cube, relative to its
+/// game folder.
+pub fn baked_sky_path(relative: &str) -> String {
+    format!(".blockloom/sky/{}.dds", relative.replace('/', "__"))
+}
+
 /// An HDR's plan: BC6H always (the only block format that keeps values past
 /// 1), downscaled past `hdr_max`.
 pub fn decide_hdr(info: &hdr::HdrInfo, settings: &ImportSettings) -> TexturePlan {
@@ -1192,6 +1199,9 @@ pub struct PipelineManifest {
     /// Roles the author chose over what the extension says, by path.
     #[serde(default)]
     pub roles: HashMap<String, ImportRole>,
+    /// Per-texture exposure bias in stops, by path. HDR files only.
+    #[serde(default)]
+    pub exposure_bias: HashMap<String, f32>,
 }
 
 fn pipeline_version() -> u32 {
@@ -1205,6 +1215,7 @@ impl Default for PipelineManifest {
             settings: ImportSettings::default(),
             entries: HashMap::new(),
             roles: HashMap::new(),
+            exposure_bias: HashMap::new(),
         }
     }
 }
@@ -1216,6 +1227,11 @@ impl PipelineManifest {
             .get(relative)
             .copied()
             .or_else(|| ImportRole::detect(relative))
+    }
+
+    /// Stops an HDR file is scaled by when it is decoded. 0 when unset.
+    pub fn bias_of(&self, relative: &str) -> f32 {
+        self.exposure_bias.get(relative).copied().unwrap_or(0.0)
     }
 }
 
@@ -1289,7 +1305,8 @@ pub fn note_removed(project_dir: &Path, relative: &str) {
     let mut manifest = load_manifest(project_dir);
     let entry = manifest.entries.remove(relative);
     let role = manifest.roles.remove(relative);
-    if entry.is_some() || role.is_some() {
+    let bias = manifest.exposure_bias.remove(relative);
+    if entry.is_some() || role.is_some() || bias.is_some() {
         let _ = save_manifest(project_dir, &manifest);
     }
 }
@@ -1299,7 +1316,8 @@ pub fn note_moved(project_dir: &Path, from: &str, to: &str) {
     let mut manifest = load_manifest(project_dir);
     let entry = manifest.entries.remove(from);
     let role = manifest.roles.remove(from);
-    if entry.is_none() && role.is_none() {
+    let bias = manifest.exposure_bias.remove(from);
+    if entry.is_none() && role.is_none() && bias.is_none() {
         return;
     }
     if let Some(entry) = entry {
@@ -1307,6 +1325,9 @@ pub fn note_moved(project_dir: &Path, from: &str, to: &str) {
     }
     if let Some(role) = role {
         manifest.roles.insert(to.to_string(), role);
+    }
+    if let Some(bias) = bias {
+        manifest.exposure_bias.insert(to.to_string(), bias);
     }
     let _ = save_manifest(project_dir, &manifest);
 }
@@ -1333,6 +1354,32 @@ pub fn set_role(
     inspect_asset(project_dir, &relative)
 }
 
+/// Scales an HDR file by `ev` stops wherever it is decoded, within +-16.
+/// Its sky picks the change up on the next world build.
+pub fn set_exposure_bias(
+    project_dir: &Path,
+    relative: &str,
+    ev: f32,
+) -> Result<PipelineReport, String> {
+    let relative = crate::assets::normalize(relative)
+        .ok_or_else(|| format!("\"{relative}\" isn't a path in this project"))?;
+    let mut manifest = load_manifest(project_dir);
+    if manifest.role_of(&relative) != Some(ImportRole::Hdr) {
+        return Err(format!("{relative} isn't an HDR image"));
+    }
+    if !ev.is_finite() {
+        return Err("Exposure bias must be a number".to_string());
+    }
+    let ev = ev.clamp(-16.0, 16.0);
+    if ev == 0.0 {
+        manifest.exposure_bias.remove(&relative);
+    } else {
+        manifest.exposure_bias.insert(relative.clone(), ev);
+    }
+    save_manifest(project_dir, &manifest)?;
+    inspect_asset(project_dir, &relative)
+}
+
 /// What the tray shows per asset: what it is, what import would do, and
 /// whether the file changed since import.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1349,6 +1396,9 @@ pub struct PipelineReport {
     /// What it imports as, when it is one of the roled kinds.
     #[serde(default)]
     pub role: Option<ImportRole>,
+    /// Stops an HDR is scaled by when decoded.
+    #[serde(default)]
+    pub exposure_bias: f32,
 }
 
 /// Inspect one asset and say what the pipeline makes of it.
@@ -1367,6 +1417,7 @@ pub fn inspect_asset(project_dir: &Path, relative: &str) -> Result<PipelineRepor
     let (summary, warnings) = describe(&relative, kind, role, &manifest.settings, &bytes);
     Ok(PipelineReport {
         dirty: is_dirty(&manifest, &relative, &full).unwrap_or(true),
+        exposure_bias: manifest.bias_of(&relative),
         path: relative,
         kind,
         summary,
@@ -1483,6 +1534,7 @@ fn collect_reports(
             true
         };
         reports.push(PipelineReport {
+            exposure_bias: manifest.bias_of(&entry.path),
             path: entry.path,
             kind: entry.kind,
             dirty,

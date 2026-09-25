@@ -1337,6 +1337,40 @@ mod tests {
         );
     }
 
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn an_exr_capture_keeps_the_frame_linear() {
+        let dir = std::env::temp_dir().join(format!("blockloom-embed-exr-{}", std::process::id()));
+        let path = dir.join("shot.exr");
+        let capture = EditorMessage::CaptureExr {
+            path: path.to_string_lossy().into_owned(),
+        };
+        let (_, _, errors) = run_world_sending(
+            red_world(Mode::ThreeD),
+            |_| {},
+            game_camera(),
+            60,
+            |_| false,
+            vec![capture],
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+        // The file is written off the main thread.
+        let started = std::time::Instant::now();
+        while !path.exists() && started.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let shot = image::open(&path)
+            .unwrap_or_else(|error| panic!("no EXR at {}: {error}", path.display()))
+            .into_rgba32f();
+        // Above the starter's ground, the red background.
+        let [r, g, b, _] = shot.get_pixel(shot.width() / 2, shot.height() / 10).0;
+        assert!(
+            r > 0.5 && g < 0.05 && b < 0.05,
+            "expected linear red, read {r} {g} {b}"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
     fn red_world(mode: Mode) -> blockloom_core::project::Project {
         let mut red = blockloom_core::project::Project::starter("Embedded", mode);
         red.world.background = "#ff0000".to_string();
@@ -1443,6 +1477,18 @@ mod tests {
         settle: usize,
         done: impl Fn([u8; 3]) -> bool,
     ) -> (Option<Arc<SlotSet>>, usize, Vec<RuntimeMessage>) {
+        run_world_sending(project, offer, view, settle, done, Vec::new())
+    }
+
+    /// `run_world`, with `extra` sent to the world after the project.
+    fn run_world_sending(
+        project: blockloom_core::project::Project,
+        offer: impl FnOnce(&FrameExchange),
+        view: SceneView,
+        settle: usize,
+        done: impl Fn([u8; 3]) -> bool,
+        extra: Vec<EditorMessage>,
+    ) -> (Option<Arc<SlotSet>>, usize, Vec<RuntimeMessage>) {
         blockloom_core::init();
         let (to_world, incoming) = std::sync::mpsc::channel();
         let (outgoing, reports) = std::sync::mpsc::channel();
@@ -1466,6 +1512,9 @@ mod tests {
                 dir: None,
             })
             .unwrap();
+        for message in extra {
+            to_world.send(message).unwrap();
+        }
 
         // The first frames come before the world has a camera; wait for
         // several, so one that shows the background has landed.

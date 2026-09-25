@@ -15,6 +15,7 @@ BwDialog {
     property var built: null
     property bool busy: false
     property bool fast: false
+    property bool hdr: true
     readonly property var chosen: targets.find(t => t.triple === triple) || null
     onChosenChanged: fast = !!chosen && chosen.fast_ready
     title: "Build a game"
@@ -33,7 +34,7 @@ BwDialog {
     function submit() {
         if (busy || !chosen || !chosen.ready) return;
         busy = true; error = ""; built = null;
-        app.invoke("build_game", { path: locationField.text.trim(), target: triple, fast: fast },
+        app.invoke("build_game", { path: locationField.text.trim(), target: triple, fast: fast, hdr: hdr },
             result => { busy = false; built = result; }, e => { busy = false; error = String(e); });
     }
 
@@ -48,6 +49,9 @@ BwDialog {
         Text { visible: !!root.chosen; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: root.chosen ? root.chosen.note : "" }
         BwCheckBox { text: "Compile blocks for maximum speed"; enabled: !!root.chosen && root.chosen.fast_ready; checked: root.fast; onToggled: root.fast = checked }
         Text { visible: !!root.chosen; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: root.chosen ? root.chosen.fast_note : "" }
+        BwCheckBox { text: "HDR rendering and output"; checked: root.hdr; onToggled: root.hdr = checked }
+        Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
+            text: "Off makes an SDR-only build: 8-bit frames and no HDR window, for weak GPUs and old displays." }
         Text { text: "Where to put it"; color: Theme.textDim; font.pixelSize: 12 }
         RowLayout {
             Layout.fillWidth: true

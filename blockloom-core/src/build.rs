@@ -241,6 +241,16 @@ fn staged_player(target: &Target, fallback: &Path) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+/// What a build carries beyond the project itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BuildOptions {
+    /// Ship the blocks as one native library as well as the document.
+    pub fast: bool,
+    /// Clamp the player to an 8-bit SDR frame, for targets too weak for
+    /// FP16 targets and HDR output.
+    pub sdr_only: bool,
+}
+
 /// Where a build landed, and what went into it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Build {
@@ -259,6 +269,8 @@ pub struct Build {
     pub atlas: usize,
     /// How many surface shader files were checked before shipping.
     pub shaders: usize,
+    /// Whether the HDR sky was baked to BC6H.
+    pub sky: bool,
 }
 
 /// What the build folder is called. The platform is in the name because one
@@ -281,8 +293,9 @@ pub fn build(
     target: &'static Target,
     player: &Path,
     parent: &Path,
-    fast: bool,
+    options: BuildOptions,
 ) -> Result<Build, String> {
+    let fast = options.fast;
     let shaders = check_shaders(project, project_dir)?;
     let dir = parent.join(build_name(project, target));
     clear_build_dir(&dir)?;
@@ -305,10 +318,13 @@ pub fn build(
 
     let game = layout.game.clone();
     std::fs::create_dir_all(&game).map_err(|e| format!("{}: {e}", game.display()))?;
-    GamePack::new(project.clone()).write(&pack::pack_path(&game))?;
+    let mut game_pack = GamePack::new(project.clone());
+    game_pack.hdr = !options.sdr_only;
+    game_pack.write(&pack::pack_path(&game))?;
 
     let assets = copy_assets(project_dir, &game)?;
     let atlas = bake_sprite_atlas(project, project_dir, &game)?;
+    let sky = bake_sky(project, project_dir, &game)?;
     let scripts = copy_scripts(project, project_dir, &game, target)?;
     let compiled = if fast {
         copy_logic(project_dir, &game, target)?;
@@ -332,6 +348,7 @@ pub fn build(
         compiled,
         atlas,
         shaders,
+        sky,
     })
 }
 
@@ -610,6 +627,36 @@ fn bake_sprite_atlas(project: &Project, project_dir: &Path, game: &Path) -> Resu
     Ok(0)
 }
 
+/// Bakes a 3D sky's HDR file into a BC6H cube the player loads as is, with
+/// its exposure bias applied, and drops the source from the build. A file
+/// that won't decode ships as it is and fails the way it does in Play.
+fn bake_sky(project: &Project, project_dir: &Path, game: &Path) -> Result<bool, String> {
+    use crate::pipeline::{self, bc6h, hdr};
+    let sky = &project.world.lighting.sky;
+    if project.world.mode != crate::scene::Mode::ThreeD || sky.is_empty() {
+        return Ok(false);
+    }
+    let Some(relative) = crate::assets::normalize(sky) else {
+        return Ok(false);
+    };
+    let Ok(mut image) = hdr::load_hdr(project_dir, &relative) else {
+        return Ok(false);
+    };
+    let manifest = pipeline::load_manifest(project_dir);
+    image.bias(manifest.bias_of(&relative));
+    let cube = hdr::HdrCube::from_image(&image, (manifest.settings.hdr_max / 2).max(64));
+    let out = game.join(pipeline::baked_sky_path(&relative));
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    std::fs::write(&out, bc6h::write_dds_cube(&cube))
+        .map_err(|e| format!("{}: {e}", out.display()))?;
+    if let Some(copied) = crate::assets::resolve(game, &relative) {
+        let _ = std::fs::remove_file(copied);
+    }
+    Ok(true)
+}
+
 /// Copies each scripted actor's library for this platform to where the
 /// runtime looks for it. The build's own copy is flat, the way a project's
 /// is: which platform it was built for stops mattering once it has shipped.
@@ -745,7 +792,15 @@ mod tests {
         let out = root.join("out");
         let target = a_target();
 
-        let built = build(&project, &project_dir, target, &player, &out, false).unwrap();
+        let built = build(
+            &project,
+            &project_dir,
+            target,
+            &player,
+            &out,
+            BuildOptions::default(),
+        )
+        .unwrap();
 
         assert_eq!(built.dir, out.join(format!("Pond Game ({})", target.label)));
         assert!(built.binary.is_file());
@@ -795,7 +850,15 @@ mod tests {
             .insert(ActorComponent::Material { material });
         let out = root.join("out");
 
-        let error = build(&project, &project_dir, a_target(), &player, &out, false).unwrap_err();
+        let error = build(
+            &project,
+            &project_dir,
+            a_target(),
+            &player,
+            &out,
+            BuildOptions::default(),
+        )
+        .unwrap_err();
         assert!(error.contains("assets/shaders/bad.wesl"), "{error}");
         assert!(!out.exists());
 
@@ -804,7 +867,15 @@ mod tests {
             "fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> { return tint; }",
         )
         .unwrap();
-        let built = build(&project, &project_dir, a_target(), &player, &out, false).unwrap();
+        let built = build(
+            &project,
+            &project_dir,
+            a_target(),
+            &player,
+            &out,
+            BuildOptions::default(),
+        )
+        .unwrap();
         assert_eq!(built.shaders, 1);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -833,7 +904,7 @@ mod tests {
             a_target(),
             &player,
             &root.join("out"),
-            false,
+            BuildOptions::default(),
         )
         .unwrap();
 
@@ -849,14 +920,67 @@ mod tests {
     }
 
     #[test]
+    fn a_3d_sky_ships_as_a_bc6h_cube_and_an_sdr_build_says_so() {
+        let root = temp("sky");
+        let (mut project, project_dir, player) = a_project(&root);
+        project.world.mode = Mode::ThreeD;
+        project.world.lighting.sky = "assets/sky.hdr".to_string();
+        let mut bytes = Vec::new();
+        image::codecs::hdr::HdrEncoder::new(&mut bytes)
+            .encode(&vec![image::Rgb([4.0f32, 2.0, 1.0]); 64 * 32], 64, 32)
+            .unwrap();
+        std::fs::write(project_dir.join("assets/sky.hdr"), bytes).unwrap();
+
+        let options = BuildOptions {
+            fast: false,
+            sdr_only: true,
+        };
+        let built = build(
+            &project,
+            &project_dir,
+            a_target(),
+            &player,
+            &root.join("out"),
+            options,
+        )
+        .unwrap();
+
+        assert!(built.sky);
+        let game = pack::game_dir(&built.dir);
+        let baked =
+            std::fs::read(game.join(crate::pipeline::baked_sky_path("assets/sky.hdr"))).unwrap();
+        let (size, _) = crate::pipeline::bc6h::read_dds_cube(&baked).unwrap();
+        assert_eq!(size, 16);
+        assert!(!game.join("assets/sky.hdr").exists());
+        assert!(!GamePack::read(&pack::pack_path(&game)).unwrap().hdr);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn building_twice_replaces_the_first_build() {
         let root = temp("replace");
         let (project, project_dir, player) = a_project(&root);
         let out = root.join("out");
 
-        let first = build(&project, &project_dir, a_target(), &player, &out, false).unwrap();
+        let first = build(
+            &project,
+            &project_dir,
+            a_target(),
+            &player,
+            &out,
+            BuildOptions::default(),
+        )
+        .unwrap();
         std::fs::write(first.dir.join("leftover.txt"), b"old").unwrap();
-        let second = build(&project, &project_dir, a_target(), &player, &out, false).unwrap();
+        let second = build(
+            &project,
+            &project_dir,
+            a_target(),
+            &player,
+            &out,
+            BuildOptions::default(),
+        )
+        .unwrap();
 
         assert_eq!(first.dir, second.dir);
         assert!(!second.dir.join("leftover.txt").exists());
@@ -877,7 +1001,10 @@ mod tests {
             a_target(),
             &player,
             &root.join("out"),
-            true,
+            BuildOptions {
+                fast: true,
+                ..BuildOptions::default()
+            },
         )
         .unwrap();
 
@@ -901,7 +1028,7 @@ mod tests {
             target,
             &player,
             &root.join("out"),
-            false,
+            BuildOptions::default(),
         )
         .unwrap();
 
@@ -933,7 +1060,7 @@ mod tests {
             target,
             &player,
             &root.join("out"),
-            false,
+            BuildOptions::default(),
         )
         .unwrap();
 
@@ -956,7 +1083,15 @@ mod tests {
         std::fs::create_dir_all(&taken).unwrap();
         std::fs::write(taken.join("taxes.txt"), b"mine").unwrap();
 
-        let error = build(&project, &project_dir, target, &player, &out, false).unwrap_err();
+        let error = build(
+            &project,
+            &project_dir,
+            target,
+            &player,
+            &out,
+            BuildOptions::default(),
+        )
+        .unwrap_err();
 
         assert!(error.contains("isn't a built game"), "{error}");
         assert!(taken.join("taxes.txt").is_file());

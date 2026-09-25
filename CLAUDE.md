@@ -485,18 +485,45 @@ spawns a bare camera and sun.
 ### HDR frame and lights
 
 Every world camera carries `Hdr` (`environment::apply_environment`), bloom or
-not: the scene renders linear FP16 and only the tonemapper at the end makes
-display values, so lights, sky and emissives can pass 1.0. Exposure stays the
-one EV on `Environment`; `set exposure to` (and a script's `set_exposure`)
-takes `ExposureClaims::director` for the rest of the run, and the atmosphere
-slot's `exposure` reading reports the resolved value.
+not: the scene renders linear FP16 and only the end of the chain makes display
+values, so lights, sky and emissives can pass 1.0. A build made with HDR off
+(`GamePack.hdr`, the Build dialog's switch) renders 8-bit instead. Exposure
+stays the one EV on `Environment`; `set exposure to` (and a script's
+`set_exposure`) takes `ExposureClaims::director` for the rest of the run, and
+the atmosphere slot's `exposure` reading reports the resolved value.
 
-`blockloom-runtime/src/hdr.rs` is the Game view's exposure debug views, a
-Bevy `FullscreenMaterial` per dimension that reads the exposed image before
-tonemapping: false color (bands of stops around middle grey, with the
-tonemapper forced to `None` so the bands stay true) and a clipping zebra over
-anything past paper white. The choice is `SceneView::debug_view`, an editor
-preference that applies while a game runs too.
+`World.display` is the project's output: SDR, HDR10 (PQ) or scRGB, peak
+brightness and paper white in nits. `hdr::HdrFrame` resolves it, with `set HDR
+output`/`set peak brightness` laid over it for the run, against what the
+window's display offers (`DisplayOffers`), and is extracted so both worlds
+switch on the same frame. Only the windowed player can leave SDR:
+`display.rs` makes the window's surface itself in the render world, keeps it
+when the display offers an HDR color space, and hands Bevy's views its
+texture each frame; otherwise Bevy keeps the window. On an HDR frame the
+tonemapper stands aside for `HdrTone*` (a curve to the display's headroom)
+and `HdrEncode*` (scRGB or PQ, after the UI so the HUD sits at paper white).
+The editor's Game view is always SDR, since its ring is 8-bit.
+
+`hdr.rs` also holds the Game view's debug views, a `FullscreenMaterial` per
+dimension over the exposed image before tonemapping (`shaders/hdr.wesl`): false
+color, a clipping zebra past paper white (past the headroom when the project
+wants HDR), a histogram, a waveform, calibration patches and an HDR preview.
+The choice is `SceneView::debug_view`, an editor preference that applies while
+a game runs too. `luminance.rs` meters the world camera's exposed image with a
+compute pass and reads it back; the atmosphere sample turns it into the
+`scene luminance` reporter's nits on the fixed tick, beside `is HDR display?`
+and `peak brightness`. `capture.rs` answers `EditorMessage::CaptureExr`: a
+second camera renders the same view untonemapped into FP16, read back and
+written as OpenEXR (`capture_exr`, the Game view's camera button).
+
+`sky.rs` (3D) turns `lighting.sky`, a Radiance/EXR panorama or strip, into a
+cube on a background task and puts it on the world camera as a `Skybox` and
+a `GeneratedEnvironmentMapLight` at `sky_brightness` nits. A build bakes the
+cube to BC6H (`pipeline::bc6h`, `build::bake_sky`) and drops the source; the
+runtime loads that compressed where the GPU has BC, decoded otherwise. An HDR
+asset's exposure bias (`set_exposure_bias`) is applied wherever it is loaded.
+`set my glow to` gives an actor its own material with the emissive scaled
+(`dim3::set_glow`).
 
 A `Light` component is a point or spot light in lumens with a range in
 metres, 3D only. `lights::sync_lights` reconciles each actor's light against
@@ -506,8 +533,8 @@ batching hides a merged actor through an empty `RenderLayers`.
 
 The GPU half is checked by the ignored tests in `embed.rs` (`cargo test -p
 blockloom-runtime -- --ignored embed`), which read pixels back from a real
-world: false color in both dimensions, and a lamp that still lights the
-floor after batching.
+world: false color in both dimensions, a lamp that still lights the floor
+after batching, and an EXR capture that stays linear.
 
 ### Shader library and pass plumbing
 

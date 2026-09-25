@@ -255,7 +255,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
       post, perf, direction, camera, audio, tooling): a World Environment asset on the
       project plus Environment volumes in the scene, with HDR, lighting, sky, fog,
       clouds, water, terrain, VFX and post blending by volume weight.
-  - [ ] Full HDR pipeline (linear FP16 end to end, HDRP-style units and output):
+  - [x] Full HDR pipeline (linear FP16 end to end, HDRP-style units and output):
         - Rendering: FP16 HDR render targets from sky through lights to post, linear
           working space, tonemap and OETF only at final output. All lights, sky sun,
           clouds and emissives can exceed 1.0 without clipping. Bloom threshold works
@@ -285,19 +285,30 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           `set light intensity/emissive strength to`, reporters `scene luminance`,
           `is HDR display?`, `peak brightness`. Fixed-tick sampling like the
           weather director so VM and codegen agree.
-        Done so far: world cameras are always `Hdr` (FP16 to the tonemapper,
-        bloom or not); a `Light` component (point/spot, lumens, range in
-        metres, radius, cone, shadows) on a child entity so batching can't
-        hide it; `set exposure to` (director claim for the run) and `set my
-        light to _ lumens` in blocks, compiled logic and scripts, plus an
-        `exposure` atmosphere reading; false color and clipping-zebra debug
-        views in the Game view (`hdr.rs`), GPU-tested in `embed.rs`.
-        Left: true HDR output (Bevy 0.20 only picks an 8-bit sRGB swapchain,
-        and the Game view ring is 8-bit), paper white and peak brightness,
-        histogram and waveform, calibration pattern, EXR screenshots, the
-        BC6H encode, per-texture exposure bias, the per-target HDR/SDR build
-        flag, `set emissive strength to`, and the `scene luminance` / `is HDR
-        display?` / `peak brightness` reporters.
+        Done: world cameras are always `Hdr` (FP16 to the tonemapper, bloom or
+        not, unless a build is SDR-only); `Light` components in lumens; `set
+        exposure`, `set my light`, `set my glow` (emissive strength), `set HDR
+        output`, `set peak brightness` in blocks, compiled logic and scripts;
+        `scene luminance` (a compute meter in `luminance.rs`, read back and
+        sampled on the fixed tick), `is HDR display?` and `peak brightness`
+        reporters plus atmosphere readings. `World.display` holds the output
+        space (SDR, HDR10 PQ, scRGB), peak and paper white; `hdr::HdrFrame`
+        resolves it against what the window offers, and `display.rs` takes the
+        player window's surface over in an HDR color space, with a tone curve
+        to the headroom and an scRGB/PQ encode after the UI. Game view debug
+        views: false color, zebra, histogram, waveform, calibration patches,
+        HDR preview. EXR screenshots (`capture.rs`), Radiance/EXR skies as
+        cubes from a panorama or strip (`sky.rs`), baked to BC6H at build
+        time, per-asset exposure bias, the build dialog's HDR switch
+        (`GamePack.hdr`), and `memory/targets/hdr` plus `hdr/tonemap` in the
+        profiler.
+        Not covered: the HDR swapchain path has only run against SDR
+        displays here, so it needs a check on real HDR10/scRGB hardware; no
+        HDR10 static metadata (MaxCLL) is sent; the Game view stays SDR (its
+        ring is 8-bit through Qt EGL), so HDR preview stands in; the BC6H
+        encoder is single-region mode only, and only the sky uses it; no HDR
+        color picker for emissive yet; the HDR/SDR flag is a build option
+        rather than set per target automatically.
   - [ ] Volume framework (the backbone everything below plugs into): global default
         plus box/sphere volumes with priority, blend distance and weight. Every
         property has an override checkbox HDRP-style, so a cave volume can take fog

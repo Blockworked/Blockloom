@@ -237,6 +237,11 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 ty: "boolean (default: on when available)",
                 required: false,
             },
+            ArgSpec {
+                name: "hdr",
+                ty: "bool",
+                required: false,
+            },
         ],
     },
     // ── The world ─────────────────────────────────────────────────────────
@@ -368,6 +373,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         summary: "Set the camera's post: exposure, tonemapping, bloom and vignette.",
         args: &[ArgSpec {
             name: "post",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-display-output",
+        cmd: "set_display_output",
+        aliases: &["set_display_output"],
+        summary: "Set the output signal (Sdr, Hdr10, Scrgb), peak_nits and paper_white_nits.",
+        args: &[ArgSpec {
+            name: "display",
             ty: "object",
             required: true,
         }],
@@ -710,6 +726,24 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        name: "set-exposure-bias",
+        cmd: "set_exposure_bias",
+        aliases: &["set_exposure_bias"],
+        summary: "Scale an HDR image by some stops (ev, -16 to 16) wherever it is decoded.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+            ArgSpec {
+                name: "ev",
+                ty: "number",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
         name: "reimport-assets",
         cmd: "reimport_assets",
         aliases: &["reimport_assets"],
@@ -900,7 +934,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "set-scene-view",
         cmd: "set_scene_view",
         aliases: &["set_scene_view"],
-        summary: "How the scene view edits: {enabled, tool: move|rotate|scale, local, snap, grid, angle, scale, show_grid, debug_view: lit|false_color|clipping}.",
+        summary: "How the scene view edits: {enabled, tool: move|rotate|scale, local, snap, grid, angle, scale, show_grid, debug_view: lit|false_color|clipping|histogram|waveform|calibration|hdr_preview}.",
         args: &[ArgSpec {
             name: "view",
             ty: "object {\"tool\": ...}",
@@ -912,6 +946,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         cmd: "frame_selected",
         aliases: &["frame_selected", "frame"],
         summary: "Point the scene view's camera at the selected actor.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "capture-exr",
+        cmd: "capture_exr",
+        aliases: &["capture_exr", "exr"],
+        summary: "Save the Game view's next frame, linear and before tonemapping, as an OpenEXR file under the project's screenshots/. Returns its path.",
         args: &[],
     },
     CommandSpec {

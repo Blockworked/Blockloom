@@ -136,6 +136,17 @@ pub enum Act {
     SetLightIntensity {
         intensity: f32,
     },
+    SetEmissiveStrength {
+        strength: f32,
+    },
+    /// Window-global.
+    SetHdrOutput {
+        enabled: bool,
+    },
+    /// Nits; window-global.
+    SetPeakBrightness {
+        nits: f32,
+    },
     SetBody {
         body: &'static str,
     },
@@ -999,7 +1010,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 15;
+pub const LOGIC_ABI_VERSION: u32 = 16;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1140,6 +1151,12 @@ pub const ACT_PLAY_ANIMATION: u32 = 73;
 pub const ACT_STOP_ANIMATION: u32 = 74;
 /// `n0` = speed. 1 is as authored, 0 freezes.
 pub const ACT_SET_ANIMATION_SPEED: u32 = 75;
+/// `n0` = multiple of the emissive tint.
+pub const ACT_SET_EMISSIVE_STRENGTH: u32 = 76;
+/// `n0` != 0 turns HDR output on. Window-global: no actor.
+pub const ACT_SET_HDR_OUTPUT: u32 = 77;
+/// `n0` = nits. Window-global: no actor.
+pub const ACT_SET_PEAK_BRIGHTNESS: u32 = 78;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1497,6 +1514,30 @@ impl Host for AbiHost {
                 "",
                 "",
                 [intensity as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetEmissiveStrength { strength } => self.act_wire(
+                actor,
+                ACT_SET_EMISSIVE_STRENGTH,
+                "",
+                "",
+                [strength as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetHdrOutput { enabled } => self.act_wire(
+                actor,
+                ACT_SET_HDR_OUTPUT,
+                "",
+                "",
+                [if enabled { 1.0 } else { 0.0 }, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetPeakBrightness { nits } => self.act_wire(
+                actor,
+                ACT_SET_PEAK_BRIGHTNESS,
+                "",
+                "",
+                [nits as f64, 0.0, 0.0],
                 &zero,
             ),
             Act::SetBody { body } => self.act_wire(actor, ACT_SET_BODY, body, "", [0.0; 3], &zero),

@@ -911,6 +911,7 @@ impl Project {
             }
         }
         repoint(&mut self.icon);
+        repoint(&mut self.world.lighting.sky);
         if let Some(font) = self.world.speech_bubble.font_asset.as_mut() {
             repoint(font);
         }

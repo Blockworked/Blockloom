@@ -27,6 +27,8 @@ BwDialog {
     function writeCamera(next) { invoke("set_camera", { camera: Object.assign(JSON.parse(JSON.stringify(world.camera)), next) }); }
     function writeLighting(next) { invoke("set_lighting", { lighting: Object.assign(JSON.parse(JSON.stringify(world.lighting)), next) }); }
     function writePost(next) { invoke("set_post_process", { post: Object.assign(postOf(), next) }); }
+    function displayOf() { return Object.assign({ space: "Sdr", peak_nits: 1000, paper_white_nits: 200 }, world && world.display ? world.display : {}); }
+    function writeDisplay(next) { invoke("set_display_output", { display: Object.assign(displayOf(), next) }); }
     function writeMixer(next) { invoke("set_sound_mixer", { mixer: Object.assign(soundOf(), next) }); }
     // Human spelling of a binding, the same text the `bind` block parses.
     function bindingText(b) {
@@ -121,7 +123,11 @@ BwDialog {
                     NumberField { value: root.world && root.world.lighting.shadow_map_size !== undefined ? root.world.lighting.shadow_map_size : 2048; fallback: 2048; onCommitted: n => root.writeLighting({ shadow_map_size: root.clamp(Math.round(n), 512, 8192) }) } }
                 InspectorRow { label: "Shadow bias"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: root.world && root.world.lighting.shadow_bias !== undefined ? root.world.lighting.shadow_bias : 0.02; fallback: 0.02; onCommitted: n => root.writeLighting({ shadow_bias: root.clamp(n, 0, 0.5) }) } }
-                Note { text: "Where the 3D sun shines from (aimed at the origin), and how the scene's ambient light looks. Occlusion darkens creases where objects meet but costs GPU time. Shadow detail snaps to a power of two; raise the bias if striped acne appears on lit faces. Applies on the next run of the game." }
+                InspectorRow { label: "Sky"; labelWidth: 110; Layout.fillWidth: true
+                    AssetField { app: root.app; accept: ["hdr"]; value: root.world && root.world.lighting.sky ? root.world.lighting.sky : ""; placeholderText: "Drag an HDR panorama here"; onCommitted: p => root.writeLighting({ sky: p }) } }
+                InspectorRow { visible: !!root.world && !!root.world.lighting.sky; label: "Sky brightness"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.world && root.world.lighting.sky_brightness !== undefined ? root.world.lighting.sky_brightness : 1000; fallback: 1000; onCommitted: n => root.writeLighting({ sky_brightness: root.clamp(n, 0, 100000) }) } }
+                Note { text: "Where the 3D sun shines from (aimed at the origin), and how the scene's ambient light looks. A sky is an .hdr or .exr panorama (2:1) or a strip of six faces; it lights the scene too, at its brightness in nits. Occlusion darkens creases where objects meet but costs GPU time. Shadow detail snaps to a power of two; raise the bias if striped acne appears on lit faces. Applies on the next run of the game." }
             }
             Section {
                 heading: "Post-process"; visible: !!root.world
@@ -140,6 +146,19 @@ BwDialog {
                     SliderField { from: 0; to: 100; stepSize: 1; value: Math.round(root.postOf().vignette_strength * 100); onMoved: root.writePost({ vignette_strength: value / 100 }) }
                     Text { text: Math.round(root.postOf().vignette_strength * 100) + "%"; color: Theme.textDim; font.pixelSize: 12 } }
                 Note { text: "The camera's finish, in both dimensions. Lower exposure brightens; glow makes emissive surfaces bloom; corners darkens the frame edges. Applies on the next run of the game." }
+            }
+            Section {
+                heading: "Display"; visible: !!root.world
+                InspectorRow { label: "Output"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: [{ value: "Sdr", label: "SDR" }, { value: "Hdr10", label: "HDR10 (PQ)" }, { value: "Scrgb", label: "scRGB" }]
+                        value: root.displayOf().space; onChosen: v => root.writeDisplay({ space: v }) } }
+                InspectorRow { visible: root.displayOf().space !== "Sdr"; label: "Peak brightness"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.displayOf().peak_nits; fallback: 1000; onCommitted: n => root.writeDisplay({ peak_nits: root.clamp(n, 100, 10000) }) }
+                    Text { text: "nits"; color: Theme.textDim; font.pixelSize: 12 } }
+                InspectorRow { visible: root.displayOf().space !== "Sdr"; label: "Paper white"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.displayOf().paper_white_nits; fallback: 200; onCommitted: n => root.writeDisplay({ paper_white_nits: root.clamp(n, 80, root.displayOf().peak_nits) }) }
+                    Text { text: "nits"; color: Theme.textDim; font.pixelSize: 12 } }
+                Note { text: "HDR output reaches a built game's window where the display offers it, and falls back to SDR where it doesn't; the Game view is always SDR, so use its HDR preview and calibration views. Paper white is how bright white UI and a lit white wall look; peak brightness is where highlights roll off. Applies on the next run of the game." }
             }
             Section {
                 heading: "Sound"; visible: !!root.world

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 11;
+pub const PROTOCOL_VERSION: u32 = 12;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -132,6 +132,11 @@ pub enum EditorMessage {
     },
     /// Points the scene view's camera at the selected actor.
     FrameSelected,
+    /// Saves the world camera's next frame, linear and before tonemapping,
+    /// as an OpenEXR file at `path`. Answered with a `say` or an `error`.
+    CaptureExr {
+        path: String,
+    },
     /// Close the window and exit.
     Shutdown,
 }
@@ -192,8 +197,18 @@ pub enum DebugView {
     Lit,
     /// Exposed luminance as bands of stops around middle grey.
     FalseColor,
-    /// Stripes over whatever is brighter than paper white.
+    /// Stripes over whatever is brighter than the display can show.
     Clipping,
+    /// The lit image with a luminance histogram over its corner.
+    Histogram,
+    /// The lit image with a luminance waveform over its lower part.
+    Waveform,
+    /// Test patches at known levels, for setting peak brightness and paper
+    /// white against the display.
+    Calibration,
+    /// The project's HDR output as an HDR display would show it, paper white
+    /// at SDR white and anything brighter clipped.
+    HdrPreview,
 }
 
 /// The scene view's settings, which are the editor's preferences rather than

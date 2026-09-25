@@ -22,7 +22,9 @@ use blockloom_core::material::GraphEffect;
 use blockloom_core::nav::NavSettings;
 use blockloom_core::pipeline;
 use blockloom_core::project::{self, Actor, Project};
-use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, PostProcess, Visual};
+use blockloom_core::scene::{
+    Camera, DisplayOutput, Lighting, Mode, Physics, Placement, PostProcess, Visual,
+};
 use blockloom_core::script;
 use blockloom_core::sound::SoundMixer;
 use blockloom_core::sync;
@@ -831,6 +833,12 @@ pub(crate) fn set_lighting(
             ambient_brightness: lighting.ambient_brightness.clamp(0.0, 1000.0),
             shadow_map_size: lighting.shadow_map_size.clamp(512, 8192),
             shadow_bias: lighting.shadow_bias.clamp(0.0, 0.5),
+            sky: lighting.sky.trim().replace('\\', "/"),
+            sky_brightness: if lighting.sky_brightness.is_finite() {
+                lighting.sky_brightness.clamp(0.0, 100_000.0)
+            } else {
+                1000.0
+            },
             ..lighting
         };
     }
@@ -854,6 +862,26 @@ pub(crate) fn set_post_process(
     post.normalize();
     if let Some(project) = s.project_mut() {
         project.world.post = post;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Sets the output signal, peak brightness and paper white. Takes effect
+/// where the display offers HDR; SDR everywhere else.
+pub(crate) fn set_display_output(
+    state: &SharedState,
+    app: &AppHandle,
+    display: DisplayOutput,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut display = display;
+    display.normalize();
+    if let Some(project) = s.project_mut() {
+        project.world.display = display;
     }
     auto_save(&s);
     sync_runtime(&mut s);
@@ -1511,6 +1539,46 @@ pub(crate) fn frame_selected(state: &SharedState) -> Result<(), String> {
     Ok(())
 }
 
+/// Saves the Game view's next frame, linear and before tonemapping, as an
+/// OpenEXR file under the project's `screenshots/`. Answers with its path;
+/// the world says in the run log once it is written.
+pub(crate) fn capture_exr(state: &SharedState) -> Result<String, String> {
+    let mut s = lock(state)?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or("No project is open")?;
+    let name: String = s
+        .project()
+        .map(|project| project.name.as_str())
+        .unwrap_or("Screenshot")
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == ' ' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis())
+        .unwrap_or(0);
+    let path = dir
+        .join("screenshots")
+        .join(format!("{} {stamp}.exr", name.trim()));
+    let path = path.to_string_lossy().into_owned();
+    let Some(runtime) = s.runtime.as_mut() else {
+        return Err("Open the Game view to capture it".to_string());
+    };
+    if !runtime.send(&blockloom_protocol::EditorMessage::CaptureExr { path: path.clone() }) {
+        s.runtime = None;
+        return Err("The game world has stopped".to_string());
+    }
+    Ok(path)
+}
+
 /// Closes the game window without touching the project.
 pub(crate) fn close_runtime(state: &SharedState, app: &AppHandle) -> Result<(), String> {
     let mut s = lock(state)?;
@@ -1713,6 +1781,7 @@ pub(crate) fn build_game(
     path: String,
     target: Option<String>,
     fast: Option<bool>,
+    hdr: Option<bool>,
 ) -> Result<build::Build, String> {
     let mut s = lock(state)?;
     let Some(project) = s.project().cloned() else {
@@ -1767,18 +1836,24 @@ pub(crate) fn build_game(
         codegen::compile_for(&project, &dir, build::script_target(target))?;
     }
 
-    let built = build::build(&project, &dir, target, &player, Path::new(&path), fast)?;
+    let options = build::BuildOptions {
+        fast,
+        sdr_only: hdr == Some(false),
+    };
+    let built = build::build(&project, &dir, target, &player, Path::new(&path), options)?;
     s.push_log(LogLine {
         kind: "say".to_string(),
         actor: "Blockloom".to_string(),
         text: format!(
-            "Built {} for {}: {} asset(s), {} script(s), {} shader(s), {} blocks -> {} and {}",
+            "Built {} for {}: {} asset(s), {} script(s), {} shader(s), {} blocks, {}{} -> {} and {}",
             project.name,
             target.label,
             built.assets,
             built.scripts,
             built.shaders,
             if built.compiled { "native" } else { "VM" },
+            if options.sdr_only { "SDR only" } else { "HDR" },
+            if built.sky { ", sky baked to BC6H" } else { "" },
             built.dir.display(),
             built.archive.display()
         ),
@@ -1962,6 +2037,19 @@ pub(crate) fn set_import_role(
         &path,
         pipeline::ImportRole::parse(&role)?,
     )
+}
+
+/// Scales an HDR file by some stops wherever it is decoded; the world picks
+/// it up on the reload this sends.
+pub(crate) fn set_exposure_bias(
+    state: &SharedState,
+    path: String,
+    ev: f32,
+) -> Result<pipeline::PipelineReport, String> {
+    let mut s = lock(state)?;
+    let report = pipeline::set_exposure_bias(&project_dir(&s)?, &path, ev)?;
+    sync_runtime(&mut s);
+    Ok(report)
 }
 
 /// Re-inspect files and refresh their fingerprints. Empty means everything

@@ -4,7 +4,7 @@
 //! reads - the camera, the sun and the render world - instead of the project.
 
 use crate::engine::{Dimension, Engine};
-use crate::hdr::HdrDebug;
+use crate::hdr::{HdrDebug, HdrFrame};
 use crate::world::{WorldCamera, WorldLight, parse_color};
 use bevy::camera::Hdr;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -221,6 +221,7 @@ pub fn apply_environment(
     mut commands: Commands,
     environment: Res<Environment>,
     debug: Res<HdrDebug>,
+    frame: Res<HdrFrame>,
     dimension: Res<Dimension>,
     mut clear_color: ResMut<ClearColor>,
     cameras: Query<(Entity, Ref<WorldCamera>, Has<Camera3d>)>,
@@ -232,25 +233,32 @@ pub fn apply_environment(
         clear_color.0 = env.background;
     }
     for (entity, camera, is_3d) in &cameras {
-        if !changed && !debug.is_changed() && !camera.is_added() {
+        if !changed && !debug.is_changed() && !frame.is_changed() && !camera.is_added() {
             continue;
         }
         let mut camera = commands.entity(entity);
-        let tonemapping = if debug.bypasses_tonemapping() {
+        // HDR output brings its own tone curve, as do some debug views.
+        let tonemapping = if debug.bypasses_tonemapping() || frame.is_hdr() {
             Tonemapping::None
         } else {
             tonemapping_of(env.tonemapping)
         };
-        // Linear FP16 all the way to the tonemapper, bloom or not, so lights,
-        // sky and emissives can pass 1.0 without clipping.
         camera.insert((
-            Hdr,
             bevy::camera::Exposure {
                 ev100: env.exposure,
             },
             tonemapping,
         ));
-        debug.apply(&mut camera, is_3d);
+        // Linear FP16 all the way to the tonemapper, bloom or not, so lights,
+        // sky and emissives can pass 1.0 without clipping. An SDR-only build
+        // stays 8-bit.
+        if frame.fp16 {
+            camera.insert(Hdr);
+        } else {
+            camera.remove::<Hdr>();
+        }
+        debug.apply(&mut camera, is_3d, &frame);
+        frame.apply(&mut camera, is_3d);
         if env.bloom {
             camera.insert(Bloom {
                 intensity: env.bloom_intensity,
@@ -426,6 +434,7 @@ mod tests {
         app.insert_resource(Dimension(Mode::ThreeD))
             .insert_resource(ClearColor(Color::WHITE))
             .init_resource::<HdrDebug>()
+            .init_resource::<HdrFrame>()
             .insert_resource(env)
             .add_systems(Update, apply_environment);
         let camera = app
@@ -487,6 +496,34 @@ mod tests {
             app.world().get::<Tonemapping>(camera),
             Some(&Tonemapping::TonyMcMapface)
         );
+
+        // HDR output takes over from the tonemapper; an SDR-only build
+        // drops the FP16 frame.
+        let both = [
+            blockloom_core::scene::OutputSpace::Sdr,
+            blockloom_core::scene::OutputSpace::Scrgb,
+        ];
+        let display = blockloom_core::scene::DisplayOutput {
+            space: blockloom_core::scene::OutputSpace::Scrgb,
+            ..default()
+        };
+        *app.world_mut().resource_mut::<HdrFrame>() =
+            HdrFrame::resolve(display, Some(&both), crate::hdr::HdrPolicy::default());
+        app.update();
+        assert_eq!(
+            app.world().get::<Tonemapping>(camera),
+            Some(&Tonemapping::None)
+        );
+        assert!(app.world().get::<crate::hdr::HdrEncode3d>(camera).is_some());
+        let clamped = crate::hdr::HdrPolicy {
+            allow: false,
+            windowed: true,
+        };
+        *app.world_mut().resource_mut::<HdrFrame>() =
+            HdrFrame::resolve(display, Some(&both), clamped);
+        app.update();
+        assert!(app.world().get::<Hdr>(camera).is_none());
+        assert!(app.world().get::<crate::hdr::HdrEncode3d>(camera).is_none());
     }
 
     #[test]

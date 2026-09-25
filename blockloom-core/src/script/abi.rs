@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 18;
+pub const ABI_VERSION: u32 = 19;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -295,6 +295,12 @@ pub const ACT_PLAY_ANIMATION: u32 = 55;
 pub const ACT_STOP_ANIMATION: u32 = 56;
 /// `n0` = speed. 1 is as authored, 0 freezes.
 pub const ACT_SET_ANIMATION_SPEED: u32 = 57;
+/// `n0` = multiple of this actor's emissive tint.
+pub const ACT_SET_EMISSIVE_STRENGTH: u32 = 58;
+/// `n0` != 0 turns HDR output on where the display offers it.
+pub const ACT_SET_HDR_OUTPUT: u32 = 59;
+/// `n0` = the display's peak brightness in nits.
+pub const ACT_SET_PEAK_BRIGHTNESS: u32 = 60;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

@@ -1,5 +1,6 @@
-//! HDR images: Radiance `.hdr` and OpenEXR `.exr`. Only the headers are read
-//! at import - enough to size the BC6H plan and spot an equirectangular sky.
+//! HDR images: Radiance `.hdr` and OpenEXR `.exr`. Import reads only the
+//! headers, enough to size the BC6H plan and spot an equirectangular sky;
+//! [`decode_hdr`] and [`HdrCube`] are what a sky is actually built from.
 
 use serde::{Deserialize, Serialize};
 
@@ -171,9 +172,295 @@ pub fn bc6h_bytes(width: u32, height: u32, mips: bool) -> u64 {
     if mips { base * 4 / 3 } else { base }
 }
 
+/// A decoded HDR image: linear RGB, row-major from the top-left.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HdrImage {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<[f32; 3]>,
+}
+
+impl HdrImage {
+    fn at(&self, x: u32, y: u32) -> [f32; 3] {
+        self.pixels[(y.min(self.height - 1) * self.width + x.min(self.width - 1)) as usize]
+    }
+
+    /// Scales every texel by 2^`ev`: the per-texture exposure bias.
+    pub fn bias(&mut self, ev: f32) {
+        if ev == 0.0 || !ev.is_finite() {
+            return;
+        }
+        let scale = ev.exp2();
+        for texel in &mut self.pixels {
+            *texel = texel.map(|c| c * scale);
+        }
+    }
+}
+
+/// Decodes either format to linear RGB. Negative, NaN and infinite texels
+/// read as 0, since nothing downstream can show them.
+pub fn decode_hdr(name: &str, bytes: &[u8]) -> Result<HdrImage, String> {
+    let format = if bytes.starts_with(&[0x76, 0x2f, 0x31, 0x01]) {
+        image::ImageFormat::OpenExr
+    } else if bytes.starts_with(b"#?") {
+        image::ImageFormat::Hdr
+    } else {
+        return Err(format!(
+            "{name} isn't an HDR image Blockloom reads (.hdr, .exr)"
+        ));
+    };
+    let decoded = image::load_from_memory_with_format(bytes, format)
+        .map_err(|e| format!("{name}: {e}"))?
+        .into_rgb32f();
+    let (width, height) = decoded.dimensions();
+    if width == 0 || height == 0 {
+        return Err(format!("{name} is empty"));
+    }
+    let pixels = decoded
+        .pixels()
+        .map(|p| p.0.map(|c| if c.is_finite() { c.max(0.0) } else { 0.0 }))
+        .collect();
+    Ok(HdrImage {
+        width,
+        height,
+        pixels,
+    })
+}
+
+/// Reads and decodes a project file.
+pub fn load_hdr(project_dir: &std::path::Path, relative: &str) -> Result<HdrImage, String> {
+    let path = crate::assets::resolve(project_dir, relative)
+        .ok_or_else(|| format!("\"{relative}\" isn't a path in this project"))?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("{relative}: {e}"))?;
+    decode_hdr(relative, &bytes)
+}
+
+/// Six square faces in cubemap order (+X, -X, +Y, -Y, +Z, -Z), laid out the
+/// way Bevy samples a cube: z negated, so the +Z face looks down world -Z.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HdrCube {
+    pub size: u32,
+    pub faces: [Vec<[f32; 3]>; 6],
+}
+
+/// The layouts a sky file comes in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkyLayout {
+    /// A 2:1 latitude-longitude panorama, its centre straight ahead (-Z).
+    Equirect,
+    /// Six faces side by side, in cubemap order.
+    StripH,
+    /// Six faces stacked, in cubemap order.
+    StripV,
+}
+
+impl SkyLayout {
+    pub fn of(width: u32, height: u32) -> SkyLayout {
+        if width == height * 6 {
+            SkyLayout::StripH
+        } else if height == width * 6 {
+            SkyLayout::StripV
+        } else {
+            SkyLayout::Equirect
+        }
+    }
+}
+
+impl HdrCube {
+    /// The largest face a sky gets, whatever its source.
+    pub const MAX_FACE: u32 = 2048;
+
+    /// Builds the faces from any layout. The face side is a power of two no
+    /// bigger than `max_face`, which filtered image-based light requires and
+    /// BC6H's 4x4 blocks divide.
+    pub fn from_image(image: &HdrImage, max_face: u32) -> HdrCube {
+        let layout = SkyLayout::of(image.width, image.height);
+        let native = match layout {
+            SkyLayout::Equirect => image.width / 4,
+            SkyLayout::StripH => image.height,
+            SkyLayout::StripV => image.width,
+        };
+        let size = face_size(native, max_face);
+        let faces = std::array::from_fn(|face| {
+            let mut texels = Vec::with_capacity((size * size) as usize);
+            for y in 0..size {
+                for x in 0..size {
+                    texels.push(match layout {
+                        SkyLayout::Equirect => {
+                            let dir = face_direction(face, x, y, size);
+                            sample_equirect(image, dir)
+                        }
+                        SkyLayout::StripH | SkyLayout::StripV => {
+                            strip_texel(image, layout, face as u32, x, y, size)
+                        }
+                    });
+                }
+            }
+            texels
+        });
+        HdrCube { size, faces }
+    }
+
+    /// The world direction a face texel looks along, undoing Bevy's z flip.
+    pub fn direction(face: usize, x: u32, y: u32, size: u32) -> [f32; 3] {
+        face_direction(face, x, y, size)
+    }
+}
+
+fn face_size(native: u32, max_face: u32) -> u32 {
+    let max = max_face.clamp(4, HdrCube::MAX_FACE);
+    // Round to the nearest power of two, never below one BC6H block.
+    let native = native.max(4);
+    let down = 1u32 << (31 - native.leading_zeros());
+    let near = if native - down > down / 2 {
+        down * 2
+    } else {
+        down
+    };
+    near.clamp(4, max)
+}
+
+/// The standard cube face mapping, then z negated into Bevy's world.
+fn face_direction(face: usize, x: u32, y: u32, size: u32) -> [f32; 3] {
+    let s = 2.0 * (x as f32 + 0.5) / size as f32 - 1.0;
+    let t = 2.0 * (y as f32 + 0.5) / size as f32 - 1.0;
+    let [lx, ly, lz] = match face {
+        0 => [1.0, -t, -s],
+        1 => [-1.0, -t, s],
+        2 => [s, 1.0, t],
+        3 => [s, -1.0, -t],
+        4 => [s, -t, 1.0],
+        _ => [-s, -t, -1.0],
+    };
+    let length = (lx * lx + ly * ly + lz * lz).sqrt();
+    [lx / length, ly / length, -lz / length]
+}
+
+/// Bilinear, wrapping around in longitude.
+fn sample_equirect(image: &HdrImage, dir: [f32; 3]) -> [f32; 3] {
+    let [x, y, z] = dir;
+    let u = 0.5 + x.atan2(-z) / std::f32::consts::TAU;
+    let v = y.clamp(-1.0, 1.0).acos() / std::f32::consts::PI;
+    let fx = u * image.width as f32 - 0.5;
+    let fy = (v * image.height as f32 - 0.5).clamp(0.0, (image.height - 1) as f32);
+    let x0 = fx.floor();
+    let y0 = fy.floor();
+    let (tx, ty) = (fx - x0, fy - y0);
+    let wrap = |x: f32| (x as i64).rem_euclid(image.width as i64) as u32;
+    let (xa, xb) = (wrap(x0), wrap(x0 + 1.0));
+    let (ya, yb) = (y0 as u32, (y0 as u32 + 1).min(image.height - 1));
+    let lerp = |a: [f32; 3], b: [f32; 3], t: f32| std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t);
+    let top = lerp(image.at(xa, ya), image.at(xb, ya), tx);
+    let bottom = lerp(image.at(xa, yb), image.at(xb, yb), tx);
+    lerp(top, bottom, ty)
+}
+
+/// Box-filters one texel of a strip face down (or nearest up) to `size`.
+fn strip_texel(
+    image: &HdrImage,
+    layout: SkyLayout,
+    face: u32,
+    x: u32,
+    y: u32,
+    size: u32,
+) -> [f32; 3] {
+    let side = match layout {
+        SkyLayout::StripH => image.height,
+        _ => image.width,
+    };
+    let (ox, oy) = match layout {
+        SkyLayout::StripH => (face * side, 0),
+        _ => (0, face * side),
+    };
+    let x0 = x * side / size;
+    let x1 = ((x + 1) * side / size).max(x0 + 1);
+    let y0 = y * side / size;
+    let y1 = ((y + 1) * side / size).max(y0 + 1);
+    let mut sum = [0.0f32; 3];
+    for sy in y0..y1 {
+        for sx in x0..x1 {
+            let texel = image.at(ox + sx, oy + sy);
+            for i in 0..3 {
+                sum[i] += texel[i];
+            }
+        }
+    }
+    let count = ((x1 - x0) * (y1 - y0)) as f32;
+    sum.map(|c| c / count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn flat(width: u32, height: u32, texel: impl Fn(u32, u32) -> [f32; 3]) -> HdrImage {
+        HdrImage {
+            width,
+            height,
+            pixels: (0..height)
+                .flat_map(|y| (0..width).map(move |x| (x, y)))
+                .map(|(x, y)| texel(x, y))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_panorama_centre_lands_straight_ahead() {
+        // Bright at the panorama's centre column, the horizon straight ahead.
+        let image = flat(64, 32, |x, _| {
+            if (30..34).contains(&x) {
+                [10.0; 3]
+            } else {
+                [0.1; 3]
+            }
+        });
+        let cube = HdrCube::from_image(&image, 64);
+        assert_eq!(cube.size, 16);
+        // Bevy's +Z face looks down world -Z, the default camera's forward.
+        let centre = (cube.size / 2 * cube.size + cube.size / 2) as usize;
+        assert!(
+            cube.faces[4][centre][0] > 5.0,
+            "{:?}",
+            cube.faces[4][centre]
+        );
+        assert!(cube.faces[5][centre][0] < 1.0);
+        let [x, y, z] = HdrCube::direction(4, 8, 8, 16);
+        assert!(z < -0.99 && x.abs() < 0.1 && y.abs() < 0.1);
+    }
+
+    #[test]
+    fn a_strip_keeps_its_faces_in_order() {
+        let image = flat(24, 4, |x, _| [(x / 4) as f32; 3]);
+        let cube = HdrCube::from_image(&image, 2048);
+        assert_eq!(cube.size, 4);
+        for face in 0..6 {
+            assert_eq!(cube.faces[face][5], [face as f32; 3]);
+        }
+        let tall = flat(8, 48, |_, y| [(y / 8) as f32; 3]);
+        let cube = HdrCube::from_image(&tall, 4);
+        assert_eq!(cube.size, 4);
+        assert_eq!(cube.faces[3][0], [3.0; 3]);
+    }
+
+    #[test]
+    fn a_bias_scales_by_stops() {
+        let mut image = flat(2, 1, |_, _| [1.0, 2.0, 0.5]);
+        image.bias(2.0);
+        assert_eq!(image.pixels[0], [4.0, 8.0, 2.0]);
+    }
+
+    #[test]
+    fn a_radiance_file_decodes() {
+        let mut bytes = Vec::new();
+        let texels = vec![image::Rgb([2.0f32, 1.0, 0.5]); 8];
+        image::codecs::hdr::HdrEncoder::new(&mut bytes)
+            .encode(&texels, 4, 2)
+            .unwrap();
+        let image = decode_hdr("sky.hdr", &bytes).unwrap();
+        assert_eq!((image.width, image.height), (4, 2));
+        assert!((image.pixels[3][0] - 2.0).abs() < 0.05);
+        assert!(decode_hdr("sky.png", b"\x89PNG").is_err());
+    }
 
     #[test]
     fn a_radiance_header_gives_its_size() {

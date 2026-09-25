@@ -662,6 +662,16 @@ pub fn apply_effects(
                     world.entity_mut(entity).insert(MeshMaterial3d(unique));
                 });
             }
+            Effect::SetEmissiveStrength { actor, strength } => {
+                let Some(entity) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                if !strength.is_finite() {
+                    continue;
+                }
+                let strength = strength.max(0.0);
+                commands.queue(move |world: &mut World| set_glow(world, entity, strength));
+            }
             Effect::SetBody { actor, body } => {
                 let Some(id) = engine.entities.get(actor).copied() else {
                     continue;
@@ -993,6 +1003,65 @@ pub fn spawn_scenery(commands: &mut Commands, camera: &blockloom_core::scene::Ca
         },
         crate::world::WorldLight,
     ));
+}
+
+/// The emissive a glowing actor started from, so strengths don't compound,
+/// and the material made its own, which later writes change in place.
+#[derive(Component, Clone, Copy)]
+struct OwnGlow(LinearRgba, bevy::asset::UntypedAssetId);
+
+/// Glows `strength` times the surface's authored emissive, or its color when
+/// it has none. The first write gives the actor a material of its own.
+fn set_glow(world: &mut World, entity: Entity, strength: f32) {
+    let tint = crate::batching::tint_of(world, entity);
+    let _ =
+        glow::<crate::batching::InstancedMaterial>(world, entity, strength, tint, |m| &mut m.base)
+            || glow::<crate::materials::BoxMaterial>(world, entity, strength, None, |m| {
+                &mut m.base
+            })
+            || glow::<StandardMaterial>(world, entity, strength, None, |m| m);
+}
+
+fn glow<M: Material + Clone>(
+    world: &mut World,
+    entity: Entity,
+    strength: f32,
+    tint: Option<LinearRgba>,
+    surface: impl Fn(&mut M) -> &mut StandardMaterial,
+) -> bool {
+    let Some(handle) = world.get::<MeshMaterial3d<M>>(entity).map(|m| m.0.clone()) else {
+        return false;
+    };
+    let own = world.get::<OwnGlow>(entity).copied();
+    let unique = own.is_some_and(|own| own.1 == handle.id().untyped());
+    let mut materials = world.resource_mut::<Assets<M>>();
+    let Some(mut material) = materials.get(&handle).cloned() else {
+        return true;
+    };
+    let base = surface(&mut material);
+    let authored = own.map_or_else(
+        || {
+            if base.emissive == LinearRgba::BLACK {
+                tint.unwrap_or_else(|| base.base_color.into())
+            } else {
+                base.emissive
+            }
+        },
+        |own| own.0,
+    );
+    base.emissive = authored * strength;
+    if unique {
+        if let Some(mut current) = materials.get_mut(&handle) {
+            *current = material;
+        }
+    } else {
+        let made = materials.add(material);
+        let id = made.id().untyped();
+        world
+            .entity_mut(entity)
+            .insert((MeshMaterial3d(made), OwnGlow(authored, id)));
+    }
+    true
 }
 
 #[cfg(test)]

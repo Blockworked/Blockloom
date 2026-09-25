@@ -193,6 +193,10 @@ pub struct Engine {
     pub last_created: HashMap<String, String>,
     /// Actor id -> lumens a block or script set its light to this run.
     pub light_intensity: HashMap<String, f32>,
+    /// `set HDR output` and `set peak brightness` this run, over the
+    /// project's display settings.
+    pub hdr_output: Option<bool>,
+    pub peak_nits: Option<f32>,
     /// Dynamic actors a walk verb (`move`, `change position`) drove this
     /// tick. A walk sets an absolute velocity, so when a driven actor goes
     /// quiet the dimension pass brakes it - otherwise the last written
@@ -259,6 +263,8 @@ impl Engine {
             clones: HashMap::new(),
             parents: HashMap::new(),
             light_intensity: HashMap::new(),
+            hdr_output: None,
+            peak_nits: None,
             last_created: HashMap::new(),
             driven: HashSet::new(),
             physics_filter: HashMap::new(),

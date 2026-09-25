@@ -452,6 +452,14 @@ pub struct Lighting {
     /// bias stays at Bevy's own default.
     #[serde(default = "default_shadow_bias")]
     pub shadow_bias: f32,
+    /// An HDR image (`.hdr`/`.exr`) the 3D sky is drawn and lit from: an
+    /// equirectangular panorama, or a 6:1 / 1:6 strip of cube faces. Empty
+    /// keeps the flat background.
+    #[serde(default)]
+    pub sky: String,
+    /// Luminance of a sky texel of 1.0, in nits. Bevy's own skybox default.
+    #[serde(default = "default_sky_brightness")]
+    pub sky_brightness: f32,
 }
 
 fn default_light_direction() -> [f32; 3] {
@@ -480,6 +488,10 @@ fn default_shadow_bias() -> f32 {
     0.02
 }
 
+fn default_sky_brightness() -> f32 {
+    1000.0
+}
+
 impl Default for Lighting {
     fn default() -> Self {
         Self {
@@ -491,6 +503,8 @@ impl Default for Lighting {
             ao_enabled: false,
             shadow_map_size: default_shadow_map_size(),
             shadow_bias: default_shadow_bias(),
+            sky: String::new(),
+            sky_brightness: default_sky_brightness(),
         }
     }
 }
@@ -604,6 +618,76 @@ impl PostProcess {
     }
 }
 
+/// The signal a window is sent in. HDR only takes effect where the display
+/// offers it; anywhere else the game falls back to SDR.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum OutputSpace {
+    /// Rec.709 primaries, sRGB transfer, 0 to 1.
+    #[default]
+    Sdr,
+    /// Rec.2020 primaries with the ST 2084 (PQ) curve.
+    Hdr10,
+    /// Extended linear sRGB, 1.0 at 80 nits.
+    Scrgb,
+}
+
+impl OutputSpace {
+    pub const ALL: &[OutputSpace] = &[OutputSpace::Sdr, OutputSpace::Hdr10, OutputSpace::Scrgb];
+
+    pub fn is_hdr(self) -> bool {
+        self != OutputSpace::Sdr
+    }
+}
+
+/// How the finished frame meets the display: the output signal, how bright
+/// the display can go and where SDR white (and the HUD) sits under HDR.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DisplayOutput {
+    #[serde(default)]
+    pub space: OutputSpace,
+    /// The brightest the display shows, in nits.
+    #[serde(default = "default_peak_nits")]
+    pub peak_nits: f32,
+    /// Where 1.0 (paper white, and the HUD) sits under HDR, in nits.
+    #[serde(default = "default_paper_white_nits")]
+    pub paper_white_nits: f32,
+}
+
+fn default_peak_nits() -> f32 {
+    1000.0
+}
+
+fn default_paper_white_nits() -> f32 {
+    200.0
+}
+
+impl Default for DisplayOutput {
+    fn default() -> Self {
+        Self {
+            space: OutputSpace::Sdr,
+            peak_nits: default_peak_nits(),
+            paper_white_nits: default_paper_white_nits(),
+        }
+    }
+}
+
+impl DisplayOutput {
+    pub const MIN_NITS: f32 = 80.0;
+    pub const MAX_NITS: f32 = 10_000.0;
+
+    pub fn normalize(&mut self) {
+        let finite = |v: f32, fallback: f32| if v.is_finite() { v } else { fallback };
+        self.peak_nits = finite(self.peak_nits, default_peak_nits()).clamp(100.0, Self::MAX_NITS);
+        self.paper_white_nits = finite(self.paper_white_nits, default_paper_white_nits())
+            .clamp(Self::MIN_NITS, self.peak_nits);
+    }
+
+    /// How far past paper white the display reaches, as a multiple of it.
+    pub fn headroom(&self) -> f32 {
+        (self.peak_nits / self.paper_white_nits.max(1.0)).max(1.0)
+    }
+}
+
 /// Everything about the world that isn't an actor.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct World {
@@ -639,6 +723,9 @@ pub struct World {
     /// vignette. Neutral by default, so old projects look the same.
     #[serde(default)]
     pub post: PostProcess,
+    /// The output signal, peak brightness and paper white.
+    #[serde(default)]
+    pub display: DisplayOutput,
     /// Cost regions and explicit links in the navigation plane.
     #[serde(default)]
     pub navigation: crate::nav::NavSettings,
@@ -673,6 +760,7 @@ impl Default for World {
             sound: SoundMixer::default(),
             input: InputConfig::default(),
             post: PostProcess::default(),
+            display: DisplayOutput::default(),
             navigation: crate::nav::NavSettings::default(),
         }
     }
@@ -697,6 +785,25 @@ mod tests {
     fn an_older_world_gets_the_default_speech_bubble_style() {
         let world: World = serde_json::from_str("{}").unwrap();
         assert_eq!(world.speech_bubble, SpeechBubbleStyle::default());
+    }
+
+    #[test]
+    fn display_output_keeps_paper_white_under_the_peak() {
+        let mut display = DisplayOutput {
+            space: OutputSpace::Hdr10,
+            peak_nits: 50_000.0,
+            paper_white_nits: f32::NAN,
+        };
+        display.normalize();
+        assert_eq!(display.peak_nits, 10_000.0);
+        assert_eq!(display.paper_white_nits, 200.0);
+        display.peak_nits = 150.0;
+        display.paper_white_nits = 400.0;
+        display.normalize();
+        assert_eq!(display.paper_white_nits, 150.0);
+        assert_eq!(display.headroom(), 1.0);
+        let old: World = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.display, DisplayOutput::default());
     }
 
     #[test]

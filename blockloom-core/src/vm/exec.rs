@@ -1299,6 +1299,18 @@ impl Vm {
                     intensity,
                 });
             }
+            Action::SetEmissiveStrength(strength) => {
+                let strength = self.eval_f32(strength, actor, params, temps, out);
+                out.push(Effect::SetEmissiveStrength {
+                    actor: owner,
+                    strength,
+                });
+            }
+            Action::SetHdrOutput(enabled) => out.push(Effect::SetHdrOutput { enabled: *enabled }),
+            Action::SetPeakBrightness(nits) => {
+                let nits = self.eval_f32(nits, actor, params, temps, out);
+                out.push(Effect::SetPeakBrightness { nits });
+            }
             Action::SetBody(body) => out.push(Effect::SetBody {
                 actor: owner,
                 body: *body,

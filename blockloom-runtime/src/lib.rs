@@ -21,9 +21,11 @@ mod ai;
 mod atmosphere;
 mod batching;
 mod bridge;
+mod capture;
 mod culling;
 mod dim2;
 mod dim3;
+mod display;
 mod edit;
 #[cfg(target_os = "linux")]
 pub mod embed;
@@ -34,6 +36,7 @@ mod gpu;
 mod hdr;
 mod lights;
 mod logic;
+mod luminance;
 mod materials;
 mod model;
 // Plumbing the Phase 5 passes build on; nothing reads most of it yet.
@@ -45,6 +48,7 @@ pub mod player;
 mod preview;
 mod probes;
 mod script;
+mod sky;
 mod sound;
 mod streaming;
 mod ui;
@@ -68,6 +72,10 @@ pub fn run_process() {
     let launch = Launch::from_args(std::env::args().skip(1));
     let mode = launch.mode();
     let title = launch.title();
+    let hdr = hdr::HdrPolicy {
+        allow: launch.allows_hdr(),
+        windowed: true,
+    };
 
     let mut app = App::new();
     app.add_plugins(
@@ -82,7 +90,13 @@ pub fn run_process() {
             })
             .set(asset_plugin()),
     );
+    // Before the world, so `hdr::register` keeps it; the display half takes
+    // the window's surface over when it offers HDR.
+    app.insert_resource(hdr);
     add_world(&mut app, mode, launch.into_engine());
+    if hdr.allow {
+        display::register(&mut app);
+    }
     app.run();
 }
 
@@ -127,6 +141,8 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     materials::register(app);
     passes::register(app);
     hdr::register(app);
+    luminance::register(app);
+    capture::register(app);
     edit::configure(app);
     // Both of these only exist to talk to an editor, and a built game has
     // none: no corner status, no handshake.
@@ -170,7 +186,12 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     overlay::apply_ui_effects,
                     world::apply_saved_data,
                     (world::apply_lifetimes, world::sync_navmesh).chain(),
-                    (world::apply_common, environment::apply_exposure_effects).chain(),
+                    (
+                        world::apply_common,
+                        environment::apply_exposure_effects,
+                        hdr::apply_hdr_effects,
+                    )
+                        .chain(),
                     dim2::apply_effects,
                     world::apply_component_effects,
                     dim2::sync_joints,
@@ -206,6 +227,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     (
                         world::rebuild_world.run_if(dim2::sprite_shaders_ready),
                         environment::blend_environment,
+                        hdr::resolve_frame,
                         environment::apply_environment,
                     )
                         .chain(),
@@ -258,6 +280,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             batching::register(app);
             culling::register(app);
             probes::register(app);
+            sky::register(app);
             use bevy::camera::visibility::VisibilitySystems;
             app.add_systems(
                 PostUpdate,
@@ -297,7 +320,12 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         overlay::apply_ui_effects,
                         world::apply_saved_data,
                         (world::apply_lifetimes, world::sync_navmesh).chain(),
-                        (world::apply_common, environment::apply_exposure_effects).chain(),
+                        (
+                        world::apply_common,
+                        environment::apply_exposure_effects,
+                        hdr::apply_hdr_effects,
+                    )
+                        .chain(),
                         dim3::apply_effects,
                         (world::apply_component_effects, lights::apply_light_effects).chain(),
                         dim3::sync_joints,
@@ -328,6 +356,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         (
                             world::rebuild_world,
                             environment::blend_environment,
+                            hdr::resolve_frame,
                             environment::apply_environment,
                             lights::sync_lights,
                         )

@@ -39,6 +39,13 @@ pub struct GamePack {
     #[serde(default)]
     pub engine: String,
     pub project: Project,
+    /// False when the target was built SDR-only: 8-bit frame, no HDR output.
+    #[serde(default = "yes")]
+    pub hdr: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl GamePack {
@@ -47,6 +54,7 @@ impl GamePack {
             pack: PACK_VERSION,
             engine: env!("CARGO_PKG_VERSION").to_string(),
             project,
+            hdr: true,
         }
     }
 

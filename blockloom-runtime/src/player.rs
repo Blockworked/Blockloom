@@ -76,6 +76,14 @@ impl Launch {
         }
     }
 
+    /// Whether this run may leave SDR: a build made SDR-only never does.
+    pub fn allows_hdr(&self) -> bool {
+        match self {
+            Self::Player { pack, .. } => pack.hdr,
+            _ => true,
+        }
+    }
+
     pub fn title(&self) -> String {
         match self {
             Self::Editor { .. } => "Blockloom".to_string(),

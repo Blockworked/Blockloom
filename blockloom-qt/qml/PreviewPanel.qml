@@ -160,12 +160,22 @@ Rectangle {
             }
             Text { text: "View"; color: Theme.textDim; font.pixelSize: 12; Layout.leftMargin: 6 }
             ChoiceField {
-                Layout.fillWidth: false; Layout.preferredWidth: 110
-                options: [{ value: "lit", label: "Lit" }, { value: "false_color", label: "False color" }, { value: "clipping", label: "Clipping" }]
+                Layout.fillWidth: false; Layout.preferredWidth: 120
+                options: [{ value: "lit", label: "Lit" }, { value: "false_color", label: "False color" }, { value: "clipping", label: "Clipping" },
+                          { value: "histogram", label: "Histogram" }, { value: "waveform", label: "Waveform" },
+                          { value: "calibration", label: "Calibration" }, { value: "hdr_preview", label: "HDR preview" }]
                 value: scene.debugView
                 onChosen: v => scene.debugView = v
                 ToolTip.visible: hovered; ToolTip.delay: 500
-                ToolTip.text: "False color bands the exposed image by stops: green is middle grey, yellow nears white, red is past it.\nClipping stripes whatever is brighter than paper white."
+                ToolTip.text: "False color bands the exposed image by stops: green is middle grey, yellow nears white, red is past it.\n"
+                    + "Clipping stripes whatever the display can't show. Histogram and waveform plot luminance in stops.\n"
+                    + "Calibration shows patches at black, paper white and peak brightness.\n"
+                    + "HDR preview shows the HDR output at paper white, clipping what only an HDR display could show."
+            }
+            IconButton {
+                visible: root.embedded || root.appState.preview_enabled
+                iconName: "camera"; tip: "Save this frame as an EXR file (linear, before tonemapping)"
+                onClicked: root.report("capture_exr", {})
             }
             Text { text: "Aspect"; color: Theme.textDim; font.pixelSize: 12; Layout.leftMargin: 6 }
             ChoiceField {

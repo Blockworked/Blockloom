@@ -877,6 +877,46 @@ impl Actor {
             .is_some_and(|playing| playing != 0.0)
     }
 
+    /// How strongly this actor's surface glows, times its emissive tint.
+    pub fn set_emissive_strength(&self, strength: f32) {
+        self.act(
+            ACT_SET_EMISSIVE_STRENGTH,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            strength as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// HDR output on or off for the rest of the run, where the display
+    /// offers it.
+    pub fn set_hdr_output(&self, enabled: bool) {
+        self.act(
+            ACT_SET_HDR_OUTPUT,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            if enabled { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        );
+    }
+
+    /// The display's peak brightness in nits for the rest of the run.
+    pub fn set_peak_brightness(&self, nits: f32) {
+        self.act(
+            ACT_SET_PEAK_BRIGHTNESS,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            nits as f64,
+            0.0,
+            0.0,
+        );
+    }
+
     /// A one-shot push. Only a dynamic body responds.
     pub fn push(&self, x: f32, y: f32, z: f32) {
         self.act(

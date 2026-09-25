@@ -272,6 +272,13 @@ pub fn set_tint(world: &mut World, entity: Entity, color: Color) -> bool {
     true
 }
 
+/// An instanced actor's tint, which rides in its slot rather than the material.
+pub fn tint_of(world: &World, entity: Entity) -> Option<LinearRgba> {
+    let slot = world.get::<InstanceSlot>(entity)?;
+    let record = world.resource::<InstanceTable>().get(slot.0)?;
+    Some(LinearRgba::from_vec4(record.tint))
+}
+
 /// Free the slots of actors that lost their instanced surface and upload the
 /// table when anything moved.
 pub fn upload_instances(

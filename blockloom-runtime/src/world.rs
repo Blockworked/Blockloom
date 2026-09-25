@@ -231,6 +231,7 @@ pub fn pump_editor(
     mut manager: ResMut<crate::ui::UiManager>,
     mut scene: Option<ResMut<crate::edit::SceneEditor>>,
     mut debug: Option<ResMut<crate::hdr::HdrDebug>>,
+    mut captures: Option<ResMut<crate::capture::ExrCaptures>>,
     time: Res<Time>,
     mut fixed: ResMut<Time<Fixed>>,
     mut exit: MessageWriter<AppExit>,
@@ -380,6 +381,13 @@ pub fn pump_editor(
                     scene.frame = true;
                 }
             }
+            EditorMessage::CaptureExr { path } => match captures.as_mut() {
+                Some(captures) => captures.request(path),
+                None => bridge::send(&RuntimeMessage::Error {
+                    actor: "Blockloom".into(),
+                    message: "This world can't capture EXR screenshots".into(),
+                }),
+            },
             EditorMessage::Shutdown => {
                 exit.write(AppExit::Success);
                 return;
@@ -548,6 +556,8 @@ pub fn rebuild_world(
     engine.clones.clear();
     engine.last_created.clear();
     engine.light_intensity.clear();
+    engine.hdr_output = None;
+    engine.peak_nits = None;
     engine.parents = engine
         .project
         .actors
@@ -3333,6 +3343,13 @@ pub fn report_status(
         })
         .collect();
     render_metrics.sort_by(|a, b| a.name.cmp(&b.name));
+    if let Some(ms) = crate::hdr::tonemap_ms(&render_metrics) {
+        render_metrics.push(RenderMetric {
+            name: "hdr/tonemap".into(),
+            value: ms,
+            unit: "ms".into(),
+        });
+    }
     if let Some(bytes) = target_bytes.filter(|bytes| bytes.0 > 0) {
         render_metrics.push(RenderMetric {
             name: "game_view_target_minimum".into(),
@@ -3604,6 +3621,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::PointTowards { actor, .. }
         | Effect::SetScale { actor, .. }
         | Effect::SetLightIntensity { actor, .. }
+        | Effect::SetEmissiveStrength { actor, .. }
         | Effect::SetBody { actor, .. }
         | Effect::ApplyImpulse { actor, .. }
         | Effect::SetVelocity { actor, .. }
@@ -3628,6 +3646,8 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         // to carry out, and none of them is a change to a transform.
         Effect::SetGravity { .. }
         | Effect::SetExposure { .. }
+        | Effect::SetHdrOutput { .. }
+        | Effect::SetPeakBrightness { .. }
         | Effect::SetBusVolume { .. }
         | Effect::RumbleGamepad { .. }
         | Effect::Stopped

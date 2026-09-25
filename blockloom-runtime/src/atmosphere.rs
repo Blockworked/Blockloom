@@ -5,8 +5,11 @@
 //! The sun comes from the blended `Environment`. Wind, fog and weather have no
 //! writer yet; Phase 5's systems fill `AtmosphereSources` and this picks them up.
 
+use crate::engine::Dimension;
 use crate::engine::Engine;
 use crate::environment::Environment;
+use crate::hdr::HdrFrame;
+use crate::luminance::SceneLuminance;
 use bevy::prelude::*;
 use blockloom_core::sense::{self, ATMOSPHERE_VERSION, AtmosphereSense};
 
@@ -60,6 +63,7 @@ pub fn sample_atmosphere(
     engine: NonSend<Engine>,
     environment: Res<Environment>,
     sources: Res<AtmosphereSources>,
+    display: Display,
     mut atmosphere: ResMut<Atmosphere>,
 ) {
     let tick = if !engine.running {
@@ -69,11 +73,50 @@ pub fn sample_atmosphere(
     } else {
         atmosphere.0.tick + 1
     };
-    atmosphere.0 = sample(tick, &environment, &sources);
+    atmosphere.0 = sample(tick, &environment, &sources, &display.reading(&environment));
     sense::publish_atmosphere(atmosphere.0.clone());
 }
 
-fn sample(tick: u64, environment: &Environment, sources: &AtmosphereSources) -> AtmosphereSense {
+/// What the display half of the slot reads from. Optional, so a bare world
+/// without the HDR frame or the meter still samples.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Display<'w> {
+    frame: Option<Res<'w, HdrFrame>>,
+    luminance: Option<Res<'w, SceneLuminance>>,
+    dimension: Option<Res<'w, Dimension>>,
+}
+
+/// The display readings for one tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct DisplayReading {
+    luminance: f32,
+    hdr: bool,
+    peak: f32,
+}
+
+impl Display<'_> {
+    fn reading(&self, environment: &Environment) -> DisplayReading {
+        let frame = self.frame.as_deref().copied().unwrap_or_default();
+        let mode = self
+            .dimension
+            .as_deref()
+            .map_or(blockloom_core::scene::Mode::ThreeD, |d| d.0);
+        DisplayReading {
+            luminance: self.luminance.as_deref().map_or(0.0, |meter| {
+                meter.nits(mode, environment.exposure, frame.paper_white_nits)
+            }),
+            hdr: frame.is_hdr(),
+            peak: frame.peak_nits,
+        }
+    }
+}
+
+fn sample(
+    tick: u64,
+    environment: &Environment,
+    sources: &AtmosphereSources,
+    display: &DisplayReading,
+) -> AtmosphereSense {
     let rgb = |color: LinearRgba| [color.red, color.green, color.blue];
     let wind_speed = sources.wind.length();
     AtmosphereSense {
@@ -93,6 +136,9 @@ fn sample(tick: u64, environment: &Environment, sources: &AtmosphereSources) -> 
         wetness: sources.wetness.clamp(0.0, 1.0),
         temperature: sources.temperature,
         exposure: environment.exposure,
+        luminance: display.luminance,
+        hdr_display: display.hdr,
+        peak_brightness: display.peak,
     }
 }
 
@@ -125,6 +171,32 @@ mod tests {
         app.world_mut().non_send_mut::<Engine>().paused = true;
         app.update();
         assert_eq!(app.world().resource::<Atmosphere>().0.tick, 2);
+    }
+
+    #[test]
+    fn the_display_half_reads_the_frame_and_the_meter() {
+        let mut app = app();
+        app.update();
+        let air = app.world().resource::<Atmosphere>().0.clone();
+        assert_eq!((air.luminance, air.hdr_display), (0.0, false));
+
+        app.insert_resource(Dimension(blockloom_core::scene::Mode::ThreeD))
+            .insert_resource(HdrFrame {
+                space: blockloom_core::scene::OutputSpace::Scrgb,
+                peak_nits: 600.0,
+                ..default()
+            })
+            .insert_resource(SceneLuminance {
+                average: 0.5,
+                peak: 1.0,
+                measured: true,
+            });
+        app.world_mut().resource_mut::<Environment>().exposure = 0.0;
+        app.update();
+        let air = &app.world().resource::<Atmosphere>().0;
+        assert!(air.hdr_display);
+        assert_eq!(air.peak_brightness, 600.0);
+        assert_eq!(air.luminance, 0.6);
     }
 
     #[test]
