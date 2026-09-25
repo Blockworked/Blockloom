@@ -44,6 +44,7 @@ mod model;
 mod overlay;
 #[allow(dead_code)]
 mod passes;
+mod pbr_patch;
 mod performance;
 pub mod player;
 mod preview;
@@ -296,6 +297,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             culling::register(app);
             probes::register(app);
             light_probes::register(app);
+            pbr_patch::register(app);
             app.init_resource::<lights::LightMasks>();
             sky::register(app);
             use bevy::camera::visibility::VisibilitySystems;
@@ -311,6 +313,9 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     batching::upload_instances,
                     culling::configure_cameras,
                     culling::cull_views
+                        .after(VisibilitySystems::CheckVisibility)
+                        .before(VisibilitySystems::MarkNewlyHiddenEntitiesInvisible),
+                    probes::hide_from_captures
                         .after(VisibilitySystems::CheckVisibility)
                         .before(VisibilitySystems::MarkNewlyHiddenEntitiesInvisible),
                 ),

@@ -459,6 +459,7 @@ pub fn batch_meshes(
             With<ActorId>,
             Without<crate::materials::AnimatedTiles>,
             Without<crate::model::ModelChild>,
+            Without<crate::light_probes::ProbeOwner>,
         ),
     >,
 ) {

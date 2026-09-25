@@ -26,7 +26,7 @@ BwDialog {
     function writeNavigation(next) { invoke("set_navigation", { navigation: Object.assign(navigationOf(), next) }); }
     function writeCamera(next) { invoke("set_camera", { camera: Object.assign(JSON.parse(JSON.stringify(world.camera)), next) }); }
     function shadowsOf() {
-        return Object.assign({ filter: "Gaussian", distance: 150, cascades: 4, first_cascade: 5, cascade_blend: 0.2, normal_bias: 1.8, sun_size: 0, contact: false, contact_length: 0.3, contact_thickness: 0.1 },
+        return Object.assign({ filter: "Gaussian", distance: 150, cascades: 4, first_cascade: 5, cascade_blend: 0.2, fade: 0.1, normal_bias: 1.8, sun_size: 0, contact: false, contact_length: 0.3, contact_thickness: 0.1 },
             world && world.lighting ? world.lighting.shadows || {} : {});
     }
     function writeShadows(next) { writeLighting({ shadows: Object.assign(shadowsOf(), next) }); }
@@ -147,6 +147,8 @@ BwDialog {
                     NumberField { value: root.shadowsOf().first_cascade; fallback: 5; onCommitted: n => root.writeShadows({ first_cascade: root.clamp(n, 0.1, 10000) }) } }
                 InspectorRow { label: "Cascade blend"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: root.shadowsOf().cascade_blend; fallback: 0.2; onCommitted: n => root.writeShadows({ cascade_blend: root.clamp(n, 0, 0.5) }) } }
+                InspectorRow { label: "Fade out"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.shadowsOf().fade; fallback: 0.1; onCommitted: n => root.writeShadows({ fade: root.clamp(n, 0, 0.5) }) } }
                 InspectorRow { label: "Normal bias"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: root.shadowsOf().normal_bias; fallback: 1.8; onCommitted: n => root.writeShadows({ normal_bias: root.clamp(n, 0, 10) }) } }
                 InspectorRow { label: "Soft sun °"; labelWidth: 110; Layout.fillWidth: true

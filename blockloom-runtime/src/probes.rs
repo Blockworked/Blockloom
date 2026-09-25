@@ -9,6 +9,7 @@
 
 use crate::environment::Environment;
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::VisibleEntities;
 use bevy::camera::{Hdr, RenderTarget};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::Image;
@@ -19,7 +20,8 @@ use bevy::render::render_resource::{
     Extent3d, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
     TextureViewDimension,
 };
-use std::collections::HashMap;
+use std::any::TypeId;
+use std::collections::{HashMap, HashSet};
 
 pub fn register(app: &mut App) {
     app.init_resource::<ProbeService>()
@@ -71,7 +73,14 @@ pub struct ProbeRequest {
     pub refresh: ProbeRefresh,
     /// Copy the faces back to the CPU and assemble a cubemap image.
     pub readback: bool,
+    /// An entity the faces don't see, children and all: the probe's own
+    /// actor, which would otherwise wrap its own cube.
+    pub hide: Option<Entity>,
 }
+
+/// On a face camera: the entity it leaves out.
+#[derive(Component)]
+pub struct CaptureHides(pub Entity);
 
 #[allow(dead_code)]
 impl ProbeRequest {
@@ -85,6 +94,7 @@ impl ProbeRequest {
             purpose,
             refresh: ProbeRefresh::Once,
             readback: false,
+            hide: None,
         }
     }
 
@@ -233,6 +243,22 @@ fn face_image(resolution: u32) -> Image {
     image
 }
 
+/// Takes each face camera's hidden entity, and its descendants, out of what
+/// the camera draws. Between visibility and its use, like `cull_views`.
+pub fn hide_from_captures(
+    mut cameras: Query<(&CaptureHides, &mut VisibleEntities)>,
+    children: Query<&Children>,
+) {
+    for (hides, mut visible) in &mut cameras {
+        let hidden: HashSet<Entity> = std::iter::once(hides.0)
+            .chain(children.iter_descendants(hides.0))
+            .collect();
+        visible
+            .get_mut(TypeId::of::<Mesh3d>())
+            .retain(|entity| !hidden.contains(entity));
+    }
+}
+
 /// Starts queued captures, ticks live ones, tears down what is finished.
 pub fn run_captures(
     mut commands: Commands,
@@ -285,6 +311,9 @@ pub fn run_captures(
             ));
             if let Some(skybox) = &skybox {
                 camera.insert(skybox.clone());
+            }
+            if let Some(hide) = request.hide {
+                camera.insert(CaptureHides(hide));
             }
             camera.id()
         });

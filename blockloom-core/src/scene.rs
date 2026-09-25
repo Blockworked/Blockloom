@@ -510,6 +510,10 @@ pub struct ShadowSettings {
     /// them fades rather than snaps.
     #[serde(default = "default_cascade_blend")]
     pub cascade_blend: f32,
+    /// The last part of the distance, 0-0.5 of it, over which the sun's
+    /// shadows fade out instead of ending at a line.
+    #[serde(default = "default_shadow_fade")]
+    pub fade: f32,
     /// Normal bias for the sun, pushing the lookup out along the surface to
     /// fight acne on slopes. The depth bias is `Lighting::shadow_bias`.
     #[serde(default = "default_normal_bias")]
@@ -546,6 +550,10 @@ fn default_cascade_blend() -> f32 {
     0.2
 }
 
+fn default_shadow_fade() -> f32 {
+    0.1
+}
+
 fn default_normal_bias() -> f32 {
     1.8
 }
@@ -568,6 +576,7 @@ impl ShadowSettings {
             cascades: self.cascades.clamp(1, 4),
             first_cascade: finite(self.first_cascade, default_first_cascade()).clamp(0.1, distance),
             cascade_blend: finite(self.cascade_blend, default_cascade_blend()).clamp(0.0, 0.5),
+            fade: finite(self.fade, default_shadow_fade()).clamp(0.0, 0.5),
             normal_bias: finite(self.normal_bias, default_normal_bias()).clamp(0.0, 10.0),
             sun_size: finite(self.sun_size, 0.0).clamp(0.0, 10.0),
             contact_length: finite(self.contact_length, default_contact_length()).clamp(0.01, 10.0),
@@ -586,6 +595,7 @@ impl Default for ShadowSettings {
             cascades: default_cascades(),
             first_cascade: default_first_cascade(),
             cascade_blend: default_cascade_blend(),
+            fade: default_shadow_fade(),
             normal_bias: default_normal_bias(),
             sun_size: 0.0,
             contact: false,

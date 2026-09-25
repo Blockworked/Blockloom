@@ -1,11 +1,13 @@
 //! Shadow tuning, 3D only: the sun's cascades, normal bias, PCSS size and
 //! cookie, and the world camera's shadow filter and contact shadows, all
 //! from the project's `ShadowSettings` plus `set shadow distance` this run.
+//! The fade at the far end is a `pbr_patch` constant.
 //!
 //! The sun's color, illuminance and depth bias stay with `environment`,
 //! which volumes blend; nothing here does.
 
 use crate::engine::Engine;
+use crate::pbr_patch::PbrPatches;
 use crate::world::{WorldCamera, WorldLight};
 use bevy::asset::RenderAssetUsages;
 use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightTexture, ShadowFilteringMethod};
@@ -40,6 +42,7 @@ pub fn apply_shadows(
     engine: NonSend<Engine>,
     mut images: ResMut<Assets<Image>>,
     mut applied: Local<Option<Applied>>,
+    patches: Option<ResMut<PbrPatches>>,
     mut cookie: Local<SunCookie>,
     mut suns: Query<(
         Entity,
@@ -57,6 +60,11 @@ pub fn apply_shadows(
         cookie: blockloom_core::assets::normalize(&lighting.sun_cookie).unwrap_or_default(),
         cookie_size: lighting.sun_cookie_size.max(0.01),
     };
+    if let Some(mut patches) = patches {
+        patches.set_if_neq(PbrPatches {
+            shadow_fade: now.settings.fade,
+        });
+    }
     let fresh = suns.iter().any(|(_, sun, ..)| sun.is_added())
         || cameras.iter().any(|(_, camera)| camera.is_added());
     let changed = applied.as_ref() != Some(&now);
@@ -218,8 +226,11 @@ mod tests {
             shadows.normal_bias = 0.5;
             shadows.sun_size = 0.5;
             shadows.contact = true;
+            shadows.fade = 0.25;
         }
+        app.init_resource::<PbrPatches>();
         app.update();
+        assert_eq!(app.world().resource::<PbrPatches>().shadow_fade, 0.25);
         let sun = sun(&mut app);
         let light = app.world().get::<DirectionalLight>(sun).unwrap();
         assert_eq!(light.shadow_normal_bias, 0.5);

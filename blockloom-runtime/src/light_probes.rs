@@ -9,11 +9,15 @@
 //! does the same capture in a running game but keeps it in memory.
 
 use crate::engine::{ActorId, Engine};
+use crate::environment::Environment;
 use crate::probes::{ProbeCaptured, ProbeId, ProbeRequest, ProbeService};
 use crate::streaming::Warmup;
 use crate::world::WorldCamera;
 use bevy::asset::RenderAssetUsages;
-use bevy::light::{GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, ParallaxCorrection};
+use bevy::light::{
+    EnvironmentMapLight, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe,
+    ParallaxCorrection,
+};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
@@ -88,6 +92,11 @@ enum Work {
         cubes: Vec<Option<AmbientCube>>,
     },
 }
+
+/// On an actor carrying a `Probe`. Its bakes leave it out, so it stays
+/// out of batching too: a merged mesh can't be left out of one camera.
+#[derive(Component)]
+pub struct ProbeOwner;
 
 /// The Bevy probe standing in for an actor's `Probe`, and what it was built
 /// from.
@@ -195,19 +204,66 @@ fn load_bake(dir: &std::path::Path, actor: &str, kind: ProbeKind) -> Result<Imag
     }
 }
 
+/// Sets a generated environment light's intensity, and the filtered light
+/// Bevy made from it, which keeps the value it was made with.
+pub fn set_environment_intensity(
+    generated: &mut GeneratedEnvironmentMapLight,
+    filtered: Option<Mut<EnvironmentMapLight>>,
+    intensity: f32,
+) {
+    if generated.intensity != intensity {
+        generated.intensity = intensity;
+    }
+    if let Some(mut filtered) = filtered
+        && filtered.intensity != intensity
+    {
+        filtered.intensity = intensity;
+    }
+}
+
 /// Keeps a Bevy probe on every probe actor that has light to give, at the
-/// actor's place and turn but the probe's own size.
+/// actor's place and turn but the probe's own size, scaled by the volumes'
+/// `reflections` and `indirect`.
 #[allow(clippy::type_complexity)]
 pub fn sync_probes(
     mut commands: Commands,
     engine: NonSend<Engine>,
     loaded: Res<LoadedProbes>,
-    actors: Query<(&ActorId, &GlobalTransform)>,
-    mut probes: Query<(Entity, &ProbeOf, &mut Transform)>,
+    environment: Option<Res<Environment>>,
+    actors: Query<(Entity, &ActorId, &GlobalTransform, Has<ProbeOwner>)>,
+    mut probes: Query<(
+        Entity,
+        &ProbeOf,
+        &mut Transform,
+        Option<&mut GeneratedEnvironmentMapLight>,
+        Option<&mut EnvironmentMapLight>,
+        Option<&mut IrradianceVolume>,
+    )>,
 ) {
-    let places: HashMap<&str, &GlobalTransform> =
-        actors.iter().map(|(id, at)| (id.0.as_str(), at)).collect();
-    let wanted: Vec<(String, ProbeSpec)> = probe_actors(&engine)
+    let (reflections, indirect) = environment
+        .map(|env| (env.reflections.max(0.0), env.indirect.max(0.0)))
+        .unwrap_or((1.0, 1.0));
+    let scaled = |spec: &ProbeSpec| {
+        spec.intensity.max(0.0)
+            * match spec.kind {
+                ProbeKind::Reflection => reflections,
+                ProbeKind::Irradiance => indirect,
+            }
+    };
+    let places: HashMap<&str, &GlobalTransform> = actors
+        .iter()
+        .map(|(_, id, at, _)| (id.0.as_str(), at))
+        .collect();
+    let owners = probe_actors(&engine);
+    for (entity, id, _, marked) in &actors {
+        let owns = owners.iter().any(|(owner, ..)| *owner == id.0);
+        if owns && !marked {
+            commands.entity(entity).insert(ProbeOwner);
+        } else if !owns && marked {
+            commands.entity(entity).remove::<ProbeOwner>();
+        }
+    }
+    let wanted: Vec<(String, ProbeSpec)> = owners
         .into_iter()
         .map(|(id, _, spec)| (id, spec))
         .filter(|(id, spec)| {
@@ -225,7 +281,7 @@ pub fn sync_probes(
     };
 
     let mut have = Vec::new();
-    for (entity, of, mut transform) in &mut probes {
+    for (entity, of, mut transform, generated, filtered, volume) in &mut probes {
         let keep = wanted.iter().find(|(id, spec)| {
             *id == of.actor && *spec == of.spec && loaded.0[id].image.id() == of.image
         });
@@ -234,6 +290,15 @@ pub fn sync_probes(
                 let at = transform_of(id, spec);
                 if *transform != at {
                     *transform = at;
+                }
+                let intensity = scaled(spec);
+                if let Some(mut generated) = generated {
+                    set_environment_intensity(&mut generated, filtered, intensity);
+                }
+                if let Some(mut volume) = volume
+                    && volume.intensity != intensity
+                {
+                    volume.intensity = intensity;
                 }
                 have.push(id.clone());
             }
@@ -257,7 +322,7 @@ pub fn sync_probes(
             transform_of(id, spec),
             Name::new("light probe"),
         ));
-        let intensity = spec.intensity.max(0.0);
+        let intensity = scaled(spec);
         match spec.kind {
             ProbeKind::Reflection => {
                 entity.insert((
@@ -291,7 +356,7 @@ pub fn start_bakes(
     mut baker: ResMut<ProbeBaker>,
     mut service: ResMut<ProbeService>,
     warmup: Option<Res<Warmup>>,
-    actors: Query<(&ActorId, &GlobalTransform)>,
+    actors: Query<(Entity, &ActorId, &GlobalTransform)>,
 ) {
     if std::mem::take(&mut engine.capture_probes) {
         baker.request(Vec::new(), false);
@@ -299,8 +364,10 @@ pub fn start_bakes(
     if !baker.busy() || warmup.is_some_and(|warmup| warmup.active()) || engine.rebuild {
         return;
     }
-    let places: HashMap<&str, &GlobalTransform> =
-        actors.iter().map(|(id, at)| (id.0.as_str(), at)).collect();
+    let places: HashMap<&str, (Entity, &GlobalTransform)> = actors
+        .iter()
+        .map(|(entity, id, at)| (id.0.as_str(), (entity, at)))
+        .collect();
     let baker = &mut *baker;
     for (actors, persist) in std::mem::take(&mut baker.requested) {
         for (actor, name, spec) in probe_actors(&engine) {
@@ -312,7 +379,7 @@ pub fn start_bakes(
                 let old = baker.jobs.remove(at);
                 cancel(&old, &mut service);
             }
-            let Some(place) = places.get(actor.as_str()) else {
+            let Some((_, place)) = places.get(actor.as_str()) else {
                 continue;
             };
             let (_, rotation, centre) = place.to_scale_rotation_translation();
@@ -350,7 +417,7 @@ pub fn start_bakes(
         }
     }
     for job in &mut baker.jobs {
-        let Some(place) = places.get(job.actor.as_str()) else {
+        let Some(&(owner, place)) = places.get(job.actor.as_str()) else {
             continue;
         };
         match &mut job.work {
@@ -363,6 +430,7 @@ pub fn start_bakes(
                     // Faces follow the box, since Bevy samples a probe's cube
                     // in the probe's own frame.
                     request.rotation = rotation;
+                    request.hide = Some(owner);
                     *capture = Some(service.request(request));
                 }
             }
@@ -377,6 +445,7 @@ pub fn start_bakes(
                     // normal.
                     let mut request = ProbeRequest::reflection(points[*next], BRICK_RESOLUTION);
                     request.near = 0.05;
+                    request.hide = Some(owner);
                     pending.insert(service.request(request), *next);
                     *next += 1;
                 }

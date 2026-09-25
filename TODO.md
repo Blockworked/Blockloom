@@ -351,12 +351,18 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         PCSS sun size and contact shadows; the sun can take a tiled cookie.
         Blocks, compiled logic and scripts share `capture probes`, `set
         shadow distance to`, `turn my light's shadows` and `casts shadows?`.
-        Not covered: a disk is drawn as the square of its area, area lights
-        cast no shadow maps (Bevy has none for them), a point light takes an
-        IES profile but not a flat cookie, shadows end at the distance rather
-        than fading (cascade blend is the only fade), reflection probes blend
-        by their own falloff rather than through environment volumes, and a
-        probe actor with a Look sees itself in its bake.
+        Later: Bevy's PBR shaders are patched as they load (`pbr_patch.rs`)
+        for true disks (a 12-gon of the disk's area), area light shadows
+        (a black point light twin's cube shadow, PCSS by the light's size)
+        and a sun shadow fade over the last `fade` of the distance. A point
+        light repeats its cookie on each face. Volumes gained `reflections`
+        and `indirect` multipliers over probes and the sky's light, and a
+        bake leaves out its own actor.
+        Not covered: an area light's shadow is cast from its centre, so its
+        penumbra is PCSS's guess rather than the true area's; a disk is a
+        12-gon; area lights take no contact shadows; the fade is a shader
+        constant, so changing it recompiles the PBR pipelines; the patches
+        are exact text against Bevy 0.20 and need redoing on a bump.
   - [ ] Ray-traced lighting (bevy_solari, experimental upstream, RTX-class GPUs):
         - Realtime (`bevy_solari::realtime` via `SolariPlugins`): alternate high-end
           backend beside the raster rig, with ReSTIR direct lighting plus GI,

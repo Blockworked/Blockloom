@@ -42,6 +42,11 @@ pub struct Environment {
     pub bloom_threshold: f32,
     pub bloom_intensity: f32,
     pub vignette: f32,
+    /// Multiplier on reflection probes and the sky's light. Only volumes
+    /// move it off 1.
+    pub reflections: f32,
+    /// Multiplier on irradiance volumes. Only volumes move it off 1.
+    pub indirect: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -95,6 +100,8 @@ impl Environment {
             bloom_threshold: post.bloom_threshold,
             bloom_intensity: post.bloom_intensity,
             vignette: post.vignette_strength.clamp(0.0, 1.0),
+            reflections: 1.0,
+            indirect: 1.0,
         }
     }
 
@@ -139,6 +146,8 @@ impl Environment {
         number(&mut self.bloom_threshold, over.bloom_threshold);
         number(&mut self.bloom_intensity, over.bloom_intensity);
         number(&mut self.vignette, over.vignette);
+        number(&mut self.reflections, over.reflections);
+        number(&mut self.indirect, over.indirect);
     }
 }
 
@@ -158,6 +167,8 @@ pub struct EnvironmentOverride {
     pub bloom_threshold: Option<f32>,
     pub bloom_intensity: Option<f32>,
     pub vignette: Option<f32>,
+    pub reflections: Option<f32>,
+    pub indirect: Option<f32>,
 }
 
 impl EnvironmentOverride {
@@ -178,6 +189,8 @@ impl EnvironmentOverride {
             bloom_threshold: overrides.bloom_threshold.get(),
             bloom_intensity: overrides.bloom_intensity.get(),
             vignette: overrides.vignette.get().map(|v| v.clamp(0.0, 1.0)),
+            reflections: overrides.reflections.get().map(|m| m.max(0.0)),
+            indirect: overrides.indirect.get().map(|m| m.max(0.0)),
         }
     }
 
@@ -201,6 +214,8 @@ impl EnvironmentOverride {
             ("bloom_threshold", self.bloom_threshold.map(show_number)),
             ("bloom_intensity", self.bloom_intensity.map(show_number)),
             ("vignette", self.vignette.map(show_number)),
+            ("reflections", self.reflections.map(show_number)),
+            ("indirect", self.indirect.map(show_number)),
         ]
         .into_iter()
         .filter_map(|(name, value)| Some((name, value?)))
@@ -225,6 +240,8 @@ impl Environment {
             ("bloom_threshold", show_number(self.bloom_threshold)),
             ("bloom_intensity", show_number(self.bloom_intensity)),
             ("vignette", show_number(self.vignette)),
+            ("reflections", show_number(self.reflections)),
+            ("indirect", show_number(self.indirect)),
         ]
     }
 }

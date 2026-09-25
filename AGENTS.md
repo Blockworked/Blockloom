@@ -571,13 +571,23 @@ after batching, and an EXR capture that stays linear.
 ### Lighting rig
 
 `Light` (`LightSpec`) is a point, spot, rect or disk light. Rect and disk are
-Bevy `RectLight`s (LTC speculars, no shadow maps; a disk is the square of the
-same area). `intensity` is lumens or, with `unit: Candela`, the brightest
-direction's candela (x 4 pi to lumens). A spot's cookie (tiled) and an IES
-profile, or a point's profile, are baked on the CPU into one R8 mask in
-`lights.rs` (`spot_mask`/`point_mask`, which invert Bevy's own texture
-lookups) and handed over as `SpotLightTexture`/`PointLightTexture`. Masks are
-cached in `LightMasks` by file, tiling and cone. Per-light contact shadows,
+Bevy `RectLight`s with LTC speculars. `intensity` is lumens or, with `unit:
+Candela`, the brightest direction's candela (x 4 pi to lumens). A cookie
+(tiled over a spot's beam, or on each face of a point light) and an IES
+profile are baked on the CPU into one R8 mask in `lights.rs`
+(`spot_mask`/`point_mask`, which invert Bevy's own texture lookups) and
+handed over as `SpotLightTexture`/`PointLightTexture`. Masks are cached in
+`LightMasks` by file, tiling and cone.
+
+`pbr_patch.rs` edits Bevy's own PBR shaders as they load, for what Bevy has
+no switch for. A disk is sent with both extents negative (the side of its
+equal-area square) and integrates as a 12-gon of the same area. A shadowed
+area light gets a `ShadowTwin` child, a black point light at exactly its
+position, whose cube shadow the rect loop looks up in the cluster; black
+point lights are skipped in the point loop. The sun's shadows fade over the
+last `ShadowSettings::fade` of the distance (a shader constant, so changing
+it recompiles). Each patch is exact text against the pinned Bevy; one that
+no longer matches reports an error and leaves Bevy's shader alone. Per-light contact shadows,
 PCSS and biases ride the same spec; `turn my light's shadows` lands in
 `engine.light_shadows`, which `wanted` lays over the authored spec, and `casts
 shadows?` reads `ActorSense::casts_shadows`.
@@ -585,7 +595,8 @@ shadows?` reads `ActorSense::casts_shadows`.
 `Lighting::shadows` (`ShadowSettings`) is the sun and camera half, applied by
 `shadows.rs`: cascades (count, first split, blend, distance - which `set
 shadow distance` overrides as `engine.shadow_distance`), normal bias, a PCSS
-sun size, the camera's `ShadowFilteringMethod` and `ContactShadows` (16 steps).
+sun size, the fade, the camera's `ShadowFilteringMethod` and `ContactShadows`
+(16 steps).
 `Lighting::sun_cookie` is a tiled `DirectionalLightTexture` whose tile size is
 the sun's scale, which is safe because cascades read only its rotation. The
 depth bias and everything volumes blend stay in `environment.rs`.
@@ -601,10 +612,17 @@ the camera's exposure into radiance. `BakeProbes` (the inspector's Bake,
 `bake-probes`) writes `.blockloom/probes/<actor>.{dds,irr,json}`; the json
 holds `probe::stamp`, a hash of the probe and every lit component around it,
 so `probe-status` and the scene view know a bake is stale, and an auto-bake
-probe rebakes itself after the next rebuild once warm-up closes. `capture
+probe rebakes itself after the next rebuild once warm-up closes. A bake
+leaves out its own actor (`ProbeRequest::hide`, applied by
+`probes::hide_from_captures`), so a probe actor (`ProbeOwner`) is never
+batched. Volumes scale probe light through `reflections` (reflection probes
+and the sky's light) and `indirect` (irradiance volumes); probes blend with
+each other by their own falloff. `capture
 probes` does the same capture mid-run and keeps it in memory. Builds copy the
-bakes. The GPU half is the ignored `embed` tests (rect light, cookie, both
-probe kinds).
+bakes. The GPU half is the ignored `embed` tests (rect and disk lights, area
+light shadows, cookie, both probe kinds, a bake leaving out its own actor).
+Those tests start their worlds one at a time: concurrent Vulkan instance
+creation crashes in the loader.
 
 ### Shader library and pass plumbing
 

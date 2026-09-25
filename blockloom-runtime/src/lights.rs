@@ -8,6 +8,10 @@
 //! A cookie and an IES profile both end up as one mask texture the light
 //! shines through: baked on the CPU when the light changes, a square over
 //! the cone for a spot and a six-face strip for a point.
+//!
+//! Area lights lean on `pbr_patch`: a disk goes out with negative extents,
+//! and a shadowed one gets a black point light twin whose cube shadow the
+//! patched shader reads.
 
 use crate::engine::{ActorId, Engine, PendingEffects};
 use crate::world::parse_color;
@@ -34,6 +38,10 @@ pub struct Lit {
 /// The child entity carrying an actor's light.
 #[derive(Component)]
 pub struct ActorLight;
+
+/// Under a shadowed area light: the black point light casting its shadow.
+#[derive(Component)]
+pub struct ShadowTwin;
 
 /// Baked masks by what they were baked from, so actors sharing a fixture
 /// share a texture and a rebuild doesn't bake again.
@@ -100,10 +108,9 @@ fn wanted(engine: &Engine, actor: &str) -> Option<LightSpec> {
 }
 
 /// Whether an actor's light casts shadow maps right now. What `casts
-/// shadows?` reads; an area light has none, and a 2D world no lights.
+/// shadows?` reads; a 2D world has no lights.
 pub fn casts_shadows(engine: &Engine, actor: &str) -> bool {
-    engine.project.world.mode.is_3d()
-        && wanted(engine, actor).is_some_and(|spec| spec.shadows && !spec.is_area())
+    engine.project.world.mode.is_3d() && wanted(engine, actor).is_some_and(|spec| spec.shadows)
 }
 
 /// Builds, rebuilds or takes away each actor's light child to match.
@@ -193,13 +200,46 @@ fn insert_light(entity: &mut EntityCommands, spec: &LightSpec, mask: Option<Hand
         }
         LightKind::Rect | LightKind::Disk => {
             let (width, height) = spec.area_size();
+            // Both extents negative marks a disk for the patched shader;
+            // Bevy's own draws the same square either way round.
+            let sign = if spec.kind == LightKind::Disk {
+                -1.0
+            } else {
+                1.0
+            };
             entity.insert(RectLight {
                 color,
                 intensity,
                 range,
-                width,
-                height,
+                width: width * sign,
+                height: height * sign,
             });
+            if spec.shadows {
+                // The shadow twin: black, so it lights nothing, at exactly
+                // the light's position, which is how the shader finds it. Its
+                // own entity, since Bevy clusters one light per entity.
+                let parent = entity.id();
+                entity.commands().spawn((
+                    ShadowTwin,
+                    Transform::default(),
+                    ChildOf(parent),
+                    PointLight {
+                        color: Color::BLACK,
+                        intensity: 0.0,
+                        range,
+                        radius: 0.5 * width.max(height),
+                        shadow_maps_enabled: true,
+                        soft_shadows_enabled: spec.soft_shadows,
+                        shadow_depth_bias: spec
+                            .shadow_depth_bias
+                            .unwrap_or(PointLight::DEFAULT_SHADOW_DEPTH_BIAS),
+                        shadow_normal_bias: spec
+                            .shadow_normal_bias
+                            .unwrap_or(PointLight::DEFAULT_SHADOW_NORMAL_BIAS),
+                        ..default()
+                    },
+                ));
+            }
         }
     }
 }
@@ -221,8 +261,6 @@ fn mask_for(
     };
     let cookie = blockloom_core::assets::normalize(&spec.cookie).unwrap_or_default();
     let ies = blockloom_core::assets::normalize(&spec.ies).unwrap_or_default();
-    // A point light can't project a flat picture, so only its profile counts.
-    let cookie = if point { String::new() } else { cookie };
     if cookie.is_empty() && ies.is_empty() {
         return None;
     }
@@ -259,10 +297,6 @@ fn bake_mask(key: &MaskKey, spec: &LightSpec) -> Result<Image, String> {
     } else {
         Some(pipeline::load_ies(&key.dir, &key.ies)?)
     };
-    if key.point {
-        let data = point_mask(profile.as_ref(), POINT_MASK_SIZE);
-        return Ok(mask_image(POINT_MASK_SIZE, POINT_MASK_SIZE * 6, data));
-    }
     let cookie = if key.cookie.is_empty() {
         None
     } else {
@@ -271,6 +305,15 @@ fn bake_mask(key: &MaskKey, spec: &LightSpec) -> Result<Image, String> {
         let image = image::open(&path).map_err(|e| format!("{}: {e}", key.cookie))?;
         Some(image.to_luma8())
     };
+    if key.point {
+        let data = point_mask(
+            profile.as_ref(),
+            cookie.as_ref(),
+            spec.cookie_tiling,
+            POINT_MASK_SIZE,
+        );
+        return Ok(mask_image(POINT_MASK_SIZE, POINT_MASK_SIZE * 6, data));
+    }
     let data = spot_mask(
         profile.as_ref(),
         cookie.as_ref(),
@@ -310,11 +353,7 @@ fn spot_mask(
     size: u32,
 ) -> Vec<u8> {
     let peak = profile.map(|p| p.max_candela().max(f32::EPSILON));
-    let tiling = if tiling.is_finite() {
-        tiling.clamp(0.01, 64.0)
-    } else {
-        1.0
-    };
+    let tiling = clamp_tiling(tiling);
     let mut out = Vec::with_capacity((size * size) as usize);
     for y in 0..size {
         for x in 0..size {
@@ -339,11 +378,26 @@ fn spot_mask(
     out
 }
 
+fn clamp_tiling(tiling: f32) -> f32 {
+    if tiling.is_finite() {
+        tiling.clamp(0.01, 64.0)
+    } else {
+        1.0
+    }
+}
+
 /// A point's mask as six faces stacked in Bevy's face order (+X, -X, +Y,
 /// -Y, -Z, +Z), each texel the direction Bevy's `cubemap_uv` maps there. The
-/// profile's vertical angle runs from straight down, local -Y.
-fn point_mask(profile: Option<&IesProfile>, size: u32) -> Vec<u8> {
+/// profile's vertical angle runs from straight down, local -Y; the cookie
+/// repeats `tiling` times across every face, like a lantern's panes.
+fn point_mask(
+    profile: Option<&IesProfile>,
+    cookie: Option<&image::GrayImage>,
+    tiling: f32,
+    size: u32,
+) -> Vec<u8> {
     let peak = profile.map(|p| p.max_candela().max(f32::EPSILON));
+    let tiling = clamp_tiling(tiling);
     let mut out = Vec::with_capacity((size * size * 6) as usize);
     for face in 0..6 {
         for y in 0..size {
@@ -351,7 +405,7 @@ fn point_mask(profile: Option<&IesProfile>, size: u32) -> Vec<u8> {
                 let a = 2.0 * (x as f32 + 0.5) / size as f32 - 1.0;
                 let b = 2.0 * (y as f32 + 0.5) / size as f32 - 1.0;
                 let dir = point_face_direction(face, a, b).normalize();
-                let value = match (profile, peak) {
+                let mut value = match (profile, peak) {
                     (Some(profile), Some(peak)) => {
                         let vertical = (-dir.y).clamp(-1.0, 1.0).acos().to_degrees();
                         let horizontal = dir.z.atan2(dir.x).to_degrees();
@@ -359,6 +413,11 @@ fn point_mask(profile: Option<&IesProfile>, size: u32) -> Vec<u8> {
                     }
                     _ => 1.0,
                 };
+                if let Some(cookie) = cookie {
+                    let u = (x as f32 + 0.5) / size as f32;
+                    let v = (y as f32 + 0.5) / size as f32;
+                    value *= sample_tiled(cookie, u * tiling, v * tiling);
+                }
                 out.push((value.clamp(0.0, 1.0) * 255.0).round() as u8);
             }
         }
@@ -510,18 +569,29 @@ mod tests {
         let child = light_child(&mut app).unwrap();
         let rect = app.world().get::<RectLight>(child).unwrap();
         assert_eq!((rect.width, rect.height), (2.0, 0.5));
-        // Area lights have no shadow maps to cast.
+        // A shadowed area light casts through a black twin at its centre.
+        let twin = app.world().get::<Children>(child).unwrap()[0];
+        assert!(app.world().get::<ShadowTwin>(twin).is_some());
+        let twin = app.world().get::<PointLight>(twin).unwrap();
+        assert!(twin.shadow_maps_enabled);
+        assert_eq!(twin.intensity, 0.0);
+        assert_eq!(twin.range, rect.range);
         let engine = app.world().non_send::<Engine>();
         let id = engine.project.actors[0].id.clone();
-        assert!(!casts_shadows(engine, &id));
+        assert!(casts_shadows(engine, &id));
 
-        let disk = LightSpec {
+        let (mut app, _) = app_with_lamp(LightSpec {
             width: 2.0,
             ..lamp(LightKind::Disk)
-        };
-        let (side, _) = disk.area_size();
-        // Same area as the disc it stands in for.
-        assert!((side * side - std::f32::consts::PI).abs() < 1e-4);
+        });
+        app.update();
+        let child = light_child(&mut app).unwrap();
+        let disk = app.world().get::<RectLight>(child).unwrap();
+        // Negative sides mark a disk, the square of its area.
+        assert!(disk.width < 0.0 && disk.height < 0.0);
+        assert!((disk.width * disk.height - std::f32::consts::PI).abs() < 1e-4);
+        // No shadows, no twin.
+        assert!(app.world().get::<Children>(child).is_none());
     }
 
     #[test]
@@ -585,7 +655,7 @@ mod tests {
     fn a_point_mask_points_its_profile_down() {
         let profile = parse_ies("down.ies", DOWNLIGHT).unwrap();
         let size = 16;
-        let mask = point_mask(Some(&profile), size);
+        let mask = point_mask(Some(&profile), None, 1.0, size);
         let centre = |face: u32| mask[((face * size + size / 2) * size + size / 2) as usize];
         // -Y is face 3: straight down, full. +Y is dark.
         assert!(centre(3) > 230);
@@ -595,6 +665,18 @@ mod tests {
         for face in 0..6 {
             let dir = point_face_direction(face, 0.0, 0.0);
             assert_eq!(dir.abs().max_element(), 1.0);
+        }
+    }
+
+    #[test]
+    fn a_point_light_repeats_its_cookie_on_every_face() {
+        let cookie =
+            image::GrayImage::from_fn(2, 1, |x, _| image::Luma([if x == 0 { 0 } else { 255 }]));
+        let size = 4;
+        let mask = point_mask(None, Some(&cookie), 2.0, size);
+        for face in 0..6 {
+            let row = &mask[(face * size * size) as usize..][..size as usize];
+            assert_eq!(row, [0, 255, 0, 255], "face {face}");
         }
     }
 }

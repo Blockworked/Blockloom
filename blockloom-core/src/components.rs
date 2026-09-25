@@ -131,7 +131,8 @@ pub struct LightSpec {
     /// Degrees from the spot's axis where the light ends.
     #[serde(default = "default_outer_angle")]
     pub outer_angle: f32,
-    /// Whether the light casts shadow maps. Area lights have none to cast.
+    /// Whether the light casts shadow maps. An area light casts a point
+    /// light's, from its centre.
     #[serde(default)]
     pub shadows: bool,
     #[serde(default)]
@@ -142,7 +143,8 @@ pub struct LightSpec {
     #[serde(default = "default_area_side")]
     pub height: f32,
     /// An image asset projected through the light like a gobo; only its red
-    /// channel counts. Empty for none.
+    /// channel counts. A point light repeats it on each of its six sides.
+    /// Empty for none.
     #[serde(default)]
     pub cookie: String,
     /// How many times the cookie repeats across the beam.
@@ -241,8 +243,8 @@ impl LightSpec {
         }
     }
 
-    /// A rect's sides in metres, or the equal-area square standing in for a
-    /// disk.
+    /// A rect's sides in metres, or for a disk the side of the square of
+    /// its area (which the renderer turns back into the disk).
     pub fn area_size(&self) -> (f32, f32) {
         let width = self.width.max(0.01);
         match self.kind {

@@ -63,6 +63,11 @@ pub struct VolumeOverrides {
     pub bloom_threshold: Override<f32>,
     pub bloom_intensity: Override<f32>,
     pub vignette: Override<f32>,
+    /// Multiplies reflection probes and the sky's light, so a cave can keep
+    /// the sky out of its reflections.
+    pub reflections: Override<f32>,
+    /// Multiplies irradiance volumes.
+    pub indirect: Override<f32>,
 }
 
 impl Default for VolumeOverrides {
@@ -84,6 +89,8 @@ impl Default for VolumeOverrides {
             bloom_threshold: Override::off(post.bloom_threshold),
             bloom_intensity: Override::off(post.bloom_intensity),
             vignette: Override::off(post.vignette_strength),
+            reflections: Override::off(1.0),
+            indirect: Override::off(1.0),
         }
     }
 }
@@ -105,6 +112,8 @@ impl VolumeOverrides {
             ("bloom_threshold", self.bloom_threshold.on),
             ("bloom_intensity", self.bloom_intensity.on),
             ("vignette", self.vignette.on),
+            ("reflections", self.reflections.on),
+            ("indirect", self.indirect.on),
         ]
         .into_iter()
         .filter_map(|(name, on)| on.then_some(name))

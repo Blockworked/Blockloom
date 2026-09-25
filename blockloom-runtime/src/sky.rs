@@ -7,7 +7,7 @@
 use crate::engine::Engine;
 use crate::world::WorldCamera;
 use bevy::asset::RenderAssetUsages;
-use bevy::light::{GeneratedEnvironmentMapLight, Skybox};
+use bevy::light::{EnvironmentMapLight, GeneratedEnvironmentMapLight, Skybox};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
@@ -89,15 +89,27 @@ fn load_sky(
     }
 }
 
-/// Keeps the world camera's skybox and environment light matching the sky.
+/// Keeps the world camera's skybox and environment light matching the sky,
+/// the light scaled by the volumes' `reflections`.
+#[allow(clippy::type_complexity)]
 fn apply_sky(
     engine: NonSend<Engine>,
     state: Res<SkyState>,
+    environment: Option<Res<crate::environment::Environment>>,
     mut commands: Commands,
-    cameras: Query<(Entity, Option<&Skybox>), With<WorldCamera>>,
+    mut cameras: Query<
+        (
+            Entity,
+            Option<&Skybox>,
+            Option<&mut GeneratedEnvironmentMapLight>,
+            Option<&mut EnvironmentMapLight>,
+        ),
+        With<WorldCamera>,
+    >,
 ) {
     let brightness = engine.project.world.lighting.sky_brightness;
-    for (camera, skybox) in &cameras {
+    let light = brightness * environment.map_or(1.0, |env| env.reflections.max(0.0));
+    for (camera, skybox, generated, filtered) in &mut cameras {
         let Some(image) = state.image.clone() else {
             if skybox.is_some() {
                 commands
@@ -110,7 +122,14 @@ fn apply_sky(
             skybox.image.as_ref() == Some(&image) && skybox.brightness == brightness
         });
         if current {
+            if let Some(mut generated) = generated {
+                crate::light_probes::set_environment_intensity(&mut generated, filtered, light);
+            }
             continue;
+        }
+        if skybox.is_some_and(|skybox| skybox.image.as_ref() != Some(&image)) {
+            // Bevy filters a generated light once; a new sky needs a new one.
+            commands.entity(camera).remove::<EnvironmentMapLight>();
         }
         commands.entity(camera).insert((
             Skybox {
@@ -120,7 +139,7 @@ fn apply_sky(
             },
             GeneratedEnvironmentMapLight {
                 environment_map: image,
-                intensity: brightness,
+                intensity: light,
                 ..default()
             },
         ));
