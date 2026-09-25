@@ -40,15 +40,21 @@ fn collider_for(visual: &Visual) -> Option<rp::Collider> {
             scale[1] / 2.0,
             scale[2] / 2.0,
         )),
-        // A solid tilemap collides as one slab; a decorative one lets
-        // bodies pass through.
-        Visual::Tilemap { tilemap } if tilemap.solid => {
-            let size = tilemap.size();
-            Some(rp::Collider::cuboid(
-                size[0] / 2.0,
-                size[1] / 2.0,
-                PLANE_THICKNESS / 2.0,
-            ))
+        // A solid tilemap collides tile by tile, one slab-thick box per
+        // merged run; a decorative one lets bodies pass through.
+        Visual::Tilemap { tilemap } => {
+            let parts: Vec<_> = tilemap
+                .solid_rects()
+                .into_iter()
+                .map(|rect| {
+                    (
+                        Vec3::new(rect.center[0], rect.center[1], 0.0),
+                        Quat::IDENTITY,
+                        rp::Collider::cuboid(rect.half[0], rect.half[1], PLANE_THICKNESS / 2.0),
+                    )
+                })
+                .collect();
+            (!parts.is_empty()).then(|| rp::Collider::compound(parts))
         }
         _ => None,
     }
@@ -60,9 +66,9 @@ fn mesh_for(visual: &Visual) -> Option<Mesh> {
         Visual::Sphere { radius, .. } => Some(Sphere::new(*radius).into()),
         Visual::Capsule { radius, height, .. } => Some(Capsule3d::new(*radius, *height).into()),
         Visual::Plane { size, .. } => Some(Cuboid::new(size[0], PLANE_THICKNESS, size[1]).into()),
-        // Placeholder until the glTF scene streams in (see ModelSource):
-        // a tinted box at the authored scale, so a missing rig is visible
-        // rather than invisible.
+        // Stands in until the glTF scene streams in (see `model`): a tinted
+        // box at the authored scale, so a missing rig is visible rather than
+        // invisible.
         Visual::Model { scale, .. } => Some(Cuboid::new(scale[0], scale[1], scale[2]).into()),
         // An empty tilemap draws nothing: let the unseen fallback take it.
         Visual::Tilemap { tilemap } => {
@@ -76,11 +82,6 @@ fn mesh_for(visual: &Visual) -> Option<Mesh> {
         _ => None,
     }
 }
-
-/// Where a `Visual::Model` actor's file lives. The placeholder box spawns
-/// immediately; a loader swaps the real scene in once Bevy resolves it.
-#[derive(Component, Debug, Clone)]
-pub struct ModelSource(pub String);
 
 /// Spawns one actor, or nothing if its visual belongs to the other dimension
 /// or a tilemap is empty. A custom-shaded actor renders through the graph
@@ -97,10 +98,11 @@ pub fn spawn_actor(
     graph_materials: &mut Assets<GraphMaterial3d>,
 ) -> Option<Entity> {
     let visual = actor.visual()?.clone();
-    let mesh = mesh_for(&visual)?;
+    let mesh = meshes.add(mesh_for(&visual)?);
     let id = commands
-        .spawn((crate::world::actor_bundle(actor), Mesh3d(meshes.add(mesh))))
+        .spawn((crate::world::actor_bundle(actor), Mesh3d(mesh.clone())))
         .id();
+    insert_look_extras(commands, id, actor, &visual, &mesh, dir, assets);
     insert_surface(
         commands,
         id,
@@ -111,11 +113,32 @@ pub fn spawn_actor(
         materials,
         graph_materials,
     );
-    if let Visual::Model { path, .. } = &visual {
-        commands.entity(id).insert(ModelSource(path.clone()));
-    }
     insert_body(&mut commands.entity(id), actor);
     Some(id)
+}
+
+/// What a look draws beyond its mesh and surface: a model's glTF scene, or
+/// a tilemap's frame clock.
+fn insert_look_extras(
+    commands: &mut Commands,
+    id: Entity,
+    actor: &Actor,
+    visual: &Visual,
+    mesh: &Handle<Mesh>,
+    dir: Option<&Path>,
+    assets: &AssetServer,
+) {
+    match visual {
+        Visual::Model { .. } => {
+            crate::model::attach(commands, id, &actor.id, visual, dir, assets);
+        }
+        Visual::Tilemap { tilemap } => {
+            if let Some(animated) = crate::materials::AnimatedTiles::of(tilemap, mesh) {
+                commands.entity(id).insert(animated);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The actor's surface: graph effect, tilemap texture, or PBR properties.
@@ -137,10 +160,11 @@ fn insert_surface(
     let material = actor.components.material();
     if let Some(effect) = material.and_then(|material| material.shader.as_ref()) {
         let secondary = crate::world::parse_color(&effect.color);
+        let shader = crate::materials::surface_shader(commands, &actor.id, effect, dir, true);
         commands
             .entity(id)
             .insert(MeshMaterial3d(graph_materials.add(
-                crate::materials::graph_material_3d(effect, color, secondary, None),
+                crate::materials::graph_material_3d(effect, color, secondary, None, shader),
             )));
         return;
     }
@@ -273,6 +297,7 @@ pub fn apply_effects(
     mut meshes: ResMut<Assets<Mesh>>,
     assets: Res<AssetServer>,
     mut graph_materials: ResMut<Assets<GraphMaterial3d>>,
+    models: Query<&crate::model::ModelChild>,
 ) {
     if !engine.running || engine.paused {
         // Still apply gravity while idle so the config is correct on Play.
@@ -500,7 +525,18 @@ pub fn apply_effects(
                         let Some(mesh) = mesh_for(&visual) else {
                             continue;
                         };
-                        commands.entity(entity).insert(Mesh3d(meshes.add(mesh)));
+                        let mesh = meshes.add(mesh);
+                        commands.entity(entity).insert(Mesh3d(mesh.clone()));
+                        crate::model::detach(&mut commands, entity, &models);
+                        insert_look_extras(
+                            &mut commands,
+                            entity,
+                            &authored,
+                            &visual,
+                            &mesh,
+                            dir.as_deref(),
+                            &assets,
+                        );
                         insert_surface(
                             &mut commands,
                             entity,
@@ -550,8 +586,11 @@ pub fn apply_effects(
                     // Nothing to draw, but the actor is still there to be
                     // moved, sensed and given a look again.
                     "Look" => {
-                        commands.entity(id).remove::<Mesh3d>();
+                        commands
+                            .entity(id)
+                            .remove::<(Mesh3d, crate::materials::AnimatedTiles)>();
                         remove_surface(&mut commands, id);
+                        crate::model::detach(&mut commands, id, &models);
                     }
                     // Back to the plain standard surface.
                     "Material" => {

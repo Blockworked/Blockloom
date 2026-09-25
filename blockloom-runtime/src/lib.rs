@@ -27,6 +27,7 @@ mod engine;
 mod fx;
 mod logic;
 mod materials;
+mod model;
 mod overlay;
 pub mod player;
 mod preview;
@@ -197,11 +198,13 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
                         fx::snapshot_trails,
                         fx::step_ghosts,
                         materials::tick_graph_time,
+                        materials::animate_tiles,
                     )
                         .chain(),
                 );
         }
         Mode::ThreeD => {
+            app.init_resource::<model::ModelCache>();
             app.insert_resource(bevy_rapier3d::prelude::TimestepMode::Fixed {
                 dt: 1.0 / 60.0,
                 substeps: 1,
@@ -280,6 +283,9 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
                         fx::snapshot_trails,
                         fx::step_ghosts,
                         materials::tick_graph_time,
+                        materials::animate_tiles,
+                        model::watch_models,
+                        model::pause_rigs,
                     )
                         .chain(),
                 );

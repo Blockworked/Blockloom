@@ -1,8 +1,9 @@
 //! Building a project into a game that runs on its own.
 //!
 //! A build is the player binary, the project's [`crate::pack::GamePack`], its
-//! assets, compiled scripts, optional native block logic, platform wrapper,
-//! icons and shareable ZIP (see [`crate::pack`] for the shape).
+//! assets, a baked sprite atlas, compiled scripts, optional native block
+//! logic, platform wrapper, icons and shareable ZIP (see [`crate::pack`] for
+//! the shape).
 //!
 //! Which platforms an install can build for is a question about what it has
 //! beside it. The player is a native binary that nothing here can produce, so
@@ -253,6 +254,9 @@ pub struct Build {
     pub assets: usize,
     pub scripts: usize,
     pub compiled: bool,
+    /// How many Image looks the baked sprite atlas carries. 0 means none
+    /// was worth baking and every sprite draws from its own file.
+    pub atlas: usize,
 }
 
 /// What the build folder is called. The platform is in the name because one
@@ -301,6 +305,7 @@ pub fn build(
     GamePack::new(project.clone()).write(&pack::pack_path(&game))?;
 
     let assets = copy_assets(project_dir, &game)?;
+    let atlas = bake_sprite_atlas(project, project_dir, &game)?;
     let scripts = copy_scripts(project, project_dir, &game, target)?;
     let compiled = if fast {
         copy_logic(project_dir, &game, target)?;
@@ -322,6 +327,7 @@ pub fn build(
         assets,
         scripts,
         compiled,
+        atlas,
     })
 }
 
@@ -512,6 +518,57 @@ fn copy_assets(project_dir: &Path, game: &Path) -> Result<usize, String> {
     })
 }
 
+/// Bakes the project's Image looks into one sheet the player draws them out
+/// of. The files still ship, since a block or a material can name them too.
+/// Sprites too big to share a sheet stay out, and if the rest overflow one
+/// sheet the biggest are dropped until they fit; one sprite alone gains
+/// nothing, so it bakes no atlas at all.
+fn bake_sprite_atlas(project: &Project, project_dir: &Path, game: &Path) -> Result<usize, String> {
+    use crate::pipeline;
+    let mut sprites: Vec<(String, u64)> = Vec::new();
+    for actor in &project.actors {
+        let Some(crate::scene::Visual::Image { path, .. }) = actor.visual() else {
+            continue;
+        };
+        let Some(relative) = crate::assets::normalize(path) else {
+            continue;
+        };
+        if sprites.iter().any(|(known, _)| *known == relative) {
+            continue;
+        }
+        // A file that won't decode is left to fail the way it does in Play.
+        let Some(full) = crate::assets::resolve(project_dir, &relative) else {
+            continue;
+        };
+        let Ok((width, height)) = image::image_dimensions(&full) else {
+            continue;
+        };
+        if width.max(height) > pipeline::ATLAS_SPRITE_MAX {
+            continue;
+        }
+        sprites.push((relative, width as u64 * height as u64));
+    }
+    // Smallest first, so dropping from the end drops the biggest.
+    sprites.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+    while sprites.len() >= 2 {
+        let paths: Vec<String> = sprites.iter().map(|(path, _)| path.clone()).collect();
+        match pipeline::bake_atlas(project_dir, &paths, 2048, 2) {
+            Ok(atlas) => {
+                pipeline::write_atlas(
+                    &atlas,
+                    &game.join(pipeline::BAKED_ATLAS_IMAGE),
+                    &game.join(pipeline::BAKED_ATLAS_LAYOUT),
+                )?;
+                return Ok(paths.len());
+            }
+            Err(_) => {
+                sprites.pop();
+            }
+        }
+    }
+    Ok(0)
+}
+
 /// Copies each scripted actor's library for this platform to where the
 /// runtime looks for it. The build's own copy is flat, the way a project's
 /// is: which platform it was built for stops mattering once it has shipped.
@@ -671,6 +728,45 @@ mod tests {
         let pack = GamePack::read(&pack::pack_path(&game)).unwrap();
         assert_eq!(pack.title(), "Pond Game");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_build_bakes_its_image_looks_into_one_sheet() {
+        use crate::scene::Visual;
+        let root = temp("atlas");
+        let (mut project, project_dir, player) = a_project(&root);
+        for (name, size) in [("a", 8), ("b", 16), ("huge", 600)] {
+            image::RgbaImage::new(size, size)
+                .save(project_dir.join(format!("assets/sprites/{name}.png")))
+                .unwrap();
+            project.actors.push(crate::project::Actor::new(
+                name,
+                Visual::Image {
+                    path: format!("assets/sprites/{name}.png"),
+                    size: [32.0, 32.0],
+                },
+            ));
+        }
+
+        let built = build(
+            &project,
+            &project_dir,
+            a_target(),
+            &player,
+            &root.join("out"),
+            false,
+        )
+        .unwrap();
+
+        let game = pack::game_dir(&built.dir);
+        assert!(game.join(crate::pipeline::BAKED_ATLAS_IMAGE).is_file());
+        let layout = crate::pipeline::read_baked_layout(&game).unwrap();
+        assert_eq!(built.atlas, 2);
+        assert!(layout.entry("assets/sprites/a.png").is_some());
+        assert!(layout.entry("assets/sprites/b.png").is_some());
+        // Too big to share a sheet: it keeps its own texture.
+        assert!(layout.entry("assets/sprites/huge.png").is_none());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

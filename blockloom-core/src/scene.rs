@@ -80,12 +80,17 @@ pub enum Visual {
         size: [f32; 2],
     },
     /// A rigged model loaded from `path` (glTF/GLB/OBJ/FBX, relative to the
-    /// project folder). The runtime draws the file and falls back to a tinted
-    /// box while it loads or when it won't; the collider is that same box.
+    /// project folder). The runtime draws a glTF's first scene, scaled by
+    /// `scale`, and falls back to a tinted box while it loads or when it
+    /// won't; the collider is that same box.
     Model {
         path: String,
         tint: String,
         scale: [f32; 3],
+        /// The glTF animation that loops on the rig, by name. Empty plays
+        /// the first one the file has; a rig without any stands still.
+        #[serde(default)]
+        animation: String,
     },
     /// A tilemap: a grid of tiles over one tileset image (see
     /// [`crate::material::Tilemap`]). Flat in 2D, a standing wall in 3D.

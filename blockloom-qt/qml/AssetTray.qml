@@ -31,7 +31,7 @@ Rectangle {
     property var menuEntry: null
     property var draft: null        // { mode: "folder"|"file"|"rename", path, name }
     property string previewing: ""
-    property string dropTarget: ""
+    property var dropTarget: null  // A folder path while an asset drag hovers one, else null - null rather than "" so the project root ("") stays hoverable without reading as hovered.
 
     readonly property var icons: ({ folder: "folder", image: "image", audio: "music", font: "file-type", model: "box", script: "file-code", shader: "sparkles", text: "file-text", other: "file" })
     function parentOf(p) { const cut = p.lastIndexOf("/"); return cut === -1 ? "" : p.slice(0, cut); }
@@ -97,12 +97,12 @@ Rectangle {
         const g = ghostLayer.mapFromItem(null, sceneX, sceneY);
         ghost.x = g.x + 8; ghost.y = g.y + 8;
         const folder = folderAt(sceneX, sceneY);
-        dropTarget = folder !== null && canDropIn(entry, folder) ? folder : "";
+        dropTarget = folder !== null && canDropIn(entry, folder) ? folder : null;
     }
     function endDrag(entry, sceneX, sceneY) {
         root.app.assetDrag = null;
         const target = dropTarget;
-        dropTarget = "";
+        dropTarget = null;
         for (const box of root.app.assetTargets.slice()) if (box.takeDrop(entry, sceneX, sceneY)) return;
         const folder = folderAt(sceneX, sceneY);
         if (folder !== null && canDropIn(entry, folder)) run("move_asset", { path: entry.path, parent: folder });
@@ -278,7 +278,7 @@ Rectangle {
                                     const p = mapToItem(null, mouse.x, mouse.y);
                                     root.endDrag(tile.modelData, p.x, p.y);
                                 }
-                                onCanceled: { dragging = false; ghost.entry = null; root.app.assetDrag = null; root.dropTarget = ""; }
+                                onCanceled: { dragging = false; ghost.entry = null; root.app.assetDrag = null; root.dropTarget = null; }
                                 onDoubleClicked: if (tile.modelData.kind === "folder") root.goTo(tile.modelData.path)
                             }
                             BwButton {

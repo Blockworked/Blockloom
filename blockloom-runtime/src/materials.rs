@@ -8,6 +8,11 @@
 //! never needs the actor to do anything. A textured look keeps its image
 //! under the effect; a circle look renders its quad round.
 //!
+//! An effect whose `source` names a `.wgsl` asset draws with that file
+//! instead: [`surface_shader`] wraps the file's `graph_main` in the same
+//! bindings and fragment entry the ubershader has, and the material's
+//! `specialize` swaps it in as the fragment shader, per material.
+//!
 //! PBR-only materials need no plugin: [`surface_standard`] folds a
 //! [`SurfaceMaterial`] into the `StandardMaterial` the 3D pipeline already
 //! uses. [`tilemesh_to_bevy`] turns a [`Tilemap`] into an uploadable mesh.
@@ -22,15 +27,20 @@ use bevy::ecs::system::SystemParam;
 use bevy::image::Image;
 use bevy::math::Vec4;
 use bevy::mesh::Mesh2d;
-use bevy::pbr::{Material, MaterialPlugin};
+use bevy::mesh::MeshVertexBufferLayoutRef;
+use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey, MaterialPlugin};
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
-use bevy::render::render_resource::AsBindGroup;
-use bevy::shader::ShaderRef;
-use bevy::sprite_render::{
-    AlphaMode2d, ColorMaterial, Material2d, Material2dPlugin, MeshMaterial2d,
+use bevy::render::render_resource::{
+    AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
 };
-use blockloom_core::material::{GraphEffect, SurfaceMaterial, TileMesh};
+use bevy::shader::{Shader, ShaderRef};
+use bevy::sprite_render::{
+    AlphaMode2d, ColorMaterial, Material2d, Material2dKey, Material2dPlugin, MeshMaterial2d,
+};
+use blockloom_core::material::{GraphEffect, SurfaceMaterial, TileMesh, Tilemap};
+use blockloom_protocol::RuntimeMessage;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 /// Register the graph materials and their embedded shaders. Every dimension
@@ -44,9 +54,18 @@ pub fn register(app: &mut App) {
     app.add_plugins(MaterialPlugin::<GraphMaterial3d>::default());
 }
 
+/// Which fragment shader a graph material draws with: the ubershader, or a
+/// project's own surface shader. Part of the pipeline key, so two materials
+/// with different files get different pipelines.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct GraphKey {
+    shader: Option<Handle<Shader>>,
+}
+
 /// One custom-shaded 2D actor: tint and second color, effect params, and the
 /// look's own image when it has one.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
+#[bind_group_data(GraphKey)]
 pub struct GraphMaterial2d {
     #[uniform(0)]
     pub tint: Vec4,
@@ -61,6 +80,16 @@ pub struct GraphMaterial2d {
     #[texture(4)]
     #[sampler(5)]
     pub texture: Option<Handle<Image>>,
+    /// A project surface shader replacing the ubershader, if any.
+    pub shader: Option<Handle<Shader>>,
+}
+
+impl From<&GraphMaterial2d> for GraphKey {
+    fn from(material: &GraphMaterial2d) -> Self {
+        Self {
+            shader: material.shader.clone(),
+        }
+    }
 }
 
 impl Material2d for GraphMaterial2d {
@@ -76,11 +105,25 @@ impl Material2d for GraphMaterial2d {
     fn alpha_mode(&self) -> AlphaMode2d {
         AlphaMode2d::Blend
     }
+
+    fn specialize(
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: Material2dKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if let (Some(shader), Some(fragment)) =
+            (key.bind_group_data.shader, descriptor.fragment.as_mut())
+        {
+            fragment.shader = shader;
+        }
+        Ok(())
+    }
 }
 
 /// One custom-shaded 3D actor. Unlit by design: an effect is its own light,
 /// so the scene's lamps leave it alone.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
+#[bind_group_data(GraphKey)]
 pub struct GraphMaterial3d {
     #[uniform(0)]
     pub tint: Vec4,
@@ -95,6 +138,16 @@ pub struct GraphMaterial3d {
     #[texture(4)]
     #[sampler(5)]
     pub texture: Option<Handle<Image>>,
+    /// A project surface shader replacing the ubershader, if any.
+    pub shader: Option<Handle<Shader>>,
+}
+
+impl From<&GraphMaterial3d> for GraphKey {
+    fn from(material: &GraphMaterial3d) -> Self {
+        Self {
+            shader: material.shader.clone(),
+        }
+    }
 }
 
 impl Material for GraphMaterial3d {
@@ -110,6 +163,145 @@ impl Material for GraphMaterial3d {
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Blend
     }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if let (Some(shader), Some(fragment)) =
+            (key.bind_group_data.shader, descriptor.fragment.as_mut())
+        {
+            fragment.shader = shader;
+        }
+        Ok(())
+    }
+}
+
+/// The imports and fragment entry a project surface shader is wrapped in,
+/// per dimension. The bindings between them are core's, the same text the
+/// editor checks a file against.
+const SURFACE_2D_HEAD: &str = "\
+#import bevy_sprite::{
+    mesh2d_vertex_output::VertexOutput,
+    mesh2d_view_bindings::view,
+}
+#ifdef TONEMAP_IN_SHADER
+#import bevy_core_pipeline::tonemapping
+#endif
+#ifdef SRGB_OUTPUT
+#import bevy_render::color_operations::linear_to_srgb
+#endif
+#ifdef OKLAB_OUTPUT
+#import bevy_render::color_operations::linear_rgb_to_oklab
+#endif
+";
+
+const SURFACE_2D_TAIL: &str = "\
+@fragment
+fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
+    if (flags.y > 0.5 && length((mesh.uv - 0.5) * 2.0) > 1.0) {
+        discard;
+    }
+    var output_color = graph_main(mesh.uv, params.w);
+#ifdef TONEMAP_IN_SHADER
+    output_color = tonemapping::tone_mapping(output_color, view.color_grading);
+#endif
+#ifdef SRGB_OUTPUT
+    output_color = vec4(linear_to_srgb(output_color.rgb), output_color.a);
+#endif
+#ifdef OKLAB_OUTPUT
+    output_color = vec4(linear_rgb_to_oklab(output_color.rgb), output_color.a);
+#endif
+    return output_color;
+}
+";
+
+const SURFACE_3D_HEAD: &str = "\
+#import bevy_pbr::{
+    forward_io::{VertexOutput, FragmentOutput},
+    mesh_view_bindings::view,
+}
+#ifdef TONEMAP_IN_SHADER
+#import bevy_core_pipeline::tonemapping
+#endif
+";
+
+const SURFACE_3D_TAIL: &str = "\
+@fragment
+fn fragment(mesh: VertexOutput) -> FragmentOutput {
+    var output_color = graph_main(mesh.uv, params.w);
+#ifdef TONEMAP_IN_SHADER
+    output_color = tonemapping::tone_mapping(output_color, view.color_grading);
+#endif
+    var out: FragmentOutput;
+    out.color = output_color;
+    return out;
+}
+";
+
+/// The shader an effect's `source` file compiles to, or `None` for the
+/// built-in ubershader. A file that won't read or doesn't check is reported
+/// against the actor and falls back to the ubershader, so a typo shows up in
+/// the run log rather than as an actor that vanished.
+///
+/// The handle is keyed by the text itself, so every actor sharing a file
+/// shares one pipeline, and an edited file is a new shader on the next build.
+pub fn surface_shader(
+    commands: &mut Commands,
+    actor: &str,
+    effect: &GraphEffect,
+    dir: Option<&Path>,
+    dim3: bool,
+) -> Option<Handle<Shader>> {
+    let source = effect.source.trim();
+    if source.is_empty() {
+        return None;
+    }
+    let report = |message: String| {
+        crate::bridge::send(&RuntimeMessage::Error {
+            actor: actor.to_string(),
+            message,
+        })
+    };
+    let path = crate::world::asset_path(dir, source);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) => {
+            report(format!(
+                "couldn't read the surface shader {source}: {error}"
+            ));
+            return None;
+        }
+    };
+    if let Err(error) = blockloom_core::material::check_surface_wgsl(&text) {
+        report(format!("{source} doesn't compile:\n{error}"));
+        return None;
+    }
+    let (head, tail) = if dim3 {
+        (SURFACE_3D_HEAD, SURFACE_3D_TAIL)
+    } else {
+        (SURFACE_2D_HEAD, SURFACE_2D_TAIL)
+    };
+    let full = format!(
+        "{head}\n{}\n{text}\n{tail}",
+        blockloom_core::material::SURFACE_BINDINGS
+    );
+    let mut low = std::collections::hash_map::DefaultHasher::new();
+    full.hash(&mut low);
+    let mut high = std::collections::hash_map::DefaultHasher::new();
+    ("blockloom-surface", &full).hash(&mut high);
+    let uuid = bevy::asset::uuid::Uuid::from_u64_pair(high.finish(), low.finish());
+    let handle = Handle::<Shader>::from(uuid);
+    let shader = Shader::from_wgsl(full, format!("blockloom://surface/{source}"));
+    let id = handle.id();
+    commands.queue(move |world: &mut World| {
+        if let Some(mut shaders) = world.get_resource_mut::<Assets<Shader>>() {
+            let _ = shaders.insert(id, shader);
+        }
+    });
+    Some(handle)
 }
 
 /// Build the 2D material for an actor carrying `effect`.
@@ -119,6 +311,7 @@ pub fn graph_material_2d(
     secondary: Color,
     texture: Option<Handle<Image>>,
     rounded: bool,
+    shader: Option<Handle<Shader>>,
 ) -> GraphMaterial2d {
     GraphMaterial2d {
         tint: tint.to_linear().to_vec4(),
@@ -131,6 +324,7 @@ pub fn graph_material_2d(
         ),
         flags: Vec4::new(f32::from(texture.is_some()), f32::from(rounded), 0.0, 0.0),
         texture,
+        shader,
     }
 }
 
@@ -140,6 +334,7 @@ pub fn graph_material_3d(
     tint: Color,
     secondary: Color,
     texture: Option<Handle<Image>>,
+    shader: Option<Handle<Shader>>,
 ) -> GraphMaterial3d {
     GraphMaterial3d {
         tint: tint.to_linear().to_vec4(),
@@ -152,6 +347,7 @@ pub fn graph_material_3d(
         ),
         flags: Vec4::new(f32::from(texture.is_some()), 0.0, 0.0, 0.0),
         texture,
+        shader,
     }
 }
 
@@ -252,6 +448,49 @@ pub struct MaterialStores<'w> {
     pub tiles: ResMut<'w, Assets<ColorMaterial>>,
 }
 
+/// A tilemap mesh with animated tiles: the map it was built from, the mesh
+/// to rewrite, and which frames that mesh shows now.
+#[derive(Component)]
+pub struct AnimatedTiles {
+    pub tilemap: Tilemap,
+    pub mesh: Handle<Mesh>,
+    shown: Vec<usize>,
+}
+
+impl AnimatedTiles {
+    /// `None` for a map with nothing to animate, which then costs nothing.
+    pub fn of(tilemap: &Tilemap, mesh: &Handle<Mesh>) -> Option<Self> {
+        tilemap.is_animated().then(|| Self {
+            tilemap: tilemap.clone(),
+            mesh: mesh.clone(),
+            shown: tilemap.frame_key(0.0),
+        })
+    }
+}
+
+/// Step every animated tilemap to the frame the clock says, rewriting only
+/// the UVs and only when a frame actually turns over. Runs on the wall clock
+/// like the graph effects, so water still ripples in the scene view.
+pub fn animate_tiles(
+    time: Res<Time>,
+    mut maps: Query<&mut AnimatedTiles>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    let now = time.elapsed_secs();
+    for mut map in &mut maps {
+        let key = map.tilemap.frame_key(now);
+        if key == map.shown {
+            continue;
+        }
+        let Some(mut mesh) = meshes.get_mut(&map.mesh) else {
+            continue;
+        };
+        let uvs = map.tilemap.build_mesh_at(now).uvs;
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+        map.shown = key;
+    }
+}
+
 /// The entity carrying a tilemap mesh, so systems can find it. Stored on the
 /// actor entity itself; the mesh entity is its child.
 #[derive(Component)]
@@ -286,9 +525,13 @@ pub fn spawn_tilemap_2d(
         texture,
         ..default()
     });
+    let animated = AnimatedTiles::of(tilemap, &mesh);
     let child = commands
         .spawn((Mesh2d(mesh), MeshMaterial2d(material)))
         .id();
+    if let Some(animated) = animated {
+        commands.entity(child).insert(animated);
+    }
     commands.entity(entity).add_child(child);
     commands.entity(entity).insert(TilemapMesh(child));
     Some(child)

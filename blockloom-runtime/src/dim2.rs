@@ -27,14 +27,63 @@ fn collider_for(visual: &Visual) -> Option<rp::Collider> {
             Some(rp::Collider::cuboid(size[0] / 2.0, size[1] / 2.0))
         }
         Visual::Circle { radius, .. } => Some(rp::Collider::ball(*radius)),
-        // A solid tilemap collides as its whole slab; a decorative one lets
-        // bodies pass through.
-        Visual::Tilemap { tilemap } if tilemap.solid => {
-            let size = tilemap.size();
-            Some(rp::Collider::cuboid(size[0] / 2.0, size[1] / 2.0))
+        // A solid tilemap collides tile by tile, as the merged runs its
+        // filled cells make; a decorative one lets bodies pass through.
+        Visual::Tilemap { tilemap } => {
+            let parts: Vec<_> = tilemap
+                .solid_rects()
+                .into_iter()
+                .map(|rect| {
+                    (
+                        Vec2::from(rect.center),
+                        0.0,
+                        rp::Collider::cuboid(rect.half[0], rect.half[1]),
+                    )
+                })
+                .collect();
+            (!parts.is_empty()).then(|| rp::Collider::compound(parts))
         }
         _ => None,
     }
+}
+
+/// A build's baked sprite sheet: the sheet's path and each Image look's
+/// rectangle in it, keyed by the project-relative path the look names.
+struct SpriteAtlas {
+    image: std::path::PathBuf,
+    rects: HashMap<String, Rect>,
+}
+
+/// The sheet a built game carries beside its pack, read once per folder.
+/// Only a player has one: Play in the editor draws every file as itself.
+fn baked_atlas(dir: Option<&Path>) -> Option<std::sync::Arc<SpriteAtlas>> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<std::path::PathBuf, Option<Arc<SpriteAtlas>>>>> =
+        OnceLock::new();
+    if crate::bridge::attached() {
+        return None;
+    }
+    let dir = dir?;
+    let mut cache = CACHE.get_or_init(Default::default).lock().ok()?;
+    cache
+        .entry(dir.to_path_buf())
+        .or_insert_with(|| {
+            let layout = blockloom_core::pipeline::read_baked_layout(dir)?;
+            let rects = layout
+                .entries
+                .iter()
+                .map(|entry| {
+                    let min = Vec2::new(entry.x as f32, entry.y as f32);
+                    let max = min + Vec2::new(entry.width as f32, entry.height as f32);
+                    (entry.name.clone(), Rect::from_corners(min, max))
+                })
+                .collect();
+            Some(Arc::new(SpriteAtlas {
+                image: dir.join(blockloom_core::pipeline::BAKED_ATLAS_IMAGE),
+                rects,
+            }))
+        })
+        .clone()
 }
 
 /// A white disc on a transparent background, so a `Circle` draws round
@@ -85,11 +134,26 @@ fn sprite_for(
             custom_size: Some(Vec2::splat(radius * 2.0)),
             ..default()
         }),
-        Visual::Image { path, size } => Some(Sprite {
-            image: assets.load(crate::world::asset_path(dir, path)),
-            custom_size: Some(Vec2::new(size[0], size[1])),
-            ..default()
-        }),
+        Visual::Image { path, size } => {
+            let custom_size = Some(Vec2::new(size[0], size[1]));
+            let baked = baked_atlas(dir).and_then(|atlas| {
+                let rect = *atlas.rects.get(&blockloom_core::assets::normalize(path)?)?;
+                Some((atlas.image.clone(), rect))
+            });
+            Some(match baked {
+                Some((sheet, rect)) => Sprite {
+                    image: assets.load(sheet),
+                    rect: Some(rect),
+                    custom_size,
+                    ..default()
+                },
+                None => Sprite {
+                    image: assets.load(crate::world::asset_path(dir, path)),
+                    custom_size,
+                    ..default()
+                },
+            })
+        }
         _ => None,
     }
 }
@@ -198,13 +262,14 @@ fn insert_graph(
     };
     let rounded = matches!(visual, Some(Visual::Circle { .. }));
     let secondary = crate::world::parse_color(&effect.color);
+    let shader = crate::materials::surface_shader(commands, &actor.id, &effect, dir, false);
     let mesh = meshes.add(Mesh::from(bevy::math::primitives::Rectangle::new(
         size.x, size.y,
     )));
     commands.entity(entity).insert((
         Mesh2d(mesh),
         MeshMaterial2d(graph_materials.add(crate::materials::graph_material_2d(
-            &effect, tint, secondary, texture, rounded,
+            &effect, tint, secondary, texture, rounded, shader,
         ))),
     ));
 }

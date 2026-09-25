@@ -385,6 +385,28 @@ centre handle the size. Handles are gizmo lines in their own `HandleGizmos`
 group, drawn over the world. In 3D the editor holds the view's pointer lock
 while the right button is down, so looking around reads raw motion.
 
+### Models, tilemaps and surface shaders
+
+A `Visual::Model` draws its glTF/GLB file's first scene as a child of the
+actor (`blockloom-runtime/src/model.rs`), scaled by the look's `scale`, and
+loops the animation the look names (the file's first when empty). The
+authored box stands in until the scene is ready, stays for OBJ/FBX or a file
+that won't load, and is always what the actor collides as. `ModelCache` keeps
+loaded files alive across rebuilds so an edit doesn't flash the box.
+
+A solid tilemap collides per tile, as the merged rects of
+`Tilemap::solid_rects` (minus its `passable` tiles), and nav blocks the same
+rects. Animated tiles cycle their frames on the wall clock;
+`materials::animate_tiles` rewrites only the mesh's UVs when a frame turns.
+
+A custom effect's `GraphEffect::starter_graph` is the uniform path spelled as
+graph nodes, so `export_shader` writes it to a `.wgsl` asset that draws the
+same thing. An effect whose `source` names a `.wgsl` file draws with that
+file's `graph_main(uv, time)`: `materials::surface_shader` wraps it in
+`material::SURFACE_BINDINGS` and swaps it in through the material's
+`specialize`. `check_surface_wgsl` validates a file with naga against those
+same bindings, so the editor and the GPU agree on what compiles.
+
 ### How a project runs
 
 1. Play hands the runtime the whole project (`EditorMessage::Load`) and starts
@@ -449,6 +471,7 @@ Pond Game/
   game/
     game.pack          the document, and the format version it was written at
     assets/...         the project's assets, minus the script sources
+    .blockloom/atlas.* the Image looks baked into one sprite sheet
     .blockloom/build/  native blocks and script libraries
 ```
 

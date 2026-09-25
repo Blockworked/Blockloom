@@ -8,7 +8,9 @@
 //!   whether it is skinned. The runtime draws a `Visual::Model` as its file
 //!   (see `dim3`), so a broken rig is caught here, at import, not mid-game.
 //! - Atlases: [`pack_atlas`] lays small sprites into one sheet with a shelf
-//!   packer, so a game with dozens of UI icons pays one texture bind.
+//!   packer, and [`bake_atlas`] draws that sheet, so a game with dozens of
+//!   sprites pays one texture bind. A build bakes its Image looks into
+//!   [`BAKED_ATLAS_IMAGE`] and the player draws them out of it.
 //! - Compression: [`decide_texture`] and [`decide_audio`] turn an inspected
 //!   file into a concrete recommendation (downscale, transcode, resample)
 //!   with the reason attached, so the tray can show it and the build can
@@ -758,6 +760,96 @@ pub fn pack_atlas(
     })
 }
 
+/// Where a build keeps its baked sprite sheet and layout, inside `game/`.
+/// The player draws an Image look out of the sheet when its path is listed.
+pub const BAKED_ATLAS_IMAGE: &str = ".blockloom/atlas.png";
+pub const BAKED_ATLAS_LAYOUT: &str = ".blockloom/atlas.json";
+/// A sprite bigger than this on either side keeps its own texture: an atlas
+/// is for the many small ones, and one backdrop would crowd them all out.
+pub const ATLAS_SPRITE_MAX: u32 = 512;
+
+/// A drawn sheet and where each sprite landed in it.
+#[derive(Debug, Clone)]
+pub struct BakedAtlas {
+    pub image: image::RgbaImage,
+    pub layout: AtlasLayout,
+}
+
+/// Pack and draw project images into one sheet. Entry names are the
+/// project-relative paths. Each sprite's edge pixels are smeared into its
+/// padding, so a filtered sample at the border reads the sprite, never its
+/// neighbour.
+pub fn bake_atlas(
+    project_dir: &Path,
+    paths: &[String],
+    max_size: u32,
+    padding: u32,
+) -> Result<BakedAtlas, String> {
+    let mut sprites = HashMap::new();
+    let mut inputs = Vec::new();
+    for path in paths {
+        let relative = crate::assets::normalize(path)
+            .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))?;
+        let full = crate::assets::resolve(project_dir, &relative)
+            .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))?;
+        let bytes = std::fs::read(&full).map_err(|e| format!("{}: {e}", full.display()))?;
+        let sprite = image::load_from_memory(&bytes)
+            .map_err(|e| format!("{relative} doesn't decode as an image: {e}"))?
+            .to_rgba8();
+        inputs.push(AtlasInput {
+            name: relative.clone(),
+            width: sprite.width(),
+            height: sprite.height(),
+        });
+        sprites.insert(relative, sprite);
+    }
+    let layout = pack_atlas(&inputs, max_size, padding)?;
+    let mut sheet = image::RgbaImage::new(layout.width.max(1), layout.height.max(1));
+    let pad = padding as i64;
+    for entry in &layout.entries {
+        let sprite = &sprites[&entry.name];
+        let (w, h) = (entry.width as i64, entry.height as i64);
+        for dy in -pad..h + pad {
+            for dx in -pad..w + pad {
+                let pixel = *sprite.get_pixel(dx.clamp(0, w - 1) as u32, dy.clamp(0, h - 1) as u32);
+                let (x, y) = (entry.x as i64 + dx, entry.y as i64 + dy);
+                if x >= 0 && y >= 0 && (x as u32) < sheet.width() && (y as u32) < sheet.height() {
+                    sheet.put_pixel(x as u32, y as u32, pixel);
+                }
+            }
+        }
+    }
+    Ok(BakedAtlas {
+        image: sheet,
+        layout,
+    })
+}
+
+/// Write a baked sheet as a PNG and its layout as JSON beside it.
+pub fn write_atlas(
+    atlas: &BakedAtlas,
+    image_path: &Path,
+    layout_path: &Path,
+) -> Result<(), String> {
+    for path in [image_path, layout_path] {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+    }
+    atlas
+        .image
+        .save_with_format(image_path, image::ImageFormat::Png)
+        .map_err(|e| format!("{}: {e}", image_path.display()))?;
+    let json = serde_json::to_string_pretty(&atlas.layout).map_err(|e| e.to_string())?;
+    std::fs::write(layout_path, json).map_err(|e| format!("{}: {e}", layout_path.display()))
+}
+
+/// The layout a build baked into `game_dir`, if it baked one.
+pub fn read_baked_layout(game_dir: &Path) -> Option<AtlasLayout> {
+    let text = std::fs::read_to_string(game_dir.join(BAKED_ATLAS_LAYOUT)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
 // ─── Reimport tracking ───────────────────────────────────────────────────
 
 /// Import-time knobs, snapshotted per asset so a settings change dirties
@@ -1239,6 +1331,40 @@ mod tests {
             height: 10,
         }];
         assert!(pack_atlas(&inputs, 2048, 0).is_err());
+    }
+
+    #[test]
+    fn a_baked_sheet_holds_each_sprite_with_smeared_edges() {
+        let dir = std::env::temp_dir().join(format!("blockloom-atlas-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        let red = image::RgbaImage::from_pixel(4, 3, image::Rgba([255, 0, 0, 255]));
+        let blue = image::RgbaImage::from_pixel(2, 2, image::Rgba([0, 0, 255, 255]));
+        red.save(dir.join("assets/red.png")).unwrap();
+        blue.save(dir.join("assets/blue.png")).unwrap();
+
+        let paths = ["assets/red.png".to_string(), "assets/blue.png".to_string()];
+        let atlas = bake_atlas(&dir, &paths, 256, 1).unwrap();
+        let red_at = atlas.layout.entry("assets/red.png").unwrap();
+        let blue_at = atlas.layout.entry("assets/blue.png").unwrap();
+        assert_eq!(
+            *atlas.image.get_pixel(red_at.x, red_at.y),
+            image::Rgba([255, 0, 0, 255])
+        );
+        assert_eq!(
+            *atlas.image.get_pixel(blue_at.x + 1, blue_at.y + 1),
+            image::Rgba([0, 0, 255, 255])
+        );
+        // The padding ring repeats the edge rather than staying clear.
+        assert_eq!(
+            *atlas.image.get_pixel(red_at.x - 1, red_at.y - 1),
+            image::Rgba([255, 0, 0, 255])
+        );
+
+        let png = dir.join(BAKED_ATLAS_IMAGE);
+        write_atlas(&atlas, &png, &dir.join(BAKED_ATLAS_LAYOUT)).unwrap();
+        assert!(png.is_file());
+        assert_eq!(read_baked_layout(&dir), Some(atlas.layout.clone()));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

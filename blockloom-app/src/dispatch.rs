@@ -210,7 +210,15 @@ impl Backend {
                 arg(&args, "paths")?,
                 arg(&args, "maxSize").ok().flatten(),
                 arg(&args, "padding").ok().flatten(),
+                arg(&args, "output").ok().flatten(),
             )?),
+            "export_shader" => to_json(commands::export_shader(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "path").ok().flatten(),
+            )?),
+            "check_shader" => to_json(commands::check_shader(state, app, arg(&args, "actorId")?)?),
 
             // ── Scripts ────────────────────────────────────────────────────
             "create_script" => {

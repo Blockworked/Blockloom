@@ -39,7 +39,14 @@ Rectangle {
     function emitterOf(c) { return Object.assign({ rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: "#FFFFFF", color_end: "#FFAB19", max: 128 }, c.emitter || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function tilemapOf(v) {
-        return Object.assign({ tileset: "", tile_size: [32, 32], width: 8, height: 8, sheet_columns: 4, sheet_rows: 4, tiles: [], solid: false }, v && v.tilemap ? v.tilemap : {});
+        return Object.assign({ tileset: "", tile_size: [32, 32], width: 8, height: 8, sheet_columns: 4, sheet_rows: 4, tiles: [], solid: false, passable: [], animations: [] }, v && v.tilemap ? v.tilemap : {});
+    }
+    // "3, 7 12" -> [3, 7, 12]: sheet indices typed as a list.
+    function tileList(text) { return text.split(/[\s,]+/).filter(t => t !== "").map(Number).filter(n => Number.isInteger(n) && n >= 0); }
+    function writeTileAnimation(c, index, next) {
+        const list = copy(tilemapOf(c.visual).animations);
+        if (next === null) list.splice(index, 1); else list[index] = Object.assign(list[index], next);
+        writeTilemap(c, { animations: list });
     }
 
     function writePlacement(c, next) { write("Place", { component: "Place", placement: merged(c.placement, next) }); }
@@ -87,8 +94,8 @@ Rectangle {
             Sphere: { shape: "Sphere", color: color, radius: 0.5 },
             Capsule: { shape: "Capsule", color: color, radius: 0.4, height: 1 },
             Plane: { shape: "Plane", color: color, size: [20, 20] },
-            Model: { shape: "Model", path: "", tint: color, scale: [1, 1, 1] },
-            Tilemap: { shape: "Tilemap", tilemap: { tileset: "", tile_size: [32, 32], width: 8, height: 8, sheet_columns: 4, sheet_rows: 4, tiles: Array(64).fill(-1), solid: false } }
+            Model: { shape: "Model", path: "", tint: color, scale: [1, 1, 1], animation: "" },
+            Tilemap: { shape: "Tilemap", tilemap: { tileset: "", tile_size: [32, 32], width: 8, height: 8, sheet_columns: 4, sheet_rows: 4, tiles: Array(64).fill(-1), solid: false, passable: [], animations: [] } }
         };
         if (visuals[shape]) write("Look", { component: "Look", visual: visuals[shape] });
     }
@@ -253,8 +260,12 @@ Rectangle {
             InspectorRow { visible: look.v.shape === "Model"; label: "Scale"; Layout.fillWidth: true
                 Repeater { model: 3; delegate: NumberField { required property int index; value: look.v.scale ? look.v.scale[index] : 1; fallback: 1
                     onCommitted: n => root.writeVisual(look.c, { scale: root.withIndex(look.v.scale || [1, 1, 1], index, n) }) } } }
-            Text { visible: look.v.shape === "Model" && !look.v.path; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
-                text: "No file yet: the actor renders nothing until one is picked. glTF plays back rigs; OBJ and FBX import as static meshes." }
+            InspectorRow { visible: look.v.shape === "Model"; label: "Animation"; Layout.fillWidth: true
+                BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "First in the file"; text: look.v.animation || ""
+                    onEditingFinished: if (text.trim() !== (look.v.animation || "")) root.writeVisual(look.c, { animation: text.trim() }) } }
+            Text { visible: look.v.shape === "Model"; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: (look.v.path ? "" : "No file yet, so the actor shows as its box. ")
+                    + "glTF and GLB draw as the file, scaled by Scale, and loop the named animation. OBJ and FBX show as the box, which is also what it collides as." }
             ColumnLayout {
                 visible: look.v.shape === "Tilemap"; Layout.fillWidth: true; spacing: 6
                 InspectorRow { label: "Tileset"; Layout.fillWidth: true
@@ -270,6 +281,34 @@ Rectangle {
                     NumberField { value: look.t.sheet_rows; fallback: 4; onCommitted: n => root.writeTilemap(look.c, { sheet_rows: Math.max(1, Math.round(n)) }) } }
                 InspectorRow { label: "Solid"; Layout.fillWidth: true
                     SwitchField { value: look.t.solid; onToggled: on => root.writeTilemap(look.c, { solid: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: look.t.solid; label: "Passable"; Layout.fillWidth: true
+                    BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Tiles bodies pass, e.g. 3, 7"
+                        text: look.t.passable.join(", ")
+                        onEditingFinished: { const next = root.tileList(text); if (next.join(",") !== look.t.passable.join(",")) root.writeTilemap(look.c, { passable: next }); else text = look.t.passable.join(", "); } } }
+                Repeater {
+                    model: look.t.animations.length
+                    delegate: InspectorRow {
+                        required property int index
+                        readonly property var anim: look.t.animations[index] || { tile: 0, frames: [], fps: 8 }
+                        label: "Animated"; Layout.fillWidth: true
+                        NumberField { Layout.maximumWidth: 48; value: anim.tile; fallback: 0; ToolTip.visible: hovered; ToolTip.text: "The painted tile that animates"
+                            onCommitted: n => root.writeTileAnimation(look.c, index, { tile: Math.max(0, Math.round(n)) }) }
+                        BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Frames, e.g. 4, 5, 6"; text: anim.frames.join(", ")
+                            onEditingFinished: { const next = root.tileList(text); if (next.join(",") !== anim.frames.join(",")) root.writeTileAnimation(look.c, index, { frames: next }); else text = anim.frames.join(", "); } }
+                        NumberField { Layout.maximumWidth: 48; value: anim.fps; fallback: 8; ToolTip.visible: hovered; ToolTip.text: "Frames a second"
+                            onCommitted: n => root.writeTileAnimation(look.c, index, { fps: n }) }
+                        IconButton { iconName: "x"; tip: "Stop animating this tile"; implicitWidth: 24; implicitHeight: 24; onClicked: root.writeTileAnimation(look.c, index, null) }
+                    }
+                }
+                BwButton {
+                    iconName: "plus"; text: "Animate a tile"; implicitHeight: 28; font.pixelSize: 12
+                    onClicked: {
+                        const list = root.copy(look.t.animations);
+                        const tile = Math.max(0, root.paintTile);
+                        list.push({ tile: tile, frames: [tile], fps: 8 });
+                        root.writeTilemap(look.c, { animations: list });
+                    }
+                }
                 InspectorRow { label: "Paint"; Layout.fillWidth: true
                     NumberField { value: root.paintTile; onCommitted: n => root.paintTile = Math.round(n) }
                     Text { text: "-1 erases"; color: Theme.textDim; font.pixelSize: 11 } }
@@ -500,6 +539,22 @@ Rectangle {
                 InspectorRow { label: "Speed"; Layout.fillWidth: true; NumberField { value: mat.m.shader ? mat.m.shader.speed : 1; fallback: 1; onCommitted: n => root.writeShader(mat.c, { speed: n }) } }
                 InspectorRow { label: "Strength"; Layout.fillWidth: true; NumberField { value: mat.m.shader ? mat.m.shader.strength : 0.5; fallback: 0.5; onCommitted: n => root.writeShader(mat.c, { strength: n }) } }
                 InspectorRow { label: "Color"; Layout.fillWidth: true; ColorField { value: mat.m.shader ? mat.m.shader.color : "#FFFFFF"; onPicked: col => root.writeShader(mat.c, { color: col }) } Item { Layout.fillWidth: true } }
+                InspectorRow { label: "WGSL"; Layout.fillWidth: true
+                    AssetField { app: root.app; accept: ["shader"]; value: mat.m.shader && mat.m.shader.source ? mat.m.shader.source : ""; placeholderText: "Built-in motion"
+                        onCommitted: p => root.writeShader(mat.c, { source: p.trim() }) } }
+                RowLayout {
+                    Layout.leftMargin: 84; spacing: 4
+                    BwButton { text: "Export WGSL"; iconName: "file-code"; implicitHeight: 28; font.pixelSize: 12
+                        enabled: !(mat.m.shader && mat.m.shader.source)
+                        onClicked: root.app.invoke("export_shader", { actorId: root.actor.id }) }
+                    BwButton { text: "Check"; implicitHeight: 28; font.pixelSize: 12
+                        enabled: !!(mat.m.shader && mat.m.shader.source)
+                        onClicked: root.app.invoke("check_shader", { actorId: root.actor.id }) }
+                }
+                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                    text: mat.m.shader && mat.m.shader.source
+                        ? "The file's graph_main(uv, time) draws this surface; Motion is ignored. Speed, Strength and Color still reach it as params and secondary."
+                        : "Export writes the motion out as a .wgsl file and draws with it, ready to edit by hand." }
             }
             Text { visible: !root.is3d && mat.m.shader === null; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Metallic, roughness and glow need 3D lighting; in 2D they rest until a custom effect is switched on." }

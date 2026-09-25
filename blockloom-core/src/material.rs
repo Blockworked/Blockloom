@@ -9,9 +9,10 @@
 //!   render a custom graph through the shared ubershader (`GraphMaterial2d` /
 //!   `GraphMaterial3d`), driven by the authored [`GraphEffect`] params.
 //! - [`ShaderGraph`] is shader-graph lite: a few nodes that emit a real WGSL
-//!   `graph_main(uv, time)` function. The WGSL text is the portable artifact
-//!   (saved as `.wgsl`, shipped with the build); the live preview uses the
-//!   equivalent uniform path, so a graph means the same thing in both.
+//!   `graph_main(uv, time)` function. [`GraphEffect::starter_graph`] is the
+//!   uniform path spelled as nodes, so exporting one to a `.wgsl` asset draws
+//!   exactly what the inspector showed; pointing [`GraphEffect::source`] at a
+//!   `.wgsl` file (exported or hand-written) makes it drive the live material.
 //! - [`ParticleSpec`] and [`TrailSpec`] describe emitters and motion trails.
 //!   The runtime simulates them on the CPU with capped entity pools.
 //! - [`Tilemap`] is a grid of tiles over one tileset image, with
@@ -172,6 +173,11 @@ pub struct GraphEffect {
     /// The second color: wave crests, plasma swirls, pulse peaks.
     #[serde(default = "default_effect_color")]
     pub color: String,
+    /// A `.wgsl` asset defining `graph_main(uv, time)`, relative to the
+    /// project folder. Set, it draws the surface instead of `mode`; empty
+    /// keeps the built-in uniform path.
+    #[serde(default)]
+    pub source: String,
 }
 
 fn default_speed() -> f32 {
@@ -193,6 +199,7 @@ impl Default for GraphEffect {
             speed: default_speed(),
             strength: default_strength(),
             color: default_effect_color(),
+            source: String::new(),
         }
     }
 }
@@ -201,148 +208,176 @@ impl GraphEffect {
     pub fn normalize(&mut self) {
         self.speed = self.speed.max(0.0);
         self.strength = self.strength.clamp(0.0, 1.0);
+        self.source = self.source.trim().to_string();
     }
 
-    /// A graph whose WGSL means the same thing as this effect's live path:
-    /// same motion, same second color. Editing the graph afterwards changes
-    /// the exported WGSL only; the live uniforms stay as authored.
-    pub fn starter_graph(&self, tint: [f32; 4]) -> ShaderGraph {
-        let second = hex_to_linear(&self.color);
-        let speed = [self.speed, self.speed, self.speed, self.speed];
-        let strength = [self.strength, self.strength, self.strength, self.strength];
-        match self.mode {
-            EffectMode::Solid => ShaderGraph {
-                nodes: vec![GraphNode::Const { color: tint }],
-                output: 0,
-            },
+    /// The graph the uniform path draws for this effect, node for node: the
+    /// same math as `graph_2d.wgsl`/`graph_3d.wgsl`, reading the same tint,
+    /// second color, speed and strength. Exporting it therefore changes
+    /// nothing on screen, and the file is a working start for a hand edit.
+    pub fn starter_graph(&self) -> ShaderGraph {
+        let mut g = GraphBuilder::default();
+        let base = g.push(GraphNode::Base);
+        let out = match self.mode {
+            EffectMode::Solid => base,
             EffectMode::Wave => {
-                // Bands sliding along x: mix(tint, second, sin(uv.x * 8 + t)).
-                let uv = 0;
-                let time = 1;
-                let scaled_uv = 2;
-                let phase = 3;
-                let bands = 4;
-                let out = 5;
-                ShaderGraph {
-                    nodes: vec![
-                        GraphNode::Uv,
-                        GraphNode::Time,
-                        GraphNode::Mul { a: uv, b: 6 },
-                        GraphNode::Add {
-                            a: scaled_uv,
-                            b: time,
-                        },
-                        GraphNode::Sin { x: phase },
-                        GraphNode::Mix {
-                            a: 7,
-                            b: 8,
-                            t: bands,
-                        },
-                        GraphNode::Const {
-                            color: [8.0, 8.0, 8.0, 8.0],
-                        },
-                        GraphNode::Const { color: tint },
-                        GraphNode::Const { color: second },
-                    ],
-                    output: out,
-                }
+                // mix(base, secondary, (sin(uv.x * 8 + t * speed) * 0.5 + 0.5) * strength)
+                let x = g.uv_x();
+                let phase = g.scaled_time();
+                let eight = g.splat(8.0);
+                let at = g.push(GraphNode::Mul { a: x, b: eight });
+                let at = g.push(GraphNode::Add { a: at, b: phase });
+                let bands = g.unit_sin(at);
+                g.mix_by_strength(base, bands)
             }
             EffectMode::Plasma => {
-                // Two sines multiplied: mix(tint, second, plasma * strength).
-                let out = 8;
-                ShaderGraph {
-                    nodes: vec![
-                        GraphNode::Uv,
-                        GraphNode::Time,
-                        GraphNode::Mul { a: 0, b: 9 },
-                        GraphNode::Add { a: 2, b: 1 },
-                        GraphNode::Sin { x: 3 },
-                        GraphNode::Mul { a: 0, b: 10 },
-                        GraphNode::Add { a: 5, b: 1 },
-                        GraphNode::Sin { x: 6 },
-                        GraphNode::Mix {
-                            a: 11,
-                            b: 12,
-                            t: 13,
-                        },
-                        GraphNode::Const {
-                            color: [6.0, 6.0, 6.0, 6.0],
-                        },
-                        GraphNode::Const {
-                            color: [3.0, 3.0, 3.0, 3.0],
-                        },
-                        GraphNode::Const { color: tint },
-                        GraphNode::Const { color: second },
-                        GraphNode::Mul { a: 4, b: 7 },
-                    ],
-                    output: out,
-                }
+                // sin(uv.x * 6 + t * speed) * sin(uv.y * 6 - t * speed * 1.3)
+                let uv = g.push(GraphNode::Uv);
+                let x = g.push(GraphNode::X { x: uv });
+                let y = g.push(GraphNode::Y { x: uv });
+                let six = g.splat(6.0);
+                let phase = g.scaled_time();
+                let back = g.splat(-1.3);
+                let back = g.push(GraphNode::Mul { a: phase, b: back });
+                let at_x = g.push(GraphNode::Mul { a: x, b: six });
+                let at_x = g.push(GraphNode::Add { a: at_x, b: phase });
+                let at_y = g.push(GraphNode::Mul { a: y, b: six });
+                let at_y = g.push(GraphNode::Add { a: at_y, b: back });
+                let sx = g.push(GraphNode::Sin { x: at_x });
+                let sy = g.push(GraphNode::Sin { x: at_y });
+                let v = g.push(GraphNode::Mul { a: sx, b: sy });
+                let half = g.splat(0.5);
+                let m = g.push(GraphNode::Mul { a: v, b: half });
+                let m = g.push(GraphNode::Add { a: m, b: half });
+                g.mix_by_strength(base, m)
             }
             EffectMode::Pulse => {
-                // A 0..1 pulse from time: mix(tint, second, pulse * strength).
-                let out = 8;
-                ShaderGraph {
-                    nodes: vec![
-                        GraphNode::Time,
-                        GraphNode::Mul { a: 0, b: 9 },
-                        GraphNode::Sin { x: 1 },
-                        GraphNode::Mul { a: 2, b: 10 },
-                        GraphNode::Add { a: 3, b: 10 },
-                        GraphNode::Mul { a: 4, b: 11 },
-                        GraphNode::Const { color: tint },
-                        GraphNode::Const { color: second },
-                        GraphNode::Mix { a: 6, b: 7, t: 5 },
-                        GraphNode::Const { color: speed },
-                        GraphNode::Const {
-                            color: [0.5, 0.5, 0.5, 0.5],
-                        },
-                        GraphNode::Const { color: strength },
-                    ],
-                    output: out,
-                }
+                // p = sin(t * speed) * 0.5 + 0.5, then brighten rgb by p * strength
+                let phase = g.scaled_time();
+                let p = g.unit_sin(phase);
+                let strength = g.push(GraphNode::Strength);
+                let ps = g.push(GraphNode::Mul { a: p, b: strength });
+                let color = g.mix(base, ps);
+                let one = g.splat(1.0);
+                let rgb = g.push(GraphNode::Const {
+                    color: [1.0, 1.0, 1.0, 0.0],
+                });
+                let lift = g.push(GraphNode::Mul { a: ps, b: rgb });
+                let gain = g.push(GraphNode::Add { a: one, b: lift });
+                g.push(GraphNode::Mul { a: color, b: gain })
             }
             EffectMode::Dissolve => {
-                // Hashed noise stepped against a pulsing threshold.
-                let out = 12;
-                ShaderGraph {
-                    nodes: vec![
-                        GraphNode::Uv,
-                        GraphNode::Mul { a: 0, b: 13 },
-                        GraphNode::Sin { x: 1 },
-                        GraphNode::Mul { a: 2, b: 14 },
-                        GraphNode::Fract { x: 3 },
-                        GraphNode::Time,
-                        GraphNode::Mul { a: 5, b: 15 },
-                        GraphNode::Sin { x: 6 },
-                        GraphNode::Mul { a: 7, b: 16 },
-                        GraphNode::Add { a: 8, b: 16 },
-                        GraphNode::Mul { a: 9, b: 17 },
-                        GraphNode::Step { edge: 10, x: 4 },
-                        GraphNode::Mix {
-                            a: 18,
-                            b: 19,
-                            t: 11,
-                        },
-                        GraphNode::Const {
-                            color: [12.9898, 12.9898, 12.9898, 12.9898],
-                        },
-                        GraphNode::Const {
-                            color: [43758.55, 43758.55, 43758.55, 43758.55],
-                        },
-                        GraphNode::Const { color: speed },
-                        GraphNode::Const {
-                            color: [0.5, 0.5, 0.5, 0.5],
-                        },
-                        GraphNode::Const { color: strength },
-                        GraphNode::Const {
-                            color: [0.0, 0.0, 0.0, 0.0],
-                        },
-                        GraphNode::Const { color: tint },
-                    ],
-                    output: out,
-                }
+                // Hashed noise against a pulsing threshold; eaten pixels go
+                // clear, with a hot rim where they are being eaten.
+                let uv = g.push(GraphNode::Uv);
+                let seed = g.push(GraphNode::Const {
+                    color: [12.9898, 78.233, 0.0, 0.0],
+                });
+                let d = g.push(GraphNode::Dot { a: uv, b: seed });
+                let d = g.push(GraphNode::Sin { x: d });
+                let big = g.splat(43758.55);
+                let d = g.push(GraphNode::Mul { a: d, b: big });
+                let noise = g.push(GraphNode::Fract { x: d });
+                let phase = g.scaled_time();
+                let pulse = g.unit_sin(phase);
+                let strength = g.push(GraphNode::Strength);
+                let threshold = g.push(GraphNode::Mul {
+                    a: pulse,
+                    b: strength,
+                });
+                let keep = g.push(GraphNode::Step {
+                    edge: threshold,
+                    x: noise,
+                });
+                let width = g.splat(0.15);
+                let hi = g.push(GraphNode::Add {
+                    a: threshold,
+                    b: width,
+                });
+                let rim = g.push(GraphNode::Smoothstep {
+                    lo: threshold,
+                    hi,
+                    x: noise,
+                });
+                let secondary = g.push(GraphNode::Secondary);
+                let two = g.splat(2.0);
+                let hot = g.push(GraphNode::Mul {
+                    a: secondary,
+                    b: two,
+                });
+                let color = g.push(GraphNode::Mix {
+                    a: hot,
+                    b: base,
+                    t: rim,
+                });
+                let rgb = g.push(GraphNode::Const {
+                    color: [1.0, 1.0, 1.0, 0.0],
+                });
+                let alpha = g.push(GraphNode::Const {
+                    color: [0.0, 0.0, 0.0, 1.0],
+                });
+                let alpha = g.push(GraphNode::Mul { a: keep, b: alpha });
+                let mask = g.push(GraphNode::Add { a: rgb, b: alpha });
+                g.push(GraphNode::Mul { a: color, b: mask })
             }
+        };
+        ShaderGraph {
+            nodes: g.nodes,
+            output: out,
         }
+    }
+}
+
+/// Appends nodes and hands back their index, so a graph reads top-down.
+#[derive(Default)]
+struct GraphBuilder {
+    nodes: Vec<GraphNode>,
+}
+
+impl GraphBuilder {
+    fn push(&mut self, node: GraphNode) -> usize {
+        self.nodes.push(node);
+        self.nodes.len() - 1
+    }
+
+    fn splat(&mut self, value: f32) -> usize {
+        self.push(GraphNode::Const { color: [value; 4] })
+    }
+
+    fn uv_x(&mut self) -> usize {
+        let uv = self.push(GraphNode::Uv);
+        self.push(GraphNode::X { x: uv })
+    }
+
+    /// `time * speed`.
+    fn scaled_time(&mut self) -> usize {
+        let time = self.push(GraphNode::Time);
+        let speed = self.push(GraphNode::Speed);
+        self.push(GraphNode::Mul { a: time, b: speed })
+    }
+
+    /// `sin(x) * 0.5 + 0.5`.
+    fn unit_sin(&mut self, x: usize) -> usize {
+        let s = self.push(GraphNode::Sin { x });
+        let half = self.splat(0.5);
+        let s = self.push(GraphNode::Mul { a: s, b: half });
+        self.push(GraphNode::Add { a: s, b: half })
+    }
+
+    fn mix(&mut self, base: usize, t: usize) -> usize {
+        let secondary = self.push(GraphNode::Secondary);
+        self.push(GraphNode::Mix {
+            a: base,
+            b: secondary,
+            t,
+        })
+    }
+
+    /// `mix(base, secondary, t * strength)`.
+    fn mix_by_strength(&mut self, base: usize, t: usize) -> usize {
+        let strength = self.push(GraphNode::Strength);
+        let t = self.push(GraphNode::Mul { a: t, b: strength });
+        self.mix(base, t)
     }
 }
 
@@ -370,31 +405,55 @@ pub fn hex_to_linear(hex: &str) -> [f32; 4] {
 // ─── Shader graphs ───────────────────────────────────────────────────────
 
 /// One node in a shader graph. Every value is a `vec4`: `Time` broadcasts
-/// the clock, `Uv` carries `(u, v, 0, 1), and every op is component-wise,
-/// so no type checker is needed - a graph that validates always emits.
+/// the clock, `Uv` carries `(u, v, 0, 1)`, `X`/`Y`/`Dot` broadcast a scalar,
+/// and every op is component-wise, so no type checker is needed - a graph
+/// that validates always emits. `Base` is the look's tint times its image,
+/// and `Secondary`/`Speed`/`Strength` read the effect's live uniforms.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "node")]
 pub enum GraphNode {
     Const { color: [f32; 4] },
     Time,
     Uv,
+    Base,
+    Secondary,
+    Speed,
+    Strength,
+    X { x: usize },
+    Y { x: usize },
     Add { a: usize, b: usize },
     Mul { a: usize, b: usize },
     Mix { a: usize, b: usize, t: usize },
     Sin { x: usize },
     Fract { x: usize },
     Step { edge: usize, x: usize },
+    Dot { a: usize, b: usize },
+    Smoothstep { lo: usize, hi: usize, x: usize },
 }
 
 impl GraphNode {
     /// The node indices this one reads, for validation and ordering.
     pub fn refs(&self) -> Vec<usize> {
         match *self {
-            GraphNode::Const { .. } | GraphNode::Time | GraphNode::Uv => Vec::new(),
-            GraphNode::Add { a, b } | GraphNode::Mul { a, b } => vec![a, b],
+            GraphNode::Const { .. }
+            | GraphNode::Time
+            | GraphNode::Uv
+            | GraphNode::Base
+            | GraphNode::Secondary
+            | GraphNode::Speed
+            | GraphNode::Strength => Vec::new(),
+            GraphNode::Add { a, b } | GraphNode::Mul { a, b } | GraphNode::Dot { a, b } => {
+                vec![a, b]
+            }
             GraphNode::Mix { a, b, t } => vec![a, b, t],
-            GraphNode::Sin { x } | GraphNode::Fract { x } => vec![x],
+            GraphNode::Sin { x }
+            | GraphNode::Fract { x }
+            | GraphNode::X { x }
+            | GraphNode::Y { x } => {
+                vec![x]
+            }
             GraphNode::Step { edge, x } => vec![edge, x],
+            GraphNode::Smoothstep { lo, hi, x } => vec![lo, hi, x],
         }
     }
 
@@ -406,6 +465,14 @@ impl GraphNode {
             ),
             GraphNode::Time => "vec4<f32>(time, time, time, time)".to_string(),
             GraphNode::Uv => "vec4<f32>(uv.x, uv.y, 0.0, 1.0)".to_string(),
+            GraphNode::Base => "base_color(uv)".to_string(),
+            GraphNode::Secondary => "secondary".to_string(),
+            GraphNode::Speed => "vec4<f32>(params.y)".to_string(),
+            GraphNode::Strength => "vec4<f32>(params.z)".to_string(),
+            GraphNode::X { x } => format!("vec4<f32>(n{x}.x)"),
+            GraphNode::Y { x } => format!("vec4<f32>(n{x}.y)"),
+            GraphNode::Dot { a, b } => format!("vec4<f32>(dot(n{a}, n{b}))"),
+            GraphNode::Smoothstep { lo, hi, x } => format!("smoothstep(n{lo}, n{hi}, n{x})"),
             GraphNode::Add { a, b } => format!("(n{a} + n{b})"),
             GraphNode::Mul { a, b } => format!("(n{a} * n{b})"),
             GraphNode::Mix { a, b, t } => format!("mix(n{a}, n{b}, n{t})"),
@@ -481,6 +548,76 @@ impl ShaderGraph {
         body.push_str(&format!("    return n{};\n}}", self.output));
         Ok(body)
     }
+
+    /// The graph as a `.wgsl` asset: the contract as a comment, then the
+    /// function. What [`GraphEffect::source`] points at after an export.
+    pub fn to_wgsl_asset(&self) -> Result<String, String> {
+        Ok(format!("{SURFACE_CONTRACT}\n{}\n", self.to_wgsl()?))
+    }
+}
+
+/// What a surface `.wgsl` asset has to provide, and what it can read. Heads
+/// every exported file, so a hand edit starts from the rules.
+pub const SURFACE_CONTRACT: &str = "\
+// Blockloom surface shader.
+// Define `fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32>`, returning the
+// surface's color (alpha 0 is see-through). Plain WGSL, no #import.
+// In scope: `tint` and `secondary` (vec4 colors), `params` (mode, speed,
+// strength, time), and `base_color(uv)`, the look's tint times its image.
+";
+
+/// The uniforms and helper every surface shader is compiled against. The
+/// runtime's template and [`check_surface_wgsl`] share this text, so what the
+/// editor accepts is what the GPU gets. `#{MATERIAL_BIND_GROUP}` is Bevy's.
+pub const SURFACE_BINDINGS: &str = "\
+@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> tint: vec4<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(1) var<uniform> secondary: vec4<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(2) var<uniform> params: vec4<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(3) var<uniform> flags: vec4<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(4) var texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(5) var texture_sampler: sampler;
+
+fn base_color(uv: vec2<f32>) -> vec4<f32> {
+    var color = tint;
+    if (flags.x > 0.5) {
+        color = color * textureSample(texture, texture_sampler, uv);
+    }
+    return color;
+}
+";
+
+/// Parse and validate a surface shader the way the GPU will see it, with
+/// line numbers that match the file: the bindings go after the source,
+/// which WGSL allows. An error comes back as naga's own report.
+pub fn check_surface_wgsl(source: &str) -> Result<(), String> {
+    if source
+        .lines()
+        .any(|line| line.trim_start().starts_with("#import"))
+    {
+        return Err("a surface shader is plain WGSL: #import isn't available".to_string());
+    }
+    let full = format!(
+        "{source}\n{}\n@fragment\nfn blockloom_check(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {{\n    return graph_main(uv, params.w);\n}}\n",
+        SURFACE_BINDINGS.replace("#{MATERIAL_BIND_GROUP}", "2")
+    );
+    let module =
+        naga::front::wgsl::parse_str(&full).map_err(|error| error.emit_to_string(&full))?;
+    let graph_main = module
+        .functions
+        .iter()
+        .find(|(_, function)| function.name.as_deref() == Some("graph_main"))
+        .map(|(_, function)| function)
+        .ok_or("the shader has no graph_main(uv, time) function")?;
+    if graph_main.arguments.len() != 2 {
+        return Err("graph_main takes exactly (uv: vec2<f32>, time: f32)".to_string());
+    }
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::default(),
+    )
+    .validate(&module)
+    .map_err(|error| error.emit_to_string(&full))?;
+    Ok(())
 }
 
 fn check_acyclic(
@@ -685,7 +822,9 @@ impl TrailSpec {
 
 /// A tilemap: a grid of tiles over one tileset image. Tile `-1` is empty;
 /// anything else indexes into the sheet, row-major from the top-left.
-/// In 2D it lies flat; in 3D it stands as a wall, one tile thick.
+/// In 2D it lies flat; in 3D it stands as a wall, one tile thick. A solid
+/// map collides tile by tile (see [`Tilemap::solid_rects`]), and a cell
+/// painted with an animated tile cycles through that animation's frames.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tilemap {
     /// The tileset image, relative to the project folder.
@@ -707,9 +846,49 @@ pub struct Tilemap {
     /// Row-major tile indices, `-1` for empty. Always `width * height`.
     #[serde(default)]
     pub tiles: Vec<i32>,
-    /// When solid the whole map collides as one slab.
+    /// When solid every filled tile collides, bar the `passable` ones.
     #[serde(default)]
     pub solid: bool,
+    /// Sheet indices a solid map still lets bodies through: grass, signs.
+    #[serde(default)]
+    pub passable: Vec<i32>,
+    /// Animated tiles: water, torches, conveyor belts.
+    #[serde(default)]
+    pub animations: Vec<TileAnimation>,
+}
+
+/// One animated tile. Every cell painted `tile` shows `frames` in turn, at
+/// `fps` frames a second, all in step with each other.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TileAnimation {
+    pub tile: i32,
+    #[serde(default)]
+    pub frames: Vec<i32>,
+    #[serde(default = "default_tile_fps")]
+    pub fps: f32,
+}
+
+fn default_tile_fps() -> f32 {
+    8.0
+}
+
+impl TileAnimation {
+    /// Which frame shows at `time` seconds, as an index into `frames`.
+    pub fn frame_index(&self, time: f32) -> usize {
+        if self.frames.is_empty() {
+            return 0;
+        }
+        let step = (time.max(0.0) * self.fps.max(0.0)).floor() as u64;
+        (step % self.frames.len() as u64) as usize
+    }
+}
+
+/// One solid rectangle of a tilemap in the actor's own frame: the same
+/// centered, y-up coordinates [`Tilemap::build_mesh`] uses.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TileRect {
+    pub center: [f32; 2],
+    pub half: [f32; 2],
 }
 
 fn default_tile_size() -> [f32; 2] {
@@ -734,6 +913,8 @@ impl Default for Tilemap {
             sheet_rows: default_sheet_extent(),
             tiles: vec![-1; (width * height) as usize],
             solid: false,
+            passable: Vec::new(),
+            animations: Vec::new(),
         }
     }
 }
@@ -798,11 +979,115 @@ impl Tilemap {
                 *tile = -1;
             }
         }
+        let in_sheet = |tile: &i32| (0..cells).contains(tile);
+        self.passable.retain(in_sheet);
+        self.passable.sort_unstable();
+        self.passable.dedup();
+        let mut seen = std::collections::HashSet::new();
+        self.animations.retain_mut(|animation| {
+            animation.frames.retain(in_sheet);
+            animation.fps = animation.fps.clamp(0.1, 60.0);
+            in_sheet(&animation.tile) && !animation.frames.is_empty() && seen.insert(animation.tile)
+        });
+    }
+
+    /// Whether any tile animates, which is what asks the runtime to keep
+    /// rewriting the map's UVs.
+    pub fn is_animated(&self) -> bool {
+        self.animations
+            .iter()
+            .any(|animation| animation.frames.len() > 1)
+    }
+
+    /// Which frame every animation is on at `time`: equal keys draw equal
+    /// meshes, so the runtime only rewrites UVs when this changes.
+    pub fn frame_key(&self, time: f32) -> Vec<usize> {
+        self.animations
+            .iter()
+            .map(|animation| animation.frame_index(time))
+            .collect()
+    }
+
+    /// The sheet cell a painted tile shows at `time`.
+    pub fn shown_tile(&self, tile: i32, time: f32) -> i32 {
+        self.animations
+            .iter()
+            .find(|animation| animation.tile == tile && !animation.frames.is_empty())
+            .map(|animation| animation.frames[animation.frame_index(time)])
+            .unwrap_or(tile)
+    }
+
+    fn collides(&self, tile: i32) -> bool {
+        tile >= 0 && !self.passable.contains(&tile)
+    }
+
+    /// The map's collision as few rectangles as a greedy merge finds: runs
+    /// along each row, then runs of the same span stacked down the rows. An
+    /// empty list for a map that isn't solid.
+    pub fn solid_rects(&self) -> Vec<TileRect> {
+        if !self.solid {
+            return Vec::new();
+        }
+        let [tw, th] = self.tile_size;
+        let [w, h] = self.size();
+        // (x0, x1) span -> (first row, last row) of the rectangle growing down.
+        let mut open: std::collections::HashMap<(u32, u32), (u32, u32)> =
+            std::collections::HashMap::new();
+        let mut spans: Vec<(u32, u32, u32, u32)> = Vec::new();
+        for gy in 0..self.height {
+            let mut row = Vec::new();
+            let mut gx = 0;
+            while gx < self.width {
+                if !self.collides(self.tile_at(gx, gy).unwrap_or(-1)) {
+                    gx += 1;
+                    continue;
+                }
+                let start = gx;
+                while gx < self.width && self.collides(self.tile_at(gx, gy).unwrap_or(-1)) {
+                    gx += 1;
+                }
+                row.push((start, gx));
+            }
+            let mut next = std::collections::HashMap::new();
+            for span in row {
+                let rows = match open.remove(&span) {
+                    Some((first, _)) => (first, gy),
+                    None => (gy, gy),
+                };
+                next.insert(span, rows);
+            }
+            spans.extend(open.drain().map(|((x0, x1), (y0, y1))| (x0, x1, y0, y1)));
+            open = next;
+        }
+        spans.extend(open.drain().map(|((x0, x1), (y0, y1))| (x0, x1, y0, y1)));
+        // A stable order, so two builds of one map collide identically.
+        spans.sort_unstable_by_key(|&(x0, _, y0, _)| (y0, x0));
+        spans
+            .into_iter()
+            .map(|(x0, x1, y0, y1)| {
+                let left = x0 as f32 * tw - w / 2.0;
+                let right = x1 as f32 * tw - w / 2.0;
+                let top = h / 2.0 - y0 as f32 * th;
+                let bottom = h / 2.0 - (y1 + 1) as f32 * th;
+                TileRect {
+                    center: [(left + right) / 2.0, (top + bottom) / 2.0],
+                    half: [(right - left) / 2.0, (top - bottom) / 2.0],
+                }
+            })
+            .collect()
     }
 
     /// Turn the grid into one mesh: a quad per filled tile with tileset UVs.
     /// Tile `(0, 0)` sits at the top-left; the map is centered on the actor.
+    /// Animated tiles show their first frame; see [`Tilemap::build_mesh_at`].
     pub fn build_mesh(&self) -> TileMesh {
+        self.build_mesh_at(0.0)
+    }
+
+    /// [`Tilemap::build_mesh`] with every animated tile on its frame for
+    /// `time`. Which cells are filled never changes, so the quads line up
+    /// one for one with any other time's and only the UVs differ.
+    pub fn build_mesh_at(&self, time: f32) -> TileMesh {
         let [tw, th] = self.tile_size;
         let [w, h] = self.size();
         let (cols, rows) = (
@@ -822,6 +1107,7 @@ impl Tilemap {
                 if tile < 0 {
                     continue;
                 }
+                let tile = self.shown_tile(tile, time).max(0);
                 let (tx, ty) = (
                     tile as u32 % self.sheet_columns.max(1),
                     tile as u32 / self.sheet_columns.max(1),
@@ -909,13 +1195,12 @@ mod tests {
 
     #[test]
     fn every_starter_graph_validates_and_emits_its_motion() {
-        let tint = [0.3, 0.5, 1.0, 1.0];
         for mode in EffectMode::ALL {
             let effect = GraphEffect {
                 mode: *mode,
                 ..GraphEffect::default()
             };
-            let graph = effect.starter_graph(tint);
+            let graph = effect.starter_graph();
             graph.validate().unwrap();
             let wgsl = graph.to_wgsl().unwrap();
             assert!(
@@ -923,23 +1208,43 @@ mod tests {
                 "{mode:?}"
             );
             assert!(wgsl.contains("return n"), "{mode:?}");
+            // The exported asset is one the live material will take.
+            check_surface_wgsl(&graph.to_wgsl_asset().unwrap())
+                .unwrap_or_else(|error| panic!("{mode:?}: {error}"));
         }
         let wave = GraphEffect {
             mode: EffectMode::Wave,
             ..GraphEffect::default()
         }
-        .starter_graph(tint)
+        .starter_graph()
         .to_wgsl()
         .unwrap();
-        assert!(wave.contains("sin("));
+        assert!(wave.contains("sin(") && wave.contains("params.y"));
         let dissolve = GraphEffect {
             mode: EffectMode::Dissolve,
             ..GraphEffect::default()
         }
-        .starter_graph(tint)
+        .starter_graph()
         .to_wgsl()
         .unwrap();
         assert!(dissolve.contains("fract(") && dissolve.contains("step("));
+        assert!(dissolve.contains("smoothstep("));
+    }
+
+    #[test]
+    fn hand_written_surface_shaders_are_checked_against_the_file() {
+        let good = "fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> {\n    \
+                    return mix(base_color(uv), secondary, fract(time));\n}\n";
+        check_surface_wgsl(good).unwrap();
+        let missing = "fn other(uv: vec2<f32>) -> vec4<f32> { return tint; }\n";
+        assert!(check_surface_wgsl(missing).is_err());
+        let typo = "fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> {\n    return tnit;\n}\n";
+        let error = check_surface_wgsl(typo).unwrap_err();
+        // The report points at the user's own line 2, not the appended stub.
+        assert!(error.contains(":2:"), "{error}");
+        let wrong = "fn graph_main(uv: vec2<f32>) -> vec4<f32> { return tint; }\n";
+        assert!(check_surface_wgsl(wrong).is_err());
+        assert!(check_surface_wgsl("#import bevy_pbr::forward_io\n").is_err());
     }
 
     #[test]
@@ -1044,5 +1349,75 @@ mod tests {
         map.resize(3, 1);
         assert_eq!(map.tile_at(0, 0), Some(0));
         assert_eq!(map.tile_at(2, 0), Some(-1));
+    }
+
+    #[test]
+    fn animated_tiles_cycle_their_frames_in_step() {
+        let mut map = Tilemap {
+            width: 2,
+            height: 1,
+            sheet_columns: 4,
+            sheet_rows: 1,
+            tiles: vec![1, 0],
+            animations: vec![
+                TileAnimation {
+                    tile: 1,
+                    frames: vec![1, 2, 3],
+                    fps: 2.0,
+                },
+                // Out of the sheet: dropped on normalize.
+                TileAnimation {
+                    tile: 9,
+                    frames: vec![0],
+                    fps: 2.0,
+                },
+            ],
+            ..Tilemap::default()
+        };
+        map.normalize();
+        assert_eq!(map.animations.len(), 1);
+        assert!(map.is_animated());
+        assert_eq!(map.shown_tile(1, 0.0), 1);
+        assert_eq!(map.shown_tile(1, 0.5), 2);
+        assert_eq!(map.shown_tile(1, 1.2), 3);
+        assert_eq!(map.shown_tile(1, 1.5), 1);
+        // A tile nobody animates stays put.
+        assert_eq!(map.shown_tile(0, 1.2), 0);
+        assert_ne!(map.frame_key(0.0), map.frame_key(0.5));
+        // Same quads, different UVs.
+        let first = map.build_mesh_at(0.0);
+        let later = map.build_mesh_at(0.5);
+        assert_eq!(first.positions, later.positions);
+        assert_ne!(first.uvs, later.uvs);
+        assert_eq!(first.uvs[4..], later.uvs[4..]);
+    }
+
+    #[test]
+    fn a_solid_map_collides_per_tile_in_merged_rects() {
+        // X X .
+        // X X .
+        // . P X      (P is passable)
+        let mut map = Tilemap {
+            width: 3,
+            height: 3,
+            tile_size: [10.0, 10.0],
+            sheet_columns: 4,
+            sheet_rows: 1,
+            tiles: vec![0, 0, -1, 0, 0, -1, -1, 3, 1],
+            solid: true,
+            passable: vec![3],
+            ..Tilemap::default()
+        };
+        map.normalize();
+        let rects = map.solid_rects();
+        assert_eq!(rects.len(), 2, "{rects:?}");
+        // The 2x2 block, top-left, merged into one rect.
+        assert_eq!(rects[0].center, [-5.0, 5.0]);
+        assert_eq!(rects[0].half, [10.0, 10.0]);
+        // The lone bottom-right tile.
+        assert_eq!(rects[1].center, [10.0, -10.0]);
+        assert_eq!(rects[1].half, [5.0, 5.0]);
+        map.solid = false;
+        assert!(map.solid_rects().is_empty());
     }
 }

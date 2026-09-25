@@ -168,6 +168,14 @@ fn modified_at(metadata: &std::fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
+/// Files the script tooling owns at the project root: the `Cargo.toml` synced
+/// for rust-analyzer, plus the `Cargo.lock` and `target/` a `cargo check`
+/// leaves behind. They are not assets, so the tray leaves them out - a
+/// same-named file deeper in the tree is still listed.
+fn is_hidden_at_root(relative: &str, name: &str) -> bool {
+    relative.is_empty() && matches!(name, "Cargo.toml" | "Cargo.lock" | "target")
+}
+
 /// Everything in one folder of a project: folders first, then files, each run
 /// alphabetical. Dotted names are left out - `.blockloom` is the build cache,
 /// not an asset.
@@ -178,7 +186,7 @@ pub fn list(project_dir: &Path, relative: &str) -> Result<Vec<AssetEntry>, Strin
     let mut entries = Vec::new();
     for entry in read.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
+        if name.starts_with('.') || is_hidden_at_root(&relative, &name) {
             continue;
         }
         let Ok(metadata) = entry.metadata() else {
@@ -461,6 +469,35 @@ mod tests {
         assert!(delete(&dir, "../elsewhere").is_err());
         delete(&dir, "assets").unwrap();
         assert!(!dir.join("assets").exists());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn root_tooling_files_are_hidden_but_nothing_else_is() {
+        let dir = std::env::temp_dir().join(format!("blockloom-assets-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), b"[package]").unwrap();
+        std::fs::write(dir.join("Cargo.lock"), b"lock").unwrap();
+        std::fs::create_dir_all(dir.join("target")).unwrap();
+        std::fs::write(dir.join("project.blockloom"), b"{}").unwrap();
+        // Same names deeper in the tree are somebody's files, not tooling's.
+        std::fs::write(dir.join("assets/Cargo.toml"), b"[package]").unwrap();
+
+        let listed = list(&dir, "").unwrap();
+        let root: Vec<&str> = listed.iter().map(|entry| entry.name.as_str()).collect();
+        assert!(root.contains(&"assets"), "{root:?}");
+        assert!(root.contains(&"project.blockloom"), "{root:?}");
+        assert!(!root.contains(&"Cargo.toml"), "{root:?}");
+        assert!(!root.contains(&"Cargo.lock"), "{root:?}");
+        assert!(!root.contains(&"target"), "{root:?}");
+
+        let listed_inner = list(&dir, "assets").unwrap();
+        let inner: Vec<&str> = listed_inner
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert!(inner.contains(&"Cargo.toml"), "{inner:?}");
 
         std::fs::remove_dir_all(&dir).ok();
     }

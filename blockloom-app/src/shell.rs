@@ -630,12 +630,40 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "pack-atlas",
         cmd: "pack_atlas",
         aliases: &["pack_atlas"],
-        summary: "Lay images into one atlas sheet plan.",
-        args: &[ArgSpec {
-            name: "paths",
-            ty: "[source paths]",
-            required: true,
-        }],
+        summary: "Lay images into one atlas sheet; with output, bake it to <output>.png and .json.",
+        args: &[
+            ArgSpec {
+                name: "paths",
+                ty: "[source paths]",
+                required: true,
+            },
+            ArgSpec {
+                name: "output",
+                ty: "asset path",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "export-shader",
+        cmd: "export_shader",
+        aliases: &["export_shader"],
+        summary: "Write an actor's custom effect out as a .wgsl asset and draw with that file from now on.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "check-shader",
+        cmd: "check_shader",
+        aliases: &["check_shader"],
+        summary: "Check the .wgsl file an actor's effect draws with, and log the verdict.",
+        args: &[A],
     },
     // ── Scripts ───────────────────────────────────────────────────────────
     CommandSpec {

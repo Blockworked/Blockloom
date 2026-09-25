@@ -72,17 +72,36 @@ impl Footprint {
     }
 }
 
-/// The footprint an actor blocks in its project's plane, if any: a static
-/// body whose visual has extent in that plane.
-fn obstacle_of(mode: Mode, actor: &crate::project::Actor) -> Option<Footprint> {
+/// The footprints an actor blocks in its project's plane: a static body
+/// whose visual has extent in that plane. Most are one box; a solid tilemap
+/// is one per merged run of tiles, the same rects it collides with.
+fn obstacles_of(mode: Mode, actor: &crate::project::Actor) -> Vec<Footprint> {
     if actor.physics().body != BodyKind::Static {
-        return None;
+        return Vec::new();
     }
-    let visual = actor.visual()?;
+    let Some(visual) = actor.visual() else {
+        return Vec::new();
+    };
+    if let (false, Visual::Tilemap { tilemap }) = (mode.is_3d(), visual) {
+        let pos = actor.placement().position;
+        return tilemap
+            .solid_rects()
+            .into_iter()
+            .map(|rect| Footprint {
+                center: [pos[0] + rect.center[0], pos[1] + rect.center[1]],
+                half: rect.half,
+            })
+            .collect();
+    }
+    obstacle_of(mode, visual, actor.placement().position)
+        .into_iter()
+        .collect()
+}
+
+fn obstacle_of(mode: Mode, visual: &Visual, pos: [f32; 3]) -> Option<Footprint> {
     if visual.is_3d() != mode.is_3d() {
         return None;
     }
-    let pos = actor.placement().position;
     let (center, half) = match (mode.is_3d(), visual) {
         (true, Visual::Cuboid { size, .. }) => ([pos[0], pos[2]], [size[0] / 2.0, size[2] / 2.0]),
         (true, Visual::Sphere { radius, .. }) => ([pos[0], pos[2]], [*radius, *radius]),
@@ -91,12 +110,6 @@ fn obstacle_of(mode: Mode, actor: &crate::project::Actor) -> Option<Footprint> {
         (false, Visual::Rect { size, .. }) => ([pos[0], pos[1]], [size[0] / 2.0, size[1] / 2.0]),
         (false, Visual::Circle { radius, .. }) => ([pos[0], pos[1]], [*radius, *radius]),
         (false, Visual::Image { size, .. }) => ([pos[0], pos[1]], [size[0] / 2.0, size[1] / 2.0]),
-        // A solid tilemap blocks as its whole slab; a decorative one lets
-        // paths through.
-        (false, Visual::Tilemap { tilemap }) if tilemap.solid => {
-            let size = tilemap.size();
-            ([pos[0], pos[1]], [size[0] / 2.0, size[1] / 2.0])
-        }
         _ => return None,
     };
     if half[0] < 1e-4 || half[1] < 1e-4 {
@@ -156,10 +169,11 @@ pub fn build_mesh(project: &Project, agent_radius: f32) -> Result<Mesh, String> 
     let bounds = boundary_of(project);
     let mut tri = Triangulation::from_outer_edges(&bounds.corners());
     tri.set_agent_radius(agent_radius.max(0.0));
-    for actor in &project.actors {
-        let Some(print) = obstacle_of(mode, actor) else {
-            continue;
-        };
+    for print in project
+        .actors
+        .iter()
+        .flat_map(|actor| obstacles_of(mode, actor))
+    {
         // The ground slab itself is walkable, not a hole.
         if print.center == bounds.center && print.half == bounds.half {
             continue;
@@ -316,6 +330,41 @@ mod tests {
         project.actors.push(cuboid("E", [12.0, 0.0], [1.0, 4.0]));
         let mesh = build_mesh(&project, 0.4).unwrap();
         assert!(find_path(&mesh, [0.0, 0.0], [10.0, 0.0]).is_none());
+    }
+
+    #[test]
+    fn a_solid_tilemap_blocks_per_tile_so_its_gaps_stay_open() {
+        let mut project = Project::starter("nav", Mode::TwoD);
+        project.actors.push(solid(
+            "Ground",
+            Visual::Rect {
+                color: "#000".to_string(),
+                size: [800.0, 600.0],
+            },
+            [0.0, 0.0, 0.0],
+        ));
+        // A row of five tiles with the middle one missing.
+        project.actors.push(solid(
+            "Wall",
+            Visual::Tilemap {
+                tilemap: crate::material::Tilemap {
+                    width: 5,
+                    height: 1,
+                    tile_size: [40.0, 40.0],
+                    tiles: vec![0, 0, -1, 0, 0],
+                    solid: true,
+                    ..crate::material::Tilemap::default()
+                },
+            },
+            [0.0, 0.0, 0.0],
+        ));
+        let mesh = build_mesh(&project, 5.0).unwrap();
+        let path = find_path(&mesh, [0.0, 100.0], [0.0, -100.0]).unwrap();
+        // Straight through the gap, which a whole-slab wall would have shut.
+        assert!(path.len() <= 2, "{path:?}");
+        // A tile itself is still a wall.
+        let around = find_path(&mesh, [-60.0, 100.0], [-60.0, -100.0]).unwrap();
+        assert!(around.len() > 2, "{around:?}");
     }
 
     #[test]

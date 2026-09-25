@@ -2104,6 +2104,7 @@ dependencies = [
  "glam 0.32.1",
  "ico",
  "image",
+ "naga",
  "polyanya",
  "serde",
  "serde_json",

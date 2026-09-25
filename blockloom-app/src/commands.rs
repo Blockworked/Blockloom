@@ -18,6 +18,7 @@ use blockloom_core::build;
 use blockloom_core::codegen;
 use blockloom_core::components::{ActorComponent, Components};
 use blockloom_core::library;
+use blockloom_core::material::GraphEffect;
 use blockloom_core::pipeline;
 use blockloom_core::project::{self, Actor, Project};
 use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, PostProcess, Visual};
@@ -1031,6 +1032,7 @@ fn default_visual(shape: &str) -> Option<Visual> {
             path: String::new(),
             tint: "#4C97FF".to_string(),
             scale: [1.0, 1.0, 1.0],
+            animation: String::new(),
         },
         "Tilemap" => Visual::Tilemap {
             tilemap: blockloom_core::material::Tilemap::default(),
@@ -1684,16 +1686,37 @@ pub(crate) fn reimport_assets(
     pipeline::reimport(&project_dir(&s)?, &paths)
 }
 
-/// Lay images into one atlas sheet plan without writing files: the tray
-/// previews it, and a build can bake it. Paths are project-relative images.
+/// Lay images into one atlas sheet. Without `output` it is a plan the tray
+/// can preview; with one it is baked into `<output>.png` plus the layout as
+/// `<output>.json`, both project-relative. A build bakes its own sheet of
+/// Image looks either way.
 pub(crate) fn pack_atlas(
     state: &SharedState,
     paths: Vec<String>,
     max_size: Option<u32>,
     padding: Option<u32>,
+    output: Option<String>,
 ) -> Result<pipeline::AtlasLayout, String> {
     let s = lock(state)?;
     let dir = project_dir(&s)?;
+    if let Some(output) = output.filter(|output| !output.trim().is_empty()) {
+        let relative = assets::normalize(&output)
+            .ok_or_else(|| format!("\"{output}\" isn't a path in this project"))?;
+        let stem = relative
+            .strip_suffix(".png")
+            .or_else(|| relative.strip_suffix(".json"))
+            .unwrap_or(&relative);
+        let resolve = |path: String| {
+            assets::resolve(&dir, &path)
+                .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))
+        };
+        let image = resolve(format!("{stem}.png"))?;
+        let layout = resolve(format!("{stem}.json"))?;
+        let atlas =
+            pipeline::bake_atlas(&dir, &paths, max_size.unwrap_or(2048), padding.unwrap_or(1))?;
+        pipeline::write_atlas(&atlas, &image, &layout)?;
+        return Ok(atlas.layout);
+    }
     let mut inputs = Vec::new();
     for path in paths {
         let relative = assets::normalize(&path)
@@ -1709,6 +1732,122 @@ pub(crate) fn pack_atlas(
         });
     }
     pipeline::pack_atlas(&inputs, max_size.unwrap_or(2048), padding.unwrap_or(1))
+}
+
+/// Writes an actor's custom effect out as a `.wgsl` asset and points the
+/// effect at it, so from then on the file draws the surface and editing it
+/// changes what Play shows. It exports the effect's own graph, so nothing
+/// on screen moves. Answers the file's path. Never overwrites a file: an
+/// effect that already reads one needs a fresh `path` to export again.
+pub(crate) fn export_shader(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    path: Option<String>,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    let dir = project_dir(&s)?;
+    let actor = s
+        .project()
+        .and_then(|p| p.actor(&actor_id))
+        .ok_or("Actor not found")?;
+    let mut material = actor
+        .components
+        .material()
+        .cloned()
+        .ok_or("This actor has no Material component")?;
+    let effect = material
+        .shader
+        .as_mut()
+        .ok_or("Switch the material's custom effect on first")?;
+    let path = match path.filter(|path| !path.trim().is_empty()) {
+        Some(path) => assets::normalize(&path)
+            .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))?,
+        None if !effect.source.is_empty() => {
+            return Err(format!(
+                "The effect already draws with {}; name a new file to export again",
+                effect.source
+            ));
+        }
+        None => {
+            let stem = format!("assets/shaders/{}", project::folder_name(&actor.name));
+            std::iter::once(format!("{stem}.wgsl"))
+                .chain((2..).map(|n| format!("{stem} {n}.wgsl")))
+                .find(|candidate| {
+                    assets::resolve(&dir, candidate).is_some_and(|full| !full.exists())
+                })
+                .expect("an unused name always exists")
+        }
+    };
+    let full = assets::resolve(&dir, &path)
+        .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))?;
+    if full.exists() {
+        return Err(format!("{path} already exists"));
+    }
+    let wgsl = GraphEffect {
+        source: String::new(),
+        ..effect.clone()
+    }
+    .starter_graph()
+    .to_wgsl_asset()?;
+    if let Some(parent) = full.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    std::fs::write(&full, wgsl).map_err(|e| format!("{}: {e}", full.display()))?;
+    effect.source = path.clone();
+    push_undo(&mut s);
+    if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
+        actor
+            .components
+            .insert(ActorComponent::Material { material });
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(path)
+}
+
+/// Checks the `.wgsl` file an actor's effect draws with, the way Play will,
+/// and logs the verdict against the actor.
+pub(crate) fn check_shader(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let dir = project_dir(&s)?;
+    let actor = s
+        .project()
+        .and_then(|p| p.actor(&actor_id))
+        .ok_or("Actor not found")?;
+    let name = actor.name.clone();
+    let source = actor
+        .components
+        .material()
+        .and_then(|material| material.shader.as_ref())
+        .map(|effect| effect.source.clone())
+        .filter(|source| !source.is_empty())
+        .ok_or("This actor's effect doesn't read a .wgsl file")?;
+    let full = assets::resolve(&dir, &source)
+        .ok_or_else(|| format!("\"{source}\" isn't a path in this project"))?;
+    let verdict = std::fs::read_to_string(&full)
+        .map_err(|e| format!("couldn't read {source}: {e}"))
+        .and_then(|text| blockloom_core::material::check_surface_wgsl(&text));
+    let line = match verdict {
+        Ok(()) => LogLine {
+            kind: "say".to_string(),
+            actor: name,
+            text: format!("{source} compiles"),
+        },
+        Err(error) => LogLine {
+            kind: "error".to_string(),
+            actor: name,
+            text: format!("{source} doesn't compile:\n{error}"),
+        },
+    };
+    s.push_log(line);
+    emit(app, &s);
+    Ok(())
 }
 
 /// Hand the OS a path: reveal a file inside its parent in the file manager,
