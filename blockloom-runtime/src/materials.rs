@@ -1,8 +1,8 @@
 //! Custom shader materials, tilemap meshes and PBR helpers.
 //!
 //! [`GraphMaterial2d`] and [`GraphMaterial3d`] render a [`GraphEffect`] each
-//! through one shared ubershader (`shaders/graph_2d.wgsl` and
-//! `shaders/graph_3d.wgsl`, embedded at compile time). The uniforms carry the
+//! through one shared ubershader (`shaders/graph_2d.wesl` and
+//! `shaders/graph_3d.wesl`, embedded at compile time). The uniforms carry the
 //! look's tint, the effect's second color, and `(mode, speed, strength,
 //! time)`; `time` is refreshed every frame by [`tick_graph_time`], so motion
 //! never needs the actor to do anything. A textured look keeps its image
@@ -39,7 +39,8 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::{Shader, ShaderRef};
 use bevy::sprite_render::{
-    AlphaMode2d, ColorMaterial, Material2d, Material2dKey, Material2dPlugin, MeshMaterial2d,
+    AlphaMode2d, ColorMaterial, Material2d, Material2dKey, Material2dPipeline, Material2dPlugin,
+    MeshMaterial2d,
 };
 use blockloom_core::material::{GraphEffect, SurfaceMaterial, TextureSampler, TileMesh, Tilemap};
 use blockloom_protocol::RuntimeMessage;
@@ -52,9 +53,9 @@ use std::path::Path;
 /// unused plugin costs nothing at runtime. The tilemap material
 /// (`ColorMaterial`) comes from `DefaultPlugins`.
 pub fn register(app: &mut App) {
-    bevy::asset::embedded_asset!(app, "shaders/graph_2d.wgsl");
-    bevy::asset::embedded_asset!(app, "shaders/graph_3d.wgsl");
-    bevy::asset::embedded_asset!(app, "shaders/box_pbr.wgsl");
+    bevy::asset::embedded_asset!(app, "shaders/graph_2d.wesl");
+    bevy::asset::embedded_asset!(app, "shaders/graph_3d.wesl");
+    bevy::asset::embedded_asset!(app, "shaders/box_pbr.wesl");
     app.add_plugins(Material2dPlugin::<GraphMaterial2d>::default());
     app.add_plugins(MaterialPlugin::<GraphMaterial3d>::default());
     app.add_plugins(MaterialPlugin::<BoxMaterial>::default());
@@ -135,7 +136,7 @@ impl MaterialExtension for BoxProjection {
     fn fragment_shader() -> ShaderRef {
         ShaderRef::Path(
             bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!(
-                "shaders/box_pbr.wgsl"
+                "shaders/box_pbr.wesl"
             ))
             .with_source("embedded"),
         )
@@ -229,7 +230,7 @@ impl Material2d for GraphMaterial2d {
     fn fragment_shader() -> ShaderRef {
         ShaderRef::Path(
             bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!(
-                "shaders/graph_2d.wgsl"
+                "shaders/graph_2d.wesl"
             ))
             .with_source("embedded"),
         )
@@ -240,6 +241,7 @@ impl Material2d for GraphMaterial2d {
     }
 
     fn specialize(
+        _pipeline: &Material2dPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         key: Material2dKey<Self>,
@@ -291,7 +293,7 @@ impl Material for GraphMaterial3d {
     fn fragment_shader() -> ShaderRef {
         ShaderRef::Path(
             bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!(
-                "shaders/graph_3d.wgsl"
+                "shaders/graph_3d.wesl"
             ))
             .with_source("embedded"),
         )
@@ -320,19 +322,16 @@ impl Material for GraphMaterial3d {
 /// per dimension. The bindings between them are core's, the same text the
 /// editor checks a file against.
 const SURFACE_2D_HEAD: &str = "\
-#import bevy_sprite::{
-    mesh2d_vertex_output::VertexOutput,
-    mesh2d_view_bindings::view,
-}
-#ifdef TONEMAP_IN_SHADER
-#import bevy_core_pipeline::tonemapping
-#endif
-#ifdef SRGB_OUTPUT
-#import bevy_render::color_operations::linear_to_srgb
-#endif
-#ifdef OKLAB_OUTPUT
-#import bevy_render::color_operations::linear_rgb_to_oklab
-#endif
+import bevy_sprite_render::mesh2d::{
+    vertex_output::VertexOutput,
+    view_bindings::view,
+};
+@if(TONEMAP_IN_SHADER)
+import bevy_core_pipeline::tonemapping;
+@if(SRGB_OUTPUT)
+import bevy_render::color_operations::linear_to_srgb;
+@if(OKLAB_OUTPUT)
+import bevy_render::color_operations::linear_rgb_to_oklab;
 ";
 
 const SURFACE_2D_TAIL: &str = "\
@@ -342,27 +341,23 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
     var output_color = graph_main(mesh.uv, params.w);
-#ifdef TONEMAP_IN_SHADER
+    @if(TONEMAP_IN_SHADER)
     output_color = tonemapping::tone_mapping(output_color, view.color_grading);
-#endif
-#ifdef SRGB_OUTPUT
+    @if(SRGB_OUTPUT)
     output_color = vec4(linear_to_srgb(output_color.rgb), output_color.a);
-#endif
-#ifdef OKLAB_OUTPUT
+    @if(OKLAB_OUTPUT)
     output_color = vec4(linear_rgb_to_oklab(output_color.rgb), output_color.a);
-#endif
     return output_color;
 }
 ";
 
 const SURFACE_3D_HEAD: &str = "\
-#import bevy_pbr::{
+import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     mesh_view_bindings::view,
-}
-#ifdef TONEMAP_IN_SHADER
-#import bevy_core_pipeline::tonemapping
-#endif
+};
+@if(TONEMAP_IN_SHADER)
+import bevy_core_pipeline::tonemapping;
 ";
 
 const SURFACE_3D_TAIL: &str = "\
@@ -383,9 +378,8 @@ fn fragment(mesh: VertexOutput) -> FragmentOutput {
         }
     }
     var output_color = graph_main(uv, params.w);
-#ifdef TONEMAP_IN_SHADER
+    @if(TONEMAP_IN_SHADER)
     output_color = tonemapping::tone_mapping(output_color, view.color_grading);
-#endif
     var out: FragmentOutput;
     out.color = output_color;
     return out;
@@ -445,7 +439,9 @@ pub fn surface_shader(
     ("blockloom-surface", &full).hash(&mut high);
     let uuid = bevy::asset::uuid::Uuid::from_u64_pair(high.finish(), low.finish());
     let handle = Handle::<Shader>::from(uuid);
-    let shader = Shader::from_wgsl(full, format!("blockloom://surface/{source}"));
+    // The wrapper imports Bevy's modules, so it is WESL even though the
+    // user's file is plain WGSL. The path is a module name, so no file name.
+    let shader = Shader::from_wesl(full, format!("blockloom_surface/s{}.wesl", uuid.simple()));
     let id = handle.id();
     commands.queue(move |world: &mut World| {
         if let Some(mut shaders) = world.get_resource_mut::<Assets<Shader>>() {

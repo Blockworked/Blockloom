@@ -1,22 +1,21 @@
-#import bevy_pbr::{
+import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     mesh_view_bindings::view,
-}
+};
 
-#ifdef TONEMAP_IN_SHADER
-#import bevy_core_pipeline::tonemapping
-#endif
+@if(TONEMAP_IN_SHADER)
+import bevy_core_pipeline::tonemapping;
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> tint: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var<uniform> secondary: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> tint: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var<uniform> secondary: vec4<f32>;
 // mode, speed, strength, time.
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var<uniform> params: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var<uniform> params: vec4<f32>;
 // use_texture, unused, unused, unused.
-@group(#{MATERIAL_BIND_GROUP}) @binding(3) var<uniform> flags: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(4) var texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(5) var texture_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(6) var<uniform> uv_scale_offset: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(7) var<uniform> uv_options: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(3) var<uniform> flags: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(4) var texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(5) var texture_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(6) var<uniform> uv_scale_offset: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(7) var<uniform> uv_options: vec4<f32>;
 
 fn surface_uv(uv: vec2<f32>) -> vec2<f32> {
     let scaled = uv * uv_scale_offset.xy;
@@ -88,9 +87,8 @@ fn fragment(mesh: VertexOutput) -> FragmentOutput {
     }
     output_color = apply_effect(effect_uv(mesh), output_color);
 
-#ifdef TONEMAP_IN_SHADER
+    @if(TONEMAP_IN_SHADER)
     output_color = tonemapping::tone_mapping(output_color, view.color_grading);
-#endif
     var out: FragmentOutput;
     out.color = output_color;
     return out;

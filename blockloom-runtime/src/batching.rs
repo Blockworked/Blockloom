@@ -34,7 +34,7 @@ use std::path::Path;
 pub type InstancedMaterial = ExtendedMaterial<StandardMaterial, InstanceData>;
 
 pub fn register(app: &mut App) {
-    bevy::asset::embedded_asset!(app, "shaders/instanced_pbr.wgsl");
+    bevy::asset::embedded_asset!(app, "shaders/instanced_pbr.wesl");
     app.add_plugins(MaterialPlugin::<InstancedMaterial>::default())
         .init_resource::<InstanceTable>()
         .init_resource::<BatchPolicy>()
@@ -53,7 +53,7 @@ impl MaterialExtension for InstanceData {
     fn fragment_shader() -> ShaderRef {
         ShaderRef::Path(
             bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!(
-                "shaders/instanced_pbr.wgsl"
+                "shaders/instanced_pbr.wesl"
             ))
             .with_source("embedded"),
         )
@@ -62,7 +62,9 @@ impl MaterialExtension for InstanceData {
 
 /// One actor's slot in the instance buffer. The layout is fixed whatever the
 /// material's texture slots hold, so new per-actor data takes a reserved lane.
-#[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
+/// Uploaded as raw bytes, so it stays `repr(C)` vec4s with no padding.
+#[derive(ShaderType, Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
 pub struct InstanceRecord {
     /// Linear RGBA multiplied over the surface's base color.
     pub tint: Vec4,
@@ -248,9 +250,11 @@ pub fn attach_instanced(
         return;
     };
     let slot = world.resource_mut::<InstanceTable>().assign(entity, record);
-    world
-        .entity_mut(entity)
-        .insert((MeshMaterial3d(handle), MeshTag(slot), InstanceSlot(slot)));
+    world.entity_mut(entity).insert((
+        MeshMaterial3d(handle),
+        MeshTag::new(slot),
+        InstanceSlot(slot),
+    ));
 }
 
 /// Recolor an instanced actor in place. Answers false for any other surface.
@@ -291,7 +295,7 @@ pub fn upload_instances(
     let data = table.padded();
     let grew = data.len() != table.uploaded;
     if let Some(mut buffer) = buffers.get_mut(&handle) {
-        buffer.set_data(data.clone());
+        *buffer = ShaderBuffer::from(data.clone());
     }
     table.uploaded = data.len();
     table.dirty = false;
@@ -610,7 +614,7 @@ pub fn batch_meshes(
             .flatten();
         match (merged, group.entity) {
             (Some(mesh), entity) => {
-                let aabb = mesh.compute_aabb();
+                let aabb = mesh.get_aabb();
                 let handle = meshes.add(mesh);
                 let entity = entity
                     .unwrap_or_else(|| spawn_batch(&mut commands, &key.surface, handle.clone()));
@@ -684,7 +688,7 @@ pub fn batch_meshes(
         };
         match batches.dynamic.get_mut(&surface) {
             Some(group) => {
-                if let Some(aabb) = mesh.compute_aabb() {
+                if let Some(aabb) = mesh.get_aabb() {
                     commands.entity(group.entity).insert(aabb);
                 }
                 if let Some(mut asset) = meshes.get_mut(&group.mesh) {
@@ -693,7 +697,7 @@ pub fn batch_meshes(
                 group.members = list;
             }
             None => {
-                let aabb = mesh.compute_aabb();
+                let aabb = mesh.get_aabb();
                 let handle = meshes.add(mesh);
                 let entity = spawn_batch(&mut commands, &surface, handle.clone());
                 if let Some(aabb) = aabb {
@@ -906,7 +910,7 @@ mod tests {
             },
         ])
         .unwrap();
-        let aabb = merged.compute_aabb().unwrap();
+        let aabb = merged.get_aabb().unwrap();
         assert!((aabb.max().x - 10.5).abs() < 1e-5);
         assert!((aabb.min().x + 1.0).abs() < 1e-5);
         assert_eq!(merged.count_vertices(), mesh.count_vertices() * 2);

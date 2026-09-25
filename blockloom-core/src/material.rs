@@ -281,7 +281,7 @@ impl GraphEffect {
     }
 
     /// The graph the uniform path draws for this effect, node for node: the
-    /// same math as `graph_2d.wgsl`/`graph_3d.wgsl`, reading the same tint,
+    /// same math as `graph_2d.wesl`/`graph_3d.wesl`, reading the same tint,
     /// second color, speed and strength. Exporting it therefore changes
     /// nothing on screen, and the file is a working start for a hand edit.
     pub fn starter_graph(&self) -> ShaderGraph {
@@ -638,16 +638,16 @@ pub const SURFACE_CONTRACT: &str = "\
 
 /// The uniforms and helper every surface shader is compiled against. The
 /// runtime's template and [`check_surface_wgsl`] share this text, so what the
-/// editor accepts is what the GPU gets. `#{MATERIAL_BIND_GROUP}` is Bevy's.
+/// editor accepts is what the GPU gets. `constants::MATERIAL_BIND_GROUP` is Bevy's.
 pub const SURFACE_BINDINGS: &str = "\
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> tint: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var<uniform> secondary: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var<uniform> params: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(3) var<uniform> flags: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(4) var texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(5) var texture_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(6) var<uniform> uv_scale_offset: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(7) var<uniform> uv_options: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> tint: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var<uniform> secondary: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var<uniform> params: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(3) var<uniform> flags: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(4) var texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(5) var texture_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(6) var<uniform> uv_scale_offset: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(7) var<uniform> uv_options: vec4<f32>;
 var<private> surface_position: vec3<f32>;
 var<private> surface_normal: vec3<f32>;
 
@@ -688,7 +688,7 @@ pub fn check_surface_wgsl(source: &str) -> Result<(), String> {
     }
     let full = format!(
         "{source}\n{}\n@fragment\nfn blockloom_check(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {{\n    return graph_main(uv, params.w);\n}}\n",
-        SURFACE_BINDINGS.replace("#{MATERIAL_BIND_GROUP}", "2")
+        SURFACE_BINDINGS.replace("constants::MATERIAL_BIND_GROUP", "2")
     );
     let module =
         naga::front::wgsl::parse_str(&full).map_err(|error| error.emit_to_string(&full))?;

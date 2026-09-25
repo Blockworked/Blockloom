@@ -130,7 +130,9 @@ pub fn tonemapping_of(
     use bevy::core_pipeline::tonemapping::Tonemapping;
     use blockloom_core::scene::TonemapName;
     match name {
-        TonemapName::None => Tonemapping::None,
+        // Linear is what `None` meant before 0.20: an identity curve that still
+        // applies exposure and grading. `None` now skips those too.
+        TonemapName::None => Tonemapping::Linear,
         TonemapName::Reinhard => Tonemapping::Reinhard,
         TonemapName::ReinhardLuminance => Tonemapping::ReinhardLuminance,
         TonemapName::AcesFitted => Tonemapping::AcesFitted,

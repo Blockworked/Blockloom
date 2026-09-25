@@ -419,6 +419,7 @@ impl GameSurface {
 /// images the cameras draw into themselves; otherwise each frame lands in
 /// `scratch` and is copied into a linear slot.
 #[derive(Resource, Clone, ExtractResource)]
+#[extract_app(RenderApp)]
 struct FrameCopy {
     exchange: Arc<FrameExchange>,
     generation: u64,
@@ -1105,6 +1106,7 @@ mod dmabuf {
                     usage,
                     view_formats: &[],
                 },
+                wgpu::TextureUses::UNINITIALIZED,
             )
         }
     }

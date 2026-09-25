@@ -1,17 +1,17 @@
-#import bevy_pbr::{
+import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-}
+};
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> scale_offset: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(101) var<uniform> options: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(102) var albedo_texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(103) var albedo_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(104) var normal_texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(105) var normal_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(106) var roughness_texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(107) var roughness_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> scale_offset: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var<uniform> options: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(102) var albedo_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(103) var albedo_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(104) var normal_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(105) var normal_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(106) var roughness_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(107) var roughness_sampler: sampler;
 
 fn projected_uv(uv: vec2<f32>) -> vec2<f32> {
     let scaled = uv * scale_offset.xy;
@@ -48,9 +48,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
                       + textureSample(roughness_texture, roughness_sampler, uv_z).g * w.z;
             pbr.material.perceptual_roughness *= rough;
         } else {
-#ifdef VERTEX_UVS_A
+            @if(VERTEX_UVS_A)
             pbr.material.perceptual_roughness *= textureSample(roughness_texture, roughness_sampler, projected_uv(in.uv)).g;
-#endif
         }
     }
     if (options.w == 1.0 || options.w == 3.0) {

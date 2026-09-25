@@ -1,28 +1,25 @@
-#import bevy_sprite::{
-    mesh2d_vertex_output::VertexOutput,
-    mesh2d_view_bindings::view,
-}
+import bevy_sprite_render::mesh2d::{
+    vertex_output::VertexOutput,
+    view_bindings::view,
+};
 
-#ifdef TONEMAP_IN_SHADER
-#import bevy_core_pipeline::tonemapping
-#endif
-#ifdef SRGB_OUTPUT
-#import bevy_render::color_operations::linear_to_srgb
-#endif
-#ifdef OKLAB_OUTPUT
-#import bevy_render::color_operations::linear_rgb_to_oklab
-#endif
+@if(TONEMAP_IN_SHADER)
+import bevy_core_pipeline::tonemapping;
+@if(SRGB_OUTPUT)
+import bevy_render::color_operations::linear_to_srgb;
+@if(OKLAB_OUTPUT)
+import bevy_render::color_operations::linear_rgb_to_oklab;
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> tint: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var<uniform> secondary: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> tint: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var<uniform> secondary: vec4<f32>;
 // mode, speed, strength, time.
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var<uniform> params: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var<uniform> params: vec4<f32>;
 // use_texture, rounded, 0, 0.
-@group(#{MATERIAL_BIND_GROUP}) @binding(3) var<uniform> flags: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(4) var texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(5) var texture_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(6) var<uniform> uv_scale_offset: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(7) var<uniform> uv_options: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(3) var<uniform> flags: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(4) var texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(5) var texture_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(6) var<uniform> uv_scale_offset: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(7) var<uniform> uv_options: vec4<f32>;
 
 fn surface_uv(uv: vec2<f32>) -> vec2<f32> {
     let scaled = uv * uv_scale_offset.xy;
@@ -77,14 +74,11 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     }
     output_color = apply_effect(mesh.uv, output_color);
 
-#ifdef TONEMAP_IN_SHADER
+    @if(TONEMAP_IN_SHADER)
     output_color = tonemapping::tone_mapping(output_color, view.color_grading);
-#endif
-#ifdef SRGB_OUTPUT
+    @if(SRGB_OUTPUT)
     output_color = vec4(linear_to_srgb(output_color.rgb), output_color.a);
-#endif
-#ifdef OKLAB_OUTPUT
+    @if(OKLAB_OUTPUT)
     output_color = vec4(linear_rgb_to_oklab(output_color.rgb), output_color.a);
-#endif
     return output_color;
 }

@@ -23,19 +23,25 @@ pub struct OneWayHooks<'w, 's> {
 }
 
 impl rp::BevyPhysicsHooks for OneWayHooks<'_, '_> {
-    fn modify_solver_contacts(&self, context: rp::ContactModificationContextView) {
+    fn modify_solver_contacts(&self, mut context: rp::ContactModificationContextView) {
         let a = context.collider1();
         let b = context.collider2();
+        // Two soft surfaces have no manifold normal; a platform is never soft.
+        let Some(normal) = context.normal() else {
+            return;
+        };
         let (other, up) = if self.platforms.get(a).is_ok() {
-            (b, context.raw.normal.y)
+            (b, normal.y)
         } else if self.platforms.get(b).is_ok() {
-            (a, -context.raw.normal.y)
+            (a, -normal.y)
         } else {
             return;
         };
         let rising = self.velocities.get(other).is_ok_and(|v| v.linear.y > 0.0);
-        if up < 0.5 || rising {
-            context.raw.solver_contacts.clear();
+        if (up < 0.5 || rising)
+            && let Some(contacts) = context.solver_contacts_mut()
+        {
+            contacts.clear();
         }
     }
 }
@@ -303,9 +309,7 @@ fn insert_graph(
     let rounded = matches!(visual, Some(Visual::Circle { .. }));
     let secondary = crate::world::parse_color(&effect.color);
     let shader = crate::materials::surface_shader(commands, &actor.id, &effect, dir, false);
-    let mesh = meshes.add(Mesh::from(bevy::math::primitives::Rectangle::new(
-        size.x, size.y,
-    )));
+    let mesh = meshes.add(Mesh::from(bevy::shape::Rectangle::new(size.x, size.y)));
     commands.entity(entity).insert((
         Mesh2d(mesh),
         MeshMaterial2d(graph_materials.add(crate::materials::graph_material_2d(
@@ -323,6 +327,11 @@ fn remove_drawn(
 ) {
     commands.entity(id).remove::<Sprite>();
     commands.entity(id).remove::<Mesh2d>();
+    // A sprite draws as a Mesh2d quad with a material Bevy adds for it, which
+    // would otherwise stay and draw under whatever the look becomes next.
+    commands
+        .entity(id)
+        .remove::<MeshMaterial2d<bevy::sprite_render::SpriteMeshMaterial>>();
     commands
         .entity(id)
         .remove::<MeshMaterial2d<GraphMaterial2d>>();

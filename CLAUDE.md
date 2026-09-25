@@ -443,6 +443,12 @@ file's `graph_main(uv, time)`: `materials::surface_shader` wraps it in
 `specialize`. `check_surface_wgsl` validates a file with naga against those
 same bindings, so the editor and the GPU agree on what compiles.
 
+The built-in shaders (`src/shaders/*.wesl`) and that wrapper are WESL, since
+Bevy 0.20 hands plain WGSL to wgpu untouched: imports are `import
+bevy_pbr::render::...`, shader defs are `@if(DEF)`, and the bind group is
+`constants::MATERIAL_BIND_GROUP`. A user's surface file stays plain WGSL with
+no imports; only the wrapper around it imports Bevy's modules.
+
 ### How a project runs
 
 1. Play hands the runtime the whole project (`EditorMessage::Load`) and starts

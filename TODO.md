@@ -165,7 +165,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         `LodChanged`, a CPU Hi-Z over solid `Occluder` boxes, and GPU occlusion
         and GPU frustum culling as camera toggles, tuned by `LodPolicy` and
         `OcclusionPolicy`. Merged dynamic batches now carry real bounds.
-  - [ ] Bevy 0.20 migration (do right after LOD, before anything else below is
+  - [x] Bevy 0.20 migration (do right after LOD, before anything else below is
         written): bump the workspace from 0.19.1 to 0.20.0-rc.1 now and follow to
         final on release, so async streaming, GPU measurement and the Phase 5
         refactors below target the new APIs instead of being migrated twice.
@@ -178,6 +178,14 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         `ScreenSpaceTransmission` on 3D cameras that need it (now opt-in).
         Confirm bevy_rapier has a 0.20-compatible release first; if it lags the
         RC, timebox on the RC and land the upgrade when rapier lands.
+        Done on 0.20.0-rc.1: shaders are WESL, the surface wrapper too, `None`
+        tonemaps as `Linear`, sprites draw through `SpriteMesh` (a look swap
+        drops its `SpriteMeshMaterial`). No material uses transmission, so no
+        camera needed `ScreenSpaceTransmission`. bevy_rapier has no 0.20
+        release: it moved into the rapier monorepo, pinned by git rev and
+        patched onto the RC's Bevy in the root `Cargo.toml`.
+  - [ ] Finish Bevy 0.20: move to 0.20.0 final, swap the rapier git pin and
+        its `[patch]` for a crates.io bevy_rapier release once one exists.
   - [ ] Async loading and streaming (owns the cell system; Phase 5 content only
         registers into it): background asset loads with placeholder or fade-in,
         world streaming cells with hysteresis so borders never thrash, shader
