@@ -52,14 +52,7 @@ pub fn update_status(engine: NonSend<Engine>, mut overlay: Query<&mut Text, With
     let Ok(mut text) = overlay.single_mut() else {
         return;
     };
-    let heading = if !engine.running {
-        "stopped - press Play in the editor"
-    } else if engine.paused {
-        "paused"
-    } else {
-        "running"
-    };
-    let next = format!("{} - {heading}", engine.project.name);
+    let next = String::new();
     if text.0 != next {
         text.0 = next;
     }
