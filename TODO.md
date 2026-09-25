@@ -103,7 +103,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 - [x] Frame pacing: the world runs on its own 60 Hz timer, not the display's, so 120/144 Hz screens get uneven frames. Tie it to Qt's frame signal.
 - [x] Log stutter: every `say`/error line still emits the whole editor state to QML. Give log lines their own event like status has.
 - [x] Zero-copy on NVIDIA: frames are copied to a linear system-memory image, then again through an external-texture pass on the Qt side. Share the image in its native tiled layout (DRM format modifiers) to drop both copies.
-- [ ] Resolution: fixed 960x720 scaled to fit - blurry on HiDPI, wrong for widescreen. Add a resolution/aspect setting in Project Settings, or render at the view's real pixel size.
+- [x] Resolution: the world renders at the Game view's real pixel size, with an aspect ratio (default 16:9, or Free) and a resolution (default Free, or a fixed size the view is sized to) picked in the Game tab. Code and Game are tabs of one editor area.
 - [ ] Other platforms: Windows (shared D3D or Vulkan handles) and macOS (IOSurface) still use the child process plus MJPEG, which stays until they're ported.
 - [ ] Crash isolation: a native crash (script cdylib, GPU fault) takes the editor down. Decide whether scripted projects should keep the separate process.
 

@@ -12,7 +12,7 @@ use crate::engine::Engine;
 use crate::world::WorldCamera;
 use bevy::app::{PluginsState, TerminalCtrlCHandlerPlugin};
 use bevy::camera::NormalizedRenderTarget;
-use bevy::camera::{ManualTextureViewHandle, RenderTarget};
+use bevy::camera::{ManualTextureViewHandle, RenderTarget, ScalingMode};
 use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
@@ -21,7 +21,7 @@ use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::texture::{ManualTextureView, ManualTextureViews, OutputColorAttachment};
 use bevy::render::view::{ViewTargetAttachments, clear_view_attachments, prepare_view_attachments};
 use bevy::render::{Render, RenderApp, RenderSystems};
-use bevy::ui::IsDefaultUiCamera;
+use bevy::ui::{IsDefaultUiCamera, UiScale};
 use bevy::window::ExitCondition;
 use blockloom_core::scene::Mode;
 use blockloom_protocol::{EditorMessage, GAME_SIZE, RuntimeMessage};
@@ -36,8 +36,12 @@ use std::time::Duration;
 const SLOTS: usize = 3;
 /// The camera target every world camera points at.
 const VIEW: ManualTextureViewHandle = ManualTextureViewHandle(0xB10C);
-/// What a player's window would show; the editor scales it to fit.
+/// What the world draws at until the view says how big it is.
 const SIZE: UVec2 = UVec2::new(GAME_SIZE.0, GAME_SIZE.1);
+/// Bounds on a requested size, so a collapsed or huge view can't ask for
+/// an image nothing can allocate.
+const MIN_SIZE: u32 = 16;
+const MAX_SIZE: u32 = 8192;
 /// The longest a world waits for the display: a hidden view presents
 /// nothing, and the world still has to keep hearing the editor.
 const PACE_TIMEOUT: Duration = Duration::from_millis(50);
@@ -161,6 +165,25 @@ pub struct FrameExchange {
     presented: Mutex<u64>,
     shown: Condvar,
     offer: Mutex<Offer>,
+    wanted: Mutex<Viewport>,
+}
+
+/// What the view shows the game at: physical pixels, and how many of them
+/// make one logical pixel, so a HiDPI view looks the size a player's window
+/// would rather than half of it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Viewport {
+    pub size: UVec2,
+    pub scale: f32,
+}
+
+impl Default for Viewport {
+    fn default() -> Self {
+        Self {
+            size: SIZE,
+            scale: 1.0,
+        }
+    }
 }
 
 /// The tiled modifiers the viewer can sample as a plain texture. Each change
@@ -191,7 +214,28 @@ impl FrameExchange {
             presented: Mutex::new(0),
             shown: Condvar::new(),
             offer: Mutex::new(Offer::default()),
+            wanted: Mutex::new(Viewport::default()),
         })
+    }
+
+    /// The view is `width` x `height` physical pixels at `scale` per logical
+    /// one. The world draws at that size from its next frame. Any thread.
+    pub fn resize(&self, width: u32, height: u32, scale: f32) {
+        let size = UVec2::new(width, height).clamp(UVec2::splat(MIN_SIZE), UVec2::splat(MAX_SIZE));
+        let scale = if scale.is_finite() {
+            scale.clamp(0.25, 8.0)
+        } else {
+            1.0
+        };
+        if let Ok(mut wanted) = self.wanted.lock() {
+            *wanted = Viewport { size, scale };
+        }
+    }
+
+    fn wanted(&self) -> Viewport {
+        self.wanted
+            .lock()
+            .map_or_else(|_| Viewport::default(), |wanted| *wanted)
     }
 
     /// The viewer can sample these `XBGR8888` modifiers without an external
@@ -358,6 +402,8 @@ pub struct GameSurface {
     exchange: Arc<FrameExchange>,
     /// The offer version the ring was last reconsidered against.
     seen: Option<u64>,
+    /// What the ring is allocated at.
+    viewport: Viewport,
     /// Sharing failed outright; the world runs unseen rather than retrying.
     failed: bool,
 }
@@ -365,7 +411,7 @@ pub struct GameSurface {
 impl GameSurface {
     /// What pointer coordinates are measured against.
     pub fn size(&self) -> Vec2 {
-        SIZE.as_vec2()
+        self.viewport.size.as_vec2()
     }
 }
 
@@ -392,6 +438,7 @@ fn add_surface(app: &mut App, exchange: Arc<FrameExchange>) {
     app.insert_resource(GameSurface {
         exchange: exchange.clone(),
         seen: None,
+        viewport: Viewport::default(),
         failed: false,
     })
     .insert_resource(FrameCopy {
@@ -404,7 +451,7 @@ fn add_surface(app: &mut App, exchange: Arc<FrameExchange>) {
         views: Vec::new(),
     })
     .add_plugins(ExtractResourcePlugin::<FrameCopy>::default())
-    .add_systems(Update, target_cameras)
+    .add_systems(Update, (target_cameras, fit_cameras))
     .add_systems(Last, build_surface);
     if let Some(render) = app.get_sub_app_mut(RenderApp) {
         render.init_resource::<Drawing>().add_systems(
@@ -436,9 +483,33 @@ fn target_cameras(
     }
 }
 
-/// Allocates the scratch target once the render device exists, and the ring
-/// whenever the viewer's offer changes what it should be: tiled in a
-/// modifier the viewer samples directly if there is one, linear otherwise.
+/// Shows the 2D world and the interface at the view's logical size, the way
+/// a player's window at that size would, whatever its pixel density.
+fn fit_cameras(
+    surface: Res<GameSurface>,
+    mut ui_scale: ResMut<UiScale>,
+    mut cameras: Query<&mut Projection, With<WorldCamera>>,
+) {
+    let Viewport { size, scale } = surface.viewport;
+    if ui_scale.0 != scale {
+        ui_scale.0 = scale;
+    }
+    let height = size.y as f32 / scale;
+    for mut projection in &mut cameras {
+        let fitted = matches!(&*projection, Projection::Orthographic(ortho)
+            if matches!(ortho.scaling_mode, ScalingMode::FixedVertical { viewport_height } if viewport_height == height));
+        if !fitted && let Projection::Orthographic(ortho) = projection.as_mut() {
+            ortho.scaling_mode = ScalingMode::FixedVertical {
+                viewport_height: height,
+            };
+        }
+    }
+}
+
+/// Allocates the scratch target and the ring once the render device exists,
+/// again whenever the view changes size, and the ring alone whenever the
+/// viewer's offer changes what it should be: tiled in a modifier the viewer
+/// samples directly if there is one, linear otherwise.
 fn build_surface(
     mut surface: ResMut<GameSurface>,
     mut copy: ResMut<FrameCopy>,
@@ -446,15 +517,21 @@ fn build_surface(
     mut views: ResMut<ManualTextureViews>,
 ) {
     let offer = surface.exchange.offer();
-    if surface.failed || surface.seen == Some(offer.version) {
+    let wanted = surface.exchange.wanted();
+    let resized = wanted.size != surface.viewport.size;
+    surface.viewport.scale = wanted.scale;
+    if surface.failed || (surface.seen == Some(offer.version) && !resized && copy.scratch.is_some())
+    {
         return;
     }
     surface.seen = Some(offer.version);
+    surface.viewport.size = wanted.size;
+    let size = wanted.size;
     let device = device.wgpu_device();
-    if copy.scratch.is_none() {
+    if copy.scratch.is_none() || resized {
         let scratch = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("game view target"),
-            size: extent(SIZE),
+            size: extent(size),
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -470,7 +547,7 @@ fn build_surface(
                 texture_view: scratch
                     .create_view(&wgpu::TextureViewDescriptor::default())
                     .into(),
-                size: SIZE,
+                size,
                 view_format: TARGET_FORMAT,
             },
         );
@@ -478,11 +555,11 @@ fn build_surface(
     }
 
     // A tiled ring the offer still covers stays put.
-    let built = !copy.ring.is_empty();
+    let built = !copy.ring.is_empty() && !resized;
     if built && copy.direct && offer.modifiers.contains(&copy.modifier) {
         return;
     }
-    let tiled = match dmabuf::allocate_tiled(device, SIZE, &offer.modifiers, SLOTS) {
+    let tiled = match dmabuf::allocate_tiled(device, size, &offer.modifiers, SLOTS) {
         Ok(ring) => ring,
         Err(reason) => {
             if !offer.modifiers.is_empty() {
@@ -495,7 +572,7 @@ fn build_surface(
         Some(ring) => (true, ring),
         None if built && !copy.direct => return,
         None => match (0..SLOTS)
-            .map(|_| dmabuf::allocate_linear(device, SIZE))
+            .map(|_| dmabuf::allocate_linear(device, size))
             .collect::<Result<Vec<_>, _>>()
         {
             Ok(ring) => (false, ring),
@@ -527,7 +604,7 @@ fn build_surface(
     copy.ring = textures;
     copy.direct = direct;
     copy.modifier = modifier;
-    copy.generation = surface.exchange.install(SIZE.x, SIZE.y, modifier, images);
+    copy.generation = surface.exchange.install(size.x, size.y, modifier, images);
 }
 
 /// Before the cameras' views are prepared: point their output at a free slot
@@ -1099,6 +1176,18 @@ mod tests {
     }
 
     #[test]
+    fn a_requested_size_stays_allocatable() {
+        let exchange = FrameExchange::new(|| {});
+        assert_eq!(exchange.wanted(), Viewport::default());
+        exchange.resize(1920, 1080, 2.0);
+        assert_eq!(exchange.wanted().size, UVec2::new(1920, 1080));
+        exchange.resize(0, 100_000, f32::NAN);
+        let wanted = exchange.wanted();
+        assert_eq!(wanted.size, UVec2::new(MIN_SIZE, MAX_SIZE));
+        assert_eq!(wanted.scale, 1.0);
+    }
+
+    #[test]
     fn a_refused_modifier_is_withdrawn_from_the_offer() {
         const TILED: u64 = 0x0300_0000_0060_6015;
         let exchange = FrameExchange::new(|| {});
@@ -1159,6 +1248,19 @@ mod tests {
         assert_eq!(set.images.len(), SLOTS);
     }
 
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn an_embedded_world_draws_at_the_size_the_view_asks_for() {
+        let (set, index, errors) = run_red_world(|exchange| exchange.resize(640, 360, 2.0));
+        let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
+        assert_eq!((set.width, set.height), (640, 360));
+        let pixel = middle_pixel(&set.images[index], 640, 360);
+        assert!(
+            pixel[0] > 150 && pixel[1] < 80,
+            "expected red, read {pixel:?}"
+        );
+    }
+
     fn gpu_modifiers() -> Vec<u64> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
@@ -1190,6 +1292,7 @@ mod tests {
         let (outgoing, reports) = std::sync::mpsc::channel();
         let exchange = FrameExchange::new(|| {});
         offer(&exchange);
+        let size = exchange.wanted().size;
         let frames = exchange.clone();
         let world = std::thread::spawn(move || {
             run(Embedded {
@@ -1215,7 +1318,7 @@ mod tests {
         let mut frames_seen = 0;
         while started.elapsed() < Duration::from_secs(20) {
             if let (Some(set), Some((generation, index))) = (exchange.slots(), exchange.latest())
-                && set.width == SIZE.x
+                && set.width == size.x
                 && set.generation == generation
             {
                 // Keep the world off this slot while it is read.
@@ -1228,7 +1331,7 @@ mod tests {
                 }
                 if set.modifier == MODIFIER_LINEAR {
                     let [r, g, b] =
-                        middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+                        middle_pixel(&set.images[index], size.x as usize, size.y as usize);
                     if r > 150 && g < 80 && b < 80 {
                         break;
                     }

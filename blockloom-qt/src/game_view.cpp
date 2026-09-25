@@ -446,6 +446,9 @@ GameView::GameView(QQuickItem *parent)
         Q_EMIT pointerLockedChanged();
         Q_EMIT pointerReleased();
     };
+    m_resizeTimer.setSingleShot(true);
+    m_resizeTimer.setInterval(150);
+    connect(&m_resizeTimer, &QTimer::timeout, this, &GameView::sendSize);
 }
 
 GameView::~GameView()
@@ -467,6 +470,49 @@ void GameView::setPointerLocked(bool locked)
 bool GameView::pointerHeld() const
 {
     return m_lock && m_lock->held();
+}
+
+void GameView::setResolution(const QSize &resolution)
+{
+    if (resolution == m_resolution)
+        return;
+    m_resolution = resolution;
+    Q_EMIT resolutionChanged();
+    resize();
+}
+
+void GameView::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
+{
+    QQuickItem::geometryChange(newGeometry, oldGeometry);
+    if (newGeometry.size() != oldGeometry.size())
+        resize();
+}
+
+void GameView::resize()
+{
+    if (m_sentSize.isEmpty())
+        sendSize();
+    else
+        m_resizeTimer.start();
+}
+
+void GameView::sendSize()
+{
+    // A hidden view's size means nothing; it is sent again once shown.
+    if (!window() || !isVisible())
+        return;
+    const qreal dpr = window()->effectiveDevicePixelRatio();
+    // A fixed resolution is a player's screen at 100%; a free one looks
+    // the way the editor does.
+    const bool fixed = !m_resolution.isEmpty();
+    const QSize size = fixed ? m_resolution : QSize(qRound(width() * dpr), qRound(height() * dpr));
+    const qreal scale = fixed ? 1.0 : dpr;
+    if (size.width() < 16 || size.height() < 16 || (size == m_sentSize && scale == m_sentScale))
+        return;
+    m_resizeTimer.stop();
+    m_sentSize = size;
+    m_sentScale = scale;
+    game_view_resize(uint32_t(size.width()), uint32_t(size.height()), float(scale));
 }
 
 void GameView::wake()
@@ -510,6 +556,9 @@ void GameView::itemChange(ItemChange change, const ItemChangeData &value)
     if (change == ItemSceneChange && value.window)
         hook(value.window);
     QQuickItem::itemChange(change, value);
+    if ((change == ItemSceneChange && value.window) || change == ItemDevicePixelRatioHasChanged
+        || (change == ItemVisibleHasChanged && value.boolValue))
+        resize();
 }
 
 void GameView::hook(QQuickWindow *window)

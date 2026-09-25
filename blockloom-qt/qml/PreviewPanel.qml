@@ -5,30 +5,70 @@ import QtQuick.Layouts
 import com.blockworked.Blockstitch 1.0
 import com.blockworked.Blockloom 1.0
 
-// The Game view, with run controls, single-step and input forwarding. The
-// game draws at its own window size and is scaled to fit, so the view shows
-// exactly what a player sees. An embedded world (Linux) draws straight into GameView
-// on the GPU. A child-process world streams MJPEG instead, and can keep its
-// OS window up beside the view or hide it (headless).
+// The Game tab: the game at its real pixel size, with a resolution and an
+// aspect ratio to size it by, plus input forwarding. An embedded world
+// (Linux) draws straight into GameView on the GPU at exactly the view's
+// pixels. A child-process world streams MJPEG instead, and can keep its OS
+// window up beside the view or hide it (headless).
 Rectangle {
     id: root
     required property var app
     readonly property var appState: app.appState
     readonly property bool embedded: appState.runtime_embedded === true
-    implicitHeight: 36 + (appState.preview_enabled ? frameArea.height + 8 : 0)
     color: Theme.panel
-    border.color: Theme.borderSoft
 
-    readonly property var gameSize: appState.game_size || [960, 720]
+    // Editor preferences, not the project's: how big this machine shows it.
+    Settings {
+        id: view
+        category: "gameView"
+        property string aspect: "16:9"
+        property string resolution: "free"
+    }
+    readonly property real dpr: Screen.devicePixelRatio
+    readonly property var aspects: ["free", "16:9", "16:10", "4:3", "21:9", "1:1"]
+    readonly property var resolutions: [
+        [1280, 720], [1600, 900], [1920, 1080], [2560, 1440], [3840, 2160],
+        [1280, 800], [1440, 900], [1920, 1200], [2560, 1600],
+        [800, 600], [960, 720], [1024, 768], [1600, 1200],
+        [2560, 1080], [3440, 1440],
+        [720, 720], [1080, 1080]
+    ]
+    // [w, h] of an aspect or resolution value, or null for "free".
+    function parsePair(value, sep) { const p = String(value).split(sep).map(Number); return p.length === 2 && p[0] > 0 && p[1] > 0 ? p : null; }
+    readonly property var ratio: parsePair(view.aspect, ":")
+    function matches(res) { return !ratio || res[0] * ratio[1] === res[1] * ratio[0]; }
+    readonly property var resolutionOptions: [{ value: "free", label: "Free" }].concat(
+        resolutions.filter(matches).map(r => ({ value: r[0] + "x" + r[1], label: r[0] + " × " + r[1] })))
+    readonly property var fixed: parsePair(view.resolution, "x")
+    // A resolution left over from another aspect ratio goes back to Free.
+    onRatioChanged: if (fixed && !matches(fixed)) view.resolution = "free"
+
+    // The game's on-screen size inside `area`, in logical pixels.
+    function fitted(area) {
+        if (fixed) {
+            const w = fixed[0] / dpr, h = fixed[1] / dpr;
+            const s = Math.min(1, area.width / w, area.height / h);
+            return Qt.size(Math.floor(w * s), Math.floor(h * s));
+        }
+        if (ratio) {
+            const s = Math.min(area.width / ratio[0], area.height / ratio[1]);
+            return Qt.size(Math.floor(ratio[0] * s), Math.floor(ratio[1] * s));
+        }
+        return Qt.size(Math.floor(area.width), Math.floor(area.height));
+    }
+    readonly property size gameSize: fitted(Qt.size(Math.max(0, frameArea.width - 2), Math.max(0, frameArea.height - 2)))
+    // What the world really draws at, and how much of it fits on screen.
+    readonly property size drawnSize: fixed ? Qt.size(fixed[0], fixed[1]) : Qt.size(Math.round(gameSize.width * dpr), Math.round(gameSize.height * dpr))
+    readonly property int shownPercent: fixed ? Math.round(100 * gameSize.width * dpr / fixed[0]) : 100
+
     // Play hands the keyboard to the game, the way its own window took it.
     readonly property bool running: appState.running === true
     onRunningChanged: {
         pointerSuspended = false;
-        if (running && embedded) {
-            frame.forceActiveFocus();
-            input({ kind: "focus", focused: attentive });
-        }
+        // Later, so the tab switch Play also causes has shown the view.
+        if (running && embedded) Qt.callLater(() => { frame.forceActiveFocus(); input({ kind: "focus", focused: attentive }); });
     }
+    onVisibleChanged: if (visible && running && embedded) frame.forceActiveFocus()
     // The view has the keyboard in the active window: the game's idea of focus.
     readonly property bool attentive: frame.activeFocus && frame.Window.active
     onAttentiveChanged: if (embedded) input({ kind: "focus", focused: attentive })
@@ -61,33 +101,42 @@ Rectangle {
     ColumnLayout {
         anchors.fill: parent; spacing: 4
         RowLayout {
-            Layout.fillWidth: true; Layout.preferredHeight: 32; Layout.leftMargin: 6; Layout.rightMargin: 6; spacing: 4
+            Layout.fillWidth: true; Layout.preferredHeight: 36; Layout.leftMargin: 8; Layout.rightMargin: 8; spacing: 6
             SwitchField { visible: !root.embedded; value: root.appState.preview_enabled; onToggled: on => root.report("set_preview_enabled", { enabled: on }) }
-            Text { text: root.embedded ? "Game" : "Preview"; color: Theme.text; font.pixelSize: 12; Layout.rightMargin: 8 }
-            IconButton {
-                visible: root.appState.preview_enabled
-                iconName: root.appState.running ? "square" : "play"; tip: root.appState.running ? "Stop" : "Play"
-                onClicked: root.report(root.appState.running ? "stop_project" : "run_project")
-            }
-            IconButton {
-                visible: root.appState.preview_enabled && root.appState.running
-                iconName: root.appState.paused ? "play" : "pause"; tip: root.appState.paused ? "Resume" : "Pause"
-                onClicked: root.report("pause_project", { paused: !root.appState.paused })
-            }
-            IconButton { visible: root.appState.preview_enabled && root.appState.running && root.appState.paused; iconName: "step-forward"; tip: "Advance one tick"; onClicked: root.report("step_project") }
-            Item { Layout.fillWidth: true }
+            Text { visible: !root.embedded; text: "Preview"; color: Theme.text; font.pixelSize: 12; Layout.rightMargin: 8 }
             SwitchField { visible: root.appState.preview_enabled && !root.embedded; value: root.appState.preview_headless; onToggled: on => root.report("set_preview_headless", { headless: on }) }
             Text { visible: root.appState.preview_enabled && !root.embedded; text: "Headless"; color: Theme.textDim; font.pixelSize: 12 }
+            Item { Layout.fillWidth: true }
+            Text {
+                visible: root.embedded
+                text: root.drawnSize.width + " × " + root.drawnSize.height + (root.shownPercent < 100 ? "  (shown at " + root.shownPercent + "%)" : "")
+                color: Theme.textDim; font.pixelSize: 11
+            }
+            Text { text: "Aspect"; color: Theme.textDim; font.pixelSize: 12; Layout.leftMargin: 6 }
+            ChoiceField {
+                Layout.fillWidth: false; Layout.preferredWidth: 96
+                options: root.aspects.map(a => ({ value: a, label: a === "free" ? "Free" : a }))
+                value: view.aspect
+                onChosen: a => view.aspect = a
+            }
+            Text { text: "Resolution"; color: Theme.textDim; font.pixelSize: 12; Layout.leftMargin: 6 }
+            ChoiceField {
+                Layout.fillWidth: false; Layout.preferredWidth: 130
+                options: root.resolutionOptions
+                value: view.resolution
+                onChosen: r => view.resolution = r
+            }
         }
         Item {
             id: frameArea
-            visible: root.appState.preview_enabled
-            Layout.fillWidth: true
-            Layout.preferredHeight: 360
+            Layout.fillWidth: true; Layout.fillHeight: true
+            Layout.leftMargin: 8; Layout.rightMargin: 8; Layout.bottomMargin: 8
             Rectangle {
                 id: frame
                 anchors.centerIn: parent
-                height: parent.height; width: height * root.gameSize[0] / root.gameSize[1]
+                // The border sits outside the game, so a fixed resolution
+                // maps one pixel to one pixel.
+                width: root.gameSize.width + 2; height: root.gameSize.height + 2
                 color: "black"; border.color: frame.activeFocus ? Theme.accent : Theme.border
                 focus: true
                 readonly property bool showing: root.embedded ? gameView.hasFrame : !!root.app.previewFrame
@@ -95,6 +144,7 @@ Rectangle {
                     id: gameView
                     visible: root.embedded
                     anchors.fill: parent; anchors.margins: 1
+                    resolution: root.fixed ? Qt.size(root.fixed[0], root.fixed[1]) : Qt.size(0, 0)
                     pointerLocked: root.embedded && root.appState.pointer_locked === true && root.attentive && !root.pointerSuspended
                     onPointerMoved: (dx, dy) => root.input({ kind: "mouse_delta", dx: dx, dy: dy })
                     onPointerReleased: root.pointerSuspended = true
@@ -111,6 +161,7 @@ Rectangle {
                     horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
                     color: gameView.error ? Theme.danger : Theme.textDim; font.pixelSize: 12
                     text: gameView.error ? "Can't show the game: " + gameView.error
+                        : !root.appState.preview_enabled ? "Turn the preview on to see the game here."
                         : root.appState.runtime_open ? "Waiting for the first frame…" : "Press Play to see the game here."
                 }
                 Rectangle {

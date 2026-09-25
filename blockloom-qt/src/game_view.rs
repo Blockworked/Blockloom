@@ -35,6 +35,8 @@ mod ffi {
         fn game_view_accept(modifiers: &[u64]);
         /// Ring `generation` couldn't be imported after all.
         fn game_view_refuse(generation: u64);
+        /// The world should draw at this many physical pixels, `scale` per logical one.
+        fn game_view_resize(width: u32, height: u32, scale: f32);
     }
 
     unsafe extern "C++" {
@@ -218,4 +220,11 @@ fn game_view_refuse(generation: u64) {
     embedded::FRAMES.refuse(generation);
     #[cfg(not(target_os = "linux"))]
     let _ = generation;
+}
+
+fn game_view_resize(width: u32, height: u32, scale: f32) {
+    #[cfg(target_os = "linux")]
+    embedded::FRAMES.resize(width, height, scale);
+    #[cfg(not(target_os = "linux"))]
+    let _ = (width, height, scale);
 }

@@ -3,6 +3,7 @@
 #ifndef BLOCKLOOM_GAME_VIEW_H
 #define BLOCKLOOM_GAME_VIEW_H
 
+#include <QtCore/QTimer>
 #include <QtQml/qqmlregistration.h>
 #include <QtQuick/QQuickItem>
 
@@ -21,6 +22,8 @@ class GameView : public QQuickItem
     // Asks for the pointer pinned over the view; held says it really is.
     Q_PROPERTY(bool pointerLocked READ pointerLocked WRITE setPointerLocked NOTIFY pointerLockedChanged)
     Q_PROPERTY(bool pointerHeld READ pointerHeld NOTIFY pointerHeldChanged)
+    // Physical pixels the world draws at; empty follows the item's own size.
+    Q_PROPERTY(QSize resolution READ resolution WRITE setResolution NOTIFY resolutionChanged)
 
 public:
     explicit GameView(QQuickItem *parent = nullptr);
@@ -31,6 +34,8 @@ public:
     bool pointerLocked() const { return m_pointerLocked; }
     void setPointerLocked(bool locked);
     bool pointerHeld() const;
+    QSize resolution() const { return m_resolution; }
+    void setResolution(const QSize &resolution);
 
     // A new frame, ring or no world at all: re-read and redraw. GUI thread.
     void wake();
@@ -40,6 +45,7 @@ Q_SIGNALS:
     void errorChanged();
     void pointerLockedChanged();
     void pointerHeldChanged();
+    void resolutionChanged();
     // Raw motion while held, coalesced.
     void pointerMoved(qreal dx, qreal dy);
     // The system broke the lock; asking again needs a fresh request.
@@ -48,6 +54,7 @@ Q_SIGNALS:
 protected:
     QSGNode *updatePaintNode(QSGNode *old, UpdatePaintNodeData *) override;
     void itemChange(ItemChange change, const ItemChangeData &value) override;
+    void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
 
 private:
     void fail(const QString &message);
@@ -57,6 +64,10 @@ private:
     void renderExternal();
     // After each swap: paces the world, and asks for the next frame while one runs.
     void framePresented();
+    // Tells the world what size to draw at. The first size goes straight
+    // away; changes after it wait for a pause, since each one rebuilds the ring.
+    void resize();
+    void sendSize();
 
     // Render thread only: the ring imported, and the node holding it.
     quint64 m_generation = 0;
@@ -66,6 +77,10 @@ private:
     bool m_hasFrame = false;
     bool m_pointerLocked = false;
     PointerLock *m_lock = nullptr;
+    QSize m_resolution;
+    QSize m_sentSize;
+    qreal m_sentScale = 0;
+    QTimer m_resizeTimer;
     QString m_error;
 };
 

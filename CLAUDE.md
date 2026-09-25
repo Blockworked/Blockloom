@@ -315,8 +315,10 @@ Bevy runs headless there: no winit, one update per frame the view presents
 (`embed::paced` waits on `FrameExchange::presented`, which the view calls on
 every swap and keeps asking for while a world runs; 50 ms at most, so a hidden
 view still hears the editor), and synchronous pipeline compilation, since async compile tasks outliving the
-device crash NVIDIA at exit. Cameras render at `GAME_SIZE` (960x720) - the
-whole game, scaled to fit the view - into a ring of three Vulkan images
+device crash NVIDIA at exit. Cameras render at the view's real pixel size
+(`FrameExchange::resize`, debounced by the view, since each size is a new
+ring; a fixed resolution picked in the Game tab is sent as is at scale 1),
+with `UiScale` and the 2D projection following the view's pixel density, into a ring of three Vulkan images
 exported as dma-bufs (`embed.rs`, raw `ash` under wgpu). `FrameExchange` hands
 slots between the world and the view: the world never draws into the one
 being shown or waiting to be. The C++ `GameView` item imports the ring through

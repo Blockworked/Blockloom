@@ -82,6 +82,7 @@ pub fn update_speech_bubbles(
     mut bubbles: Query<(Entity, &SpeechBubble, &mut Node)>,
     mut labels: Query<(&SpeechBubbleText, &mut Text)>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    ui_scale: Res<UiScale>,
 ) {
     let camera = cameras.iter().next();
     let mut existing = HashSet::new();
@@ -133,11 +134,13 @@ pub fn update_speech_bubbles(
         // new sub-pixel offset every frame while the bubble follows the actor.
         // The viewport reads logical while node pixels resolve physical, so
         // the position is de-scaled or bubbles drift off on scaled displays.
+        // `UiScale` counts too: the embedded view's density lives there.
         let scale = windows
             .iter()
             .next()
             .map(|window| window.scale_factor())
-            .unwrap_or(1.0);
+            .unwrap_or(1.0)
+            * ui_scale.0;
         node.display = Display::Flex;
         node.left = Val::Px((viewport.x + offset[0]).round() / scale);
         node.top = Val::Px((viewport.y + offset[1]).round() / scale);
