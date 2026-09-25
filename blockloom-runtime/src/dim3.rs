@@ -84,6 +84,68 @@ pub(super) fn mesh_for(visual: &Visual) -> Option<Mesh> {
     }
 }
 
+fn surface_mesh(
+    actor: &Actor,
+    visual: &Visual,
+    cache: &mut crate::performance::RenderCache,
+    meshes: &mut Assets<Mesh>,
+) -> Option<Handle<Mesh>> {
+    let Some(material) = actor.components.material() else {
+        return cache.mesh(visual, meshes);
+    };
+    let revised = material.box_projection
+        || material.tiling != [1.0, 1.0]
+        || material.offset != [0.0, 0.0]
+        || material.rotation != 0.0
+        || material.sampler != blockloom_core::material::TextureSampler::Clamp
+        || !material.normal_texture.is_empty()
+        || !material.roughness_texture.is_empty()
+        || material.texel_density != 1.0;
+    if !revised || !matches!(visual, Visual::Cuboid { .. } | Visual::Plane { .. }) {
+        return cache.mesh(visual, meshes);
+    }
+    cache.scaled_mesh(
+        visual,
+        || {
+            let mut mesh = mesh_for(visual)?;
+            scale_primitive_uv(&mut mesh, visual, 1.0);
+            Some(mesh)
+        },
+        meshes,
+    )
+}
+
+fn scale_primitive_uv(mesh: &mut Mesh, visual: &Visual, density: f32) {
+    let (
+        Some(bevy::mesh::VertexAttributeValues::Float32x3(normals)),
+        Some(bevy::mesh::VertexAttributeValues::Float32x2(uvs)),
+    ) = (
+        mesh.attribute(Mesh::ATTRIBUTE_NORMAL),
+        mesh.attribute(Mesh::ATTRIBUTE_UV_0),
+    )
+    else {
+        return;
+    };
+    let mut scaled = uvs.clone();
+    let extent = match visual {
+        Visual::Cuboid { size, .. } => *size,
+        Visual::Plane { size, .. } => [size[0], PLANE_THICKNESS, size[1]],
+        _ => unreachable!(),
+    };
+    for (uv, normal) in scaled.iter_mut().zip(normals) {
+        let dimensions = if normal[0].abs() > 0.5 {
+            [extent[2], extent[1]]
+        } else if normal[1].abs() > 0.5 {
+            [extent[0], extent[2]]
+        } else {
+            [extent[0], extent[1]]
+        };
+        uv[0] *= dimensions[0] * density;
+        uv[1] *= dimensions[1] * density;
+    }
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, scaled);
+}
+
 /// Spawns one actor, or nothing if its visual belongs to the other dimension
 /// or a tilemap is empty. A custom-shaded actor renders through the graph
 /// material; a tilemap through its textured mesh; a material-carrying actor
@@ -100,7 +162,7 @@ pub fn spawn_actor(
     cache: &mut crate::performance::RenderCache,
 ) -> Option<Entity> {
     let visual = actor.visual()?.clone();
-    let mesh = cache.mesh(&visual, meshes)?;
+    let mesh = surface_mesh(actor, &visual, cache, meshes)?;
     let id = commands
         .spawn((crate::world::actor_bundle(actor), Mesh3d(mesh.clone())))
         .id();
@@ -165,14 +227,47 @@ fn insert_surface(
         .map(crate::world::parse_color)
         .unwrap_or(Color::WHITE);
     let material = actor.components.material();
-    if let Some(effect) = material.and_then(|material| material.shader.as_ref()) {
+    if let Some((material, effect)) =
+        material.and_then(|material| material.shader.as_ref().map(|effect| (material, effect)))
+    {
         let secondary = crate::world::parse_color(&effect.color);
         let shader = crate::materials::surface_shader(commands, &actor.id, effect, dir, true);
+        let texture = crate::materials::load_surface_image(
+            commands,
+            &material.albedo_texture,
+            material,
+            dir,
+            assets,
+            true,
+        );
         commands
             .entity(id)
             .insert(MeshMaterial3d(graph_materials.add(
-                crate::materials::graph_material_3d(effect, color, secondary, None, shader),
+                crate::materials::graph_material_3d(
+                    material, effect, color, secondary, texture, shader,
+                ),
             )));
+        return;
+    }
+    if let Some(material) = material
+        .filter(|material| material.box_projection || !material.roughness_texture.is_empty())
+    {
+        let surface = crate::materials::box_material(commands, material, color, dir, assets);
+        let key = format!(
+            "projected:{:?}:{}:{}",
+            dir,
+            visual.color().unwrap_or(""),
+            serde_json::to_string(material).unwrap_or_default()
+        );
+        commands.queue(move |world: &mut World| {
+            let handle =
+                world.resource_scope(|world, mut cache: Mut<crate::performance::RenderCache>| {
+                    let mut materials =
+                        world.resource_mut::<Assets<crate::materials::BoxMaterial>>();
+                    cache.box_material(key, || surface, &mut materials)
+                });
+            world.entity_mut(id).insert(MeshMaterial3d(handle));
+        });
         return;
     }
     if let Visual::Tilemap { tilemap } = visual {
@@ -207,7 +302,9 @@ fn insert_surface(
     let handle = cache.material(
         key,
         || match material {
-            Some(material) => crate::materials::surface_standard(material, color, dir, assets),
+            Some(material) => {
+                crate::materials::surface_standard(commands, material, color, dir, assets)
+            }
             None => StandardMaterial {
                 base_color: color,
                 perceptual_roughness: 0.6,
@@ -227,6 +324,9 @@ fn remove_surface(commands: &mut Commands, id: Entity) {
     commands
         .entity(id)
         .remove::<MeshMaterial3d<GraphMaterial3d>>();
+    commands
+        .entity(id)
+        .remove::<MeshMaterial3d<crate::materials::BoxMaterial>>();
 }
 
 /// Gives an actor the rigid body its `Body` component asks for, with the
@@ -631,7 +731,8 @@ pub fn apply_effects(
                         let Some(visual) = authored.visual().cloned() else {
                             continue;
                         };
-                        let Some(mesh) = cache.mesh(&visual, &mut meshes) else {
+                        let Some(mesh) = surface_mesh(&authored, &visual, &mut cache, &mut meshes)
+                        else {
                             continue;
                         };
                         commands.entity(entity).insert(Mesh3d(mesh.clone()));
@@ -670,10 +771,12 @@ pub fn apply_effects(
                         let Some(visual) = authored.visual().cloned() else {
                             continue;
                         };
-                        if mesh_for(&visual).is_none() {
+                        let Some(mesh) = surface_mesh(&authored, &visual, &mut cache, &mut meshes)
+                        else {
                             continue;
-                        }
+                        };
                         remove_surface(&mut commands, entity);
+                        commands.entity(entity).insert(Mesh3d(mesh));
                         insert_surface(
                             &mut commands,
                             entity,
@@ -713,13 +816,19 @@ pub fn apply_effects(
                     }
                     // Back to the plain standard surface.
                     "Material" => {
-                        let Some(authored) = engine.actor(actor).cloned() else {
+                        let Some(mut authored) = engine.actor(actor).cloned() else {
                             continue;
                         };
+                        authored.components.remove("Material");
                         let Some(visual) = authored.visual().cloned() else {
                             continue;
                         };
                         remove_surface(&mut commands, id);
+                        if let Some(mesh) =
+                            surface_mesh(&authored, &visual, &mut cache, &mut meshes)
+                        {
+                            commands.entity(id).insert(Mesh3d(mesh));
+                        }
                         insert_surface(
                             &mut commands,
                             id,
@@ -916,4 +1025,53 @@ fn shadow_map_size(size: u32) -> usize {
         .copied()
         .min_by_key(|candidate| candidate.abs_diff(wanted))
         .unwrap_or(2048)
+}
+
+#[cfg(test)]
+mod texture_tests {
+    use super::*;
+    use bevy::mesh::VertexAttributeValues;
+
+    #[test]
+    fn box_faces_tile_by_their_own_world_dimensions() {
+        let visual = Visual::Cuboid {
+            color: "#FFFFFF".into(),
+            size: [4.0, 2.0, 8.0],
+        };
+        let mut mesh = mesh_for(&visual).unwrap();
+        let VertexAttributeValues::Float32x3(normals) =
+            mesh.attribute(Mesh::ATTRIBUTE_NORMAL).unwrap()
+        else {
+            panic!("normals");
+        };
+        let normals = normals.clone();
+        let VertexAttributeValues::Float32x2(original) =
+            mesh.attribute(Mesh::ATTRIBUTE_UV_0).unwrap()
+        else {
+            panic!("uvs");
+        };
+        let original = original.clone();
+        scale_primitive_uv(&mut mesh, &visual, 2.0);
+        let VertexAttributeValues::Float32x2(scaled) =
+            mesh.attribute(Mesh::ATTRIBUTE_UV_0).unwrap()
+        else {
+            panic!("scaled uvs");
+        };
+        for ((normal, before), after) in normals.iter().zip(&original).zip(scaled) {
+            let dimensions = if normal[0].abs() > 0.5 {
+                [8.0, 2.0]
+            } else if normal[1].abs() > 0.5 {
+                [4.0, 8.0]
+            } else {
+                [4.0, 2.0]
+            };
+            assert_eq!(
+                *after,
+                [
+                    before[0] * dimensions[0] * 2.0,
+                    before[1] * dimensions[1] * 2.0
+                ]
+            );
+        }
+    }
 }

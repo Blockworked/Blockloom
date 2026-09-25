@@ -21,6 +21,15 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(3) var<uniform> flags: vec4<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(4) var texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(5) var texture_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(6) var<uniform> uv_scale_offset: vec4<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(7) var<uniform> uv_options: vec4<f32>;
+
+fn surface_uv(uv: vec2<f32>) -> vec2<f32> {
+    let scaled = uv * uv_scale_offset.xy;
+    let angle = uv_options.x;
+    return vec2<f32>(scaled.x * cos(angle) - scaled.y * sin(angle),
+                     scaled.x * sin(angle) + scaled.y * cos(angle)) + uv_scale_offset.zw;
+}
 
 fn apply_effect(uv: vec2<f32>, base: vec4<f32>) -> vec4<f32> {
     let mode = u32(params.x + 0.5);
@@ -60,7 +69,7 @@ fn apply_effect(uv: vec2<f32>, base: vec4<f32>) -> vec4<f32> {
 fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     var output_color = tint;
     if (flags.x > 0.5) {
-        output_color = output_color * textureSample(texture, texture_sampler, mesh.uv);
+        output_color = output_color * textureSample(texture, texture_sampler, surface_uv(mesh.uv));
     }
     // A circle look renders its quad round, the way the sprite disc does.
     if (flags.y > 0.5 && length((mesh.uv - 0.5) * 2.0) > 1.0) {

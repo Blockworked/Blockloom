@@ -397,6 +397,7 @@ pub fn snapshot_trails(
         Option<&Mesh3d>,
         Option<&MeshMaterial3d<StandardMaterial>>,
         Option<&MeshMaterial3d<GraphMaterial3d>>,
+        Option<&MeshMaterial3d<crate::materials::BoxMaterial>>,
         Option<&TilemapMesh>,
     )>,
     tile_children: Query<(&Mesh2d, &MeshMaterial2d<ColorMaterial>)>,
@@ -404,6 +405,7 @@ pub fn snapshot_trails(
     mut tiles: ResMut<Assets<ColorMaterial>>,
     mut graphs_2d: ResMut<Assets<GraphMaterial2d>>,
     mut graphs_3d: ResMut<Assets<GraphMaterial3d>>,
+    mut boxes: ResMut<Assets<crate::materials::BoxMaterial>>,
     ghosts: Query<&Ghost>,
     particles: Query<&Particle>,
 ) {
@@ -426,6 +428,7 @@ pub fn snapshot_trails(
         mesh,
         handle,
         graph_3d,
+        box_3d,
         child,
     ) in &mut trailed
     {
@@ -507,6 +510,22 @@ pub fn snapshot_trails(
                 ));
                 living += 1;
             }
+        } else if let (Some(mesh), Some(handle)) = (mesh, box_3d) {
+            if let Some(mut faded) = boxes.get(&handle.0).cloned() {
+                faded.base.base_color = tint;
+                faded.base.alpha_mode = AlphaMode::Blend;
+                commands.spawn((
+                    Ghost {
+                        age: 0.0,
+                        life: spec.life,
+                        base: 0.5,
+                    },
+                    *transform,
+                    Mesh3d(mesh.0.clone()),
+                    MeshMaterial3d(boxes.add(faded)),
+                ));
+                living += 1;
+            }
         } else if let (Some(mesh), Some(handle)) = (mesh, handle) {
             let mut faded = materials.get(&handle.0).cloned().unwrap_or_default();
             faded.base_color = tint;
@@ -539,17 +558,19 @@ pub fn step_ghosts(
         Option<&MeshMaterial2d<GraphMaterial2d>>,
         Option<&MeshMaterial3d<StandardMaterial>>,
         Option<&MeshMaterial3d<GraphMaterial3d>>,
+        Option<&MeshMaterial3d<crate::materials::BoxMaterial>>,
     )>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut tiles: ResMut<Assets<ColorMaterial>>,
     mut graphs_2d: ResMut<Assets<GraphMaterial2d>>,
     mut graphs_3d: ResMut<Assets<GraphMaterial3d>>,
+    mut boxes: ResMut<Assets<crate::materials::BoxMaterial>>,
 ) {
     if !engine.running || engine.paused {
         return;
     }
     let dt = time.delta_secs();
-    for (entity, mut ghost, sprite, tile, graph_2d, handle, graph_3d) in &mut ghosts {
+    for (entity, mut ghost, sprite, tile, graph_2d, handle, graph_3d, box_3d) in &mut ghosts {
         ghost.age += dt;
         if ghost.age >= ghost.life {
             commands.entity(entity).despawn();
@@ -569,6 +590,10 @@ pub fn step_ghosts(
         } else if let Some(handle) = graph_3d {
             if let Some(mut material) = graphs_3d.get_mut(&handle.0) {
                 material.tint.w = alpha;
+            }
+        } else if let Some(handle) = box_3d {
+            if let Some(mut material) = boxes.get_mut(&handle.0) {
+                material.base.base_color.set_alpha(alpha);
             }
         } else if let Some(handle) = handle {
             if let Some(mut material) = materials.get_mut(&handle.0) {

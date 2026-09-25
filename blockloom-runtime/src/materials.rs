@@ -21,14 +21,17 @@
 //! [`SurfaceMaterial`]: blockloom_core::material::SurfaceMaterial
 //! [`Tilemap`]: blockloom_core::material::Tilemap
 
-use bevy::asset::{Assets, Handle};
+use bevy::asset::{AssetEvent, AssetId, Assets, Handle};
 use bevy::color::Color;
 use bevy::ecs::system::SystemParam;
-use bevy::image::Image;
+use bevy::image::{Image, ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::math::Vec4;
 use bevy::mesh::Mesh2d;
 use bevy::mesh::MeshVertexBufferLayoutRef;
-use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey, MaterialPlugin};
+use bevy::pbr::{
+    ExtendedMaterial, Material, MaterialExtension, MaterialPipeline, MaterialPipelineKey,
+    MaterialPlugin,
+};
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
 use bevy::render::render_resource::{
@@ -38,8 +41,9 @@ use bevy::shader::{Shader, ShaderRef};
 use bevy::sprite_render::{
     AlphaMode2d, ColorMaterial, Material2d, Material2dKey, Material2dPlugin, MeshMaterial2d,
 };
-use blockloom_core::material::{GraphEffect, SurfaceMaterial, TileMesh, Tilemap};
+use blockloom_core::material::{GraphEffect, SurfaceMaterial, TextureSampler, TileMesh, Tilemap};
 use blockloom_protocol::RuntimeMessage;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
@@ -50,8 +54,133 @@ use std::path::Path;
 pub fn register(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/graph_2d.wgsl");
     bevy::asset::embedded_asset!(app, "shaders/graph_3d.wgsl");
+    bevy::asset::embedded_asset!(app, "shaders/box_pbr.wgsl");
     app.add_plugins(Material2dPlugin::<GraphMaterial2d>::default());
     app.add_plugins(MaterialPlugin::<GraphMaterial3d>::default());
+    app.add_plugins(MaterialPlugin::<BoxMaterial>::default());
+    app.init_resource::<TextureVariants>();
+    app.add_systems(Update, sync_texture_variants);
+}
+
+#[derive(Resource, Default)]
+struct TextureVariants(HashMap<AssetId<Image>, TextureVariant>);
+
+struct TextureVariant {
+    source: Handle<Image>,
+    sampler: TextureSampler,
+    anisotropy: u8,
+    srgb: bool,
+}
+
+fn sync_texture_variants(
+    mut variants: ResMut<TextureVariants>,
+    mut images: ResMut<Assets<Image>>,
+    mut events: MessageReader<AssetEvent<Image>>,
+) {
+    let changed: HashSet<_> = events
+        .read()
+        .filter_map(|event| match event {
+            AssetEvent::Added { id } | AssetEvent::Modified { id } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    for (id, request) in &mut variants.0 {
+        if images.get(*id).is_some() && !changed.contains(&request.source.id()) {
+            continue;
+        }
+        let Some(mut image) = images.get(&request.source).cloned() else {
+            continue;
+        };
+        let mode = match request.sampler {
+            TextureSampler::Repeat => ImageAddressMode::Repeat,
+            TextureSampler::Mirror => ImageAddressMode::MirrorRepeat,
+            TextureSampler::Clamp => ImageAddressMode::ClampToEdge,
+        };
+        let mut descriptor = ImageSamplerDescriptor::linear();
+        descriptor.address_mode_u = mode;
+        descriptor.address_mode_v = mode;
+        descriptor.anisotropy_clamp = u16::from(request.anisotropy.max(1));
+        image.sampler = ImageSampler::Descriptor(descriptor);
+        image.texture_descriptor.format = if request.srgb {
+            image.texture_descriptor.format.add_srgb_suffix()
+        } else {
+            image.texture_descriptor.format.remove_srgb_suffix()
+        };
+        let _ = images.insert(*id, image);
+    }
+}
+
+pub type BoxMaterial = ExtendedMaterial<StandardMaterial, BoxProjection>;
+
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct BoxProjection {
+    /// Tiling X/Y, offset X/Y.
+    #[uniform(100)]
+    pub scale_offset: Vec4,
+    /// Rotation in radians, tiles per world unit, map flags.
+    #[uniform(101)]
+    pub options: Vec4,
+    #[texture(102)]
+    #[sampler(103)]
+    pub albedo: Option<Handle<Image>>,
+    #[texture(104)]
+    #[sampler(105)]
+    pub normal: Option<Handle<Image>>,
+    #[texture(106)]
+    #[sampler(107)]
+    pub roughness: Option<Handle<Image>>,
+}
+
+impl MaterialExtension for BoxProjection {
+    fn fragment_shader() -> ShaderRef {
+        ShaderRef::Path(
+            bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!(
+                "shaders/box_pbr.wgsl"
+            ))
+            .with_source("embedded"),
+        )
+    }
+}
+
+pub fn box_material(
+    commands: &mut Commands,
+    material: &SurfaceMaterial,
+    tint: Color,
+    dir: Option<&Path>,
+    assets: &AssetServer,
+) -> BoxMaterial {
+    let mut base = surface_standard(commands, material, tint, dir, assets);
+    base.opaque_render_method = bevy::material::OpaqueRendererMethod::Forward;
+    let albedo = if material.box_projection {
+        base.base_color_texture.take()
+    } else {
+        None
+    };
+    let normal = if material.box_projection {
+        base.normal_map_texture.take()
+    } else {
+        None
+    };
+    let roughness = base.metallic_roughness_texture.take();
+    BoxMaterial {
+        base,
+        extension: BoxProjection {
+            scale_offset: uv_scale_offset(material),
+            options: Vec4::new(
+                material.rotation.to_radians(),
+                if material.box_projection {
+                    material.texel_density
+                } else {
+                    0.0
+                },
+                f32::from(albedo.is_some()),
+                f32::from(normal.is_some()) + 2.0 * f32::from(roughness.is_some()),
+            ),
+            albedo,
+            normal,
+            roughness,
+        },
+    }
 }
 
 /// Which fragment shader a graph material draws with: the ubershader, or a
@@ -80,6 +209,10 @@ pub struct GraphMaterial2d {
     #[texture(4)]
     #[sampler(5)]
     pub texture: Option<Handle<Image>>,
+    #[uniform(6)]
+    pub uv_scale_offset: Vec4,
+    #[uniform(7)]
+    pub uv_options: Vec4,
     /// A project surface shader replacing the ubershader, if any.
     pub shader: Option<Handle<Shader>>,
 }
@@ -138,6 +271,10 @@ pub struct GraphMaterial3d {
     #[texture(4)]
     #[sampler(5)]
     pub texture: Option<Handle<Image>>,
+    #[uniform(6)]
+    pub uv_scale_offset: Vec4,
+    #[uniform(7)]
+    pub uv_options: Vec4,
     /// A project surface shader replacing the ubershader, if any.
     pub shader: Option<Handle<Shader>>,
 }
@@ -231,7 +368,21 @@ const SURFACE_3D_HEAD: &str = "\
 const SURFACE_3D_TAIL: &str = "\
 @fragment
 fn fragment(mesh: VertexOutput) -> FragmentOutput {
-    var output_color = graph_main(mesh.uv, params.w);
+    surface_position = mesh.world_position.xyz;
+    surface_normal = mesh.world_normal;
+    var uv = mesh.uv;
+    if (uv_options.y > 0.5) {
+        let p = mesh.world_position.xyz * uv_options.z;
+        let n = abs(mesh.world_normal);
+        if (n.x >= n.y && n.x >= n.z) {
+            uv = p.yz;
+        } else if (n.y >= n.z) {
+            uv = p.xz;
+        } else {
+            uv = p.xy;
+        }
+    }
+    var output_color = graph_main(uv, params.w);
 #ifdef TONEMAP_IN_SHADER
     output_color = tonemapping::tone_mapping(output_color, view.color_grading);
 #endif
@@ -306,6 +457,7 @@ pub fn surface_shader(
 
 /// Build the 2D material for an actor carrying `effect`.
 pub fn graph_material_2d(
+    material: &SurfaceMaterial,
     effect: &GraphEffect,
     tint: Color,
     secondary: Color,
@@ -324,12 +476,25 @@ pub fn graph_material_2d(
         ),
         flags: Vec4::new(f32::from(texture.is_some()), f32::from(rounded), 0.0, 0.0),
         texture,
+        uv_scale_offset: Vec4::new(
+            material.tiling[0] * material.texel_density,
+            material.tiling[1] * material.texel_density,
+            material.offset[0],
+            material.offset[1],
+        ),
+        uv_options: Vec4::new(
+            material.rotation.to_radians(),
+            0.0,
+            material.texel_density,
+            0.0,
+        ),
         shader,
     }
 }
 
 /// Build the 3D material for an actor carrying `effect`.
 pub fn graph_material_3d(
+    material: &SurfaceMaterial,
     effect: &GraphEffect,
     tint: Color,
     secondary: Color,
@@ -347,6 +512,8 @@ pub fn graph_material_3d(
         ),
         flags: Vec4::new(f32::from(texture.is_some()), 0.0, 0.0, 0.0),
         texture,
+        uv_scale_offset: uv_scale_offset(material),
+        uv_options: uv_options(material),
         shader,
     }
 }
@@ -371,20 +538,42 @@ pub fn tick_graph_time(
 /// with. `tint` is the look's own color; the albedo texture multiplies over
 /// it when one is authored.
 pub fn surface_standard(
+    commands: &mut Commands,
     material: &SurfaceMaterial,
     tint: Color,
     dir: Option<&Path>,
     assets: &AssetServer,
 ) -> StandardMaterial {
-    let albedo = if material.albedo_texture.trim().is_empty() {
-        None
-    } else {
-        let path = crate::world::asset_path(dir, material.albedo_texture.trim());
-        Some(assets.load(path))
-    };
+    let albedo = load_surface_image(
+        commands,
+        &material.albedo_texture,
+        material,
+        dir,
+        assets,
+        true,
+    );
+    let normal = load_surface_image(
+        commands,
+        &material.normal_texture,
+        material,
+        dir,
+        assets,
+        false,
+    );
+    let roughness = load_surface_image(
+        commands,
+        &material.roughness_texture,
+        material,
+        dir,
+        assets,
+        false,
+    );
     StandardMaterial {
         base_color: tint,
         base_color_texture: albedo,
+        normal_map_texture: normal,
+        metallic_roughness_texture: roughness,
+        uv_transform: uv_transform(material),
         metallic: material.metallic.clamp(0.0, 1.0),
         perceptual_roughness: material.roughness.clamp(0.0, 1.0),
         emissive: bevy::color::LinearRgba::from(crate::world::parse_color(&material.emissive))
@@ -392,6 +581,92 @@ pub fn surface_standard(
         double_sided: material.double_sided,
         ..default()
     }
+}
+
+pub fn uv_scale_offset(material: &SurfaceMaterial) -> Vec4 {
+    let density = if material.box_projection {
+        1.0
+    } else {
+        material.texel_density
+    };
+    Vec4::new(
+        material.tiling[0] * density,
+        material.tiling[1] * density,
+        material.offset[0],
+        material.offset[1],
+    )
+}
+
+pub fn uv_options(material: &SurfaceMaterial) -> Vec4 {
+    Vec4::new(
+        material.rotation.to_radians(),
+        f32::from(material.box_projection),
+        material.texel_density,
+        0.0,
+    )
+}
+
+pub fn uv_transform(material: &SurfaceMaterial) -> bevy::math::Affine2 {
+    let density = if material.box_projection {
+        1.0
+    } else {
+        material.texel_density
+    };
+    bevy::math::Affine2::from_translation(Vec2::from(material.offset))
+        * bevy::math::Affine2::from_angle(material.rotation.to_radians())
+        * bevy::math::Affine2::from_scale(Vec2::from(material.tiling) * density)
+}
+
+pub fn load_surface_image(
+    commands: &mut Commands,
+    name: &str,
+    material: &SurfaceMaterial,
+    dir: Option<&Path>,
+    assets: &AssetServer,
+    srgb: bool,
+) -> Option<Handle<Image>> {
+    if name.trim().is_empty() {
+        return None;
+    }
+    let path = crate::world::asset_path(dir, name.trim());
+    let source = assets.load::<Image>(path.clone());
+    let mut low = std::collections::hash_map::DefaultHasher::new();
+    (
+        path.as_os_str(),
+        material.sampler,
+        material.anisotropy,
+        srgb,
+    )
+        .hash(&mut low);
+    let mut high = std::collections::hash_map::DefaultHasher::new();
+    (
+        "blockloom-texture",
+        path.as_os_str(),
+        material.sampler,
+        material.anisotropy,
+        srgb,
+    )
+        .hash(&mut high);
+    let handle = Handle::<Image>::from(bevy::asset::uuid::Uuid::from_u64_pair(
+        high.finish(),
+        low.finish(),
+    ));
+    let id = handle.id();
+    let sampler = material.sampler;
+    let anisotropy = material.anisotropy;
+    commands.queue(move |world: &mut World| {
+        world.init_resource::<TextureVariants>();
+        world.resource_mut::<TextureVariants>().0.insert(
+            id,
+            TextureVariant {
+                source,
+                sampler,
+                anisotropy,
+                srgb,
+            },
+        );
+    });
+    Some(handle)
 }
 
 /// Turn a tilemap mesh into an uploadable Bevy mesh, with normals for the

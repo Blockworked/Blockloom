@@ -276,6 +276,7 @@ fn insert_graph(
     let Some(effect) = shader_of(actor) else {
         return;
     };
+    let material = actor.components.material().expect("shader needs material");
     let visual = actor.visual().cloned();
     let size = visual
         .as_ref()
@@ -287,8 +288,17 @@ fn insert_graph(
         .map(crate::world::parse_color)
         .unwrap_or(Color::WHITE);
     let texture = match &visual {
-        Some(Visual::Image { path, .. }) => Some(assets.load(crate::world::asset_path(dir, path))),
-        _ => None,
+        Some(Visual::Image { path, .. }) => {
+            crate::materials::load_surface_image(commands, path, material, dir, assets, true)
+        }
+        _ => crate::materials::load_surface_image(
+            commands,
+            &material.albedo_texture,
+            material,
+            dir,
+            assets,
+            true,
+        ),
     };
     let rounded = matches!(visual, Some(Visual::Circle { .. }));
     let secondary = crate::world::parse_color(&effect.color);
@@ -299,7 +309,7 @@ fn insert_graph(
     commands.entity(entity).insert((
         Mesh2d(mesh),
         MeshMaterial2d(graph_materials.add(crate::materials::graph_material_2d(
-            &effect, tint, secondary, texture, rounded, shader,
+            material, &effect, tint, secondary, texture, rounded, shader,
         ))),
     ));
 }

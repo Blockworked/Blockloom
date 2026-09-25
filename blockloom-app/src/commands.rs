@@ -926,10 +926,13 @@ pub(crate) fn set_actor_component(
     app: &AppHandle,
     actor_id: String,
     name: String,
-    component: ActorComponent,
+    mut component: ActorComponent,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     check_parent(s.project(), &actor_id, &component)?;
+    if let ActorComponent::Material { material } = &mut component {
+        material.normalize();
+    }
     push_undo_for(
         &mut s,
         Some(EditSession::Comment {

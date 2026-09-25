@@ -35,7 +35,7 @@ Rectangle {
         return Object.assign({ body: "None", gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5, density: 1, mass: null, trigger: false, one_way: false, character_controller: false, collision_layer: 1, collision_mask: 255 }, c.physics || {});
     }
     function cameraOf(c) { return Object.assign({ view: "Follow", offset: [0, 0.6, 0], distance: 6, pitch: 15, fov: 75 }, c.camera || {}); }
-    function materialOf(c) { return Object.assign({ metallic: 0, roughness: 0.6, emissive: "#000000", emissive_energy: 0, albedo_texture: "", double_sided: false, shader: null }, c.material || {}); }
+    function materialOf(c) { return Object.assign({ metallic: 0, roughness: 0.6, emissive: "#000000", emissive_energy: 0, albedo_texture: "", normal_texture: "", roughness_texture: "", tiling: [1, 1], offset: [0, 0], rotation: 0, sampler: "Clamp", anisotropy: 0, box_projection: false, texel_density: 1, double_sided: false, shader: null }, c.material || {}); }
     function emitterOf(c) { return Object.assign({ rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: "#FFFFFF", color_end: "#FFAB19", max: 128 }, c.emitter || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
@@ -223,7 +223,7 @@ Rectangle {
                 NumberField { value: c.placement.position[0]; onCommitted: n => root.writeVector(c, "position", 0, n) }
                 NumberField { value: c.placement.position[1]; onCommitted: n => root.writeVector(c, "position", 1, n) }
                 NumberField { visible: root.is3d; value: c.placement.position[2]; onCommitted: n => root.writeVector(c, "position", 2, n) } }
-            InspectorRow { label: "Rotation"; Layout.fillWidth: true
+            InspectorRow { label: "Rotation deg"; Layout.fillWidth: true
                 NumberField { visible: root.is3d; value: c.placement.rotation[0]; onCommitted: n => root.writeVector(c, "rotation", 0, n) }
                 NumberField { visible: root.is3d; value: c.placement.rotation[1]; onCommitted: n => root.writeVector(c, "rotation", 1, n) }
                 NumberField { value: c.placement.rotation[2]; onCommitted: n => root.writeVector(c, "rotation", 2, n) } }
@@ -589,6 +589,26 @@ Rectangle {
                 NumberField { value: mat.m.emissive_energy; onCommitted: n => root.writeMaterial(mat.c, { emissive_energy: n }) } }
             InspectorRow { label: "Texture"; Layout.fillWidth: true
                 AssetField { app: root.app; accept: ["image"]; value: mat.m.albedo_texture; placeholderText: "Optional albedo"; onCommitted: p => root.writeMaterial(mat.c, { albedo_texture: p }) } }
+            InspectorRow { label: "Normal map"; Layout.fillWidth: true; visible: root.is3d && mat.m.shader === null
+                AssetField { app: root.app; accept: ["image"]; value: mat.m.normal_texture; placeholderText: "Optional normal"; onCommitted: p => root.writeMaterial(mat.c, { normal_texture: p }) } }
+            InspectorRow { label: "Rough map"; Layout.fillWidth: true; visible: root.is3d && mat.m.shader === null
+                AssetField { app: root.app; accept: ["image"]; value: mat.m.roughness_texture; placeholderText: "Roughness in green channel"; onCommitted: p => root.writeMaterial(mat.c, { roughness_texture: p }) } }
+            InspectorRow { label: "Tile X / Y"; Layout.fillWidth: true
+                NumberField { value: mat.m.tiling[0]; fallback: 1; onCommitted: n => root.writeMaterial(mat.c, { tiling: root.withIndex(mat.m.tiling, 0, n) }) }
+                NumberField { value: mat.m.tiling[1]; fallback: 1; onCommitted: n => root.writeMaterial(mat.c, { tiling: root.withIndex(mat.m.tiling, 1, n) }) } }
+            InspectorRow { label: "Offset X / Y"; Layout.fillWidth: true
+                NumberField { value: mat.m.offset[0]; onCommitted: n => root.writeMaterial(mat.c, { offset: root.withIndex(mat.m.offset, 0, n) }) }
+                NumberField { value: mat.m.offset[1]; onCommitted: n => root.writeMaterial(mat.c, { offset: root.withIndex(mat.m.offset, 1, n) }) } }
+            InspectorRow { label: "Rotation"; Layout.fillWidth: true
+                NumberField { value: mat.m.rotation; onCommitted: n => root.writeMaterial(mat.c, { rotation: n }) } }
+            InspectorRow { label: "Sampler"; Layout.fillWidth: true
+                ChoiceField { options: Blocks.opts(["Clamp", "Repeat", "Mirror"]); value: mat.m.sampler; onChosen: v => root.writeMaterial(mat.c, { sampler: v }) } }
+            InspectorRow { label: "Anisotropy"; Layout.fillWidth: true
+                ChoiceField { options: Blocks.opts(["0", "2", "4", "8", "16"]); value: String(mat.m.anisotropy); onChosen: v => root.writeMaterial(mat.c, { anisotropy: Number(v) }) } }
+            InspectorRow { label: "Box projection"; Layout.fillWidth: true; visible: root.is3d
+                SwitchField { value: mat.m.box_projection; onToggled: on => root.writeMaterial(mat.c, { box_projection: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Tiles / unit"; Layout.fillWidth: true
+                NumberField { value: mat.m.texel_density; fallback: 1; onCommitted: n => root.writeMaterial(mat.c, { texel_density: n }) } }
             InspectorRow { label: "Two-sided"; Layout.fillWidth: true; SwitchField { value: mat.m.double_sided; onToggled: on => root.writeMaterial(mat.c, { double_sided: on }) } Item { Layout.fillWidth: true } }
             InspectorRow { label: "Effect"; Layout.fillWidth: true
                 SwitchField { value: mat.m.shader !== null; onToggled: on => root.writeMaterial(mat.c, { shader: on ? { mode: "Solid", speed: 1, strength: 0.5, color: "#FFFFFF" } : null }) } Item { Layout.fillWidth: true } }

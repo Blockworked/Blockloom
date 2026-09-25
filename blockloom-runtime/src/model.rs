@@ -155,6 +155,7 @@ fn on_ready(
             Mesh3d,
             MeshMaterial3d<StandardMaterial>,
             MeshMaterial3d<GraphMaterial3d>,
+            MeshMaterial3d<crate::materials::BoxMaterial>,
         )>();
     }
     for entity in children.iter_descendants(ready.entity) {

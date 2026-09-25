@@ -755,6 +755,10 @@ impl Project {
         }
         self.world.input.normalize();
         for actor in &mut self.actors {
+            if let Some(ActorComponent::Material { material }) = actor.components.get_mut("Material")
+            {
+                material.normalize();
+            }
             actor.graph.migrate_bool_slots();
             actor.graph.normalize_block_colors();
             actor.graph.prune_orphaned_comments();
@@ -895,6 +899,8 @@ impl Project {
                     } => repoint(&mut tilemap.tileset),
                     ActorComponent::Material { material } => {
                         repoint(&mut material.albedo_texture);
+                        repoint(&mut material.normal_texture);
+                        repoint(&mut material.roughness_texture);
                     }
                     ActorComponent::Script { path } => repoint(path),
                     _ => {}
@@ -1507,6 +1513,14 @@ mod tests {
         actor.components.insert(ActorComponent::Script {
             path: "assets/scripts/player.rs".to_string(),
         });
+        actor.components.insert(ActorComponent::Material {
+            material: crate::material::SurfaceMaterial {
+                albedo_texture: "assets/sprites/player.png".to_string(),
+                normal_texture: "assets/sprites/normal.png".to_string(),
+                roughness_texture: "assets/sprites/rough.png".to_string(),
+                ..Default::default()
+            },
+        });
 
         // The file itself.
         assert!(project.repoint_asset("assets/sprites/player.png", "assets/sprites/hero.png"));
@@ -1522,6 +1536,10 @@ mod tests {
             Some(Visual::Image { path, .. }) if path == "art/hero.png"
         ));
         assert_eq!(actor.components.script(), Some("assets/scripts/player.rs"));
+        let material = actor.components.material().unwrap();
+        assert_eq!(material.albedo_texture, "art/hero.png");
+        assert_eq!(material.normal_texture, "art/normal.png");
+        assert_eq!(material.roughness_texture, "art/rough.png");
     }
 
     #[test]

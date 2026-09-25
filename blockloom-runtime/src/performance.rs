@@ -92,8 +92,10 @@ pub fn update_streaming_cells(
 #[derive(Resource, Default)]
 pub struct RenderCache {
     meshes: HashMap<MeshKey, Handle<Mesh>>,
+    scaled_meshes: HashMap<MeshKey, Handle<Mesh>>,
     low_spheres: HashMap<u32, Handle<Mesh>>,
     materials: HashMap<String, Handle<StandardMaterial>>,
+    box_materials: HashMap<String, Handle<crate::materials::BoxMaterial>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -121,6 +123,21 @@ impl MeshKey {
 }
 
 impl RenderCache {
+    pub fn scaled_mesh(
+        &mut self,
+        visual: &Visual,
+        make: impl FnOnce() -> Option<Mesh>,
+        meshes: &mut Assets<Mesh>,
+    ) -> Option<Handle<Mesh>> {
+        let key = MeshKey::of(visual)?;
+        if let Some(handle) = self.scaled_meshes.get(&key) {
+            return Some(handle.clone());
+        }
+        let handle = meshes.add(make()?);
+        self.scaled_meshes.insert(key, handle.clone());
+        Some(handle)
+    }
+
     pub fn mesh(&mut self, visual: &Visual, meshes: &mut Assets<Mesh>) -> Option<Handle<Mesh>> {
         let key = MeshKey::of(visual);
         if let Some(handle) = key.and_then(|key| self.meshes.get(&key)) {
@@ -162,12 +179,26 @@ impl RenderCache {
             .clone()
     }
 
+    pub fn box_material(
+        &mut self,
+        key: String,
+        make: impl FnOnce() -> crate::materials::BoxMaterial,
+        materials: &mut Assets<crate::materials::BoxMaterial>,
+    ) -> Handle<crate::materials::BoxMaterial> {
+        self.box_materials
+            .entry(key)
+            .or_insert_with(|| materials.add(make()))
+            .clone()
+    }
+
     /// A rebuild starts a new authored world. Old handles remain alive only
     /// while old entities still reference them.
     pub fn clear(&mut self) {
         self.meshes.clear();
+        self.scaled_meshes.clear();
         self.low_spheres.clear();
         self.materials.clear();
+        self.box_materials.clear();
     }
 }
 
@@ -265,7 +296,10 @@ mod tests {
     #[test]
     fn stream_cells_stay_active_in_the_hysteresis_band() {
         let mut cells = StreamingCells::default();
-        assert_eq!(StreamingCells::cell_at(Vec3::new(-0.1, 0.0, -64.1)), (-1, -2));
+        assert_eq!(
+            StreamingCells::cell_at(Vec3::new(-0.1, 0.0, -64.1)),
+            (-1, -2)
+        );
         cells.update(Vec3::ZERO);
         assert!(cells.active.contains(&(0, 0)));
         cells.update(Vec3::new(160.0, 0.0, 0.0));

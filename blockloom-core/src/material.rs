@@ -3,8 +3,8 @@
 //! The look beyond flat colors: what a surface is made of, what moves on it,
 //! and what the ground is built from.
 //!
-//! - [`SurfaceMaterial`] is PBR properties (metallic, roughness, emissive,
-//!   albedo texture) plus an optional [`ShaderGraph`] custom effect. The 3D
+//! - [`SurfaceMaterial`] is PBR properties, texture maps and mapping controls
+//!   plus an optional [`ShaderGraph`] custom effect. The 3D
 //!   runtime applies the PBR half to its `StandardMaterial`; both dimensions
 //!   render a custom graph through the shared ubershader (`GraphMaterial2d` /
 //!   `GraphMaterial3d`), driven by the authored [`GraphEffect`] params.
@@ -41,6 +41,24 @@ pub struct SurfaceMaterial {
     /// Empty means none.
     #[serde(default)]
     pub albedo_texture: String,
+    #[serde(default)]
+    pub normal_texture: String,
+    #[serde(default)]
+    pub roughness_texture: String,
+    #[serde(default = "default_tiling")]
+    pub tiling: [f32; 2],
+    #[serde(default)]
+    pub offset: [f32; 2],
+    #[serde(default)]
+    pub rotation: f32,
+    #[serde(default)]
+    pub sampler: TextureSampler,
+    #[serde(default)]
+    pub anisotropy: u8,
+    #[serde(default)]
+    pub box_projection: bool,
+    #[serde(default = "default_texel_density")]
+    pub texel_density: f32,
     /// Draw both faces. Off culls back faces, the usual want.
     #[serde(default)]
     pub double_sided: bool,
@@ -51,6 +69,21 @@ pub struct SurfaceMaterial {
 
 fn default_roughness() -> f32 {
     0.6
+}
+
+fn default_tiling() -> [f32; 2] {
+    [1.0, 1.0]
+}
+fn default_texel_density() -> f32 {
+    1.0
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum TextureSampler {
+    Repeat,
+    Mirror,
+    #[default]
+    Clamp,
 }
 
 fn default_emissive() -> String {
@@ -65,6 +98,15 @@ impl Default for SurfaceMaterial {
             emissive: default_emissive(),
             emissive_energy: 0.0,
             albedo_texture: String::new(),
+            normal_texture: String::new(),
+            roughness_texture: String::new(),
+            tiling: default_tiling(),
+            offset: [0.0; 2],
+            rotation: 0.0,
+            sampler: TextureSampler::Clamp,
+            anisotropy: 0,
+            box_projection: false,
+            texel_density: default_texel_density(),
             double_sided: false,
             shader: None,
         }
@@ -78,6 +120,24 @@ impl SurfaceMaterial {
         self.roughness = self.roughness.clamp(0.0, 1.0);
         self.emissive_energy = self.emissive_energy.max(0.0);
         self.albedo_texture = self.albedo_texture.trim().to_string();
+        self.normal_texture = self.normal_texture.trim().to_string();
+        self.roughness_texture = self.roughness_texture.trim().to_string();
+        self.tiling = self.tiling.map(|v| {
+            if v.is_finite() {
+                v.clamp(0.001, 1024.0)
+            } else {
+                1.0
+            }
+        });
+        self.offset = self.offset.map(|v| if v.is_finite() { v } else { 0.0 });
+        if !self.rotation.is_finite() {
+            self.rotation = 0.0;
+        }
+        if !self.texel_density.is_finite() {
+            self.texel_density = 1.0;
+        }
+        self.texel_density = self.texel_density.clamp(0.001, 1024.0);
+        self.anisotropy = self.anisotropy.min(16);
         if let Some(effect) = self.shader.as_mut() {
             effect.normalize();
         }
@@ -89,6 +149,15 @@ impl SurfaceMaterial {
             || self.roughness != default_roughness()
             || self.emissive_energy > 0.0
             || !self.albedo_texture.is_empty()
+            || !self.normal_texture.is_empty()
+            || !self.roughness_texture.is_empty()
+            || self.tiling != default_tiling()
+            || self.offset != [0.0; 2]
+            || self.rotation != 0.0
+            || self.sampler != TextureSampler::Clamp
+            || self.anisotropy != 0
+            || self.box_projection
+            || self.texel_density != default_texel_density()
             || self.double_sided
             || self.shader.is_some()
     }
@@ -564,6 +633,7 @@ pub const SURFACE_CONTRACT: &str = "\
 // surface's color (alpha 0 is see-through). Plain WGSL, no #import.
 // In scope: `tint` and `secondary` (vec4 colors), `params` (mode, speed,
 // strength, time), and `base_color(uv)`, the look's tint times its image.
+// The runtime passes box-projected UVs when the material enables projection.
 ";
 
 /// The uniforms and helper every surface shader is compiled against. The
@@ -576,11 +646,31 @@ pub const SURFACE_BINDINGS: &str = "\
 @group(#{MATERIAL_BIND_GROUP}) @binding(3) var<uniform> flags: vec4<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(4) var texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(5) var texture_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(6) var<uniform> uv_scale_offset: vec4<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(7) var<uniform> uv_options: vec4<f32>;
+var<private> surface_position: vec3<f32>;
+var<private> surface_normal: vec3<f32>;
+
+fn surface_uv(uv: vec2<f32>) -> vec2<f32> {
+    let scaled = uv * uv_scale_offset.xy;
+    let angle = uv_options.x;
+    return vec2<f32>(scaled.x * cos(angle) - scaled.y * sin(angle),
+                     scaled.x * sin(angle) + scaled.y * cos(angle)) + uv_scale_offset.zw;
+}
 
 fn base_color(uv: vec2<f32>) -> vec4<f32> {
     var color = tint;
     if (flags.x > 0.5) {
-        color = color * textureSample(texture, texture_sampler, uv);
+        if (uv_options.y > 0.5) {
+            let p = surface_position * uv_options.z;
+            let weight = pow(abs(normalize(surface_normal)), vec3<f32>(4.0));
+            let w = weight / max(dot(weight, vec3<f32>(1.0)), 0.0001);
+            color = color * (textureSample(texture, texture_sampler, surface_uv(p.yz)) * w.x
+                + textureSample(texture, texture_sampler, surface_uv(p.xz)) * w.y
+                + textureSample(texture, texture_sampler, surface_uv(p.xy)) * w.z);
+        } else {
+            color = color * textureSample(texture, texture_sampler, surface_uv(uv));
+        }
     }
     return color;
 }
@@ -1172,12 +1262,27 @@ mod tests {
         let mut material = SurfaceMaterial {
             metallic: 2.0,
             roughness: -1.0,
+            tiling: [-2.0, f32::NAN],
+            texel_density: 0.0,
             ..SurfaceMaterial::default()
         };
         material.normalize();
         assert_eq!(material.metallic, 1.0);
         assert_eq!(material.roughness, 0.0);
+        assert_eq!(material.tiling, [0.001, 1.0]);
+        assert_eq!(material.texel_density, 0.001);
         assert!(material.is_active());
+    }
+
+    #[test]
+    fn older_materials_keep_clamped_unit_uvs() {
+        let material: SurfaceMaterial =
+            serde_json::from_str(r#"{"albedo_texture":"stone.png"}"#).unwrap();
+        assert_eq!(material.tiling, [1.0, 1.0]);
+        assert_eq!(material.offset, [0.0, 0.0]);
+        assert_eq!(material.sampler, TextureSampler::Clamp);
+        assert!(!material.box_projection);
+        assert_eq!(material.texel_density, 1.0);
     }
 
     #[test]

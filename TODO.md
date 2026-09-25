@@ -100,6 +100,22 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [ ] MJPEG fallback (Windows, macOS, `BLOCKLOOM_RUNTIME=process`): the resolution switch still resizes the OS window, pointer lock only gets absolute positions, and the stream is a fixed ~15fps JPEG-60 regardless of preset or pause state. Most of this goes away once those platforms share GPU frames.
 - [x] Visual world editor: edit-mode 2D/3D viewport with selection sync to ActorList/Inspector, drag to move plus rotate/scale gizmos, snapping, camera pan/zoom/orbit. Shares the Game view panel: Edit manipulates placement directly, Play runs the world.
 - [ ] Editor: gizmos/snapping, prefab mode, scene search, log filter, frame stepper, profiler (draw calls, CPU/GPU/memory), playmode tests.
+- [ ] Editor/headless project sync: shell and MCP sessions share live state with an
+      open editor instead of forking a silent second copy that last-writer-wins
+      over the user's work.
+  - [ ] Attach mode: shell/MCP drives the editor's own Backend over the existing
+        command channel instead of booting a second in-memory project;
+        `open-project` attaches when the folder is already open, owns only when
+        it is not. One copy, no merge problem by construction.
+  - [ ] Lock file: per-folder lock with owner PID, session id and heartbeat; a
+        second owner-mode opener warns or takes over explicitly, never silently.
+  - [ ] Live reload (covers every non-attached reader): file-watch
+        project.blockloom plus assets, and since every edit already hits disk on
+        landing, reload idle backends straight off disk. Conflict prompt when both
+        sides hold unsaved in-memory work (keep mine / take theirs); undo history
+        stays per side and is never merged.
+  - [ ] Revision feed: counter on every save; shell `--watch` streams revisions so
+        agents poll cheaply, MCP state resources re-read on revision bump.
 
 ### Phase 4 - Look and depth, uses Bevy leverage
 - [x] Asset pipeline: glTF/FBX rigs, atlases, texture/audio compression, reimport tracking.
@@ -107,7 +123,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 - [x] Load glTF scenes for Model looks (a ModelSource loader with rig playback from the parsed animations) instead of placeholder boxes.
 - [x] Bake atlas layouts into sheets at build time - pack_atlas is plan-only today - and let a tilemap animate tiles and collide per-tile rather than as one slab.
 - [x] Close the custom-shader loop: export a shader graph to a .wgsl asset, and let hand-authored WGSL drive the live material instead of only the uniform path.
-- [ ] World-space material texturing (fixes stretched textures on large brushes,
+- [x] World-space material texturing (fixes stretched textures on large brushes,
       first-person walls and floors first): per-material texture transform
       (tiling X/Y, offset, rotation), sampler choice (Repeat/Mirror/Clamp plus
       anisotropy), normal and roughness map slots beside albedo, and a
@@ -130,18 +146,23 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         Bevy instancing, sphere screen-size LOD, depth-pyramid occlusion,
         hysteretic XZ cell activation, and live render timings, mesh allocation
         and Game view target footprint.
-  - [ ] Batching and instancing: static batching for level geometry, GPU instancing
-        for repeated props/vegetation/debris (one draw per mesh, per-instance data
-        in storage buffers), dynamic batching for small meshes. Covers the actors
-        Phase 5 will scatter by the thousand.
-  - [ ] LOD and occlusion: screen-size LOD selection for meshes, software Hi-Z or
-        query-based occlusion culling for interiors and caves, GPU frustum culling
-        where Bevy does not already do it. The LOD hooks Phase 5 terrain chunks,
-        trees and VFX plug into rather than reinvent.
-  - [ ] Async loading and streaming: background asset loads with placeholder or
-        fade-in, world streaming cells with hysteresis so borders never thrash,
-        shader prewarm on Play and at build time so first frames never hitch. The
-        cell system Phase 5 terrain chunks stream through.
+  - [ ] Batching and instancing (the mechanism; Phase 5 sets the numbers): static
+        batching for level geometry, GPU instancing for repeated meshes (one draw
+        per mesh, per-instance data in storage buffers, batch keys independent of
+        material slot layout so texturing changes never re-key), dynamic batching
+        for small meshes. Phase 5 decides what scatters by the thousand; this is
+        how the thousand draws become one.
+  - [ ] LOD and occlusion (framework plus hooks; Phase 5 plugs policy in):
+        screen-size LOD selection with hysteresis bands and a per-level swap API
+        for meshes, software Hi-Z or query-based occlusion culling for interiors
+        and caves, GPU frustum culling where Bevy does not already do it. Terrain
+        chunks, trees and VFX supply thresholds and levels, never new selectors.
+  - [ ] Async loading and streaming (owns the cell system; Phase 5 content only
+        registers into it): background asset loads with placeholder or fade-in,
+        world streaming cells with hysteresis so borders never thrash, shader
+        prewarm on Play and at build time so first frames never hitch. Terrain
+        chunks, noise volumes, HDRI mips and probe captures arrive as payload
+        types on this system, not as a second one.
   - [ ] GPU measurement: per-pass timestamp queries plus render-target memory
         accounting, surfaced in the profiler (completes the render half of the open
         Phase 3 profiler item). No Phase 5 budget is enforceable without it.
@@ -150,6 +171,9 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         `Environment` render resource (sky, fog, light, exposure deltas) that the
         dim2/dim3 passes read, instead of each pass reading the project. Sky,
         clouds, fog, water and post then consume the same blended values.
+        `Environment.exposure` is the single EV value every pass reads; writers
+        resolve by precedence (director track beats post auto-exposure beats
+        manual EV), so the four exposure dials below never fight.
   - [ ] Shared shader library and pass plumbing: common WGSL chunks (hash, noise,
         FBM, scattering helpers, standard UBO layout) plus one FP16 working-target
         set with a half-res scratch pair and bilateral upsample, used by both
@@ -172,10 +196,13 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           working space, tonemap and OETF only at final output. All lights, sky sun,
           clouds and emissives can exceed 1.0 without clipping. Bloom threshold works
           in HDR (1.0-plus for real glints, below for stylized glow).
-        - Physical units: sun in lux with real sun/sky ratios, punctual lights in
-          lumens/candela with range falloff in meters, emissive as color times
-          intensity multiplier (HDR color picker with exposure-invariant swatch).
-          Exposure in EV shared with time-of-day director and post volumes.
+        - Physical units (the scene-referred side; the EV value itself lives in
+          `Environment.exposure`): sun in lux with real sun/sky ratios, punctual
+          lights in lumens/candela with range falloff in meters, emissive as color
+          times intensity multiplier (HDR color picker with exposure-invariant
+          swatch). Exposure is the single bridge from scene lux to display nits,
+          written by the director track or post auto-exposure per the precedence
+          on the blended environment resource, never stored per system.
         - Display output: SDR sRGB fallback everywhere plus true HDR where the OS
           offers it (Windows Advanced Color scRGB/HDR10, macOS EDR, Vulkan HDR
           swapchain, Wayland color-management when present). Selectable output
@@ -232,7 +259,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           anisotropy g plus directional intensity, ozone absorption, Rayleigh and Mie
           altitude scales, ground albedo tint, horizon-to-zenith blend curve, planet
           radius and atmosphere thickness for limb curvature, night tint ramp, and
-          shared exposure offset. Sun position driven by lat/long plus time, or
+          a sky-local exposure bias (added after `Environment.exposure`, never a
+          second EV). Sun position driven by lat/long plus time, or
           manual azimuth/elevation.
         - Gradient sky: top/middle/bottom stops, horizon offset and softness,
           horizon warmth tied to sun elevation, dither toggle to kill banding,
@@ -343,19 +371,23 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         camera, HDR color for glow trails), event hooks (`on collide/die/spawn` fires
         blocks). CPU fallback pool for headless/low-end. Editor: curve editor, live
         loop preview, max-particle budget and overdraw meter.
-  - [ ] Decals: deferred projected (albedo/normal/roughness/emissive, atlas pages,
+  - [ ] Decals (transient marks only; lasting stains live in the destruction map
+        below): deferred projected (albedo/normal/roughness/emissive, atlas pages,
         angle fade, depth reject to avoid floating edges), pool with LRU steal plus
-        per-decal lifetime/fade, blood/scorch/footprint presets. Blocks: `spawn decal
-        _ at`, `fade decals in radius`. Persist toggle for scorch that survives reload.
+        per-decal lifetime/fade, blood/footprint/fresh-scorch presets. Blocks:
+        `spawn decal _ at`, `fade decals in radius`. No persist toggle: anything
+        that must survive reload goes through the scorch/wetness map instead.
   - [ ] Destruction and fluids lite: fracture-on-hit (Voronoi cell count, interior
         cap material, impulse threshold, shard lifetime/sleep/pool cap), debris
         impulse inheritance plus bounce sounds, 2D shallow-water ripple grid for
         puddles/ponds (rain rings, footstep rings, shore reflect), smoke advection
         grid for stylized chimneys and dust puffs (no full 3D sim), persistent
         scorch/wetness map (world-space RT, dries over time, darkens albedo and
-        raises specular). Blocks: `fracture _`, `splash at`, `puff smoke at`.
-  - [ ] Post volumes (full HDR chain, volume-blended): exposure (manual EV plus auto
-        spot-meter with min/max and speed), bloom (threshold/knee, 5-mip scatter chain,
+        raises specular): the sole owner of lasting surface state, read by the
+        material mask stack. Blocks: `fracture _`, `splash at`, `puff smoke at`.
+  - [ ] Post volumes (full HDR chain, volume-blended): exposure (auto spot-meter
+        with min/max and speed writes `Environment.exposure` when enabled, else the
+        manual EV stands; both lose to the director track per precedence), bloom (threshold/knee, 5-mip scatter chain,
         dirt texture), tonemap (ACES/Neutral/AgX select, toe/shoulder), white balance
         plus LUT/grading (lift/gamma/gain, saturation, contrast), vignette, depth of
         field (autofocus target or fixed distance, bokeh blades/circular, near/far),
@@ -363,18 +395,19 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         SSR toggle with roughness cutoff, chromatic aberration, film grain, sharpen.
         Order fixed HDR-first; debug splits (bloom mip, CoC, AO only).
   - [ ] Performance and scalability (whole-frame budgets for the stack above):
-        - Draw efficiency: GPU instancing for vegetation/props/debris, static plus
-          dynamic batching for decals and small meshes, indirect draws with GPU
-          frustum and occlusion culling (software Hi-Z plus hardware queries),
-          per-system draw-call and triangle budgets surfaced in the profiler.
-        - LOD and culling: distance plus screen-size LOD for terrain chunks, trees,
-          water tiles and VFX, occlusion culling for interiors and caves, cloud
-          step-count LOD by distance and weather weight, probe and shadow update
+        - Draw policy (numbers on the Phase 4 mechanisms, no new machinery):
+          which meshes instance (vegetation, props, debris, decals) and at what
+          density, indirect-draw batch membership, per-system draw-call and
+          triangle budgets surfaced in the profiler. A system over budget loses
+          density or distance before it loses features.
+        - LOD and throttle policy (thresholds, not selectors): screen-size and
+          distance cutoffs for terrain chunks, trees, water tiles and VFX, cloud
+          step counts by distance and weather weight, probe and shadow update
           throttling (staggered refresh, frozen static probes, cascade shrinking).
-        - Async and streaming: background load of terrain chunks, noise volumes,
-          HDRI mips and probe captures, world streaming cells with hysteresis so
-          borders never thrash, shader prewarm on Play and at build time so first
-          frames never hitch.
+        - Content streaming (payloads on the Phase 4 cell system, not a second
+          one): terrain chunk data, noise volumes, HDRI mips and probe captures
+          register as streamable payloads with per-type priority and eviction
+          policy. No new hysteresis or prewarm logic here.
         - Resolution scaling: dynamic resolution driven by frame-time feedback,
           spatial upscaler plus temporal anti-aliasing path, half-res volumetrics,
           fog and SSR with bilateral upsample, reflection and shadow resolution
@@ -395,7 +428,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           `frame time`, `draw calls`, `current quality`, `is DLSS available?`, event `when quality drops`.
   - [ ] Time-of-day and weather director (the thing that makes it shippable):
         - 24h curve editor: tracks for sun azimuth/elevation, moon azimuth/elevation,
-          exposure EV, temperature/tint, fog density, cloud coverage/type, precipitation,
+          exposure EV (the default writer of `Environment.exposure`; wins over post
+          auto-exposure and manual EV while the director runs), temperature/tint, fog density, cloud coverage/type, precipitation,
           wetness, wind, aurora KP, grading LUT weight. Bezier keys, loop toggle,
           keyframe presets (dawn/noon/dusk/midnight).
         - Weather presets as assets: Clear, Overcast, Storm, Sunset, Night, plus user
@@ -404,7 +438,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           so rapid changes do not pop.
         - Block and script API: `set time of day to`, `advance time by`, `set cloud
           coverage/density/type to`, `set fog density to`, `set precipitation to`,
-          `set exposure to`, reporters `time of day`, `sun elevation`, `cloud
+          `set exposure to` (director value, top precedence), reporters `time of day`, `sun elevation`, `cloud
           coverage`, `current weather`, event `when weather becomes _`. Sensor
           snapshot carries sun/wind/fog so reporters and scripts agree per tick.
         - Determinism: seeded RNG per blend so two runs with same inputs make same
