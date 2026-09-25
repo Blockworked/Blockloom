@@ -37,13 +37,14 @@ libloading.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+# Bevy's own version; the GPU timer needs query sets it doesn't re-export.
+wgpu = "30"
 
 # The embedded Game view hands frames to the editor as dma-bufs, which takes
 # the raw Vulkan device under Bevy's wgpu, with the DRM modifier extension
 # `raw_vulkan_init` lets it turn on. Versions match Bevy's own.
 [target.'cfg(target_os = "linux")'.dependencies]
 bevy = { workspace = true, features = ["raw_vulkan_init"] }
-wgpu = "30"
 ash = "0.38"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]

@@ -2944,6 +2944,7 @@ pub fn report_status(
     batches: Option<Res<crate::batching::Batches>>,
     culling: Option<Res<crate::culling::Culling>>,
     streaming: crate::streaming::StreamingReport,
+    gpu: crate::gpu::GpuReport,
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
     let now = time.elapsed_secs() as f64;
@@ -2977,8 +2978,9 @@ pub fn report_status(
         .flat_map(|store| store.iter())
         .filter_map(|diagnostic| {
             let name = diagnostic.path().as_str();
-            let measured = name.starts_with("render/")
-                && (name.ends_with("/elapsed_gpu") || name.ends_with("/elapsed_cpu"));
+            let measured = name == crate::gpu::FRAME_GPU.as_str()
+                || name.starts_with("render/")
+                    && (name.ends_with("/elapsed_gpu") || name.ends_with("/elapsed_cpu"));
             if !measured && name != "mesh_allocator_slabs_size" {
                 return None;
             }
@@ -3041,6 +3043,13 @@ pub fn report_status(
             name: name.into(),
             value: value as f64,
             unit: "count".into(),
+        });
+    }
+    for (name, value, unit) in gpu.metrics() {
+        render_metrics.push(RenderMetric {
+            name: name.into(),
+            value,
+            unit: unit.into(),
         });
     }
     bridge::send(&RuntimeMessage::Status(Status {

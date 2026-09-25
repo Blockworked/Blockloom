@@ -199,9 +199,16 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         warm-up window after every rebuild that draws everything unculled and
         holds the green flag until loads and pipeline compiles settle. Builds
         validate every `.wgsl` surface file first.
-  - [ ] GPU measurement: per-pass timestamp queries plus render-target memory
+  - [x] GPU measurement: per-pass timestamp queries plus render-target memory
         accounting, surfaced in the profiler (completes the render half of the open
         Phase 3 profiler item). No Phase 5 budget is enforceable without it.
+        Done in `blockloom-runtime/src/gpu.rs`: a whole-frame timestamp span
+        (`gpu/frame`) beside Bevy's per-pass `elapsed_gpu`, render-target bytes
+        by kind (color, depth, prepass, shadow, post, game view) plus images
+        and everything else, sorted from the wgpu allocator's report by label
+        so a new pass is counted without code of its own. Backends without a
+        report (Metal) fall back to sizing the views' own textures. The
+        profiler says when an adapter has no timestamps.
 - [ ] Refactors to clear the path for Phase 5 (do these first, not mid-stack):
   - [ ] One blended environment resource: volume blending writes a single
         `Environment` render resource (sky, fog, light, exposure deltas) that the

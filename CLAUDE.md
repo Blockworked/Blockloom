@@ -422,6 +422,17 @@ reduced to a max-depth pyramid. Bevy's GPU `OcclusionCulling` and GPU frustum
 culling (`NoCpuCulling`) are camera toggles in `OcclusionPolicy`. Counts reach
 the profiler as `culling/*`.
 
+### GPU measurement
+
+`blockloom-runtime/src/gpu.rs`. Bevy's `RenderDiagnosticsPlugin` times each
+pass; `gpu.rs` adds one timestamp pair around the whole frame (an encoder
+pushed in `RenderGraphSystems::Begin` and one before `Submit`, read back a few
+frames later) as `gpu/frame`. Every `MEMORY_EVERY` frames it sorts the wgpu
+allocator's report into `Kind`s by allocation label (`Kind::of`), so a new
+render target needs a label that sorts, not code. Without a report (Metal) it
+sizes the views' own textures instead. All of it reaches the profiler as
+`gpu/*` and `memory/*`.
+
 ### Loading and streaming
 
 `blockloom-runtime/src/streaming.rs`. `StreamingCells` is the one cell system:

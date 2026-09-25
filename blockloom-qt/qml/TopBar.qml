@@ -68,6 +68,10 @@ Rectangle {
         padding: 12
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         background: Rectangle { color: Theme.panel; border.color: Theme.border; radius: 6 }
+        function metric(name) {
+            const all = root.app.status && root.app.status.render_metrics ? root.app.status.render_metrics : [];
+            return all.find(m => m.name === name) || null;
+        }
         contentItem: Flickable {
             clip: true
             contentHeight: metricsColumn.implicitHeight
@@ -77,8 +81,29 @@ Rectangle {
                 spacing: 5
                 Text { text: "Render profiler"; color: Theme.text; font.bold: true; font.pixelSize: 14 }
                 Text { text: "Frame: " + (root.app.status && root.app.status.fps ? (1000 / root.app.status.fps).toFixed(1) : "-") + " ms"; color: Theme.textDim; font.pixelSize: 12 }
+                Text {
+                    readonly property var gpu: profilerPopup.metric("gpu/frame")
+                    visible: gpu !== null
+                    text: "GPU: " + (gpu ? gpu.value.toFixed(2) : "-") + " ms"
+                    color: Theme.textDim; font.pixelSize: 12
+                }
+                Text {
+                    readonly property var flag: profilerPopup.metric("gpu/timestamps")
+                    visible: flag !== null && flag.value === 0
+                    width: parent.width; wrapMode: Text.Wrap
+                    text: "This GPU has no timestamp queries, so only CPU timings show."
+                    color: Theme.textDim; font.pixelSize: 11
+                }
+                Text {
+                    readonly property var flag: profilerPopup.metric("memory/exact")
+                    visible: flag !== null && flag.value === 0
+                    width: parent.width; wrapMode: Text.Wrap
+                    text: "This backend has no allocator report, so memory is render targets only, worked out from their sizes."
+                    color: Theme.textDim; font.pixelSize: 11
+                }
                 Repeater {
-                    model: root.app.status && root.app.status.render_metrics ? root.app.status.render_metrics : []
+                    model: (root.app.status && root.app.status.render_metrics ? root.app.status.render_metrics : [])
+                        .filter(m => m.unit !== "flag" && m.name !== "gpu/frame")
                     Text {
                         required property var modelData
                         text: modelData.name.replace(/^render\//, "").replace(/\/elapsed_(gpu|cpu)$/, " ($1)") + ": " +

@@ -28,6 +28,7 @@ mod edit;
 pub mod embed;
 mod engine;
 mod fx;
+mod gpu;
 mod logic;
 mod materials;
 mod model;
@@ -108,6 +109,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .init_resource::<preview::PreviewTouches>()
         .insert_non_send(engine);
     streaming::register(app);
+    gpu::register(app);
     // Custom shader materials plus the tilemap material. Every dimension
     // registers all three, so systems can take their asset stores
     // unconditionally; an unused plugin costs nothing at runtime.
