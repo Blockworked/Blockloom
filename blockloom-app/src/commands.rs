@@ -1534,11 +1534,12 @@ pub(crate) fn build_game(
         kind: "say".to_string(),
         actor: "Blockloom".to_string(),
         text: format!(
-            "Built {} for {}: {} asset(s), {} script(s), {} blocks -> {} and {}",
+            "Built {} for {}: {} asset(s), {} script(s), {} shader(s), {} blocks -> {} and {}",
             project.name,
             target.label,
             built.assets,
             built.scripts,
+            built.shaders,
             if built.compiled { "native" } else { "VM" },
             built.dir.display(),
             built.archive.display()

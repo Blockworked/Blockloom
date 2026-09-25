@@ -3,7 +3,7 @@
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use blockloom_core::scene::Visual;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Minimum pixel bytes for the Game view's scratch target and image ring.
 #[derive(Resource, Default)]
@@ -12,80 +12,8 @@ pub struct GameViewTargetBytes(pub u64);
 #[derive(SystemParam)]
 pub struct PerformanceStores<'w> {
     pub cache: ResMut<'w, RenderCache>,
-    pub cells: ResMut<'w, StreamingCells>,
-}
-
-/// Active XZ cells for terrain, props, and effects that stream with the camera.
-/// Consumers read `entered` and `left` after this frame's camera update.
-#[derive(Resource, Default)]
-pub struct StreamingCells {
-    pub active: HashSet<(i32, i32)>,
-    pub entered: Vec<(i32, i32)>,
-    pub left: Vec<(i32, i32)>,
-}
-
-impl StreamingCells {
-    pub const SIZE: f32 = 64.0;
-    const ENTER: f32 = 128.0;
-    const EXIT: f32 = 192.0;
-
-    pub fn clear(&mut self) {
-        self.active.clear();
-        self.entered.clear();
-        self.left.clear();
-    }
-
-    pub fn cell_at(position: Vec3) -> (i32, i32) {
-        (
-            (position.x / Self::SIZE).floor() as i32,
-            (position.z / Self::SIZE).floor() as i32,
-        )
-    }
-
-    pub fn update(&mut self, position: Vec3) {
-        self.entered.clear();
-        self.left.clear();
-        let center = Self::cell_at(position);
-        for x in center.0 - 4..=center.0 + 4 {
-            for z in center.1 - 4..=center.1 + 4 {
-                let cell = (x, z);
-                if !self.active.contains(&cell)
-                    && cell_distance(position, cell, Self::SIZE) <= Self::ENTER
-                {
-                    self.active.insert(cell);
-                    self.entered.push(cell);
-                }
-            }
-        }
-        self.active.retain(|&cell| {
-            let keep = cell_distance(position, cell, Self::SIZE) <= Self::EXIT;
-            if !keep {
-                self.left.push(cell);
-            }
-            keep
-        });
-        self.entered.sort_unstable();
-        self.left.sort_unstable();
-    }
-}
-
-fn cell_distance(position: Vec3, cell: (i32, i32), size: f32) -> f32 {
-    let x = position
-        .x
-        .clamp(cell.0 as f32 * size, (cell.0 + 1) as f32 * size);
-    let z = position
-        .z
-        .clamp(cell.1 as f32 * size, (cell.1 + 1) as f32 * size);
-    Vec2::new(position.x - x, position.z - z).length()
-}
-
-pub fn update_streaming_cells(
-    camera: Query<&Transform, With<crate::world::WorldCamera>>,
-    mut cells: ResMut<StreamingCells>,
-) {
-    if let Ok(camera) = camera.single() {
-        cells.update(camera.translation);
-    }
+    pub cells: ResMut<'w, crate::streaming::StreamingCells>,
+    pub warmup: Option<ResMut<'w, crate::streaming::Warmup>>,
 }
 
 /// Shared handles let Bevy batch repeated opaque meshes into instanced draws.
@@ -277,22 +205,5 @@ mod tests {
         let second = cache.material("stone".into(), StandardMaterial::default, &mut materials);
         assert_eq!(first, second);
         assert_eq!(materials.len(), 1);
-    }
-
-    #[test]
-    fn stream_cells_stay_active_in_the_hysteresis_band() {
-        let mut cells = StreamingCells::default();
-        assert_eq!(
-            StreamingCells::cell_at(Vec3::new(-0.1, 0.0, -64.1)),
-            (-1, -2)
-        );
-        cells.update(Vec3::ZERO);
-        assert!(cells.active.contains(&(0, 0)));
-        cells.update(Vec3::new(160.0, 0.0, 0.0));
-        assert!(cells.active.contains(&(0, 0)));
-        assert!(!cells.left.contains(&(0, 0)));
-        cells.update(Vec3::new(300.0, 0.0, 0.0));
-        assert!(!cells.active.contains(&(0, 0)));
-        assert!(cells.left.contains(&(0, 0)));
     }
 }

@@ -396,7 +396,8 @@ slot rather than making a material, and same-mesh actors stay one draw.
 
 `batch_meshes` (PostUpdate) merges what instancing can't group: actors with
 no body or a fixed one that hold still for `settle_frames` merge per
-streaming cell and surface, and one that moves after merging draws itself for
+streaming cell and surface, on a `CellTasks` background task (members draw
+themselves until it lands), and one that moves after merging draws itself for
 the rest of the run; small movers merge per surface every frame. A batched
 actor keeps its entity and only loses its own draw, through
 `RenderLayers::none()`. Merged meshes bake tint and UVs into vertex colors and
@@ -420,6 +421,34 @@ Occlusion is a software Hi-Z: the camera-facing faces of solid, opaque
 reduced to a max-depth pyramid. Bevy's GPU `OcclusionCulling` and GPU frustum
 culling (`NoCpuCulling`) are camera toggles in `OcclusionPolicy`. Counts reach
 the profiler as `culling/*`.
+
+### Loading and streaming
+
+`blockloom-runtime/src/streaming.rs`. `StreamingCells` is the one cell system:
+XZ cells around the world camera with a hysteresis band, admitted nearest
+first under a per-frame budget and announced as `CellEntered`/`CellLeft`
+messages (a rebuild sends every cell as left). Content streams by being a
+payload: it reacts to those messages and does its work through `CellTasks`,
+which runs on the async compute pool and holds the cell as loading until the
+task lands. Terrain chunks and the like belong there, not in a second system.
+
+A look whose files are still loading gets `Loading`: a flat `Placeholder`
+child in 3D (Bevy draws nothing for a material whose texture isn't in yet),
+and a `FadeIn` on the sprite in 2D once the image lands. A model's own box is
+its placeholder already.
+
+Every rebuild opens a `Warmup` window: everything with bounds is drawn
+unculled (`NoFrustumCulling`, and `cull_views` stands down), so every pipeline
+compiles now rather than when a thing first turns up on screen. It closes
+after a few quiet frames with no loads, no loading cells and no pipelines in
+the render world's backlog (`PipelineBacklog`), or at its timeout. Start
+doesn't press the green flag itself in a rendering world: `engine.starting`
+holds it (reported to the editor as running) and `warm_up` calls
+`world::begin_run` when the window closes, so a built player's first frame
+is warm too. A bare test world (`engine.prewarm` false) starts on the spot.
+At build time `build::check_shaders` compiles every `.wgsl` surface file the
+project draws with, and a broken one fails the build. Counts reach the
+profiler as `streaming/*`.
 
 ### Models, tilemaps and surface shaders
 

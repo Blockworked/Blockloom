@@ -257,6 +257,8 @@ pub struct Build {
     /// How many Image looks the baked sprite atlas carries. 0 means none
     /// was worth baking and every sprite draws from its own file.
     pub atlas: usize,
+    /// How many surface shader files were checked before shipping.
+    pub shaders: usize,
 }
 
 /// What the build folder is called. The platform is in the name because one
@@ -281,6 +283,7 @@ pub fn build(
     parent: &Path,
     fast: bool,
 ) -> Result<Build, String> {
+    let shaders = check_shaders(project, project_dir)?;
     let dir = parent.join(build_name(project, target));
     clear_build_dir(&dir)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -328,7 +331,44 @@ pub fn build(
         scripts,
         compiled,
         atlas,
+        shaders,
     })
+}
+
+/// Validates every `.wgsl` surface file the project's looks draw with, the
+/// way the GPU will compile it. The player warms its pipelines before its
+/// first frame, so a file that won't compile has to stop the build here
+/// rather than reach a player's screen.
+pub fn check_shaders(project: &Project, project_dir: &Path) -> Result<usize, String> {
+    let mut sources: Vec<&str> = project
+        .actors
+        .iter()
+        .filter_map(|actor| actor.components.material()?.shader.as_ref())
+        .map(|effect| effect.source.trim())
+        .filter(|source| !source.is_empty())
+        .collect();
+    sources.sort_unstable();
+    sources.dedup();
+    let mut errors = Vec::new();
+    for source in &sources {
+        let verdict = crate::assets::resolve(project_dir, source)
+            .ok_or_else(|| "isn't a path in this project".to_string())
+            .and_then(|full| {
+                std::fs::read_to_string(&full).map_err(|error| format!("couldn't be read: {error}"))
+            })
+            .and_then(|text| crate::material::check_surface_wgsl(&text));
+        if let Err(error) = verdict {
+            errors.push(format!("{source}: {error}"));
+        }
+    }
+    if errors.is_empty() {
+        Ok(sources.len())
+    } else {
+        Err(format!(
+            "A surface shader doesn't compile, so the game wasn't built:\n{}",
+            errors.join("\n")
+        ))
+    }
 }
 
 const BUILD_MARKER: &str = ".blockloom-build";
@@ -727,6 +767,44 @@ mod tests {
 
         let pack = GamePack::read(&pack::pack_path(&game)).unwrap();
         assert_eq!(pack.title(), "Pond Game");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_shader_that_wont_compile_stops_the_build() {
+        use crate::components::ActorComponent;
+        use crate::material::{GraphEffect, SurfaceMaterial};
+        let root = temp("shaders");
+        let (mut project, project_dir, player) = a_project(&root);
+        std::fs::create_dir_all(project_dir.join("assets/shaders")).unwrap();
+        std::fs::write(
+            project_dir.join("assets/shaders/bad.wgsl"),
+            "fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> { return nope; }",
+        )
+        .unwrap();
+        let material = SurfaceMaterial {
+            shader: Some(GraphEffect {
+                source: "assets/shaders/bad.wgsl".into(),
+                ..GraphEffect::default()
+            }),
+            ..SurfaceMaterial::default()
+        };
+        project.actors[0]
+            .components
+            .insert(ActorComponent::Material { material });
+        let out = root.join("out");
+
+        let error = build(&project, &project_dir, a_target(), &player, &out, false).unwrap_err();
+        assert!(error.contains("assets/shaders/bad.wgsl"), "{error}");
+        assert!(!out.exists());
+
+        std::fs::write(
+            project_dir.join("assets/shaders/bad.wgsl"),
+            "fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> { return tint; }",
+        )
+        .unwrap();
+        let built = build(&project, &project_dir, a_target(), &player, &out, false).unwrap();
+        assert_eq!(built.shaders, 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 

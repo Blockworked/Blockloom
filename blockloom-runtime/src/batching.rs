@@ -7,14 +7,15 @@
 //! colors are one mesh, one material and one instanced draw.
 //!
 //! What instancing can't group merges instead. Actors that stay put merge into
-//! one mesh per streaming cell and surface (static batching), and small moving
+//! one mesh per streaming cell and surface (static batching), built off the
+//! main thread as a streaming payload, and small moving
 //! meshes merge into one mesh per surface every frame (dynamic batching). A
 //! batched actor keeps its entity, body and pose; only its own draw is turned
 //! off, through an empty `RenderLayers`. [`BatchPolicy`] holds the numbers.
 
 use crate::engine::ActorId;
 use crate::materials::BoxMaterial;
-use crate::performance::StreamingCells;
+use crate::streaming::{CellTasks, StreamingCells};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::primitives::MeshAabb;
 use bevy::camera::visibility::RenderLayers;
@@ -371,10 +372,14 @@ impl Snapshot {
     }
 }
 
+/// A cell's merge. It builds in the background, and its members draw
+/// themselves until the result lands.
 #[derive(Default)]
 struct StaticGroup {
     entity: Option<Entity>,
     dirty: bool,
+    /// Bumped per rebuild, so a merge for old membership is thrown away.
+    generation: u64,
 }
 
 struct DynamicGroup {
@@ -404,6 +409,7 @@ pub struct Batches {
     moved: HashSet<Entity>,
     dynamic: HashMap<Surface, DynamicGroup>,
     hidden: HashSet<Entity>,
+    merging: CellTasks<GroupKey, (u64, Option<Mesh>)>,
     pub stats: BatchStats,
 }
 
@@ -426,6 +432,7 @@ pub fn batch_meshes(
     policy: Res<BatchPolicy>,
     table: Res<InstanceTable>,
     mut batches: ResMut<Batches>,
+    mut cells: ResMut<StreamingCells>,
     mut meshes: ResMut<Assets<Mesh>>,
     instanced: Res<Assets<InstancedMaterial>>,
     boxes: Res<Assets<BoxMaterial>>,
@@ -576,6 +583,24 @@ pub fn batch_meshes(
         }
     }
 
+    // Merges that landed, if their group hasn't changed since.
+    for (key, (generation, mesh)) in batches.merging.poll(&mut cells) {
+        let Some(group) = batches.groups.get_mut(&key) else {
+            continue;
+        };
+        if group.generation != generation || group.dirty {
+            continue;
+        }
+        if let Some(mesh) = mesh {
+            let aabb = mesh.get_aabb();
+            let entity = spawn_batch(&mut commands, &key.surface, meshes.add(mesh));
+            if let Some(aabb) = aabb {
+                commands.entity(entity).insert(aabb);
+            }
+            group.entity = Some(entity);
+        }
+    }
+
     let mut by_group: HashMap<&GroupKey, Vec<Entity>> = HashMap::new();
     for (entity, (key, _)) in &batches.members {
         by_group.entry(key).or_default().push(*entity);
@@ -586,55 +611,56 @@ pub fn batch_meshes(
     for (key, group) in &mut batches.groups {
         let mut entities = by_group.remove(key).unwrap_or_default();
         let drawn = entities.len() >= policy.static_min_members;
-        if drawn {
-            hidden.extend(entities.iter().copied());
-            stats.static_batches += 1;
-            stats.static_members += entities.len();
-        }
-        if !group.dirty {
-            continue;
-        }
-        group.dirty = false;
-        entities.sort();
-        let merged = drawn
-            .then(|| {
-                let parts: Vec<Part> = entities
+        if group.dirty {
+            group.dirty = false;
+            group.generation += 1;
+            // The old merge no longer matches its members: they draw
+            // themselves until the new one lands.
+            if let Some(entity) = group.entity.take() {
+                commands.entity(entity).despawn();
+            }
+            if drawn {
+                entities.sort();
+                let parts: Vec<(Mesh, Affine3A, Option<InstanceRecord>)> = entities
                     .iter()
                     .filter_map(|entity| {
                         let (_, snapshot) = &batches.members[entity];
-                        Some(Part {
-                            mesh: meshes.get(snapshot.mesh)?,
-                            transform: snapshot.pose,
-                            record: snapshot.record,
-                        })
+                        Some((
+                            meshes.get(snapshot.mesh)?.clone(),
+                            snapshot.pose,
+                            snapshot.record,
+                        ))
                     })
                     .collect();
-                merge(&parts)
-            })
-            .flatten();
-        match (merged, group.entity) {
-            (Some(mesh), entity) => {
-                let aabb = mesh.get_aabb();
-                let handle = meshes.add(mesh);
-                let entity = entity
-                    .unwrap_or_else(|| spawn_batch(&mut commands, &key.surface, handle.clone()));
-                commands.entity(entity).insert(Mesh3d(handle));
-                if let Some(aabb) = aabb {
-                    commands.entity(entity).insert(aabb);
-                }
-                group.entity = Some(entity);
+                let generation = group.generation;
+                batches
+                    .merging
+                    .spawn(&mut cells, key.clone(), key.cell, move || {
+                        let parts: Vec<Part> = parts
+                            .iter()
+                            .map(|(mesh, transform, record)| Part {
+                                mesh,
+                                transform: *transform,
+                                record: *record,
+                            })
+                            .collect();
+                        (generation, merge(&parts))
+                    });
+            } else {
+                batches.merging.cancel(&mut cells, key);
             }
-            (None, Some(entity)) => {
-                commands.entity(entity).despawn();
-                group.entity = None;
-            }
-            (None, None) => {}
+        }
+        if drawn && group.entity.is_some() {
+            hidden.extend(entities.iter().copied());
+            stats.static_batches += 1;
+            stats.static_members += entities.len();
         }
         if entities.is_empty() {
             emptied.push(key.clone());
         }
     }
     for key in emptied {
+        batches.merging.cancel(&mut cells, &key);
         batches.groups.remove(&key);
     }
 

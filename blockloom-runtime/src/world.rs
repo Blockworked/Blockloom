@@ -306,6 +306,7 @@ pub fn pump_editor(
                 // fixed step that builds this run's interface.
                 manager.clear();
                 engine.running = false;
+                engine.starting = false;
                 engine.paused = false;
                 engine.pause_began = None;
                 engine.rebuild = true;
@@ -324,17 +325,23 @@ pub fn pump_editor(
                 engine.speech.clear();
                 manager.clear();
                 engine.rebuild = true;
-                engine.running = true;
                 engine.paused = false;
                 engine.pause_began = None;
-                engine.started_at = now;
-                engine.fire(Event::Started);
+                // A rendering world holds the green flag until its first
+                // frames can draw without compiling or loading anything.
+                if engine.prewarm {
+                    engine.running = false;
+                    engine.starting = true;
+                } else {
+                    begin_run(&mut engine, now);
+                }
             }
             EditorMessage::Stop => {
                 engine.stop_program();
                 engine.speech.clear();
                 manager.clear();
                 engine.running = false;
+                engine.starting = false;
                 engine.paused = false;
                 engine.pause_began = None;
                 engine.rebuild = true;
@@ -403,6 +410,14 @@ pub fn pump_editor(
             }
         }
     }
+}
+
+/// Presses the green flag: the run's clock starts now.
+pub fn begin_run(engine: &mut Engine, now: f64) {
+    engine.starting = false;
+    engine.running = true;
+    engine.started_at = now;
+    engine.fire(Event::Started);
 }
 
 fn load_saved_data(engine: &mut Engine) {
@@ -526,6 +541,9 @@ pub fn rebuild_world(
     engine.rebuild = false;
     performance.cache.clear();
     performance.cells.clear();
+    if let Some(warmup) = performance.warmup.as_mut() {
+        warmup.open();
+    }
 
     for entity in &actors {
         commands.entity(entity).despawn();
@@ -2925,6 +2943,7 @@ pub fn report_status(
     target_bytes: Option<Res<crate::performance::GameViewTargetBytes>>,
     batches: Option<Res<crate::batching::Batches>>,
     culling: Option<Res<crate::culling::Culling>>,
+    streaming: crate::streaming::StreamingReport,
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
     let now = time.elapsed_secs() as f64;
@@ -3017,8 +3036,15 @@ pub fn report_status(
             });
         }
     }
+    for (name, value) in streaming.metrics() {
+        render_metrics.push(RenderMetric {
+            name: name.into(),
+            value: value as f64,
+            unit: "count".into(),
+        });
+    }
     bridge::send(&RuntimeMessage::Status(Status {
-        running: engine.running,
+        running: engine.running || engine.starting,
         paused: engine.paused,
         time: engine.run_time(now),
         fps: 1.0 / time.delta_secs().max(f32::EPSILON),
@@ -4246,7 +4272,7 @@ mod tests {
         app.add_plugins(bevy::asset::AssetPlugin::default());
         app.init_resource::<Assets<Mesh>>();
         app.init_resource::<crate::performance::RenderCache>();
-        app.init_resource::<crate::performance::StreamingCells>();
+        app.init_resource::<crate::streaming::StreamingCells>();
         app.init_resource::<Assets<StandardMaterial>>();
         app.init_resource::<Assets<Image>>();
         app.init_resource::<Assets<crate::materials::GraphMaterial2d>>();
@@ -4385,7 +4411,7 @@ mod tests {
         app.init_resource::<Assets<StandardMaterial>>();
         app.init_resource::<Assets<Mesh>>();
         app.init_resource::<crate::performance::RenderCache>();
-        app.init_resource::<crate::performance::StreamingCells>();
+        app.init_resource::<crate::streaming::StreamingCells>();
         app.insert_resource(PendingEffects(vec![
             Effect::Turn {
                 actor: "player".to_string(),
@@ -4475,7 +4501,7 @@ mod tests {
         app.init_resource::<Assets<StandardMaterial>>();
         app.init_resource::<Assets<Mesh>>();
         app.init_resource::<crate::performance::RenderCache>();
-        app.init_resource::<crate::performance::StreamingCells>();
+        app.init_resource::<crate::streaming::StreamingCells>();
         let walk = |steps: f32| Effect::Move {
             actor: "player".to_string(),
             steps,
@@ -4575,7 +4601,7 @@ mod tests {
         app.init_resource::<Assets<StandardMaterial>>();
         app.init_resource::<Assets<Mesh>>();
         app.init_resource::<crate::performance::RenderCache>();
-        app.init_resource::<crate::performance::StreamingCells>();
+        app.init_resource::<crate::streaming::StreamingCells>();
         let walk = |steps: f32| Effect::Move {
             actor: "player".to_string(),
             steps,
@@ -4664,7 +4690,7 @@ mod tests {
         app.init_resource::<Assets<StandardMaterial>>();
         app.init_resource::<Assets<Mesh>>();
         app.init_resource::<crate::performance::RenderCache>();
-        app.init_resource::<crate::performance::StreamingCells>();
+        app.init_resource::<crate::streaming::StreamingCells>();
         app.insert_resource(PendingEffects(vec![
             Effect::Move {
                 actor: "player".to_string(),
@@ -4747,7 +4773,7 @@ mod tests {
         app.init_resource::<Assets<StandardMaterial>>();
         app.init_resource::<Assets<Mesh>>();
         app.init_resource::<crate::performance::RenderCache>();
-        app.init_resource::<crate::performance::StreamingCells>();
+        app.init_resource::<crate::streaming::StreamingCells>();
         app.insert_resource(PendingEffects(vec![
             Effect::Turn {
                 actor: "player".to_string(),

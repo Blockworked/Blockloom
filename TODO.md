@@ -186,12 +186,19 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         patched onto the RC's Bevy in the root `Cargo.toml`.
   - [ ] Finish Bevy 0.20: move to 0.20.0 final, swap the rapier git pin and
         its `[patch]` for a crates.io bevy_rapier release once one exists.
-  - [ ] Async loading and streaming (owns the cell system; Phase 5 content only
+  - [x] Async loading and streaming (owns the cell system; Phase 5 content only
         registers into it): background asset loads with placeholder or fade-in,
         world streaming cells with hysteresis so borders never thrash, shader
         prewarm on Play and at build time so first frames never hitch. Terrain
         chunks, noise volumes, HDRI mips and probe captures arrive as payload
         types on this system, not as a second one.
+        Done in `blockloom-runtime/src/streaming.rs`: budgeted nearest-first
+        cells with `CellEntered`/`CellLeft` and `CellTasks` for background
+        payload work (static batch merges are the first payload), flat
+        placeholders for loading 3D looks and sprite fade-in in 2D, and a
+        warm-up window after every rebuild that draws everything unculled and
+        holds the green flag until loads and pipeline compiles settle. Builds
+        validate every `.wgsl` surface file first.
   - [ ] GPU measurement: per-pass timestamp queries plus render-target memory
         accounting, surfaced in the profiler (completes the render half of the open
         Phase 3 profiler item). No Phase 5 budget is enforceable without it.

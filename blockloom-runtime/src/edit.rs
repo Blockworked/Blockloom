@@ -194,7 +194,7 @@ impl SceneEditor {
 
 /// Whether the scene view is what the Game view shows right now.
 pub fn editing(engine: &Engine, editor: &SceneEditor) -> bool {
-    !engine.running && editor.view.enabled
+    !engine.running && !engine.starting && editor.view.enabled
 }
 
 /// How the scene view's camera sees, worked out from its own pose rather

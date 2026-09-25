@@ -87,6 +87,12 @@ pub struct Engine {
     pub entities: HashMap<String, Entity>,
     pub running: bool,
     pub paused: bool,
+    /// Play was pressed and the run begins once the world is warm (see
+    /// `streaming::warm_up`). Reads as running to the editor.
+    pub starting: bool,
+    /// Whether a Start waits for the world to warm up. Set by `add_world`,
+    /// so a bare test world starts on the spot.
+    pub prewarm: bool,
     /// Whether the game window actually holds OS focus, from `WindowFocused`
     /// events only. Bevy's `Window::focused` defaults to true and winit only
     /// reports changes, so a window opened behind the editor would read
@@ -195,6 +201,8 @@ impl Engine {
             speech: HashMap::new(),
             next_report: 0.0,
             rebuild: true,
+            starting: false,
+            prewarm: false,
             project_dir: None,
             scripts: HashMap::new(),
             scripts_started: HashSet::new(),

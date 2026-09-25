@@ -303,11 +303,16 @@ pub fn cull_views(
     standard: Res<Assets<StandardMaterial>>,
     instanced: Res<Assets<InstancedMaterial>>,
     boxes: Res<Assets<BoxMaterial>>,
+    warmup: Option<Res<crate::streaming::Warmup>>,
 ) {
     let culling = &mut *culling;
     culling.stats.occluders = 0;
     culling.stats.tested = 0;
     culling.stats.occluded = 0;
+    // Warming draws everything, so every pipeline compiles up front.
+    if warmup.is_some_and(|warmup| warmup.active()) {
+        return;
+    }
     let Some((eye, projection, _, mut visible)) = cameras
         .iter_mut()
         .find(|(_, _, camera, _)| camera.is_active)
