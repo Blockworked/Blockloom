@@ -71,7 +71,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [x] True headless/offscreen preview mode: a Headless toggle hides the OS window while the hidden window keeps rendering the stream. Windowed mode still keeps it up beside the viewport.
   - [ ] Stop the resolution switch from resizing the OS window: render the stream at its own size offscreen.
   - [ ] Forward scroll-wheel, touch/multitouch and gamepad through the viewport, not just mouse, keys and text.
-  - [ ] Honor `lock mouse` inside the preview (pointer lock + raw deltas) instead of absolute positions only.
+  - [ ] Honor `lock mouse` inside the preview (pointer lock + raw deltas) - done for the in-process Game view, pending a test; the MJPEG preview still only gets absolute positions.
   - [ ] Adaptive stream rate/quality: fixed ~15fps JPEG-60 today regardless of preset or pause state.
 - [ ] Visual world editor: edit-mode 2D/3D viewport with selection sync to ActorList/Inspector, drag to move plus rotate/scale gizmos, snapping, camera pan/zoom/orbit. Shares panel with embedded preview: Edit manipulates placement directly, Play streams runtime.
 - [ ] Editor: gizmos/snapping, prefab mode, scene search, log filter, frame stepper, profiler (draw calls, CPU/GPU/memory), playmode tests.
@@ -92,13 +92,22 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 - [ ] Deploy: Web/WASM, Android/iOS signing, console path, auto-updater/DLC/addressables.
 - [ ] Ecosystem: analytics/crash, achievements/IAP hooks, plugin API, asset store, collab/VCS, docs/LTS.
 
-### Qt6 rewrite - in-process Game view path, only if streaming hits its ceiling
-- [ ] Goal: docked Game view with no sidecar video and no extra OS window. Qt gives a native handle (QWindow, QQuickFramebufferObject, createWindowContainer) where CEF only gives an `<img>` tag.
-- [ ] Step 1 - reparented child window (fast path): keep `blockloom-runtime` as a process, embed its OS window via `createWindowContainer` / `QWindow::fromWinId`. Target X11/Win32 first, Wayland/macOS last. Keeps crash isolation, kills MJPEG.
-- [ ] Step 2 - headless render thread (true in-process): disable the `WindowPlugin` primary window, render the camera to a `RenderTarget::Image`, pump `App::update` from a Qt timer on a render thread. Replace the `RuntimeHandle` child pipes with channels. The VM stays pinned to its thread (`!Send`).
-- [ ] Step 3 - texture sharing: CPU readback blit first, then wgpu-to-QRhi interop for zero-copy. No Chromium SharedImage work needed.
-- [ ] Step 4 - input parity: route Qt key/mouse/wheel/touch/gamepad plus pointer-lock raw deltas into `PreviewInput`. Fixes the absolute-position-only gap.
-- [ ] Costs accepted: full `ui/` Vue rewrite in QML/Widgets, Rust Qt bindings (cxx-qt) are immature, CEF helper model goes away, a script cdylib panic now takes the editor down, two GPU clients during transition.
-- [ ] Rule: do headless sidecar plus faster transport on the current stack first. Qt rewrite only if that still falls short.
+### Qt6 rewrite - in-process Game view
+- [x] Goal: docked Game view with no sidecar video and no extra OS window.
+- [x] Step 2 - headless world thread (true in-process, Linux): Bevy runs windowless on its own thread of the editor, `RuntimeHandle` talks to it over channels. A panic ends the run, not the editor.
+- [x] Step 3 - GPU texture sharing (Linux): the camera renders offscreen and each frame lands in a ring of dma-bufs, imported into Qt's GL through EGL. Wayland and X11.
+- [ ] Step 4 - input parity:
+  - [x] Keys, mouse buttons and position, text, focus.
+  - [ ] Pointer lock plus raw deltas (Wayland pointer constraints, X11 warp fallback) - built, awaiting a test on KDE. X11 path untested.
+  - [ ] Scroll wheel and touch.
+  - [ ] Gamepads: probably already read straight from the system in-process - verify.
+  - [ ] Keyboard by physical key, not Qt key name (non-QWERTY layouts land WASD elsewhere). Right Shift/Ctrl/Alt arrive as left; numpad, brackets, quote and backtick aren't sent.
+- [ ] Update CLAUDE.md: it still describes the world as a separate process with its own window.
+- [ ] Frame pacing: the world runs on its own 60 Hz timer, not the display's, so 120/144 Hz screens get uneven frames. Tie it to Qt's frame signal.
+- [ ] Log stutter: every `say`/error line still emits the whole editor state to QML. Give log lines their own event like status has.
+- [ ] Zero-copy on NVIDIA: frames are copied to a linear system-memory image, then again through an external-texture pass on the Qt side. Share the image in its native tiled layout (DRM format modifiers) to drop both copies.
+- [ ] Resolution: fixed 960x720 scaled to fit - blurry on HiDPI, wrong for widescreen. Add a resolution/aspect setting in Project Settings, or render at the view's real pixel size.
+- [ ] Other platforms: Windows (shared D3D or Vulkan handles) and macOS (IOSurface) still use the child process plus MJPEG, which stays until they're ported.
+- [ ] Crash isolation: a native crash (script cdylib, GPU fault) takes the editor down. Decide whether scripted projects should keep the separate process.
 
 Rule: do 1-4 before 5-8, do 9-11 before adding new block surface in 12-15, leave 17-19 until single-player shipping loop is solid.
