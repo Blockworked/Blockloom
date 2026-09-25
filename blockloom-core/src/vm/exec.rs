@@ -1105,6 +1105,17 @@ impl Vm {
                     factor,
                 });
             }
+            Action::SetExposure(ev) => {
+                let ev = self.eval_f32(ev, actor, params, temps, out);
+                out.push(Effect::SetExposure { ev });
+            }
+            Action::SetLightIntensity(intensity) => {
+                let intensity = self.eval_f32(intensity, actor, params, temps, out);
+                out.push(Effect::SetLightIntensity {
+                    actor: owner,
+                    intensity,
+                });
+            }
             Action::SetBody(body) => out.push(Effect::SetBody {
                 actor: owner,
                 body: *body,

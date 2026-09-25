@@ -4,7 +4,9 @@
 //! reads - the camera, the sun and the render world - instead of the project.
 
 use crate::engine::{Dimension, Engine};
+use crate::hdr::HdrDebug;
 use crate::world::{WorldCamera, WorldLight, parse_color};
+use bevy::camera::Hdr;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::light::DirectionalLightShadowMap;
 use bevy::pbr::ScreenSpaceAmbientOcclusion;
@@ -178,6 +180,24 @@ impl ExposureClaims {
     }
 }
 
+/// `set exposure to` takes the director's slot for the rest of the run.
+pub fn apply_exposure_effects(
+    effects: Res<crate::engine::PendingEffects>,
+    engine: NonSend<Engine>,
+    mut claims: ResMut<ExposureClaims>,
+) {
+    if !engine.running || engine.paused {
+        return;
+    }
+    for effect in &effects.0 {
+        if let blockloom_core::vm::Effect::SetExposure { ev } = effect
+            && ev.is_finite()
+        {
+            claims.director = Some(*ev);
+        }
+    }
+}
+
 /// Builds this frame's `Environment`. Only a real change marks it changed,
 /// so `apply_environment` leaves the camera alone on a quiet frame.
 pub fn blend_environment(
@@ -196,9 +216,11 @@ pub fn blend_environment(
 
 /// Writes the environment onto the world camera and sun: whenever it
 /// changes, and onto any camera or sun a rebuild has just spawned.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_environment(
     mut commands: Commands,
     environment: Res<Environment>,
+    debug: Res<HdrDebug>,
     dimension: Res<Dimension>,
     mut clear_color: ResMut<ClearColor>,
     cameras: Query<(Entity, Ref<WorldCamera>, Has<Camera3d>)>,
@@ -210,16 +232,25 @@ pub fn apply_environment(
         clear_color.0 = env.background;
     }
     for (entity, camera, is_3d) in &cameras {
-        if !changed && !camera.is_added() {
+        if !changed && !debug.is_changed() && !camera.is_added() {
             continue;
         }
         let mut camera = commands.entity(entity);
+        let tonemapping = if debug.bypasses_tonemapping() {
+            Tonemapping::None
+        } else {
+            tonemapping_of(env.tonemapping)
+        };
+        // Linear FP16 all the way to the tonemapper, bloom or not, so lights,
+        // sky and emissives can pass 1.0 without clipping.
         camera.insert((
+            Hdr,
             bevy::camera::Exposure {
                 ev100: env.exposure,
             },
-            tonemapping_of(env.tonemapping),
+            tonemapping,
         ));
+        debug.apply(&mut camera, is_3d);
         if env.bloom {
             camera.insert(Bloom {
                 intensity: env.bloom_intensity,
@@ -394,6 +425,7 @@ mod tests {
         env.exposure = 7.0;
         app.insert_resource(Dimension(Mode::ThreeD))
             .insert_resource(ClearColor(Color::WHITE))
+            .init_resource::<HdrDebug>()
             .insert_resource(env)
             .add_systems(Update, apply_environment);
         let camera = app
@@ -416,6 +448,7 @@ mod tests {
             7.0
         );
         assert!(world.get::<Bloom>(camera).is_some());
+        assert!(world.get::<Hdr>(camera).is_some());
         assert!(world.get::<ScreenSpaceAmbientOcclusion>(camera).is_some());
         assert_eq!(world.resource::<ClearColor>().0, base().background);
         assert_eq!(
@@ -433,6 +466,26 @@ mod tests {
             app.world()
                 .get::<ScreenSpaceAmbientOcclusion>(camera)
                 .is_none()
+        );
+        // Bloom going away leaves the frame HDR.
+        assert!(app.world().get::<Hdr>(camera).is_some());
+
+        app.world_mut().resource_mut::<HdrDebug>().0 = blockloom_protocol::DebugView::FalseColor;
+        app.update();
+        assert_eq!(
+            app.world().get::<Tonemapping>(camera),
+            Some(&Tonemapping::None)
+        );
+        assert!(
+            app.world()
+                .get::<crate::hdr::HdrDebugView3d>(camera)
+                .is_some()
+        );
+        app.world_mut().resource_mut::<HdrDebug>().0 = blockloom_protocol::DebugView::Lit;
+        app.update();
+        assert_eq!(
+            app.world().get::<Tonemapping>(camera),
+            Some(&Tonemapping::TonyMcMapface)
         );
     }
 

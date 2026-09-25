@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -184,6 +184,18 @@ pub enum SceneTool {
     Scale,
 }
 
+/// What the Game view shows in place of the lit image, for judging exposure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DebugView {
+    #[default]
+    Lit,
+    /// Exposed luminance as bands of stops around middle grey.
+    FalseColor,
+    /// Stripes over whatever is brighter than paper white.
+    Clipping,
+}
+
 /// The scene view's settings, which are the editor's preferences rather than
 /// the project's. Steps are in world units: pixels in 2D, metres in 3D.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -200,6 +212,8 @@ pub struct SceneView {
     pub angle: f32,
     pub scale: f32,
     pub show_grid: bool,
+    /// Applies while a game runs too, since exposure is judged in play.
+    pub debug_view: DebugView,
 }
 
 impl Default for SceneView {
@@ -213,6 +227,7 @@ impl Default for SceneView {
             angle: 15.0,
             scale: 0.1,
             show_grid: true,
+            debug_view: DebugView::Lit,
         }
     }
 }
@@ -333,6 +348,7 @@ mod tests {
         let view = EditorMessage::SceneView(SceneView {
             tool: SceneTool::Rotate,
             snap: true,
+            debug_view: DebugView::FalseColor,
             ..SceneView::default()
         });
         assert_eq!(decode::<EditorMessage>(&encode(&view)), Some(Ok(view)));

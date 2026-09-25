@@ -475,6 +475,33 @@ a rebuild spawns new ones, and it is extracted to the render world. Passes
 read `Environment`, never `project.world.lighting`/`post`; the rebuild only
 spawns a bare camera and sun.
 
+### HDR frame and lights
+
+Every world camera carries `Hdr` (`environment::apply_environment`), bloom or
+not: the scene renders linear FP16 and only the tonemapper at the end makes
+display values, so lights, sky and emissives can pass 1.0. Exposure stays the
+one EV on `Environment`; `set exposure to` (and a script's `set_exposure`)
+takes `ExposureClaims::director` for the rest of the run, and the atmosphere
+slot's `exposure` reading reports the resolved value.
+
+`blockloom-runtime/src/hdr.rs` is the Game view's exposure debug views, a
+Bevy `FullscreenMaterial` per dimension that reads the exposed image before
+tonemapping: false color (bands of stops around middle grey, with the
+tonemapper forced to `None` so the bands stay true) and a clipping zebra over
+anything past paper white. The choice is `SceneView::debug_view`, an editor
+preference that applies while a game runs too.
+
+A `Light` component is a point or spot light in lumens with a range in
+metres, 3D only. `lights::sync_lights` reconciles each actor's light against
+`engine.attached`, the authored spec and `engine.light_intensity` (what
+`set my light to` wrote this run), and hangs it on a child entity, since
+batching hides a merged actor through an empty `RenderLayers`.
+
+The GPU half is checked by the ignored tests in `embed.rs` (`cargo test -p
+blockloom-runtime -- --ignored embed`), which read pixels back from a real
+world: false color in both dimensions, and a lamp that still lights the
+floor after batching.
+
 ### Shader library and pass plumbing
 
 `blockloom-core/src/shader_lib.rs` holds Blockloom's own WESL modules

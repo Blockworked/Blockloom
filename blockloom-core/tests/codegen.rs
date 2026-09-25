@@ -282,6 +282,7 @@ impl Host for Recorder {
             | Act::SetFocus { .. }
             | Act::SetUiTheme { .. }
             | Act::SetBusVolume { .. }
+            | Act::SetExposure { .. }
             | Act::SetPaused { .. } => String::new(),
             _ => actor.to_string(),
         };
@@ -912,6 +913,8 @@ fn line_of(act: &Act) -> String {
         Act::Glide { seconds, target } => format!("Glide {seconds:?} {target:?}"),
         Act::Turn { axis, degrees } => format!("Turn {axis} {degrees:?}"),
         Act::SetScale { factor } => format!("SetScale {factor:?}"),
+        Act::SetExposure { ev } => format!("SetExposure {ev:?}"),
+        Act::SetLightIntensity { intensity } => format!("SetLightIntensity {intensity:?}"),
         Act::Say { text } => format!("Say {text}"),
         Act::SetColor { color } => format!("SetColor {color}"),
         Act::SetVisible { visible } => format!("SetVisible {visible}"),
@@ -1067,6 +1070,10 @@ fn line_of(effect: &Effect) -> Option<String> {
             degrees,
         } => format!("{actor}|Turn {} {degrees:?}", axis.index()),
         Effect::SetScale { actor, factor } => format!("{actor}|SetScale {factor:?}"),
+        Effect::SetExposure { ev } => format!("|SetExposure {ev:?}"),
+        Effect::SetLightIntensity { actor, intensity } => {
+            format!("{actor}|SetLightIntensity {intensity:?}")
+        }
         Effect::Say { actor, text } => format!("{actor}|Say {text}"),
         Effect::SetColor { actor, color } => format!("{actor}|SetColor {color}"),
         Effect::SetVisible { actor, visible } => format!("{actor}|SetVisible {visible}"),
@@ -1554,6 +1561,16 @@ fn arithmetic_lands_on_the_same_numbers() {
             },
             K::SetScale {
                 factor: op("Round", vec![number(1.5)]),
+            },
+            K::SetExposure {
+                ev: op("Sub", vec![number(9.7), number(2.0)]),
+            },
+            K::SetLightIntensity {
+                intensity: op("Mul", vec![number(800.0), number(3.0)]),
+            },
+            // A slot that isn't a number stands a zero, the same both ways.
+            K::SetLightIntensity {
+                intensity: Value::text("bright"),
             },
             K::Move {
                 steps: op("Math", vec![Value::text("Sqrt"), number(2.0)]),

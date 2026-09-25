@@ -92,6 +92,7 @@ fn sample(tick: u64, environment: &Environment, sources: &AtmosphereSources) -> 
         snow: sources.snow.clamp(0.0, 1.0),
         wetness: sources.wetness.clamp(0.0, 1.0),
         temperature: sources.temperature,
+        exposure: environment.exposure,
     }
 }
 

@@ -179,6 +179,8 @@ pub struct AtmosphereSense {
     pub wetness: f32,
     /// Degrees Celsius.
     pub temperature: f32,
+    /// The camera's EV100 after every claim on it: lower is brighter.
+    pub exposure: f32,
 }
 
 impl Default for AtmosphereSense {
@@ -199,6 +201,7 @@ impl Default for AtmosphereSense {
             snow: 0.0,
             wetness: 0.0,
             temperature: 20.0,
+            exposure: 9.7,
         }
     }
 }
@@ -221,6 +224,7 @@ pub const ATMOSPHERE_FIELDS: &[&str] = &[
     "snow",
     "wetness",
     "temperature",
+    "exposure",
 ];
 
 impl AtmosphereSense {
@@ -248,6 +252,7 @@ impl AtmosphereSense {
             "snow" => self.snow,
             "wetness" => self.wetness,
             "temperature" => self.temperature,
+            "exposure" | "ev" => self.exposure,
             _ => return None,
         };
         Some(value as f64)

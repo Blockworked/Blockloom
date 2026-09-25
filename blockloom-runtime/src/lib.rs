@@ -31,6 +31,8 @@ mod engine;
 mod environment;
 mod fx;
 mod gpu;
+mod hdr;
+mod lights;
 mod logic;
 mod materials;
 mod model;
@@ -123,6 +125,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // unconditionally; an unused plugin costs nothing at runtime.
     materials::register(app);
     passes::register(app);
+    hdr::register(app);
     edit::configure(app);
     // Both of these only exist to talk to an editor, and a built game has
     // none: no corner status, no handshake.
@@ -166,7 +169,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     overlay::apply_ui_effects,
                     world::apply_saved_data,
                     (world::apply_lifetimes, world::sync_navmesh).chain(),
-                    world::apply_common,
+                    (world::apply_common, environment::apply_exposure_effects).chain(),
                     dim2::apply_effects,
                     world::apply_component_effects,
                     dim2::sync_joints,
@@ -277,9 +280,9 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         overlay::apply_ui_effects,
                         world::apply_saved_data,
                         (world::apply_lifetimes, world::sync_navmesh).chain(),
-                        world::apply_common,
+                        (world::apply_common, environment::apply_exposure_effects).chain(),
                         dim3::apply_effects,
-                        world::apply_component_effects,
+                        (world::apply_component_effects, lights::apply_light_effects).chain(),
                         dim3::sync_joints,
                         fx::apply_fx_effects,
                         sound::apply_sound_effects,
@@ -309,6 +312,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                             world::rebuild_world,
                             environment::blend_environment,
                             environment::apply_environment,
+                            lights::sync_lights,
                         )
                             .chain(),
                         dim3::relay_collisions,

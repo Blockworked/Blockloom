@@ -103,6 +103,13 @@ pub enum Act {
     SetScale {
         factor: f32,
     },
+    /// EV100 for the rest of the run; world-global, like gravity.
+    SetExposure {
+        ev: f32,
+    },
+    SetLightIntensity {
+        intensity: f32,
+    },
     SetBody {
         body: &'static str,
     },
@@ -960,7 +967,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 13;
+pub const LOGIC_ABI_VERSION: u32 = 14;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1080,6 +1087,10 @@ pub const ACT_RUMBLE_GAMEPAD: u32 = 60;
 pub const ACT_BIND_ACTION: u32 = 61;
 /// `a` = action.
 pub const ACT_CLEAR_ACTION_BINDINGS: u32 = 62;
+/// `n0` = EV100. Window-global: no actor.
+pub const ACT_SET_EXPOSURE: u32 = 67;
+/// `n0` = lumens.
+pub const ACT_SET_LIGHT_INTENSITY: u32 = 68;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1362,6 +1373,22 @@ impl Host for AbiHost {
                 "",
                 "",
                 [factor as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetExposure { ev } => self.act_wire(
+                actor,
+                ACT_SET_EXPOSURE,
+                "",
+                "",
+                [ev as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetLightIntensity { intensity } => self.act_wire(
+                actor,
+                ACT_SET_LIGHT_INTENSITY,
+                "",
+                "",
+                [intensity as f64, 0.0, 0.0],
                 &zero,
             ),
             Act::SetBody { body } => self.act_wire(actor, ACT_SET_BODY, body, "", [0.0; 3], &zero),

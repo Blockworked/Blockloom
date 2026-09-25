@@ -733,6 +733,33 @@ impl Actor {
         );
     }
 
+    /// The camera's exposure in EV100 for the rest of the run: lower is
+    /// brighter. Outranks auto-exposure and the project's own value.
+    pub fn set_exposure(&self, ev: f32) {
+        self.act(
+            ACT_SET_EXPOSURE,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            ev as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// This actor's light, in lumens. Nothing happens without a Light.
+    pub fn set_light_intensity(&self, lumens: f32) {
+        self.act(
+            ACT_SET_LIGHT_INTENSITY,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            lumens as f64,
+            0.0,
+            0.0,
+        );
+    }
+
     /// A one-shot push. Only a dynamic body responds.
     pub fn push(&self, x: f32, y: f32, z: f32) {
         self.act(

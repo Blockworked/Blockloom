@@ -66,13 +66,13 @@ pub use runtime::{
     ACT_NAVIGATE_TO, ACT_PLAY_SOUND, ACT_POINT_TOWARDS, ACT_RUMBLE_GAMEPAD, ACT_SAVE_VARIABLE,
     ACT_SAY, ACT_SET_BODY, ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH,
     ACT_SET_CAMERA_VIEW, ACT_SET_COLLISION_LAYER, ACT_SET_COLLISION_MASK, ACT_SET_COLOR,
-    ACT_SET_DENSITY, ACT_SET_EMITTER_DIAL, ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_GRAVITY,
-    ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_ROTATION,
-    ACT_SET_SCALE, ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_TRAIL_ENABLED,
-    ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE,
-    ACT_SHOW_ELEMENT, ACT_STOP_SOUND, ACT_TURN, AbiStr, AbiValue, Act, Actors, Entry, Host,
-    LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI,
-    SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
+    ACT_SET_DENSITY, ACT_SET_EMITTER_DIAL, ACT_SET_EXPOSURE, ACT_SET_FIELD, ACT_SET_FOCUS,
+    ACT_SET_GRAVITY, ACT_SET_LIGHT_INTENSITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT,
+    ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME,
+    ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY,
+    ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_STOP_SOUND, ACT_TURN, AbiStr, AbiValue, Act, Actors,
+    Entry, Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner,
+    SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
     SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
     Val,
 };
@@ -912,6 +912,11 @@ impl<'a> Pass<'a> {
             Action::SetScale(factor) => {
                 reading(self.number(factor)?, "Act::SetScale { factor: slot }")
             }
+            Action::SetExposure(ev) => reading(self.number(ev)?, "Act::SetExposure { ev: slot }"),
+            Action::SetLightIntensity(intensity) => reading(
+                self.number(intensity)?,
+                "Act::SetLightIntensity { intensity: slot }",
+            ),
             Action::SetBody(body) => act(format!("Act::SetBody {{ body: {} }}", name_of(body))),
             Action::ApplyImpulse(vector) => {
                 reading(self.vec3(vector)?, "Act::ApplyImpulse { impulse: slot }")

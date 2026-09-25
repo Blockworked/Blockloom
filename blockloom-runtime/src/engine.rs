@@ -145,6 +145,8 @@ pub struct Engine {
     pub parents: HashMap<String, String>,
     /// Actor id -> the last actor or clone it made, for "the actor I made".
     pub last_created: HashMap<String, String>,
+    /// Actor id -> lumens a block or script set its light to this run.
+    pub light_intensity: HashMap<String, f32>,
     /// Dynamic actors a walk verb (`move`, `change position`) drove this
     /// tick. A walk sets an absolute velocity, so when a driven actor goes
     /// quiet the dimension pass brakes it - otherwise the last written
@@ -210,6 +212,7 @@ impl Engine {
             spawned: HashMap::new(),
             clones: HashMap::new(),
             parents: HashMap::new(),
+            light_intensity: HashMap::new(),
             last_created: HashMap::new(),
             driven: HashSet::new(),
             physics_filter: HashMap::new(),

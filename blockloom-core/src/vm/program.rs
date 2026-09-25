@@ -89,6 +89,8 @@ pub enum Action {
     },
     PointTowards(String),
     SetScale(Value),
+    SetExposure(Value),
+    SetLightIntensity(Value),
     SetBody(BodyKind),
     ApplyImpulse([Value; 3]),
     SetVelocity([Value; 3]),
@@ -497,6 +499,8 @@ fn action_values(action: &Action) -> Vec<&Value> {
     match action {
         Action::Move(value)
         | Action::SetScale(value)
+        | Action::SetExposure(value)
+        | Action::SetLightIntensity(value)
         | Action::Say(value)
         | Action::SetColor(value)
         | Action::StopSound { sound: value }
@@ -741,6 +745,8 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
             degrees: lift_one(degrees, ctx),
         },
         Action::SetScale(v) => Action::SetScale(lift_one(v, ctx)),
+        Action::SetExposure(v) => Action::SetExposure(lift_one(v, ctx)),
+        Action::SetLightIntensity(v) => Action::SetLightIntensity(lift_one(v, ctx)),
         Action::ApplyImpulse(mut t) => {
             for v in &mut t {
                 *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
@@ -1094,6 +1100,10 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             steps.push(Step::Action(Action::PointTowards(target.clone())))
         }
         K::SetScale { factor } => steps.push(Step::Action(Action::SetScale(factor.clone()))),
+        K::SetExposure { ev } => steps.push(Step::Action(Action::SetExposure(ev.clone()))),
+        K::SetLightIntensity { intensity } => {
+            steps.push(Step::Action(Action::SetLightIntensity(intensity.clone())))
+        }
         K::SetBody { body } => steps.push(Step::Action(Action::SetBody(*body))),
         K::ApplyImpulse { x, y, z } => steps.push(Step::Action(Action::ApplyImpulse([
             x.clone(),

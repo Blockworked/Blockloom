@@ -37,6 +37,7 @@ Rectangle {
     function cameraOf(c) { return Object.assign({ view: "Follow", offset: [0, 0.6, 0], distance: 6, pitch: 15, fov: 75 }, c.camera || {}); }
     function materialOf(c) { return Object.assign({ metallic: 0, roughness: 0.6, emissive: "#000000", emissive_energy: 0, albedo_texture: "", normal_texture: "", roughness_texture: "", tiling: [1, 1], offset: [0, 0], rotation: 0, sampler: "Clamp", anisotropy: 0, box_projection: false, texel_density: 1, double_sided: false, shader: null }, c.material || {}); }
     function emitterOf(c) { return Object.assign({ rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: "#FFFFFF", color_end: "#FFAB19", max: 128 }, c.emitter || {}); }
+    function lightOf(c) { return Object.assign({ kind: "Point", color: "#FFFFFF", intensity: 800, range: 20, radius: 0, inner_angle: 30, outer_angle: 45, shadows: false }, c.light || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
     function brainOf(c) { return Object.assign({ target: "", speed: 4, sight: 12, fov: 120, separation: 1, tree: { node: "Selector", children: [{ node: "Sequence", children: [{ node: "CanSeeTarget" }, { node: "NavigateToTarget" }] }, { node: "Idle" }] } }, c.brain || {}); }
@@ -59,6 +60,7 @@ Rectangle {
     function writeMaterial(c, next) { write("Material", { component: "Material", material: merged(materialOf(c), next) }); }
     function writeShader(c, next) { writeMaterial(c, { shader: merged(materialOf(c).shader || { mode: "Solid", speed: 1, strength: 0.5, color: "#FFFFFF" }, next) }); }
     function writeEmitter(c, next) { write("Emitter", { component: "Emitter", emitter: merged(emitterOf(c), next) }); }
+    function writeLight(c, next) { write("Light", { component: "Light", light: merged(lightOf(c), next) }); }
     function writeTrail(c, next) { write("Trail", { component: "Trail", trail: merged(trailOf(c), next) }); }
     function writeJoint(c, next) { write("Joint", { component: "Joint", joint: merged(jointOf(c), next) }); }
     function writeBrain(c, next) { write("Brain", { component: "Brain", brain: merged(brainOf(c), next) }); }
@@ -125,7 +127,7 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Custom"]
+        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Custom"]
             .filter(n => n === "Custom" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }));
     }
     function blank(name) {
@@ -140,6 +142,7 @@ Rectangle {
         case "Material": return { component: "Material", material: materialOf({}) };
         case "Emitter": return { component: "Emitter", emitter: emitterOf({}) };
         case "Trail": return { component: "Trail", trail: trailOf({}) };
+        case "Light": return { component: "Light", light: lightOf({}) };
         case "Custom": return { component: "Custom", name: "Component", fields: [{ name: "value", value: { kind: "Number", value: 0 } }] };
         default: return null;
         }
@@ -193,7 +196,7 @@ Rectangle {
                             Layout.fillWidth: true
                             readonly property var c: card.c
                             sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard })[card.c.component] || null
+                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard })[card.c.component] || null
                         }
                     }
                 }
@@ -662,6 +665,33 @@ Rectangle {
             InspectorRow { label: "Max"; Layout.fillWidth: true; NumberField { value: em.e.max; fallback: 128; onCommitted: n => root.writeEmitter(em.c, { max: Math.round(n) }) } }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Runs while attached - detaching the emitter stops the spray, and what is already flying fades out on its own." }
+        }
+    }
+    Component {
+        id: lightCard
+        ColumnLayout {
+            id: li
+            readonly property var c: parent.c
+            readonly property var l: root.lightOf(c)
+            spacing: 6
+            InspectorRow { label: "Kind"; Layout.fillWidth: true
+                ChoiceField { options: [{ value: "Point", label: "Point" }, { value: "Spot", label: "Spot" }]; value: li.l.kind; onChosen: k => root.writeLight(li.c, { kind: k }) } }
+            InspectorRow { label: "Color"; Layout.fillWidth: true; ColorField { value: li.l.color; onPicked: col => root.writeLight(li.c, { color: col }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Lumens"; Layout.fillWidth: true
+                NumberField { value: li.l.intensity; fallback: 800; onCommitted: n => root.writeLight(li.c, { intensity: Math.max(0, n) }) } }
+            InspectorRow { label: "Range m"; Layout.fillWidth: true
+                NumberField { value: li.l.range; fallback: 20; onCommitted: n => root.writeLight(li.c, { range: Math.max(0.01, n) }) } }
+            InspectorRow { label: "Radius m"; Layout.fillWidth: true
+                NumberField { value: li.l.radius; fallback: 0; onCommitted: n => root.writeLight(li.c, { radius: Math.max(0, n) }) } }
+            InspectorRow { visible: li.l.kind === "Spot"; label: "Cone °"; Layout.fillWidth: true
+                NumberField { value: li.l.inner_angle; fallback: 30; onCommitted: n => root.writeLight(li.c, { inner_angle: n }) }
+                NumberField { value: li.l.outer_angle; fallback: 45; onCommitted: n => root.writeLight(li.c, { outer_angle: n }) } }
+            InspectorRow { label: "Shadows"; Layout.fillWidth: true
+                SwitchField { value: li.l.shadows; onToggled: on => root.writeLight(li.c, { shadows: on }) } Item { Layout.fillWidth: true } }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: root.is3d
+                    ? "About " + Math.round(li.l.intensity / (4 * Math.PI)) + " candela. A spot shines down the actor's forward axis; its cone doesn't gather the light, so narrowing it isn't brighter."
+                    : "Lights need a 3D world; in 2D this rests." }
         }
     }
     Component {

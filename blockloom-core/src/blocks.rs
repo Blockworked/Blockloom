@@ -142,6 +142,15 @@ pub enum InstructionKind {
     SetScale {
         factor: Value,
     },
+    /// Sets the camera's exposure in EV100 for the rest of the run: lower is
+    /// brighter. Outranks auto-exposure and the project's own value.
+    SetExposure {
+        ev: Value,
+    },
+    /// Sets this actor's light, in lumens. Nothing happens without a Light.
+    SetLightIntensity {
+        intensity: Value,
+    },
 
     // ─── Physics ────────────────────────────────────────────────────────────
     SetBody {
@@ -647,6 +656,8 @@ impl BlockKind for InstructionKind {
             | K::Turn { degrees: v, .. }
             | K::SetRotation { degrees: v, .. }
             | K::SetScale { factor: v }
+            | K::SetExposure { ev: v }
+            | K::SetLightIntensity { intensity: v }
             | K::SetDensity { density: v }
             | K::SetMass { mass: v }
             | K::SetCollisionLayer { layer: v }

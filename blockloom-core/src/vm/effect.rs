@@ -58,6 +58,16 @@ pub enum Effect {
         actor: String,
         factor: f32,
     },
+    /// The camera's exposure in EV100 for the rest of the run. World-global,
+    /// like gravity: no actor.
+    SetExposure {
+        ev: f32,
+    },
+    /// The actor's light, in lumens.
+    SetLightIntensity {
+        actor: String,
+        intensity: f32,
+    },
     SetBody {
         actor: String,
         body: BodyKind,

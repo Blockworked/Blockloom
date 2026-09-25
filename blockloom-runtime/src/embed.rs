@@ -1115,6 +1115,7 @@ mod dmabuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use blockloom_protocol::SceneView;
 
     fn images(count: usize) -> Vec<SharedImage> {
         (0..count)
@@ -1221,7 +1222,8 @@ mod tests {
     #[test]
     #[ignore = "needs a GPU"]
     fn an_embedded_world_draws_into_shared_images() {
-        let (set, index, errors) = run_red_world(|_| {});
+        let (set, index, errors) =
+            run_world(red_world(Mode::TwoD), |_| {}, game_camera(), 0, is_red);
         let (set, index) = (
             set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}")),
             index,
@@ -1242,7 +1244,13 @@ mod tests {
         // A real viewer offers what EGL samples; here, whatever the GPU draws.
         let modifiers = gpu_modifiers();
         assert!(!modifiers.is_empty(), "this GPU has no drawable modifiers");
-        let (set, _, errors) = run_red_world(|exchange| exchange.accept(modifiers));
+        let (set, _, errors) = run_world(
+            red_world(Mode::TwoD),
+            |exchange| exchange.accept(modifiers),
+            game_camera(),
+            0,
+            is_red,
+        );
         let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
         assert!(errors.is_empty(), "{errors:?}");
         assert_ne!(
@@ -1255,7 +1263,13 @@ mod tests {
     #[test]
     #[ignore = "needs a GPU"]
     fn an_embedded_world_draws_at_the_size_the_view_asks_for() {
-        let (set, index, errors) = run_red_world(|exchange| exchange.resize(640, 360, 2.0));
+        let (set, index, errors) = run_world(
+            red_world(Mode::TwoD),
+            |exchange| exchange.resize(640, 360, 2.0),
+            game_camera(),
+            0,
+            is_red,
+        );
         let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
         assert_eq!((set.width, set.height), (640, 360));
         let pixel = middle_pixel(&set.images[index], 640, 360);
@@ -1263,6 +1277,133 @@ mod tests {
             pixel[0] > 150 && pixel[1] < 80,
             "expected red, read {pixel:?}"
         );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn an_embedded_world_shows_false_color_over_its_hdr_frame() {
+        // Red's luminance sits a quarter stop over middle grey: the green band.
+        let view = SceneView {
+            debug_view: blockloom_protocol::DebugView::FalseColor,
+            ..game_camera()
+        };
+        let green = |[r, g, b]: [u8; 3]| g > 180 && r < 140 && b < 140;
+        let (set, index, errors) = run_world(red_world(Mode::TwoD), |_| {}, view, 0, green);
+        let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
+        let pixel = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        assert!(green(pixel), "expected the green band, read {pixel:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_3d_world_shows_false_color_too() {
+        let view = SceneView {
+            debug_view: blockloom_protocol::DebugView::FalseColor,
+            ..game_camera()
+        };
+        let (set, index, errors) = run_world(red_world(Mode::ThreeD), |_| {}, view, 30, |_| false);
+        let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
+        assert!(errors.is_empty(), "{errors:?}");
+        let pixel = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        assert!(
+            is_false_color(pixel),
+            "expected a false color band, read {pixel:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_light_component_lights_the_ground_after_batching() {
+        let lit = run_world(dark_room(true), |_| {}, game_camera(), 90, |_| false);
+        let dark = run_world(dark_room(false), |_| {}, game_camera(), 90, |_| false);
+        let middle = |(set, index, errors): (Option<Arc<SlotSet>>, usize, Vec<RuntimeMessage>)| {
+            let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
+            middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize)
+        };
+        let (lit, dark) = (middle(lit), middle(dark));
+        assert!(
+            lit.iter().all(|c| *c > 120),
+            "expected a lit floor, read {lit:?}"
+        );
+        assert!(
+            dark.iter().all(|c| *c < 30),
+            "expected a dark floor, read {dark:?}"
+        );
+    }
+
+    fn red_world(mode: Mode) -> blockloom_core::project::Project {
+        let mut red = blockloom_core::project::Project::starter("Embedded", mode);
+        red.world.background = "#ff0000".to_string();
+        red
+    }
+
+    /// The 3D starter's floor with no sun and no ambient light, plus a small
+    /// still lamp above the middle of it, which batching merges.
+    fn dark_room(lamp: bool) -> blockloom_core::project::Project {
+        use blockloom_core::components::{ActorComponent, LightSpec};
+        use blockloom_core::scene::Visual;
+        let mut room = blockloom_core::project::Project::starter("Room", Mode::ThreeD);
+        room.world.background = "#000000".to_string();
+        room.world.lighting.illuminance = 0.0;
+        room.world.lighting.ambient_brightness = 0.0;
+        room.actors.retain(|actor| actor.name == "Ground");
+        room.actors[0].components.set_visual(Visual::Plane {
+            color: "#FFFFFF".to_string(),
+            size: [20.0, 20.0],
+        });
+        if lamp {
+            let mut lamp = blockloom_core::project::Actor::new(
+                "Lamp",
+                Visual::Sphere {
+                    color: "#FFFFFF".to_string(),
+                    radius: 0.05,
+                },
+            );
+            lamp.components.placement_mut().position = [0.0, 1.5, 3.0];
+            lamp.components.insert(ActorComponent::Light {
+                light: LightSpec {
+                    intensity: 1_000_000.0,
+                    ..LightSpec::default()
+                },
+            });
+            room.actors.push(lamp);
+        }
+        room
+    }
+
+    /// Whether a pixel is one of the false color bands, as sRGB.
+    fn is_false_color(pixel: [u8; 3]) -> bool {
+        const BANDS: &[[f32; 3]] = &[
+            [1.0, 1.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 0.8, 0.0],
+            [0.45, 0.45, 0.45],
+            [0.1, 0.8, 0.1],
+            [0.12, 0.12, 0.12],
+            [0.0, 0.35, 0.45],
+            [0.0, 0.05, 0.6],
+            [0.2, 0.0, 0.3],
+        ];
+        let srgb =
+            |linear: f32| (bevy::color::Srgba::gamma_function_inverse(linear) * 255.0).round();
+        BANDS.iter().any(|band| {
+            band.iter()
+                .zip(pixel)
+                .all(|(linear, got)| (srgb(*linear) - got as f32).abs() <= 6.0)
+        })
+    }
+
+    /// Looking through the game's own camera, so the scene view's grid and
+    /// selection stay out of the frame.
+    fn game_camera() -> SceneView {
+        SceneView {
+            enabled: false,
+            ..SceneView::default()
+        }
+    }
+
+    fn is_red([r, g, b]: [u8; 3]) -> bool {
+        r > 150 && g < 80 && b < 80
     }
 
     fn gpu_modifiers() -> Vec<u64> {
@@ -1286,10 +1427,15 @@ mod tests {
         }
     }
 
-    /// Runs a world with a red background until a frame shows it, answering
-    /// the ring it arrived in, which slot, and any errors the world sent.
-    fn run_red_world(
+    /// Runs a project until a frame's middle pixel passes `done`, or for
+    /// `settle` frames and then the next one, answering the ring it arrived
+    /// in, which slot, and any errors the world sent.
+    fn run_world(
+        project: blockloom_core::project::Project,
         offer: impl FnOnce(&FrameExchange),
+        view: SceneView,
+        settle: usize,
+        done: impl Fn([u8; 3]) -> bool,
     ) -> (Option<Arc<SlotSet>>, usize, Vec<RuntimeMessage>) {
         blockloom_core::init();
         let (to_world, incoming) = std::sync::mpsc::channel();
@@ -1298,19 +1444,19 @@ mod tests {
         offer(&exchange);
         let size = exchange.wanted().size;
         let frames = exchange.clone();
+        let project_mode = project.world.mode;
         let world = std::thread::spawn(move || {
             run(Embedded {
-                mode: Mode::TwoD,
+                mode: project_mode,
                 incoming,
                 outgoing,
                 frames,
             })
         });
-        let mut red = blockloom_core::project::Project::starter("Embedded", Mode::TwoD);
-        red.world.background = "#ff0000".to_string();
+        to_world.send(EditorMessage::SceneView(view)).unwrap();
         to_world
             .send(EditorMessage::Load {
-                project: Box::new(red),
+                project: Box::new(project),
                 dir: None,
             })
             .unwrap();
@@ -1334,9 +1480,8 @@ mod tests {
                     break;
                 }
                 if set.modifier == MODIFIER_LINEAR {
-                    let [r, g, b] =
-                        middle_pixel(&set.images[index], size.x as usize, size.y as usize);
-                    if r > 150 && g < 80 && b < 80 {
+                    let pixel = middle_pixel(&set.images[index], size.x as usize, size.y as usize);
+                    if done(pixel) || (settle > 0 && frames_seen > settle) {
                         break;
                     }
                 }

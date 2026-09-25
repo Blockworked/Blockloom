@@ -27,7 +27,7 @@ QtObject {
     readonly property var keyOptions: opts(["space","up arrow","down arrow","left arrow","right arrow","enter","escape","shift","control","alt","tab","backspace"]
         .concat("abcdefghijklmnopqrstuvwxyz".split("")).concat("0123456789".split("")))
     // The atmosphere slot's readings, spelled as `AtmosphereSense::field` takes them.
-    readonly property var atmosphereOptions: opts(["sun x","sun y","sun z","sun brightness","wind x","wind y","wind z","wind speed","wind gust","fog density","cloud cover","rain","snow","wetness","temperature"])
+    readonly property var atmosphereOptions: opts(["sun x","sun y","sun z","sun brightness","wind x","wind y","wind z","wind speed","wind gust","fog density","cloud cover","rain","snow","wetness","temperature","exposure"])
     readonly property var axisOptions: [{value:"X",label:"x"},{value:"Y",label:"y"},{value:"Z",label:"z"}]
     readonly property var bodyOptions: [{value:"None",label:"none (blocks only)"},{value:"Static",label:"static"},{value:"Dynamic",label:"dynamic"},{value:"Kinematic",label:"kinematic"}]
     readonly property var triggerOptions: [{value:"false",label:"solid"},{value:"true",label:"a trigger"}]
@@ -74,7 +74,7 @@ QtObject {
     }
     function attachableOptions() {
         const held = (actor ? actor.components : []).map(componentName);
-        const extra = ["Look","Render","Body","Joint","Brain","Camera","Material","Emitter","Trail"].filter(n => held.indexOf(n) < 0);
+        const extra = ["Look","Render","Body","Joint","Brain","Camera","Material","Emitter","Trail","Light"].filter(n => held.indexOf(n) < 0);
         return opts(held.filter(n => n !== "Place" && n !== "Script").concat(extra));
     }
     function detachableOptions() { return opts((actor ? actor.components : []).map(componentName).filter(n => n !== "Place")); }
@@ -118,7 +118,7 @@ QtObject {
         BlockHeader:"blocks", Move:"arrow-right", GoTo:"move", NavigateTo:"navigation", ChangePosition:"move-3d", Glide:"wind", Turn:"rotate-cw",
         SetRotation:"rotate-cw", PointTowards:"target", SetScale:"maximize", SetBody:"boxes", SetTrigger:"ghost", SetCollisionLayer:"layers",
         SetCollisionMask:"filter", ApplyImpulse:"zap", SetVelocity:"trending-up", SetGravity:"cloud", SetDensity:"weight", SetMass:"weight",
-        Say:"message-square", SetVisible:"eye", SetColor:"palette", BurstParticles:"sparkles", SetEmitterDial:"sliders-horizontal", SetTrailEnabled:"wind", PlaySound:"volume-2", PlaySoundAt:"map-pin", StopSound:"square",
+        Say:"message-square", SetVisible:"eye", SetColor:"palette", SetExposure:"sun", SetLightIntensity:"zap", BurstParticles:"sparkles", SetEmitterDial:"sliders-horizontal", SetTrailEnabled:"wind", PlaySound:"volume-2", PlaySoundAt:"map-pin", StopSound:"square",
         SetSoundVolume:"volume-1", SetSoundPitch:"music", SetBusVolume:"sliders-horizontal", SetComponentField:"panels-top-left",
         SetCameraView:"camera", SetCameraPitch:"video", SetCameraFov:"video", AttachComponent:"plus", DetachComponent:"x", SetParent:"link",
         CreateClone:"copy", CreateActor:"sparkles", DeleteActor:"trash-2", Wait:"clock", WaitUntil:"hand", If:"git-branch", IfElse:"git-fork",
@@ -174,6 +174,8 @@ QtObject {
             Say: row([lb("say"), slot("SayText", "text")]),
             SetVisible: row([flagDefaultTrue("visible", visibleOptions), lb("myself")]),
             SetColor: row([lb("set color to"), slot("ColorText", "color")]),
+            SetExposure: row([lb("set exposure to"), slot("ExposureEv", "ev"), lb("EV")]),
+            SetLightIntensity: row([lb("set my light to"), slot("LightIntensity", "intensity"), lb("lumens")]),
             BurstParticles: row([lb("burst"), slot("ParticleCount", "count"), lb("particles")]),
             SetEmitterDial: row([lb("set emitter"), dd("dial", () => opts(["Rate","Lifetime","Speed","Spread","Gravity","SizeStart","SizeEnd","Max"])), lb("to"), slot("EmitterValue", "value")]),
             SetTrailEnabled: row([flagDefaultTrue("enabled", visibleOptions), lb("my trail")]),
@@ -287,6 +289,8 @@ QtObject {
         case "Say": return { text: txt("Hello!") };
         case "SetVisible": return { visible: true };
         case "SetColor": return { color: txt("#FFAB19") };
+        case "SetExposure": return { ev: num(9.7) };
+        case "SetLightIntensity": return { intensity: num(800) };
         case "BurstParticles": return { count: num(24) };
         case "SetEmitterDial": return { dial: "Rate", value: num(24) };
         case "SetTrailEnabled": return { enabled: true };
@@ -434,7 +438,7 @@ QtObject {
         { label: "Events", types: ["WhenStarted","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenUiClicked","WhenUiChanged","Broadcast"] },
         { label: "Motion", types: ["Move","GoTo","NavigateTo","ChangePosition","Glide","Turn","SetRotation","PointTowards","SetScale"] },
         { label: "Physics", types: ["SetBody","ApplyImpulse","SetVelocity","SetGravity","SetDensity","SetMass","SetTrigger","SetCollisionLayer","SetCollisionMask"] },
-        { label: "Looks", types: ["Say","SetVisible","SetColor","BurstParticles","SetEmitterDial","SetTrailEnabled"] },
+        { label: "Looks", types: ["Say","SetVisible","SetColor","SetExposure","SetLightIntensity","BurstParticles","SetEmitterDial","SetTrailEnabled"] },
         { label: "Sound", types: ["PlaySound","PlaySoundAt","StopSound","SetSoundVolume","SetSoundPitch","SetBusVolume"] },
         { label: "Components", types: ["SetComponentField","SetCameraView","SetCameraPitch","SetCameraFov","AttachComponent","DetachComponent","SetParent"] },
         { label: "Actors", types: ["CreateClone","CreateActor","DeleteActor"] },
@@ -485,7 +489,7 @@ QtObject {
         Glide:"glide to", Turn:"turn", SetRotation:"point in direction", PointTowards:"point towards", SetScale:"set size", SetBody:"set body",
         SetTrigger:"make me solid or a trigger", SetCollisionLayer:"set my collision layer", SetCollisionMask:"set my collision mask",
         ApplyImpulse:"push", SetVelocity:"set velocity", SetGravity:"set gravity", SetDensity:"set density", SetMass:"set mass", Say:"say",
-        SetVisible:"show or hide", SetColor:"set color", BurstParticles:"burst particles", SetEmitterDial:"set an emitter dial", SetTrailEnabled:"start or stop my trail", PlaySound:"play sound", PlaySoundAt:"play sound at an actor", StopSound:"stop sound",
+        SetVisible:"show or hide", SetColor:"set color", SetExposure:"set exposure", SetLightIntensity:"set my light brightness", BurstParticles:"burst particles", SetEmitterDial:"set an emitter dial", SetTrailEnabled:"start or stop my trail", PlaySound:"play sound", PlaySoundAt:"play sound at an actor", StopSound:"stop sound",
         SetSoundVolume:"set sound volume", SetSoundPitch:"set sound pitch", SetBusVolume:"set bus volume", SetComponentField:"set a component field",
         SetCameraView:"set my camera view", SetCameraPitch:"set camera pitch", SetCameraFov:"set camera fov", AttachComponent:"attach a component",
         DetachComponent:"detach a component", SetParent:"attach me to an actor", CreateClone:"create a clone", CreateActor:"create an actor",

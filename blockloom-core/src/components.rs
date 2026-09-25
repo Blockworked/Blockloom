@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 /// can't take one of these names.
 pub const BUILT_IN_NAMES: &[&str] = &[
     "Place", "Look", "Render", "Body", "Joint", "Brain", "Camera", "Script", "Parent", "Material",
-    "Emitter", "Trail",
+    "Emitter", "Trail", "Light",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -62,6 +62,87 @@ impl Default for JointSpec {
             anchor: [0.0; 3],
             length: default_rope_length(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum LightKind {
+    /// Shines every way from the actor.
+    #[default]
+    Point,
+    /// A cone down the actor's forward (-Z) axis.
+    Spot,
+}
+
+/// A punctual light in physical units. 3D only: a 2D world has no lights.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LightSpec {
+    #[serde(default)]
+    pub kind: LightKind,
+    #[serde(default = "default_light_color")]
+    pub color: String,
+    /// Luminous power in lumens. A household bulb is about 800. A spot's
+    /// power isn't gathered into its cone, so a narrow one is no brighter.
+    #[serde(default = "default_lumens")]
+    pub intensity: f32,
+    /// Metres past which the light no longer reaches.
+    #[serde(default = "default_light_range")]
+    pub range: f32,
+    /// Metres. A bigger emitter softens highlights and shadow edges.
+    #[serde(default)]
+    pub radius: f32,
+    /// Degrees from the spot's axis where the falloff starts.
+    #[serde(default = "default_inner_angle")]
+    pub inner_angle: f32,
+    /// Degrees from the spot's axis where the light ends.
+    #[serde(default = "default_outer_angle")]
+    pub outer_angle: f32,
+    #[serde(default)]
+    pub shadows: bool,
+}
+
+fn default_light_color() -> String {
+    "#FFFFFF".to_string()
+}
+
+fn default_lumens() -> f32 {
+    800.0
+}
+
+fn default_light_range() -> f32 {
+    20.0
+}
+
+fn default_inner_angle() -> f32 {
+    30.0
+}
+
+fn default_outer_angle() -> f32 {
+    45.0
+}
+
+impl Default for LightSpec {
+    fn default() -> Self {
+        Self {
+            kind: LightKind::Point,
+            color: default_light_color(),
+            intensity: default_lumens(),
+            range: default_light_range(),
+            radius: 0.0,
+            inner_angle: default_inner_angle(),
+            outer_angle: default_outer_angle(),
+            shadows: false,
+        }
+    }
+}
+
+impl LightSpec {
+    /// The spot cone in radians, inner never past outer and outer short of
+    /// a half turn, which is as wide as a cone gets.
+    pub fn cone(&self) -> (f32, f32) {
+        let outer = self.outer_angle.clamp(0.1, 89.9).to_radians();
+        let inner = self.inner_angle.clamp(0.0, 89.9).to_radians().min(outer);
+        (inner, outer)
     }
 }
 
@@ -124,6 +205,8 @@ pub enum ActorComponent {
     Emitter { emitter: ParticleSpec },
     /// A motion trail: fading snapshots of where the actor just was.
     Trail { trail: TrailSpec },
+    /// A point or spot light riding the actor.
+    Light { light: LightSpec },
 }
 
 impl ActorComponent {
@@ -142,6 +225,7 @@ impl ActorComponent {
             ActorComponent::Material { .. } => "Material",
             ActorComponent::Emitter { .. } => "Emitter",
             ActorComponent::Trail { .. } => "Trail",
+            ActorComponent::Light { .. } => "Light",
             ActorComponent::Custom { name, .. } => name,
         }
     }
@@ -423,6 +507,14 @@ impl Components {
         }
     }
 
+    /// The light, if the actor carries one.
+    pub fn light(&self) -> Option<&LightSpec> {
+        match self.get("Light") {
+            Some(ActorComponent::Light { light }) => Some(light),
+            _ => None,
+        }
+    }
+
     pub fn camera(&self) -> Option<&CameraAttach> {
         match self.get("Camera") {
             Some(ActorComponent::Camera { camera }) => Some(camera),
@@ -630,5 +722,24 @@ mod tests {
         .unwrap();
         assert_eq!(json["component"], "Camera");
         assert_eq!(json["camera"]["view"], "ThirdPerson");
+    }
+
+    #[test]
+    fn a_bare_light_reads_as_a_bulb_and_its_cone_stays_a_cone() {
+        let component: ActorComponent =
+            serde_json::from_str(r#"{"component":"Light","light":{"kind":"Spot"}}"#).unwrap();
+        let ActorComponent::Light { light } = component else {
+            panic!("not a light");
+        };
+        assert_eq!(light.kind, LightKind::Spot);
+        assert_eq!(light.intensity, 800.0);
+        let wide = LightSpec {
+            inner_angle: 120.0,
+            outer_angle: 10.0,
+            ..LightSpec::default()
+        };
+        let (inner, outer) = wide.cone();
+        assert!(inner <= outer);
+        assert!(outer < std::f32::consts::FRAC_PI_2);
     }
 }

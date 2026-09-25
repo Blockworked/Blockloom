@@ -285,6 +285,19 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           `set light intensity/emissive strength to`, reporters `scene luminance`,
           `is HDR display?`, `peak brightness`. Fixed-tick sampling like the
           weather director so VM and codegen agree.
+        Done so far: world cameras are always `Hdr` (FP16 to the tonemapper,
+        bloom or not); a `Light` component (point/spot, lumens, range in
+        metres, radius, cone, shadows) on a child entity so batching can't
+        hide it; `set exposure to` (director claim for the run) and `set my
+        light to _ lumens` in blocks, compiled logic and scripts, plus an
+        `exposure` atmosphere reading; false color and clipping-zebra debug
+        views in the Game view (`hdr.rs`), GPU-tested in `embed.rs`.
+        Left: true HDR output (Bevy 0.20 only picks an 8-bit sRGB swapchain,
+        and the Game view ring is 8-bit), paper white and peak brightness,
+        histogram and waveform, calibration pattern, EXR screenshots, the
+        BC6H encode, per-texture exposure bias, the per-target HDR/SDR build
+        flag, `set emissive strength to`, and the `scene luminance` / `is HDR
+        display?` / `peak brightness` reporters.
   - [ ] Volume framework (the backbone everything below plugs into): global default
         plus box/sphere volumes with priority, blend distance and weight. Every
         property has an override checkbox HDRP-style, so a cave volume can take fog

@@ -690,6 +690,38 @@ pub const BLOCKS: &[BlockSpec] = &[
         bools: NO_BOOLS,
         bodies: NO_BODIES,
     },
+    BlockSpec {
+        r#type: "SetExposure",
+        category: "Looks",
+        purpose: "Sets the camera's exposure in EV100 for the rest of the run (lower is brighter; 9.7 is the default). Outranks auto-exposure and the project's own value.",
+        header: false,
+        three_d: true,
+        slots: &[Slot {
+            field: "ev",
+            id: "ExposureEv",
+            value: "Any",
+        }],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetLightIntensity",
+        category: "Looks",
+        purpose: "Sets this actor's Light component, in lumens (800 is a household bulb). Does nothing without a Light.",
+        header: false,
+        three_d: true,
+        slots: &[Slot {
+            field: "intensity",
+            id: "LightIntensity",
+            value: "Any",
+        }],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
     // ── Sound ──────────────────────────────────────────────────────────────
     BlockSpec {
         r#type: "PlaySound",

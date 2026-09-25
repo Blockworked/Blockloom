@@ -773,6 +773,11 @@ extern "C" fn act(
                 pitch: clamp_pitch(n0 as f32),
             }
         }
+        abi::ACT_SET_EXPOSURE => Effect::SetExposure { ev: n0 as f32 },
+        abi::ACT_SET_LIGHT_INTENSITY => Effect::SetLightIntensity {
+            actor,
+            intensity: n0 as f32,
+        },
         abi::ACT_SET_BUS_VOLUME => Effect::SetBusVolume {
             bus: SoundBus::parse(a).unwrap_or(SoundBus::Sfx),
             volume: user_to_gain(n0),

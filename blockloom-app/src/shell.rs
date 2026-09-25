@@ -835,7 +835,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "set-scene-view",
         cmd: "set_scene_view",
         aliases: &["set_scene_view"],
-        summary: "How the scene view edits: {enabled, tool: move|rotate|scale, local, snap, grid, angle, scale, show_grid}.",
+        summary: "How the scene view edits: {enabled, tool: move|rotate|scale, local, snap, grid, angle, scale, show_grid, debug_view: lit|false_color|clipping}.",
         args: &[ArgSpec {
             name: "view",
             ty: "object {\"tool\": ...}",

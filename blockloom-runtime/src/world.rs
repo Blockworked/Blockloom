@@ -230,6 +230,7 @@ pub fn pump_editor(
     mut preview: Option<ResMut<crate::preview::PreviewState>>,
     mut manager: ResMut<crate::ui::UiManager>,
     mut scene: Option<ResMut<crate::edit::SceneEditor>>,
+    mut debug: Option<ResMut<crate::hdr::HdrDebug>>,
     time: Res<Time>,
     mut fixed: ResMut<Time<Fixed>>,
     mut exit: MessageWriter<AppExit>,
@@ -343,6 +344,9 @@ pub fn pump_editor(
                 engine.preview_inputs.push(input);
             }
             EditorMessage::SceneView(view) => {
+                if let Some(debug) = debug.as_mut() {
+                    debug.set_if_neq(crate::hdr::HdrDebug(view.debug_view));
+                }
                 let Some(scene) = scene.as_mut() else {
                     continue;
                 };
@@ -492,11 +496,16 @@ pub fn rebuild_world(
     mut navmesh: Option<ResMut<NavMesh>>,
     mut stores: crate::materials::MaterialStores,
     mut performance: crate::performance::PerformanceStores,
+    claims: Option<ResMut<crate::environment::ExposureClaims>>,
 ) {
     if !engine.rebuild {
         return;
     }
     engine.rebuild = false;
+    // A `set exposure` lasts exactly as long as the run.
+    if let Some(mut claims) = claims {
+        claims.director = None;
+    }
     performance.cache.clear();
     performance.cells.clear();
     if let Some(warmup) = performance.warmup.as_mut() {
@@ -525,6 +534,7 @@ pub fn rebuild_world(
     engine.spawned.clear();
     engine.clones.clear();
     engine.last_created.clear();
+    engine.light_intensity.clear();
     engine.parents = engine
         .project
         .actors
@@ -2190,7 +2200,10 @@ fn camera_of(engine: &Engine, actor: &str) -> Option<blockloom_core::components:
 /// materials need the dimension's own pipeline, so `dim2`/`dim3` pick those
 /// up from the same effect list.
 fn is_dimensions_own(component: &str) -> bool {
-    matches!(component, "Body" | "Joint" | "Brain" | "Look" | "Material")
+    matches!(
+        component,
+        "Body" | "Joint" | "Brain" | "Look" | "Material" | "Light"
+    )
 }
 
 fn attach(
@@ -3207,6 +3220,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetRotation { actor, .. }
         | Effect::PointTowards { actor, .. }
         | Effect::SetScale { actor, .. }
+        | Effect::SetLightIntensity { actor, .. }
         | Effect::SetBody { actor, .. }
         | Effect::ApplyImpulse { actor, .. }
         | Effect::SetVelocity { actor, .. }
@@ -3230,6 +3244,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         // Making, deleting and re-parenting an actor are `apply_lifetimes`'s
         // to carry out, and none of them is a change to a transform.
         Effect::SetGravity { .. }
+        | Effect::SetExposure { .. }
         | Effect::SetBusVolume { .. }
         | Effect::RumbleGamepad { .. }
         | Effect::Stopped

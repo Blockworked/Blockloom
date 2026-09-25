@@ -41,11 +41,13 @@ Rectangle {
         property real angle: 15
         property real scaleStep: 0.1
         property bool showGrid: true
+        property string debugView: "lit"
     }
     readonly property bool is3d: !!appState.project && appState.project.world.mode === "ThreeD"
     readonly property var sceneView: ({
         enabled: scene.enabled, tool: scene.tool, local: scene.local, snap: scene.snap,
-        grid: is3d ? scene.grid3d : scene.grid2d, angle: scene.angle, scale: scene.scaleStep, show_grid: scene.showGrid
+        grid: is3d ? scene.grid3d : scene.grid2d, angle: scene.angle, scale: scene.scaleStep, show_grid: scene.showGrid,
+        debug_view: scene.debugView
     })
     onSceneViewChanged: app.invoke("set_scene_view", { view: sceneView }, null, () => {})
     // The scene view is what's showing: a world is up and nothing runs.
@@ -155,6 +157,15 @@ Rectangle {
                 visible: root.embedded
                 text: root.drawnSize.width + " × " + root.drawnSize.height + (root.shownPercent < 100 ? "  (shown at " + root.shownPercent + "%)" : "")
                 color: Theme.textDim; font.pixelSize: 11
+            }
+            Text { text: "View"; color: Theme.textDim; font.pixelSize: 12; Layout.leftMargin: 6 }
+            ChoiceField {
+                Layout.fillWidth: false; Layout.preferredWidth: 110
+                options: [{ value: "lit", label: "Lit" }, { value: "false_color", label: "False color" }, { value: "clipping", label: "Clipping" }]
+                value: scene.debugView
+                onChosen: v => scene.debugView = v
+                ToolTip.visible: hovered; ToolTip.delay: 500
+                ToolTip.text: "False color bands the exposed image by stops: green is middle grey, yellow nears white, red is past it.\nClipping stripes whatever is brighter than paper white."
             }
             Text { text: "Aspect"; color: Theme.textDim; font.pixelSize: 12; Layout.leftMargin: 6 }
             ChoiceField {

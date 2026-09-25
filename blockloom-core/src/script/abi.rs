@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 15;
+pub const ABI_VERSION: u32 = 16;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -267,6 +267,11 @@ pub const ACT_RUMBLE_GAMEPAD: u32 = 46;
 pub const ACT_BIND_ACTION: u32 = 47;
 /// `a` = action. Forgets every binding for the rest of the run.
 pub const ACT_CLEAR_ACTION_BINDINGS: u32 = 48;
+/// `n0` = EV100, lower is brighter. Holds for the rest of the run and
+/// outranks auto-exposure.
+pub const ACT_SET_EXPOSURE: u32 = 49;
+/// `n0` = lumens. Sets this actor's Light component.
+pub const ACT_SET_LIGHT_INTENSITY: u32 = 50;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per
