@@ -52,6 +52,7 @@ pub mod save;
 pub mod scene;
 pub mod script;
 pub mod sense;
+pub mod shader_lib;
 pub mod sound;
 pub mod ui;
 pub mod value;

@@ -113,7 +113,7 @@ impl Kind {
 
     /// Sorts an allocation by the label Bevy (or we) gave it.
     pub fn of(label: &str) -> Kind {
-        const POST: [&str; 13] = [
+        const POST: [&str; 14] = [
             "bloom",
             "ssao",
             "ssr",
@@ -127,6 +127,7 @@ impl Kind {
             "oit_",
             "deferred_lighting",
             "screenshot-capture",
+            "working_",
         ];
         if label.starts_with("main_texture") {
             Kind::Color
@@ -569,6 +570,7 @@ mod tests {
             ("ssao_noisy_texture", Kind::Post),
             ("taa_history_1_texture", Kind::Post),
             ("depth of field auxiliary texture", Kind::Post),
+            ("working_scratch_a", Kind::Post),
             ("game view target", Kind::GameView),
             ("Unlabeled texture", Kind::Images),
             ("general mesh slab 0 (vertex buffer)", Kind::Other),

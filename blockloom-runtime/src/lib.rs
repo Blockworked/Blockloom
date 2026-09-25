@@ -33,7 +33,10 @@ mod gpu;
 mod logic;
 mod materials;
 mod model;
+// Plumbing the Phase 5 passes build on; nothing reads most of it yet.
 mod overlay;
+#[allow(dead_code)]
+mod passes;
 mod performance;
 pub mod player;
 mod preview;
@@ -116,6 +119,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // registers all three, so systems can take their asset stores
     // unconditionally; an unused plugin costs nothing at runtime.
     materials::register(app);
+    passes::register(app);
     edit::configure(app);
     // Both of these only exist to talk to an editor, and a built game has
     // none: no corner status, no handshake.

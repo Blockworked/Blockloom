@@ -224,10 +224,16 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         bloom, vignette, AO, the sun, ambient and the clear color. It is
         extracted to the render world for the Phase 5 passes. Nothing fills
         the volume list or the claims yet; the volume framework does.
-  - [ ] Shared shader library and pass plumbing: common WESL chunks (hash, noise,
+  - [x] Shared shader library and pass plumbing: common WESL chunks (hash, noise,
         FBM, scattering helpers, standard UBO layout) plus one FP16 working-target
         set with a half-res scratch pair and bilateral upsample, used by both
         dimensions. Stops volumetrics, fog and SSR from each rolling their own.
+        Done: the modules are `blockloom::hash`, `noise`, `fbm`, `scattering`
+        and `frame` (`blockloom-core/src/shader_lib.rs`), importable from
+        surface files too. `blockloom-runtime/src/passes.rs` gives any camera
+        carrying `WorkingTargets` the FP16 set, `FrameUniforms` from the
+        blended `Environment`, and prewarmed upsample pipelines (depth-guided
+        in 3D, bilinear in 2D) behind `passes::upsample`.
   - [ ] Asset and snapshot extension points: the importer grows 3D/LUT volumes,
         HDR/EXR with BC6H, heightmaps, IES/cookies (extend the Phase 4 pipeline,
         not a parallel one); probe capture becomes a service reused for HDRI

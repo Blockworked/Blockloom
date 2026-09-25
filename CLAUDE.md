@@ -474,6 +474,29 @@ a rebuild spawns new ones, and it is extracted to the render world. Passes
 read `Environment`, never `project.world.lighting`/`post`; the rebuild only
 spawns a bare camera and sun.
 
+### Shader library and pass plumbing
+
+`blockloom-core/src/shader_lib.rs` holds Blockloom's own WESL modules
+(`src/shaders/`): `hash` (PCG), `noise` (value, gradient, Worley), `fbm`,
+`scattering` (phase functions, Beer, per-step integral) and `frame`, the
+standard per-view `FrameUniforms`. They live in core so the editor's shader
+check can link them; `shader_lib::validate` links a module against them and
+runs naga, which is how their tests (and the runtime's shader tests) check
+them without a GPU. The runtime registers each as `blockloom::<name>`
+(`blockloom-runtime/src/passes.rs`), so built-in passes and surface files
+import them like Bevy's.
+
+`passes.rs` is also the shared pass plumbing, both dimensions. A camera
+asks for it with `WorkingTargets` (like `DepthPrepass`); the render world then
+gives the view a `WorkingTargetSet` (one full-res `Rgba16Float` target and a
+half-res scratch pair, labelled `working_*`), `ViewFrameUniforms` into the one
+`FrameUniformBuffer` filled from the extracted `Environment`, and
+`ViewUpsample`'s bilateral upsample pipelines, queued up front so warm-up
+compiles them. `passes::upsample` draws scratch onto a full-res target,
+guided by the 3D depth prepass (plain bilinear in 2D). A half-res texel
+stands for the full-res pixel at twice its coordinate (`frame::full_texel`).
+Nothing asks for `WorkingTargets` yet; Phase 5's passes are the consumers.
+
 ### Models, tilemaps and surface shaders
 
 A `Visual::Model` draws its glTF/GLB file's first scene as a child of the
@@ -504,7 +527,8 @@ The built-in shaders (`src/shaders/*.wesl`) and that wrapper are WESL, since
 Bevy 0.20 hands plain WGSL to wgpu untouched: imports are `import
 bevy_pbr::render::...`, shader defs are `@if(DEF)`, and the bind group is
 `constants::MATERIAL_BIND_GROUP`. A user's surface file is WESL too and may
-import Bevy's own modules (`bevy_pbr` in 3D, `bevy_sprite_render` in 2D);
+import Blockloom's library (`blockloom::fbm`, ...) and Bevy's own modules
+(`bevy_pbr` in 3D, `bevy_sprite_render` in 2D);
 a project's other files aren't modules, so `package::`/`super::` are refused.
 
 ### How a project runs

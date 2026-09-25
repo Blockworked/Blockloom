@@ -47,5 +47,8 @@ wgpu = "30"
 bevy = { workspace = true, features = ["raw_vulkan_init"] }
 ash = "0.38"
 
+[dev-dependencies]
+naga.workspace = true
+
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libc = "0.2"

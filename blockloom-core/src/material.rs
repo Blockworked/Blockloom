@@ -631,8 +631,9 @@ pub const SURFACE_CONTRACT: &str = "\
 // Blockloom surface shader (WESL).
 // Define `fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32>`, returning the
 // surface's color (alpha 0 is see-through). `import` statements may open the
-// file, for Bevy's own shader modules: bevy_pbr in 3D, bevy_sprite_render in
-// 2D. Other files in the project aren't modules and can't be imported.
+// file, for Blockloom's library (blockloom::hash, noise, fbm, scattering) and
+// Bevy's own modules: bevy_pbr in 3D, bevy_sprite_render in 2D. Other files
+// in the project aren't modules and can't be imported.
 // In scope: `tint` and `secondary` (vec4 colors), `params` (mode, speed,
 // strength, time), and `base_color(uv)`, the look's tint times its image.
 // The runtime passes box-projected UVs when the material enables projection.
@@ -876,10 +877,12 @@ fn split_header(source: &str) -> Header {
 /// Parse and validate a surface shader the way the GPU will see it. Syntax
 /// errors and the naga check carry line numbers that match the file: naga
 /// sees the bindings after the source, which WGSL allows. A file without
-/// `import` statements gets naga's full type check; one with imports gets
-/// WESL syntax, the contract and a clash check against the wrapper, and its
-/// types are checked when Play compiles it on the GPU, since imported
-/// modules only resolve there. An error comes back ready to log.
+/// `import` statements gets naga's full type check, and so does one that
+/// only imports Blockloom's library, linked in first (its errors then point
+/// into the linked module). One importing Bevy gets WESL syntax, the contract
+/// and a clash check against the wrapper, and its types are checked when Play
+/// compiles it on the GPU, since Bevy's modules only resolve there. An error
+/// comes back ready to log.
 pub fn check_surface_wesl(source: &str, dim3: bool) -> Result<(), String> {
     use std::borrow::Cow;
     use std::collections::HashSet;
@@ -927,7 +930,7 @@ pub fn check_surface_wesl(source: &str, dim3: bool) -> Result<(), String> {
         match import.path.as_ref().map(|path| &path.origin) {
             Some(PathOrigin::Package(name)) => Ok(name.clone()),
             Some(PathOrigin::Absolute | PathOrigin::Relative(_)) => Err(
-                "`package::` and `super::` imports don't resolve: a surface file can only import Bevy's shader modules"
+                "`package::` and `super::` imports don't resolve: a surface file can only import Blockloom's and Bevy's shader modules"
                     .to_string(),
             ),
             None => Ok(match &import.content {
@@ -939,9 +942,8 @@ pub fn check_surface_wesl(source: &str, dim3: bool) -> Result<(), String> {
         }
     }
     let parse = |text: &str| -> Result<TranslationUnit, String> {
-        text.parse().map_err(|error: wgsl_parse::Error| {
-            error.with_source(Cow::Borrowed(text)).to_string()
-        })
+        text.parse()
+            .map_err(|error: wgsl_parse::Error| error.with_source(Cow::Borrowed(text)).to_string())
     };
 
     if source
@@ -974,17 +976,22 @@ pub fn check_surface_wesl(source: &str, dim3: bool) -> Result<(), String> {
     } else {
         ("bevy_pbr", "2D")
     };
+    let mut library_only = true;
     for import in &unit.imports {
         let package = package(import)?;
         if package == other || (dim3 && package == "bevy_sprite") {
-            return Err(format!("`{package}` isn't available to a {here} surface shader"));
+            return Err(format!(
+                "`{package}` isn't available to a {here} surface shader"
+            ));
         }
+        library_only &= package == crate::shader_lib::PACKAGE;
     }
 
     // Names can't clash with each other or with anything the wrapper brings
     // in. The file's own `@if` branches may reuse a name, since only one lands.
-    let wrapper: HashSet<String> =
-        global_names(&parse(&surface_module("", dim3))?, true).into_iter().collect();
+    let wrapper: HashSet<String> = global_names(&parse(&surface_module("", dim3))?, true)
+        .into_iter()
+        .collect();
     let mut seen = HashSet::new();
     for name in global_names(&unit, false) {
         if !seen.insert(name.clone()) {
@@ -1001,20 +1008,24 @@ pub fn check_surface_wesl(source: &str, dim3: bool) -> Result<(), String> {
     // The module the GPU gets has to parse too, hoisted imports and all.
     parse(&surface_module(source, dim3))?;
 
-    if unit.imports.is_empty() {
-        let full = format!(
-            "{source}\n{}\n@fragment\nfn blockloom_check(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {{\n    return graph_main(uv, params.w);\n}}\n",
-            SURFACE_BINDINGS.replace("constants::MATERIAL_BIND_GROUP", "2")
-        );
-        let module =
-            naga::front::wgsl::parse_str(&full).map_err(|error| error.emit_to_string(&full))?;
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::default(),
-        )
-        .validate(&module)
-        .map_err(|error| error.emit_to_string(&full))?;
+    if !library_only {
+        return Ok(());
     }
+    let full = format!(
+        "{source}\n{}\n@fragment\nfn blockloom_check(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {{\n    return graph_main(uv, params.w);\n}}\n",
+        SURFACE_BINDINGS.replace("constants::MATERIAL_BIND_GROUP", "2")
+    );
+    if !unit.imports.is_empty() {
+        return crate::shader_lib::validate(&full, &[]);
+    }
+    let module =
+        naga::front::wgsl::parse_str(&full).map_err(|error| error.emit_to_string(&full))?;
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::default(),
+    )
+    .validate(&module)
+    .map_err(|error| error.emit_to_string(&full))?;
     Ok(())
 }
 
@@ -1686,7 +1697,14 @@ mod tests {
         // The file's lines keep their numbers inside the body.
         let header = split_header(imported);
         assert_eq!(header.body.lines().count(), imported.lines().count());
-        assert!(header.body.lines().nth(7).unwrap().starts_with("fn graph_main"));
+        assert!(
+            header
+                .body
+                .lines()
+                .nth(7)
+                .unwrap()
+                .starts_with("fn graph_main")
+        );
 
         // Importing what the wrapper already imports clashes on the GPU.
         let twice = "import bevy_pbr::forward_io::VertexOutput;\n\
@@ -1707,6 +1725,25 @@ mod tests {
         let module = surface_module(directive, false);
         assert!(module.find("enable f16;").unwrap() > module.rfind("import ").unwrap());
         let _: wesl::syntax::TranslationUnit = module.parse().unwrap();
+    }
+
+    #[test]
+    fn surface_files_can_use_the_shader_library() {
+        let clouds = "import blockloom::fbm::fbm2;\n\
+                      fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> {\n    \
+                      let n = fbm2(uv * 4.0 + vec2<f32>(time, 0.0), 5u, 2.0, 0.5);\n    \
+                      return mix(base_color(uv), secondary, n * 0.5 + 0.5);\n}\n";
+        check_surface_wesl(clouds, true).unwrap();
+        check_surface_wesl(clouds, false).unwrap();
+        // Linked, the library still type-checks the file's own body.
+        let wrong = "import blockloom::fbm::fbm2;\n\
+                     fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> {\n    \
+                     return fbm2(uv, 5u, 2.0, 0.5);\n}\n";
+        assert!(check_surface_wesl(wrong, true).is_err());
+        let missing = "import blockloom::fbm::fbm9;\n\
+                       fn graph_main(uv: vec2<f32>, time: f32) -> vec4<f32> {\n    \
+                       return tint * fbm9(uv);\n}\n";
+        assert!(check_surface_wesl(missing, true).is_err());
     }
 
     #[test]
