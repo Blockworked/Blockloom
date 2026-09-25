@@ -209,7 +209,8 @@ impl Backend {
                     actor: name_of(&actor),
                     text,
                 };
-                s.push_log(line);
+                self.publish_log(s, line);
+                return;
             }
             RuntimeMessage::Error { actor, message } => {
                 let line = LogLine {
@@ -217,7 +218,8 @@ impl Backend {
                     actor: name_of(&actor),
                     text: message,
                 };
-                s.push_log(line);
+                self.publish_log(s, line);
+                return;
             }
             RuntimeMessage::Status(status) => {
                 let unchanged = s.running == status.running && s.paused == status.paused;
@@ -262,6 +264,20 @@ impl Backend {
         let dto = crate::state::state_dto(&s);
         drop(s);
         self.app.emit_state(&dto);
+    }
+
+    /// Adds a line and sends the log on its own, leaving the snapshot alone.
+    fn publish_log(&self, mut s: std::sync::MutexGuard<'_, crate::state::AppState>, line: LogLine) {
+        s.push_log(line);
+        let json = serde_json::to_string(&crate::state::LogDto {
+            total: s.log_total,
+            lines: &s.log,
+        });
+        drop(s);
+        match json {
+            Ok(json) => self.app.send(Event::Log(json.into())),
+            Err(e) => tracing::warn!("Couldn't serialize the run log: {e}"),
+        }
     }
 
     /// The runtime's window closed. Its handle is dropped so the next Play

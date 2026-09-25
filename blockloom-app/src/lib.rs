@@ -23,6 +23,9 @@ pub enum Event {
     /// several times a second, so a frontend can apply it without re-reading
     /// the whole snapshot; the next snapshot carries it too.
     Status(Arc<str>),
+    /// The run log alone, serialized as `{total, lines}` - a `say` in a loop
+    /// would otherwise re-send the whole snapshot every frame.
+    Log(Arc<str>),
     /// The game window closed on its own.
     RuntimeClosed,
 }
@@ -89,6 +92,7 @@ impl Backend {
             paused: false,
             status: None,
             log: Vec::new(),
+            log_total: 0,
             // An embedded world is always shown, so it is always previewing.
             preview_enabled: embedded.is_some(),
             preview_headless: false,

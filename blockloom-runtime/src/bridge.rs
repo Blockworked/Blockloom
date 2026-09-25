@@ -14,8 +14,8 @@
 
 use blockloom_protocol::{EditorMessage, RuntimeMessage, decode, encode};
 use std::io::{BufRead, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 static ATTACHED: AtomicBool = AtomicBool::new(false);

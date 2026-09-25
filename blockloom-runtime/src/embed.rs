@@ -8,7 +8,7 @@
 use crate::bridge;
 use crate::engine::Engine;
 use crate::world::WorldCamera;
-use bevy::app::{ScheduleRunnerPlugin, TerminalCtrlCHandlerPlugin};
+use bevy::app::{PluginsState, TerminalCtrlCHandlerPlugin};
 use bevy::camera::{ManualTextureViewHandle, RenderTarget};
 use bevy::prelude::*;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
@@ -22,7 +22,7 @@ use blockloom_protocol::{EditorMessage, GAME_SIZE, RuntimeMessage};
 use std::os::fd::OwnedFd;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 /// How many shared images the ring holds: one the viewer shows, one ready
@@ -32,6 +32,9 @@ const SLOTS: usize = 3;
 const VIEW: ManualTextureViewHandle = ManualTextureViewHandle(0xB10C);
 /// What a player's window would show; the editor scales it to fit.
 const SIZE: UVec2 = UVec2::new(GAME_SIZE.0, GAME_SIZE.1);
+/// The longest a world waits for the display: a hidden view presents
+/// nothing, and the world still has to keep hearing the editor.
+const PACE_TIMEOUT: Duration = Duration::from_millis(50);
 /// `DRM_FORMAT_XBGR8888`: RGBA bytes in memory, alpha ignored.
 const FOURCC_XBGR8888: u32 = u32::from_le_bytes(*b"XB24");
 /// `DRM_FORMAT_MOD_LINEAR`.
@@ -83,13 +86,29 @@ pub fn run(embedded: Embedded) {
             .disable::<bevy::winit::WinitPlugin>()
             .disable::<bevy::log::LogPlugin>()
             .disable::<TerminalCtrlCHandlerPlugin>(),
-    )
-    .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
-        1.0 / 60.0,
-    )));
+    );
     crate::add_world(&mut app, mode, Engine::new(incoming, mode));
-    add_surface(&mut app, frames);
+    add_surface(&mut app, frames.clone());
+    app.set_runner(move |app| paced(app, &frames));
     app.run();
+}
+
+/// Bevy's loop, one update per frame the view presents rather than on a timer
+/// of its own, so a 144 Hz screen gets 144 evenly spaced frames.
+fn paced(mut app: App, frames: &FrameExchange) -> AppExit {
+    while app.plugins_state() == PluginsState::Adding {
+        bevy::tasks::tick_global_task_pools_on_main_thread();
+    }
+    app.finish();
+    app.cleanup();
+    let mut seen = frames.presented_count();
+    loop {
+        app.update();
+        if let Some(exit) = app.should_exit() {
+            return exit;
+        }
+        seen = frames.wait_presented(seen, PACE_TIMEOUT);
+    }
 }
 
 struct Detach(u64, Arc<FrameExchange>);
@@ -126,6 +145,9 @@ pub struct SlotSet {
 pub struct FrameExchange {
     ring: Mutex<Ring>,
     wake: Box<dyn Fn() + Send + Sync>,
+    /// How many frames the view has put on screen, and its waiter.
+    presented: Mutex<u64>,
+    shown: Condvar,
 }
 
 #[derive(Default)]
@@ -145,7 +167,37 @@ impl FrameExchange {
         Arc::new(Self {
             ring: Mutex::new(Ring::default()),
             wake: Box::new(wake),
+            presented: Mutex::new(0),
+            shown: Condvar::new(),
         })
+    }
+
+    /// The view just put a frame on screen: time for the world's next one.
+    /// Any thread.
+    pub fn presented(&self) {
+        if let Ok(mut count) = self.presented.lock() {
+            *count += 1;
+        }
+        self.shown.notify_all();
+    }
+
+    fn presented_count(&self) -> u64 {
+        self.presented.lock().map_or(0, |count| *count)
+    }
+
+    /// Blocks until a frame past `seen` is presented, or `timeout` passes.
+    /// Answers the count now, so a present during the update isn't waited on.
+    fn wait_presented(&self, seen: u64, timeout: Duration) -> u64 {
+        let Ok(count) = self.presented.lock() else {
+            return seen;
+        };
+        match self
+            .shown
+            .wait_timeout_while(count, timeout, |count| *count == seen)
+        {
+            Ok((count, _)) => *count,
+            Err(_) => seen,
+        }
     }
 
     /// The current ring, or none while no world is drawing.
@@ -586,6 +638,25 @@ mod tests {
     }
 
     #[test]
+    fn a_world_waits_for_the_display_but_not_forever() {
+        let exchange = FrameExchange::new(|| {});
+        let seen = exchange.presented_count();
+        // Nothing presented: the timeout lets it go.
+        assert_eq!(
+            exchange.wait_presented(seen, Duration::from_millis(5)),
+            seen
+        );
+        // Presented during the update: no wait at all.
+        exchange.presented();
+        let started = std::time::Instant::now();
+        assert_eq!(
+            exchange.wait_presented(seen, Duration::from_secs(5)),
+            seen + 1
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
     fn a_new_ring_forgets_the_old_one() {
         let exchange = FrameExchange::new(|| {});
         let old = exchange.install(4, 4, images(3));
@@ -636,7 +707,10 @@ mod tests {
             {
                 // Keep the world off this slot while it is read.
                 exchange.hold(generation, index);
-                seen = Some((set.images.len(), middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize)));
+                seen = Some((
+                    set.images.len(),
+                    middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize),
+                ));
                 if seen.is_some_and(|(_, [r, g, b])| r > 150 && g < 80 && b < 80) {
                     break;
                 }

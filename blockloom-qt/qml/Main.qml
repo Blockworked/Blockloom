@@ -27,12 +27,15 @@ ApplicationWindow {
     property var appState: ({
         library: [], default_project_location: "", project_path: null, project: null, selected_actor: null,
         can_undo: false, can_redo: false, invalid_field_buffers: [], running: false, paused: false, status: null,
-        log: [], runtime_available: true, runtime_open: false, preview_enabled: false, preview_headless: false,
+        log: [], log_total: 0, runtime_available: true, runtime_open: false, preview_enabled: false, preview_headless: false,
         preview_port: null, game_size: [960, 720], runtime_embedded: false, pointer_locked: false
     })
     // The run's live status, kept apart from `appState` so it can change
     // several times a second without re-evaluating the whole editor.
     property var status: null
+    // The run log, likewise: `total` counts every line ever added, so the log
+    // view appends what's new instead of rebuilding.
+    property var log: ({ total: 0, lines: [] })
     readonly property var openActor: Blocks.actor
     // The tray entry being dragged onto an asset box, and the boxes that take one.
     property var assetDrag: null
@@ -73,12 +76,18 @@ ApplicationWindow {
             catch (error) { console.warn("Invalid Blockloom state", error); return; }
             Blocks.appState = root.appState;
             root.status = root.appState.status || null;
+            if (root.appState.log_total !== root.log.total || root.appState.log.length !== root.log.lines.length)
+                root.log = { total: root.appState.log_total || 0, lines: root.appState.log || [] };
         }
         // A running world's status, several times a second: only what reads
         // `status` re-evaluates, not everything bound to the whole snapshot.
         onStatusJsonChanged: {
             try { root.status = JSON.parse(statusJson); }
             catch (error) { console.warn("Invalid run status", error); }
+        }
+        onLogJsonChanged: {
+            try { root.log = JSON.parse(logJson); }
+            catch (error) { console.warn("Invalid run log", error); }
         }
         onReplied: (token, response) => {
             const call = root.pending[token];

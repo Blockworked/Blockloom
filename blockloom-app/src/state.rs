@@ -42,6 +42,8 @@ pub(crate) struct AppState {
     /// The last status the runtime reported.
     pub(crate) status: Option<blockloom_protocol::Status>,
     pub(crate) log: Vec<LogLine>,
+    /// Lines ever pushed, so a frontend can tell which ones it hasn't seen.
+    pub(crate) log_total: u64,
     /// Whether the embedded preview viewport wants the sidecar stream.
     pub(crate) preview_enabled: bool,
     /// Hides the runtime's OS window while the stream runs.
@@ -80,6 +82,7 @@ impl AppState {
 
     pub(crate) fn push_log(&mut self, line: LogLine) {
         self.log.push(line);
+        self.log_total += 1;
         let overflow = self.log.len().saturating_sub(LOG_LIMIT);
         self.log.drain(..overflow);
     }
@@ -93,6 +96,13 @@ pub(crate) struct LogLine {
     /// Actor name, resolved when the line was made.
     pub(crate) actor: String,
     pub(crate) text: String,
+}
+
+/// The run log as [`crate::Event::Log`] carries it.
+#[derive(Serialize)]
+pub(crate) struct LogDto<'a> {
+    pub(crate) total: u64,
+    pub(crate) lines: &'a [LogLine],
 }
 
 // ─── The snapshot the frontend gets ────────────────────────────────────────
@@ -116,6 +126,7 @@ pub(crate) struct StateDto {
     pub(crate) paused: bool,
     pub(crate) status: Option<blockloom_protocol::Status>,
     pub(crate) log: Vec<LogLine>,
+    pub(crate) log_total: u64,
     /// False when no runtime binary sits next to this one, which is the one
     /// install mistake that would otherwise look like "Play does nothing".
     pub(crate) runtime_available: bool,
@@ -194,6 +205,7 @@ pub(crate) fn state_dto(s: &AppState) -> StateDto {
         paused: s.paused,
         status: s.status.clone(),
         log: s.log.clone(),
+        log_total: s.log_total,
         runtime_available: s.embedded.is_some() || blockloom_protocol::runtime_path().exists(),
         runtime_open: s.runtime.is_some(),
         preview_enabled: s.preview_enabled,

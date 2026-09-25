@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Blockloom is a Qt/QML desktop app (Windows/Linux/macOS) for building games out
 of blocks - a Scratch-style block editor driving a real game world, in 2D or
 in 3D. A project is a world plus a set of actors, each with its own block
-canvas; pressing Play opens the world in a Bevy window and runs those blocks
-against it.
+canvas; pressing Play runs those blocks against a Bevy world, shown in the
+editor's Game view.
 
 ## Common commands
 
@@ -20,10 +20,11 @@ just test               # cargo test --workspace (blockloom-core has the bulk of
 just player             # stage the hard-optimized player a built game ships
 ```
 
-Build the whole workspace, not just `-p blockloom`: the editor starts the
-`blockloom-runtime` binary sitting next to it, and a stale or missing runtime is
-exactly what `cargo run -p blockloom` would leave you with. The editor says so
-in a banner rather than letting Play do nothing.
+Build the whole workspace, not just `-p blockloom`: off Linux (or with
+`BLOCKLOOM_RUNTIME=process`) the editor starts the `blockloom-runtime` binary
+sitting next to it, and a stale or missing runtime is exactly what `cargo run -p
+blockloom` would leave you with. The editor says so in a banner rather than
+letting Play do nothing.
 
 There's no clippy.toml/rustfmt.toml - just `cargo clippy`/`cargo fmt` with
 defaults.
@@ -109,7 +110,9 @@ Build/test with `cd mcp && pnpm install && pnpm run build && pnpm test`.
 
 ### Cargo workspace
 
-Two processes: the editor window, and the game world.
+The editor, and the game world. On Linux the world runs on a thread inside the
+editor and draws straight into its Game view (see Game view below); elsewhere
+it is a child process.
 
 - **`blockloom-qt`** (package `blockloom`) - the editor window and the app's
   entry point: Qt Quick over cxx-qt. It owns `blockloom-app` directly - there
@@ -117,8 +120,9 @@ Two processes: the editor window, and the game world.
   `invokeCommand` runs a `Backend::dispatch` command on a worker thread, in
   order, and answers with `replied(token, {ok, result, error})`; state the
   backend publishes lands in the `stateJson` property, coalesced per burst.
-  `src/preview.rs` follows the runtime's MJPEG preview stream into
-  `previewFrame`.
+  `src/preview.rs` follows a child runtime's MJPEG preview stream into
+  `previewFrame`. `src/game_view.rs`/`.cpp` are the in-process Game view, and
+  `src/pointer_lock.cpp` its pointer lock.
 - **`blockloom-app`** - the backend: `src/commands.rs` holds every command,
   `src/dispatch.rs` maps command names + JSON args onto them, `src/state.rs`
   holds `SharedState`/`AppState` and the snapshot the frontend gets, and
@@ -127,17 +131,19 @@ Two processes: the editor window, and the game world.
   Commands publish changes through `AppHandle`, a plain callback the host
   supplies.
 - **`blockloom-runtime`** - the game world: a Bevy app that renders one project
-  and runs its blocks. A separate process because Bevy needs its own window and
-  event loop and the editor's Qt one already owns the process. `--mode 2d|3d`
+  and runs its blocks. A library plus a thin binary: `run_process` is the child
+  process and the built player, `embed::run` the windowless in-editor world,
+  and both build the same world through `add_world`. `--mode 2d|3d`
   decides which physics/render pipeline is built, so the editor restarts it when
   a project switches dimension. `src/world.rs` holds the dimension-agnostic
   systems, `src/dim2.rs`/`src/dim3.rs` the sprite/`bevy_rapier2d` and
   mesh/`bevy_rapier3d` halves. The same binary is what a built game ships:
   with a pack beside it, it loads that instead of waiting for an editor, and
   `src/player.rs` is the whole of the difference (see Building a game below).
-- **`blockloom-protocol`** - the wire format between them: newline-delimited
-  JSON over the child's stdin/stdout. No sockets, no ports; the pipe closing is
-  the whole shutdown handshake.
+- **`blockloom-protocol`** - the messages between them: newline-delimited JSON
+  over a child's stdin/stdout, or the same enums over channels in-process. No
+  sockets, no ports; the pipe or channel closing is the whole shutdown
+  handshake. Bump `PROTOCOL_VERSION` whenever a message changes.
 - **`blockloom-core`** - the engine library both processes share: `scene.rs`
   (the value types a world is built from - looks, bodies, placements, camera),
   `components.rs` (what an actor is made of - see below), `blocks.rs` (the
@@ -296,11 +302,51 @@ does in the block editor. A panic inside a script is caught by `export!` and
 logged rather than being allowed to cross the C boundary, which would abort
 the whole game window.
 
+### Game view
+
+`Backend::start_embedded` takes an `EmbeddedRuntime` host, and
+`RuntimeHandle` then starts the world on a `blockloom-world` thread instead of
+spawning a child - same messages, over channels. `bridge::attach` routes the
+world's `send` into that channel. A panic in the world is caught and reported
+as `Fatal`, ending the run rather than the editor; a native crash (a script
+library, a GPU fault) still takes the editor down.
+
+Bevy runs headless there: no winit, one update per frame the view presents
+(`embed::paced` waits on `FrameExchange::presented`, which the view calls on
+every swap and keeps asking for while a world runs; 50 ms at most, so a hidden
+view still hears the editor), and synchronous pipeline compilation, since async compile tasks outliving the
+device crash NVIDIA at exit. Cameras render into an offscreen texture of
+`GAME_SIZE` (960x720) - the whole game, scaled to fit the view - and each
+frame is GPU-copied into a ring of three linear Vulkan images exported as
+dma-bufs (`embed.rs`, raw `ash` under wgpu). `FrameExchange` hands slots
+between the world and the view: the world never draws into the one being
+shown or waiting to be. The C++ `GameView` item imports the ring through EGL;
+NVIDIA only samples linear buffers as external textures, so there it copies
+each frame through a small shader into a plain texture first. This is why Qt
+is forced onto its OpenGL renderer, and onto EGL on X11.
+
+Status (positions, variables) and the run log reach QML through their own
+`statusJson` and `logJson`, not the whole state snapshot - re-evaluating every
+binding on each status or `say` stuttered the view. `RunLog.qml` appends by
+`log.total` rather than rebuilding its list.
+
+Input is `PreviewInput`, as it is for the MJPEG preview: keys, buttons,
+position, text, plus `focus` (which, once sent, decides whether the game is
+focused, and releases held keys when lost) and `mouse_delta`. A windowless
+world answers `lock mouse` with `RuntimeMessage::PointerLock`; the view then
+locks the pointer while it has the keyboard - Wayland pointer constraints and
+relative pointer (the generated glue is vendored in `blockloom-qt/src/wayland/`),
+cursor warping on X11 - and forwards raw motion. Escape always releases it and
+a click takes it back.
+
+`BLOCKLOOM_RUNTIME=process` forces the child process and MJPEG preview on
+Linux too. Windows and macOS have no GPU sharing yet.
+
 ### How a project runs
 
 1. Play hands the runtime the whole project (`EditorMessage::Load`) and starts
-   it. Nothing is shared but that message: the runtime owns the world from then
-   on.
+   it. Nothing is shared but that message - even in-process, the world gets its
+   own copy - and the runtime owns the world from then on.
 2. `vm::compile` flattens each actor's canvas into a `Vec<Step>` with jumps -
    a nested tree can't be suspended mid-body, but a program counter can. Header
    strands become entry points keyed by their trigger.
@@ -551,7 +597,8 @@ doesn't. `world::set_paused` is the one place that flips it, whether the
 editor's Pause button or the block asked.
 
 Pointer lock is fully manual: game code unlocks around a menu and re-locks on
-close. The one safety net is that showing a modal while the pointer is locked
+close. In the Game view the editor holds it on the world's behalf (see Game
+view above). The one safety net is that showing a modal while the pointer is locked
 logs a warning, since a locked hidden cursor can't press anything.
 
 ### Frontend (`blockloom-qt/qml/`)

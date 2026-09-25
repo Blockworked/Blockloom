@@ -52,6 +52,8 @@ private:
     void fail(const QString &message);
     // Before Qt draws: copies an external-only frame into a plain texture.
     void renderExternal();
+    // After each swap: paces the world, and asks for the next frame while one runs.
+    void framePresented();
 
     // Render thread only: the ring imported, and the node holding it.
     quint64 m_generation = 0;

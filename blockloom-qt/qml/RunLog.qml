@@ -15,6 +15,24 @@ Rectangle {
     border.color: Theme.borderSoft
 
     Settings { id: remembered; category: "runlog"; property bool open: true }
+    // Appends the lines not yet shown and drops what the backend dropped.
+    readonly property var log: app.log
+    property real shownTotal: 0
+    onLogChanged: sync()
+    Component.onCompleted: sync()
+    function sync() {
+        const incoming = log.lines, added = log.total - shownTotal;
+        const entry = line => ({ kind: line.kind, actor: line.actor, words: line.text });
+        if (added < 0 || added > incoming.length) {
+            lineModel.clear();
+            for (const line of incoming) lineModel.append(entry(line));
+        } else {
+            for (let i = incoming.length - added; i < incoming.length; i++) lineModel.append(entry(incoming[i]));
+            if (lineModel.count > incoming.length) lineModel.remove(0, lineModel.count - incoming.length);
+        }
+        shownTotal = log.total;
+    }
+    ListModel { id: lineModel }
     function shown(value) { return value.value === undefined ? String(value.kind) : String(value.value); }
 
     ColumnLayout {
@@ -37,16 +55,18 @@ Rectangle {
             id: lines
             visible: remembered.open
             Layout.fillWidth: true; Layout.fillHeight: true; clip: true
-            model: root.appState.log
+            model: lineModel
             ScrollBar.vertical: ScrollBar {}
             onCountChanged: positionViewAtEnd()
             delegate: Text {
-                required property var modelData
+                required property string kind
+                required property string actor
+                required property string words
                 width: lines.width - 16; x: 8
                 wrapMode: Text.Wrap; font.family: "monospace"; font.pixelSize: 12
                 textFormat: Text.PlainText
-                color: modelData.kind === "error" ? Theme.danger : Theme.text
-                text: (modelData.actor ? modelData.actor + "  " : "") + modelData.text
+                color: kind === "error" ? Theme.danger : Theme.text
+                text: (actor ? actor + "  " : "") + words
             }
         }
     }

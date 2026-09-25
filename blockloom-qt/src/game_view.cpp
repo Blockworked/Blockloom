@@ -465,6 +465,14 @@ void GameView::renderExternal()
     window()->endExternalCommands();
 }
 
+void GameView::framePresented()
+{
+    game_view_presented();
+    // A running world draws a frame per present, so keep presenting.
+    if (m_generation)
+        QMetaObject::invokeMethod(this, [this] { update(); }, Qt::QueuedConnection);
+}
+
 QSGNode *GameView::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
 {
     auto *node = static_cast<GameViewNode *>(old);
@@ -480,6 +488,7 @@ QSGNode *GameView::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
     if (m_hooked != window()) {
         m_hooked = window();
         connect(window(), &QQuickWindow::beforeRendering, this, &GameView::renderExternal, Qt::DirectConnection);
+        connect(window(), &QQuickWindow::frameSwapped, this, &GameView::framePresented, Qt::DirectConnection);
     }
 
     // Tried once per ring: a failed import waits for the next one.

@@ -102,7 +102,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [ ] Scroll wheel and touch.
   - [ ] Gamepads: probably already read straight from the system in-process - verify.
   - [ ] Keyboard by physical key, not Qt key name (non-QWERTY layouts land WASD elsewhere). Right Shift/Ctrl/Alt arrive as left; numpad, brackets, quote and backtick aren't sent.
-- [ ] Update CLAUDE.md: it still describes the world as a separate process with its own window.
+- [x] Update CLAUDE.md: it still describes the world as a separate process with its own window.
 - [ ] Frame pacing: the world runs on its own 60 Hz timer, not the display's, so 120/144 Hz screens get uneven frames. Tie it to Qt's frame signal.
 - [ ] Log stutter: every `say`/error line still emits the whole editor state to QML. Give log lines their own event like status has.
 - [ ] Zero-copy on NVIDIA: frames are copied to a linear system-memory image, then again through an external-texture pass on the Qt side. Share the image in its native tiled layout (DRM format modifiers) to drop both copies.

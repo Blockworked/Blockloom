@@ -29,6 +29,8 @@ mod ffi {
         fn game_view_slots(known: u64, out: &mut GameFrames) -> bool;
         fn game_view_latest() -> GameFrame;
         fn game_view_hold(generation: u64, index: usize);
+        /// The window put a frame on screen. Any thread.
+        fn game_view_presented();
     }
 
     unsafe extern "C++" {
@@ -191,4 +193,9 @@ fn game_view_hold(generation: u64, index: usize) {
     embedded::FRAMES.hold(generation, index);
     #[cfg(not(target_os = "linux"))]
     let _ = (generation, index);
+}
+
+fn game_view_presented() {
+    #[cfg(target_os = "linux")]
+    embedded::FRAMES.presented();
 }

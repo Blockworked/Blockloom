@@ -83,17 +83,17 @@ fn asset_plugin() -> AssetPlugin {
 /// schedules, the same whether it has a window or an embedded view.
 fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
     app.insert_resource(ClearColor(Color::srgb(0.11, 0.14, 0.19)))
-    .insert_resource(Dimension(mode))
-    .init_resource::<PendingEffects>()
-    .init_resource::<world::NavMesh>()
-    .init_resource::<ui::UiManager>()
-    .init_resource::<sound::SoundState>()
-    .init_resource::<fx::FxCache>()
-    .init_resource::<preview::PreviewState>()
-    .init_resource::<preview::PreviewPointer>()
-    .init_resource::<preview::PreviewButtons>()
-    .init_resource::<preview::PreviewKeys>()
-    .insert_non_send(engine);
+        .insert_resource(Dimension(mode))
+        .init_resource::<PendingEffects>()
+        .init_resource::<world::NavMesh>()
+        .init_resource::<ui::UiManager>()
+        .init_resource::<sound::SoundState>()
+        .init_resource::<fx::FxCache>()
+        .init_resource::<preview::PreviewState>()
+        .init_resource::<preview::PreviewPointer>()
+        .init_resource::<preview::PreviewButtons>()
+        .init_resource::<preview::PreviewKeys>()
+        .insert_non_send(engine);
     // Custom shader materials plus the tilemap material. Every dimension
     // registers all three, so systems can take their asset stores
     // unconditionally; an unused plugin costs nothing at runtime.
@@ -280,7 +280,6 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
                 );
         }
     }
-
 }
 
 fn announce_ready() {

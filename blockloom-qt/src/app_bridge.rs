@@ -24,6 +24,7 @@ pub mod qobject {
         #[qml_element]
         #[qproperty(QString, state_json, cxx_name = "stateJson")]
         #[qproperty(QString, status_json, cxx_name = "statusJson")]
+        #[qproperty(QString, log_json, cxx_name = "logJson")]
         #[qproperty(QString, preview_frame, cxx_name = "previewFrame")]
         #[qproperty(QString, app_version, cxx_name = "appVersion")]
         type AppBridge = super::AppBridgeRust;
@@ -66,6 +67,7 @@ struct Job {
 pub struct AppBridgeRust {
     state_json: QString,
     status_json: QString,
+    log_json: QString,
     preview_frame: QString,
     app_version: QString,
     backend: Option<Backend>,
@@ -78,6 +80,7 @@ impl Default for AppBridgeRust {
         Self {
             state_json: QString::from("{}"),
             status_json: QString::default(),
+            log_json: QString::default(),
             preview_frame: QString::default(),
             app_version: QString::from(env!("CARGO_PKG_VERSION")),
             backend: None,
@@ -121,6 +124,10 @@ fn apply_status(bridge: Pin<&mut qobject::AppBridge>, json: String) {
     bridge.set_status_json(QString::from(&json));
 }
 
+fn apply_log(bridge: Pin<&mut qobject::AppBridge>, json: String) {
+    bridge.set_log_json(QString::from(&json));
+}
+
 impl qobject::AppBridge {
     pub fn start(mut self: Pin<&mut Self>) {
         if self.rust().backend.is_some() {
@@ -129,6 +136,7 @@ impl qobject::AppBridge {
         let thread = self.qt_thread();
         let pending: Latest = Arc::new(Mutex::new(None));
         let status: Latest = Arc::new(Mutex::new(None));
+        let log: Latest = Arc::new(Mutex::new(None));
         let sink_thread = thread.clone();
         let sink_pending = pending.clone();
         let handle = BackendHandle::new(move |event| match event {
@@ -137,6 +145,9 @@ impl qobject::AppBridge {
             }
             Event::Status(json) => {
                 post_latest(&status, &sink_thread, json.to_string(), apply_status);
+            }
+            Event::Log(json) => {
+                post_latest(&log, &sink_thread, json.to_string(), apply_log);
             }
             Event::RuntimeClosed => {}
         });

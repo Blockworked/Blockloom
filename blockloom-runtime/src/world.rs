@@ -1032,8 +1032,7 @@ pub fn publish_sensors(
     let mut touch_started = false;
     if focused {
         for touch in touches.iter() {
-            if let Some(point) = screen_to_world(dimension.0, touch.position(), &cameras)
-            {
+            if let Some(point) = screen_to_world(dimension.0, touch.position(), &cameras) {
                 touch_points.push(TouchSense {
                     id: touch.id(),
                     position: point,
