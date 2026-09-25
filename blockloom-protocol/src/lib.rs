@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -224,9 +224,18 @@ pub struct Status {
     /// Seconds since the green flag.
     pub time: f64,
     pub fps: f32,
+    /// Renderer timings and mesh allocation, sampled with the live status.
+    pub render_metrics: Vec<RenderMetric>,
     pub actors: Vec<ActorStatus>,
     /// Project-wide variables, by name.
     pub globals: Vec<VariableValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RenderMetric {
+    pub name: String,
+    pub value: f64,
+    pub unit: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

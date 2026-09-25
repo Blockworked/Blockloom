@@ -36,7 +36,9 @@ use blockloom_core::sense::{ActorSense, Sensors, TouchSense, normalize_key};
 use blockloom_core::ui::UiKind;
 use blockloom_core::value::Evaluated;
 use blockloom_core::vm::{Effect, Event};
-use blockloom_protocol::{ActorStatus, EditorMessage, RuntimeMessage, Status, VariableValue};
+use blockloom_protocol::{
+    ActorStatus, EditorMessage, RenderMetric, RuntimeMessage, Status, VariableValue,
+};
 use std::collections::{HashMap, HashSet};
 
 /// The one camera the project controls.
@@ -514,11 +516,14 @@ pub fn rebuild_world(
     mut sound: ResMut<crate::sound::SoundState>,
     mut navmesh: Option<ResMut<NavMesh>>,
     mut stores: crate::materials::MaterialStores,
+    mut performance: crate::performance::PerformanceStores,
 ) {
     if !engine.rebuild {
         return;
     }
     engine.rebuild = false;
+    performance.cache.clear();
+    performance.cells.clear();
 
     for entity in &actors {
         commands.entity(entity).despawn();
@@ -643,6 +648,7 @@ pub fn rebuild_world(
                     &mut meshes,
                     &mut materials,
                     &mut stores.graph_3d,
+                    &mut performance.cache,
                 )
                 .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::ThreeD));
                 attach_camera(&mut commands, actor, entity);
@@ -2409,6 +2415,7 @@ pub fn apply_lifetimes(
     mut graph_materials_2d: ResMut<Assets<crate::materials::GraphMaterial2d>>,
     mut graph_materials_3d: ResMut<Assets<crate::materials::GraphMaterial3d>>,
     mut tile_materials: ResMut<Assets<bevy::sprite_render::ColorMaterial>>,
+    mut render_cache: ResMut<crate::performance::RenderCache>,
     live: Query<(&Visibility, Option<&CustomComponents>)>,
     mut transforms: Query<&mut Transform>,
 ) {
@@ -2458,6 +2465,7 @@ pub fn apply_lifetimes(
                     &mut graph_materials_2d,
                     &mut graph_materials_3d,
                     &mut tile_materials,
+                    &mut render_cache,
                     copy,
                 );
             }
@@ -2482,6 +2490,7 @@ pub fn apply_lifetimes(
                     &mut graph_materials_2d,
                     &mut graph_materials_3d,
                     &mut tile_materials,
+                    &mut render_cache,
                     made,
                 );
             }
@@ -2544,6 +2553,7 @@ fn spawn_runtime_actor(
     graph_materials_2d: &mut Assets<crate::materials::GraphMaterial2d>,
     graph_materials_3d: &mut Assets<crate::materials::GraphMaterial3d>,
     tile_materials: &mut Assets<bevy::sprite_render::ColorMaterial>,
+    render_cache: &mut crate::performance::RenderCache,
     actor: Actor,
 ) {
     let dir = engine.project_dir.clone();
@@ -2566,6 +2576,7 @@ fn spawn_runtime_actor(
             meshes,
             materials,
             graph_materials_3d,
+            render_cache,
         ),
     }
     .unwrap_or_else(|| spawn_unseen(commands, &actor, mode));
@@ -2908,6 +2919,8 @@ fn depth_of(parents: &HashMap<String, String>, id: &str) -> usize {
 pub fn report_status(
     mut engine: NonSendMut<Engine>,
     time: Res<Time>,
+    diagnostics: Option<Res<bevy::diagnostic::DiagnosticsStore>>,
+    target_bytes: Option<Res<crate::performance::GameViewTargetBytes>>,
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
     let now = time.elapsed_secs() as f64;
@@ -2936,11 +2949,42 @@ pub fn report_status(
             value: value.clone(),
         })
         .collect();
+    let mut render_metrics: Vec<RenderMetric> = diagnostics
+        .iter()
+        .flat_map(|store| store.iter())
+        .filter_map(|diagnostic| {
+            let name = diagnostic.path().as_str();
+            let measured = name.starts_with("render/")
+                && (name.ends_with("/elapsed_gpu") || name.ends_with("/elapsed_cpu"));
+            if !measured && name != "mesh_allocator_slabs_size" {
+                return None;
+            }
+            Some(RenderMetric {
+                name: name.to_string(),
+                value: diagnostic.smoothed()?,
+                unit: if name == "mesh_allocator_slabs_size" {
+                    "bytes"
+                } else {
+                    "ms"
+                }
+                .into(),
+            })
+        })
+        .collect();
+    render_metrics.sort_by(|a, b| a.name.cmp(&b.name));
+    if let Some(bytes) = target_bytes.filter(|bytes| bytes.0 > 0) {
+        render_metrics.push(RenderMetric {
+            name: "game_view_target_minimum".into(),
+            value: bytes.0 as f64,
+            unit: "bytes".into(),
+        });
+    }
     bridge::send(&RuntimeMessage::Status(Status {
         running: engine.running,
         paused: engine.paused,
         time: engine.run_time(now),
         fps: 1.0 / time.delta_secs().max(f32::EPSILON),
+        render_metrics,
         actors: statuses,
         globals,
     }));
@@ -4163,8 +4207,13 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(bevy::asset::AssetPlugin::default());
         app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<crate::performance::RenderCache>();
+        app.init_resource::<crate::performance::StreamingCells>();
         app.init_resource::<Assets<StandardMaterial>>();
         app.init_resource::<Assets<Image>>();
+        app.init_resource::<Assets<crate::materials::GraphMaterial2d>>();
+        app.init_resource::<Assets<crate::materials::GraphMaterial3d>>();
+        app.init_resource::<Assets<bevy::sprite_render::ColorMaterial>>();
         app.insert_resource(Dimension(Mode::TwoD));
         app.insert_resource(PendingEffects(vec![Effect::SetParent {
             actor: "child".to_string(),
@@ -4293,8 +4342,12 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(Time::<()>::default());
         app.insert_resource(Dimension(Mode::ThreeD));
+        app.add_plugins(bevy::asset::AssetPlugin::default());
+        app.init_resource::<Assets<crate::materials::GraphMaterial3d>>();
         app.init_resource::<Assets<StandardMaterial>>();
         app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<crate::performance::RenderCache>();
+        app.init_resource::<crate::performance::StreamingCells>();
         app.insert_resource(PendingEffects(vec![
             Effect::Turn {
                 actor: "player".to_string(),
@@ -4379,8 +4432,12 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(Time::<()>::default());
         app.insert_resource(Dimension(Mode::ThreeD));
+        app.add_plugins(bevy::asset::AssetPlugin::default());
+        app.init_resource::<Assets<crate::materials::GraphMaterial3d>>();
         app.init_resource::<Assets<StandardMaterial>>();
         app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<crate::performance::RenderCache>();
+        app.init_resource::<crate::performance::StreamingCells>();
         let walk = |steps: f32| Effect::Move {
             actor: "player".to_string(),
             steps,
@@ -4475,8 +4532,12 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(Time::<()>::default());
         app.insert_resource(Dimension(Mode::ThreeD));
+        app.add_plugins(bevy::asset::AssetPlugin::default());
+        app.init_resource::<Assets<crate::materials::GraphMaterial3d>>();
         app.init_resource::<Assets<StandardMaterial>>();
         app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<crate::performance::RenderCache>();
+        app.init_resource::<crate::performance::StreamingCells>();
         let walk = |steps: f32| Effect::Move {
             actor: "player".to_string(),
             steps,
@@ -4560,8 +4621,12 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(Time::<()>::default());
         app.insert_resource(Dimension(Mode::ThreeD));
+        app.add_plugins(bevy::asset::AssetPlugin::default());
+        app.init_resource::<Assets<crate::materials::GraphMaterial3d>>();
         app.init_resource::<Assets<StandardMaterial>>();
         app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<crate::performance::RenderCache>();
+        app.init_resource::<crate::performance::StreamingCells>();
         app.insert_resource(PendingEffects(vec![
             Effect::Move {
                 actor: "player".to_string(),
@@ -4639,8 +4704,12 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(Time::<()>::default());
         app.insert_resource(Dimension(Mode::ThreeD));
+        app.add_plugins(bevy::asset::AssetPlugin::default());
+        app.init_resource::<Assets<crate::materials::GraphMaterial3d>>();
         app.init_resource::<Assets<StandardMaterial>>();
         app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<crate::performance::RenderCache>();
+        app.init_resource::<crate::performance::StreamingCells>();
         app.insert_resource(PendingEffects(vec![
             Effect::Turn {
                 actor: "player".to_string(),

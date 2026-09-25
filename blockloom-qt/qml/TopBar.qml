@@ -40,6 +40,9 @@ Rectangle {
             visible: root.appState.running
             implicitWidth: fpsText.implicitWidth + 16; implicitHeight: 24; radius: 12; color: Theme.panelRaised; border.color: Theme.border
             Text { id: fpsText; anchors.centerIn: parent; text: Math.round(root.app.status ? root.app.status.fps : 0) + " fps"; color: Theme.textDim; font.pixelSize: 11 }
+            MouseArea { anchors.fill: parent; onClicked: profilerPopup.open() }
+            ToolTip.visible: fpsHover.hovered; ToolTip.text: "Show render timings"; ToolTip.delay: 500
+            HoverHandler { id: fpsHover }
         }
         IconButton { visible: root.appState.runtime_open; iconName: "monitor-x"; tip: "Close the game window"; onClicked: root.app.invoke("close_runtime") }
         IconButton {
@@ -54,6 +57,41 @@ Rectangle {
             iconName: root.appState.running ? "square" : "play"
             text: root.appState.running ? "Stop" : "Play"
             onClicked: root.report(root.appState.running ? "stop_project" : "run_project")
+        }
+    }
+
+    Popup {
+        id: profilerPopup
+        x: root.width - width - 110; y: root.height
+        width: 350
+        height: Math.min(480, metricsColumn.implicitHeight + padding * 2)
+        padding: 12
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle { color: Theme.panel; border.color: Theme.border; radius: 6 }
+        contentItem: Flickable {
+            clip: true
+            contentHeight: metricsColumn.implicitHeight
+            Column {
+                id: metricsColumn
+                width: parent.width
+                spacing: 5
+                Text { text: "Render profiler"; color: Theme.text; font.bold: true; font.pixelSize: 14 }
+                Text { text: "Frame: " + (root.app.status && root.app.status.fps ? (1000 / root.app.status.fps).toFixed(1) : "-") + " ms"; color: Theme.textDim; font.pixelSize: 12 }
+                Repeater {
+                    model: root.app.status && root.app.status.render_metrics ? root.app.status.render_metrics : []
+                    Text {
+                        required property var modelData
+                        text: modelData.name.replace(/^render\//, "").replace(/\/elapsed_(gpu|cpu)$/, " ($1)") + ": " +
+                              (modelData.unit === "bytes" ? (modelData.value / 1048576).toFixed(1) + " MiB" : modelData.value.toFixed(2) + " ms")
+                        color: Theme.textDim; font.pixelSize: 11
+                    }
+                }
+                Text {
+                    visible: !root.app.status || !root.app.status.render_metrics || root.app.status.render_metrics.length === 0
+                    text: "Waiting for render measurements"
+                    color: Theme.textDim; font.pixelSize: 11
+                }
+            }
         }
     }
 

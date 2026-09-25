@@ -61,7 +61,7 @@ fn collider_for(visual: &Visual) -> Option<rp::Collider> {
     }
 }
 
-fn mesh_for(visual: &Visual) -> Option<Mesh> {
+pub(super) fn mesh_for(visual: &Visual) -> Option<Mesh> {
     match visual {
         Visual::Cuboid { size, .. } => Some(Cuboid::new(size[0], size[1], size[2]).into()),
         Visual::Sphere { radius, .. } => Some(Sphere::new(*radius).into()),
@@ -97,12 +97,16 @@ pub fn spawn_actor(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     graph_materials: &mut Assets<GraphMaterial3d>,
+    cache: &mut crate::performance::RenderCache,
 ) -> Option<Entity> {
     let visual = actor.visual()?.clone();
-    let mesh = meshes.add(mesh_for(&visual)?);
+    let mesh = cache.mesh(&visual, meshes)?;
     let id = commands
         .spawn((crate::world::actor_bundle(actor), Mesh3d(mesh.clone())))
         .id();
+    if let Some(lod) = cache.lod(&visual, &mesh, meshes) {
+        commands.entity(id).insert(lod);
+    }
     insert_look_extras(commands, id, actor, &visual, &mesh, dir, assets);
     insert_surface(
         commands,
@@ -113,6 +117,7 @@ pub fn spawn_actor(
         assets,
         materials,
         graph_materials,
+        cache,
     );
     insert_body(&mut commands.entity(id), actor);
     Some(id)
@@ -153,6 +158,7 @@ fn insert_surface(
     assets: &AssetServer,
     materials: &mut Assets<StandardMaterial>,
     graph_materials: &mut Assets<GraphMaterial3d>,
+    cache: &mut crate::performance::RenderCache,
 ) {
     let color = visual
         .color()
@@ -170,33 +176,47 @@ fn insert_surface(
         return;
     }
     if let Visual::Tilemap { tilemap } = visual {
-        let texture = if tilemap.tileset.trim().is_empty() {
-            None
-        } else {
-            Some(assets.load(crate::world::asset_path(dir, tilemap.tileset.trim())))
-        };
-        commands
-            .entity(id)
-            .insert(MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                base_color_texture: texture,
-                alpha_mode: AlphaMode::Blend,
-                cull_mode: None,
-                ..default()
-            })));
+        let key = format!("tile:{}:{:?}", tilemap.tileset, dir);
+        let handle = cache.material(
+            key,
+            || {
+                let texture = if tilemap.tileset.trim().is_empty() {
+                    None
+                } else {
+                    Some(assets.load(crate::world::asset_path(dir, tilemap.tileset.trim())))
+                };
+                StandardMaterial {
+                    base_color: Color::WHITE,
+                    base_color_texture: texture,
+                    alpha_mode: AlphaMode::Blend,
+                    cull_mode: None,
+                    ..default()
+                }
+            },
+            materials,
+        );
+        commands.entity(id).insert(MeshMaterial3d(handle));
         return;
     }
-    let standard = match material {
-        Some(material) => crate::materials::surface_standard(material, color, dir, assets),
-        None => StandardMaterial {
-            base_color: color,
-            perceptual_roughness: 0.6,
-            ..default()
+    let key = format!(
+        "surface:{:?}:{}:{}",
+        dir,
+        visual.color().unwrap_or(""),
+        serde_json::to_string(&material).unwrap_or_default()
+    );
+    let handle = cache.material(
+        key,
+        || match material {
+            Some(material) => crate::materials::surface_standard(material, color, dir, assets),
+            None => StandardMaterial {
+                base_color: color,
+                perceptual_roughness: 0.6,
+                ..default()
+            },
         },
-    };
-    commands
-        .entity(id)
-        .insert(MeshMaterial3d(materials.add(standard)));
+        materials,
+    );
+    commands.entity(id).insert(MeshMaterial3d(handle));
 }
 
 /// Drop whatever surface the actor renders with: standard or graph.
@@ -350,6 +370,7 @@ pub fn apply_effects(
     mut meshes: ResMut<Assets<Mesh>>,
     assets: Res<AssetServer>,
     mut graph_materials: ResMut<Assets<GraphMaterial3d>>,
+    mut cache: ResMut<crate::performance::RenderCache>,
     models: Query<&crate::model::ModelChild>,
 ) {
     if !engine.running || engine.paused {
@@ -505,13 +526,19 @@ pub fn apply_effects(
                 }
             }
             Effect::SetColor { actor, color } => {
-                if let Some(mut material) = engine
+                if let Some(material) = engine
                     .entities
                     .get(actor)
                     .and_then(|entity| surfaces.get(*entity).ok())
-                    .and_then(|handle| materials.get_mut(&handle.0))
+                    .and_then(|handle| materials.get(&handle.0))
                 {
-                    material.base_color = crate::world::parse_color(color);
+                    let mut unique = material.clone();
+                    unique.base_color = crate::world::parse_color(color);
+                    if let Some(entity) = engine.entities.get(actor) {
+                        commands
+                            .entity(*entity)
+                            .insert(MeshMaterial3d(materials.add(unique)));
+                    }
                 }
             }
             Effect::SetBody { actor, body } => {
@@ -604,11 +631,16 @@ pub fn apply_effects(
                         let Some(visual) = authored.visual().cloned() else {
                             continue;
                         };
-                        let Some(mesh) = mesh_for(&visual) else {
+                        let Some(mesh) = cache.mesh(&visual, &mut meshes) else {
                             continue;
                         };
-                        let mesh = meshes.add(mesh);
                         commands.entity(entity).insert(Mesh3d(mesh.clone()));
+                        commands
+                            .entity(entity)
+                            .remove::<crate::performance::LodMesh>();
+                        if let Some(lod) = cache.lod(&visual, &mesh, &mut meshes) {
+                            commands.entity(entity).insert(lod);
+                        }
                         crate::model::detach(&mut commands, entity, &models);
                         insert_look_extras(
                             &mut commands,
@@ -628,6 +660,7 @@ pub fn apply_effects(
                             &assets,
                             &mut materials,
                             &mut graph_materials,
+                            &mut cache,
                         );
                     }
                     "Material" => {
@@ -650,6 +683,7 @@ pub fn apply_effects(
                             &assets,
                             &mut materials,
                             &mut graph_materials,
+                            &mut cache,
                         );
                     }
                     _ => {}
@@ -669,9 +703,11 @@ pub fn apply_effects(
                     // Nothing to draw, but the actor is still there to be
                     // moved, sensed and given a look again.
                     "Look" => {
-                        commands
-                            .entity(id)
-                            .remove::<(Mesh3d, crate::materials::AnimatedTiles)>();
+                        commands.entity(id).remove::<(
+                            Mesh3d,
+                            crate::materials::AnimatedTiles,
+                            crate::performance::LodMesh,
+                        )>();
                         remove_surface(&mut commands, id);
                         crate::model::detach(&mut commands, id, &models);
                     }
@@ -693,6 +729,7 @@ pub fn apply_effects(
                             &assets,
                             &mut materials,
                             &mut graph_materials,
+                            &mut cache,
                         );
                     }
                     _ => {}
@@ -825,6 +862,9 @@ pub fn spawn_scenery(
             ev100: post.exposure_ev,
         },
         crate::world::tonemapping_of(post.tonemapping),
+        // Bevy's depth pyramid culls hidden meshes after the depth prepass.
+        bevy::core_pipeline::prepass::DepthPrepass,
+        bevy::render::occlusion_culling::OcclusionCulling,
     ));
     if lighting.ao_enabled {
         // SSAO needs multisampling off on the same camera, or `bevy_pbr`

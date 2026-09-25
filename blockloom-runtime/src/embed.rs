@@ -513,6 +513,7 @@ fn fit_cameras(
 fn build_surface(
     mut surface: ResMut<GameSurface>,
     mut copy: ResMut<FrameCopy>,
+    mut target_bytes: ResMut<crate::performance::GameViewTargetBytes>,
     device: Res<RenderDevice>,
     mut views: ResMut<ManualTextureViews>,
 ) {
@@ -602,6 +603,7 @@ fn build_surface(
         })
         .collect();
     copy.ring = textures;
+    target_bytes.0 = size.x as u64 * size.y as u64 * 4 * (copy.ring.len() as u64 + 1);
     copy.direct = direct;
     copy.modifier = modifier;
     copy.generation = surface.exchange.install(size.x, size.y, modifier, images);

@@ -61,7 +61,35 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 ### Phase 2 - Ship a complete single-player game
 - [x] Input actions plus remapping, gamepad/rumble, touch/multitouch, mouse lock.
 - [ ] Tweens plus sprite animation plus animation player/state machine.
-- [ ] In-game UI: button/label/bar/slider/input, anchors/layout, HUD/menus.
+- [ ] In-game UI framework (UMG/UI-Toolkit grade, builds on the 7 widgets we have):
+  - [ ] Layout engine: measure/arrange pass with desired-size bubbling, containers
+        (vertical/horizontal box, grid, overlay/canvas, scroll box, wrap box, size
+        box, spacer), padding/margin, 9-point anchors plus offsets, fill/align
+        policies. Retained mode with dirty-flag reflow plus batched draws over a
+        shared atlas, so static HUDs cost nothing per frame.
+  - [ ] Widgets: progress bars (linear and radial), virtualized list view with row
+        recycling for long inventories, tabs, dropdown/select, scrollbar, tooltip,
+        rich-text label (markup, wrapping, auto-size), world-space widgets
+        (nameplates, prompts projected from 3D actors).
+  - [ ] Style and themes: stylesheet assets over the existing three global themes,
+        state styles (normal/hover/pressed/disabled/focused), font fallback chain,
+        borders/shadows/rounded corners, per-element overrides kept.
+  - [ ] Data binding: bind widget text/value/visibility to variables and custom
+        components with converters, one-way plus two-way (inputs write back), so
+        HUDs update without per-frame rebuild blocks.
+  - [ ] Events and navigation: click/press/hover/drag/scroll events with bubbling,
+        gamepad directional focus navigation plus focus memory, touch and wheel
+        routing, existing modal and focus rules kept.
+  - [ ] Polish: hover/press transitions and tweens on UI properties, show/hide
+        animations, screen-safe areas, DPI and canvas scaling (scale-with-size vs
+        constant-pixel), resolution-independent sizes.
+  - [ ] Editor: visual UI designer (drag widgets onto a canvas, live resolution
+        previews, hierarchy outliner, style inspector), UI prefabs for
+        menus/dialogs shared across scenes.
+  - [ ] Blocks and scripts: `show/hide/delete` kept, plus `bind _ to _`, `set items
+        of _ to`, `scroll _ to`, `set theme of _ to`, reporters (`value of`,
+        `is shown?` kept) plus `selected index of _`. Fixed-tick sampling like
+        other reporters so VM and codegen agree.
 - [ ] Save slots/profiles plus localization: builds on save system we have.
 
 ### Phase 3 - Dev productivity, before API surface explodes
@@ -79,11 +107,29 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 - [x] Load glTF scenes for Model looks (a ModelSource loader with rig playback from the parsed animations) instead of placeholder boxes.
 - [x] Bake atlas layouts into sheets at build time - pack_atlas is plan-only today - and let a tilemap animate tiles and collide per-tile rather than as one slab.
 - [x] Close the custom-shader loop: export a shader graph to a .wgsl asset, and let hand-authored WGSL drive the live material instead of only the uniform path.
+- [ ] World-space material texturing (fixes stretched textures on large brushes,
+      first-person walls and floors first): per-material texture transform
+      (tiling X/Y, offset, rotation), sampler choice (Repeat/Mirror/Clamp plus
+      anisotropy), normal and roughness map slots beside albedo, and a
+      triplanar/box-projection toggle with world-scale texel density so big
+      surfaces tile evenly at any size. Scale-corrected UVs for Cuboid/Plane
+      primitives, applied in `surface_standard` and the graph ubershaders, with
+      inspector rows for the new dials. Old projects normalize to the legacy
+      mapping (tiling 1x1, clamp) so nothing already shipped changes look.
+  - [ ] Advanced pass (for Phase 5 terrain): stochastic texture bombing to hide
+        tiling, macro variation plus micro detail maps, mask stack (slope, height,
+        cavity plus snow/wetness fed by the weather director and the persistent
+        wetness map), blend debug view. Builds on the triplanar toggle and texel
+        density above, not a second implementation.
 - [x] Particle/trail blocks (burst, emitter dials), plus ghost trails for custom-shaded and tilemap actors.
 - [x] Advanced physics: fixed, hinge and rope joints, character controller, one-way platforms, and ragdoll chains built from hinged bodies.
 - [x] AI: live polyanya rebake, navigation cost areas and layer masks, off-mesh links, crowd separation, steering, behavior trees and sight perception.
 - [ ] Performance foundation (do before Phase 5 needs it): engine-wide footing for
       the Phase 5 environment stack; Phase 5 adds the rendering budgets on top.
+  - [x] First renderer pass: shared primitive mesh and PBR material handles for
+        Bevy instancing, sphere screen-size LOD, depth-pyramid occlusion,
+        hysteretic XZ cell activation, and live render timings, mesh allocation
+        and Game view target footprint.
   - [ ] Batching and instancing: static batching for level geometry, GPU instancing
         for repeated props/vegetation/debris (one draw per mesh, per-instance data
         in storage buffers), dynamic batching for small meshes. Covers the actors

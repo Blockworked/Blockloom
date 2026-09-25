@@ -30,6 +30,7 @@ mod logic;
 mod materials;
 mod model;
 mod overlay;
+mod performance;
 pub mod player;
 mod preview;
 mod script;
@@ -39,6 +40,7 @@ mod world;
 
 use bevy::asset::{AssetPlugin, UnapprovedPathMode};
 use bevy::prelude::*;
+use bevy::render::diagnostic::{MeshAllocatorDiagnosticPlugin, RenderDiagnosticsPlugin};
 use bevy::window::WindowResolution;
 use blockloom_core::scene::Mode;
 use blockloom_protocol::{GAME_SIZE, PROTOCOL_VERSION, RuntimeMessage};
@@ -85,6 +87,7 @@ fn asset_plugin() -> AssetPlugin {
 /// Everything past the platform plugins: the world's resources, physics and
 /// schedules, the same whether it has a window or an embedded view.
 fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
+    app.add_plugins((RenderDiagnosticsPlugin, MeshAllocatorDiagnosticPlugin));
     app.insert_resource(ClearColor(Color::srgb(0.11, 0.14, 0.19)))
         .insert_resource(Dimension(mode))
         .init_resource::<PendingEffects>()
@@ -92,6 +95,9 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
         .init_resource::<ui::UiManager>()
         .init_resource::<sound::SoundState>()
         .init_resource::<fx::FxCache>()
+        .init_resource::<performance::RenderCache>()
+        .init_resource::<performance::GameViewTargetBytes>()
+        .init_resource::<performance::StreamingCells>()
         .init_resource::<preview::PreviewState>()
         .init_resource::<preview::PreviewPointer>()
         .init_resource::<preview::PreviewButtons>()
@@ -269,6 +275,7 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
                         sound::maintain_voices,
                         world::interpolate_poses,
                         (world::drive_camera, edit::apply_view, edit::draw).chain(),
+                        (performance::update_lod, performance::update_streaming_cells).chain(),
                         overlay::update_speech_bubbles,
                         preview::capture_preview_frame,
                         world::report_status.run_if(bridge::editor_attached),
