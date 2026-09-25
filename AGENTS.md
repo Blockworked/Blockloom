@@ -1,14 +1,14 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file provides guidance to coding agents (Codex, opencode and others) when working with code in this repository.
 
 ## Project
 
-Blockloom is a Tauri desktop app (Windows/Linux/macOS) for building games out
+Blockloom is a Qt/QML desktop app (Windows/Linux/macOS) for building games out
 of blocks - a Scratch-style block editor driving a real game world, in 2D or
 in 3D. A project is a world plus a set of actors, each with its own block
-canvas; pressing Play opens the world in a Bevy window and runs those blocks
-against it.
+canvas; pressing Play runs those blocks against a Bevy world, shown in the
+editor's Game view.
 
 ## Common commands
 
@@ -20,10 +20,11 @@ just test               # cargo test --workspace (blockloom-core has the bulk of
 just player             # stage the hard-optimized player a built game ships
 ```
 
-Build the whole workspace, not just `-p blockloom`: the editor starts the
-`blockloom-runtime` binary sitting next to it, and a stale or missing runtime is
-exactly what `cargo run -p blockloom` would leave you with. The editor says so
-in a banner rather than letting Play do nothing.
+Build the whole workspace, not just `-p blockloom`: off Linux (or with
+`BLOCKLOOM_RUNTIME=process`) the editor starts the `blockloom-runtime` binary
+sitting next to it, and a stale or missing runtime is exactly what `cargo run -p
+blockloom` would leave you with. The editor says so in a banner rather than
+letting Play do nothing.
 
 There's no clippy.toml/rustfmt.toml - just `cargo clippy`/`cargo fmt` with
 defaults.
@@ -33,48 +34,35 @@ defaults.
 - NEVER use em-dashes (-) in comments, code, docs, or commit messages. Use a normal hyphen (-) instead.
 - Write comments like a human: short and terse, 1-2 lines. State what and why briefly. No multi-paragraph essays, no history lessons ("Previously..."), no dangling "see X docs" pointers unless X exists.
 
-### Frontend (`ui/`, Vue 3 + TypeScript + Vite, pnpm)
+### Frontend (`blockloom-qt/qml/`, QML)
 
-You almost never need to build the frontend by hand: `src-tauri/build.rs` runs
-`pnpm install && pnpm run build` before *every* `cargo build`/`cargo run`
-(debug or release), so `ui/dist` is always current. Manual commands, if needed:
-
-```bash
-cd ui && pnpm run build   # vue-tsc --noEmit && vite build
-cd ui && pnpm run dev     # Vite alone (see dev-bridge below to make it functional)
-```
+The QML is compiled into the binary by `blockloom-qt/build.rs` (cxx-qt's
+`CxxQtBuilder` + qmlcachegen), so a plain `cargo build` picks up every edit.
+It needs Qt 6 with Quick, QuickControls2, QuickDialogs2 and Multimedia; use
+Qt 6's `qml`/`qmlls` (`/usr/lib/qt6/bin` on Arch), not Qt 5's. A new `.qml`
+file must also be listed in `build.rs`'s `QmlModule`.
 
 ### Local `blockstitch` development
 
-`blockstitch` is a separate sibling repo with two halves, both shared with any
-other app built on the same block editor and both pinned to the same commit:
+`blockstitch` is a separate sibling repo shared with any other app built on
+the same block editor. Two halves of it are used here:
 
-- the Vue component/theming library, a git dependency in `ui/package.json`;
 - `crates/blockstitch-core`, the Rust backend (value system, document model,
-  editor operations), a git dependency in the root `Cargo.toml`.
+  editor operations), a git dependency in the root `Cargo.toml`;
+- the QML block canvas and controls (`blockstitch-qml`, module
+  `com.blockworked.Blockstitch`), a path dependency on `../blockstitch` in
+  `blockloom-qt/Cargo.toml`, so that checkout has to exist beside this one.
 
-To iterate on either half locally without hand-patching `node_modules`:
+To build against a local checkout of the Rust half too:
 
 ```bash
 just blockstitch-local [path]        # default path: ../../blockstitch, relative to ui/
-just blockstitch-published [commit]  # restore the pinned commit, or move both halves to a new one
+just blockstitch-published [commit]  # restore the pinned commit, or move to a new one
 ```
 
-### Browser-driven dev workflow (`dev-bridge`)
-
-```bash
-just dev-backend    # the real backend + an HTTP/WS bridge on 127.0.0.1:4128
-just dev-ui         # Vite alone; then open http://localhost:1420
-```
-
-`ui/src/bridge.ts` picks between the real Tauri `invoke` and this HTTP bridge
-based on whether `window.__TAURI_INTERNALS__` exists, so the same frontend code
-runs against the real backend in a plain browser tab - no relaunching the CEF
-window after every UI tweak. Both paths end in `Backend::dispatch`
-(`blockloom-app/src/dispatch.rs`), so a new command added to
-`blockloom-app/src/commands.rs` only needs an arm there (argument names in
-camelCase, as the frontend sends them) to be reachable from either. Play works
-from the browser too: the backend spawns the same runtime process.
+The old Vue frontend (`ui/`) and its Tauri shell (`src-tauri/`) are still in
+the tree but out of the workspace, as are the browser dev bridge recipes
+(`just dev-backend`/`dev-ui`) that serve it. Nothing new goes there.
 
 ### AI/CLI shell (`blockloom-shell`)
 
@@ -114,49 +102,48 @@ must be taught there). Tool calls are one shell line, responses are the
 resources. Each session is its own backend, so the window-and-shell warning
 above applies to it too - one MCP server process and the editor must not hold
 the same project. The shell resolves as `target/debug|release/blockloom-shell`
-beside the repo, `BLOCKLOOM_MCP_SHELL`, or `--shell`, and is then staged to a
-per-process scratch copy before it is spawned: a running executable locks its
-own file on Windows, so driving the build tree's binary in place would fail
-every `cargo build` for as long as the server lives. The copy is as fresh as
-the last server start, so restart the server after rebuilding to pick up a new
-binary. `just mcp` builds everything and prints the client config line for the
-built `dist/index.js`.
+beside the repo, `BLOCKLOOM_MCP_SHELL`, or `--shell`; `just mcp` builds
+everything and prints the client config line for the built `dist/index.js`.
 Build/test with `cd mcp && pnpm install && pnpm run build && pnpm test`.
 
 ## Architecture
 
 ### Cargo workspace
 
-Two processes: the editor window, and the game world.
+The editor, and the game world. On Linux the world runs on a thread inside the
+editor and draws straight into its Game view (see Game view below); elsewhere
+it is a child process.
 
-- **`src-tauri`** (package `blockloom`) - the editor window and the app's entry
-  point. Uses a custom CEF runtime (`tauri-runtime-cef` + the `cef` crate, both
-  forks pinned via git `rev`/`[patch.crates-io]` in the root `Cargo.toml`)
-  instead of Tauri's default wry/webview. It owns `blockloom-app` directly -
-  there is no daemon - and forwards every frontend command through its one
-  `call` command. Command responses include the resulting state directly;
-  runtime-only changes are also sent through the `state-updated` event. Only
-  window-local things live here (`reset_zoom`, the `.blockloom` file dialogs,
-  the pre-paint background color in `theme.rs`).
+- **`blockloom-qt`** (package `blockloom`) - the editor window and the app's
+  entry point: Qt Quick over cxx-qt. It owns `blockloom-app` directly - there
+  is no daemon. `src/app_bridge.rs` is the one QObject QML talks to:
+  `invokeCommand` runs a `Backend::dispatch` command on a worker thread, in
+  order, and answers with `replied(token, {ok, result, error})`; state the
+  backend publishes lands in the `stateJson` property, coalesced per burst.
+  `src/preview.rs` follows a child runtime's MJPEG preview stream into
+  `previewFrame`. `src/game_view.rs`/`.cpp` are the in-process Game view, and
+  `src/pointer_lock.cpp` its pointer lock.
 - **`blockloom-app`** - the backend: `src/commands.rs` holds every command,
   `src/dispatch.rs` maps command names + JSON args onto them, `src/state.rs`
   holds `SharedState`/`AppState` and the snapshot the frontend gets, and
-  `src/runtime.rs` is the game runtime's leash. No Tauri dependency, so the
+  `src/runtime.rs` is the game runtime's leash. No Qt dependency, so the
   dev bridge (`src/bin/devserver.rs`, feature `dev-bridge`) hosts the same code.
   Commands publish changes through `AppHandle`, a plain callback the host
   supplies.
 - **`blockloom-runtime`** - the game world: a Bevy app that renders one project
-  and runs its blocks. A separate process because Bevy needs its own window and
-  event loop and the editor's CEF runtime already owns one. `--mode 2d|3d`
+  and runs its blocks. A library plus a thin binary: `run_process` is the child
+  process and the built player, `embed::run` the windowless in-editor world,
+  and both build the same world through `add_world`. `--mode 2d|3d`
   decides which physics/render pipeline is built, so the editor restarts it when
   a project switches dimension. `src/world.rs` holds the dimension-agnostic
   systems, `src/dim2.rs`/`src/dim3.rs` the sprite/`bevy_rapier2d` and
   mesh/`bevy_rapier3d` halves. The same binary is what a built game ships:
   with a pack beside it, it loads that instead of waiting for an editor, and
   `src/player.rs` is the whole of the difference (see Building a game below).
-- **`blockloom-protocol`** - the wire format between them: newline-delimited
-  JSON over the child's stdin/stdout. No sockets, no ports; the pipe closing is
-  the whole shutdown handshake.
+- **`blockloom-protocol`** - the messages between them: newline-delimited JSON
+  over a child's stdin/stdout, or the same enums over channels in-process. No
+  sockets, no ports; the pipe or channel closing is the whole shutdown
+  handshake. Bump `PROTOCOL_VERSION` whenever a message changes.
 - **`blockloom-core`** - the engine library both processes share: `scene.rs`
   (the value types a world is built from - looks, bodies, placements, camera),
   `components.rs` (what an actor is made of - see below), `blocks.rs` (the
@@ -169,8 +156,9 @@ Two processes: the editor window, and the game world.
   build out), `vm/` (the block VM), `codegen/` (the same blocks as Rust
   instead),
   `script/` (compiling a project's Rust scripts, and the ABI they talk over),
-  `sense.rs` (the world state reporter blocks read), and `wire.rs` (the one
-  shape difference between documents and the frontend).
+  `sense.rs` (the world state reporter blocks read), `ui.rs` (the screen-space
+  interface a game builds out of blocks - see Interface below), and `wire.rs`
+  (the one shape difference between documents and the frontend).
 - **`blockstitch-core`** (sibling repo, see above) - the shared block-editor
   backend. `value` is the `Value`/`Op` expression system, extended by an app
   through `register_operators` (Blockloom registers its sensing reporters in
@@ -193,31 +181,94 @@ so removing `Body` really does leave it without a rigid body, and removing
 to be. `actor.visual()` is therefore an `Option`, while `placement()`,
 `physics()` and `visible()` fall back to a default.
 
-Three components have no fixed-field ancestor. `Camera` attaches the world
+Four components have no fixed-field ancestor. `Camera` attaches the world
 camera to that actor - follow, first person or third person - and one project
 has one of them, so adding it takes it off whoever had it. `Script` names a
-Rust file (see below). `Custom` is a named bag of values the project invented
+Rust file (see below). `Parent` names another actor this one hangs off (see
+Actors below). `Custom` is a named bag of values the project invented
 (`Health { hp, armour }`); the runtime carries it on the entity as
 `CustomComponents`, publishes it through `sense::ActorSense`, and
 `set <field> of <component> to` writes it back. Like a position and unlike a
-variable, those writes last exactly as long as the run. `Material` is what a
-surface is made of (PBR properties plus an optional shader-graph effect),
-`Emitter` sprays CPU particles while attached, and `Trail` stamps fading
-ghosts of where the actor just was. `Render` also carries a 2D sort layer,
-so a higher layer draws on top without touching the actor's depth.
+variable, those writes last exactly as long as the run.
 
 Components come and go mid-run, from a block (`attach`/`detach`) or from a
 script. `engine.attached` is the one record of what an actor is carrying right
 now - the document says what it *started* with - and
-`world::apply_component_effects` is the only place that writes it. A `Body`, a
-`Look` or a `Material` needs the dimension's own pipeline, so `dim2`/`dim3`
-pick those three out of the same effect list and do the ECS half. Re-attaching brings back what
+`world::apply_component_effects` is the only place that writes it. A `Body` or
+a `Look` needs the dimension's own pipeline, so `dim2`/`dim3` pick those two
+out of the same effect list and do the ECS half. Re-attaching brings back what
 the editor authored, or that component's defaults if the project never had one.
 
 Pre-component documents kept `visual`/`placement`/`physics`/`visible` flat on
 the actor, and the world camera named the actor it followed. Both still load:
 `Actor` deserializes through `ActorRepr`, and `Project::normalize` moves the
 old `follow` onto its actor as a camera component.
+
+### Actors that come and go
+
+An actor's id is what everything keys it by, and a run can mint ids the
+document never had. `engine.spawned` holds those runtime-only actors and
+`Engine::actor` looks there before the project, so one question finds any
+actor at all - a clone answers about its shape, its physics and its components
+exactly as the actor it was copied from does. Those ids are counted rather
+than random - `~1`, `~2` - so one project run makes the same ids however it
+was scheduled, which is what lets `tests/codegen.rs` hold a compiled run's
+clones against the VM's. An id the host mints itself, for a script's clone in
+a build whose scheduler is the compiled program, is `~h1` instead, so the two
+counters can never land on the same name.
+
+`create a clone of` copies a running actor. The VM does the scheduling half:
+`register_clone` gives the copy the template's compiled `Program` (an `Rc`
+clone - one program, many actors), its name, its custom-block inputs, and its
+own copy of the template's variables as they stand. It then queues
+`Event::Cloned`, which starts the copy's `when I start as a clone` strands at
+the top of the next tick - by which time `apply_lifetimes` has built the
+entity those blocks read through. The host does the world half: the clone is
+the template as the editor authored it, standing where the template stands
+now, carrying its live custom-component values and hanging off whatever it
+hangs off. A clone shares its template's name, so `when I touch Ball`,
+`broadcast` and `how many Ball there are` all reach every copy; `the actor I
+made` reports an id, which is how a block means one clone in particular.
+A compiled program does the same halves in the same order: its own `Actors`
+table mints the id and queues the copy, and the host is handed the entity to
+build (see Compiling the blocks below).
+
+`create actor` makes something the document never had: a `Place`, a plain
+`Look`, and no blocks at all. `delete` takes an actor out of the run - the
+document is untouched, so Play puts an authored one back - and stops its
+scripts. Deleting yourself ends the strand that asked where it stands, the
+way `stop all` ends everything. Both blocks name an actor through a value
+slot, so `the actor I made` can be dropped straight into one; `create a clone
+of` names an authored actor, so it stays a dropdown.
+
+The parent/child hierarchy is `engine.parents`, one entry per child, seeded
+from every `Parent` component on a rebuild and moved after that by `set my
+parent to` or a script. Rather than reparenting Bevy's transforms - which
+would make every position in the engine relative to somebody and leave rapier
+owning half of them - `world::apply_parenting` moves each child by exactly the
+change its parent underwent this step: `child = (parent now / parent then) *
+child`. A child that moved itself keeps that motion, a parent's turn swings
+its children around it, and parents are walked roots-first so one pass carries
+a move the whole way down a chain. It runs in `FixedPostUpdate` before
+`record_poses`, so the parent's change includes what physics wrote and the
+pose the renderer interpolates towards is where the child ended up. Loops are
+refused where they would be made - `Project::prune_parents` on load,
+`commands::check_parent` in the editor, `world::set_parent` at run time -
+because a cycle has no root to start the pass at.
+
+A `Parent` may also carry an `offset`, which is where the child stands in its
+parent's frame. `Place` stays the one thing the world is built from, so the
+offset is resolved into a world placement before anything is spawned -
+`world::place_authored_children`, parents before their children so an offset
+down a chain is measured against a parent that has already moved - and read
+again whenever `set my parent to` hangs the actor off someone new, which
+places it at the offset rather than leaving it where it stood. A `Parent`
+without one - which is what a document written before offsets says - keeps
+the world position its own `Place` gives it, at build and at run time both.
+The local-position reporters (`my local x position`, `<actor>'s local x
+position`, and the matching script reads) answer that frame live: the
+parent's world transform inverted onto the child's world position, or the
+world position itself for an actor hanging off nothing.
 
 ### Scripts
 
@@ -238,22 +289,10 @@ There is no Cargo, so a script gets `std` and nothing else.
 
 The editor compiles scripts on Play (`commands::build_scripts`) so rustc's
 errors land in the run log against the script's own line numbers; the runtime
-only ever loads what it finds. Without a toolchain Play logs one line saying
-scripts are skipped and runs the blocks alone (`script::ide::toolchain_status`
-is the same answer on demand). The boundary is three calls, not one per verb, so adding
+only ever loads what it finds. **Scripts therefore need `rustc` on the machine
+that presses Play.** The boundary is three calls, not one per verb, so adding
 something a script can do is a new constant in `abi.rs` rather than a new
 field in `HostApi` - which would break every script already built.
-
-The script editor (`ui/src/components/ScriptDialog.vue`) tints Rust with its
-own tokenizer and shows `script_diagnostics` inline on their lines and in the
-run log. `blockloom-core/src/script/ide.rs` keeps a Cargo project at the
-project root in sync - one `[[test]]` per script in `assets/scripts/*.rs` plus
-a path dependency on the assembled `blockloom` crate under `.blockloom/ide/`
-- so an external editor gets completion, `export!` expansion and go-to-source
-on the API. Play still compiles directly with `rustc`, so Cargo is
-analysis-only; `cargo check --tests` over that project is what feeds the inline
-errors, with a direct-`rustc` JSON run as the fallback. "Open in editor" tries
-VS Code, then Zed, then the file manager on the project folder.
 
 A script reads the world through the same frame snapshot the reporter blocks
 read (`sense`) and everything it does comes back as a `vm::Effect`, applied by
@@ -263,11 +302,58 @@ does in the block editor. A panic inside a script is caught by `export!` and
 logged rather than being allowed to cross the C boundary, which would abort
 the whole game window.
 
+### Game view
+
+`Backend::start_embedded` takes an `EmbeddedRuntime` host, and
+`RuntimeHandle` then starts the world on a `blockloom-world` thread instead of
+spawning a child - same messages, over channels. `bridge::attach` routes the
+world's `send` into that channel. A panic in the world is caught and reported
+as `Fatal`, ending the run rather than the editor; a native crash (a script
+library, a GPU fault) still takes the editor down.
+
+Bevy runs headless there: no winit, one update per frame the view presents
+(`embed::paced` waits on `FrameExchange::presented`, which the view calls on
+every swap and keeps asking for while a world runs; 50 ms at most, so a hidden
+view still hears the editor), and synchronous pipeline compilation, since async compile tasks outliving the
+device crash NVIDIA at exit. Cameras render at `GAME_SIZE` (960x720) - the
+whole game, scaled to fit the view - into a ring of three Vulkan images
+exported as dma-bufs (`embed.rs`, raw `ash` under wgpu). `FrameExchange` hands
+slots between the world and the view: the world never draws into the one
+being shown or waiting to be. The C++ `GameView` item imports the ring through
+EGL. This is why Qt is forced onto its OpenGL renderer, and onto EGL on X11.
+
+The ring's layout is negotiated. The view offers (`FrameExchange::accept`)
+the tiled DRM format modifiers its EGL samples as a plain texture; the world
+turns on `VK_EXT_image_drm_format_modifier` through Bevy's `raw_vulkan_init`,
+allocates the ring in one of those, and has the cameras draw straight into it
+(`aim_cameras` swaps the claimed slot in as their output attachment) - no copy
+on either side. With no common modifier, or once the view `refuse`s one it
+couldn't import, it falls back to a linear system-memory ring the frame is
+copied into, which NVIDIA only samples as an external texture, so the view
+copies it again through a small shader into a plain texture.
+
+Status (positions, variables) and the run log reach QML through their own
+`statusJson` and `logJson`, not the whole state snapshot - re-evaluating every
+binding on each status or `say` stuttered the view. `RunLog.qml` appends by
+`log.total` rather than rebuilding its list.
+
+Input is `PreviewInput`, as it is for the MJPEG preview: keys, buttons,
+position, text, plus `focus` (which, once sent, decides whether the game is
+focused, and releases held keys when lost) and `mouse_delta`. A windowless
+world answers `lock mouse` with `RuntimeMessage::PointerLock`; the view then
+locks the pointer while it has the keyboard - Wayland pointer constraints and
+relative pointer (the generated glue is vendored in `blockloom-qt/src/wayland/`),
+cursor warping on X11 - and forwards raw motion. Escape always releases it and
+a click takes it back.
+
+`BLOCKLOOM_RUNTIME=process` forces the child process and MJPEG preview on
+Linux too. Windows and macOS have no GPU sharing yet.
+
 ### How a project runs
 
 1. Play hands the runtime the whole project (`EditorMessage::Load`) and starts
-   it. Nothing is shared but that message: the runtime owns the world from then
-   on.
+   it. Nothing is shared but that message - even in-process, the world gets its
+   own copy - and the runtime owns the world from then on.
 2. `vm::compile` flattens each actor's canvas into a `Vec<Step>` with jumps -
    a nested tree can't be suspended mid-body, but a program counter can. Header
    strands become entry points keyed by their trigger.
@@ -278,18 +364,25 @@ the whole game window.
    per-frame `Update` publishes the sensor snapshot (`sense::publish`), turns input
    and rapier contacts into `vm::Event`s (at most once a frame, so a few sunk fixed
    steps never repeat a keypress), and reads `Vm::tick`'s results next step.
-4. The runtime applies those effects to the ECS - shared ones in
-   `world::apply_common`, physics and material ones in the dimension's own
-   module - and reports says, errors and a periodic status back to the editor.
+4. The runtime applies those effects to the ECS - actors made and unmade in
+   `world::apply_lifetimes`, shared ones in `world::apply_common`, physics and
+   material ones in the dimension's own module - and reports says, errors and a
+   periodic status back to the editor.
    Every actor carries a `PhysicsPose`/`PrevPose` pair, and `record_poses`
    (`FixedPostUpdate`) + `interpolate_poses` (`Update`) draw each between fixed
    steps so fast displays don't see them - physics bodies from the pose physics
    wrote, and a `move`/`glide` sprite from the pose its step's effects pushed
-   it to, both just as smooth as a rolling ball.
+   it to, both just as smooth as a rolling ball. `restore_poses` puts the
+   settled pose back at the head of every fixed step, so simulation builds on
+   where the actor actually is rather than on the frame the renderer drew.
 
 Scripts yield the way Scratch's do: at a `wait`, and once per loop iteration.
 That one rule is why `forever` costs one step per fixed tick instead of hanging
 the process, and it's checked directly in `blockloom-core/tests/vm.rs`.
+
+The VM holds `Rc`s, so it is a `!Send` Bevy resource - which is exactly right:
+every system touching it is therefore scheduled on the main thread, the same
+thread the thread-local sensor snapshot lives on. Keep it that way.
 
 ### Sound
 
@@ -305,30 +398,44 @@ path, oldest stolen past 8 of a file or 128 total. Sounds ignore the pause
 freeze (a menu click still clicks), and `stop all` silences them. Reporters
 are `is playing?` and `bus volume`, read off the published snapshot.
 
-The VM holds `Rc`s, so it is a `!Send` Bevy resource - which is exactly right:
-every system touching it is therefore scheduled on the main thread, the same
-thread the thread-local sensor snapshot lives on. Keep it that way.
-
 ### Building a game
 
 Build is not Export. Export writes a `.blockloom` file for somebody else's
-editor; Build makes a folder somebody can run without Blockloom at all:
+editor; Build makes a runnable folder and a ZIP somebody can share without
+Blockloom at all. Windows keeps the player and `game/` together. Linux adds a
+portable shell launcher, a `.desktop` entry and a PNG icon. macOS uses the
+native bundle layout:
 
 ```text
 Pond Game/
   Pond Game.exe        the player: `blockloom-runtime`, renamed
+  Pond Game.ico        the project icon, also embedded in the executable
   game/
     game.pack          the document, and the format version it was written at
     assets/...         the project's assets, minus the script sources
-    .blockloom/build/  the script libraries, where the runtime already looks
+    .blockloom/build/  native blocks and script libraries
+```
+
+```text
+Pond Game.app/
+  Contents/
+    Info.plist
+    MacOS/Pond Game
+    Resources/
+      GameIcon.icns
+      game/...
 ```
 
 `blockloom-core/src/build.rs` lays that out and `commands::build_game` drives
-it. The player finds `game/game.pack` beside its own executable, so renaming
-the binary is the whole of the branding, and `game/` is handed to the runtime
-as the project folder - which is why the assets and the script libraries keep
-the spelling they have inside a project. Nothing in the runtime knows whether
-it is playing a folder or a build.
+it. The player finds `game/game.pack` beside its own executable, or under the
+app's `Contents/Resources` on macOS. That `game/` is handed to the runtime as
+the project folder, which is why assets and native libraries keep the spelling
+they have inside a project.
+
+Project Settings holds one image asset for build branding. Packaging converts
+it into a multi-size Windows ICO, a macOS ICNS and a Linux PNG; an empty setting
+uses Blockloom's bundled icon. The ZIP contains the platform-named build folder
+as its top-level entry and preserves executable bits for Linux and macOS.
 
 `player::Launch` is the one fork: a pack beside the binary means player mode,
 which takes its dimension from the document rather than `--mode`, presses its
@@ -337,11 +444,12 @@ false, so the status corner and the editor handshake are skipped), and exits
 when the world stops, since nothing can press Play again - `stop all` is how a
 built game quits. `--play <folder>` runs a build without renaming anything.
 
-A build ships the blocks as the document and runs them on the same VM the
-editor plays with, so it needs no toolchain and costs a file copy. Scripts are
-the exception: they ship as the libraries the editor already compiled, and one
-that won't compile fails the build rather than shipping an actor that quietly
-does nothing.
+A build always ships the document so the VM remains a fallback. With "Compile
+blocks for maximum speed" enabled, it also ships one optimized native logic
+library and the player schedules that instead. The option defaults on when the
+project and target toolchain support it. Scripts ship as the libraries the
+editor already compiled, and one that won't compile fails the build rather
+than shipping an actor that quietly does nothing.
 
 Which platforms an install can build for is a question about what it has beside
 it. The player is a native binary Blockloom can't produce, so one per platform
@@ -380,13 +488,11 @@ in a flat slot the entry table sized and an `escape loop` is just a jump.
 One function covers a whole actor rather than one strand, because every strand
 and every custom block body live in one step list with one set of numbers, and
 a custom block called as a statement is a jump into somebody else's region with
-a return address pushed. A reporter that can wait is an `Invoke` step with its
-value in a temp slot instead: the caller suspends while the body runs, so a
-`wait` in one sleeps the strand that asked. A reporter that cannot wait still
-runs to completion in place - the VM's `immediate` flag becomes a second
-function over the same steps, with its own state, so one of those may call
-another and the strand's program counter never moves. Each actor is therefore
-emitted at most twice, however many custom blocks it has.
+a return address pushed. The VM's `immediate` flag - a reporter body run to
+completion in place - becomes a second function over the same steps, with its
+own state, so a reporter may call another or itself and the strand's program
+counter never moves. Each actor is therefore emitted at most twice, however
+many custom blocks it has.
 
 The rule it has to keep is that a compiled program and the VM ask the world for
 exactly the same things in the same order, on the same tick - including the
@@ -397,16 +503,12 @@ prints what each one asked for and which tick it asked on, and compares line
 for line. Add a block to the emitter and add a case there, or the two halves
 drift and a compiled game stops meaning what the played one meant.
 
-The one difference on purpose is the VM's per-tick step budget, which a compiled
-strand only counts when it has to. Every back edge belongs to a loop and every
-loop yields, so a plain strand can't spin; the budget only ever catches ten
-thousand straight-line blocks in a row, and paying for a counter on every block
-to match it there would cost what compiling was for. A reporter body does
-count, since nothing in one yields and the budget is all that ends a runaway
-one. A recursive statement block is the other: a runaway there would spin
-inside a single tick where the VM hands the frame back, so one of those counts
-too. Each live call keeps its own loop counters and temp slots, saved and
-restored across the boundary, which is what lets a block call itself.
+The one difference on purpose is the VM's per-tick step budget, which compiled
+strands don't count against. Every back edge belongs to a loop and every loop
+yields, so a compiled strand can't spin; the budget only catches ten thousand
+straight-line blocks in a row, and a counter on every block would cost what
+compiling was for. A reporter body does count, since nothing in one yields and
+the budget is the only thing that ends a runaway.
 
 `codegen/runtime.rs` is the support code a generated program is built on - the
 value type, the operators over it, the `State` a suspended strand is kept in,
@@ -426,30 +528,118 @@ call - is hoisted into a `let` ahead of the expression, because the VM resolves
 a whole tree before one operator runs: a reporter on the side `and` never reads
 still runs, and still does whatever it does to the world.
 
-`Unsupported` names the one thing this still will not do, so a build can fall
-back to the VM knowing what sent it there. Nothing uses it right now: every
-block compiles, so a build ships native logic and the runtime plays it.
+The actor is a value rather than a constant, which is what lets one emitted
+function cover an authored actor and every clone of it: a `State` carries the
+id it is running under, and `Entry` says which authored actor's strand it is.
+The generated program keeps its own `Actors` table, the same one the VM keeps
+and for the same reason - `delete` and `create a clone of` name an actor the
+way every block does, and both have to be answerable before the host has done
+anything about them. So the program mints the id, copies the scheduling and
+queues the copy's `when I start as a clone` strands for the top of the next
+tick, and the host is left with the entity. `NAMES` lists every actor the
+document has, blocks or none, because an empty canvas still answers to its
+name. A clone or a deletion from outside the program - a script's - comes in
+through `fire` as a `Cloned`, `Created` or `Deleted` kind instead.
 
-### Frontend (`ui/`)
+What it won't compile is a custom block that can reach itself through
+statement calls: its loops would share one set of counters where the VM gives
+every invocation a frame. `Unsupported` refuses the whole project rather than
+emitting half of one, so the Build dialog can disable native logic and name
+what sent it there.
 
-Vue 3 + TypeScript + Vite, package-managed with pnpm. `src-tauri/tauri.conf.json`
-points `frontendDist` at `ui/dist`. Key files: `store.ts` (the one copy of
-backend state), `tauri.ts` (one function per command) over `bridge.ts` (the
-Tauri/dev-bridge switch), `blockstitchSetup.ts` (the single wiring point into
-blockstitch), and `blockFields.ts`, which is where a block's row comes from:
-every block is described once as a list of pieces (a label, a value slot, a
-dropdown, a nested body) and two factories turn that into the canvas component
-and the sidebar-prefab component. **Adding a block means adding a variant to
-`InstructionKind`, a row to `BLOCK_SPECS`, an icon and label in `icons.ts`, a
+`vm::Variables` is the live variable home shared by either scheduler. Generated
+logic exports one runner behind the ABI in `codegen/runtime.rs`, and
+`blockloom-runtime/src/logic.rs` loads it, translates events and effects, and
+answers variable and sensing callbacks. Editor Play stays on the VM as the
+reference behavior. A packaged player uses the native runner whenever its
+build carries one, and falls back to the VM when it does not.
+
+### Interface
+
+A game builds its HUD and its menus out of blocks, in screen space, over the
+world. `blockloom-core/src/ui.rs` is the vocabulary: seven element kinds
+(`Panel`, `Label`, `Button`, `Image`, `Input`, `Slider`, `Toggle`), a 9-point
+anchor, and the properties `set [prop] of (id) to` can write. An element is
+named by an id string the project invents, and `show` makes one *or updates
+the one that id already names* - so a HUD strand can rebuild itself every
+frame without piling up. `hide` takes one off the screen without forgetting
+it, children and all; `delete` forgets it. A parented element flows after its
+siblings inside its parent's vertical stack and its own placement is ignored,
+which is what makes Resume / Settings / Quit a three-block menu.
+
+Every `show` block spells its id, caption and placement the same way, so the
+element kinds share one set of field ids (`UiId`, `UiContent`, `UiX`, ...). The
+JSON field is `element` rather than `id`, because a flattened instruction
+already carries its own `id` on the wire (see `wire.rs`).
+
+Three properties have no `show` row and so live beside the style rather than
+on the element: a slider's `step`, and a text input's `allow` and `max
+length`. A HUD strand that re-shows its own slider every frame would
+otherwise wipe them. `step` rounds a slider's number to a multiple of itself
+measured from `min`, which is also applied to a number written straight in,
+so a step that doesn't divide the span leaves the far end short. `allow`
+names a character set (`any`, `numbers`, `digits`, `letters`) by a word
+somebody types, and anything else reads as `any` - a typo shouldn't deaden a
+field. A refused keystroke is simply not there: no error, since somebody
+holding a key down means no harm by it.
+
+Five reporters read the interface: `value of (id)` and `text of (id)`
+(which is a label's words, or an empty input's placeholder), `is (id)
+shown?`, `does (id) exist?` and `the focused element`. `hide` leaves an
+element existing but not shown; only `delete` takes it out of both. An id
+nothing answers to is an error for the first two, the way a missing actor
+is, and plainly false for the other two.
+
+`blockloom-runtime/src/ui.rs` is the id map and the rules over it - the
+hit test, the subtree walk, the anchoring - Bevy-free but for the entity
+handle, so they unit-test without a window. `overlay.rs` is the Bevy half:
+`apply_ui_effects` folds the fixed step's effects into the map, and `draw_ui`
+spawns, despawns and restyles. An element's anchor is a percentage plus a
+`UiTransform` of its own size rather than a worked-out pixel offset, because
+an auto-sized label isn't measured until Bevy has laid it out - and a window
+resize then recomputes for free.
+
+Clicks route through the interface first (`world::detect_clicks`): the
+topmost visible element whose rectangle covers the pointer wins, and only
+what nothing wanted reaches the world picks. A visible modal element swallows
+the rest, so clicking beside a pause menu never fires the gun behind it. A
+click on a text input hands it the keyboard; while it holds it, game strands
+see no keys at all. `focus (id)` and `clear focus` move the keyboard without
+a click, and the input holding it is drawn brighter, since otherwise nothing
+would say where the typing is going.
+
+`pause game` freezes the world: no world strand advances, no physics steps,
+no key or collision event queues, so resuming never bursts. The one fork is
+that strands a UI event started keep ticking - otherwise a pause menu's own
+buttons would be dead - and they run on the wall clock, so a `wait 1` blink
+on a frozen menu still blinks. A `pause game` in a world strand stops that
+strand where it stands, the way `delete myself` does; in a UI strand it
+doesn't. `world::set_paused` is the one place that flips it, whether the
+editor's Pause button or the block asked.
+
+Pointer lock is fully manual: game code unlocks around a menu and re-locks on
+close. In the Game view the editor holds it on the world's behalf (see Game
+view above). The one safety net is that showing a modal while the pointer is locked
+logs a warning, since a locked hidden cursor can't press anything.
+
+### Frontend (`blockloom-qt/qml/`)
+
+`Main.qml` holds the one copy of backend state (`appState`, parsed from
+`bridge.stateJson`) and `invoke(command, args, done, failed)`, which every
+other file calls. `Blocks.qml` (a singleton) is the single wiring point into
+blockstitch and where a block's row comes from: every block is described once
+as a list of pieces (a label, a value slot, a dropdown, a text field) and
+registered with blockstitch's `BlockRegistry`, which both the canvas and the
+palette read. **Adding a block means adding a variant to `InstructionKind`, a
+row and an icon in `Blocks.qml`'s `buildRows()`, a label in its `labels`, a
 field id if it has value slots, and a `Step`/`Effect` if it does something
-new** - not a pair of `.vue` files. The
-two blocks whose row comes from a `BlockDef` rather than their type
-(`BlockHeader`, `CallBlock`) are still hand-written, in `components/fields/`.
+new** - not a new QML file. `BlockHeader` and `CallBlock` take their row from
+a `BlockDef` rather than their type, which blockstitch draws itself.
 
-The asset tray along the bottom (`components/AssetTray.vue`) is a file manager
+The asset tray along the bottom (`AssetTray.qml`) is a file manager
 over the project folder: it lists, makes, imports, renames, moves and deletes
-files, and an asset dragged out of it lands on any input wrapped in
-`AssetDrop.vue` (the Look component's Image, the Script component's path).
+files, and an asset dragged out of it lands on any
+`AssetField.qml` (the Look component's Image, the Script component's path).
 Asset paths are relative to the project folder with forward slashes
 (`assets/sprites/player.png`), the same spelling `Script` uses, and
 `Project::repoint_asset` follows a renamed or moved file through the document
@@ -467,26 +657,36 @@ lists; names and dimensions are read back off disk, never cached there. With
 under it. `blockloom-core/src/library.rs` is that list, including the one-time
 migration of pre-folder `<id>.blockloom` files.
 
-The app opens on the Dashboard (`ui/src/components/Dashboard.vue`); the editor
+The app opens on the Dashboard (`Dashboard.qml`); the editor
 appears once a project is open, and `state.project` being null is what decides
 which of the two shows. Every edit is still written to disk right after it
 lands.
 
 ### Known gaps
 
-- No clones (`create clone of myself`).
-- A build carries no icon of its own and is a folder rather than an installer
-  or one file; macOS gets that same folder rather than an `.app` bundle.
+- The interface has three global themes plus per-element overrides and
+  scrollable UI lists. Variables persist only when a `save variable` block or
+  the matching script call writes them to per-player save data.
+- A text input is basic: no selection, no cursor, no IME. Backspace rubs out,
+  Escape and Enter let go, and every other character key appends - subject to
+  the input's own `allow` and `max length`, which is all the validation there
+  is. Backspace ignores both, so a rule written after the typing doesn't trap
+  what is already in the field.
+- A clone copies the template as the editor authored it, standing where the
+  template stands now. What `attach`/`detach` did to the template since Play
+  doesn't carry over - re-attaching a component has always meant the authored
+  one.
 - Building for another platform needs its player staged by hand, and a scripted
   project also needs that target's `std` and a linker for it.
-- A built game's blocks are interpreted, the same way the editor plays them.
-  Nothing compiles a project down.
+- Recursive statement-shaped custom blocks fall back to the VM because their
+  loop counters still need to move onto each call frame.
 - A script needs a Rust toolchain on the machine that presses Play, which a
-  packaged install can't assume. Without one Play runs the blocks alone and
-  says so once in the run log; the script editor shows the same status, with
-  highlighting and inline errors either way.
+  packaged install can't assume. The script editor is a plain textarea, and a
+  script's errors only show in the run log.
 - A script can't be attached mid-run: its library is opened when the world is
   built.
 - `say` shows as a camera-projected speech bubble over its actor in both 2D and
   3D, and is also recorded in the editor log. Bubble styling is saved on the
   world with an optional font asset path, which no inspector row exposes yet.
+- A reporter-shaped custom block runs to completion in place, so a `wait` inside
+  one passes straight through.

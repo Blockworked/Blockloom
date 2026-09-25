@@ -384,6 +384,20 @@ The VM holds `Rc`s, so it is a `!Send` Bevy resource - which is exactly right:
 every system touching it is therefore scheduled on the main thread, the same
 thread the thread-local sensor snapshot lives on. Keep it that way.
 
+### Sound
+
+`blockloom-core/src/sound.rs` is the model: a `SoundBus` (`Master`, `Music`,
+`Sfx`), a `SoundMixer` of one linear gain per bus saved on the `World`, and
+the 0-100 block scale both ways (`user_to_gain`/`gain_to_user`). Blocks are
+`play sound` (global), `play sound at` (positional: follows an actor, panned
+by Bevy spatial audio with per-frame distance falloff), `stop sound` (empty
+stops all), `set sound volume`/`pitch` (live voices of one file), and `set
+bus volume` (window-global like gravity). `blockloom-runtime/src/sound.rs`
+owns the voices: one entity per play with an `AudioPlayer`, handles cached by
+path, oldest stolen past 8 of a file or 128 total. Sounds ignore the pause
+freeze (a menu click still clicks), and `stop all` silences them. Reporters
+are `is playing?` and `bus volume`, read off the published snapshot.
+
 ### Building a game
 
 Build is not Export. Export writes a `.blockloom` file for somebody else's
