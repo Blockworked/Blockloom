@@ -26,6 +26,8 @@ QtObject {
     function opts(names) { return names.map(n => ({ value: n, label: n })); }
     readonly property var keyOptions: opts(["space","up arrow","down arrow","left arrow","right arrow","enter","escape","shift","control","alt","tab","backspace"]
         .concat("abcdefghijklmnopqrstuvwxyz".split("")).concat("0123456789".split("")))
+    // The atmosphere slot's readings, spelled as `AtmosphereSense::field` takes them.
+    readonly property var atmosphereOptions: opts(["sun x","sun y","sun z","sun brightness","wind x","wind y","wind z","wind speed","wind gust","fog density","cloud cover","rain","snow","wetness","temperature"])
     readonly property var axisOptions: [{value:"X",label:"x"},{value:"Y",label:"y"},{value:"Z",label:"z"}]
     readonly property var bodyOptions: [{value:"None",label:"none (blocks only)"},{value:"Static",label:"static"},{value:"Dynamic",label:"dynamic"},{value:"Kinematic",label:"kinematic"}]
     readonly property var triggerOptions: [{value:"false",label:"solid"},{value:"true",label:"a trigger"}]
@@ -405,7 +407,8 @@ QtObject {
         ActorPosition: { infix: "'s", suffix: "position", result: "number", enumArg: { index: 1, options: axisOptions }, arity: 2, args: ["text","text"] },
         ActorLocalPosition: { infix: "'s local", suffix: "position", result: "number", enumArg: { index: 1, options: axisOptions }, arity: 2, args: ["text","text"] },
         SoundPlaying: { prefix: "is", suffix: "playing?", result: "bool", arity: 1, args: ["text"] },
-        BusVolume: { prefix: "volume of", suffix: "bus", result: "number", enumArg: { index: 0, options: soundBusOptions }, arity: 1, args: ["text"] }
+        BusVolume: { prefix: "volume of", suffix: "bus", result: "number", enumArg: { index: 0, options: soundBusOptions }, arity: 1, args: ["text"] },
+        Atmosphere: { prefix: "air", result: "number", enumArg: { index: 0, options: atmosphereOptions }, arity: 1, args: ["text"] }
     })
     // Arity and slot types of blockstitch's own operators, for fresh palette values.
     readonly property var builtinShapes: ({
@@ -418,7 +421,7 @@ QtObject {
     })
     // Palette groups, the way the sidebar shows them.
     readonly property var operatorGroups: [
-        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","ActorPosition","ActorLocalPosition","ComponentField","SoundPlaying","BusVolume"] },
+        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","ActorPosition","ActorLocalPosition","ComponentField","SoundPlaying","BusVolume","Atmosphere"] },
         { label: "Interface", kinds: ["UiValue","UiText","UiShown","UiExists","UiFocus","GamePaused"] },
         { label: "Actors", kinds: ["IsClone","MyParent","NewActor","ActorCount"] },
         { label: "Maths", kinds: ["Add","Sub","Mul","Div","Mod","Round","Math","Random"] },

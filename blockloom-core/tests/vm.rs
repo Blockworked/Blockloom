@@ -1855,3 +1855,18 @@ fn the_sound_reporters_read_the_published_snapshot() {
     let missing = Value::op(Op::from_name("BusVolume"), vec![Value::text("Nope")]);
     assert!(missing.eval().is_err());
 }
+
+#[test]
+fn the_atmosphere_reporter_reads_the_fixed_tick_slot() {
+    use blockloom_core::sense::{self, AtmosphereSense};
+
+    sense::publish(Sensors::default());
+    sense::publish_atmosphere(AtmosphereSense {
+        rain: 0.5,
+        ..Default::default()
+    });
+    let rain = Value::op(Op::from_name("Atmosphere"), vec![Value::text("Rain")]);
+    assert_eq!(rain.eval(), Ok(Evaluated::Number(0.5)));
+    let missing = Value::op(Op::from_name("Atmosphere"), vec![Value::text("humidity")]);
+    assert!(missing.eval().is_err());
+}

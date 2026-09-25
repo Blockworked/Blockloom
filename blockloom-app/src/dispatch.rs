@@ -206,6 +206,11 @@ impl Backend {
             }
             "inspect_asset" => to_json(commands::inspect_asset(state, arg(&args, "path")?)?),
             "pipeline_status" => to_json(commands::pipeline_status(state)?),
+            "set_import_role" => to_json(commands::set_import_role(
+                state,
+                arg(&args, "path")?,
+                arg(&args, "role")?,
+            )?),
             "reimport_assets" => to_json(commands::reimport_assets(
                 state,
                 arg(&args, "paths").unwrap_or_default(),

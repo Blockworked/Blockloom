@@ -234,12 +234,20 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         carrying `WorkingTargets` the FP16 set, `FrameUniforms` from the
         blended `Environment`, and prewarmed upsample pipelines (depth-guided
         in 3D, bilinear in 2D) behind `passes::upsample`.
-  - [ ] Asset and snapshot extension points: the importer grows 3D/LUT volumes,
+  - [x] Asset and snapshot extension points: the importer grows 3D/LUT volumes,
         HDR/EXR with BC6H, heightmaps, IES/cookies (extend the Phase 4 pipeline,
         not a parallel one); probe capture becomes a service reused for HDRI
         baking, reflection probes and water reflections; the sense snapshot gains
         a versioned slot for sun/wind/fog/weather so VM, codegen and scripts stay
         in sync on fixed ticks.
+        Done: `ImportRole` in `blockloom-core/src/pipeline/` (hdr, volume,
+        heightmap, ies, cookie) with per-asset overrides in the manifest and
+        `load_*` decoders for passes; HDR plans as BC6H but the encode itself
+        waits for the build step that applies texture plans. Probe capture is
+        `blockloom-runtime/src/probes.rs` (`ProbeService`, six FP16 faces,
+        optional cube readback). `Sensors::atmosphere` is sampled per fixed
+        tick in `atmosphere.rs` and read by the `Atmosphere` reporter and a
+        script's `atmosphere()`; nothing writes wind, fog or weather yet.
 
 ### Phase 5 - Environment and AAA look (HDRP/Unreal parity)
 - [ ] AAA environment stack (HDRP-grade, Bevy leverage where it exists, ordered

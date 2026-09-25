@@ -124,6 +124,7 @@ fn publish_world() {
     sensors.gamepad_connected = true;
     sensors.gamepad_axes.insert("leftstickx".to_string(), 0.5);
     sensors.gamepad_buttons.insert("south".to_string());
+    sensors.atmosphere.wind_speed = 3.0;
     blockloom_core::sense::publish(sensors);
 }
 
@@ -348,6 +349,10 @@ impl Host for Recorder {
                 "volume" | "hint"
             ))),
             "UiFocus" => Ok(Val::Text("name".to_string())),
+            "Atmosphere" => match args[0].as_text().as_str() {
+                "wind speed" => Ok(Val::Num(3.0)),
+                other => Err(format!("the atmosphere has no \"{other}\" reading")),
+            },
             "MyPosition" => Ok(Val::Num(axis_of(&args[0], [3.0, 7.0, 0.0]))),
             "MyLocalPosition" => Ok(Val::Num(axis_of(&args[0], [1.0, 2.0, 0.0]))),
             "ActorPosition" => {
@@ -1702,6 +1707,12 @@ fn sensing_reads_the_same_world() {
             },
             K::Say {
                 text: op("GamepadButtonDown", vec![Value::text("South")]),
+            },
+            K::Say {
+                text: op("Atmosphere", vec![Value::text("wind speed")]),
+            },
+            K::Say {
+                text: op("Atmosphere", vec![Value::text("humidity")]),
             },
             K::ChangePosition {
                 axis: Axis::X,

@@ -356,6 +356,7 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
                     as f64,
             )
         }
+        abi::READ_ATMOSPHERE => sense::read(|sensors| sensors.atmosphere.field(a)),
         abi::READ_ACTOR_COUNT => Some(sense::read(|sensors| sensors.count_named(a)) as f64),
         abi::READ_POSITION_OF => {
             let axis = axis_of(arg).index();

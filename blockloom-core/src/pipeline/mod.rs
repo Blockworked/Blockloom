@@ -20,6 +20,16 @@
 //!   disk since and need a reimport. The manifest lives at
 //!   `.blockloom/pipeline.json`, beside the script build cache, never inside
 //!   `assets/` itself.
+//! - Import roles: an [`ImportRole`] says what a file is imported *as* - HDR
+//!   sky, 3D volume, heightmap, IES profile, light cookie. Most follow from
+//!   the extension; a PNG heightmap or cookie is an override the manifest
+//!   keeps. Each role's decoder lives in its own submodule and the `load_*`
+//!   functions are what a pass reads a file through.
+
+pub mod hdr;
+pub mod height;
+pub mod ies;
+pub mod volume;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -400,6 +410,8 @@ pub enum TextureTarget {
     Downscale,
     /// Transcode to a GPU-compressed container (KTX2/Basis) at build time.
     Transcode,
+    /// HDR: BC6H in KTX2 at build time, which keeps values above 1.
+    Bc6h,
 }
 
 /// One texture's import plan, with the reason attached for the tray.
@@ -850,6 +862,240 @@ pub fn read_baked_layout(game_dir: &Path) -> Option<AtlasLayout> {
     serde_json::from_str(&text).ok()
 }
 
+// ─── Import roles ────────────────────────────────────────────────────────
+
+/// What a file is imported as. The same PNG can be a sprite, a heightmap or a
+/// light cookie; only the author knows, so the extension's guess can be
+/// overridden per asset (see [`set_role`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportRole {
+    /// An ordinary colour texture: the downscale/transcode plan.
+    Texture,
+    /// High dynamic range: skies, IBL sources, emissive masks. Ships as BC6H.
+    Hdr,
+    /// A 3D texture: a `.cube` grading LUT or an image strip of slices.
+    Volume,
+    /// Terrain heights, 16-bit where the source has it.
+    Heightmap,
+    /// A photometric light profile.
+    Ies,
+    /// A grayscale mask a light projects.
+    Cookie,
+}
+
+impl ImportRole {
+    pub const ALL: [ImportRole; 6] = [
+        ImportRole::Texture,
+        ImportRole::Hdr,
+        ImportRole::Volume,
+        ImportRole::Heightmap,
+        ImportRole::Ies,
+        ImportRole::Cookie,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ImportRole::Texture => "texture",
+            ImportRole::Hdr => "hdr",
+            ImportRole::Volume => "volume",
+            ImportRole::Heightmap => "heightmap",
+            ImportRole::Ies => "ies",
+            ImportRole::Cookie => "cookie",
+        }
+    }
+
+    /// By name, case ignored. `auto` and empty are `None`: follow the extension.
+    pub fn parse(name: &str) -> Result<Option<ImportRole>, String> {
+        let name = name.trim().to_lowercase();
+        if name.is_empty() || name == "auto" {
+            return Ok(None);
+        }
+        Self::ALL
+            .into_iter()
+            .find(|role| role.name() == name)
+            .map(Some)
+            .ok_or_else(|| format!("\"{name}\" isn't an import role"))
+    }
+
+    /// The role a file's extension implies, or `None` for kinds with no role
+    /// (models, audio, scripts...).
+    pub fn detect(relative: &str) -> Option<ImportRole> {
+        use crate::assets::AssetKind;
+        match crate::assets::kind_of(relative) {
+            AssetKind::Image => Some(ImportRole::Texture),
+            AssetKind::Hdr => Some(ImportRole::Hdr),
+            AssetKind::Volume => Some(ImportRole::Volume),
+            AssetKind::Height => Some(ImportRole::Heightmap),
+            AssetKind::Light => Some(ImportRole::Ies),
+            _ => None,
+        }
+    }
+}
+
+/// An HDR's plan: BC6H always (the only block format that keeps values past
+/// 1), downscaled past `hdr_max`.
+pub fn decide_hdr(info: &hdr::HdrInfo, settings: &ImportSettings) -> TexturePlan {
+    let max = settings.hdr_max.max(64);
+    let side = info.width.max(info.height);
+    let (width, height) = if side > max {
+        let scale = max as f64 / side as f64;
+        (
+            ((info.width as f64 * scale).round() as u32).max(1),
+            ((info.height as f64 * scale).round() as u32).max(1),
+        )
+    } else {
+        (info.width, info.height)
+    };
+    let shape = if info.is_equirect() {
+        "equirectangular sky, bakes to a cubemap"
+    } else {
+        "HDR texture"
+    };
+    let size = hdr::bc6h_bytes(width, height, true);
+    let reason = if side > max {
+        format!(
+            "{shape}: downscale to {width}x{height} and ship as BC6H ({})",
+            human_bytes(size)
+        )
+    } else {
+        format!("{shape}: ships as BC6H ({})", human_bytes(size))
+    };
+    TexturePlan {
+        target: TextureTarget::Bc6h,
+        target_width: width,
+        target_height: height,
+        reason,
+    }
+}
+
+fn human_bytes(bytes: u64) -> String {
+    match bytes {
+        b if b >= 1 << 20 => format!("{:.1} MiB", b as f64 / (1 << 20) as f64),
+        b if b >= 1 << 10 => format!("{:.1} KiB", b as f64 / (1 << 10) as f64),
+        b => format!("{b} B"),
+    }
+}
+
+/// The summary and warnings for a file imported as `role`.
+fn describe_role(
+    relative: &str,
+    role: ImportRole,
+    settings: &ImportSettings,
+    bytes: &[u8],
+) -> Result<(String, Vec<String>), String> {
+    let mut warnings = Vec::new();
+    let summary = match role {
+        ImportRole::Texture => unreachable!("textures take the plain image path"),
+        ImportRole::Hdr => {
+            let info = hdr::inspect_hdr(relative, bytes)?;
+            if !info.channels.iter().any(|c| c == "R" || c.ends_with(".R")) {
+                warnings.push("no R channel: reads as black".to_string());
+            }
+            let plan = decide_hdr(&info, settings);
+            format!(
+                "{} {}x{} {}-bit: {}",
+                info.format, info.width, info.height, info.bits, plan.reason
+            )
+        }
+        ImportRole::Volume => {
+            let volume = decode_volume(relative, bytes)?;
+            let [x, y, z] = volume.info.size;
+            format!(
+                "{x}x{y}x{z} volume from a {}: 3D texture, {}",
+                volume.info.source,
+                human_bytes(volume.info.texels() * 8)
+            )
+        }
+        ImportRole::Heightmap => {
+            let map = height::decode_heightmap(relative, bytes)?;
+            let info = &map.info;
+            if info.bits < 16 {
+                warnings.push("8-bit heights terrace: export 16-bit".to_string());
+            }
+            if info.width != info.height || !height::is_terrain_side(info.width) {
+                warnings.push(format!(
+                    "{}x{} isn't 2^n+1 square (513, 1025...): terrain resamples it",
+                    info.width, info.height
+                ));
+            }
+            if info.max <= info.min {
+                warnings.push("every sample is the same height".to_string());
+            }
+            format!(
+                "{}x{} {}-bit heightmap, range {:.3}-{:.3}",
+                info.width, info.height, info.bits, info.min, info.max
+            )
+        }
+        ImportRole::Ies => {
+            let text = std::str::from_utf8(bytes).map_err(|_| format!("{relative} isn't text"))?;
+            let info = ies::parse_ies(relative, text)?.info();
+            format!(
+                "IES {}x{} angles ({}), peak {:.0} cd",
+                info.vertical_angles, info.horizontal_angles, info.symmetry, info.max_candela
+            )
+        }
+        ImportRole::Cookie => {
+            let info = inspect_texture(relative, bytes)?;
+            if info.width != info.height {
+                warnings.push("not square: the cookie stretches over the cone".to_string());
+            }
+            if !info.width.is_power_of_two() || !info.height.is_power_of_two() {
+                warnings.push("not a power of two: mips come out uneven".to_string());
+            }
+            let side = info
+                .width
+                .max(info.height)
+                .min(settings.texture_max.max(64));
+            format!(
+                "{}x{} light cookie: one channel, {side}px R8",
+                info.width, info.height
+            )
+        }
+    };
+    Ok((summary, warnings))
+}
+
+/// A volume from its bytes: a `.cube` LUT as text, anything else as a strip.
+pub fn decode_volume(relative: &str, bytes: &[u8]) -> Result<volume::Volume, String> {
+    if relative.to_lowercase().ends_with(".cube") {
+        let text = std::str::from_utf8(bytes).map_err(|_| format!("{relative} isn't text"))?;
+        return volume::parse_cube(relative, text);
+    }
+    let image = image::load_from_memory(bytes)
+        .map_err(|e| format!("{relative} doesn't decode as an image: {e}"))?
+        .to_rgba8();
+    volume::volume_from_strip(relative, &image)
+}
+
+fn read_asset(project_dir: &Path, relative: &str) -> Result<(String, Vec<u8>), String> {
+    let relative = crate::assets::normalize(relative)
+        .ok_or_else(|| format!("\"{relative}\" isn't a path in this project"))?;
+    let full = crate::assets::resolve(project_dir, &relative)
+        .ok_or_else(|| format!("\"{relative}\" isn't a path in this project"))?;
+    let bytes = std::fs::read(&full).map_err(|e| format!("{relative}: {e}"))?;
+    Ok((relative, bytes))
+}
+
+/// A project's volume, ready to upload as a 3D texture.
+pub fn load_volume(project_dir: &Path, relative: &str) -> Result<volume::Volume, String> {
+    let (relative, bytes) = read_asset(project_dir, relative)?;
+    decode_volume(&relative, &bytes)
+}
+
+/// A project's heightmap, samples 0-1.
+pub fn load_heightmap(project_dir: &Path, relative: &str) -> Result<height::Heightmap, String> {
+    let (relative, bytes) = read_asset(project_dir, relative)?;
+    height::decode_heightmap(&relative, &bytes)
+}
+
+/// A project's IES profile.
+pub fn load_ies(project_dir: &Path, relative: &str) -> Result<ies::IesProfile, String> {
+    let (relative, bytes) = read_asset(project_dir, relative)?;
+    let text = String::from_utf8(bytes).map_err(|_| format!("{relative} isn't text"))?;
+    ies::parse_ies(&relative, &text)
+}
+
 // ─── Reimport tracking ───────────────────────────────────────────────────
 
 /// Import-time knobs, snapshotted per asset so a settings change dirties
@@ -862,6 +1108,13 @@ pub struct ImportSettings {
     pub audio_quality: u8,
     #[serde(default = "default_atlas_max")]
     pub atlas_max: u32,
+    /// Longest side an HDR keeps: skies want more than sprites do.
+    #[serde(default = "default_hdr_max")]
+    pub hdr_max: u32,
+}
+
+fn default_hdr_max() -> u32 {
+    4096
 }
 
 fn default_texture_max() -> u32 {
@@ -882,16 +1135,21 @@ impl Default for ImportSettings {
             texture_max: default_texture_max(),
             audio_quality: default_audio_quality(),
             atlas_max: default_atlas_max(),
+            hdr_max: default_hdr_max(),
         }
     }
 }
 
 impl ImportSettings {
     fn fingerprint(&self) -> u32 {
-        let text = format!(
+        let mut text = format!(
             "{}:{}:{}",
             self.texture_max, self.audio_quality, self.atlas_max
         );
+        // Newer knobs join only when moved, so adding one dirties nothing.
+        if self.hdr_max != default_hdr_max() {
+            text += &format!(":hdr{}", self.hdr_max);
+        }
         crc32(text.as_bytes())
     }
 }
@@ -916,6 +1174,10 @@ pub struct ManifestEntry {
     pub outputs: Vec<String>,
     #[serde(default)]
     pub detail: String,
+    /// The role it imported as. `None` in manifests written before roles,
+    /// which read as the role its extension gives.
+    #[serde(default)]
+    pub role: Option<ImportRole>,
 }
 
 /// The whole folder's fingerprints, keyed by project-relative path.
@@ -927,6 +1189,9 @@ pub struct PipelineManifest {
     pub settings: ImportSettings,
     #[serde(default)]
     pub entries: HashMap<String, ManifestEntry>,
+    /// Roles the author chose over what the extension says, by path.
+    #[serde(default)]
+    pub roles: HashMap<String, ImportRole>,
 }
 
 fn pipeline_version() -> u32 {
@@ -939,7 +1204,18 @@ impl Default for PipelineManifest {
             version: PIPELINE_VERSION,
             settings: ImportSettings::default(),
             entries: HashMap::new(),
+            roles: HashMap::new(),
         }
+    }
+}
+
+impl PipelineManifest {
+    /// What `relative` imports as: the author's override, else its extension's.
+    pub fn role_of(&self, relative: &str) -> Option<ImportRole> {
+        self.roles
+            .get(relative)
+            .copied()
+            .or_else(|| ImportRole::detect(relative))
     }
 }
 
@@ -991,6 +1267,7 @@ pub fn note_imported(project_dir: &Path, relative: &str, detail: &str) -> Result
     let (hash, size, mtime) = file_fingerprint(&full)?;
     let mut manifest = load_manifest(project_dir);
     let settings = manifest.settings.fingerprint();
+    let role = manifest.role_of(&relative);
     manifest.entries.insert(
         relative,
         ManifestEntry {
@@ -1000,6 +1277,7 @@ pub fn note_imported(project_dir: &Path, relative: &str, detail: &str) -> Result
             settings,
             outputs: Vec::new(),
             detail: detail.to_string(),
+            role,
         },
     );
     save_manifest(project_dir, &manifest)
@@ -1009,7 +1287,9 @@ pub fn note_imported(project_dir: &Path, relative: &str, detail: &str) -> Result
 /// never points at a file that left.
 pub fn note_removed(project_dir: &Path, relative: &str) {
     let mut manifest = load_manifest(project_dir);
-    if manifest.entries.remove(relative).is_some() {
+    let entry = manifest.entries.remove(relative);
+    let role = manifest.roles.remove(relative);
+    if entry.is_some() || role.is_some() {
         let _ = save_manifest(project_dir, &manifest);
     }
 }
@@ -1017,10 +1297,40 @@ pub fn note_removed(project_dir: &Path, relative: &str) {
 /// Follow a rename through the manifest.
 pub fn note_moved(project_dir: &Path, from: &str, to: &str) {
     let mut manifest = load_manifest(project_dir);
-    if let Some(entry) = manifest.entries.remove(from) {
-        manifest.entries.insert(to.to_string(), entry);
-        let _ = save_manifest(project_dir, &manifest);
+    let entry = manifest.entries.remove(from);
+    let role = manifest.roles.remove(from);
+    if entry.is_none() && role.is_none() {
+        return;
     }
+    if let Some(entry) = entry {
+        manifest.entries.insert(to.to_string(), entry);
+    }
+    if let Some(role) = role {
+        manifest.roles.insert(to.to_string(), role);
+    }
+    let _ = save_manifest(project_dir, &manifest);
+}
+
+/// Imports `relative` as `role` from now on, or as its extension says when
+/// `None`. The asset reads dirty until it is reimported under the new role.
+pub fn set_role(
+    project_dir: &Path,
+    relative: &str,
+    role: Option<ImportRole>,
+) -> Result<PipelineReport, String> {
+    let relative = crate::assets::normalize(relative)
+        .ok_or_else(|| format!("\"{relative}\" isn't a path in this project"))?;
+    let mut manifest = load_manifest(project_dir);
+    match role {
+        Some(role) if Some(role) != ImportRole::detect(&relative) => {
+            manifest.roles.insert(relative.clone(), role);
+        }
+        _ => {
+            manifest.roles.remove(&relative);
+        }
+    }
+    save_manifest(project_dir, &manifest)?;
+    inspect_asset(project_dir, &relative)
 }
 
 /// What the tray shows per asset: what it is, what import would do, and
@@ -1036,6 +1346,9 @@ pub struct PipelineReport {
     pub summary: String,
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// What it imports as, when it is one of the roled kinds.
+    #[serde(default)]
+    pub role: Option<ImportRole>,
 }
 
 /// Inspect one asset and say what the pipeline makes of it.
@@ -1049,18 +1362,34 @@ pub fn inspect_asset(project_dir: &Path, relative: &str) -> Result<PipelineRepor
     }
     let bytes = std::fs::read(&full).map_err(|e| format!("{}: {e}", full.display()))?;
     let kind = crate::assets::kind_of(&relative);
-    let (summary, warnings) = describe(&relative, kind, &bytes);
     let manifest = load_manifest(project_dir);
+    let role = manifest.role_of(&relative);
+    let (summary, warnings) = describe(&relative, kind, role, &manifest.settings, &bytes);
     Ok(PipelineReport {
         dirty: is_dirty(&manifest, &relative, &full).unwrap_or(true),
         path: relative,
         kind,
         summary,
         warnings,
+        role,
     })
 }
 
-fn describe(relative: &str, kind: crate::assets::AssetKind, bytes: &[u8]) -> (String, Vec<String>) {
+fn describe(
+    relative: &str,
+    kind: crate::assets::AssetKind,
+    role: Option<ImportRole>,
+    settings: &ImportSettings,
+    bytes: &[u8],
+) -> (String, Vec<String>) {
+    if let Some(role) = role
+        && role != ImportRole::Texture
+    {
+        return match describe_role(relative, role, settings, bytes) {
+            Ok(described) => described,
+            Err(error) => (error.clone(), vec![error]),
+        };
+    }
     match kind {
         crate::assets::AssetKind::Model => match inspect_model(relative, bytes) {
             Ok(info) => (info.summary(), info.warnings.clone()),
@@ -1068,7 +1397,7 @@ fn describe(relative: &str, kind: crate::assets::AssetKind, bytes: &[u8]) -> (St
         },
         crate::assets::AssetKind::Image => match inspect_texture(relative, bytes) {
             Ok(info) => {
-                let plan = decide_texture(&info, ImportSettings::default().texture_max);
+                let plan = decide_texture(&info, settings.texture_max);
                 (
                     format!("{}x{} {}", info.width, info.height, plan.reason),
                     Vec::new(),
@@ -1107,6 +1436,10 @@ fn is_dirty(manifest: &PipelineManifest, relative: &str, full: &Path) -> Result<
     if entry.settings != manifest.settings.fingerprint() {
         return Ok(true);
     }
+    let imported_as = entry.role.or_else(|| ImportRole::detect(relative));
+    if imported_as != manifest.role_of(relative) {
+        return Ok(true);
+    }
     let (hash, size, _) = file_fingerprint(full)?;
     Ok(hash != entry.hash || size != entry.size)
 }
@@ -1141,7 +1474,9 @@ fn collect_reports(
             None => continue,
         };
         let bytes = std::fs::read(&full).unwrap_or_default();
-        let (summary, warnings) = describe(&entry.path, entry.kind, &bytes);
+        let role = manifest.role_of(&entry.path);
+        let (summary, warnings) =
+            describe(&entry.path, entry.kind, role, &manifest.settings, &bytes);
         let dirty = if full.is_file() {
             is_dirty(manifest, &entry.path, &full).unwrap_or(true)
         } else {
@@ -1153,6 +1488,7 @@ fn collect_reports(
             dirty,
             summary,
             warnings,
+            role,
         });
     }
 }
@@ -1365,6 +1701,95 @@ mod tests {
         assert!(png.is_file());
         assert_eq!(read_baked_layout(&dir), Some(atlas.layout.clone()));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn roles_follow_the_extension_unless_overridden() {
+        let dir = std::env::temp_dir().join(format!("blockloom-role-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        let hills = image::ImageBuffer::<image::Luma<u16>, _>::from_fn(5, 5, |x, y| {
+            image::Luma([(x * y * 1000) as u16])
+        });
+        hills.save(dir.join("assets/hills.png")).unwrap();
+        assert_eq!(
+            ImportRole::detect("assets/hills.png"),
+            Some(ImportRole::Texture)
+        );
+        assert_eq!(ImportRole::detect("assets/sky.exr"), Some(ImportRole::Hdr));
+        assert_eq!(ImportRole::detect("assets/jump.wav"), None);
+
+        reimport(&dir, &["assets/hills.png".to_string()]).unwrap();
+        let report = set_role(&dir, "assets/hills.png", Some(ImportRole::Heightmap)).unwrap();
+        assert_eq!(report.role, Some(ImportRole::Heightmap));
+        assert!(
+            report.summary.contains("16-bit heightmap"),
+            "{}",
+            report.summary
+        );
+        // A new role is a new import.
+        assert!(report.dirty);
+        reimport(&dir, &[]).unwrap();
+        assert!(!inspect_asset(&dir, "assets/hills.png").unwrap().dirty);
+
+        // Moving keeps the override; clearing it goes back to the extension.
+        std::fs::rename(dir.join("assets/hills.png"), dir.join("assets/land.png")).unwrap();
+        note_moved(&dir, "assets/hills.png", "assets/land.png");
+        assert_eq!(
+            load_manifest(&dir).role_of("assets/land.png"),
+            Some(ImportRole::Heightmap)
+        );
+        let cleared =
+            set_role(&dir, "assets/land.png", ImportRole::parse("auto").unwrap()).unwrap();
+        assert_eq!(cleared.role, Some(ImportRole::Texture));
+        assert!(ImportRole::parse("sprite").is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn each_role_describes_its_file() {
+        let settings = ImportSettings::default();
+        let describe = |name: &str, bytes: &[u8]| {
+            describe(
+                name,
+                crate::assets::kind_of(name),
+                ImportRole::detect(name),
+                &settings,
+                bytes,
+            )
+        };
+        let (summary, _) = describe("sky.hdr", b"#?RADIANCE\n\n-Y 4096 +X 8192\n");
+        assert!(summary.contains("downscale to 4096x2048"), "{summary}");
+        assert!(summary.contains("BC6H"), "{summary}");
+
+        let mut cube = "LUT_3D_SIZE 2\n".to_string();
+        for _ in 0..8 {
+            cube += "0 0 0\n";
+        }
+        let (summary, warnings) = describe("grade.cube", cube.as_bytes());
+        assert!(summary.starts_with("2x2x2 volume from a cube"), "{summary}");
+        assert!(warnings.is_empty());
+
+        let (summary, _) = describe(
+            "down.ies",
+            b"TILT=NONE\n1 1000 1 2 1 1 2 0 0 0\n1 1 10\n0 90\n0\n100 0\n",
+        );
+        assert!(summary.contains("peak 100 cd"), "{summary}");
+
+        let (_, warnings) = describe("flat.r16", &[0u8; 8]);
+        assert!(warnings.iter().any(|w| w.contains("same height")));
+        assert!(warnings.iter().any(|w| w.contains("2^n+1")));
+
+        let (summary, warnings) = describe("broken.ies", b"nothing here");
+        assert_eq!(warnings, vec![summary]);
+    }
+
+    #[test]
+    fn hdr_settings_only_dirty_when_moved() {
+        let mut settings = ImportSettings::default();
+        let before = settings.fingerprint();
+        assert_eq!(before, crc32(b"2048:5:2048"));
+        settings.hdr_max = 2048;
+        assert_ne!(settings.fingerprint(), before);
     }
 
     #[test]

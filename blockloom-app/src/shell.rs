@@ -627,6 +627,24 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[],
     },
     CommandSpec {
+        name: "set-import-role",
+        cmd: "set_import_role",
+        aliases: &["set_import_role"],
+        summary: "What an asset imports as (a PNG can be a heightmap, cookie or volume strip); auto follows the extension.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+            ArgSpec {
+                name: "role",
+                ty: "auto|texture|hdr|volume|heightmap|ies|cookie",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
         name: "reimport-assets",
         cmd: "reimport_assets",
         aliases: &["reimport_assets"],

@@ -875,6 +875,7 @@ pub fn publish_sensors(
     cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     actors: Query<(&ActorId, &Transform, &Visibility, Option<&CustomComponents>)>,
     sound: Res<crate::sound::SoundState>,
+    atmosphere: Option<Res<crate::atmosphere::Atmosphere>>,
     preview_pointer: Option<ResMut<crate::preview::PreviewPointer>>,
 ) {
     let now = time.elapsed_secs() as f64;
@@ -1111,6 +1112,9 @@ pub fn publish_sensors(
         ui_focus: manager.focus().unwrap_or_default().to_string(),
         sounds: sound.playing(),
         bus_volumes: sound.bus_volumes(),
+        // The last fixed tick's, not a fresh one: a frame between ticks
+        // reads what the schedulers read.
+        atmosphere: atmosphere.map(|air| air.0.clone()).unwrap_or_default(),
     });
 
     // No world event queues while paused, so resuming never bursts.

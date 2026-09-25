@@ -18,6 +18,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod ai;
+mod atmosphere;
 mod batching;
 mod bridge;
 mod culling;
@@ -40,6 +41,7 @@ mod passes;
 mod performance;
 pub mod player;
 mod preview;
+mod probes;
 mod script;
 mod sound;
 mod streaming;
@@ -113,6 +115,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .init_resource::<preview::PreviewTouches>()
         .insert_non_send(engine);
     environment::register(app);
+    atmosphere::register(app);
     streaming::register(app);
     gpu::register(app);
     // Custom shader materials plus the tilemap material. Every dimension
@@ -157,7 +160,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 (
                     dim2::sync_pause,
                     dim2::sync_timestep,
-                    world::restore_poses,
+                    (world::restore_poses, atmosphere::sample_atmosphere).chain(),
                     world::step_vm,
                     (world::step_scripts, ai::tick).chain(),
                     overlay::apply_ui_effects,
@@ -234,6 +237,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             app.init_resource::<model::ModelCache>();
             batching::register(app);
             culling::register(app);
+            probes::register(app);
             use bevy::camera::visibility::VisibilitySystems;
             app.add_systems(
                 PostUpdate,
@@ -267,7 +271,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     (
                         dim3::sync_pause,
                         dim3::sync_timestep,
-                        world::restore_poses,
+                        (world::restore_poses, atmosphere::sample_atmosphere).chain(),
                         world::step_vm,
                         (world::step_scripts, ai::tick).chain(),
                         overlay::apply_ui_effects,
@@ -340,6 +344,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         materials::animate_tiles,
                         model::watch_models,
                         model::pause_rigs,
+                        probes::run_captures,
                     )
                         .chain(),
                 );

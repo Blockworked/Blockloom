@@ -33,7 +33,7 @@ Rectangle {
     property string previewing: ""
     property var dropTarget: null  // A folder path while an asset drag hovers one, else null - null rather than "" so the project root ("") stays hoverable without reading as hovered.
 
-    readonly property var icons: ({ folder: "folder", image: "image", audio: "music", font: "file-type", model: "box", script: "file-code", shader: "sparkles", text: "file-text", other: "file" })
+    readonly property var icons: ({ folder: "folder", image: "image", audio: "music", font: "file-type", model: "box", script: "file-code", shader: "sparkles", text: "file-text", hdr: "sun", volume: "layers", light: "zap", height: "trending-up", other: "file" })
     function parentOf(p) { const cut = p.lastIndexOf("/"); return cut === -1 ? "" : p.slice(0, cut); }
     readonly property var crumbs: { const parts = path.split("/").filter(p => p.length); return parts.map((name, i) => ({ name: name, path: parts.slice(0, i + 1).join("/") })); }
     function fileSize(bytes) {
@@ -72,6 +72,12 @@ Rectangle {
         else if (name !== d.name) run("rename_asset", { path: d.path, name: name });
     }
     function report(entry) { return reports[entry.path] || null; }
+    // An image can be re-roled; offer every role it isn't already.
+    function canRole(role) {
+        if (!menuEntry || menuEntry.kind !== "image") return false;
+        const r = report(menuEntry);
+        return (r && r.role ? r.role : "texture") !== role;
+    }
     function togglePreview(entry) {
         if (!sound.item) return;
         if (previewing === entry.path) { sound.item.stop(); previewing = ""; return; }
@@ -313,6 +319,10 @@ Rectangle {
             onTriggered: root.run("reimport_assets", { paths: Object.values(root.reports).filter(r => r.dirty).map(r => r.path) })
         }
         BwMenuItem { visible: !!root.menuEntry && !!root.report(root.menuEntry) && root.report(root.menuEntry).dirty; iconName: "sparkles"; text: "Reimport this file"; onTriggered: root.run("reimport_assets", { paths: [root.menuEntry.path] }) }
+        BwMenuItem { visible: root.canRole("texture"); iconName: "image"; text: "Import as texture"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "auto" }) }
+        BwMenuItem { visible: root.canRole("heightmap"); iconName: "trending-up"; text: "Import as heightmap"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "heightmap" }) }
+        BwMenuItem { visible: root.canRole("cookie"); iconName: "sun"; text: "Import as light cookie"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "cookie" }) }
+        BwMenuItem { visible: root.canRole("volume"); iconName: "layers"; text: "Import as volume strip"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "volume" }) }
         BwMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "folder"; iconName: "folder"; text: "Open"; onTriggered: root.goTo(root.menuEntry.path) }
         BwMenuItem { visible: !!root.menuEntry; iconName: "pencil"; text: "Rename"; onTriggered: root.startRename(root.menuEntry) }
         BwMenuItem { visible: !!root.menuEntry && root.path.length > 0; iconName: "upload"; text: "Move up one folder"; onTriggered: root.run("move_asset", { path: root.menuEntry.path, parent: root.parentOf(root.parentOf(root.menuEntry.path)) }) }

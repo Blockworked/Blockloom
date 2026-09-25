@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 14;
+pub const ABI_VERSION: u32 = 15;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -133,6 +133,9 @@ pub const READ_GAMEPAD_AXIS: u32 = 37;
 pub const READ_GAMEPAD_BUTTON: u32 = 38;
 /// `a` = `left`, `right` or `middle`. Whether that mouse button is held.
 pub const READ_MOUSE_BUTTON: u32 = 39;
+/// `a` = a reading's name (`wind speed`, `rain`, ...). The air as of this
+/// fixed tick, the same slot the atmosphere reporter reads.
+pub const READ_ATMOSPHERE: u32 = 40;
 
 // ─── What a script can read as text ────────────────────────────────────────
 

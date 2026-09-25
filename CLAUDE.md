@@ -151,7 +151,8 @@ it is a child process.
   calls each value slot), `project.rs` (the saved document and the folder it
   lives in), `library.rs` (the project folders the Dashboard lists),
   `assets.rs` (the files inside one of those folders, which the asset tray
-  manages and the runtime loads images and fonts from), `pack.rs` (that
+  manages and the runtime loads images and fonts from), `pipeline/` (what
+  import makes of each of those files - see Import roles below), `pack.rs` (that
   document again, as a built game carries it) with `build.rs` (what lays a
   build out), `vm/` (the block VM), `codegen/` (the same blocks as Rust
   instead),
@@ -496,6 +497,37 @@ compiles them. `passes::upsample` draws scratch onto a full-res target,
 guided by the 3D depth prepass (plain bilinear in 2D). A half-res texel
 stands for the full-res pixel at twice its coordinate (`frame::full_texel`).
 Nothing asks for `WorkingTargets` yet; Phase 5's passes are the consumers.
+
+### Import roles, probes and the atmosphere slot
+
+The asset pipeline (`blockloom-core/src/pipeline/`) inspects, plans and
+fingerprints every file. An `ImportRole` says what a file imports *as*:
+texture, HDR (`.hdr`/`.exr`, planned as BC6H), volume (`.cube` LUTs, or an
+image strip of slices), heightmap (16-bit images, `.r16`/`.r32`), IES profile,
+or light cookie. The extension picks one; a PNG heightmap or cookie is an
+override kept in `.blockloom/pipeline.json` (`set-import-role`), and changing
+a role dirties the asset. Each role's decoder is its own submodule, and a pass
+reads files through `pipeline::load_volume`/`load_heightmap`/`load_ies` rather
+than parsing them itself. A new format extends a role here, not a second
+importer.
+
+`blockloom-runtime/src/probes.rs` is probe capture as a service, 3D only:
+`ProbeService::request` spawns six 90° FP16 face cameras (`FACES` is cubemap
+order, with Bevy's z flip), announces `ProbeCaptured` after a couple of
+frames, and with `readback` assembles the faces into a cube image. HDRI
+baking, reflection probes and water reflections are requests with different
+defaults (`ProbeRequest::hdri`/`reflection`/`water`); none owns cameras.
+
+`Sensors::atmosphere` is the snapshot's sun/wind/fog/weather slot, versioned
+by `ATMOSPHERE_VERSION`. `atmosphere::sample_atmosphere` writes it at the head
+of every fixed tick, before any scheduler, from the blended `Environment` and
+`AtmosphereSources` (which Phase 5's wind and weather systems fill), and
+`publish_sensors` copies that sample rather than resampling, so a frame
+between ticks reads what the tick read. Every reader goes through
+`AtmosphereSense::field`: the `Atmosphere` reporter (VM, and compiled logic
+through `sense`) and a script's `atmosphere()` (`READ_ATMOSPHERE`). A new
+reading is one arm there, one entry in `ATMOSPHERE_FIELDS` and the reporter's
+dropdown in `Blocks.qml`.
 
 ### Models, tilemaps and surface shaders
 

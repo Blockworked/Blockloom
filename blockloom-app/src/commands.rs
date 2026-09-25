@@ -1710,6 +1710,22 @@ pub(crate) fn pipeline_status(
     Ok(pipeline::scan_project(&project_dir(&s)?))
 }
 
+/// What an asset imports as: `hdr`, `volume`, `heightmap`, `ies`, `cookie`,
+/// `texture`, or `auto` to follow its extension. The asset reads dirty until
+/// it is reimported.
+pub(crate) fn set_import_role(
+    state: &SharedState,
+    path: String,
+    role: String,
+) -> Result<pipeline::PipelineReport, String> {
+    let s = lock(state)?;
+    pipeline::set_role(
+        &project_dir(&s)?,
+        &path,
+        pipeline::ImportRole::parse(&role)?,
+    )
+}
+
 /// Re-inspect files and refresh their fingerprints. Empty means everything
 /// dirty; naming paths forces those even when clean.
 pub(crate) fn reimport_assets(

@@ -31,6 +31,14 @@ pub enum AssetKind {
     Script,
     Shader,
     Text,
+    /// High dynamic range images (`.hdr`, `.exr`): skies, IBL, emissive masks.
+    Hdr,
+    /// 3D data: colour grading LUTs (`.cube`).
+    Volume,
+    /// Photometric light profiles (`.ies`).
+    Light,
+    /// Headerless height samples (`.r16`, `.r32`, `.raw`).
+    Height,
     Other,
 }
 
@@ -135,6 +143,10 @@ pub fn kind_of(name: &str) -> AssetKind {
         "rs" => AssetKind::Script,
         "wgsl" | "wesl" | "shader" | "hlsl" => AssetKind::Shader,
         "txt" | "json" | "toml" | "md" | "csv" | "ron" | "yaml" | "yml" => AssetKind::Text,
+        "hdr" | "exr" => AssetKind::Hdr,
+        "cube" => AssetKind::Volume,
+        "ies" => AssetKind::Light,
+        "r16" | "r32" | "raw" => AssetKind::Height,
         _ => AssetKind::Other,
     }
 }
@@ -440,6 +452,10 @@ mod tests {
         assert_eq!(kind_of("jump.ogg"), AssetKind::Audio);
         assert_eq!(kind_of("player.rs"), AssetKind::Script);
         assert_eq!(kind_of("notes"), AssetKind::Other);
+        assert_eq!(kind_of("sky.EXR"), AssetKind::Hdr);
+        assert_eq!(kind_of("grade.cube"), AssetKind::Volume);
+        assert_eq!(kind_of("spot.ies"), AssetKind::Light);
+        assert_eq!(kind_of("island.r16"), AssetKind::Height);
     }
 
     #[test]

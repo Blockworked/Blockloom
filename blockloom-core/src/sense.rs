@@ -138,6 +138,120 @@ pub struct Sensors {
     /// The live gain of each mixing bus, in 0-100 block scale. Seeded from
     /// the saved mix and moved by `set bus volume` mid-run.
     pub bus_volumes: HashMap<SoundBus, f32>,
+    /// Sun, wind, fog and weather as of the last fixed tick.
+    pub atmosphere: AtmosphereSense,
+}
+
+/// The shape of [`AtmosphereSense`]. Bumped when a field changes meaning or
+/// goes away; adding one doesn't need it, since a reading is asked for by name.
+pub const ATMOSPHERE_VERSION: u32 = 1;
+
+/// The world's air as blocks and scripts read it. Sampled once per fixed tick,
+/// before any scheduler runs, so the VM, compiled logic and scripts all see
+/// the same values on the same tick however many frames draw between.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AtmosphereSense {
+    /// [`ATMOSPHERE_VERSION`] when the host wrote it.
+    pub version: u32,
+    /// The fixed tick it was sampled on, counted from the start of the run.
+    pub tick: u64,
+    /// Unit vector towards the sun.
+    pub sun_direction: [f32; 3],
+    /// Linear RGB, 0-1.
+    pub sun_color: [f32; 3],
+    /// Lux.
+    pub sun_illuminance: f32,
+    /// Unit vector the wind blows towards, or zero when calm.
+    pub wind_direction: [f32; 3],
+    /// World units per second.
+    pub wind_speed: f32,
+    /// Extra speed a gust adds on top right now.
+    pub wind_gust: f32,
+    /// Extinction per world unit, 0 for clear air.
+    pub fog_density: f32,
+    pub fog_color: [f32; 3],
+    /// Fraction of sky covered, 0-1.
+    pub cloud_cover: f32,
+    /// Rain and snow intensity, 0-1.
+    pub rain: f32,
+    pub snow: f32,
+    /// How wet surfaces are, 0-1. Lags the rain.
+    pub wetness: f32,
+    /// Degrees Celsius.
+    pub temperature: f32,
+}
+
+impl Default for AtmosphereSense {
+    fn default() -> Self {
+        Self {
+            version: ATMOSPHERE_VERSION,
+            tick: 0,
+            sun_direction: [0.0, 1.0, 0.0],
+            sun_color: [1.0; 3],
+            sun_illuminance: 0.0,
+            wind_direction: [0.0; 3],
+            wind_speed: 0.0,
+            wind_gust: 0.0,
+            fog_density: 0.0,
+            fog_color: [1.0; 3],
+            cloud_cover: 0.0,
+            rain: 0.0,
+            snow: 0.0,
+            wetness: 0.0,
+            temperature: 20.0,
+        }
+    }
+}
+
+/// Every reading [`AtmosphereSense::field`] answers, in the spelling the
+/// reporter's dropdown and a script's `atmosphere` call use.
+pub const ATMOSPHERE_FIELDS: &[&str] = &[
+    "sun x",
+    "sun y",
+    "sun z",
+    "sun brightness",
+    "wind x",
+    "wind y",
+    "wind z",
+    "wind speed",
+    "wind gust",
+    "fog density",
+    "cloud cover",
+    "rain",
+    "snow",
+    "wetness",
+    "temperature",
+];
+
+impl AtmosphereSense {
+    /// One reading by name, case and spacing ignored. The one lookup every
+    /// reader goes through, so a new field is one arm here.
+    pub fn field(&self, name: &str) -> Option<f64> {
+        let key: String = name
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '_')
+            .flat_map(char::to_lowercase)
+            .collect();
+        let value = match key.as_str() {
+            "sunx" => self.sun_direction[0],
+            "suny" => self.sun_direction[1],
+            "sunz" => self.sun_direction[2],
+            "sunbrightness" | "sunilluminance" => self.sun_illuminance,
+            "windx" => self.wind_direction[0] * self.wind_speed,
+            "windy" => self.wind_direction[1] * self.wind_speed,
+            "windz" => self.wind_direction[2] * self.wind_speed,
+            "windspeed" => self.wind_speed,
+            "windgust" => self.wind_gust,
+            "fogdensity" | "fog" => self.fog_density,
+            "cloudcover" | "clouds" => self.cloud_cover,
+            "rain" => self.rain,
+            "snow" => self.snow,
+            "wetness" => self.wetness,
+            "temperature" => self.temperature,
+            _ => return None,
+        };
+        Some(value as f64)
+    }
 }
 
 impl Default for UiSense {
@@ -226,6 +340,12 @@ thread_local! {
 /// stepping any script.
 pub fn publish(sensors: Sensors) {
     SENSORS.with(|slot| *slot.borrow_mut() = sensors);
+}
+
+/// Replaces just the atmosphere slot. The host calls it at the head of each
+/// fixed tick, so a tick that runs between two frames still reads its own.
+pub fn publish_atmosphere(atmosphere: AtmosphereSense) {
+    SENSORS.with(|slot| slot.borrow_mut().atmosphere = atmosphere);
 }
 
 /// Reads the published snapshot. `f` sees a default-empty one before the
@@ -366,6 +486,33 @@ mod tests {
             assert!(in_ui_strand());
         });
         assert!(!in_ui_strand());
+    }
+
+    #[test]
+    fn atmosphere_fields_all_answer_by_name() {
+        let atmosphere = AtmosphereSense {
+            wind_direction: [1.0, 0.0, 0.0],
+            wind_speed: 4.0,
+            ..Default::default()
+        };
+        for name in ATMOSPHERE_FIELDS {
+            assert!(atmosphere.field(name).is_some(), "{name}");
+        }
+        assert_eq!(atmosphere.field("Wind_X"), Some(4.0));
+        assert_eq!(atmosphere.field("humidity"), None);
+    }
+
+    #[test]
+    fn publishing_the_atmosphere_leaves_the_rest_of_the_snapshot() {
+        publish(Sensors {
+            time: 3.0,
+            ..Default::default()
+        });
+        publish_atmosphere(AtmosphereSense {
+            tick: 7,
+            ..Default::default()
+        });
+        assert_eq!(read(|s| (s.time, s.atmosphere.tick)), (3.0, 7));
     }
 
     #[test]

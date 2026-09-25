@@ -566,6 +566,20 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "Atmosphere",
+        op: "Atmosphere",
+        arity: 1,
+        default_args: || vec![text("wind speed")],
+        // One reading of the air as of this fixed tick. An unknown name is
+        // reported rather than read as calm.
+        eval: |args| {
+            let name = args[0].as_text();
+            sense::read(|sensors| sensors.atmosphere.field(&name))
+                .map(Evaluated::Number)
+                .ok_or_else(|| format!("the atmosphere has no \"{name}\" reading"))
+        },
+    },
+    ExtOperator {
         kind: "IsTrigger",
         op: "IsTrigger",
         arity: 1,

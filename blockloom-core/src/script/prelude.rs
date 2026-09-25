@@ -896,6 +896,13 @@ impl Actor {
             .unwrap_or(100.0)
     }
 
+    /// One reading of the air as of this fixed tick: `sun x`, `wind speed`,
+    /// `fog density`, `rain`, ... as the atmosphere reporter names them.
+    /// `None` for a name the host doesn't know.
+    pub fn atmosphere(&self, reading: &str) -> Option<f64> {
+        self.number(READ_ATMOSPHERE, Str::borrow(reading), Str::EMPTY, 0.0)
+    }
+
     /// Fires every `when I get` strand listening for it, in every actor.
     pub fn broadcast(&self, message: &str) {
         self.act(
