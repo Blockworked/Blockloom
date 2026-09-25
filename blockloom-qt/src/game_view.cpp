@@ -39,6 +39,9 @@ QList<QPointer<GameView>> &views()
 
 std::atomic<bool> wakePending{false};
 
+constexpr uint32_t fourccXbgr8888 = 0x34324258; // "XB24"
+constexpr uint64_t modifierLinear = 0;
+
 #ifdef __linux__
 
 using ImageTargetTexture = void (*)(GLenum, void *);
@@ -74,23 +77,55 @@ QString loadEgl()
     return {};
 }
 
+struct Modifier {
+    EGLuint64KHR modifier;
+    EGLBoolean externalOnly;
+};
+
+// Every modifier the driver imports `fourcc` in.
+std::vector<Modifier> modifiersFor(uint32_t fourcc)
+{
+    if (!egl.queryModifiers)
+        return {};
+    EGLint count = 0;
+    if (!egl.queryModifiers(egl.display, EGLint(fourcc), 0, nullptr, nullptr, &count) || count <= 0)
+        return {};
+    std::vector<EGLuint64KHR> modifiers(count);
+    std::vector<EGLBoolean> external(count);
+    egl.queryModifiers(egl.display, EGLint(fourcc), count, modifiers.data(), external.data(), &count);
+    std::vector<Modifier> all;
+    for (EGLint i = 0; i < count; ++i)
+        all.push_back({modifiers[i], external[i]});
+    return all;
+}
+
 // Whether the driver will only sample this format and modifier as an
 // external texture - NVIDIA says so for linear buffers.
 bool externalOnly(uint32_t fourcc, uint64_t modifier)
 {
-    if (!egl.queryModifiers)
-        return false;
-    EGLint count = 0;
-    if (!egl.queryModifiers(egl.display, EGLint(fourcc), 0, nullptr, nullptr, &count) || count <= 0)
-        return false;
-    std::vector<EGLuint64KHR> modifiers(count);
-    std::vector<EGLBoolean> external(count);
-    egl.queryModifiers(egl.display, EGLint(fourcc), count, modifiers.data(), external.data(), &count);
-    for (EGLint i = 0; i < count; ++i) {
-        if (modifiers[i] == modifier)
-            return external[i];
+    for (const Modifier &known : modifiersFor(fourcc)) {
+        if (known.modifier == modifier)
+            return known.externalOnly;
     }
     return false;
+}
+
+// Tells the world which tiled layouts Qt can sample as a plain texture, so
+// it draws straight into one. Once, on the render thread with GL current.
+void offerModifiers()
+{
+    static bool offered = false;
+    if (offered)
+        return;
+    offered = true;
+    if (!egl.createImage && !loadEgl().isEmpty())
+        return;
+    std::vector<uint64_t> direct;
+    for (const Modifier &known : modifiersFor(fourccXbgr8888)) {
+        if (!known.externalOnly && known.modifier != modifierLinear)
+            direct.push_back(known.modifier);
+    }
+    game_view_accept(rust::Slice<const uint64_t>(direct.data(), direct.size()));
 }
 
 #endif
@@ -266,8 +301,8 @@ public:
         if (error.isEmpty() && external)
             error = prepareCopy(gl, window, frameSize);
         if (error.isEmpty())
-            qInfo("Game view: showing %dx%d frames %s", frameSize.width(), frameSize.height(),
-                  external ? "through an external-texture copy" : "directly");
+            qInfo("Game view: showing %dx%d frames %s (modifier 0x%llx)", frameSize.width(), frameSize.height(),
+                  external ? "through an external-texture copy" : "directly", (unsigned long long)frames.modifier);
 #else
         Q_UNUSED(window);
         error = QStringLiteral("the Game view isn't supported on this platform yet");
@@ -458,11 +493,34 @@ void GameView::fail(const QString &message)
 
 void GameView::renderExternal()
 {
+#ifdef __linux__
+    offerModifiers();
+#endif
     if (!m_node || m_node->pending < 0)
         return;
     window()->beginExternalCommands();
     m_node->drawPending();
     window()->endExternalCommands();
+}
+
+void GameView::itemChange(ItemChange change, const ItemChangeData &value)
+{
+    // Hooked as soon as there is a window, before anything is drawn, so the
+    // modifier offer reaches the world early.
+    if (change == ItemSceneChange && value.window)
+        hook(value.window);
+    QQuickItem::itemChange(change, value);
+}
+
+void GameView::hook(QQuickWindow *window)
+{
+    if (m_hooked == window)
+        return;
+    if (m_hooked)
+        disconnect(m_hooked, nullptr, this, nullptr);
+    m_hooked = window;
+    connect(window, &QQuickWindow::beforeRendering, this, &GameView::renderExternal, Qt::DirectConnection);
+    connect(window, &QQuickWindow::frameSwapped, this, &GameView::framePresented, Qt::DirectConnection);
 }
 
 void GameView::framePresented()
@@ -485,12 +543,6 @@ QSGNode *GameView::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
         node = new GameViewNode(&m_node);
         m_node = node;
     }
-    if (m_hooked != window()) {
-        m_hooked = window();
-        connect(window(), &QQuickWindow::beforeRendering, this, &GameView::renderExternal, Qt::DirectConnection);
-        connect(window(), &QQuickWindow::frameSwapped, this, &GameView::framePresented, Qt::DirectConnection);
-    }
-
     // Tried once per ring: a failed import waits for the next one.
     GameFrames frames;
     if (game_view_slots(m_generation, frames)) {
@@ -498,8 +550,14 @@ QSGNode *GameView::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
         node->release();
         if (frames.generation) {
             const QString error = node->import(frames, window());
-            if (!error.isEmpty())
+            // A tiled ring that won't import isn't the end: the world falls
+            // back to linear frames once it hears.
+            if (!error.isEmpty() && frames.modifier != modifierLinear) {
+                qWarning("Game view: %s; asking for linear frames instead", qPrintable(error));
+                game_view_refuse(frames.generation);
+            } else if (!error.isEmpty()) {
                 fail(error);
+            }
         }
     }
 

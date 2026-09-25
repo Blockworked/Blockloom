@@ -315,15 +315,22 @@ Bevy runs headless there: no winit, one update per frame the view presents
 (`embed::paced` waits on `FrameExchange::presented`, which the view calls on
 every swap and keeps asking for while a world runs; 50 ms at most, so a hidden
 view still hears the editor), and synchronous pipeline compilation, since async compile tasks outliving the
-device crash NVIDIA at exit. Cameras render into an offscreen texture of
-`GAME_SIZE` (960x720) - the whole game, scaled to fit the view - and each
-frame is GPU-copied into a ring of three linear Vulkan images exported as
-dma-bufs (`embed.rs`, raw `ash` under wgpu). `FrameExchange` hands slots
-between the world and the view: the world never draws into the one being
-shown or waiting to be. The C++ `GameView` item imports the ring through EGL;
-NVIDIA only samples linear buffers as external textures, so there it copies
-each frame through a small shader into a plain texture first. This is why Qt
-is forced onto its OpenGL renderer, and onto EGL on X11.
+device crash NVIDIA at exit. Cameras render at `GAME_SIZE` (960x720) - the
+whole game, scaled to fit the view - into a ring of three Vulkan images
+exported as dma-bufs (`embed.rs`, raw `ash` under wgpu). `FrameExchange` hands
+slots between the world and the view: the world never draws into the one
+being shown or waiting to be. The C++ `GameView` item imports the ring through
+EGL. This is why Qt is forced onto its OpenGL renderer, and onto EGL on X11.
+
+The ring's layout is negotiated. The view offers (`FrameExchange::accept`)
+the tiled DRM format modifiers its EGL samples as a plain texture; the world
+turns on `VK_EXT_image_drm_format_modifier` through Bevy's `raw_vulkan_init`,
+allocates the ring in one of those, and has the cameras draw straight into it
+(`aim_cameras` swaps the claimed slot in as their output attachment) - no copy
+on either side. With no common modifier, or once the view `refuse`s one it
+couldn't import, it falls back to a linear system-memory ring the frame is
+copied into, which NVIDIA only samples as an external texture, so the view
+copies it again through a small shader into a plain texture.
 
 Status (positions, variables) and the run log reach QML through their own
 `statusJson` and `logJson`, not the whole state snapshot - re-evaluating every

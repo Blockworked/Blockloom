@@ -47,9 +47,12 @@ Q_SIGNALS:
 
 protected:
     QSGNode *updatePaintNode(QSGNode *old, UpdatePaintNodeData *) override;
+    void itemChange(ItemChange change, const ItemChangeData &value) override;
 
 private:
     void fail(const QString &message);
+    // Follows `window`'s render and swap signals. GUI thread.
+    void hook(QQuickWindow *window);
     // Before Qt draws: copies an external-only frame into a plain texture.
     void renderExternal();
     // After each swap: paces the world, and asks for the next frame while one runs.
@@ -58,6 +61,7 @@ private:
     // Render thread only: the ring imported, and the node holding it.
     quint64 m_generation = 0;
     GameViewNode *m_node = nullptr;
+    // GUI thread only.
     QQuickWindow *m_hooked = nullptr;
     bool m_hasFrame = false;
     bool m_pointerLocked = false;

@@ -31,6 +31,10 @@ mod ffi {
         fn game_view_hold(generation: u64, index: usize);
         /// The window put a frame on screen. Any thread.
         fn game_view_presented();
+        /// The tiled `XBGR8888` modifiers the viewer samples as a plain texture.
+        fn game_view_accept(modifiers: &[u64]);
+        /// Ring `generation` couldn't be imported after all.
+        fn game_view_refuse(generation: u64);
     }
 
     unsafe extern "C++" {
@@ -153,7 +157,9 @@ fn game_view_slots(known: u64, out: &mut GameFrames) -> bool {
                 let Ok(fd) = image.fd.as_fd().try_clone_to_owned() else {
                     for fd in out.fds.drain(..) {
                         // SAFETY: each was just duplicated for this call.
-                        drop(unsafe { <std::os::fd::OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd) });
+                        drop(unsafe {
+                            <std::os::fd::OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd)
+                        });
                     }
                     out.generation = known;
                     return false;
@@ -198,4 +204,18 @@ fn game_view_hold(generation: u64, index: usize) {
 fn game_view_presented() {
     #[cfg(target_os = "linux")]
     embedded::FRAMES.presented();
+}
+
+fn game_view_accept(modifiers: &[u64]) {
+    #[cfg(target_os = "linux")]
+    embedded::FRAMES.accept(modifiers.iter().copied());
+    #[cfg(not(target_os = "linux"))]
+    let _ = modifiers;
+}
+
+fn game_view_refuse(generation: u64) {
+    #[cfg(target_os = "linux")]
+    embedded::FRAMES.refuse(generation);
+    #[cfg(not(target_os = "linux"))]
+    let _ = generation;
 }

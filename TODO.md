@@ -103,9 +103,9 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [ ] Gamepads: probably already read straight from the system in-process - verify.
   - [ ] Keyboard by physical key, not Qt key name (non-QWERTY layouts land WASD elsewhere). Right Shift/Ctrl/Alt arrive as left; numpad, brackets, quote and backtick aren't sent.
 - [x] Update CLAUDE.md: it still describes the world as a separate process with its own window.
-- [ ] Frame pacing: the world runs on its own 60 Hz timer, not the display's, so 120/144 Hz screens get uneven frames. Tie it to Qt's frame signal.
-- [ ] Log stutter: every `say`/error line still emits the whole editor state to QML. Give log lines their own event like status has.
-- [ ] Zero-copy on NVIDIA: frames are copied to a linear system-memory image, then again through an external-texture pass on the Qt side. Share the image in its native tiled layout (DRM format modifiers) to drop both copies.
+- [x] Frame pacing: the world runs on its own 60 Hz timer, not the display's, so 120/144 Hz screens get uneven frames. Tie it to Qt's frame signal.
+- [x] Log stutter: every `say`/error line still emits the whole editor state to QML. Give log lines their own event like status has.
+- [x] Zero-copy on NVIDIA: frames are copied to a linear system-memory image, then again through an external-texture pass on the Qt side. Share the image in its native tiled layout (DRM format modifiers) to drop both copies.
 - [ ] Resolution: fixed 960x720 scaled to fit - blurry on HiDPI, wrong for widescreen. Add a resolution/aspect setting in Project Settings, or render at the view's real pixel size.
 - [ ] Other platforms: Windows (shared D3D or Vulkan handles) and macOS (IOSurface) still use the child process plus MJPEG, which stays until they're ported.
 - [ ] Crash isolation: a native crash (script cdylib, GPU fault) takes the editor down. Decide whether scripted projects should keep the separate process.
