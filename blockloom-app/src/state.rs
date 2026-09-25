@@ -54,6 +54,8 @@ pub(crate) struct AppState {
     pub(crate) pointer_locked: bool,
     /// Runs the game world inside this process, when the host supplies one.
     pub(crate) embedded: Option<Arc<dyn crate::runtime::EmbeddedRuntime>>,
+    /// How the scene view edits, re-sent to every world that comes up.
+    pub(crate) scene_view: blockloom_protocol::SceneView,
 }
 
 impl AppState {

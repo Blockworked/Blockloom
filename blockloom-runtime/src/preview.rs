@@ -368,7 +368,7 @@ fn move_pointer(
     pointer.seen = Some(now);
 }
 
-fn preview_to_window(x: f32, y: f32, w: f32, h: f32, window: Vec2) -> Vec2 {
+pub fn preview_to_window(x: f32, y: f32, w: f32, h: f32, window: Vec2) -> Vec2 {
     if w <= 0.0 || h <= 0.0 {
         return Vec2::new(x, y);
     }

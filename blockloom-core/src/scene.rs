@@ -267,12 +267,31 @@ pub struct Placement {
     pub position: [f32; 3],
     #[serde(default)]
     pub rotation: [f32; 3],
+    /// The uniform size the `size` blocks read and write.
     #[serde(default = "unit_scale")]
     pub scale: f32,
+    /// Per-axis stretch in the actor's own frame, on top of `scale`.
+    #[serde(default = "unit_stretch", skip_serializing_if = "is_unit_stretch")]
+    pub stretch: [f32; 3],
 }
 
 fn unit_scale() -> f32 {
     1.0
+}
+
+fn unit_stretch() -> [f32; 3] {
+    [1.0; 3]
+}
+
+fn is_unit_stretch(stretch: &[f32; 3]) -> bool {
+    *stretch == [1.0; 3]
+}
+
+impl Placement {
+    /// The scale on each axis: the size times the stretch.
+    pub fn scale3(&self) -> [f32; 3] {
+        self.stretch.map(|s| s * self.scale)
+    }
 }
 
 impl Default for Placement {
@@ -281,6 +300,7 @@ impl Default for Placement {
             position: [0.0; 3],
             rotation: [0.0; 3],
             scale: 1.0,
+            stretch: [1.0; 3],
         }
     }
 }

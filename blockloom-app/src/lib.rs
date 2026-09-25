@@ -99,6 +99,7 @@ impl Backend {
             preview_port: None,
             pointer_locked: false,
             embedded,
+            scene_view: Default::default(),
         };
         Backend {
             state: Arc::new(Mutex::new(state)),

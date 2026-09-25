@@ -451,15 +451,20 @@ pub(crate) fn set_mode(
                             || runtime
                                 .send(&blockloom_protocol::EditorMessage::Pause { paused: true })));
                 if loaded && started {
-                    if s.preview_enabled
-                        && !runtime.send(&blockloom_protocol::EditorMessage::Preview {
-                            enabled: true,
-                            headless: s.preview_headless,
-                        })
-                    {
-                        s.preview_port = None;
-                    }
                     s.runtime = Some(runtime);
+                    greet(&mut s);
+                    if s.preview_enabled {
+                        let headless = s.preview_headless;
+                        let shown = s.runtime.as_mut().is_some_and(|runtime| {
+                            runtime.send(&blockloom_protocol::EditorMessage::Preview {
+                                enabled: true,
+                                headless,
+                            })
+                        });
+                        if !shown {
+                            s.preview_port = None;
+                        }
+                    }
                 } else {
                     restart_error = Some("Lost the connection to the game runtime".to_string());
                 }
@@ -620,8 +625,43 @@ pub(crate) fn select_actor(
     let mut s = lock(state)?;
     s.selected_actor = Some(actor_id);
     s.history.end_session();
+    send_selection(&mut s);
     emit(app, &s);
     Ok(())
+}
+
+/// A scene view drag landed: writes where the actor now stands, as one undo
+/// step. A child placed in its parent's frame gets its offset written too,
+/// since that, not its `Place`, is what puts it there.
+pub(crate) fn place_from_view(
+    s: &mut AppState,
+    actor_id: &str,
+    placement: Placement,
+    offset: Option<[f32; 3]>,
+) {
+    if s.running || s.project().and_then(|p| p.actor(actor_id)).is_none() {
+        return;
+    }
+    push_undo(s);
+    // Drags land on float noise; the inspector shouldn't show it.
+    let tidy = |value: f32, step: f32| (value / step).round() * step;
+    let placement = Placement {
+        position: placement.position.map(|v| tidy(v, 1e-4)),
+        rotation: placement.rotation.map(|v| tidy(v, 1e-3)),
+        scale: tidy(placement.scale, 1e-4),
+        stretch: placement.stretch.map(|v| tidy(v, 1e-4)),
+    };
+    if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(actor_id)) {
+        actor.components.set_placement(placement);
+        if let Some(offset) = offset {
+            actor
+                .components
+                .set_parent_offset(Some(offset.map(|v| tidy(v, 1e-4))));
+        }
+    }
+    s.selected_actor = Some(actor_id.to_string());
+    auto_save(s);
+    sync_runtime(s);
 }
 
 /// Adds an actor with a default look for `shape` - see [`default_visual`].
@@ -1048,6 +1088,7 @@ pub(crate) fn run_project(
             backend.clone(),
             s.embedded.clone(),
         )?);
+        greet(&mut s);
     }
 
     let Some(runtime) = s.runtime.as_mut() else {
@@ -1110,6 +1151,90 @@ pub(crate) fn pause_project(
     }
     s.paused = paused && s.running;
     emit(app, &s);
+    Ok(())
+}
+
+/// Brings up a world for the scene view to edit: the project loaded but not
+/// started. Does nothing while one is already up for this dimension.
+pub(crate) fn open_world(
+    backend: &Backend,
+    state: &SharedState,
+    app: &AppHandle,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let Some(project) = s.project().cloned() else {
+        return Err("No project is open".to_string());
+    };
+    if s.runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.mode == project.world.mode)
+    {
+        return Ok(());
+    }
+    s.runtime = None;
+    s.runtime = Some(RuntimeHandle::spawn(
+        project.world.mode,
+        backend.clone(),
+        s.embedded.clone(),
+    )?);
+    let dir = s
+        .project_dir()
+        .map(|dir| dir.to_string_lossy().into_owned());
+    let alive = greet(&mut s)
+        && s.runtime.as_mut().is_some_and(|runtime| {
+            runtime.send(&blockloom_protocol::EditorMessage::Load {
+                project: Box::new(project),
+                dir,
+            })
+        });
+    if !alive {
+        s.runtime = None;
+        emit(app, &s);
+        return Err("Lost the connection to the game runtime".to_string());
+    }
+    if s.preview_enabled {
+        let headless = s.preview_headless;
+        let shown = s.runtime.as_mut().is_some_and(|runtime| {
+            runtime.send(&blockloom_protocol::EditorMessage::Preview {
+                enabled: true,
+                headless,
+            })
+        });
+        if !shown {
+            s.preview_port = None;
+        }
+    }
+    s.running = false;
+    s.paused = false;
+    emit(app, &s);
+    Ok(())
+}
+
+/// How the scene view edits: the tool, snapping and its steps. An editor
+/// preference, so it isn't saved with the project.
+pub(crate) fn set_scene_view(
+    state: &SharedState,
+    view: blockloom_protocol::SceneView,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    s.scene_view = view.clone();
+    if let Some(runtime) = s.runtime.as_mut()
+        && !runtime.send(&blockloom_protocol::EditorMessage::SceneView(view))
+    {
+        s.runtime = None;
+    }
+    Ok(())
+}
+
+/// Points the scene view's camera at the selected actor.
+pub(crate) fn frame_selected(state: &SharedState) -> Result<(), String> {
+    let mut s = lock(state)?;
+    send_selection(&mut s);
+    if let Some(runtime) = s.runtime.as_mut()
+        && !runtime.send(&blockloom_protocol::EditorMessage::FrameSelected)
+    {
+        s.runtime = None;
+    }
     Ok(())
 }
 
@@ -1854,6 +1979,30 @@ fn sync_runtime(s: &mut AppState) {
         })
     {
         s.runtime = None;
+    }
+    send_selection(s);
+}
+
+/// Tells the world which actor the scene view should outline.
+fn send_selection(s: &mut AppState) {
+    let actor = s.actor_id();
+    if let Some(runtime) = s.runtime.as_mut()
+        && !runtime.send(&blockloom_protocol::EditorMessage::Select { actor })
+    {
+        s.runtime = None;
+    }
+}
+
+/// What a fresh world needs beyond the project: how the scene view edits and
+/// what is selected. `false` means the link is already gone.
+fn greet(s: &mut AppState) -> bool {
+    let view = blockloom_protocol::EditorMessage::SceneView(s.scene_view.clone());
+    let select = blockloom_protocol::EditorMessage::Select {
+        actor: s.actor_id(),
+    };
+    match s.runtime.as_mut() {
+        Some(runtime) => runtime.send(&view) && runtime.send(&select),
+        None => true,
     }
 }
 

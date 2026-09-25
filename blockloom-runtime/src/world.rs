@@ -43,6 +43,10 @@ use std::collections::{HashMap, HashSet};
 #[derive(Component)]
 pub struct WorldCamera;
 
+/// The project's sun, which a rebuild replaces rather than adds to.
+#[derive(Component)]
+pub struct WorldLight;
+
 /// The baked navmesh the `navigate to` block walks. Rebuilt from the
 /// project's static geometry every time the world is, so Play always walks
 /// what the editor shows. `None` means the bake had nothing to stand on, and
@@ -128,7 +132,7 @@ pub fn transform_for(actor: &Actor) -> Transform {
             ry.to_radians(),
             rz.to_radians(),
         ),
-        scale: Vec3::splat(placement.scale),
+        scale: Vec3::from(placement.scale3()),
     }
 }
 
@@ -214,6 +218,7 @@ pub fn pump_editor(
     mut engine: NonSendMut<Engine>,
     mut preview: Option<ResMut<crate::preview::PreviewState>>,
     mut manager: ResMut<crate::ui::UiManager>,
+    mut scene: Option<ResMut<crate::edit::SceneEditor>>,
     time: Res<Time>,
     mut fixed: ResMut<Time<Fixed>>,
     mut exit: MessageWriter<AppExit>,
@@ -252,6 +257,9 @@ pub fn pump_editor(
                 engine.paused = false;
                 engine.pause_began = None;
                 engine.rebuild = true;
+                if let Some(scene) = scene.as_mut() {
+                    scene.loaded = true;
+                }
             }
             EditorMessage::Start => {
                 let project = engine.project.clone();
@@ -315,6 +323,27 @@ pub fn pump_editor(
             }
             EditorMessage::PreviewInput { input } => {
                 engine.preview_inputs.push(input);
+            }
+            EditorMessage::SceneView(view) => {
+                let Some(scene) = scene.as_mut() else {
+                    continue;
+                };
+                // Turning the scene view off shows the game's own camera,
+                // which only a rebuild puts back where the project says.
+                if scene.view.enabled && !view.enabled && !engine.running {
+                    engine.rebuild = true;
+                }
+                scene.view = view;
+            }
+            EditorMessage::Select { actor } => {
+                if let Some(scene) = scene.as_mut() {
+                    scene.selected = actor;
+                }
+            }
+            EditorMessage::FrameSelected => {
+                if let Some(scene) = scene.as_mut() {
+                    scene.frame = true;
+                }
             }
             EditorMessage::Shutdown => {
                 exit.write(AppExit::Success);
@@ -432,7 +461,7 @@ pub fn rebuild_world(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut textures: ResMut<Assets<Image>>,
     actors: Query<Entity, With<ActorId>>,
-    cameras: Query<Entity, With<WorldCamera>>,
+    scenery: Query<Entity, Or<(With<WorldCamera>, With<WorldLight>)>>,
     voices: Query<Entity, With<crate::sound::VoiceTag>>,
     mut sound: ResMut<crate::sound::SoundState>,
     mut navmesh: Option<ResMut<NavMesh>>,
@@ -446,7 +475,7 @@ pub fn rebuild_world(
     for entity in &actors {
         commands.entity(entity).despawn();
     }
-    for entity in &cameras {
+    for entity in &scenery {
         commands.entity(entity).despawn();
     }
     // Voices are neither actors nor cameras, so the passes above miss them:
@@ -906,7 +935,7 @@ pub fn publish_sensors(
                 position: transform.translation.to_array(),
                 local_position,
                 rotation: [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()],
-                scale: transform.scale.x,
+                scale: size_of(transform, engine.stretch_of(&id.0)),
                 visible: *visibility != Visibility::Hidden,
                 parent: engine.parents.get(&id.0).cloned().unwrap_or_default(),
                 is_clone: engine.clones.contains_key(&id.0),
@@ -1455,7 +1484,7 @@ fn screen_rect(
     Some(Rect::from_center_size(centre, size))
 }
 
-fn half_extents(visual: &Visual) -> Vec2 {
+pub(crate) fn half_extents(visual: &Visual) -> Vec2 {
     match visual {
         Visual::Rect { size, .. } | Visual::Image { size, .. } => {
             Vec2::new(size[0] / 2.0, size[1] / 2.0)
@@ -1469,7 +1498,7 @@ fn half_extents(visual: &Visual) -> Vec2 {
     }
 }
 
-fn half_extents3(visual: &Visual) -> Vec3 {
+pub(crate) fn half_extents3(visual: &Visual) -> Vec3 {
     match visual {
         Visual::Cuboid { size, .. } => Vec3::new(size[0] / 2.0, size[1] / 2.0, size[2] / 2.0),
         Visual::Sphere { radius, .. } => Vec3::splat(*radius),
@@ -1772,7 +1801,9 @@ pub fn apply_common(
                     Mode::ThreeD => transform.look_at(to, Vec3::Y),
                 }
             }
-            Effect::SetScale { factor, .. } => transform.scale = Vec3::splat(*factor),
+            Effect::SetScale { factor, .. } => {
+                transform.scale = Vec3::from(engine.stretch_of(actor)) * *factor
+            }
             Effect::SetVisible { visible, .. } => {
                 *visibility = if *visible {
                     Visibility::Inherited
@@ -2263,7 +2294,8 @@ pub fn apply_lifetimes(
                 copy.id = clone.clone();
                 if let Some(entity) = engine.entities.get(of).copied() {
                     if let Ok(transform) = transforms.get(entity) {
-                        copy.components.set_placement(placement_of(transform));
+                        let stretch = copy.placement().stretch;
+                        copy.components.set_placement(placement_of(transform, stretch));
                         // The live z carries the sort layer, and the spawner
                         // re-adds it: take it back off so a clone of a layered
                         // actor doesn't sort twice as high.
@@ -2332,12 +2364,24 @@ pub fn apply_lifetimes(
 }
 
 /// A transform, as the `Place` component spells one.
-fn placement_of(transform: &Transform) -> blockloom_core::scene::Placement {
+/// `stretch` is the actor's own, since a transform can't tell it from size.
+pub(crate) fn placement_of(transform: &Transform, stretch: [f32; 3]) -> blockloom_core::scene::Placement {
     let (rx, ry, rz) = transform.rotation.to_euler(EulerRot::XYZ);
     blockloom_core::scene::Placement {
         position: transform.translation.to_array(),
         rotation: [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()],
-        scale: transform.scale.x,
+        scale: size_of(transform, stretch),
+        stretch,
+    }
+}
+
+/// The uniform size a transform stands at, with the actor's stretch taken out.
+pub(crate) fn size_of(transform: &Transform, stretch: [f32; 3]) -> f32 {
+    let x = stretch[0];
+    if x.abs() < 1e-6 {
+        transform.scale.x
+    } else {
+        transform.scale.x / x
     }
 }
 
@@ -2568,7 +2612,7 @@ pub fn resolve_actor(engine: &Engine, running: &str, wanted: &str) -> Option<Str
 /// Where `child` stands in its parent's frame: the parent's world transform
 /// inverted onto the child's world position. What the local-position
 /// reporters read, and the inverse of [`world_of`].
-fn local_of(parent: &Transform, child: Vec3) -> [f32; 3] {
+pub(crate) fn local_of(parent: &Transform, child: Vec3) -> [f32; 3] {
     parent
         .compute_affine()
         .inverse()
@@ -2579,7 +2623,7 @@ fn local_of(parent: &Transform, child: Vec3) -> [f32; 3] {
 /// Where an offset in a parent's frame lands in the world: the same
 /// `parent * offset` the world is built from, which is also where `set my
 /// parent to` puts a child carrying an authored offset.
-fn world_of(parent: &Transform, offset: [f32; 3]) -> Vec3 {
+pub(crate) fn world_of(parent: &Transform, offset: [f32; 3]) -> Vec3 {
     parent.transform_point(Vec3::from(offset))
 }
 
@@ -2643,7 +2687,7 @@ fn transform_of(placement: &blockloom_core::scene::Placement) -> Transform {
             ry.to_radians(),
             rz.to_radians(),
         ),
-        scale: Vec3::splat(placement.scale),
+        scale: Vec3::from(placement.scale3()),
     }
 }
 
@@ -3862,7 +3906,7 @@ mod tests {
                     blockloom_core::scene::Placement {
                         position: [0.0, 0.0, 0.0],
                         rotation: [0.0, 0.0, 90.0],
-                        scale: 1.0,
+                        ..Default::default()
                     },
                 ),
                 ("child", at(0.0, 0.0)),
@@ -3892,7 +3936,7 @@ mod tests {
         let parent = transform_of(&blockloom_core::scene::Placement {
             position: [0.0, 0.0, 0.0],
             rotation: [0.0, 0.0, 90.0],
-            scale: 1.0,
+            ..Default::default()
         });
         let child = world_of(&parent, [10.0, 0.0, 0.0]);
 

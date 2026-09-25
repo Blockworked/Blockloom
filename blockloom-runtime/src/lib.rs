@@ -20,6 +20,7 @@
 mod bridge;
 mod dim2;
 mod dim3;
+mod edit;
 #[cfg(target_os = "linux")]
 pub mod embed;
 mod engine;
@@ -99,6 +100,7 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
     // registers all three, so systems can take their asset stores
     // unconditionally; an unused plugin costs nothing at runtime.
     materials::register(app);
+    edit::configure(app);
     // Both of these only exist to talk to an editor, and a built game has
     // none: no corner status, no handshake.
     app.add_systems(
@@ -161,6 +163,7 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
                     Update,
                     (
                         world::pump_editor,
+                        (edit::interact, edit::report).chain(),
                         preview::apply_preview_visibility,
                         preview::drain_preview_inputs,
                         fx::despawn_fx,
@@ -173,7 +176,7 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
                         world::publish_sensors,
                         sound::maintain_voices,
                         world::interpolate_poses,
-                        world::drive_camera,
+                        (world::drive_camera, edit::apply_view, edit::draw).chain(),
                         overlay::update_speech_bubbles,
                         preview::capture_preview_frame,
                         world::report_status.run_if(bridge::editor_attached),
@@ -243,6 +246,7 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
                     Update,
                     (
                         world::pump_editor,
+                        (edit::interact, edit::report).chain(),
                         preview::apply_preview_visibility,
                         preview::drain_preview_inputs,
                         fx::despawn_fx,
@@ -255,7 +259,7 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
                         world::publish_sensors,
                         sound::maintain_voices,
                         world::interpolate_poses,
-                        world::drive_camera,
+                        (world::drive_camera, edit::apply_view, edit::draw).chain(),
                         overlay::update_speech_bubbles,
                         preview::capture_preview_frame,
                         world::report_status.run_if(bridge::editor_attached),

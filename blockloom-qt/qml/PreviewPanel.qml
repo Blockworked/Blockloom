@@ -10,6 +10,10 @@ import com.blockworked.Blockloom 1.0
 // (Linux) draws straight into GameView on the GPU at exactly the view's
 // pixels. A child-process world streams MJPEG instead, and can keep its OS
 // window up beside the view or hide it (headless).
+//
+// While nothing runs it is the scene view: the same world, loaded but not
+// started, seen through an editor camera, with the input driving that camera
+// and a gizmo instead of the game.
 Rectangle {
     id: root
     required property var app
@@ -24,6 +28,41 @@ Rectangle {
         property string aspect: "16:9"
         property string resolution: "free"
     }
+    // How the scene view edits. Also the editor's, not the project's.
+    Settings {
+        id: scene
+        category: "sceneView"
+        property bool enabled: true
+        property string tool: "move"
+        property bool local: false
+        property bool snap: false
+        property real grid2d: 10
+        property real grid3d: 0.5
+        property real angle: 15
+        property real scaleStep: 0.1
+        property bool showGrid: true
+    }
+    readonly property bool is3d: !!appState.project && appState.project.world.mode === "ThreeD"
+    readonly property var sceneView: ({
+        enabled: scene.enabled, tool: scene.tool, local: scene.local, snap: scene.snap,
+        grid: is3d ? scene.grid3d : scene.grid2d, angle: scene.angle, scale: scene.scaleStep, show_grid: scene.showGrid
+    })
+    onSceneViewChanged: app.invoke("set_scene_view", { view: sceneView }, null, () => {})
+    // The scene view is what's showing: a world is up and nothing runs.
+    readonly property bool editing: !running && scene.enabled && appState.runtime_open === true
+    // The right button is held to fly, with the pointer held still.
+    property bool looking: false
+    onEditingChanged: looking = false
+    // A world to edit comes up whenever the tab is looked at without one, as
+    // long as it would draw here rather than in a window of its own.
+    function openWorld() {
+        if (visible && !!appState.project && appState.runtime_available && appState.runtime_open !== true
+                && (embedded || appState.preview_enabled === true))
+            report("open_world");
+    }
+    readonly property string projectPath: appState.project_path || ""
+    onProjectPathChanged: Qt.callLater(openWorld)
+    function setTool(tool) { scene.tool = tool; }
     readonly property real dpr: Screen.devicePixelRatio
     readonly property var aspects: ["free", "16:9", "16:10", "4:3", "21:9", "1:1"]
     readonly property var resolutions: [
@@ -68,7 +107,7 @@ Rectangle {
         // Later, so the tab switch Play also causes has shown the view.
         if (running && embedded) Qt.callLater(() => { frame.forceActiveFocus(); input({ kind: "focus", focused: attentive }); });
     }
-    onVisibleChanged: if (visible && running && embedded) frame.forceActiveFocus()
+    onVisibleChanged: { if (visible && running && embedded) frame.forceActiveFocus(); openWorld(); }
     // The view has the keyboard in the active window: the game's idea of focus.
     readonly property bool attentive: frame.activeFocus && frame.Window.active
     onAttentiveChanged: if (embedded) input({ kind: "focus", focused: attentive })
@@ -77,7 +116,7 @@ Rectangle {
     // Follow the stream whenever the sidecar has a port.
     readonly property int port: appState.preview_port || 0
     onPortChanged: app.watchPreview(port)
-    Component.onCompleted: app.watchPreview(port)
+    Component.onCompleted: { app.watchPreview(port); app.invoke("set_scene_view", { view: sceneView }, null, () => {}); Qt.callLater(openWorld); }
     Component.onDestruction: app.watchPreview(0)
 
     function report(command, args) { app.invoke(command, args, null, e => app.invoke("push_log", { kind: "error", text: String(e) })); }
@@ -150,10 +189,11 @@ Rectangle {
                     visible: root.embedded
                     anchors.fill: parent; anchors.margins: 1
                     resolution: root.fixed ? Qt.size(root.fixed[0], root.fixed[1]) : Qt.size(0, 0)
-                    pointerLocked: root.embedded && root.appState.pointer_locked === true && root.attentive && !root.pointerSuspended
+                    pointerLocked: root.embedded && root.attentive && (root.editing ? root.looking && root.is3d
+                        : root.appState.pointer_locked === true && !root.pointerSuspended)
                     onPointerMoved: (dx, dy) => root.input({ kind: "mouse_delta", dx: dx, dy: dy })
                     onPointerReleased: root.pointerSuspended = true
-                    onPointerHeldChanged: if (pointerHeld) escapeHint.shown = true
+                    onPointerHeldChanged: if (pointerHeld && root.running) escapeHint.shown = true
                 }
                 Image {
                     visible: !root.embedded
@@ -167,7 +207,13 @@ Rectangle {
                     color: gameView.error ? Theme.danger : Theme.textDim; font.pixelSize: 12
                     text: gameView.error ? "Can't show the game: " + gameView.error
                         : !root.appState.preview_enabled ? "Turn the preview on to see the game here."
-                        : root.appState.runtime_open ? "Waiting for the first frame…" : "Press Play to see the game here."
+                        : root.appState.runtime_open ? "Waiting for the first frame…" : "Press Play, or open the scene to edit it here."
+                }
+                BwButton {
+                    visible: !frame.showing && !root.appState.runtime_open && root.appState.runtime_available && gameView.error === ""
+                    anchors.horizontalCenter: parent.horizontalCenter; anchors.top: parent.verticalCenter; anchors.topMargin: 20
+                    text: "Open the scene"; iconName: "box"
+                    onClicked: root.report("open_world")
                 }
                 Rectangle {
                     readonly property string text: !frame.activeFocus ? "Click to control the game"
@@ -197,8 +243,15 @@ Rectangle {
                     cursorShape: gameView.pointerHeld ? Qt.BlankCursor : Qt.ArrowCursor
                     readonly property var buttons: { const b = {}; b[Qt.LeftButton] = 0; b[Qt.RightButton] = 1; b[Qt.MiddleButton] = 2; return b; }
                     onPositionChanged: mouse => root.input(Object.assign({ kind: "mouse_move" }, root.box(mouse.x, mouse.y)))
-                    onPressed: mouse => { frame.forceActiveFocus(); root.pointerSuspended = false; root.input(Object.assign({ kind: "mouse_button", button: buttons[mouse.button], down: true }, root.box(mouse.x, mouse.y))); }
-                    onReleased: mouse => root.input(Object.assign({ kind: "mouse_button", button: buttons[mouse.button], down: false }, root.box(mouse.x, mouse.y)))
+                    onPressed: mouse => {
+                        frame.forceActiveFocus(); root.pointerSuspended = false;
+                        if (root.editing && mouse.button === Qt.RightButton) root.looking = true;
+                        root.input(Object.assign({ kind: "mouse_button", button: buttons[mouse.button], down: true }, root.box(mouse.x, mouse.y)));
+                    }
+                    onReleased: mouse => {
+                        if (mouse.button === Qt.RightButton) root.looking = false;
+                        root.input(Object.assign({ kind: "mouse_button", button: buttons[mouse.button], down: false }, root.box(mouse.x, mouse.y)));
+                    }
                     // Notches from a wheel, pixels from a touchpad that reports them.
                     onWheel: wheel => {
                         const px = wheel.pixelDelta, line = px.x === 0 && px.y === 0;
@@ -215,10 +268,60 @@ Rectangle {
                     onReleased: points => send(points, "end")
                     onCanceled: points => send(points, "cancel")
                 }
+                // The scene view's tools, over the top-left of the view.
+                Rectangle {
+                    visible: !root.running && root.appState.runtime_open === true
+                    anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 8
+                    width: tools.implicitWidth + 8; height: tools.implicitHeight + 8; radius: 6
+                    color: "#d0202124"; border.color: Theme.borderSoft
+                    // Swallows clicks between the buttons, so they never pick in the world.
+                    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }
+                    Row {
+                        id: tools
+                        anchors.centerIn: parent; spacing: 2
+                        ToolToggle { icon: "box"; tip: scene.enabled ? "Scene view: editing through the editor camera. Click to look through the game's camera." : "Game camera: click to edit the scene"; checked: scene.enabled; onClicked: scene.enabled = !scene.enabled }
+                        Rectangle { width: 1; height: 20; color: Theme.border; anchors.verticalCenter: parent.verticalCenter; visible: scene.enabled }
+                        ToolToggle { visible: scene.enabled; icon: "move"; tip: "Move (W)"; checked: scene.tool === "move"; onClicked: root.setTool("move") }
+                        ToolToggle { visible: scene.enabled; icon: "rotate-cw"; tip: "Rotate (E)"; checked: scene.tool === "rotate"; onClicked: root.setTool("rotate") }
+                        ToolToggle { visible: scene.enabled; icon: "scale"; tip: "Scale (R)"; checked: scene.tool === "scale"; onClicked: root.setTool("scale") }
+                        ToolToggle { visible: scene.enabled && root.is3d; icon: "move-3d"; tip: scene.local ? "Local axes: the actor's own" : "World axes"; checked: scene.local; onClicked: scene.local = !scene.local }
+                        Rectangle { width: 1; height: 20; color: Theme.border; anchors.verticalCenter: parent.verticalCenter; visible: scene.enabled }
+                        ToolToggle { visible: scene.enabled; icon: "layout-grid"; tip: "Snap to the grid (hold Ctrl to flip)"; checked: scene.snap; onClicked: scene.snap = !scene.snap }
+                        NumberField {
+                            visible: scene.enabled && scene.snap
+                            width: 52; implicitHeight: 26; anchors.verticalCenter: parent.verticalCenter
+                            value: root.is3d ? scene.grid3d : scene.grid2d; fallback: root.is3d ? 0.5 : 10
+                            ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: root.is3d ? "Grid step, in metres" : "Grid step, in pixels"
+                            onCommitted: n => { const v = Math.max(0.001, Number(n)); if (root.is3d) scene.grid3d = v; else scene.grid2d = v; }
+                        }
+                        NumberField {
+                            visible: scene.enabled && scene.snap
+                            width: 44; implicitHeight: 26; anchors.verticalCenter: parent.verticalCenter
+                            value: scene.angle; fallback: 15
+                            ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: "Angle step, in degrees"
+                            onCommitted: n => scene.angle = Math.max(0.1, Number(n))
+                        }
+                        ToolToggle { visible: scene.enabled; icon: "hash"; tip: "Show the grid (G)"; checked: scene.showGrid; onClicked: scene.showGrid = !scene.showGrid }
+                        ToolToggle { visible: scene.enabled; icon: "crosshair"; tip: "Frame the selected actor (F)"; onClicked: root.report("frame_selected") }
+                        ToolToggle {
+                            visible: scene.enabled; icon: "info"
+                            tip: root.is3d
+                                ? "Hold the right button to look around, and fly with W A S D, Q and E (Shift to hurry, wheel for speed).\nMiddle-drag pans, Alt-drag orbits, the wheel dollies.\nClick an actor to select it; drag it or its handles to place it. Esc cancels a drag."
+                                : "Right- or middle-drag pans, the wheel zooms.\nClick an actor to select it; drag it or its handles to place it. Esc cancels a drag."
+                        }
+                    }
+                }
                 Keys.onPressed: event => {
                     // Escape always frees the pointer, and the game still hears it.
                     if (event.key === Qt.Key_Escape && gameView.pointerLocked) root.pointerSuspended = true;
                     const code = root.keyCode(event);
+                    // The scene view's own keys, by where they sit; flying uses the same ones.
+                    if (root.editing && !root.looking && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier)) && !event.isAutoRepeat) {
+                        const tools = { KeyW: "move", KeyE: "rotate", KeyR: "scale" };
+                        if (tools[code]) root.setTool(tools[code]);
+                        else if (code === "KeyF") root.report("frame_selected");
+                        else if (code === "KeyG") scene.showGrid = !scene.showGrid;
+                    }
                     if (code) root.input({ kind: "key", code: code, down: true });
                     // Printable characters also travel as text, for a focused in-game input.
                     if (event.text.length === 1 && !(event.modifiers & Qt.ControlModifier)) root.input({ kind: "text", text: event.text });
@@ -227,5 +330,22 @@ Rectangle {
                 Keys.onReleased: event => { const code = root.keyCode(event); if (code && !event.isAutoRepeat) root.input({ kind: "key", code: code, down: false }); event.accepted = true; }
             }
         }
+    }
+
+    // One button of the scene view's toolbar, lit while its setting is on.
+    component ToolToggle: Rectangle {
+        id: toggle
+        property string icon: ""
+        property string tip: ""
+        property bool checked: false
+        signal clicked()
+        width: 26; height: 26; radius: 4
+        anchors.verticalCenter: parent ? parent.verticalCenter : undefined
+        color: checked ? Theme.accent : toggleMouse.containsMouse ? "#3b3c40" : "transparent"
+        LucideIcon { anchors.centerIn: parent; width: 15; height: 15; name: toggle.icon; color: toggle.checked ? "white" : Theme.text }
+        MouseArea { id: toggleMouse; anchors.fill: parent; hoverEnabled: true; onClicked: toggle.clicked() }
+        ToolTip.visible: toggleMouse.containsMouse && tip.length > 0
+        ToolTip.delay: 500
+        ToolTip.text: tip
     }
 }

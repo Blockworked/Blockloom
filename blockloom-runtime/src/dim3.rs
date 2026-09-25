@@ -731,6 +731,7 @@ pub fn spawn_scenery(
             ..default()
         },
         Transform::from_translation(from).looking_at(Vec3::ZERO, Vec3::Y),
+        crate::world::WorldLight,
     ));
     // Shadow map size is a resource, not a light field: one size for every
     // cascade. Powers of two only; anything else falls back to 2048.

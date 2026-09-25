@@ -215,6 +215,11 @@ Rectangle {
                 NumberField { value: c.placement.rotation[2]; onCommitted: n => root.writeVector(c, "rotation", 2, n) } }
             InspectorRow { label: "Size"; Layout.fillWidth: true
                 NumberField { value: c.placement.scale; fallback: 1; onCommitted: n => root.writePlacement(c, { scale: n }) } }
+            InspectorRow { id: stretchRow; label: "Stretch"; Layout.fillWidth: true
+                readonly property var s: c.placement.stretch || [1, 1, 1]
+                NumberField { value: stretchRow.s[0]; fallback: 1; onCommitted: n => root.writePlacement(c, { stretch: root.withIndex(stretchRow.s, 0, n) }) }
+                NumberField { value: stretchRow.s[1]; fallback: 1; onCommitted: n => root.writePlacement(c, { stretch: root.withIndex(stretchRow.s, 1, n) }) }
+                NumberField { visible: root.is3d; value: stretchRow.s[2]; fallback: 1; onCommitted: n => root.writePlacement(c, { stretch: root.withIndex(stretchRow.s, 2, n) }) } }
             Text { visible: !!root.live; text: root.live ? "Now at " + root.live.position.map(n => n.toFixed(1)).join(", ") : ""; color: Theme.textDim; font.pixelSize: 11 }
         }
     }

@@ -392,7 +392,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             A,
             ArgSpec {
                 name: "placement",
-                ty: "object {position, rotation, scale}",
+                ty: "object {position, rotation, scale, stretch}",
                 required: true,
             },
         ],
@@ -766,6 +766,31 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             ty: "object {\"kind\": ...}",
             required: true,
         }],
+    },
+    CommandSpec {
+        name: "open-world",
+        cmd: "open_world",
+        aliases: &["open_world", "scene"],
+        summary: "Bring up the world with the project loaded but not running, for the scene view.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "set-scene-view",
+        cmd: "set_scene_view",
+        aliases: &["set_scene_view"],
+        summary: "How the scene view edits: {enabled, tool: move|rotate|scale, local, snap, grid, angle, scale, show_grid}.",
+        args: &[ArgSpec {
+            name: "view",
+            ty: "object {\"tool\": ...}",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "frame-selected",
+        cmd: "frame_selected",
+        aliases: &["frame_selected", "frame"],
+        summary: "Point the scene view's camera at the selected actor.",
+        args: &[],
     },
     CommandSpec {
         name: "close-runtime",

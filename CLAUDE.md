@@ -356,6 +356,35 @@ a click takes it back.
 `BLOCKLOOM_RUNTIME=process` forces the child process and MJPEG preview on
 Linux too. Windows and macOS have no GPU sharing yet.
 
+### Scene view
+
+While nothing runs, the Game view is a scene view over the same world:
+loaded, never started, and seen through an editor camera instead of the
+game's. `commands::open_world` brings a world up for it when the tab is shown
+(embedded, or with the preview on), so editing never waits for Play.
+`blockloom-runtime/src/edit.rs` is all of it: `SceneEditor` holds the camera
+(a flying one in 3D, pan and zoom in 2D), the selection and any drag.
+
+Input is the same forwarded `PreviewInput` a game reads, but `edit::interact`
+takes it in order ahead of the game's systems, so a press and its release in
+one frame still make a click. A click picks the actor under the pointer
+(nearest along the ray in 3D, topmost in 2D) and reports `Picked`; a drag on
+it or on the gizmo's handles moves the entity's pose live, and the release
+reports `Placed`. `commands::place_from_view` writes that into the document
+as one undo step, which reloads the world like any other edit. A child placed
+in its parent's frame reports its new `offset` too, since that, not `Place`,
+is what the world builds it from, and such children follow a dragged parent
+live.
+
+The tool, snapping and steps are `blockloom_protocol::SceneView`, an editor
+preference kept in QML `Settings` and re-sent to every world that comes up,
+as is the selection (`EditorMessage::Select`). `Place` has a uniform
+`scale` (the size blocks read and write) and a per-axis `stretch` in the
+actor's own frame; the scale tool's axis handles move the stretch and its
+centre handle the size. Handles are gizmo lines in their own `HandleGizmos`
+group, drawn over the world. In 3D the editor holds the view's pointer lock
+while the right button is down, so looking around reads raw motion.
+
 ### How a project runs
 
 1. Play hands the runtime the whole project (`EditorMessage::Load`) and starts
@@ -697,3 +726,5 @@ lands.
   world with an optional font asset path, which no inspector row exposes yet.
 - A reporter-shaped custom block runs to completion in place, so a `wait` inside
   one passes straight through.
+- The scene view's camera starts over whenever the world does (a dimension
+  switch, reopening a project).

@@ -271,6 +271,12 @@ impl Backend {
             "pause_project" => to_json(commands::pause_project(state, app, arg(&args, "paused")?)?),
             "step_project" => to_json(commands::step_project(state, app)?),
             "close_runtime" => to_json(commands::close_runtime(state, app)?),
+            "open_world" => to_json(commands::open_world(self, state, app)?),
+            "set_scene_view" => to_json(commands::set_scene_view(
+                state,
+                arg::<blockloom_protocol::SceneView>(&args, "view")?,
+            )?),
+            "frame_selected" => to_json(commands::frame_selected(state)?),
             "set_preview_enabled" => to_json(commands::set_preview_enabled(
                 state,
                 app,

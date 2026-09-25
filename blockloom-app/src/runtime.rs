@@ -252,6 +252,23 @@ impl Backend {
             RuntimeMessage::PointerLock { locked } => {
                 s.pointer_locked = locked;
             }
+            RuntimeMessage::Picked { actor } => {
+                if s.project()
+                    .and_then(|project| project.actor(&actor))
+                    .is_none()
+                {
+                    return;
+                }
+                s.selected_actor = Some(actor);
+                s.history.end_session();
+            }
+            RuntimeMessage::Placed {
+                actor,
+                placement,
+                offset,
+            } => {
+                crate::commands::place_from_view(&mut s, &actor, placement, offset);
+            }
             RuntimeMessage::Fatal { message } => {
                 s.running = false;
                 s.push_log(LogLine {

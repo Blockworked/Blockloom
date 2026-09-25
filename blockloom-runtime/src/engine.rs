@@ -220,6 +220,12 @@ impl Engine {
         self.spawned.get(id).or_else(|| self.project.actor(id))
     }
 
+    /// The per-axis stretch an actor was authored with, which no block moves.
+    pub fn stretch_of(&self, id: &str) -> [f32; 3] {
+        self.actor(id)
+            .map_or([1.0; 3], |actor| actor.placement().stretch)
+    }
+
     /// Every actor in the world, authored and made, by id.
     pub fn actor_ids(&self) -> impl Iterator<Item = &String> {
         self.entities.keys()

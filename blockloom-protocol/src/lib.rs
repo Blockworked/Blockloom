@@ -9,13 +9,14 @@
 pub mod keys;
 
 use blockloom_core::project::Project;
+use blockloom_core::scene::Placement;
 use blockloom_core::value::Evaluated;
 use serde::{Deserialize, Serialize};
 
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -117,10 +118,20 @@ pub enum EditorMessage {
         #[serde(default)]
         headless: bool,
     },
-    /// A pointer or keyboard event from the embedded viewport.
+    /// A pointer or keyboard event from the embedded viewport. While nothing
+    /// runs, these drive the scene view instead of the game.
     PreviewInput {
         input: PreviewInput,
     },
+    /// How the scene view edits while nothing runs.
+    SceneView(SceneView),
+    /// The actor the editor has selected, which the scene view outlines.
+    Select {
+        #[serde(default)]
+        actor: Option<String>,
+    },
+    /// Points the scene view's camera at the selected actor.
+    FrameSelected,
     /// Close the window and exit.
     Shutdown,
 }
@@ -150,6 +161,60 @@ pub enum RuntimeMessage {
     PointerLock { locked: bool },
     /// The runtime is giving up (a fatal renderer or physics error).
     Fatal { message: String },
+    /// An actor was clicked in the scene view.
+    Picked { actor: String },
+    /// A scene view drag ended: where the actor now stands. `offset` is set
+    /// for a child placed in its parent's frame, whose `Place` position the
+    /// world ignores.
+    Placed {
+        actor: String,
+        placement: Placement,
+        #[serde(default)]
+        offset: Option<[f32; 3]>,
+    },
+}
+
+/// Which handle the scene view's gizmo shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SceneTool {
+    #[default]
+    Move,
+    Rotate,
+    Scale,
+}
+
+/// The scene view's settings, which are the editor's preferences rather than
+/// the project's. Steps are in world units: pixels in 2D, metres in 3D.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SceneView {
+    /// Off shows the idle world through the game's own camera.
+    pub enabled: bool,
+    pub tool: SceneTool,
+    /// Move and rotate along the actor's own axes rather than the world's.
+    pub local: bool,
+    pub snap: bool,
+    pub grid: f32,
+    /// Degrees.
+    pub angle: f32,
+    pub scale: f32,
+    pub show_grid: bool,
+}
+
+impl Default for SceneView {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            tool: SceneTool::Move,
+            local: false,
+            snap: false,
+            grid: 1.0,
+            angle: 15.0,
+            scale: 0.1,
+            show_grid: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -252,6 +317,22 @@ mod tests {
         let ready = RuntimeMessage::PreviewReady { port: 4129 };
         let line = encode(&ready);
         assert_eq!(decode::<RuntimeMessage>(&line), Some(Ok(ready)));
+    }
+
+    #[test]
+    fn scene_messages_round_trip_as_one_line() {
+        let view = EditorMessage::SceneView(SceneView {
+            tool: SceneTool::Rotate,
+            snap: true,
+            ..SceneView::default()
+        });
+        assert_eq!(decode::<EditorMessage>(&encode(&view)), Some(Ok(view)));
+        let placed = RuntimeMessage::Placed {
+            actor: "a1".to_string(),
+            placement: Placement::default(),
+            offset: Some([1.0, 2.0, 3.0]),
+        };
+        assert_eq!(decode::<RuntimeMessage>(&encode(&placed)), Some(Ok(placed)));
     }
 
     #[test]
