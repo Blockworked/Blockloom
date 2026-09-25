@@ -2,6 +2,7 @@
 //! and the game runtime's leash. It has no dependency on Tauri or CEF, so the
 //! editor window and the browser dev bridge host the same code.
 
+pub mod attach;
 mod commands;
 mod dispatch;
 mod runtime;
@@ -84,6 +85,7 @@ impl Backend {
         let state = AppState {
             library: library::list(),
             open: None,
+            session_id: blockloom_core::sync::new_session(),
             selected_actor: None,
             history: state::History::new(UNDO_STACK_LIMIT),
             invalid_field_buffers: Default::default(),
@@ -114,9 +116,16 @@ impl Backend {
     }
 
     /// Closes the game window, if one is open. Called as the editor exits so
-    /// the runtime never outlives it.
+    /// the runtime never outlives it. Also drops our project folder lock, so
+    /// a backend that goes away without closing its project doesn't look
+    /// live to the next opener until its heartbeat runs out.
     pub fn shutdown(&self) {
         if let Ok(mut s) = self.state.lock() {
+            if let Some(open) = &s.open
+                && open.owns_lock
+            {
+                blockloom_core::sync::release_lock(&open.dir, &s.session_id);
+            }
             s.runtime = None;
         }
     }

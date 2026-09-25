@@ -37,7 +37,12 @@ pub mod qobject {
         /// `replied(token, {ok, result, error})`.
         #[qinvokable]
         #[cxx_name = "invokeCommand"]
-        fn invoke_command(self: Pin<&mut AppBridge>, token: i32, command: &QString, arguments: &QString);
+        fn invoke_command(
+            self: Pin<&mut AppBridge>,
+            token: i32,
+            command: &QString,
+            arguments: &QString,
+        );
 
         /// Follows the runtime's preview stream on `port`, or stops following
         /// it when `port` is 0.
@@ -184,21 +189,39 @@ impl qobject::AppBridge {
         if let Ok(json) = backend.state_json() {
             self.as_mut().set_state_json(QString::from(&json));
         }
+        // Lets `blockloom-shell --attach` drive this backend instead of
+        // forking a second copy. Best effort: a second editor just works
+        // standalone, and the folder locks still keep two owners honest.
+        let _ = blockloom_app::attach::serve_attach(backend.clone());
         self.as_mut().rust_mut().backend = Some(backend);
         self.as_mut().rust_mut().jobs = Some(tx);
     }
 
-    pub fn invoke_command(self: Pin<&mut Self>, token: i32, command: &QString, arguments: &QString) {
+    pub fn invoke_command(
+        self: Pin<&mut Self>,
+        token: i32,
+        command: &QString,
+        arguments: &QString,
+    ) {
         let args = match serde_json::from_str::<Value>(&arguments.to_string()) {
             Ok(args) => args,
             Err(error) => {
-                let text = json!({ "ok": false, "error": format!("Invalid command arguments: {error}") });
+                let text =
+                    json!({ "ok": false, "error": format!("Invalid command arguments: {error}") });
                 self.replied(token, QString::from(&text.to_string()));
                 return;
             }
         };
-        let job = Job { token, command: command.to_string(), args };
-        let sent = self.rust().jobs.as_ref().is_some_and(|jobs| jobs.send(job).is_ok());
+        let job = Job {
+            token,
+            command: command.to_string(),
+            args,
+        };
+        let sent = self
+            .rust()
+            .jobs
+            .as_ref()
+            .is_some_and(|jobs| jobs.send(job).is_ok());
         if !sent {
             let text = json!({ "ok": false, "error": "The backend isn't running" });
             self.replied(token, QString::from(&text.to_string()));

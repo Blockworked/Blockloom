@@ -602,7 +602,7 @@ mod tests {
         let (_tx, rx) = std::sync::mpsc::channel();
         let mut engine = Engine::new(rx, blockloom_core::scene::Mode::TwoD);
         engine.running = true;
-        app.insert_non_send_resource(engine)
+        app.insert_non_send(engine)
             .init_resource::<UiManager>()
             .init_resource::<PendingEffects>();
         app
@@ -694,7 +694,8 @@ mod tests {
     #[test]
     fn drawing_all_widget_kinds_has_disjoint_queries_and_retains_entities() {
         let mut app = app();
-        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default())).init_asset::<Image>();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
+            .init_asset::<Image>();
         app.add_systems(Update, crate::overlay::draw_ui);
         for i in 0..23 {
             app.world_mut().resource_mut::<UiManager>().show(UiElement {
@@ -725,35 +726,75 @@ pub struct UiAtlas {
 }
 /// Packs loaded UI images once per source set; Bevy batches nodes sharing the sheet.
 pub fn atlas(
-    manager: Res<UiManager>, engine: NonSend<Engine>, server: Res<AssetServer>, mut images: ResMut<Assets<Image>>,
-    mut nodes: Query<&mut ImageNode>, mut cache: Local<UiAtlas>,
+    manager: Res<UiManager>,
+    engine: NonSend<Engine>,
+    server: Res<AssetServer>,
+    mut images: ResMut<Assets<Image>>,
+    mut nodes: Query<&mut ImageNode>,
+    mut cache: Local<UiAtlas>,
 ) {
-    let mut sources: Vec<(String,Handle<Image>)> = Vec::new();
+    let mut sources: Vec<(String, Handle<Image>)> = Vec::new();
     for id in manager.ids() {
-        let Some(node) = manager.get(id).filter(|n|n.kind == UiKind::Image) else { continue; };
+        let Some(node) = manager.get(id).filter(|n| n.kind == UiKind::Image) else {
+            continue;
+        };
         let path = node.spec.content.trim();
-        if path.is_empty() || sources.iter().any(|(p,_)|p==path) { continue; }
-        let handle = server.load(crate::world::asset_path(engine.project_dir.as_deref(),path));
-        if images.get(&handle).is_some_and(|image|image.width()<=512 && image.height()<=512 && image.data.is_some()) { sources.push((path.into(),handle)); }
+        if path.is_empty() || sources.iter().any(|(p, _)| p == path) {
+            continue;
+        }
+        let handle = server.load(crate::world::asset_path(
+            engine.project_dir.as_deref(),
+            path,
+        ));
+        if images.get(&handle).is_some_and(|image| {
+            image.width() <= 512 && image.height() <= 512 && image.data.is_some()
+        }) {
+            sources.push((path.into(), handle));
+        }
     }
-    sources.sort_by(|a,b|a.0.cmp(&b.0)); sources.truncate(64);
+    sources.sort_by(|a, b| a.0.cmp(&b.0));
+    sources.truncate(64);
     if cache.sources != sources {
         let mut builder = bevy::image::TextureAtlasBuilder::default();
         builder.padding(UVec2::splat(2));
-        for (_,handle) in &sources { builder.add_texture(Some(handle.id()),images.get(handle).unwrap()); }
-        let built = if sources.len()>1 { builder.build().ok() } else { None };
-        cache.rects.clear(); cache.sheet = None;
-        if let Some((layout,lookup,image))=built {
-            for (path,handle) in &sources { if let Some(rect)=lookup.texture_rect(&layout,handle.id()) { cache.rects.insert(path.clone(),Rect::from_corners(rect.min.as_vec2(),rect.max.as_vec2())); } }
+        for (_, handle) in &sources {
+            builder.add_texture(Some(handle.id()), images.get(handle).unwrap());
+        }
+        let built = if sources.len() > 1 {
+            builder.build().ok()
+        } else {
+            None
+        };
+        cache.rects.clear();
+        cache.sheet = None;
+        if let Some((layout, lookup, image)) = built {
+            for (path, handle) in &sources {
+                if let Some(rect) = lookup.texture_rect(&layout, handle.id()) {
+                    cache.rects.insert(
+                        path.clone(),
+                        Rect::from_corners(rect.min.as_vec2(), rect.max.as_vec2()),
+                    );
+                }
+            }
             cache.sheet = Some(images.add(image));
         }
-        cache.sources=sources;
+        cache.sources = sources;
     }
-    let Some(sheet)=&cache.sheet else { return; };
+    let Some(sheet) = &cache.sheet else {
+        return;
+    };
     for id in manager.ids() {
-        let Some(node)=manager.get(id).filter(|n|n.kind==UiKind::Image) else {continue;};
-        if let (Some(rect),Ok(mut image))=(cache.rects.get(node.spec.content.trim()),nodes.get_mut(node.entity)) {
-            if image.image != *sheet || image.rect != Some(*rect) { image.image=sheet.clone(); image.rect=Some(*rect); }
+        let Some(node) = manager.get(id).filter(|n| n.kind == UiKind::Image) else {
+            continue;
+        };
+        if let (Some(rect), Ok(mut image)) = (
+            cache.rects.get(node.spec.content.trim()),
+            nodes.get_mut(node.entity),
+        ) {
+            if image.image != *sheet || image.rect != Some(*rect) {
+                image.image = sheet.clone();
+                image.rect = Some(*rect);
+            }
         }
     }
 }

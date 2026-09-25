@@ -2,6 +2,7 @@
 //! applies to by id, and carries already-evaluated numbers - the host never
 //! evaluates a [`crate::value::Value`] itself.
 
+use crate::animation::TweenEasing;
 use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
 use crate::sound::SoundBus;
@@ -34,11 +35,53 @@ pub enum Effect {
         by: f32,
     },
     /// Starts a slide to `target`; the host interpolates over `seconds` while
-    /// the script sleeps for exactly as long.
+    /// the script sleeps for exactly as long. `easing` shapes the motion.
     Glide {
         actor: String,
         seconds: f32,
         target: [f32; 3],
+        easing: TweenEasing,
+    },
+    /// Tweens the size towards `factor`, eased. The script sleeps like a glide.
+    TweenScale {
+        actor: String,
+        factor: f32,
+        seconds: f32,
+        easing: TweenEasing,
+    },
+    /// Tweens one axis towards `degrees`, eased.
+    TweenRotation {
+        actor: String,
+        axis: Axis,
+        degrees: f32,
+        seconds: f32,
+        easing: TweenEasing,
+    },
+    /// Tweens the tint towards `color`, eased. No-op on an image actor.
+    TweenColor {
+        actor: String,
+        color: String,
+        seconds: f32,
+        easing: TweenEasing,
+    },
+    /// Stops every tween on the actor where it stands: glides included.
+    StopTweens {
+        actor: String,
+    },
+    /// Plays the named flipbook clip at `speed`. Unknown names are an error.
+    PlayAnimation {
+        actor: String,
+        clip: String,
+        speed: f32,
+    },
+    /// Stops the animation player, keeping the frame it shows.
+    StopAnimation {
+        actor: String,
+    },
+    /// Retunes the playing clip's speed. 1 is as authored, 0 freezes.
+    SetAnimationSpeed {
+        actor: String,
+        speed: f32,
     },
     Turn {
         actor: String,

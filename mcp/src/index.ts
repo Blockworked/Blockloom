@@ -4,9 +4,12 @@
 //! Every shell command becomes an MCP tool; the agent calls it the same way
 //! it would type it, and reads the world back through `get-state` or the
 //! `blockloom://state` resource. Each server process owns one shell child,
-//! which owns one backend, which owns one in-memory copy of whatever project
-//! it has open - so, exactly like the shell, don't edit a project that the
-//! editor window has open at the same time.
+//! which owns one backend - unless started with `--attach`, which drives the
+//! editor's own backend over its attach socket instead, so there is ever one
+//! copy of the project. Without `--attach`, don't edit a project that the
+//! editor window has open at the same time: the shell attaches to the live
+//! owner's files and follows their saves, but two writers still take turns
+//! through the revision counter rather than truly sharing one copy.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -44,6 +47,8 @@ function usage(): string {
     "",
     "  --shell <path>          Which blockloom-shell to drive (or set",
     "                          BLOCKLOOM_MCP_SHELL).",
+    "  --attach                Drive the editor's own backend over its",
+    "                          attach socket instead of a private copy.",
     "  --help                  Show this help.",
     "",
   ].join("\n");
@@ -51,6 +56,7 @@ function usage(): string {
 
 async function main(): Promise<void> {
   let explicitShell: string | undefined;
+  let attach = false;
   const args = process.argv.slice(2);
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--shell") {
@@ -59,6 +65,8 @@ async function main(): Promise<void> {
         console.error("--shell needs a path");
         process.exit(2);
       }
+    } else if (args[i] === "--attach") {
+      attach = true;
     } else if (args[i] === "--help" || args[i] === "-h") {
       process.stdout.write(usage());
       return;
@@ -82,7 +90,8 @@ async function main(): Promise<void> {
   // build for as long as this server lives.
   const staged = stageShell(shell);
   const specs = await loadSpecs(staged);
-  const session = new ShellSession(staged, ["--no-state"]);
+  const sessionArgs = attach ? ["--no-state", "--attach"] : ["--no-state"];
+  const session = new ShellSession(staged, sessionArgs);
   // stderr only: stdout is the protocol and must stay quiet.
   console.error(
     "blockloom-mcp: driving " +
@@ -91,8 +100,13 @@ async function main(): Promise<void> {
       shell +
       ", so cargo builds stay unlocked) with " +
       specs.length +
-      " commands. This session has its own copy of any project it opens; " +
-      "don't edit the same project from the window or another agent at once.",
+      " commands" +
+      (attach ? " attached to the editor's backend" : " on a private copy") +
+      ". " +
+      (attach
+        ? "One copy of any project it opens; the window and the agent share it."
+        : "This session has its own copy of any project it opens; " +
+          "don't edit the same project from the window or another agent at once."),
   );
 
   const server = new McpServer({ name: "blockloom", version: packageVersion() });

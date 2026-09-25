@@ -18,6 +18,7 @@
 //! skips rather than fails - the same bargain `blockloom-runtime`'s script
 //! tests make.
 
+use blockloom_core::animation::TweenEasing;
 use blockloom_core::blocks::{
     BlockDef, BlockPiece, BlockShape, DictDef, DictEntry, DictItem, EmitterDial, InputValueType,
     Instruction, InstructionKind as K, ListDef, ListItem, Strand, VariableDef,
@@ -62,6 +63,12 @@ fn publish_world() {
                 MY_LOCAL_POSITION[1] as f32,
                 0.0,
             ],
+            // The harness player idles: no tween running, holding the Walk
+            // clip on its third frame, still playing.
+            tweening: false,
+            anim_clip: "Walk".to_string(),
+            anim_frame: 3,
+            anim_playing: true,
             ..Default::default()
         },
     );
@@ -354,6 +361,12 @@ impl Host for Recorder {
                 "wind speed" => Ok(Val::Num(3.0)),
                 other => Err(format!("the atmosphere has no \"{other}\" reading")),
             },
+            // The harness player idles holding Walk on frame 3, mirroring
+            // the snapshot the VM reads above.
+            "IsTweening" => Ok(Val::Bool(false)),
+            "CurrentClip" => Ok(Val::Text("Walk".to_string())),
+            "CurrentFrame" => Ok(Val::Num(3.0)),
+            "AnimationPlaying" => Ok(Val::Bool(true)),
             "MyPosition" => Ok(Val::Num(axis_of(&args[0], [3.0, 7.0, 0.0]))),
             "MyLocalPosition" => Ok(Val::Num(axis_of(&args[0], [1.0, 2.0, 0.0]))),
             "ActorPosition" => {
@@ -910,7 +923,31 @@ fn line_of(act: &Act) -> String {
         Act::SetEmitterDial { dial, value } => format!("SetEmitterDial {dial} {value:?}"),
         Act::SetTrailEnabled { enabled } => format!("SetTrailEnabled {enabled}"),
         Act::ChangePosition { axis, by } => format!("ChangePosition {axis} {by:?}"),
-        Act::Glide { seconds, target } => format!("Glide {seconds:?} {target:?}"),
+        Act::Glide {
+            seconds,
+            target,
+            easing,
+        } => format!("Glide {seconds:?} {target:?} {easing}"),
+        Act::TweenScale {
+            factor,
+            seconds,
+            easing,
+        } => format!("TweenScale {factor:?} {seconds:?} {easing}"),
+        Act::TweenRotation {
+            axis,
+            degrees,
+            seconds,
+            easing,
+        } => format!("TweenRotation {axis} {degrees:?} {seconds:?} {easing}"),
+        Act::TweenColor {
+            color,
+            seconds,
+            easing,
+        } => format!("TweenColor {color} {seconds:?} {easing}"),
+        Act::StopTweens => "StopTweens".to_string(),
+        Act::PlayAnimation { clip, speed } => format!("PlayAnimation {clip} {speed:?}"),
+        Act::StopAnimation => "StopAnimation".to_string(),
+        Act::SetAnimationSpeed { speed } => format!("SetAnimationSpeed {speed:?}"),
         Act::Turn { axis, degrees } => format!("Turn {axis} {degrees:?}"),
         Act::SetScale { factor } => format!("SetScale {factor:?}"),
         Act::SetExposure { ev } => format!("SetExposure {ev:?}"),
@@ -1015,6 +1052,10 @@ fn main() {
     let mut runner = Runner::new(NAMES);
     runner.fire(ENTRIES, "Started", "", "", "");
     runner.fire(ENTRIES, "UiClicked", "", "resume", "");
+    // A Walk clip ending on the harness player, beside the green flag: a
+    // case with a `when animation ends` strand gets one, and nothing else
+    // sees it.
+    runner.fire(ENTRIES, "AnimationEnded", "a1", "Walk", "");
 
     for tick in 0..TICKS {
         recorder.tick = tick;
@@ -1061,7 +1102,38 @@ fn line_of(effect: &Effect) -> Option<String> {
             actor,
             seconds,
             target,
-        } => format!("{actor}|Glide {seconds:?} {target:?}"),
+            easing,
+        } => format!("{actor}|Glide {seconds:?} {target:?} {easing:?}"),
+        Effect::TweenScale {
+            actor,
+            factor,
+            seconds,
+            easing,
+        } => format!("{actor}|TweenScale {factor:?} {seconds:?} {easing:?}"),
+        Effect::TweenRotation {
+            actor,
+            axis,
+            degrees,
+            seconds,
+            easing,
+        } => format!(
+            "{actor}|TweenRotation {} {degrees:?} {seconds:?} {easing:?}",
+            axis.index()
+        ),
+        Effect::TweenColor {
+            actor,
+            color,
+            seconds,
+            easing,
+        } => format!("{actor}|TweenColor {color} {seconds:?} {easing:?}"),
+        Effect::StopTweens { actor } => format!("{actor}|StopTweens"),
+        Effect::PlayAnimation { actor, clip, speed } => {
+            format!("{actor}|PlayAnimation {clip} {speed:?}")
+        }
+        Effect::StopAnimation { actor } => format!("{actor}|StopAnimation"),
+        Effect::SetAnimationSpeed { actor, speed } => {
+            format!("{actor}|SetAnimationSpeed {speed:?}")
+        }
         // Nobody's effect in particular: the run itself ending.
         Effect::Stopped => "|Stopped".to_string(),
         Effect::Turn {
@@ -1329,6 +1401,12 @@ fn by_vm(project: &Project) -> Vec<String> {
     // world is frozen. No other case has that hat, so nothing else sees it.
     vm.fire(Event::UiClicked {
         id: "resume".to_string(),
+    });
+    // A Walk clip ending on the harness player, beside the green flag: a
+    // case with a `when animation ends` strand gets one, like above.
+    vm.fire(Event::AnimationEnded {
+        actor: ACTOR.to_string(),
+        clip: "Walk".to_string(),
     });
     let mut lines = Vec::new();
     for tick in 0..TICKS {
@@ -2559,6 +2637,7 @@ fn a_glide_starts_the_same_slide_and_sleeps_as_long() {
                 x: number(5.0),
                 y: op("Add", vec![number(1.0), number(2.0)]),
                 z: number(0.0),
+                easing: TweenEasing::EaseOut,
             },
             K::Say {
                 text: Value::text("landed"),
@@ -2570,12 +2649,102 @@ fn a_glide_starts_the_same_slide_and_sleeps_as_long() {
                 x: number(1.0),
                 y: number(1.0),
                 z: number(1.0),
+                easing: TweenEasing::Linear,
             },
             K::Say {
                 text: Value::text("instant"),
             },
         ],
         &[],
+    );
+}
+
+#[test]
+fn tweens_ease_towards_scale_rotation_and_color_then_stop() {
+    assert_same(
+        "tweens",
+        vec![
+            K::TweenScale {
+                factor: number(2.0),
+                seconds: number(0.2),
+                easing: TweenEasing::EaseInOut,
+            },
+            K::TweenRotation {
+                axis: Axis::Z,
+                degrees: op("Add", vec![number(45.0), number(45.0)]),
+                seconds: number(0.2),
+                easing: TweenEasing::Bounce,
+            },
+            K::TweenColor {
+                color: Value::text("#FF0000"),
+                seconds: number(0.2),
+                easing: TweenEasing::Elastic,
+            },
+            K::StopTweens,
+            // No time to tween over: the effect still goes out, and nothing
+            // is suspended.
+            K::TweenScale {
+                factor: number(1.0),
+                seconds: number(0.0),
+                easing: TweenEasing::Linear,
+            },
+            K::Say {
+                text: Value::text("settled"),
+            },
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn animation_blocks_play_retune_read_back_and_stop_together() {
+    assert_same(
+        "animation",
+        vec![
+            K::PlayAnimation {
+                clip: Value::text("Walk"),
+                speed: number(1.5),
+            },
+            K::SetAnimationSpeed {
+                speed: op("CurrentFrame", vec![]),
+            },
+            K::Say {
+                text: op("CurrentClip", vec![]),
+            },
+            K::Say {
+                text: op("AnimationPlaying", vec![]),
+            },
+            K::Say {
+                text: op("IsTweening", vec![]),
+            },
+            K::StopAnimation,
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn when_animation_ends_starts_only_for_its_clip() {
+    assert_same_headed(
+        "animation-ends",
+        vec![
+            (
+                K::WhenAnimationEnds {
+                    clip: "Walk".to_string(),
+                },
+                vec![K::Say {
+                    text: Value::text("walk done"),
+                }],
+            ),
+            (
+                K::WhenAnimationEnds {
+                    clip: "".to_string(),
+                },
+                vec![K::Say {
+                    text: Value::text("any done"),
+                }],
+            ),
+        ],
     );
 }
 
@@ -2836,6 +3005,7 @@ fn a_wait_inside_a_reporter_suspends_its_caller() {
                     x: number(1.0),
                     y: number(2.0),
                     z: number(3.0),
+                    easing: TweenEasing::Linear,
                 },
                 K::Return {
                     value: Value::text("done"),

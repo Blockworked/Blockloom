@@ -297,6 +297,12 @@ pub enum Event {
     Cloned {
         actor: String,
     },
+    /// A `Once` clip finished, in the actor playing it. An empty filter
+    /// matches any clip; the event always names the one that ended.
+    AnimationEnded {
+        actor: String,
+        clip: String,
+    },
     /// The named input action went down, in lowercase action spelling.
     Action(String),
     /// A finger touched the screen.
@@ -671,6 +677,10 @@ impl Vm {
             }
             (Trigger::Message(want), Event::Message(got)) => want == got,
             (Trigger::Cloned, Event::Cloned { actor: fresh }) => fresh == actor,
+            (
+                Trigger::AnimationEnded { clip: want },
+                Event::AnimationEnded { actor: ended, clip },
+            ) => ended == actor && (want.is_empty() || want.eq_ignore_ascii_case(clip)),
             (Trigger::ActionPressed(want), Event::Action(got)) => want == got,
             (Trigger::Touched, Event::Touched) => true,
             (
@@ -901,7 +911,11 @@ impl Vm {
                         return None;
                     }
                 }
-                Step::Glide { seconds, target } => {
+                Step::Glide {
+                    seconds,
+                    target,
+                    easing,
+                } => {
                     let params = current_params(script);
                     let temps = script.temps.clone();
                     let seconds = self
@@ -915,6 +929,87 @@ impl Vm {
                         actor: script.actor.clone(),
                         seconds: seconds as f32,
                         target: position,
+                        easing: *easing,
+                    });
+                    script.pc = pc + 1;
+                    if !immediate && seconds > 0.0 {
+                        script.status = Status::Sleep(clock + seconds);
+                        return None;
+                    }
+                }
+                Step::TweenScale {
+                    factor,
+                    seconds,
+                    easing,
+                } => {
+                    let params = current_params(script);
+                    let temps = script.temps.clone();
+                    let factor = self.eval_f32(factor, &script.actor, params.as_ref(), &temps, out);
+                    let seconds = self
+                        .eval(seconds, &script.actor, params.as_ref(), &temps, out)
+                        .as_number()
+                        .unwrap_or(0.0)
+                        .max(0.0);
+                    out.push(Effect::TweenScale {
+                        actor: script.actor.clone(),
+                        factor,
+                        seconds: seconds as f32,
+                        easing: *easing,
+                    });
+                    script.pc = pc + 1;
+                    if !immediate && seconds > 0.0 {
+                        script.status = Status::Sleep(clock + seconds);
+                        return None;
+                    }
+                }
+                Step::TweenRotation {
+                    axis,
+                    degrees,
+                    seconds,
+                    easing,
+                } => {
+                    let params = current_params(script);
+                    let temps = script.temps.clone();
+                    let degrees =
+                        self.eval_f32(degrees, &script.actor, params.as_ref(), &temps, out);
+                    let seconds = self
+                        .eval(seconds, &script.actor, params.as_ref(), &temps, out)
+                        .as_number()
+                        .unwrap_or(0.0)
+                        .max(0.0);
+                    out.push(Effect::TweenRotation {
+                        actor: script.actor.clone(),
+                        axis: *axis,
+                        degrees,
+                        seconds: seconds as f32,
+                        easing: *easing,
+                    });
+                    script.pc = pc + 1;
+                    if !immediate && seconds > 0.0 {
+                        script.status = Status::Sleep(clock + seconds);
+                        return None;
+                    }
+                }
+                Step::TweenColor {
+                    color,
+                    seconds,
+                    easing,
+                } => {
+                    let params = current_params(script);
+                    let temps = script.temps.clone();
+                    let color = self
+                        .eval(color, &script.actor, params.as_ref(), &temps, out)
+                        .as_text();
+                    let seconds = self
+                        .eval(seconds, &script.actor, params.as_ref(), &temps, out)
+                        .as_number()
+                        .unwrap_or(0.0)
+                        .max(0.0);
+                    out.push(Effect::TweenColor {
+                        actor: script.actor.clone(),
+                        color,
+                        seconds: seconds as f32,
+                        easing: *easing,
                     });
                     script.pc = pc + 1;
                     if !immediate && seconds > 0.0 {
@@ -1117,6 +1212,80 @@ impl Vm {
                 out.push(Effect::SetScale {
                     actor: owner,
                     factor,
+                });
+            }
+            Action::TweenScale {
+                factor,
+                seconds,
+                easing,
+            } => {
+                let factor = self.eval_f32(factor, actor, params, temps, out);
+                let seconds = self
+                    .eval(seconds, actor, params, temps, out)
+                    .as_number()
+                    .unwrap_or(0.0)
+                    .max(0.0);
+                out.push(Effect::TweenScale {
+                    actor: owner,
+                    factor,
+                    seconds: seconds as f32,
+                    easing: *easing,
+                });
+            }
+            Action::TweenRotation {
+                axis,
+                degrees,
+                seconds,
+                easing,
+            } => {
+                let degrees = self.eval_f32(degrees, actor, params, temps, out);
+                let seconds = self
+                    .eval(seconds, actor, params, temps, out)
+                    .as_number()
+                    .unwrap_or(0.0)
+                    .max(0.0);
+                out.push(Effect::TweenRotation {
+                    actor: owner,
+                    axis: *axis,
+                    degrees,
+                    seconds: seconds as f32,
+                    easing: *easing,
+                });
+            }
+            Action::TweenColor {
+                color,
+                seconds,
+                easing,
+            } => {
+                let color = self.eval(color, actor, params, temps, out).as_text();
+                let seconds = self
+                    .eval(seconds, actor, params, temps, out)
+                    .as_number()
+                    .unwrap_or(0.0)
+                    .max(0.0);
+                out.push(Effect::TweenColor {
+                    actor: owner,
+                    color,
+                    seconds: seconds as f32,
+                    easing: *easing,
+                });
+            }
+            Action::StopTweens => out.push(Effect::StopTweens { actor: owner }),
+            Action::PlayAnimation { clip, speed } => {
+                let clip = self.eval(clip, actor, params, temps, out).as_text();
+                let speed = self.eval_f32(speed, actor, params, temps, out);
+                out.push(Effect::PlayAnimation {
+                    actor: owner,
+                    clip: clip.trim().to_string(),
+                    speed,
+                });
+            }
+            Action::StopAnimation => out.push(Effect::StopAnimation { actor: owner }),
+            Action::SetAnimationSpeed(speed) => {
+                let speed = self.eval_f32(speed, actor, params, temps, out);
+                out.push(Effect::SetAnimationSpeed {
+                    actor: owner,
+                    speed,
                 });
             }
             Action::SetExposure(ev) => {

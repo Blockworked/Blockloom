@@ -1175,12 +1175,14 @@ pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
 }
 
 /// Writes `project` into its folder, making the folder and its `assets` if
-/// they aren't there.
-pub fn save_project(project: &Project, dir: &Path) -> Result<(), String> {
+/// they aren't there. Answers the new revision: every save bumps the folder's
+/// counter, so an idle backend can tell its in-memory copy went stale.
+pub fn save_project(project: &Project, dir: &Path) -> Result<u64, String> {
     std::fs::create_dir_all(assets_dir(dir)).map_err(|e| format!("{}: {e}", dir.display()))?;
     let path = project_file(dir);
     let json = serde_json::to_string_pretty(project).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| format!("{}: {e}", path.display()))
+    std::fs::write(&path, json).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(crate::sync::bump_revision(dir))
 }
 
 /// Writes a project to an arbitrary path, for "Export".

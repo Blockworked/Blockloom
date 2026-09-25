@@ -60,7 +60,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 
 ### Phase 2 - Ship a complete single-player game
 - [x] Input actions plus remapping, gamepad/rumble, touch/multitouch, mouse lock.
-- [ ] Tweens plus sprite animation plus animation player/state machine.
+- [x] Tweens plus sprite animation plus animation player/state machine.
 - [ ] In-game UI framework (UMG/UI-Toolkit grade, builds on the 7 widgets we have):
   - [ ] Layout engine: measure/arrange pass with desired-size bubbling, containers
         (vertical/horizontal box, grid, overlay/canvas, scroll box, wrap box, size
@@ -100,21 +100,21 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [ ] MJPEG fallback (Windows, macOS, `BLOCKLOOM_RUNTIME=process`): the resolution switch still resizes the OS window, pointer lock only gets absolute positions, and the stream is a fixed ~15fps JPEG-60 regardless of preset or pause state. Most of this goes away once those platforms share GPU frames.
 - [x] Visual world editor: edit-mode 2D/3D viewport with selection sync to ActorList/Inspector, drag to move plus rotate/scale gizmos, snapping, camera pan/zoom/orbit. Shares the Game view panel: Edit manipulates placement directly, Play runs the world.
 - [ ] Editor: gizmos/snapping, prefab mode, scene search, log filter, frame stepper, profiler (draw calls, CPU/GPU/memory), playmode tests.
-- [ ] Editor/headless project sync: shell and MCP sessions share live state with an
+- [x] Editor/headless project sync: shell and MCP sessions share live state with an
       open editor instead of forking a silent second copy that last-writer-wins
       over the user's work.
-  - [ ] Attach mode: shell/MCP drives the editor's own Backend over the existing
+  - [x] Attach mode: shell/MCP drives the editor's own Backend over the existing
         command channel instead of booting a second in-memory project;
         `open-project` attaches when the folder is already open, owns only when
         it is not. One copy, no merge problem by construction.
-  - [ ] Lock file: per-folder lock with owner PID, session id and heartbeat; a
+  - [x] Lock file: per-folder lock with owner PID, session id and heartbeat; a
         second owner-mode opener warns or takes over explicitly, never silently.
-  - [ ] Live reload (covers every non-attached reader): file-watch
+  - [x] Live reload (covers every non-attached reader): file-watch
         project.blockloom plus assets, and since every edit already hits disk on
         landing, reload idle backends straight off disk. Conflict prompt when both
         sides hold unsaved in-memory work (keep mine / take theirs); undo history
         stays per side and is never merged.
-  - [ ] Revision feed: counter on every save; shell `--watch` streams revisions so
+  - [x] Revision feed: counter on every save; shell `--watch` streams revisions so
         agents poll cheaply, MCP state resources re-read on revision bump.
 
 ### Phase 4 - Look and depth, uses Bevy leverage

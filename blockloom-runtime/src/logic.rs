@@ -11,18 +11,19 @@ use blockloom_core::codegen::{
     ACT_DELETE_ELEMENT, ACT_DETACH, ACT_DICT_CLEAR, ACT_DICT_DELETE_KEY, ACT_DICT_SET, ACT_ERROR,
     ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD,
     ACT_LIST_CLEAR, ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE,
-    ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_PLAY_SOUND, ACT_POINT_TOWARDS,
-    ACT_RUMBLE_GAMEPAD, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_BODY, ACT_SET_BUS_VOLUME,
-    ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_COLLISION_LAYER,
-    ACT_SET_COLLISION_MASK, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_EMITTER_DIAL, ACT_SET_EXPOSURE,
-    ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_GRAVITY, ACT_SET_LIGHT_INTENSITY, ACT_SET_MASS,
-    ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE,
-    ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER,
-    ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT,
-    ACT_STOP_SOUND, ACT_TURN, AbiStr, AbiValue, LOGIC_ABI_VERSION, LogicHostApi, READ_SENSE,
-    READ_VARIABLE, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE,
-    SYM_LOGIC_RESET, SYM_LOGIC_TICK, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER,
-    VALUE_TEXT,
+    ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_PLAY_ANIMATION, ACT_PLAY_SOUND,
+    ACT_POINT_TOWARDS, ACT_RUMBLE_GAMEPAD, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_ANIMATION_SPEED,
+    ACT_SET_BODY, ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH,
+    ACT_SET_CAMERA_VIEW, ACT_SET_COLLISION_LAYER, ACT_SET_COLLISION_MASK, ACT_SET_COLOR,
+    ACT_SET_DENSITY, ACT_SET_EMITTER_DIAL, ACT_SET_EXPOSURE, ACT_SET_FIELD, ACT_SET_FOCUS,
+    ACT_SET_GRAVITY, ACT_SET_LIGHT_INTENSITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT,
+    ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME,
+    ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY,
+    ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_STOP_ANIMATION, ACT_STOP_SOUND, ACT_STOP_TWEENS,
+    ACT_TURN, ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue,
+    LOGIC_ABI_VERSION, LogicHostApi, READ_SENSE, READ_VARIABLE, SYM_LOGIC_ABI, SYM_LOGIC_FIRE,
+    SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET, SYM_LOGIC_TICK, TICK_STOPPED,
+    VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
 };
 use blockloom_core::components::CameraView;
 use blockloom_core::project::Project;
@@ -145,8 +146,14 @@ impl LoadedLogic {
             }
             Event::UiClicked { id } => self.fire_raw("UiClicked", "", &id, ""),
             Event::UiChanged { id, .. } => self.fire_raw("UiChanged", "", &id, ""),
+            Event::AnimationEnded { actor, clip } => {
+                self.fire_raw("AnimationEnded", &actor, &clip, "")
+            }
             Event::Action(action) => self.fire_raw("Action", "", &action, ""),
             Event::Touched => self.fire_raw("Touched", "", "", ""),
+            Event::AnimationEnded { actor, clip } => {
+                self.fire_raw("AnimationEnded", &actor, &clip, "")
+            }
             // The program makes its own clones and starts their strands
             // itself, so nothing outside it queues one. A script's clone
             // comes through `cloned` below instead.
@@ -440,6 +447,41 @@ extern "C" fn act(
             actor,
             seconds: n0 as f32,
             target: [n1 as f32, n2 as f32, value.number as f32],
+            easing: blockloom_core::animation::TweenEasing::parse(a)
+                .unwrap_or(blockloom_core::animation::TweenEasing::Linear),
+        },
+        ACT_TWEEN_SCALE => Effect::TweenScale {
+            actor,
+            factor: n0 as f32,
+            seconds: n1 as f32,
+            easing: blockloom_core::animation::TweenEasing::parse(a)
+                .unwrap_or(blockloom_core::animation::TweenEasing::Linear),
+        },
+        ACT_TWEEN_ROTATION => Effect::TweenRotation {
+            actor,
+            axis: axis_of(n0),
+            degrees: n1 as f32,
+            seconds: n2 as f32,
+            easing: blockloom_core::animation::TweenEasing::parse(a)
+                .unwrap_or(blockloom_core::animation::TweenEasing::Linear),
+        },
+        ACT_TWEEN_COLOR => Effect::TweenColor {
+            actor,
+            color: a.to_string(),
+            seconds: n0 as f32,
+            easing: blockloom_core::animation::TweenEasing::parse(b)
+                .unwrap_or(blockloom_core::animation::TweenEasing::Linear),
+        },
+        ACT_STOP_TWEENS => Effect::StopTweens { actor },
+        ACT_PLAY_ANIMATION => Effect::PlayAnimation {
+            actor,
+            clip: a.trim().to_string(),
+            speed: n0 as f32,
+        },
+        ACT_STOP_ANIMATION => Effect::StopAnimation { actor },
+        ACT_SET_ANIMATION_SPEED => Effect::SetAnimationSpeed {
+            actor,
+            speed: n0 as f32,
         },
         ACT_TURN => Effect::Turn {
             actor,

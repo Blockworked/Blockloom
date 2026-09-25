@@ -40,6 +40,7 @@ Rectangle {
     function lightOf(c) { return Object.assign({ kind: "Point", color: "#FFFFFF", intensity: 800, range: 20, radius: 0, inner_angle: 30, outer_angle: 45, shadows: false }, c.light || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
+    function animationOf(c) { return Object.assign({ clips: [], states: [] }, c.animation || {}); }
     function brainOf(c) { return Object.assign({ target: "", speed: 4, sight: 12, fov: 120, separation: 1, tree: { node: "Selector", children: [{ node: "Sequence", children: [{ node: "CanSeeTarget" }, { node: "NavigateToTarget" }] }, { node: "Idle" }] } }, c.brain || {}); }
     function tilemapOf(v) {
         return Object.assign({ tileset: "", tile_size: [32, 32], width: 8, height: 8, sheet_columns: 4, sheet_rows: 4, tiles: [], solid: false, passable: [], animations: [] }, v && v.tilemap ? v.tilemap : {});
@@ -63,6 +64,7 @@ Rectangle {
     function writeLight(c, next) { write("Light", { component: "Light", light: merged(lightOf(c), next) }); }
     function writeTrail(c, next) { write("Trail", { component: "Trail", trail: merged(trailOf(c), next) }); }
     function writeJoint(c, next) { write("Joint", { component: "Joint", joint: merged(jointOf(c), next) }); }
+    function writeAnimation(c, next) { write("Animation", { component: "Animation", animation: merged(animationOf(c), next) }); }
     function writeBrain(c, next) { write("Brain", { component: "Brain", brain: merged(brainOf(c), next) }); }
     function writeRender(c, next) { write("Render", { component: "Render", visible: next.visible !== undefined ? next.visible : c.visible, layer: next.layer !== undefined ? next.layer : (c.layer || 0) }); }
     function writeParent(c, next) {
@@ -127,7 +129,7 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Custom"]
+        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Custom"]
             .filter(n => n === "Custom" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }));
     }
     function blank(name) {
@@ -143,6 +145,7 @@ Rectangle {
         case "Emitter": return { component: "Emitter", emitter: emitterOf({}) };
         case "Trail": return { component: "Trail", trail: trailOf({}) };
         case "Light": return { component: "Light", light: lightOf({}) };
+        case "Animation": return { component: "Animation", animation: { clips: [], states: [] } };
         case "Custom": return { component: "Custom", name: "Component", fields: [{ name: "value", value: { kind: "Number", value: 0 } }] };
         default: return null;
         }
@@ -196,7 +199,7 @@ Rectangle {
                             Layout.fillWidth: true
                             readonly property var c: card.c
                             sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard })[card.c.component] || null
+                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard })[card.c.component] || null
                         }
                     }
                 }
@@ -704,6 +707,79 @@ Rectangle {
             InspectorRow { label: "Every s"; Layout.fillWidth: true; NumberField { value: tr.t.interval; fallback: 0.05; onCommitted: n => root.writeTrail(tr.c, { interval: n }) } }
             InspectorRow { label: "Lasts s"; Layout.fillWidth: true; NumberField { value: tr.t.life; fallback: 0.4; onCommitted: n => root.writeTrail(tr.c, { life: n }) } }
             InspectorRow { label: "Color"; Layout.fillWidth: true; ColorField { value: tr.t.color; onPicked: col => root.writeTrail(tr.c, { color: col }) } Item { Layout.fillWidth: true } }
+        }
+    }
+    Component {
+        id: animationCard
+        ColumnLayout {
+            id: an
+            readonly property var c: parent.c
+            readonly property var a: root.animationOf(c)
+            spacing: 6
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Flipbooks over image files. play animation changes state; when animation ends fires the transition for a Once clip." }
+            Text { text: "Clips"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            Repeater {
+                model: an.a.clips
+                delegate: ColumnLayout {
+                    required property int index
+                    required property var modelData
+                    Layout.fillWidth: true; spacing: 4
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        BwTextField { Layout.preferredWidth: 90; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "Clip"
+                            onEditingFinished: { const l = root.copy(an.a.clips); l[index].name = text.trim(); root.writeAnimation(an.c, { clips: l }); } }
+                        NumberField { Layout.preferredWidth: 56; value: modelData.fps; fallback: 8; onCommitted: n => { const l = root.copy(an.a.clips); l[index].fps = Math.min(60, Math.max(0.1, n)); root.writeAnimation(an.c, { clips: l }); } }
+                        ChoiceField { Layout.preferredWidth: 96; options: Blocks.loopModeOptions; value: modelData.loop_mode || "Once"
+                            onChosen: v => { const l = root.copy(an.a.clips); l[index].loop_mode = v; root.writeAnimation(an.c, { clips: l }); } }
+                        IconButton { iconName: "x"; tip: "Remove this clip"; implicitWidth: 24; implicitHeight: 24
+                            onClicked: { const l = root.copy(an.a.clips); l.splice(index, 1); root.writeAnimation(an.c, { clips: l }); } }
+                    }
+                    BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Frames, one asset path per line or comma";
+                        text: (modelData.frames || []).join(", ")
+                        onEditingFinished: { const l = root.copy(an.a.clips); l[index].frames = text.split(/[\n,]+/).map(s => s.trim()).filter(s => s !== ""); root.writeAnimation(an.c, { clips: l }); } }
+                }
+            }
+            BwButton {
+                iconName: "plus"; text: "Add clip"; implicitHeight: 28; font.pixelSize: 12
+                onClicked: {
+                    const l = root.copy(an.a.clips);
+                    const taken = l.map(x => x.name);
+                    let name = "walk";
+                    for (let n = 2; taken.indexOf(name) >= 0; ++n) name = "walk " + n;
+                    l.push({ name: name, frames: [], fps: 8, loop_mode: "Loop" });
+                    root.writeAnimation(an.c, { clips: l });
+                }
+            }
+            Text { text: "States"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            Repeater {
+                model: an.a.states
+                delegate: RowLayout {
+                    required property int index
+                    required property var modelData
+                    Layout.fillWidth: true; spacing: 4
+                    BwTextField { Layout.preferredWidth: 80; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "State"
+                        onEditingFinished: { const l = root.copy(an.a.states); l[index].name = text.trim(); root.writeAnimation(an.c, { states: l }); } }
+                    ChoiceField { Layout.fillWidth: true; options: [{ value: "", label: "clip…" }].concat(an.a.clips.map(x => ({ value: x.name, label: x.name }))); value: modelData.clip || ""
+                        onChosen: v => { const l = root.copy(an.a.states); l[index].clip = v; root.writeAnimation(an.c, { states: l }); } }
+                    NumberField { Layout.preferredWidth: 52; value: modelData.speed; fallback: 1; onCommitted: n => { const l = root.copy(an.a.states); l[index].speed = Math.min(8, Math.max(0, n)); root.writeAnimation(an.c, { states: l }); } }
+                    BwTextField { Layout.preferredWidth: 80; implicitHeight: 30; font.pixelSize: 12; text: modelData.next || ""; placeholderText: "Next state"
+                        onEditingFinished: { const l = root.copy(an.a.states); l[index].next = text.trim(); root.writeAnimation(an.c, { states: l }); } }
+                    IconButton { iconName: "x"; tip: "Remove this state"; implicitWidth: 24; implicitHeight: 24
+                        onClicked: { const l = root.copy(an.a.states); l.splice(index, 1); root.writeAnimation(an.c, { states: l }); } }
+                }
+            }
+            BwButton {
+                iconName: "plus"; text: "Add state"; implicitHeight: 28; font.pixelSize: 12
+                onClicked: {
+                    const l = root.copy(an.a.states);
+                    const taken = l.map(x => x.name);
+                    let name = "idle";
+                    for (let n = 2; taken.indexOf(name) >= 0; ++n) name = "idle " + n;
+                    l.push({ name: name, clip: an.a.clips.length ? an.a.clips[0].name : "", speed: 1, next: "" });
+                    root.writeAnimation(an.c, { states: l });
+                }
+            }
         }
     }
 

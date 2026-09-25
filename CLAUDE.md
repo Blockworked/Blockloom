@@ -87,8 +87,14 @@ hosts its own `Backend` (like `devserver`). The command registry lives in
 command. `parse` turns a line into `Action`, `run` turns `Action` into a
 JSON response. `--eval` for one-shot, `--no-state` to suppress the state
 snapshot (useful for bandwidth with large projects). Piped mode exits 1
-if any command errors. **Don't edit the same project from the shell and
-the window simultaneously** - each holds its own in-memory copy.
+if any command errors. Project folders carry an owner lock
+(`blockloom-core/src/sync.rs`) and a revision counter bumped on every save:
+`open-project` attaches to a live owner's copy (or takes it over with
+`force`), idle backends reload the folder's saves before each command,
+`sync-status` / `reload-project` / `take-over-lock` manage the rest, and
+`--watch` streams revisions. `--attach` drives the editor's own backend over
+the attach socket (`blockloom-app/src/attach.rs`, served by the editor) so
+there is one copy at all.
 
 #### MCP server (`mcp/`)
 
@@ -99,9 +105,10 @@ MCP tool, with schemas derived from the same registry (see `src/registry.ts`,
 which maps every `ArgSpec.ty` prose string to a zod schema - a new prose type
 must be taught there). Tool calls are one shell line, responses are the
 `{ok, result, error}` shape, plus `blockloom://state` and `blockloom://blocks`
-resources. Each session is its own backend, so the window-and-shell warning
-above applies to it too - one MCP server process and the editor must not hold
-the same project. The shell resolves as `target/debug|release/blockloom-shell`
+resources. Each session is its own backend unless started with `--attach` (see
+above), so without it the window-and-shell sharing rules apply: the shell
+attaches to the live owner's files and follows their saves, and one MCP server
+process and the editor should still not write the same project at once. The shell resolves as `target/debug|release/blockloom-shell`
 beside the repo, `BLOCKLOOM_MCP_SHELL`, or `--shell`; `just mcp` builds
 everything and prints the client config line for the built `dist/index.js`.
 Build/test with `cd mcp && pnpm install && pnpm run build && pnpm test`.

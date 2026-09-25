@@ -30,6 +30,17 @@ pub struct ActorSense {
     pub parent: String,
     /// True for an actor a `create clone` block made rather than the editor.
     pub is_clone: bool,
+    /// True while any tween (a glide or a `tween ...` block) is still moving
+    /// this actor. What `is tweening?` answers.
+    pub tweening: bool,
+    /// The clip the animation player is holding, by name, or empty for none.
+    /// What `current clip` answers.
+    pub anim_clip: String,
+    /// The 1-based frame showing right now. Zero with no clip.
+    pub anim_frame: usize,
+    /// Whether that clip is still advancing. A `Once` clip at its end, or a
+    /// stopped player, reads as false.
+    pub anim_playing: bool,
     /// The id of the last actor or clone this one made, so a block can move,
     /// parent or delete what it just created. Empty until it makes one.
     pub last_created: String,
@@ -280,6 +291,10 @@ impl Default for ActorSense {
             visible: true,
             parent: String::new(),
             is_clone: false,
+            tweening: false,
+            anim_clip: String::new(),
+            anim_frame: 0,
+            anim_playing: false,
             last_created: String::new(),
             touching: HashSet::new(),
             attached: HashSet::new(),

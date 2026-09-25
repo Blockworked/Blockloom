@@ -14,8 +14,8 @@
 //! sinks several fixed steps into one frame doesn't triple a keypress.
 
 use crate::engine::{
-    ActorId, CameraRig, CustomComponents, Dimension, Engine, Gliding, PendingEffects, PhysicsPose,
-    PrevPose,
+    ActorId, AnimationPlayer, CameraRig, CustomComponents, Dimension, Engine, Gliding,
+    PendingEffects, PhysicsPose, PrevPose, TweeningColor, TweeningRotation, TweeningScale,
 };
 use crate::{bridge, dim2, dim3};
 use bevy::input::ButtonState;
@@ -896,7 +896,17 @@ pub fn publish_sensors(
     mut focus: MessageReader<WindowFocused>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
-    actors: Query<(&ActorId, &Transform, &Visibility, Option<&CustomComponents>)>,
+    actors: Query<(
+        &ActorId,
+        &Transform,
+        &Visibility,
+        Option<&CustomComponents>,
+        Option<&Gliding>,
+        Option<&TweeningScale>,
+        Option<&TweeningRotation>,
+        Option<&TweeningColor>,
+        Option<&AnimationPlayer>,
+    )>,
     sound: Res<crate::sound::SoundState>,
     atmosphere: Option<Res<crate::atmosphere::Atmosphere>>,
     preview_pointer: Option<ResMut<crate::preview::PreviewPointer>>,
@@ -951,9 +961,9 @@ pub fn publish_sensors(
     // place in its parent's frame below.
     let posed: HashMap<&str, Transform> = actors
         .iter()
-        .map(|(id, transform, _, _)| (id.0.as_str(), *transform))
+        .map(|(id, transform, ..)| (id.0.as_str(), *transform))
         .collect();
-    for (id, transform, visibility, custom) in &actors {
+    for (id, transform, visibility, custom, glide, scale, rotation, color, player) in &actors {
         // The parent's world transform inverted onto this actor's own: the
         // world position itself when it hangs off nothing, or its parent is
         // gone. The inverse of `world_of`, which places an offset.
@@ -967,6 +977,18 @@ pub fn publish_sensors(
         let (layer, mask, trigger) = engine.filter_of(&id.0);
         let has_body = engine.has_component(&id.0, "Body");
         let shape = collider_shape(&engine, &id.0, dimension.0, transform);
+        let (anim_clip, anim_frame, anim_playing) = match player {
+            Some(player) => {
+                let frame = engine
+                    .actor(&id.0)
+                    .and_then(|actor| actor.components.animation())
+                    .and_then(|spec| spec.find_clip(&player.clip))
+                    .map(|clip| clip.frame_index(player.elapsed).0 + 1)
+                    .unwrap_or(0);
+                (player.clip.clone(), frame, player.playing)
+            }
+            None => (String::new(), 0, false),
+        };
         senses.insert(
             id.0.clone(),
             ActorSense {
@@ -981,6 +1003,13 @@ pub fn publish_sensors(
                 visible: *visibility != Visibility::Hidden,
                 parent: engine.parents.get(&id.0).cloned().unwrap_or_default(),
                 is_clone: engine.clones.contains_key(&id.0),
+                tweening: glide.is_some()
+                    || scale.is_some()
+                    || rotation.is_some()
+                    || color.is_some(),
+                anim_clip,
+                anim_frame,
+                anim_playing,
                 last_created: engine.last_created.get(&id.0).cloned().unwrap_or_default(),
                 touching: engine.touching.get(&id.0).cloned().unwrap_or_default(),
                 attached: engine.attached.get(&id.0).cloned().unwrap_or_default(),
@@ -1745,6 +1774,7 @@ pub fn apply_common(
     mut controllers_3d: Query<&mut bevy_rapier3d::prelude::KinematicCharacterController>,
     mut velocities_2d: Query<&mut bevy_rapier2d::prelude::Velocity>,
     mut velocities_3d: Query<&mut bevy_rapier3d::prelude::Velocity>,
+    mut animation_players: Query<&mut AnimationPlayer>,
 ) {
     if !engine.running || engine.paused {
         return;
@@ -1950,18 +1980,148 @@ pub fn apply_common(
                 };
             }
             Effect::Glide {
-                seconds, target, ..
+                seconds,
+                target,
+                easing,
+                ..
             } => {
                 let to = vec3_in(dimension.0, *target, transform.translation);
                 if *seconds <= 0.0 {
                     transform.translation = to;
+                    commands.entity(entity).remove::<Gliding>();
                 } else {
                     commands.entity(entity).insert(Gliding {
                         from: transform.translation,
                         to,
                         elapsed: 0.0,
                         duration: *seconds,
+                        easing: *easing,
                     });
+                }
+            }
+            Effect::TweenScale {
+                factor,
+                seconds,
+                easing,
+                ..
+            } => {
+                let to = factor.max(0.0);
+                let from = size_of(&transform, engine.stretch_of(actor));
+                if *seconds <= 0.0 {
+                    transform.scale = Vec3::from(engine.stretch_of(actor)) * to;
+                    commands.entity(entity).remove::<TweeningScale>();
+                } else {
+                    commands.entity(entity).insert(TweeningScale {
+                        from,
+                        to,
+                        elapsed: 0.0,
+                        duration: *seconds,
+                        easing: *easing,
+                    });
+                }
+            }
+            Effect::TweenRotation {
+                axis,
+                degrees,
+                seconds,
+                easing,
+                ..
+            } => {
+                let from = rotation_of(&transform, dimension.0, *axis);
+                if *seconds <= 0.0 {
+                    set_rotation_of(&mut transform, dimension.0, *axis, *degrees);
+                    commands.entity(entity).remove::<TweeningRotation>();
+                } else {
+                    commands.entity(entity).insert(TweeningRotation {
+                        axis: *axis,
+                        from,
+                        to: *degrees,
+                        elapsed: 0.0,
+                        duration: *seconds,
+                        easing: *easing,
+                    });
+                }
+            }
+            Effect::TweenColor {
+                color,
+                seconds,
+                easing,
+                ..
+            } => {
+                let to = parse_color(color);
+                if *seconds <= 0.0 {
+                    commands.entity(entity).remove::<TweeningColor>();
+                    // The dimensions own the tint; leave a finished tween so
+                    // the stepper paints the final color once, in both.
+                    commands.entity(entity).insert(TweeningColor {
+                        from: Some(to),
+                        to,
+                        elapsed: 1.0,
+                        duration: 1.0,
+                        easing: *easing,
+                    });
+                } else {
+                    // `from` fills in on the first step from whatever is
+                    // showing, so a mid-tween retarget eases out of the live
+                    // color rather than snapping back to the authored one.
+                    commands.entity(entity).insert(TweeningColor {
+                        from: None,
+                        to,
+                        elapsed: 0.0,
+                        duration: *seconds,
+                        easing: *easing,
+                    });
+                }
+            }
+            Effect::StopTweens { .. } => {
+                commands.entity(entity).remove::<Gliding>();
+                commands.entity(entity).remove::<TweeningScale>();
+                commands.entity(entity).remove::<TweeningRotation>();
+                commands.entity(entity).remove::<TweeningColor>();
+            }
+            Effect::PlayAnimation { clip, speed, .. } => {
+                let wanted = clip.trim();
+                let Some(spec) = engine.actor(actor).and_then(|a| a.components.animation()) else {
+                    bridge::send(&RuntimeMessage::Error {
+                        actor: actor.clone(),
+                        message: "this actor has no Animation component to play".to_string(),
+                    });
+                    continue;
+                };
+                let Some(found) = spec.find_clip(wanted) else {
+                    bridge::send(&RuntimeMessage::Error {
+                        actor: actor.clone(),
+                        message: format!("there's no animation clip called \"{wanted}\""),
+                    });
+                    continue;
+                };
+                if found.is_empty() {
+                    bridge::send(&RuntimeMessage::Error {
+                        actor: actor.clone(),
+                        message: format!("animation clip \"{wanted}\" has no frames"),
+                    });
+                    continue;
+                }
+                commands.entity(entity).insert(AnimationPlayer {
+                    clip: found.name.clone(),
+                    elapsed: 0.0,
+                    speed: (*speed).clamp(0.0, 8.0),
+                    playing: true,
+                    ended_fired: false,
+                });
+            }
+            Effect::StopAnimation { .. } => {
+                if let Ok(mut player) = animation_players.get_mut(entity) {
+                    player.playing = false;
+                }
+            }
+            Effect::SetAnimationSpeed { speed, .. } => {
+                if let Ok(mut player) = animation_players.get_mut(entity) {
+                    player.speed = (*speed).clamp(0.0, 8.0);
+                    if player.speed > 0.0 {
+                        player.playing = true;
+                        player.ended_fired = false;
+                    }
                 }
             }
             // Physics, colors and speech are somebody else's job.
@@ -1983,11 +2143,193 @@ pub fn step_glides(
     }
     for (entity, mut transform, mut glide) in &mut gliding {
         glide.elapsed += time.delta_secs();
-        let progress = (glide.elapsed / glide.duration).clamp(0.0, 1.0);
-        transform.translation = glide.from.lerp(glide.to, progress);
-        if progress >= 1.0 {
+        let linear = (glide.elapsed / glide.duration).clamp(0.0, 1.0);
+        transform.translation = glide.from.lerp(glide.to, glide.easing.apply(linear));
+        if linear >= 1.0 {
             commands.entity(entity).remove::<Gliding>();
         }
+    }
+}
+
+/// Advances every scale, rotation and color tween. Frozen while paused or
+/// stopped, like glides. Color writes land on the sprite in 2D and the PBR
+/// material in 3D, the same halves `set color` writes through.
+pub fn step_tweens(
+    mut commands: Commands,
+    time: Res<Time>,
+    engine: NonSend<Engine>,
+    dimension: Res<Dimension>,
+    mut motion: Query<(
+        Entity,
+        &mut Transform,
+        Option<&mut TweeningScale>,
+        Option<&mut TweeningRotation>,
+    )>,
+    mut colors: Query<(
+        Entity,
+        &mut TweeningColor,
+        Option<&mut Sprite>,
+        Option<&MeshMaterial3d<StandardMaterial>>,
+    )>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if !engine.running || engine.paused {
+        return;
+    }
+    let dt = time.delta_secs();
+    for (entity, mut transform, scale, rotation) in &mut motion {
+        if let Some(mut tween) = scale {
+            tween.elapsed += dt;
+            let linear = (tween.elapsed / tween.duration.max(1e-6)).clamp(0.0, 1.0);
+            let value = tween.from + (tween.to - tween.from) * tween.easing.apply(linear);
+            let stretch = engine
+                .actor_id_of(entity)
+                .and_then(|id| engine.actor(id))
+                .map(|actor| actor.placement().stretch)
+                .unwrap_or([1.0; 3]);
+            transform.scale = Vec3::from(stretch) * value.max(0.0);
+            if linear >= 1.0 {
+                commands.entity(entity).remove::<TweeningScale>();
+            }
+        }
+        if let Some(mut tween) = rotation {
+            tween.elapsed += dt;
+            let linear = (tween.elapsed / tween.duration.max(1e-6)).clamp(0.0, 1.0);
+            let value = tween.from + (tween.to - tween.from) * tween.easing.apply(linear);
+            set_rotation_of(&mut transform, dimension.0, tween.axis, value);
+            if linear >= 1.0 {
+                commands.entity(entity).remove::<TweeningRotation>();
+            }
+        }
+    }
+    for (entity, mut tween, sprite, material) in &mut colors {
+        // First step paints from whatever is showing, so a retarget eases
+        // out of the live color.
+        if tween.from.is_none() {
+            tween.from = Some(
+                sprite
+                    .as_ref()
+                    .map(|sprite| sprite.color)
+                    .or_else(|| {
+                        material
+                            .as_ref()
+                            .and_then(|handle| materials.get(&handle.0).map(|mat| mat.base_color))
+                    })
+                    .unwrap_or(Color::WHITE),
+            );
+        }
+        tween.elapsed += dt;
+        let linear = (tween.elapsed / tween.duration.max(1e-6)).clamp(0.0, 1.0);
+        let eased = tween.easing.apply(linear);
+        let from = tween.from.unwrap_or(Color::WHITE);
+        let mixed = mix_color(from, tween.to, eased);
+        if let Some(mut sprite) = sprite {
+            sprite.color = mixed;
+        }
+        if let Some(handle) = material {
+            if let Some(mut mat) = materials.get_mut(&handle.0) {
+                mat.base_color = mixed;
+            }
+        }
+        if linear >= 1.0 {
+            commands.entity(entity).remove::<TweeningColor>();
+        }
+    }
+}
+
+fn mix_color(from: Color, to: Color, t: f32) -> Color {
+    let from = from.to_srgba();
+    let to = to.to_srgba();
+    Color::srgba(
+        from.red + (to.red - from.red) * t,
+        from.green + (to.green - from.green) * t,
+        from.blue + (to.blue - from.blue) * t,
+        from.alpha + (to.alpha - from.alpha) * t,
+    )
+}
+
+/// Advances every animation player, swaps the displayed flipbook frame, and
+/// fires `when animation ends` once when a `Once` clip runs out. Frozen
+/// while paused or stopped, like the VM. A `next` state on the authored
+/// state of the same name chains automatically; anything else is blocks.
+pub fn step_animations(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut engine: NonSendMut<Engine>,
+    assets: Res<AssetServer>,
+    mut players: Query<(Entity, &mut AnimationPlayer, Option<&mut Sprite>)>,
+) {
+    if !engine.running || engine.paused {
+        return;
+    }
+    let dt = time.delta_secs();
+    let dir = engine.project_dir.clone();
+    let mut ended: Vec<(String, String)> = Vec::new();
+    for (entity, mut player, sprite) in &mut players {
+        let Some(id) = engine.actor_id_of(entity).map(str::to_string) else {
+            continue;
+        };
+        let Some(spec) = engine
+            .actor(&id)
+            .and_then(|a| a.components.animation())
+            .cloned()
+        else {
+            commands.entity(entity).remove::<AnimationPlayer>();
+            continue;
+        };
+        let Some(clip) = spec.find_clip(&player.clip).cloned() else {
+            commands.entity(entity).remove::<AnimationPlayer>();
+            continue;
+        };
+        if player.playing && player.speed > 0.0 {
+            player.elapsed += dt * player.speed;
+        }
+        let (index, done) = clip.frame_index(player.elapsed);
+        if let Some(path) = clip.frames.get(index) {
+            if let Some(mut sprite) = sprite {
+                let handle: Handle<Image> = assets.load(asset_path(dir.as_deref(), path));
+                if sprite.image != handle {
+                    sprite.image = handle;
+                }
+            }
+        }
+        if done && !player.ended_fired {
+            player.ended_fired = true;
+            player.playing = false;
+            ended.push((id.clone(), clip.name.clone()));
+            // A named state chains to its `next` without blocks.
+            if let Some(state) = spec
+                .states
+                .iter()
+                .find(|state| state.clip.eq_ignore_ascii_case(&clip.name))
+                .cloned()
+            {
+                let next = state.next.trim();
+                if !next.is_empty() {
+                    if let Some(follow) = spec
+                        .find_state(next)
+                        .and_then(|state| spec.find_clip(&state.clip))
+                        .or_else(|| spec.find_clip(next))
+                        .cloned()
+                    {
+                        if !follow.is_empty() {
+                            player.clip = follow.name.clone();
+                            player.elapsed = 0.0;
+                            player.speed = spec
+                                .find_state(next)
+                                .map(|state| state.speed)
+                                .unwrap_or(1.0)
+                                .clamp(0.0, 8.0);
+                            player.playing = player.speed > 0.0;
+                            player.ended_fired = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for (actor, clip) in ended {
+        engine.fire(Event::AnimationEnded { actor, clip });
     }
 }
 
@@ -2318,6 +2660,11 @@ fn attach(
                 .entity(entity)
                 .insert(crate::fx::TrailState::fresh());
         }
+        // Clips come back with the run stopped: attaching the component
+        // gives the player somewhere to play, not something playing.
+        "Animation" => {
+            commands.entity(entity).remove::<AnimationPlayer>();
+        }
         // Anything else is a custom component: it comes back with the fields
         // the editor gave it, or empty if the project never had one.
         name => {
@@ -2388,6 +2735,10 @@ fn detach(
         }
         "Trail" => {
             commands.entity(entity).remove::<crate::fx::TrailState>();
+        }
+        // Taking the clips away stops the player with them.
+        "Animation" => {
+            commands.entity(entity).remove::<AnimationPlayer>();
         }
         name => {
             if let Ok(mut custom) = customs.get_mut(entity) {
@@ -3241,6 +3592,13 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetTrailEnabled { actor, .. }
         | Effect::ChangePosition { actor, .. }
         | Effect::Glide { actor, .. }
+        | Effect::TweenScale { actor, .. }
+        | Effect::TweenRotation { actor, .. }
+        | Effect::TweenColor { actor, .. }
+        | Effect::StopTweens { actor, .. }
+        | Effect::PlayAnimation { actor, .. }
+        | Effect::StopAnimation { actor, .. }
+        | Effect::SetAnimationSpeed { actor, .. }
         | Effect::Turn { actor, .. }
         | Effect::SetRotation { actor, .. }
         | Effect::PointTowards { actor, .. }
@@ -3382,6 +3740,32 @@ fn set_rotation_3d(transform: &mut Transform, axis: Axis, radians: f32) {
     let mut angles = [pitch, yaw, roll];
     angles[axis.index()] = radians;
     transform.rotation = Quat::from_euler(EulerRot::YXZ, angles[1], angles[0], angles[2]);
+}
+
+/// One axis of a transform in degrees, as the tween blocks speak it. 2D only
+/// turns about Z; the other axes read as zero rather than an error.
+fn rotation_of(transform: &Transform, mode: Mode, axis: Axis) -> f32 {
+    if mode == Mode::ThreeD {
+        let (yaw, pitch, roll) = transform.rotation.to_euler(EulerRot::YXZ);
+        let angles = [pitch, yaw, roll];
+        angles[axis.index()].to_degrees()
+    } else {
+        match rotation_axis(mode, axis) {
+            Some(index) => euler_of(transform)[index].to_degrees(),
+            None => 0.0,
+        }
+    }
+}
+
+/// Writes one axis of a transform in degrees, the inverse of `rotation_of`.
+fn set_rotation_of(transform: &mut Transform, mode: Mode, axis: Axis, degrees: f32) {
+    if mode == Mode::ThreeD {
+        set_rotation_3d(transform, axis, degrees.to_radians());
+    } else if let Some(index) = rotation_axis(mode, axis) {
+        let mut euler = euler_of(transform);
+        euler[index] = degrees.to_radians();
+        transform.rotation = quat_of(euler);
+    }
 }
 
 fn axis_vector(axis: Axis) -> Vec3 {

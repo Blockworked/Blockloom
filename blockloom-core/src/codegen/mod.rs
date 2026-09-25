@@ -63,16 +63,18 @@ pub use runtime::{
     ACT_DICT_CLEAR, ACT_DICT_DELETE_KEY, ACT_DICT_SET, ACT_ERROR, ACT_GLIDE, ACT_GO_TO,
     ACT_HIDE_ELEMENT, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD, ACT_LIST_CLEAR,
     ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE, ACT_LIST_SHIFT, ACT_MOVE,
-    ACT_NAVIGATE_TO, ACT_PLAY_SOUND, ACT_POINT_TOWARDS, ACT_RUMBLE_GAMEPAD, ACT_SAVE_VARIABLE,
-    ACT_SAY, ACT_SET_BODY, ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH,
-    ACT_SET_CAMERA_VIEW, ACT_SET_COLLISION_LAYER, ACT_SET_COLLISION_MASK, ACT_SET_COLOR,
-    ACT_SET_DENSITY, ACT_SET_EMITTER_DIAL, ACT_SET_EXPOSURE, ACT_SET_FIELD, ACT_SET_FOCUS,
-    ACT_SET_GRAVITY, ACT_SET_LIGHT_INTENSITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT,
-    ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME,
-    ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY,
-    ACT_SET_VISIBLE, ACT_SHOW_ELEMENT, ACT_STOP_SOUND, ACT_TURN, AbiStr, AbiValue, Act, Actors,
-    Entry, Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner,
-    SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
+    ACT_NAVIGATE_TO, ACT_PLAY_ANIMATION, ACT_PLAY_SOUND, ACT_POINT_TOWARDS, ACT_RUMBLE_GAMEPAD,
+    ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_ANIMATION_SPEED, ACT_SET_BODY, ACT_SET_BUS_VOLUME,
+    ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_COLLISION_LAYER,
+    ACT_SET_COLLISION_MASK, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_EMITTER_DIAL, ACT_SET_EXPOSURE,
+    ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_GRAVITY, ACT_SET_LIGHT_INTENSITY, ACT_SET_MASS,
+    ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_ROTATION, ACT_SET_SCALE,
+    ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER,
+    ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT,
+    ACT_STOP_ANIMATION, ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_TURN, ACT_TWEEN_COLOR,
+    ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, Act, Actors, Entry, Host,
+    LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI,
+    SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
     SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
     Val,
 };
@@ -345,6 +347,7 @@ fn trigger_name(trigger: &crate::vm::Trigger) -> &'static str {
         Trigger::Collision { .. } => "Collision",
         Trigger::Message(_) => "Message",
         Trigger::Cloned => "Cloned",
+        Trigger::AnimationEnded { .. } => "AnimationEnded",
         Trigger::ActionPressed(_) => "Action",
         Trigger::Touched => "Touched",
         Trigger::UiEvent { .. } => "UiEvent",
@@ -359,6 +362,7 @@ fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
         Trigger::KeyPressed(key) => key.clone(),
         Trigger::Collision { with } => with.clone(),
         Trigger::Message(name) => name.clone(),
+        Trigger::AnimationEnded { clip } => clip.clone(),
         Trigger::UiEvent { id, event } => format!("{event}\n{id}"),
         Trigger::UiClicked(id) | Trigger::UiChanged(id) => id.clone(),
         Trigger::ActionPressed(action) => action.clone(),
@@ -518,6 +522,9 @@ impl Plan {
                 // its callee may wait, so what follows has to be resumable.
                 Step::Wait(_)
                 | Step::Glide { .. }
+                | Step::TweenScale { .. }
+                | Step::TweenRotation { .. }
+                | Step::TweenColor { .. }
                 | Step::Break
                 | Step::Continue
                 | Step::Return(_)
@@ -754,12 +761,60 @@ impl<'a> Pass<'a> {
                 }
             }
             // The slide is the host's to draw; the strand just sleeps as long.
-            Step::Glide { seconds, target } => {
+            Step::Glide {
+                seconds,
+                target,
+                easing,
+            } => {
                 let seconds = self.number_f64(seconds)?;
                 let target = self.vec3(target)?;
                 format!(
                     "{PAD}let seconds = {seconds}.max(0.0);\n{PAD}let target = {target};\n\
-                     {PAD}h.act(&me, Act::Glide {{ seconds: seconds as f32, target }});\n\
+                     {PAD}h.act(&me, Act::Glide {{ seconds: seconds as f32, target, easing: \"{easing:?}\" }});\n\
+                     {PAD}s.pc = {next};\n{}",
+                    self.sleep()
+                )
+            }
+            Step::TweenScale {
+                factor,
+                seconds,
+                easing,
+            } => {
+                let factor = self.number(factor)?;
+                let seconds = self.number_f64(seconds)?;
+                format!(
+                    "{PAD}let factor = {factor};\n{PAD}let seconds = {seconds}.max(0.0);\n\
+                     {PAD}h.act(&me, Act::TweenScale {{ factor: factor as f32, seconds: seconds as f32, easing: \"{easing:?}\" }});\n\
+                     {PAD}s.pc = {next};\n{}",
+                    self.sleep()
+                )
+            }
+            Step::TweenRotation {
+                axis,
+                degrees,
+                seconds,
+                easing,
+            } => {
+                let degrees = self.number(degrees)?;
+                let seconds = self.number_f64(seconds)?;
+                format!(
+                    "{PAD}let degrees = {degrees};\n{PAD}let seconds = {seconds}.max(0.0);\n\
+                     {PAD}h.act(&me, Act::TweenRotation {{ axis: {}, degrees: degrees as f32, seconds: seconds as f32, easing: \"{easing:?}\" }});\n\
+                     {PAD}s.pc = {next};\n{}",
+                    axis.index(),
+                    self.sleep()
+                )
+            }
+            Step::TweenColor {
+                color,
+                seconds,
+                easing,
+            } => {
+                let color = self.text(color)?;
+                let seconds = self.number_f64(seconds)?;
+                format!(
+                    "{PAD}let color = {color}.trim().to_string();\n{PAD}let seconds = {seconds}.max(0.0);\n\
+                     {PAD}h.act(&me, Act::TweenColor {{ color, seconds: seconds as f32, easing: \"{easing:?}\" }});\n\
                      {PAD}s.pc = {next};\n{}",
                     self.sleep()
                 )
@@ -914,6 +969,50 @@ impl<'a> Pass<'a> {
             Action::SetScale(factor) => {
                 reading(self.number(factor)?, "Act::SetScale { factor: slot }")
             }
+            Action::TweenScale {
+                factor,
+                seconds,
+                easing,
+            } => format!(
+                "    let factor = {};\n    let seconds = {}.max(0.0);\n    \
+                 h.act(&me, Act::TweenScale {{ factor: factor as f32, seconds: seconds as f32, easing: \"{easing:?}\" }});\n",
+                self.number(factor)?,
+                self.number_f64(seconds)?,
+            ),
+            Action::TweenRotation {
+                axis,
+                degrees,
+                seconds,
+                easing,
+            } => format!(
+                "    let degrees = {};\n    let seconds = {}.max(0.0);\n    \
+                 h.act(&me, Act::TweenRotation {{ axis: {}, degrees: degrees as f32, seconds: seconds as f32, easing: \"{easing:?}\" }});\n",
+                self.number(degrees)?,
+                self.number_f64(seconds)?,
+                axis.index(),
+            ),
+            Action::TweenColor {
+                color,
+                seconds,
+                easing,
+            } => format!(
+                "    let color = {}.trim().to_string();\n    let seconds = {}.max(0.0);\n    \
+                 h.act(&me, Act::TweenColor {{ color, seconds: seconds as f32, easing: \"{easing:?}\" }});\n",
+                self.text(color)?,
+                self.number_f64(seconds)?,
+            ),
+            Action::StopTweens => act("Act::StopTweens".to_string()),
+            Action::PlayAnimation { clip, speed } => format!(
+                "    let clip = {}.trim().to_string();\n    let speed = {};\n    \
+                 h.act(&me, Act::PlayAnimation {{ clip, speed: speed as f32 }});\n",
+                self.text(clip)?,
+                self.number(speed)?,
+            ),
+            Action::StopAnimation => act("Act::StopAnimation".to_string()),
+            Action::SetAnimationSpeed(speed) => reading(
+                self.number(speed)?,
+                "Act::SetAnimationSpeed { speed: slot }",
+            ),
             Action::SetExposure(ev) => reading(self.number(ev)?, "Act::SetExposure { ev: slot }"),
             Action::SetLightIntensity(intensity) => reading(
                 self.number(intensity)?,

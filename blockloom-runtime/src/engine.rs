@@ -41,6 +41,52 @@ pub struct Gliding {
     pub to: Vec3,
     pub elapsed: f32,
     pub duration: f32,
+    pub easing: blockloom_core::animation::TweenEasing,
+}
+
+/// A `tween size` in progress: like a glide, but over the scale.
+#[derive(Component, Debug, Clone)]
+pub struct TweeningScale {
+    pub from: f32,
+    pub to: f32,
+    pub elapsed: f32,
+    pub duration: f32,
+    pub easing: blockloom_core::animation::TweenEasing,
+}
+
+/// A `tween rotation` in progress: one axis, eased.
+#[derive(Component, Debug, Clone)]
+pub struct TweeningRotation {
+    pub axis: blockloom_core::scene::Axis,
+    pub from: f32,
+    pub to: f32,
+    pub elapsed: f32,
+    pub duration: f32,
+    pub easing: blockloom_core::animation::TweenEasing,
+}
+
+/// A `tween color` in progress: from tint to tint, eased. `from` fills in on
+/// the first step from whatever is showing, so a retarget eases out of the
+/// live color rather than snapping back to the authored one.
+#[derive(Component, Debug, Clone)]
+pub struct TweeningColor {
+    pub from: Option<Color>,
+    pub to: Color,
+    pub elapsed: f32,
+    pub duration: f32,
+    pub easing: blockloom_core::animation::TweenEasing,
+}
+
+/// The animation player: which flipbook clip is showing, and how far in.
+/// Clips are authored on the `Animation` component; this is the live cursor
+/// over them. A `Once` clip at its end fires `when animation ends` once.
+#[derive(Component, Debug, Clone)]
+pub struct AnimationPlayer {
+    pub clip: String,
+    pub elapsed: f32,
+    pub speed: f32,
+    pub playing: bool,
+    pub ended_fired: bool,
 }
 
 /// The pose an actor settled at the end of a fixed step - physically, or from

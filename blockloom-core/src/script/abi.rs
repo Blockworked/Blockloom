@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 17;
+pub const ABI_VERSION: u32 = 18;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -136,6 +136,13 @@ pub const READ_MOUSE_BUTTON: u32 = 39;
 /// `a` = a reading's name (`wind speed`, `rain`, ...). The air as of this
 /// fixed tick, the same slot the atmosphere reporter reads.
 pub const READ_ATMOSPHERE: u32 = 40;
+/// Whether any tween (a glide or a `tween ...` block) is still moving this
+/// actor. What `is tweening?` answers.
+pub const READ_IS_TWEENING: u32 = 41;
+/// The 1-based flipbook frame showing right now. Zero with no clip.
+pub const READ_ANIM_FRAME: u32 = 42;
+/// Whether the animation player's clip is still advancing.
+pub const READ_ANIM_PLAYING: u32 = 43;
 
 // ─── What a script can read as text ────────────────────────────────────────
 
@@ -160,6 +167,8 @@ pub const TEXT_UI_FOCUS: u32 = 8;
 pub const TEXT_RAY_HIT: u32 = 9;
 /// `a` = "x y z", `b` = radius. The nearest body a ball overlaps, by name.
 pub const TEXT_CIRCLE_HIT: u32 = 10;
+/// The clip the animation player is holding, or [`MISSING`] for none.
+pub const TEXT_CURRENT_CLIP: u32 = 11;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -272,6 +281,20 @@ pub const ACT_CLEAR_ACTION_BINDINGS: u32 = 48;
 pub const ACT_SET_EXPOSURE: u32 = 49;
 /// `n0` = lumens. Sets this actor's Light component.
 pub const ACT_SET_LIGHT_INTENSITY: u32 = 50;
+/// `n0` = factor, `n1` = seconds; `b` = easing name. Eased like the block.
+pub const ACT_TWEEN_SCALE: u32 = 51;
+/// `n0` = axis, `n1` = degrees, `n2` = seconds; `b` = easing name.
+pub const ACT_TWEEN_ROTATION: u32 = 52;
+/// `a` = `#RRGGBB`, `b` = easing name; `n0` = seconds.
+pub const ACT_TWEEN_COLOR: u32 = 53;
+/// No numbers: stops every tween on the actor where it stands.
+pub const ACT_STOP_TWEENS: u32 = 54;
+/// `a` = clip name; `n0` = speed.
+pub const ACT_PLAY_ANIMATION: u32 = 55;
+/// No numbers: stops the animation player, keeping the frame.
+pub const ACT_STOP_ANIMATION: u32 = 56;
+/// `n0` = speed. 1 is as authored, 0 freezes.
+pub const ACT_SET_ANIMATION_SPEED: u32 = 57;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

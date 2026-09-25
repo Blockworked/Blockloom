@@ -88,6 +88,32 @@ pub enum Act {
     Glide {
         seconds: f32,
         target: [f32; 3],
+        easing: &'static str,
+    },
+    TweenScale {
+        factor: f32,
+        seconds: f32,
+        easing: &'static str,
+    },
+    TweenRotation {
+        axis: usize,
+        degrees: f32,
+        seconds: f32,
+        easing: &'static str,
+    },
+    TweenColor {
+        color: String,
+        seconds: f32,
+        easing: &'static str,
+    },
+    StopTweens,
+    PlayAnimation {
+        clip: String,
+        speed: f32,
+    },
+    StopAnimation,
+    SetAnimationSpeed {
+        speed: f32,
     },
     Turn {
         axis: usize,
@@ -616,6 +642,10 @@ impl Runner {
                             || entry.detail == detail
                             || entry.detail.eq_ignore_ascii_case(other_name))
                 }
+                ("AnimationEnded", "AnimationEnded") => {
+                    entry.actor == &*template
+                        && (entry.detail.is_empty() || entry.detail.eq_ignore_ascii_case(detail))
+                }
                 _ => false,
             };
             if !matches {
@@ -625,7 +655,7 @@ impl Runner {
             // strand; a broadcast, or an interface element nobody owns,
             // starts every copy's.
             let running = match kind {
-                "Clicked" | "Collision" => vec![Rc::from(actor)],
+                "Clicked" | "Collision" | "AnimationEnded" => vec![Rc::from(actor)],
                 _ => self.actors.copies_of(entry.actor),
             };
             for id in running {
@@ -1093,6 +1123,23 @@ pub const ACT_CLEAR_ACTION_BINDINGS: u32 = 62;
 pub const ACT_SET_EXPOSURE: u32 = 67;
 /// `n0` = lumens.
 pub const ACT_SET_LIGHT_INTENSITY: u32 = 68;
+/// A position tween; `a` = easing name, numbers are seconds, x, y, and the
+/// value is z. The strand sleeps for exactly as long.
+pub const ACT_TWEEN_GLIDE_EASING: &str = "easing";
+/// `n0` = factor, `n1` = seconds; `a` = easing name.
+pub const ACT_TWEEN_SCALE: u32 = 69;
+/// `n0` = axis, `n1` = degrees, `n2` = seconds; `a` = easing name.
+pub const ACT_TWEEN_ROTATION: u32 = 70;
+/// `a` = `#RRGGBB`, `b` = easing name; `n0` = seconds.
+pub const ACT_TWEEN_COLOR: u32 = 71;
+/// No numbers: stops every tween on the actor where it stands.
+pub const ACT_STOP_TWEENS: u32 = 72;
+/// `a` = clip name; `n0` = speed.
+pub const ACT_PLAY_ANIMATION: u32 = 73;
+/// No numbers: stops the animation player, keeping the frame.
+pub const ACT_STOP_ANIMATION: u32 = 74;
+/// `n0` = speed. 1 is as authored, 0 freezes.
+pub const ACT_SET_ANIMATION_SPEED: u32 = 75;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1342,13 +1389,72 @@ impl Host for AbiHost {
                 [axis as f64, by as f64, 0.0],
                 &zero,
             ),
-            Act::Glide { seconds, target } => self.act_wire(
+            Act::Glide {
+                seconds,
+                target,
+                easing,
+            } => self.act_wire(
                 actor,
                 ACT_GLIDE,
-                "",
+                easing,
                 "",
                 [seconds as f64, target[0] as f64, target[1] as f64],
                 &Val::Num(target[2] as f64),
+            ),
+            Act::TweenScale {
+                factor,
+                seconds,
+                easing,
+            } => self.act_wire(
+                actor,
+                ACT_TWEEN_SCALE,
+                easing,
+                "",
+                [factor as f64, seconds as f64, 0.0],
+                &zero,
+            ),
+            Act::TweenRotation {
+                axis,
+                degrees,
+                seconds,
+                easing,
+            } => self.act_wire(
+                actor,
+                ACT_TWEEN_ROTATION,
+                easing,
+                "",
+                [axis as f64, degrees as f64, seconds as f64],
+                &zero,
+            ),
+            Act::TweenColor {
+                color,
+                seconds,
+                easing,
+            } => self.act_wire(
+                actor,
+                ACT_TWEEN_COLOR,
+                &color,
+                easing,
+                [seconds as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::StopTweens => self.act_wire(actor, ACT_STOP_TWEENS, "", "", [0.0; 3], &zero),
+            Act::PlayAnimation { clip, speed } => self.act_wire(
+                actor,
+                ACT_PLAY_ANIMATION,
+                &clip,
+                "",
+                [speed as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::StopAnimation => self.act_wire(actor, ACT_STOP_ANIMATION, "", "", [0.0; 3], &zero),
+            Act::SetAnimationSpeed { speed } => self.act_wire(
+                actor,
+                ACT_SET_ANIMATION_SPEED,
+                "",
+                "",
+                [speed as f64, 0.0, 0.0],
+                &zero,
             ),
             Act::Turn { axis, degrees } => self.act_wire(
                 actor,

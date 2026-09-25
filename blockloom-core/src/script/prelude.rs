@@ -760,6 +760,123 @@ impl Actor {
         );
     }
 
+    /// Tweens the size towards `factor` over `seconds`, eased like the
+    /// block. `easing` names a [`TweenEasing`]: "Linear", "EaseIn",
+    /// "EaseOut", "EaseInOut", "Bounce" or "Elastic".
+    pub fn tween_scale(&self, factor: f32, seconds: f32, easing: &str) {
+        self.act(
+            ACT_TWEEN_SCALE,
+            Str::EMPTY,
+            Str::borrow(easing),
+            Str::EMPTY,
+            factor as f64,
+            seconds as f64,
+            0.0,
+        );
+    }
+
+    /// Tweens one axis towards `degrees` over `seconds`, eased.
+    pub fn tween_rotation(&self, axis: Axis, degrees: f32, seconds: f32, easing: &str) {
+        self.act(
+            ACT_TWEEN_ROTATION,
+            Str::EMPTY,
+            Str::borrow(easing),
+            Str::EMPTY,
+            axis.index(),
+            degrees as f64,
+            seconds as f64,
+        );
+    }
+
+    /// Tweens the tint towards a `#RRGGBB` color over `seconds`, eased.
+    /// No-op on an image actor, like `set color`.
+    pub fn tween_color(&self, color: &str, seconds: f32, easing: &str) {
+        self.act(
+            ACT_TWEEN_COLOR,
+            Str::borrow(color),
+            Str::borrow(easing),
+            Str::EMPTY,
+            seconds as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Stops every tween on this actor where it stands: glides included.
+    pub fn stop_tweens(&self) {
+        self.act(
+            ACT_STOP_TWEENS,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Whether any tween is still moving this actor.
+    pub fn is_tweening(&self) -> bool {
+        self.number(READ_IS_TWEENING, Str::EMPTY, Str::EMPTY, 0.0)
+            .is_some_and(|tweening| tweening != 0.0)
+    }
+
+    /// Plays the named flipbook clip at `speed` (1 is as authored).
+    pub fn play_animation(&self, clip: &str, speed: f32) {
+        self.act(
+            ACT_PLAY_ANIMATION,
+            Str::borrow(clip),
+            Str::EMPTY,
+            Str::EMPTY,
+            speed as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Stops the animation player, keeping the frame it shows.
+    pub fn stop_animation(&self) {
+        self.act(
+            ACT_STOP_ANIMATION,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Retunes the playing clip's speed. 1 is as authored, 0 freezes.
+    pub fn set_animation_speed(&self, speed: f32) {
+        self.act(
+            ACT_SET_ANIMATION_SPEED,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            speed as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// The clip the animation player is holding, or `None` for none.
+    pub fn current_clip(&self) -> Option<String> {
+        self.text(TEXT_CURRENT_CLIP, Str::EMPTY, Str::EMPTY)
+    }
+
+    /// The 1-based flipbook frame showing right now. Zero with no clip.
+    pub fn current_frame(&self) -> usize {
+        self.number(READ_ANIM_FRAME, Str::EMPTY, Str::EMPTY, 0.0)
+            .unwrap_or(0.0) as usize
+    }
+
+    /// Whether the player's clip is still advancing.
+    pub fn is_animation_playing(&self) -> bool {
+        self.number(READ_ANIM_PLAYING, Str::EMPTY, Str::EMPTY, 0.0)
+            .is_some_and(|playing| playing != 0.0)
+    }
+
     /// A one-shot push. Only a dynamic body responds.
     pub fn push(&self, x: f32, y: f32, z: f32) {
         self.act(

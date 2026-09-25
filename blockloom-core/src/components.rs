@@ -16,6 +16,7 @@
 //! inspector all read and write by name.
 
 use crate::ai::BrainSpec;
+use crate::animation::AnimationSpec;
 use crate::material::{ParticleSpec, SurfaceMaterial, TrailSpec};
 use crate::scene::{Physics, Placement, Visual};
 use crate::value::Evaluated;
@@ -24,8 +25,20 @@ use serde::{Deserialize, Serialize};
 /// The components every project knows about by name. A custom component
 /// can't take one of these names.
 pub const BUILT_IN_NAMES: &[&str] = &[
-    "Place", "Look", "Render", "Body", "Joint", "Brain", "Camera", "Script", "Parent", "Material",
-    "Emitter", "Trail", "Light",
+    "Place",
+    "Look",
+    "Render",
+    "Body",
+    "Joint",
+    "Brain",
+    "Camera",
+    "Script",
+    "Parent",
+    "Material",
+    "Emitter",
+    "Trail",
+    "Light",
+    "Animation",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -207,6 +220,10 @@ pub enum ActorComponent {
     Trail { trail: TrailSpec },
     /// A point or spot light riding the actor.
     Light { light: LightSpec },
+    /// Sprite flipbooks and the named states over them. The runtime's player
+    /// swaps the displayed frame; `play clip` changes state and `when
+    /// animation ends` fires the transition.
+    Animation { animation: AnimationSpec },
 }
 
 impl ActorComponent {
@@ -226,6 +243,7 @@ impl ActorComponent {
             ActorComponent::Emitter { .. } => "Emitter",
             ActorComponent::Trail { .. } => "Trail",
             ActorComponent::Light { .. } => "Light",
+            ActorComponent::Animation { .. } => "Animation",
             ActorComponent::Custom { name, .. } => name,
         }
     }
@@ -511,6 +529,14 @@ impl Components {
     pub fn light(&self) -> Option<&LightSpec> {
         match self.get("Light") {
             Some(ActorComponent::Light { light }) => Some(light),
+            _ => None,
+        }
+    }
+
+    /// The authored flipbooks and states, if the actor carries them.
+    pub fn animation(&self) -> Option<&AnimationSpec> {
+        match self.get("Animation") {
+            Some(ActorComponent::Animation { animation }) => Some(animation),
             _ => None,
         }
     }

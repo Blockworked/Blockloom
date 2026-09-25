@@ -43,12 +43,28 @@ impl Backend {
     pub fn dispatch(&self, cmd: &str, args: Value) -> Result<Value, String> {
         let state = &self.state;
         let app = &self.app;
+        // Heartbeat first, then live reload: an idle backend follows the
+        // folder's saves before running whatever was actually asked.
+        commands::note_activity(state);
+        commands::poll_live_reload(self);
         match cmd {
             "get_state" => to_json(commands::get_state(state)?),
             "block_vocabulary" => to_json(commands::block_vocabulary()?),
+            "sync_status" => to_json(commands::sync_status(state)?),
+            "reload_project" => to_json(commands::reload_project(
+                state,
+                app,
+                arg(&args, "take_theirs").unwrap_or_default(),
+            )?),
+            "take_over_lock" => to_json(commands::take_over_lock(state, app)?),
 
             // ── Projects ───────────────────────────────────────────────────
-            "open_project" => to_json(commands::open_project(state, app, arg(&args, "path")?)?),
+            "open_project" => to_json(commands::open_project(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg(&args, "force").unwrap_or_default(),
+            )?),
             "create_project" => to_json(commands::create_project(
                 state,
                 app,

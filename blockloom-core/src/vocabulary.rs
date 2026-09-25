@@ -80,6 +80,14 @@ fn bodies_empty(s: &[Body]) -> bool {
 const AXES: &[&str] = &["X", "Y", "Z"];
 const BODY_KINDS: &[&str] = &["None", "Static", "Dynamic", "Kinematic"];
 const CAMERA_VIEWS: &[&str] = &["Follow", "FirstPerson", "ThirdPerson"];
+const TWEEN_EASINGS: &[&str] = &[
+    "Linear",
+    "EaseIn",
+    "EaseOut",
+    "EaseInOut",
+    "Bounce",
+    "Elastic",
+];
 const SOUND_BUSES: &[&str] = &["Master", "Music", "Sfx"];
 const UI_ANCHORS: &[&str] = &[
     "TopLeft",
@@ -284,6 +292,18 @@ pub const BLOCKS: &[BlockSpec] = &[
         bools: NO_BOOLS,
         bodies: NO_BODIES,
     },
+    BlockSpec {
+        r#type: "WhenAnimationEnds",
+        category: "Events",
+        purpose: "Runs when the named clip finishes a Once pass. Empty matches any clip ending.",
+        header: true,
+        three_d: false,
+        slots: NO_SLOTS,
+        dropdowns: NO_DROPDOWNS,
+        strings: &["clip"],
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
     // ── Motion ─────────────────────────────────────────────────────────────
     BlockSpec {
         r#type: "Move",
@@ -384,7 +404,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "Glide",
         category: "Motion",
-        purpose: "Slides to a position over seconds, one step per rendered frame.",
+        purpose: "Slides to a position over seconds, eased. Linear glides at one speed; the rest ease in, out, or bounce.",
         header: false,
         three_d: false,
         slots: &[
@@ -409,6 +429,156 @@ pub const BLOCKS: &[BlockSpec] = &[
                 value: "Any",
             },
         ],
+        dropdowns: &[Dropdown {
+            field: "easing",
+            options: TWEEN_EASINGS,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "TweenScale",
+        category: "Motion",
+        purpose: "Tweens the size towards factor over seconds, eased.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "factor",
+                id: "TweenFactor",
+                value: "Any",
+            },
+            Slot {
+                field: "seconds",
+                id: "TweenSeconds",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "easing",
+            options: TWEEN_EASINGS,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "TweenRotation",
+        category: "Motion",
+        purpose: "Tweens one axis towards degrees over seconds, eased.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "degrees",
+                id: "TweenDegrees",
+                value: "Any",
+            },
+            Slot {
+                field: "seconds",
+                id: "TweenSeconds",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[
+            Dropdown {
+                field: "axis",
+                options: AXES,
+            },
+            Dropdown {
+                field: "easing",
+                options: TWEEN_EASINGS,
+            },
+        ],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "TweenColor",
+        category: "Motion",
+        purpose: "Tweens the tint towards a #RRGGBB color over seconds, eased. No-op on an image actor.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "color",
+                id: "TweenColor",
+                value: "Any",
+            },
+            Slot {
+                field: "seconds",
+                id: "TweenSeconds",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "easing",
+            options: TWEEN_EASINGS,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "StopTweens",
+        category: "Motion",
+        purpose: "Stops every tween on this actor where it stands: glides included.",
+        header: false,
+        three_d: false,
+        slots: NO_SLOTS,
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "PlayAnimation",
+        category: "Looks",
+        purpose: "Plays the named flipbook clip at speed (1 is as authored). Unknown names are an error.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "clip",
+                id: "AnimClip",
+                value: "Any",
+            },
+            Slot {
+                field: "speed",
+                id: "AnimSpeed",
+                value: "Any",
+            },
+        ],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "StopAnimation",
+        category: "Looks",
+        purpose: "Stops the animation player, keeping the frame it shows.",
+        header: false,
+        three_d: false,
+        slots: NO_SLOTS,
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetAnimationSpeed",
+        category: "Looks",
+        purpose: "Retunes the playing clip's speed. 1 is as authored, 0 freezes.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "speed",
+            id: "AnimSpeed",
+            value: "Any",
+        }],
         dropdowns: NO_DROPDOWNS,
         strings: NO_STRINGS,
         bools: NO_BOOLS,

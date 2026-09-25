@@ -282,6 +282,42 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "IsTweening",
+        op: "IsTweening",
+        arity: 0,
+        default_args: Vec::new,
+        // Whether any tween (a glide or a `tween ...` block) is still moving
+        // me. What a strand waits on before starting the next hop.
+        eval: |_| Ok(Evaluated::Bool(me()?.tweening)),
+    },
+    ExtOperator {
+        kind: "CurrentClip",
+        op: "CurrentClip",
+        arity: 0,
+        default_args: Vec::new,
+        // The clip the animation player is holding, or empty for none. The
+        // state name in a clip-per-state project, which is what a state
+        // machine transition switches on.
+        eval: |_| Ok(Evaluated::Text(me()?.anim_clip)),
+    },
+    ExtOperator {
+        kind: "CurrentFrame",
+        op: "CurrentFrame",
+        arity: 0,
+        default_args: Vec::new,
+        // The 1-based frame showing right now. Zero with no clip.
+        eval: |_| Ok(Evaluated::Number(me()?.anim_frame as f64)),
+    },
+    ExtOperator {
+        kind: "AnimationPlaying",
+        op: "AnimationPlaying",
+        arity: 0,
+        default_args: Vec::new,
+        // Whether the player's clip is still advancing. A `Once` clip at
+        // its end reads as false, which is when `when animation ends` fires.
+        eval: |_| Ok(Evaluated::Bool(me()?.anim_playing)),
+    },
+    ExtOperator {
         kind: "Timer",
         op: "Timer",
         arity: 0,

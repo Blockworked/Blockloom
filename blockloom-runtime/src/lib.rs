@@ -176,7 +176,12 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     dim2::sync_joints,
                     fx::apply_fx_effects,
                     sound::apply_sound_effects,
-                    world::step_glides,
+                    (
+                        world::step_glides,
+                        world::step_tweens,
+                        world::step_animations,
+                    )
+                        .chain(),
                     world::apply_input_effects,
                     world::apply_rumble,
                     world::apply_cursor_lock,
@@ -298,7 +303,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         dim3::sync_joints,
                         fx::apply_fx_effects,
                         sound::apply_sound_effects,
-                        world::step_glides,
+                        (world::step_glides, world::step_tweens, world::step_animations).chain(),
                         world::apply_input_effects,
                         world::apply_rumble,
                         world::apply_cursor_lock,

@@ -67,12 +67,19 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "open-project",
         cmd: "open_project",
         aliases: &["open_project"],
-        summary: "Open the project in a folder, replacing whatever was open.",
-        args: &[ArgSpec {
-            name: "path",
-            ty: "folder path",
-            required: true,
-        }],
+        summary: "Open the project in a folder, replacing whatever was open. Attaches to a live owner's copy unless force takes it over.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "folder path",
+                required: true,
+            },
+            ArgSpec {
+                name: "force",
+                ty: "bool",
+                required: false,
+            },
+        ],
     },
     CommandSpec {
         name: "create-project",
@@ -153,6 +160,31 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         cmd: "save_project",
         aliases: &["save_project"],
         summary: "Write the open project to disk now.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "sync-status",
+        cmd: "sync_status",
+        aliases: &["sync_status", "sync"],
+        summary: "Where the open project stands against its folder: revisions, staleness, lock owner, attach mode.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "reload-project",
+        cmd: "reload_project",
+        aliases: &["reload_project", "reload"],
+        summary: "Load the open project back off disk. Refuses when unsaved in-memory edits would be lost, unless take_theirs takes the folder's side.",
+        args: &[ArgSpec {
+            name: "take_theirs",
+            ty: "bool",
+            required: false,
+        }],
+    },
+    CommandSpec {
+        name: "take-over-lock",
+        cmd: "take_over_lock",
+        aliases: &["take_over_lock", "take-over"],
+        summary: "Take the open folder's owner lock explicitly, so headless edits stop deferring to whoever held it.",
         args: &[],
     },
     CommandSpec {
@@ -2048,6 +2080,72 @@ pub fn run(backend: &Backend, line: &str, with_state: bool) -> Value {
     }
 }
 
+/// Runs one shell line against an attached editor and returns the same JSON
+/// response object as [`run`]. Blank lines, comments and `help` are answered
+/// locally; every real command goes through `forward`, which should send
+/// `(cmd, args)` down the attach socket and answer the server's whole
+/// response object.
+pub fn run_forwarded(
+    forward: &mut dyn FnMut(&str, Value) -> Result<Value, String>,
+    line: &str,
+    with_state: bool,
+) -> Value {
+    let state = |forward: &mut dyn FnMut(&str, Value) -> Result<Value, String>| {
+        if !with_state {
+            return Value::Null;
+        }
+        match forward("get_state", json!({})) {
+            Ok(response) => response.get("state").cloned().unwrap_or(Value::Null),
+            Err(_) => Value::Null,
+        }
+    };
+    let action = match parse(line) {
+        Ok(Some(action)) => action,
+        Ok(None) => {
+            return json!({"ok": true, "result": null, "error": null, "state": state(forward)});
+        }
+        Err(error) => {
+            return json!({"ok": false, "result": null, "error": error, "state": state(forward)});
+        }
+    };
+    match action {
+        Action::Exit => {
+            json!({"ok": true, "result": null, "error": null, "state": Value::Null})
+        }
+        Action::Help(topic) => {
+            let result = match topic {
+                None => Value::String(help()),
+                Some(topic) => match help_for(&topic) {
+                    Ok(text) => Value::String(text),
+                    Err(error) => {
+                        return json!({"ok": false, "result": null, "error": error, "state":
+                            state(forward)});
+                    }
+                },
+            };
+            json!({"ok": true, "result": result, "error": null, "state": state(forward)})
+        }
+        Action::Run { spec, args } => match forward(spec.cmd, Value::Object(args)) {
+            Ok(response) => {
+                let state = if with_state {
+                    response.get("state").cloned().unwrap_or(Value::Null)
+                } else {
+                    Value::Null
+                };
+                json!({
+                    "ok": response.get("ok").cloned().unwrap_or(Value::Bool(false)),
+                    "result": response.get("result").cloned().unwrap_or(Value::Null),
+                    "error": response.get("error").cloned().unwrap_or(Value::Null),
+                    "state": state,
+                })
+            }
+            Err(error) => {
+                json!({"ok": false, "result": null, "error": error, "state": state(forward)})
+            }
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2135,6 +2233,43 @@ mod tests {
     #[test]
     fn missing_equals_is_an_error() {
         assert!(parse_args("just a token").is_err());
+    }
+
+    #[test]
+    fn forwarded_commands_keep_the_response_shape() {
+        let mut forward = |cmd: &str, _args: Value| -> Result<Value, String> {
+            assert_eq!(cmd, "add_actor");
+            Ok(json!({
+                "ok": true,
+                "result": "a1",
+                "error": null,
+                "state": {"project": null},
+            }))
+        };
+        let response = run_forwarded(&mut forward, "add-actor shape=Circle", true);
+        assert_eq!(response["ok"], Value::Bool(true));
+        assert_eq!(response["result"], "a1");
+        assert_eq!(response["state"]["project"], Value::Null);
+    }
+
+    #[test]
+    fn forwarded_help_is_answered_locally() {
+        let mut forward = |_: &str, _: Value| -> Result<Value, String> {
+            panic!("help must not reach the editor");
+        };
+        let response = run_forwarded(&mut forward, "help sync-status", false);
+        assert_eq!(response["ok"], Value::Bool(true));
+        assert!(response["result"].as_str().unwrap().contains("sync-status"));
+    }
+
+    #[test]
+    fn a_dead_attach_server_errors_like_a_failed_command() {
+        let mut forward = |_: &str, _: Value| -> Result<Value, String> {
+            Err("The editor closed the attach connection".to_string())
+        };
+        let response = run_forwarded(&mut forward, "get-state", false);
+        assert_eq!(response["ok"], Value::Bool(false));
+        assert!(response["error"].as_str().unwrap().contains("attach"));
     }
 
     #[test]

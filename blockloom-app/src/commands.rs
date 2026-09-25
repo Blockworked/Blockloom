@@ -5,8 +5,8 @@
 
 use crate::runtime::RuntimeHandle;
 use crate::state::{
-    AppState, EditSession, InstrPath, LogLine, OpenProject, SharedState, StateDto, ValueLocation,
-    state_dto,
+    AppState, EditSession, InstrPath, LogLine, OpenProject, SharedState, StateDto, SyncDto,
+    ValueLocation, state_dto, sync_dto,
 };
 use crate::{AppHandle, Backend};
 use blockloom_core::assets;
@@ -25,12 +25,15 @@ use blockloom_core::project::{self, Actor, Project};
 use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, PostProcess, Visual};
 use blockloom_core::script;
 use blockloom_core::sound::SoundMixer;
+use blockloom_core::sync;
+use blockloom_core::sync::LockInfo;
 use blockloom_core::value::{Evaluated, Value};
 use blockstitch_core::editor::{ValueEdit, prune_value_buffers};
 use blockstitch_core::value::operator_kind;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::MutexGuard;
+use std::sync::atomic::Ordering;
 
 type Guard<'a> = MutexGuard<'a, AppState>;
 
@@ -56,14 +59,89 @@ fn push_undo_for(s: &mut AppState, session: Option<EditSession>) {
     }
 }
 
-/// Writes the open project to its folder. Failures are logged, not surfaced:
-/// an unwritable folder shouldn't stop the editor working.
+/// Writes the open project to its folder, tracking the new revision. Failures
+/// are logged, not surfaced: an unwritable folder shouldn't stop the editor
+/// working. A failed save marks the copy dirty, which is what makes the next
+/// reload a conflict with a choice instead of a quiet overwrite.
 fn auto_save(s: &AppState) {
-    if let Some(open) = &s.open
-        && let Err(e) = project::save_project(&open.project, &open.dir)
-    {
-        tracing::warn!("Couldn't save the project: {e}");
+    if let Some(open) = &s.open {
+        match project::save_project(&open.project, &open.dir) {
+            Ok(revision) => {
+                open.revision.store(revision, Ordering::SeqCst);
+                open.dirty.store(false, Ordering::SeqCst);
+                open.touched.store(sync::now_secs(), Ordering::SeqCst);
+                sync::refresh_heartbeat(&open.dir, &s.session_id, "");
+            }
+            Err(e) => {
+                tracing::warn!("Couldn't save the project: {e}");
+                open.dirty.store(true, Ordering::SeqCst);
+            }
+        }
     }
+}
+
+/// Touches our owner lock's heartbeat, throttled so chatty commands (a key
+/// press, a forwarded mouse move) don't rewrite the file each time. Runs on
+/// every dispatch, so an idle-but-alive backend keeps looking alive.
+pub(crate) fn note_activity(state: &SharedState) {
+    let Ok(s) = state.lock() else {
+        return;
+    };
+    let Some(open) = &s.open else {
+        return;
+    };
+    if !open.owns_lock {
+        return;
+    }
+    let now = sync::now_secs();
+    if now.saturating_sub(open.touched.load(Ordering::SeqCst)) < sync::HEARTBEAT_TOUCH_EVERY_SECS {
+        return;
+    }
+    if sync::refresh_heartbeat(&open.dir, &s.session_id, "") {
+        open.touched.store(now, Ordering::SeqCst);
+    }
+}
+
+/// Reloads the open project straight off disk when another side saved since
+/// this backend last wrote or loaded. Every edit already hits disk on
+/// landing, so an idle backend is never dirty and just follows along; a
+/// dirty one keeps its unsaved work and reports the conflict instead. The
+/// reload checkpoints first, so it stays undoable, and the undo history
+/// itself is never merged - each side keeps its own.
+pub(crate) fn poll_live_reload(backend: &Backend) {
+    let mut s = match backend.state.lock() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let (dir, loaded, dirty) = match &s.open {
+        Some(open) => (
+            open.dir.clone(),
+            open.loaded_revision(),
+            open.dirty.load(Ordering::SeqCst),
+        ),
+        None => return,
+    };
+    if dirty {
+        return;
+    }
+    let disk = sync::read_revision(&dir);
+    if disk <= loaded {
+        return;
+    }
+    let project = match project::read_project_dir(&dir) {
+        Ok(project) => project,
+        Err(e) => {
+            tracing::warn!("Couldn't reload the project: {e}");
+            return;
+        }
+    };
+    push_undo(&mut s);
+    if let Some(open) = s.open.as_mut() {
+        open.project = project;
+        open.revision.store(disk, Ordering::SeqCst);
+    }
+    sync_runtime(&mut s);
+    emit(&backend.app, &s);
 }
 
 /// Regenerates the analysis project rust-analyzer opens: the root `Cargo.toml`
@@ -162,25 +240,84 @@ pub(crate) fn block_vocabulary() -> Result<serde_json::Value, String> {
 
 // ─── Projects ──────────────────────────────────────────────────────────────
 
+/// What opening a folder decided about sharing it.
+#[derive(serde::Serialize)]
+pub(crate) struct OpenReport {
+    /// Opened while a live owner held the folder: this copy shares the files
+    /// and reloads their saves. Only one copy that way, no merge problem.
+    pub(crate) attached: bool,
+    /// Took the owner lock off a live backend explicitly (`force`).
+    pub(crate) took_over: bool,
+    /// Who owns the folder, when someone else got there first.
+    pub(crate) owner: Option<LockInfo>,
+    /// Why this open deserves a second thought, if it does.
+    pub(crate) warning: Option<String>,
+}
+
+/// Our claim on a folder we are about to own.
+fn owner_lock(session: &str) -> LockInfo {
+    LockInfo {
+        pid: sync::own_pid(),
+        session: session.to_string(),
+        heartbeat: sync::now_secs(),
+        app: "blockloom".to_string(),
+    }
+}
+
 /// Opens the project in `dir`, replacing whatever was open. The Dashboard's
-/// cards and its "Open a folder" both land here.
+/// cards and its "Open a folder" both land here. When a live backend owns the
+/// folder this one attaches instead of forking a silent second copy - unless
+/// `force` takes the lock off it explicitly, never silently.
 pub(crate) fn open_project(
     state: &SharedState,
     app: &AppHandle,
     path: String,
-) -> Result<(), String> {
+    force: bool,
+) -> Result<OpenReport, String> {
     let dir = std::path::PathBuf::from(path);
     let project = project::read_project_dir(&dir)?;
+    let disk_revision = sync::read_revision(&dir);
     let mut s = lock(state)?;
+    let session = s.session_id.clone();
     close_open_project(&mut s, true);
     library::remember(&dir);
-    s.open = Some(OpenProject { project, dir });
+    let owner = sync::live_owner(&dir, &session);
+    let (owns_lock, attached, took_over, warning) = match &owner {
+        Some(live) if !force => (
+            false,
+            true,
+            false,
+            Some(format!(
+                "That folder is open in another Blockloom (session {}), so this copy shares its files and follows its saves. Pass force=true to take it over, or drive the editor directly with blockloom-shell --attach.",
+                live.session
+            )),
+        ),
+        other => {
+            let held = sync::write_lock(&dir, &owner_lock(&session)).is_ok();
+            if !held {
+                tracing::warn!("Couldn't write the owner lock for {}", dir.display());
+            }
+            (held, false, other.is_some(), None)
+        }
+    };
+    s.open = Some(OpenProject::new(
+        project,
+        dir.clone(),
+        disk_revision,
+        owns_lock,
+        attached,
+    ));
     s.library = library::list();
     if let Some(dir) = s.project_dir().map(Path::to_path_buf) {
         sync_ide(&dir);
     }
     emit(app, &s);
-    Ok(())
+    Ok(OpenReport {
+        attached,
+        took_over,
+        owner,
+        warning,
+    })
 }
 
 /// Makes a project folder under `location` - named after the project, since
@@ -205,9 +342,12 @@ pub(crate) fn create_project(
     let dir = project::create_project(&project, &parent)?;
 
     let mut s = lock(state)?;
+    let session = s.session_id.clone();
     close_open_project(&mut s, true);
     library::remember(&dir);
-    s.open = Some(OpenProject { project, dir });
+    let revision = sync::read_revision(&dir);
+    let owns_lock = sync::write_lock(&dir, &owner_lock(&session)).is_ok();
+    s.open = Some(OpenProject::new(project, dir, revision, owns_lock, false));
     s.library = library::list();
     if let Some(dir) = s.project_dir().map(Path::to_path_buf) {
         sync_ide(&dir);
@@ -280,8 +420,15 @@ pub(crate) fn set_project_name(
     open.project.name = name.clone();
     let from = open.dir.clone();
     // Save first, so the rename moves a folder that already says the new name.
-    if let Err(e) = project::save_project(&open.project, &from) {
-        tracing::warn!("Couldn't save the project: {e}");
+    match project::save_project(&open.project, &from) {
+        Ok(revision) => {
+            open.revision.store(revision, Ordering::SeqCst);
+            open.dirty.store(false, Ordering::SeqCst);
+        }
+        Err(e) => {
+            tracing::warn!("Couldn't save the project: {e}");
+            open.dirty.store(true, Ordering::SeqCst);
+        }
     }
     match project::rename_project_dir(&from, &name) {
         Ok(to) => {
@@ -334,13 +481,18 @@ pub(crate) fn set_project_icon(
     Ok(())
 }
 
-pub(crate) fn save_open_project(state: &SharedState, app: &AppHandle) -> Result<(), String> {
+pub(crate) fn save_open_project(state: &SharedState, app: &AppHandle) -> Result<u64, String> {
     let s = lock(state)?;
     if let Some(open) = &s.open {
-        project::save_project(&open.project, &open.dir)?;
+        let revision = project::save_project(&open.project, &open.dir)?;
+        open.revision.store(revision, Ordering::SeqCst);
+        open.dirty.store(false, Ordering::SeqCst);
     }
     emit(app, &s);
-    Ok(())
+    Ok(s.open
+        .as_ref()
+        .map(|open| open.loaded_revision())
+        .unwrap_or(0))
 }
 
 /// Suggested file name for the export dialog.
@@ -374,9 +526,12 @@ pub(crate) fn import_project(
     let dir = project::create_project(&project, &project::default_projects_dir())?;
 
     let mut s = lock(state)?;
+    let session = s.session_id.clone();
     close_open_project(&mut s, true);
     library::remember(&dir);
-    s.open = Some(OpenProject { project, dir });
+    let revision = sync::read_revision(&dir);
+    let owns_lock = sync::write_lock(&dir, &owner_lock(&session)).is_ok();
+    s.open = Some(OpenProject::new(project, dir, revision, owns_lock, false));
     s.library = library::list();
     if let Some(dir) = s.project_dir().map(Path::to_path_buf) {
         sync_ide(&dir);
@@ -385,12 +540,95 @@ pub(crate) fn import_project(
     Ok(())
 }
 
+/// What reloading the folder decided.
+#[derive(serde::Serialize)]
+pub(crate) struct ReloadReport {
+    pub(crate) reloaded: bool,
+    pub(crate) revision: u64,
+}
+
+/// Where the open project stands against its folder: revisions, staleness,
+/// lock owner and attach mode. What agents poll instead of the document.
+pub(crate) fn sync_status(state: &SharedState) -> Result<SyncDto, String> {
+    let s = lock(state)?;
+    Ok(sync_dto(&s))
+}
+
+/// Loads the open project back off disk. Idle backends reload on their own
+/// before every command; this is the explicit form, and the conflict prompt:
+/// when unsaved in-memory edits would be lost it refuses unless `take_theirs`
+/// says to take the folder's side. Saving first keeps mine instead. Undo
+/// history stays per side and is never merged - the reload checkpoints, so it
+/// can itself be undone.
+pub(crate) fn reload_project(
+    state: &SharedState,
+    app: &AppHandle,
+    take_theirs: bool,
+) -> Result<ReloadReport, String> {
+    let mut s = lock(state)?;
+    let dir = project_dir(&s)?;
+    let loaded = s
+        .open
+        .as_ref()
+        .map(|open| open.loaded_revision())
+        .unwrap_or(0);
+    let dirty = s
+        .open
+        .as_ref()
+        .is_some_and(|open| open.dirty.load(Ordering::SeqCst));
+    let disk = sync::read_revision(&dir);
+    if dirty && !take_theirs {
+        return Err("This copy holds unsaved edits a reload would throw away. Run reload-project take_theirs=true to take the folder's side, or save-project to keep mine.".to_string());
+    }
+    if disk == loaded && !dirty {
+        return Ok(ReloadReport {
+            reloaded: false,
+            revision: loaded,
+        });
+    }
+    let project = project::read_project_dir(&dir)?;
+    push_undo(&mut s);
+    if let Some(open) = s.open.as_mut() {
+        open.project = project;
+        open.revision.store(disk, Ordering::SeqCst);
+        open.dirty.store(false, Ordering::SeqCst);
+    }
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(ReloadReport {
+        reloaded: true,
+        revision: disk,
+    })
+}
+
+/// Takes the open folder's owner lock explicitly, so headless edits stop
+/// deferring to whoever held it. The loud form of what `open_project`
+/// refuses to do silently.
+pub(crate) fn take_over_lock(state: &SharedState, app: &AppHandle) -> Result<LockInfo, String> {
+    let mut s = lock(state)?;
+    let dir = project_dir(&s)?;
+    let info = owner_lock(&s.session_id);
+    sync::write_lock(&dir, &info)?;
+    if let Some(open) = s.open.as_mut() {
+        open.owns_lock = true;
+        open.attached = false;
+    }
+    emit(app, &s);
+    Ok(info)
+}
+
 /// Lets go of whatever is open, leaving the editor on the Dashboard. The game
 /// window and the run log belong to the project, so they go too. `save` is
-/// false only when the project is on its way to being deleted.
+/// false only when the project is on its way to being deleted. Releases our
+/// owner lock, but only when it is still ours.
 fn close_open_project(s: &mut AppState, save: bool) {
     if save {
         auto_save(s);
+    }
+    if let Some(open) = &s.open
+        && open.owns_lock
+    {
+        sync::release_lock(&open.dir, &s.session_id);
     }
     s.open = None;
     s.selected_actor = None;

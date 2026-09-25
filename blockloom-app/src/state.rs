@@ -2,8 +2,10 @@
 
 use blockloom_core::library::ProjectEntry;
 use blockloom_core::project::Project;
+use blockloom_core::sync::LockInfo;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub(crate) use blockstitch_core::editor::{
@@ -22,11 +24,52 @@ const LOG_LIMIT: usize = 200;
 pub(crate) struct OpenProject {
     pub(crate) project: Project,
     pub(crate) dir: PathBuf,
+    /// Revision this backend last wrote or loaded. The folder's counter moves
+    /// on every save from any side, so a smaller number here than on disk
+    /// means another backend saved since - time to reload.
+    pub(crate) revision: AtomicU64,
+    /// True when in-memory edits never reached disk because a save failed.
+    /// Set under a shared borrow too, since every edit auto-saves.
+    pub(crate) dirty: AtomicBool,
+    /// Whether this backend holds the folder's owner lock.
+    pub(crate) owns_lock: bool,
+    /// Opened while a live owner held the folder: this copy shares the files
+    /// and reloads their saves, rather than forking a silent second truth.
+    pub(crate) attached: bool,
+    /// Last heartbeat write, so the lock file is touched at most every few
+    /// seconds no matter how chatty the command stream is.
+    pub(crate) touched: AtomicU64,
+}
+
+impl OpenProject {
+    pub(crate) fn new(
+        project: Project,
+        dir: PathBuf,
+        revision: u64,
+        owns_lock: bool,
+        attached: bool,
+    ) -> Self {
+        Self {
+            project,
+            dir,
+            revision: AtomicU64::new(revision),
+            dirty: AtomicBool::new(false),
+            owns_lock,
+            attached,
+            touched: AtomicU64::new(0),
+        }
+    }
+
+    pub(crate) fn loaded_revision(&self) -> u64 {
+        self.revision.load(Ordering::SeqCst)
+    }
 }
 
 pub(crate) struct AppState {
     /// What the Dashboard lists, most recently opened first.
     pub(crate) library: Vec<ProjectEntry>,
+    /// This backend instance, naming its owner lock and heartbeats.
+    pub(crate) session_id: String,
     /// The open project, or `None` while the Dashboard is showing.
     pub(crate) open: Option<OpenProject>,
     /// Actor whose canvas the editor is showing.
@@ -149,6 +192,31 @@ pub(crate) struct StateDto {
     pub(crate) runtime_embedded: bool,
     /// The Game view should hold the pointer while it has the keyboard.
     pub(crate) pointer_locked: bool,
+    /// How this copy relates to the project folder on disk, for agents and
+    /// the editor to tell a stale copy from a live one.
+    pub(crate) sync: SyncDto,
+}
+
+/// Where the open project stands against its folder: revisions, lock owner,
+/// and whether this backend attached to someone else's folder.
+#[derive(Serialize, Clone)]
+pub(crate) struct SyncDto {
+    /// Revision this backend last wrote or loaded.
+    pub(crate) revision: u64,
+    /// Revision the folder is at now.
+    pub(crate) disk_revision: u64,
+    /// True when another side saved since this backend last wrote or loaded.
+    pub(crate) stale: bool,
+    /// True when in-memory edits never reached disk because a save failed.
+    pub(crate) dirty: bool,
+    /// Opened while a live owner held the folder; shares the files.
+    pub(crate) attached: bool,
+    /// Holds the folder's owner lock.
+    pub(crate) owns_lock: bool,
+    /// This backend instance.
+    pub(crate) session: String,
+    /// Who owns the folder now, if anyone's lock is on it.
+    pub(crate) owner: Option<LockInfo>,
 }
 
 /// One Dashboard card.
@@ -216,5 +284,36 @@ pub(crate) fn state_dto(s: &AppState) -> StateDto {
         game_size: blockloom_protocol::GAME_SIZE,
         runtime_embedded: s.embedded.is_some(),
         pointer_locked: s.pointer_locked && s.running && s.runtime.is_some(),
+        sync: sync_dto(s),
+    }
+}
+
+/// The open folder's sync standing: this copy's revision against the disk's,
+// plus who owns the folder. Two tiny file reads; cheap enough to ride every
+// snapshot so agents can poll `sync.disk_revision` instead of the document.
+pub(crate) fn sync_dto(s: &AppState) -> SyncDto {
+    let Some(open) = &s.open else {
+        return SyncDto {
+            revision: 0,
+            disk_revision: 0,
+            stale: false,
+            dirty: false,
+            attached: false,
+            owns_lock: false,
+            session: s.session_id.clone(),
+            owner: None,
+        };
+    };
+    let revision = open.loaded_revision();
+    let disk_revision = blockloom_core::sync::read_revision(&open.dir);
+    SyncDto {
+        revision,
+        disk_revision,
+        stale: disk_revision > revision,
+        dirty: open.dirty.load(Ordering::SeqCst),
+        attached: open.attached,
+        owns_lock: open.owns_lock,
+        session: s.session_id.clone(),
+        owner: blockloom_core::sync::read_lock(&open.dir),
     }
 }

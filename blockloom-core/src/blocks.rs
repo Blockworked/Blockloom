@@ -6,6 +6,7 @@
 //! (an axis, a key name, a body kind) is a fixed in-place dropdown the
 //! frontend rewrites with `edit_instruction`.
 
+use crate::animation::TweenEasing;
 use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
 use crate::sound::SoundBus;
@@ -77,6 +78,12 @@ pub enum InstructionKind {
     },
     /// Runs on a fresh clone, in the clone itself, the moment it is made.
     WhenCloned,
+    /// Runs when the named clip finishes a `Once` pass. An empty `clip`
+    /// matches any clip ending, which is what a state machine transition
+    /// wants when it doesn't care which state just left.
+    WhenAnimationEnds {
+        clip: String,
+    },
     /// Runs when the interface element named `element` is clicked.
     ///
     /// Spelled `element` rather than `id` because a flattened instruction
@@ -125,11 +132,50 @@ pub enum InstructionKind {
         by: Value,
     },
     /// Slides to a position over `seconds`, one step per rendered frame.
+    /// `easing` shapes the motion: linear glides at one speed, the rest ease
+    /// in, out, or bounce. Old documents without one read as linear.
     Glide {
         seconds: Value,
         x: Value,
         y: Value,
         z: Value,
+        #[serde(default)]
+        easing: TweenEasing,
+    },
+    /// Tweens the size towards `factor` over `seconds`, eased.
+    TweenScale {
+        factor: Value,
+        seconds: Value,
+        easing: TweenEasing,
+    },
+    /// Tweens one axis towards `degrees` over `seconds`, eased.
+    TweenRotation {
+        axis: Axis,
+        degrees: Value,
+        seconds: Value,
+        easing: TweenEasing,
+    },
+    /// Tweens the tint towards `color` over `seconds`, eased. No-op on an
+    /// image actor, like `set color`.
+    TweenColor {
+        color: Value,
+        seconds: Value,
+        easing: TweenEasing,
+    },
+    /// Stops every tween on this actor where it stands: glides included.
+    StopTweens,
+    /// Plays the named flipbook clip at `speed` (1 is as authored). A state
+    /// whose clip this names changes state too; an unknown name is an error
+    /// the run log shows.
+    PlayAnimation {
+        clip: Value,
+        speed: Value,
+    },
+    /// Stops the animation player where it stands, keeping the frame.
+    StopAnimation,
+    /// Retunes the playing clip's speed. 1 is as authored, 0 freezes.
+    SetAnimationSpeed {
+        speed: Value,
     },
     Turn {
         axis: Axis,
@@ -724,12 +770,35 @@ impl BlockKind for InstructionKind {
                 f(z, InputValueType::Any);
                 f(speed, InputValueType::Any);
             }
-            K::Glide { seconds, x, y, z } => {
+            K::Glide {
+                seconds, x, y, z, ..
+            } => {
                 f(seconds, InputValueType::Any);
                 f(x, InputValueType::Any);
                 f(y, InputValueType::Any);
                 f(z, InputValueType::Any);
             }
+            K::TweenScale {
+                factor, seconds, ..
+            } => {
+                f(factor, InputValueType::Any);
+                f(seconds, InputValueType::Any);
+            }
+            K::TweenRotation {
+                degrees, seconds, ..
+            } => {
+                f(degrees, InputValueType::Any);
+                f(seconds, InputValueType::Any);
+            }
+            K::TweenColor { color, seconds, .. } => {
+                f(color, InputValueType::Any);
+                f(seconds, InputValueType::Any);
+            }
+            K::PlayAnimation { clip, speed } => {
+                f(clip, InputValueType::Any);
+                f(speed, InputValueType::Any);
+            }
+            K::SetAnimationSpeed { speed } => f(speed, InputValueType::Any),
             K::CreateActor { name, x, y, z } => {
                 f(name, InputValueType::Any);
                 f(x, InputValueType::Any);
@@ -944,6 +1013,7 @@ impl BlockKind for InstructionKind {
             | K::WhenCollision { .. }
             | K::WhenMessage { .. }
             | K::WhenCloned
+            | K::WhenAnimationEnds { .. }
             | K::BlockHeader { .. }
             | K::CreateClone { .. }
             | K::PointTowards { .. }
@@ -954,6 +1024,8 @@ impl BlockKind for InstructionKind {
             | K::DetachComponent { .. }
             | K::SetVisible { .. }
             | K::SetTrailEnabled { .. }
+            | K::StopTweens
+            | K::StopAnimation
             | K::Forever { .. }
             | K::EscapeLoop
             | K::ContinueLoop
@@ -987,6 +1059,7 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenCollision { .. }
                 | InstructionKind::WhenMessage { .. }
                 | InstructionKind::WhenCloned
+                | InstructionKind::WhenAnimationEnds { .. }
                 | InstructionKind::WhenUiEvent { .. }
                 | InstructionKind::WhenUiClicked { .. }
                 | InstructionKind::WhenUiChanged { .. }

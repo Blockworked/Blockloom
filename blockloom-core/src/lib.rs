@@ -33,6 +33,7 @@
 //!   blockstitch frontend speaks.
 
 pub mod ai;
+pub mod animation;
 pub mod assets;
 pub mod blocks;
 pub mod build;
@@ -54,6 +55,7 @@ pub mod script;
 pub mod sense;
 pub mod shader_lib;
 pub mod sound;
+pub mod sync;
 pub mod ui;
 pub mod value;
 pub mod vm;

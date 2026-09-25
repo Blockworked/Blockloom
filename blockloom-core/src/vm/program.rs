@@ -6,6 +6,7 @@
 //! small frame stack - suspending it is free, which is what makes `wait` and
 //! per-frame yielding work.
 
+use crate::animation::TweenEasing;
 use crate::blocks::{ActorGraph, Instruction, InstructionKind};
 use crate::components::CameraView;
 use crate::scene::{Axis, BodyKind};
@@ -28,6 +29,10 @@ pub enum Trigger {
     Message(String),
     /// A fresh clone starting up, in the clone itself.
     Cloned,
+    /// A `Once` clip finished. Empty matches any clip ending.
+    AnimationEnded {
+        clip: String,
+    },
     /// The named input action went down.
     ActionPressed(String),
     /// A finger touched the screen.
@@ -96,6 +101,29 @@ pub enum Action {
     },
     PointTowards(String),
     SetScale(Value),
+    TweenScale {
+        factor: Value,
+        seconds: Value,
+        easing: TweenEasing,
+    },
+    TweenRotation {
+        axis: Axis,
+        degrees: Value,
+        seconds: Value,
+        easing: TweenEasing,
+    },
+    TweenColor {
+        color: Value,
+        seconds: Value,
+        easing: TweenEasing,
+    },
+    StopTweens,
+    PlayAnimation {
+        clip: Value,
+        speed: Value,
+    },
+    StopAnimation,
+    SetAnimationSpeed(Value),
     SetExposure(Value),
     SetLightIntensity(Value),
     SetBody(BodyKind),
@@ -322,6 +350,23 @@ pub enum Step {
     Glide {
         seconds: Value,
         target: [Value; 3],
+        easing: TweenEasing,
+    },
+    TweenScale {
+        factor: Value,
+        seconds: Value,
+        easing: TweenEasing,
+    },
+    TweenRotation {
+        axis: Axis,
+        degrees: Value,
+        seconds: Value,
+        easing: TweenEasing,
+    },
+    TweenColor {
+        color: Value,
+        seconds: Value,
+        easing: TweenEasing,
     },
     Call {
         block_id: String,
@@ -386,6 +431,9 @@ pub fn compile(graph: &ActorGraph) -> Program {
                 Some(Trigger::Message(name.trim().to_string()))
             }
             InstructionKind::WhenCloned => Some(Trigger::Cloned),
+            InstructionKind::WhenAnimationEnds { clip } => Some(Trigger::AnimationEnded {
+                clip: clip.trim().to_string(),
+            }),
             InstructionKind::WhenActionPressed { action } => Some(Trigger::ActionPressed(
                 crate::input::normalize_action(action).to_lowercase(),
             )),
@@ -444,7 +492,12 @@ fn emit_body(steps: &mut Vec<Step>, body: &[Instruction]) {
 fn step_is_suspending(step: &Step) -> bool {
     matches!(
         step,
-        Step::Wait(_) | Step::WaitUntil(_) | Step::Glide { .. }
+        Step::Wait(_)
+            | Step::WaitUntil(_)
+            | Step::Glide { .. }
+            | Step::TweenScale { .. }
+            | Step::TweenRotation { .. }
+            | Step::TweenColor { .. }
     )
 }
 
@@ -481,11 +534,29 @@ fn calls_in_step(step: &Step) -> Vec<String> {
         },
         Step::Wait(duration) => calls_in_value(duration, &mut out),
         Step::WaitUntil(condition) => calls_in_value(condition, &mut out),
-        Step::Glide { seconds, target } => {
+        Step::Glide {
+            seconds, target, ..
+        } => {
             calls_in_value(seconds, &mut out);
             for value in target {
                 calls_in_value(value, &mut out);
             }
+        }
+        Step::TweenScale {
+            factor, seconds, ..
+        } => {
+            calls_in_value(factor, &mut out);
+            calls_in_value(seconds, &mut out);
+        }
+        Step::TweenRotation {
+            degrees, seconds, ..
+        } => {
+            calls_in_value(degrees, &mut out);
+            calls_in_value(seconds, &mut out);
+        }
+        Step::TweenColor { color, seconds, .. } => {
+            calls_in_value(color, &mut out);
+            calls_in_value(seconds, &mut out);
         }
         Step::Call { block_id, args } => {
             out.push(block_id.clone());
@@ -535,7 +606,16 @@ fn action_values(action: &Action) -> Vec<&Value> {
         | Action::SetDensity(by)
         | Action::SetMass(by)
         | Action::SetCameraPitch(by)
+        | Action::SetAnimationSpeed(by)
         | Action::SetCameraFov(by) => vec![by],
+        Action::TweenScale {
+            factor, seconds, ..
+        } => vec![factor, seconds],
+        Action::TweenRotation {
+            degrees, seconds, ..
+        } => vec![degrees, seconds],
+        Action::TweenColor { color, seconds, .. } => vec![color, seconds],
+        Action::PlayAnimation { clip, speed } => vec![clip, speed],
         Action::PlaySound {
             sound,
             volume,
@@ -839,6 +919,40 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         },
         Action::SetCameraPitch(v) => Action::SetCameraPitch(lift_one(v, ctx)),
         Action::SetCameraFov(v) => Action::SetCameraFov(lift_one(v, ctx)),
+        Action::SetAnimationSpeed(v) => Action::SetAnimationSpeed(lift_one(v, ctx)),
+        Action::TweenScale {
+            factor,
+            seconds,
+            easing,
+        } => Action::TweenScale {
+            factor: lift_one(factor, ctx),
+            seconds: lift_one(seconds, ctx),
+            easing,
+        },
+        Action::TweenRotation {
+            axis,
+            degrees,
+            seconds,
+            easing,
+        } => Action::TweenRotation {
+            axis,
+            degrees: lift_one(degrees, ctx),
+            seconds: lift_one(seconds, ctx),
+            easing,
+        },
+        Action::TweenColor {
+            color,
+            seconds,
+            easing,
+        } => Action::TweenColor {
+            color: lift_one(color, ctx),
+            seconds: lift_one(seconds, ctx),
+            easing,
+        },
+        Action::PlayAnimation { clip, speed } => Action::PlayAnimation {
+            clip: lift_one(clip, ctx),
+            speed: lift_one(speed, ctx),
+        },
         Action::SetParent(v) => Action::SetParent(lift_one(v, ctx)),
         Action::CreateActor { name, position } => {
             let mut p = position;
@@ -970,14 +1084,51 @@ fn lift_step(
         }
         Step::Wait(duration) => Step::Wait(lift_one(duration, &mut ctx)),
         Step::WaitUntil(condition) => Step::WaitUntil(lift_one(condition, &mut ctx)),
-        Step::Glide { seconds, target } => {
+        Step::Glide {
+            seconds,
+            target,
+            easing,
+        } => {
             let seconds = lift_one(seconds, &mut ctx);
             let mut t = target;
             for v in &mut t {
                 *v = lift_one(std::mem::replace(v, Value::Bool), &mut ctx);
             }
-            Step::Glide { seconds, target: t }
+            Step::Glide {
+                seconds,
+                target: t,
+                easing,
+            }
         }
+        Step::TweenScale {
+            factor,
+            seconds,
+            easing,
+        } => Step::TweenScale {
+            factor: lift_one(factor, &mut ctx),
+            seconds: lift_one(seconds, &mut ctx),
+            easing,
+        },
+        Step::TweenRotation {
+            axis,
+            degrees,
+            seconds,
+            easing,
+        } => Step::TweenRotation {
+            axis,
+            degrees: lift_one(degrees, &mut ctx),
+            seconds: lift_one(seconds, &mut ctx),
+            easing,
+        },
+        Step::TweenColor {
+            color,
+            seconds,
+            easing,
+        } => Step::TweenColor {
+            color: lift_one(color, &mut ctx),
+            seconds: lift_one(seconds, &mut ctx),
+            easing,
+        },
         Step::Call { block_id, args } => {
             if !blocks.contains_key(&block_id) {
                 Step::Call { block_id, args }
@@ -1077,6 +1228,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenCollision { .. }
         | K::WhenMessage { .. }
         | K::WhenCloned
+        | K::WhenAnimationEnds { .. }
         | K::WhenUiEvent { .. }
         | K::WhenUiClicked { .. }
         | K::WhenUiChanged { .. }
@@ -1096,10 +1248,55 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             axis: *axis,
             by: by.clone(),
         })),
-        K::Glide { seconds, x, y, z } => steps.push(Step::Glide {
+        K::Glide {
+            seconds,
+            x,
+            y,
+            z,
+            easing,
+        } => steps.push(Step::Glide {
             seconds: seconds.clone(),
             target: [x.clone(), y.clone(), z.clone()],
+            easing: *easing,
         }),
+        K::TweenScale {
+            factor,
+            seconds,
+            easing,
+        } => steps.push(Step::TweenScale {
+            factor: factor.clone(),
+            seconds: seconds.clone(),
+            easing: *easing,
+        }),
+        K::TweenRotation {
+            axis,
+            degrees,
+            seconds,
+            easing,
+        } => steps.push(Step::TweenRotation {
+            axis: *axis,
+            degrees: degrees.clone(),
+            seconds: seconds.clone(),
+            easing: *easing,
+        }),
+        K::TweenColor {
+            color,
+            seconds,
+            easing,
+        } => steps.push(Step::TweenColor {
+            color: color.clone(),
+            seconds: seconds.clone(),
+            easing: *easing,
+        }),
+        K::StopTweens => steps.push(Step::Action(Action::StopTweens)),
+        K::PlayAnimation { clip, speed } => steps.push(Step::Action(Action::PlayAnimation {
+            clip: clip.clone(),
+            speed: speed.clone(),
+        })),
+        K::StopAnimation => steps.push(Step::Action(Action::StopAnimation)),
+        K::SetAnimationSpeed { speed } => {
+            steps.push(Step::Action(Action::SetAnimationSpeed(speed.clone())))
+        }
         K::Turn { axis, degrees } => steps.push(Step::Action(Action::Turn {
             axis: *axis,
             degrees: degrees.clone(),

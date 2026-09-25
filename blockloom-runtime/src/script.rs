@@ -359,6 +359,9 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
             )
         }
         abi::READ_ATMOSPHERE => sense::read(|sensors| sensors.atmosphere.field(a)),
+        abi::READ_IS_TWEENING => bool_as(me(actor)?.tweening),
+        abi::READ_ANIM_FRAME => Some(me(actor)?.anim_frame as f64),
+        abi::READ_ANIM_PLAYING => bool_as(me(actor)?.anim_playing),
         abi::READ_ACTOR_COUNT => Some(sense::read(|sensors| sensors.count_named(a)) as f64),
         abi::READ_POSITION_OF => {
             let axis = axis_of(arg).index();
@@ -489,6 +492,9 @@ extern "C" fn read_text(
                 .filter(|name| !name.is_empty())
             })
         })(),
+        abi::TEXT_CURRENT_CLIP => me(ctx.actor)
+            .map(|me| me.anim_clip)
+            .filter(|clip| !clip.is_empty()),
         _ => None,
     };
     let Some(answer) = answer else {
@@ -779,6 +785,39 @@ extern "C" fn act(
         abi::ACT_SET_LIGHT_INTENSITY => Effect::SetLightIntensity {
             actor,
             intensity: n0 as f32,
+        },
+        abi::ACT_TWEEN_SCALE => Effect::TweenScale {
+            actor,
+            factor: n0 as f32,
+            seconds: n1 as f32,
+            easing: blockloom_core::animation::TweenEasing::parse(b)
+                .unwrap_or(blockloom_core::animation::TweenEasing::Linear),
+        },
+        abi::ACT_TWEEN_ROTATION => Effect::TweenRotation {
+            actor,
+            axis: axis_of(n0),
+            degrees: n1 as f32,
+            seconds: n2 as f32,
+            easing: blockloom_core::animation::TweenEasing::parse(b)
+                .unwrap_or(blockloom_core::animation::TweenEasing::Linear),
+        },
+        abi::ACT_TWEEN_COLOR => Effect::TweenColor {
+            actor,
+            color: a.to_string(),
+            seconds: n0 as f32,
+            easing: blockloom_core::animation::TweenEasing::parse(b)
+                .unwrap_or(blockloom_core::animation::TweenEasing::Linear),
+        },
+        abi::ACT_STOP_TWEENS => Effect::StopTweens { actor },
+        abi::ACT_PLAY_ANIMATION => Effect::PlayAnimation {
+            actor,
+            clip: a.trim().to_string(),
+            speed: n0 as f32,
+        },
+        abi::ACT_STOP_ANIMATION => Effect::StopAnimation { actor },
+        abi::ACT_SET_ANIMATION_SPEED => Effect::SetAnimationSpeed {
+            actor,
+            speed: n0 as f32,
         },
         abi::ACT_SET_BUS_VOLUME => Effect::SetBusVolume {
             bus: SoundBus::parse(a).unwrap_or(SoundBus::Sfx),
