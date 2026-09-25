@@ -67,13 +67,10 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 ### Phase 3 - Dev productivity, before API surface explodes
 - [x] Script toolchain: ship rustc or graceful degrade plus highlight plus inline errors plus rust-analyzer Cargo project.
 - [x] VM/codegen correctness: suspendable reporter `wait`, recursive statement blocks.
-- [x] Embedded preview: sidecar MJPEG runtime plus streamed viewport in editor with input forwarding, pause/step, resolution switch. Keeps separate-process split, no OS reparenting. Additive: the OS window stays up beside the viewport.
-  - [x] True headless/offscreen preview mode: a Headless toggle hides the OS window while the hidden window keeps rendering the stream. Windowed mode still keeps it up beside the viewport.
-  - [ ] Stop the resolution switch from resizing the OS window: render the stream at its own size offscreen.
-  - [ ] Forward scroll-wheel, touch/multitouch and gamepad through the viewport, not just mouse, keys and text.
-  - [ ] Honor `lock mouse` inside the preview (pointer lock + raw deltas) - done for the in-process Game view, pending a test; the MJPEG preview still only gets absolute positions.
-  - [ ] Adaptive stream rate/quality: fixed ~15fps JPEG-60 today regardless of preset or pause state.
-- [ ] Visual world editor: edit-mode 2D/3D viewport with selection sync to ActorList/Inspector, drag to move plus rotate/scale gizmos, snapping, camera pan/zoom/orbit. Shares panel with embedded preview: Edit manipulates placement directly, Play streams runtime.
+- [x] Game view: the world runs in the editor and draws into a docked Game view, with input forwarding, pause/step and pointer lock. Started as a sidecar MJPEG stream beside the runtime's own OS window; on Linux it is now in-process with GPU frame sharing and no extra window (see "Qt6 rewrite" below for what's left there).
+  - [x] Headless mode for the sidecar: hide the OS window while it keeps rendering the stream. Moot in-process, where there is no window.
+  - [ ] MJPEG fallback (Windows, macOS, `BLOCKLOOM_RUNTIME=process`): the resolution switch still resizes the OS window, pointer lock only gets absolute positions, and the stream is a fixed ~15fps JPEG-60 regardless of preset or pause state. Most of this goes away once those platforms share GPU frames.
+- [ ] Visual world editor: edit-mode 2D/3D viewport with selection sync to ActorList/Inspector, drag to move plus rotate/scale gizmos, snapping, camera pan/zoom/orbit. Shares the Game view panel: Edit manipulates placement directly, Play runs the world.
 - [ ] Editor: gizmos/snapping, prefab mode, scene search, log filter, frame stepper, profiler (draw calls, CPU/GPU/memory), playmode tests.
 
 ### Phase 4 - Look and depth, uses Bevy leverage
