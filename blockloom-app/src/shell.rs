@@ -264,6 +264,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-navigation",
+        cmd: "set_navigation",
+        aliases: &["set_navigation"],
+        summary: "Set navigation cost areas and off-mesh links in XY or XZ coordinates.",
+        args: &[ArgSpec {
+            name: "navigation",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-lighting",
         cmd: "set_lighting",
         aliases: &["set_lighting"],

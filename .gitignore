@@ -22,3 +22,4 @@ mcp/dist-test/
 opencode.json
 .mcp.json
 plans/
+.codex/

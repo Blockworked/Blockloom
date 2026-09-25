@@ -15,6 +15,7 @@
 //! project invents - `Health { hp, armour }` - which blocks, scripts and the
 //! inspector all read and write by name.
 
+use crate::ai::BrainSpec;
 use crate::material::{ParticleSpec, SurfaceMaterial, TrailSpec};
 use crate::scene::{Physics, Placement, Visual};
 use crate::value::Evaluated;
@@ -23,8 +24,46 @@ use serde::{Deserialize, Serialize};
 /// The components every project knows about by name. A custom component
 /// can't take one of these names.
 pub const BUILT_IN_NAMES: &[&str] = &[
-    "Place", "Look", "Render", "Body", "Camera", "Script", "Parent", "Material", "Emitter", "Trail",
+    "Place", "Look", "Render", "Body", "Joint", "Brain", "Camera", "Script", "Parent", "Material",
+    "Emitter", "Trail",
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum JointKind {
+    #[default]
+    Fixed,
+    Hinge,
+    Rope,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JointSpec {
+    /// Actor id at the other end of the joint.
+    pub target: String,
+    #[serde(default)]
+    pub kind: JointKind,
+    /// Anchor in this actor's local frame.
+    #[serde(default)]
+    pub anchor: [f32; 3],
+    /// Maximum rope length; ignored by fixed and hinge joints.
+    #[serde(default = "default_rope_length")]
+    pub length: f32,
+}
+
+fn default_rope_length() -> f32 {
+    2.0
+}
+
+impl Default for JointSpec {
+    fn default() -> Self {
+        Self {
+            target: String::new(),
+            kind: JointKind::Fixed,
+            anchor: [0.0; 3],
+            length: default_rope_length(),
+        }
+    }
+}
 
 /// One component on an actor. Serialized internally-tagged, so a component
 /// reads as `{"component": "Body", "physics": {...}}`.
@@ -47,6 +86,11 @@ pub enum ActorComponent {
     /// A rigid body and collider. Absent means blocks move the actor and
     /// nothing else does.
     Body { physics: Physics },
+    /// Constrains this body to another actor. A chain of hinged bodies makes
+    /// a ragdoll while the usual parent hierarchy remains independent.
+    Joint { joint: JointSpec },
+    /// A behavior tree with a target, sight cone and crowd spacing.
+    Brain { brain: BrainSpec },
     /// Puts the world camera on this actor.
     Camera { camera: CameraAttach },
     /// A Rust file under the project's `assets/scripts`, compiled to a shared
@@ -90,6 +134,8 @@ impl ActorComponent {
             ActorComponent::Look { .. } => "Look",
             ActorComponent::Render { .. } => "Render",
             ActorComponent::Body { .. } => "Body",
+            ActorComponent::Joint { .. } => "Joint",
+            ActorComponent::Brain { .. } => "Brain",
             ActorComponent::Camera { .. } => "Camera",
             ActorComponent::Script { .. } => "Script",
             ActorComponent::Parent { .. } => "Parent",
@@ -311,6 +357,20 @@ impl Components {
 
     pub fn set_physics(&mut self, physics: Physics) {
         self.insert(ActorComponent::Body { physics });
+    }
+
+    pub fn joint(&self) -> Option<&JointSpec> {
+        match self.get("Joint") {
+            Some(ActorComponent::Joint { joint }) => Some(joint),
+            _ => None,
+        }
+    }
+
+    pub fn brain(&self) -> Option<&BrainSpec> {
+        match self.get("Brain") {
+            Some(ActorComponent::Brain { brain }) => Some(brain),
+            _ => None,
+        }
     }
 
     /// Whether the actor is drawn. An actor with no `Render` is visible.

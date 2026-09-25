@@ -98,6 +98,12 @@ pub enum Action {
     SetTrigger(bool),
     SetCollisionLayer(Value),
     SetCollisionMask(Value),
+    BurstParticles(Value),
+    SetEmitterDial {
+        dial: crate::blocks::EmitterDial,
+        value: Value,
+    },
+    SetTrailEnabled(bool),
     Say(Value),
     SetVisible(bool),
     SetColor(Value),
@@ -498,6 +504,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
         | Action::SetFocus(value)
         | Action::SetParent(value)
         | Action::DeleteActor(value) => vec![value],
+        Action::BurstParticles(value) | Action::SetEmitterDial { value, .. } => vec![value],
         Action::GoTo(target)
         | Action::ApplyImpulse(target)
         | Action::SetVelocity(target)
@@ -754,6 +761,11 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         }
         Action::SetDensity(v) => Action::SetDensity(lift_one(v, ctx)),
         Action::SetMass(v) => Action::SetMass(lift_one(v, ctx)),
+        Action::BurstParticles(v) => Action::BurstParticles(lift_one(v, ctx)),
+        Action::SetEmitterDial { dial, value } => Action::SetEmitterDial {
+            dial,
+            value: lift_one(value, ctx),
+        },
         Action::Say(v) => Action::Say(lift_one(v, ctx)),
         Action::SetColor(v) => Action::SetColor(lift_one(v, ctx)),
         Action::PlaySound {
@@ -1106,6 +1118,16 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         }
         K::SetCollisionMask { mask } => {
             steps.push(Step::Action(Action::SetCollisionMask(mask.clone())))
+        }
+        K::BurstParticles { count } => {
+            steps.push(Step::Action(Action::BurstParticles(count.clone())))
+        }
+        K::SetEmitterDial { dial, value } => steps.push(Step::Action(Action::SetEmitterDial {
+            dial: *dial,
+            value: value.clone(),
+        })),
+        K::SetTrailEnabled { enabled } => {
+            steps.push(Step::Action(Action::SetTrailEnabled(*enabled)))
         }
         K::Say { text } => steps.push(Step::Action(Action::Say(text.clone()))),
         K::SetVisible { visible } => steps.push(Step::Action(Action::SetVisible(*visible))),

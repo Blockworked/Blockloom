@@ -43,6 +43,8 @@ pub enum FieldId {
     TriggerMask,
     SayText,
     ColorText,
+    ParticleCount,
+    EmitterValue,
     SoundAsset,
     SoundVolume,
     SoundPitch,
@@ -171,6 +173,8 @@ impl std::fmt::Display for FieldId {
             FieldId::Mass => write!(f, "Mass"),
             FieldId::SayText => write!(f, "SayText"),
             FieldId::ColorText => write!(f, "ColorText"),
+            FieldId::ParticleCount => write!(f, "ParticleCount"),
+            FieldId::EmitterValue => write!(f, "EmitterValue"),
             FieldId::SoundAsset => write!(f, "SoundAsset"),
             FieldId::SoundVolume => write!(f, "SoundVolume"),
             FieldId::SoundPitch => write!(f, "SoundPitch"),
@@ -263,6 +267,8 @@ impl FromStr for FieldId {
             "Mass" => FieldId::Mass,
             "SayText" => FieldId::SayText,
             "ColorText" => FieldId::ColorText,
+            "ParticleCount" => FieldId::ParticleCount,
+            "EmitterValue" => FieldId::EmitterValue,
             "SoundAsset" => FieldId::SoundAsset,
             "SoundVolume" => FieldId::SoundVolume,
             "SoundPitch" => FieldId::SoundPitch,
@@ -354,6 +360,8 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::SetCollisionMask { mask }, F::TriggerMask) => Some(mask),
         (K::Say { text }, F::SayText) => Some(text),
         (K::SetColor { color }, F::ColorText) => Some(color),
+        (K::BurstParticles { count }, F::ParticleCount) => Some(count),
+        (K::SetEmitterDial { value, .. }, F::EmitterValue) => Some(value),
         (K::PlaySound { sound, .. }, F::SoundAsset)
         | (K::PlaySoundAt { sound, .. }, F::SoundAsset)
         | (K::StopSound { sound }, F::SoundAsset)

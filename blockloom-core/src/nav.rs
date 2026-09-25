@@ -1,6 +1,6 @@
 //! Polyanya navmesh pathfinding over a project's static geometry.
 //!
-//! A navmesh is baked once per project from its static colliders - ground
+//! A navmesh is baked from its static colliders - ground
 //! planes (or slabs) as the walkable boundary, static boxes and balls as
 //! holes - and then queried any-angle at run time. The mesh lives in the
 //! mover's plane: XZ in 3D, XY in 2D. Only `Static` bodies become obstacles,
@@ -8,12 +8,53 @@
 
 use glam::Vec2;
 use polyanya::{Mesh, Triangulation};
+use serde::{Deserialize, Serialize};
 
 use crate::project::Project;
 use crate::scene::{BodyKind, Mode, Visual};
 
 /// Agent radius the baked mesh keeps off walls when none is given.
 pub const DEFAULT_AGENT_RADIUS: f32 = 0.4;
+
+/// A cost region on the navigation plane. A mask of zero applies to every layer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NavArea {
+    pub center: [f32; 2],
+    pub size: [f32; 2],
+    #[serde(default = "unit_cost")]
+    pub cost: f32,
+    #[serde(default)]
+    pub layers: u32,
+}
+
+/// A directed shortcut between two places on the navigation plane.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NavLink {
+    pub from: [f32; 2],
+    pub to: [f32; 2],
+    #[serde(default)]
+    pub bidirectional: bool,
+    #[serde(default = "unit_cost")]
+    pub cost: f32,
+    #[serde(default)]
+    pub layers: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct NavSettings {
+    #[serde(default)]
+    pub areas: Vec<NavArea>,
+    #[serde(default)]
+    pub links: Vec<NavLink>,
+}
+
+fn unit_cost() -> f32 {
+    1.0
+}
+
+fn applies(mask: u32, layer: u32) -> bool {
+    mask == 0 || mask & layer != 0
+}
 
 /// Fallback boundary half-extents when a project has no static ground to
 /// read one from: 3D first, then 2D (pixels).
@@ -206,6 +247,159 @@ pub fn find_path(mesh: &Mesh, from: [f32; 2], to: [f32; 2]) -> Option<Vec<[f32; 
     Some(normalize(&path.path, from, to))
 }
 
+/// Choose a route through the mesh and any enabled off-mesh links. Cost
+/// regions change which route wins without changing the baked geometry.
+pub fn find_route(
+    mesh: &Mesh,
+    from: [f32; 2],
+    to: [f32; 2],
+    settings: &NavSettings,
+    layer: u32,
+) -> Option<Vec<[f32; 2]>> {
+    let links: Vec<_> = settings
+        .links
+        .iter()
+        .filter(|link| {
+            applies(link.layers, layer)
+                && link
+                    .from
+                    .iter()
+                    .chain(link.to.iter())
+                    .all(|n| n.is_finite())
+                && link.cost.is_finite()
+                && link.cost >= 0.0
+        })
+        .take(16)
+        .collect();
+    let areas: Vec<_> = settings
+        .areas
+        .iter()
+        .filter(|area| {
+            applies(area.layers, layer)
+                && area.cost.is_finite()
+                && area.cost > 1.0
+                && area
+                    .center
+                    .iter()
+                    .chain(area.size.iter())
+                    .all(|n| n.is_finite())
+        })
+        .take(8)
+        .collect();
+    if links.is_empty() && areas.is_empty() {
+        return find_path(mesh, from, to);
+    }
+    let mut nodes = vec![from, to];
+    for link in &links {
+        nodes.extend([link.from, link.to]);
+    }
+    for area in areas {
+        let half = [
+            area.size[0].abs() * 0.5 + 0.01,
+            area.size[1].abs() * 0.5 + 0.01,
+        ];
+        for x in [-1.0, 1.0] {
+            for y in [-1.0, 1.0] {
+                nodes.push([area.center[0] + x * half[0], area.center[1] + y * half[1]]);
+            }
+        }
+    }
+    let mut costs = vec![f32::INFINITY; nodes.len()];
+    let mut paths: Vec<Option<Vec<[f32; 2]>>> = vec![None; nodes.len()];
+    let mut visited = vec![false; nodes.len()];
+    costs[0] = 0.0;
+    paths[0] = Some(Vec::new());
+    for _ in 0..nodes.len() {
+        let Some(i) = (0..nodes.len())
+            .filter(|i| !visited[*i])
+            .min_by(|a, b| costs[*a].total_cmp(&costs[*b]))
+        else {
+            break;
+        };
+        if !costs[i].is_finite() {
+            break;
+        }
+        if i == 1 {
+            return paths[i].take();
+        }
+        visited[i] = true;
+        for j in 1..nodes.len() {
+            if i == j || visited[j] {
+                continue;
+            }
+            if let Some(path) = find_path(mesh, nodes[i], nodes[j]) {
+                let mut previous = nodes[i];
+                let mut weight = 0.0;
+                for point in &path {
+                    weight += segment_cost(previous, *point, &settings.areas, layer);
+                    previous = *point;
+                }
+                if costs[i] + weight < costs[j] {
+                    costs[j] = costs[i] + weight;
+                    let mut route = paths[i].clone().unwrap_or_default();
+                    route.extend(path);
+                    paths[j] = Some(route);
+                }
+            }
+        }
+        for (index, link) in links.iter().enumerate() {
+            let a = 2 + index * 2;
+            let b = a + 1;
+            let target = if i == a {
+                Some(b)
+            } else if i == b && link.bidirectional {
+                Some(a)
+            } else {
+                None
+            };
+            if let Some(j) = target.filter(|j| !visited[*j]) {
+                let distance = (nodes[i][0] - nodes[j][0]).hypot(nodes[i][1] - nodes[j][1]);
+                let weight = distance * link.cost.max(0.001);
+                if costs[i] + weight < costs[j] {
+                    costs[j] = costs[i] + weight;
+                    let mut route = paths[i].clone().unwrap_or_default();
+                    route.push(nodes[j]);
+                    paths[j] = Some(route);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn segment_cost(from: [f32; 2], to: [f32; 2], areas: &[NavArea], layer: u32) -> f32 {
+    let length = (to[0] - from[0]).hypot(to[1] - from[1]);
+    let mut cost = length;
+    for area in areas.iter().filter(|area| applies(area.layers, layer)) {
+        if !area.cost.is_finite() || area.cost < 0.0 {
+            continue;
+        }
+        let mut enter: f32 = 0.0;
+        let mut exit: f32 = 1.0;
+        let mut intersects = true;
+        for axis in 0..2 {
+            let low = area.center[axis] - area.size[axis].abs() * 0.5;
+            let high = area.center[axis] + area.size[axis].abs() * 0.5;
+            let delta = to[axis] - from[axis];
+            if delta.abs() < 1e-6 {
+                if from[axis] < low || from[axis] > high {
+                    intersects = false;
+                    break;
+                }
+            } else {
+                let a = (low - from[axis]) / delta;
+                let b = (high - from[axis]) / delta;
+                enter = enter.max(a.min(b));
+                exit = exit.min(a.max(b));
+            }
+        }
+        if intersects && exit > enter {
+            cost += length * (exit - enter) * (area.cost - 1.0);
+        }
+    }
+    cost.max(0.0)
+}
+
 /// Drops the waypoint the mover already stands on and pins the last one to
 /// the real goal, so following the list ends on the target.
 fn normalize(raw: &[Vec2], from: [f32; 2], to: [f32; 2]) -> Vec<[f32; 2]> {
@@ -240,6 +434,39 @@ pub fn next_step(path: &[[f32; 2]], from: [f32; 2], max_step: f32) -> [f32; 2] {
             from[1] + dz / dist * max_step,
         ]
     }
+}
+
+/// Cross a link in one step once its entrance is reached. Walking the line
+/// between the endpoints would collide with the gap the link crosses.
+pub fn next_route_step(
+    path: &[[f32; 2]],
+    from: [f32; 2],
+    max_step: f32,
+    settings: &NavSettings,
+    layer: u32,
+) -> ([f32; 2], bool) {
+    if max_step <= 0.0 {
+        return (from, false);
+    }
+    for link in settings
+        .links
+        .iter()
+        .filter(|link| applies(link.layers, layer))
+    {
+        for (entry, exit) in [(link.from, link.to), (link.to, link.from)] {
+            if entry == link.to && !link.bidirectional {
+                continue;
+            }
+            let close = (from[0] - entry[0]).hypot(from[1] - entry[1]) <= max_step;
+            if close
+                && (path.first() == Some(&exit)
+                    || path.first() == Some(&entry) && path.get(1) == Some(&exit))
+            {
+                return (exit, true);
+            }
+        }
+    }
+    (next_step(path, from, max_step), false)
 }
 
 #[cfg(test)]
@@ -330,6 +557,78 @@ mod tests {
         project.actors.push(cuboid("E", [12.0, 0.0], [1.0, 4.0]));
         let mesh = build_mesh(&project, 0.4).unwrap();
         assert!(find_path(&mesh, [0.0, 0.0], [10.0, 0.0]).is_none());
+    }
+
+    #[test]
+    fn an_off_mesh_link_reaches_a_sealed_room() {
+        let mut project = Project::starter("nav", Mode::ThreeD);
+        project.actors.push(solid(
+            "Ground",
+            Visual::Plane {
+                color: "#000".into(),
+                size: [40.0, 30.0],
+            },
+            [0.0; 3],
+        ));
+        project.actors.push(cuboid("N", [10.0, 1.5], [3.0, 1.0]));
+        project.actors.push(cuboid("S", [10.0, -1.5], [3.0, 1.0]));
+        project.actors.push(cuboid("W", [8.0, 0.0], [1.0, 4.0]));
+        project.actors.push(cuboid("E", [12.0, 0.0], [1.0, 4.0]));
+        let mesh = build_mesh(&project, 0.4).unwrap();
+        let settings = NavSettings {
+            links: vec![NavLink {
+                from: [5.0, 0.0],
+                to: [10.0, 0.0],
+                cost: 1.0,
+                bidirectional: false,
+                layers: 2,
+            }],
+            ..NavSettings::default()
+        };
+        assert!(find_route(&mesh, [0.0, 0.0], [10.0, 0.0], &settings, 1).is_none());
+        assert_eq!(
+            find_route(&mesh, [0.0, 0.0], [10.0, 0.0], &settings, 2)
+                .unwrap()
+                .last(),
+            Some(&[10.0, 0.0])
+        );
+        assert_eq!(
+            next_route_step(&[[5.0, 0.0], [10.0, 0.0]], [4.9, 0.0], 0.2, &settings, 2),
+            ([10.0, 0.0], true)
+        );
+    }
+
+    #[test]
+    fn cost_areas_weight_segments_by_overlap_and_layer() {
+        let area = NavArea {
+            center: [5.0, 0.0],
+            size: [4.0, 4.0],
+            cost: 3.0,
+            layers: 2,
+        };
+        assert_eq!(
+            segment_cost([0.0, 0.0], [10.0, 0.0], &[area.clone()], 1),
+            10.0
+        );
+        assert_eq!(segment_cost([0.0, 0.0], [10.0, 0.0], &[area], 2), 18.0);
+    }
+
+    #[test]
+    fn a_cost_area_makes_a_route_go_around_it() {
+        let project = Project::starter("nav", Mode::ThreeD);
+        let mesh = build_mesh(&project, 0.4).unwrap();
+        let settings = NavSettings {
+            areas: vec![NavArea {
+                center: [5.0, 0.0],
+                size: [4.0, 4.0],
+                cost: 10.0,
+                layers: 1,
+            }],
+            ..NavSettings::default()
+        };
+        let route = find_route(&mesh, [0.0, 0.0], [10.0, 0.0], &settings, 1).unwrap();
+        assert!(route.iter().any(|point| point[1].abs() > 1.9), "{route:?}");
+        assert_eq!(route.last(), Some(&[10.0, 0.0]));
     }
 
     #[test]

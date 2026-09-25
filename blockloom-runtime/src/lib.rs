@@ -17,6 +17,7 @@
 // the usual argument-count limit doesn't apply here.
 #![allow(clippy::too_many_arguments)]
 
+mod ai;
 mod bridge;
 mod dim2;
 mod dim3;
@@ -127,81 +128,84 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
             app.insert_resource(bevy::audio::DefaultSpatialScale(
                 bevy::audio::SpatialScale::new_2d(1.0 / 500.0),
             ));
-            app.add_plugins(bevy_rapier2d::prelude::RapierPhysicsPlugin::<
-                bevy_rapier2d::prelude::NoUserData,
-            >::pixels_per_meter(dim2::PIXELS_PER_METER)
-            .in_fixed_schedule())
-                .add_systems(
-                    FixedUpdate,
-                    (
-                        dim2::sync_pause,
-                        dim2::sync_timestep,
-                        world::restore_poses,
-                        world::step_vm,
-                        world::step_scripts,
-                        overlay::apply_ui_effects,
-                        world::apply_saved_data,
-                        world::apply_lifetimes,
-                        world::apply_common,
-                        dim2::apply_effects,
-                        world::apply_component_effects,
-                        sound::apply_sound_effects,
-                        world::step_glides,
-                        world::apply_input_effects,
-                        world::apply_rumble,
-                        world::apply_cursor_lock,
-                        world::clear_effects,
-                        world::finish_step,
-                    )
-                        .chain()
-                        .in_set(world::SimulationSet),
+            app.add_plugins(
+                bevy_rapier2d::prelude::RapierPhysicsPlugin::<dim2::OneWayHooks>::pixels_per_meter(
+                    dim2::PIXELS_PER_METER,
                 )
-                .add_systems(
-                    FixedPostUpdate,
-                    (world::apply_parenting, dim2::record_poses).chain(),
+                .in_fixed_schedule(),
+            )
+            .add_systems(
+                FixedUpdate,
+                (
+                    dim2::sync_pause,
+                    dim2::sync_timestep,
+                    world::restore_poses,
+                    world::step_vm,
+                    (world::step_scripts, ai::tick).chain(),
+                    overlay::apply_ui_effects,
+                    world::apply_saved_data,
+                    (world::apply_lifetimes, world::sync_navmesh).chain(),
+                    world::apply_common,
+                    dim2::apply_effects,
+                    world::apply_component_effects,
+                    dim2::sync_joints,
+                    fx::apply_fx_effects,
+                    sound::apply_sound_effects,
+                    world::step_glides,
+                    world::apply_input_effects,
+                    world::apply_rumble,
+                    world::apply_cursor_lock,
+                    world::clear_effects,
+                    world::finish_step,
                 )
-                .add_systems(
-                    Update,
-                    (
-                        world::pump_editor,
-                        (edit::interact, edit::report).chain(),
-                        preview::apply_preview_visibility,
-                        preview::drain_preview_inputs,
-                        fx::despawn_fx,
-                        world::rebuild_world,
-                        dim2::relay_collisions,
-                        overlay::draw_ui,
-                        world::type_into_focused_input,
-                        world::scroll_ui_lists,
-                        world::detect_clicks,
-                        world::publish_sensors,
-                        sound::maintain_voices,
-                        world::interpolate_poses,
-                        (world::drive_camera, edit::apply_view, edit::draw).chain(),
-                        overlay::update_speech_bubbles,
-                        preview::capture_preview_frame,
-                        world::report_status.run_if(bridge::editor_attached),
-                        overlay::update_status.run_if(bridge::editor_attached),
-                    )
-                        .chain(),
+                    .chain()
+                    .in_set(world::SimulationSet),
+            )
+            .add_systems(
+                FixedPostUpdate,
+                (world::apply_parenting, dim2::record_poses).chain(),
+            )
+            .add_systems(
+                Update,
+                (
+                    world::pump_editor,
+                    (edit::interact, edit::report).chain(),
+                    preview::apply_preview_visibility,
+                    preview::drain_preview_inputs,
+                    fx::despawn_fx,
+                    world::rebuild_world,
+                    dim2::relay_collisions,
+                    overlay::draw_ui,
+                    world::type_into_focused_input,
+                    world::scroll_ui_lists,
+                    world::detect_clicks,
+                    world::publish_sensors,
+                    sound::maintain_voices,
+                    world::interpolate_poses,
+                    (world::drive_camera, edit::apply_view, edit::draw).chain(),
+                    overlay::update_speech_bubbles,
+                    preview::capture_preview_frame,
+                    world::report_status.run_if(bridge::editor_attached),
+                    overlay::update_status.run_if(bridge::editor_attached),
                 )
-                .configure_sets(
-                    FixedUpdate,
-                    world::SimulationSet
-                        .before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend),
+                    .chain(),
+            )
+            .configure_sets(
+                FixedUpdate,
+                world::SimulationSet.before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend),
+            )
+            .add_systems(
+                Update,
+                (
+                    fx::emit_particles,
+                    fx::step_particles,
+                    fx::snapshot_trails,
+                    fx::step_ghosts,
+                    materials::tick_graph_time,
+                    materials::animate_tiles,
                 )
-                .add_systems(
-                    Update,
-                    (
-                        fx::emit_particles,
-                        fx::step_particles,
-                        fx::snapshot_trails,
-                        fx::step_ghosts,
-                        materials::tick_graph_time,
-                        materials::animate_tiles,
-                    )
-                        .chain(),
-                );
+                    .chain(),
+            );
         }
         Mode::ThreeD => {
             app.init_resource::<model::ModelCache>();
@@ -223,13 +227,15 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
                         dim3::sync_timestep,
                         world::restore_poses,
                         world::step_vm,
-                        world::step_scripts,
+                        (world::step_scripts, ai::tick).chain(),
                         overlay::apply_ui_effects,
                         world::apply_saved_data,
-                        world::apply_lifetimes,
+                        (world::apply_lifetimes, world::sync_navmesh).chain(),
                         world::apply_common,
                         dim3::apply_effects,
                         world::apply_component_effects,
+                        dim3::sync_joints,
+                        fx::apply_fx_effects,
                         sound::apply_sound_effects,
                         world::step_glides,
                         world::apply_input_effects,

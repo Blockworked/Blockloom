@@ -99,6 +99,19 @@ pub enum Effect {
         actor: String,
         mask: u8,
     },
+    BurstParticles {
+        actor: String,
+        count: u32,
+    },
+    SetEmitterDial {
+        actor: String,
+        dial: crate::blocks::EmitterDial,
+        value: f32,
+    },
+    SetTrailEnabled {
+        actor: String,
+        enabled: bool,
+    },
     /// A speech bubble over the actor; an empty text clears it.
     Say {
         actor: String,

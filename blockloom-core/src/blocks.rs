@@ -13,6 +13,19 @@ use crate::ui::{UiAnchor, UiProp, UiTheme};
 use crate::value::Value;
 use serde::{Deserialize, Serialize};
 
+/// Runtime emitter settings available to blocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EmitterDial {
+    Rate,
+    Lifetime,
+    Speed,
+    Spread,
+    Gravity,
+    SizeStart,
+    SizeEnd,
+    Max,
+}
+
 pub use blockstitch_core::graph::{
     BlockDef, BlockGraph, BlockKind, BlockPiece, BlockShape, Comment, DictDef, DictEntry, DictItem,
     FloatingValue, InputValueType, ListDef, ListItem, VariableDef, default_block_color,
@@ -189,6 +202,19 @@ pub enum InstructionKind {
     /// A `#RRGGBB` string. No-op on an image actor.
     SetColor {
         color: Value,
+    },
+    /// Spawns particles immediately, including from a zero-rate emitter.
+    BurstParticles {
+        count: Value,
+    },
+    /// Changes one emitter setting for this run.
+    SetEmitterDial {
+        dial: EmitterDial,
+        value: Value,
+    },
+    /// Starts or stops recording snapshots for this run.
+    SetTrailEnabled {
+        enabled: bool,
     },
 
     // ─── Sound ──────────────────────────────────────────────────────────────
@@ -627,6 +653,8 @@ impl BlockKind for InstructionKind {
             | K::SetCollisionMask { mask: v }
             | K::Say { text: v }
             | K::SetColor { color: v }
+            | K::BurstParticles { count: v }
+            | K::SetEmitterDial { value: v, .. }
             | K::Wait { duration: v }
             | K::SetVariable { value: v, .. }
             | K::SetCameraPitch { degrees: v, .. }
@@ -869,6 +897,7 @@ impl BlockKind for InstructionKind {
             | K::AttachComponent { .. }
             | K::DetachComponent { .. }
             | K::SetVisible { .. }
+            | K::SetTrailEnabled { .. }
             | K::Forever { .. }
             | K::EscapeLoop
             | K::ContinueLoop

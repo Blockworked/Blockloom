@@ -8,6 +8,7 @@ use bevy::pbr::ScreenSpaceAmbientOcclusion;
 use bevy::prelude::*;
 use bevy::render::view::Msaa;
 use bevy_rapier3d::prelude as rp;
+use blockloom_core::components::JointKind;
 use blockloom_core::project::Actor;
 use blockloom_core::scene::{BodyKind, Visual};
 use blockloom_core::vm::Effect;
@@ -236,6 +237,57 @@ fn insert_body(entity: &mut EntityCommands, actor: &Actor) {
     if physics.lock_rotation {
         entity.insert(rp::LockedAxes::ROTATION_LOCKED);
     }
+    if physics.character_controller && physics.body == BodyKind::Kinematic {
+        entity.insert(rp::KinematicCharacterController::default());
+    }
+}
+
+/// Connect authored bodies once both endpoints exist in the world.
+pub fn sync_joints(
+    mut commands: Commands,
+    engine: NonSend<Engine>,
+    actors: Query<(
+        Entity,
+        &crate::engine::ActorId,
+        Option<&rp::ImpulseJoint>,
+        Option<&rp::RigidBody>,
+    )>,
+    bodies: Query<&rp::RigidBody>,
+) {
+    for (entity, id, installed, body) in &actors {
+        let desired = engine
+            .has_component(&id.0, "Joint")
+            .then(|| engine.actor(&id.0).and_then(|a| a.components.joint()))
+            .flatten();
+        let target = desired.and_then(|j| engine.entities.get(&j.target).copied());
+        let valid = body.is_some() && target.is_some_and(|t| t != entity && bodies.get(t).is_ok());
+        if !valid {
+            if installed.is_some() {
+                commands.entity(entity).remove::<rp::ImpulseJoint>();
+            }
+            continue;
+        }
+        let spec = desired.unwrap();
+        let target = target.unwrap();
+        if installed.is_some_and(|joint| joint.parent == target) {
+            continue;
+        }
+        let anchor = Vec3::from(spec.anchor);
+        let joint = match spec.kind {
+            JointKind::Fixed => {
+                rp::ImpulseJoint::new(target, rp::FixedJointBuilder::new().local_anchor2(anchor))
+            }
+            JointKind::Hinge => rp::ImpulseJoint::new(
+                target,
+                rp::RevoluteJointBuilder::new(Vec3::Z).local_anchor2(anchor),
+            ),
+            JointKind::Rope => rp::ImpulseJoint::new(
+                target,
+                rp::RopeJointBuilder::new(spec.length.max(0.01)).local_anchor2(anchor),
+            ),
+        };
+        commands.entity(entity).insert(joint);
+    }
 }
 
 /// The rapier filter for one actor's layer and mask, on both halves so a
@@ -290,6 +342,7 @@ pub fn apply_effects(
     mut engine: NonSendMut<Engine>,
     time: Res<Time>,
     mut bodies: Query<(&mut rp::Velocity, &mut rp::ExternalImpulse)>,
+    mut controllers: Query<&mut rp::KinematicCharacterController>,
     mut transforms: Query<&mut Transform>,
     mut config: Query<&mut rp::RapierConfiguration>,
     surfaces: Query<&MeshMaterial3d<StandardMaterial>>,
@@ -322,7 +375,9 @@ pub fn apply_effects(
     let mut walks: HashMap<String, (Vec3, [bool; 3])> = HashMap::new();
     for effect in &effects.0 {
         let actor = match effect {
-            Effect::Move { actor, .. } | Effect::ChangePosition { actor, .. } => actor,
+            Effect::Move { actor, .. }
+            | Effect::ChangePosition { actor, .. }
+            | Effect::NavigateTo { actor, .. } => actor,
             _ => continue,
         };
         if crate::world::is_dynamic(&engine, actor) {
@@ -363,6 +418,17 @@ pub fn apply_effects(
                 let Some(entity) = engine.entities.get(actor) else {
                     continue;
                 };
+                if let Ok(mut controller) = controllers.get_mut(*entity) {
+                    if let Ok(transform) = transforms.get(*entity) {
+                        let delta = crate::world::forward_of(
+                            transform,
+                            blockloom_core::scene::Mode::ThreeD,
+                        ) * *steps;
+                        controller.translation =
+                            Some(controller.translation.unwrap_or(Vec3::ZERO) + delta);
+                    }
+                    continue;
+                }
                 if !crate::world::is_dynamic(&engine, actor) {
                     continue;
                 }
@@ -386,6 +452,12 @@ pub fn apply_effects(
                 let Some(entity) = engine.entities.get(actor) else {
                     continue;
                 };
+                if let Ok(mut controller) = controllers.get_mut(*entity) {
+                    let mut delta = controller.translation.unwrap_or(Vec3::ZERO);
+                    delta[axis.index()] += *by;
+                    controller.translation = Some(delta);
+                    continue;
+                }
                 if !crate::world::is_dynamic(&engine, actor) {
                     continue;
                 }
@@ -466,6 +538,15 @@ pub fn apply_effects(
                         } else {
                             entity.remove::<rp::Sensor>();
                         }
+                        if *body == BodyKind::Kinematic
+                            && engine
+                                .actor(actor)
+                                .is_some_and(|a| a.physics().character_controller)
+                        {
+                            entity.insert(rp::KinematicCharacterController::default());
+                        } else {
+                            entity.remove::<rp::KinematicCharacterController>();
+                        }
                         // Rebase the pose slider so a fresh body starts
                         // interpolating from where it actually is.
                         if let Ok(transform) = transforms.get(id) {
@@ -475,6 +556,7 @@ pub fn apply_effects(
                     _ => {
                         entity.remove::<rp::RigidBody>();
                         entity.remove::<rp::Collider>();
+                        entity.remove::<rp::KinematicCharacterController>();
                     }
                 }
             }
@@ -582,6 +664,7 @@ pub fn apply_effects(
                         let mut entity = commands.entity(id);
                         entity.remove::<rp::RigidBody>();
                         entity.remove::<rp::Collider>();
+                        entity.remove::<rp::KinematicCharacterController>();
                     }
                     // Nothing to draw, but the actor is still there to be
                     // moved, sensed and given a look again.

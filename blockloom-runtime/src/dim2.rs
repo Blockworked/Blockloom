@@ -5,11 +5,41 @@
 use crate::engine::{Engine, PendingEffects, PhysicsPose, PrevPose};
 use crate::materials::{GraphMaterial2d, custom_quad_size};
 use bevy::asset::RenderAssetUsages;
+use bevy::ecs::system::SystemParam;
 use bevy::mesh::Mesh2d;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite_render::{ColorMaterial, MeshMaterial2d};
 use bevy_rapier2d::prelude as rp;
+
+/// Static collider whose top face supports falling actors.
+#[derive(Component)]
+pub struct OneWayPlatform;
+
+#[derive(SystemParam)]
+pub struct OneWayHooks<'w, 's> {
+    platforms: Query<'w, 's, &'static OneWayPlatform>,
+    velocities: Query<'w, 's, &'static rp::Velocity>,
+}
+
+impl rp::BevyPhysicsHooks for OneWayHooks<'_, '_> {
+    fn modify_solver_contacts(&self, context: rp::ContactModificationContextView) {
+        let a = context.collider1();
+        let b = context.collider2();
+        let (other, up) = if self.platforms.get(a).is_ok() {
+            (b, context.raw.normal.y)
+        } else if self.platforms.get(b).is_ok() {
+            (a, -context.raw.normal.y)
+        } else {
+            return;
+        };
+        let rising = self.velocities.get(other).is_ok_and(|v| v.linear.y > 0.0);
+        if up < 0.5 || rising {
+            context.raw.solver_contacts.clear();
+        }
+    }
+}
+use blockloom_core::components::JointKind;
 use blockloom_core::project::Actor;
 use blockloom_core::scene::{BodyKind, Visual};
 use blockloom_core::vm::Effect;
@@ -318,6 +348,61 @@ fn insert_body(entity: &mut EntityCommands, actor: &Actor) {
         if physics.lock_rotation {
             entity.insert(rp::LockedAxes::ROTATION_LOCKED);
         }
+        if physics.one_way && physics.body == BodyKind::Static {
+            entity.insert((OneWayPlatform, rp::ActiveHooks::MODIFY_SOLVER_CONTACTS));
+        }
+        if physics.character_controller && physics.body == BodyKind::Kinematic {
+            entity.insert(rp::KinematicCharacterController::default());
+        }
+    }
+}
+
+/// Connect authored bodies after all entities are present. A chain of
+/// hinged dynamic bodies is a ragdoll; ropes and fixed joints use the same path.
+pub fn sync_joints(
+    mut commands: Commands,
+    engine: NonSend<Engine>,
+    actors: Query<(
+        Entity,
+        &crate::engine::ActorId,
+        Option<&rp::ImpulseJoint>,
+        Option<&rp::RigidBody>,
+    )>,
+    bodies: Query<&rp::RigidBody>,
+) {
+    for (entity, id, installed, body) in &actors {
+        let desired = engine
+            .has_component(&id.0, "Joint")
+            .then(|| engine.actor(&id.0).and_then(|a| a.components.joint()))
+            .flatten();
+        let target = desired.and_then(|j| engine.entities.get(&j.target).copied());
+        let valid = body.is_some() && target.is_some_and(|t| t != entity && bodies.get(t).is_ok());
+        if !valid {
+            if installed.is_some() {
+                commands.entity(entity).remove::<rp::ImpulseJoint>();
+            }
+            continue;
+        }
+        let spec = desired.unwrap();
+        let target = target.unwrap();
+        if installed.is_some_and(|joint| joint.parent == target) {
+            continue;
+        }
+        let anchor = Vec2::new(spec.anchor[0], spec.anchor[1]);
+        let joint = match spec.kind {
+            JointKind::Fixed => {
+                rp::ImpulseJoint::new(target, rp::FixedJointBuilder::new().local_anchor2(anchor))
+            }
+            JointKind::Hinge => rp::ImpulseJoint::new(
+                target,
+                rp::RevoluteJointBuilder::new().local_anchor2(anchor),
+            ),
+            JointKind::Rope => rp::ImpulseJoint::new(
+                target,
+                rp::RopeJointBuilder::new(spec.length.max(0.01)).local_anchor2(anchor),
+            ),
+        };
+        commands.entity(entity).insert(joint);
     }
 }
 
@@ -376,6 +461,7 @@ pub fn apply_effects(
     mut engine: NonSendMut<Engine>,
     time: Res<Time>,
     mut bodies: Query<(&mut rp::Velocity, &mut rp::ExternalImpulse)>,
+    mut controllers: Query<&mut rp::KinematicCharacterController>,
     mut transforms: Query<&mut Transform>,
     mut config: Query<&mut rp::RapierConfiguration>,
     mut sprites: Query<&mut Sprite>,
@@ -409,7 +495,9 @@ pub fn apply_effects(
     let mut walks: HashMap<String, (Vec3, [bool; 3])> = HashMap::new();
     for effect in &effects.0 {
         let actor = match effect {
-            Effect::Move { actor, .. } | Effect::ChangePosition { actor, .. } => actor,
+            Effect::Move { actor, .. }
+            | Effect::ChangePosition { actor, .. }
+            | Effect::NavigateTo { actor, .. } => actor,
             _ => continue,
         };
         if crate::world::is_dynamic(&engine, actor) {
@@ -451,6 +539,17 @@ pub fn apply_effects(
                 let Some(entity) = engine.entities.get(actor) else {
                     continue;
                 };
+                if let Ok(mut controller) = controllers.get_mut(*entity) {
+                    if let Ok(transform) = transforms.get(*entity) {
+                        let delta =
+                            crate::world::forward_of(transform, blockloom_core::scene::Mode::TwoD)
+                                .truncate()
+                                * *steps;
+                        controller.translation =
+                            Some(controller.translation.unwrap_or(Vec2::ZERO) + delta);
+                    }
+                    continue;
+                }
                 if !crate::world::is_dynamic(&engine, actor) {
                     continue;
                 }
@@ -472,6 +571,14 @@ pub fn apply_effects(
                 let Some(entity) = engine.entities.get(actor) else {
                     continue;
                 };
+                if let Ok(mut controller) = controllers.get_mut(*entity) {
+                    if axis.index() < 2 {
+                        let mut delta = controller.translation.unwrap_or(Vec2::ZERO);
+                        delta[axis.index()] += *by;
+                        controller.translation = Some(delta);
+                    }
+                    continue;
+                }
                 if !crate::world::is_dynamic(&engine, actor) {
                     continue;
                 }
@@ -560,6 +667,24 @@ pub fn apply_effects(
                         } else {
                             entity.remove::<rp::Sensor>();
                         }
+                        if *body == BodyKind::Static
+                            && engine.actor(actor).is_some_and(|a| a.physics().one_way)
+                        {
+                            entity
+                                .insert((OneWayPlatform, rp::ActiveHooks::MODIFY_SOLVER_CONTACTS));
+                        } else {
+                            entity.remove::<OneWayPlatform>();
+                            entity.remove::<rp::ActiveHooks>();
+                        }
+                        if *body == BodyKind::Kinematic
+                            && engine
+                                .actor(actor)
+                                .is_some_and(|a| a.physics().character_controller)
+                        {
+                            entity.insert(rp::KinematicCharacterController::default());
+                        } else {
+                            entity.remove::<rp::KinematicCharacterController>();
+                        }
                         // Rebase the pose slider so a fresh body starts
                         // interpolating from where it actually is.
                         if let Ok(transform) = transforms.get(id) {
@@ -569,6 +694,9 @@ pub fn apply_effects(
                     _ => {
                         entity.remove::<rp::RigidBody>();
                         entity.remove::<rp::Collider>();
+                        entity.remove::<OneWayPlatform>();
+                        entity.remove::<rp::ActiveHooks>();
+                        entity.remove::<rp::KinematicCharacterController>();
                     }
                 }
             }
@@ -710,6 +838,9 @@ pub fn apply_effects(
                         let mut entity = commands.entity(id);
                         entity.remove::<rp::RigidBody>();
                         entity.remove::<rp::Collider>();
+                        entity.remove::<OneWayPlatform>();
+                        entity.remove::<rp::ActiveHooks>();
+                        entity.remove::<rp::KinematicCharacterController>();
                     }
                     // Nothing to draw, but the actor is still there to be
                     // moved, sensed and given a look again.
@@ -844,6 +975,7 @@ pub fn record_poses(mut posed: Query<(&Transform, &mut PhysicsPose, &mut PrevPos
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn circle_texture_is_a_disc_not_a_square() {
@@ -873,6 +1005,73 @@ mod tests {
         assert_eq!(
             image.texture_descriptor.format,
             TextureFormat::Rgba8UnormSrgb
+        );
+    }
+
+    #[test]
+    fn one_way_platform_stops_falls_and_allows_rising_through() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(TransformPlugin);
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Time>();
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f32(1.0 / 60.0),
+        ));
+        app.add_plugins(rp::RapierPhysicsPlugin::<OneWayHooks>::default());
+        app.world_mut().spawn((
+            rp::RigidBody::Fixed,
+            rp::Collider::cuboid(5.0, 0.1),
+            rp::ActiveHooks::MODIFY_SOLVER_CONTACTS,
+            OneWayPlatform,
+            Transform::default(),
+        ));
+        let falling = app
+            .world_mut()
+            .spawn((
+                rp::RigidBody::Dynamic,
+                rp::Collider::ball(0.5),
+                rp::GravityScale(0.0),
+                rp::Velocity {
+                    linear: Vec2::new(0.0, -5.0),
+                    angular: 0.0,
+                },
+                Transform::from_xyz(-2.0, 2.0, 0.0),
+            ))
+            .id();
+        let rising = app
+            .world_mut()
+            .spawn((
+                rp::RigidBody::Dynamic,
+                rp::Collider::ball(0.5),
+                rp::GravityScale(0.0),
+                rp::Velocity {
+                    linear: Vec2::new(0.0, 5.0),
+                    angular: 0.0,
+                },
+                Transform::from_xyz(2.0, -2.0, 0.0),
+            ))
+            .id();
+        for _ in 0..60 {
+            app.update();
+        }
+        let y = |entity: Entity| {
+            app.world()
+                .entity(entity)
+                .get::<Transform>()
+                .unwrap()
+                .translation
+                .y
+        };
+        assert!(
+            y(falling) > 0.4,
+            "falling body crossed the platform: {}",
+            y(falling)
+        );
+        assert!(
+            y(rising) > 1.0,
+            "rising body hit the underside: {}",
+            y(rising)
         );
     }
 }

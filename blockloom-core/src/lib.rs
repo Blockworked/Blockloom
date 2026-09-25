@@ -32,6 +32,7 @@
 //! - [`wire`] converts documents to and from the flat JSON shape the
 //!   blockstitch frontend speaks.
 
+pub mod ai;
 pub mod assets;
 pub mod blocks;
 pub mod build;

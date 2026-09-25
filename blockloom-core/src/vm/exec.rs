@@ -1051,6 +1051,25 @@ impl Vm {
                     speed,
                 });
             }
+            Action::BurstParticles(count) => {
+                let count = self.eval_f32(count, actor, params, temps, out);
+                out.push(Effect::BurstParticles {
+                    actor: owner,
+                    count: (count as i64).clamp(0, 512) as u32,
+                });
+            }
+            Action::SetEmitterDial { dial, value } => {
+                let value = self.eval_f32(value, actor, params, temps, out);
+                out.push(Effect::SetEmitterDial {
+                    actor: owner,
+                    dial: *dial,
+                    value,
+                });
+            }
+            Action::SetTrailEnabled(enabled) => out.push(Effect::SetTrailEnabled {
+                actor: owner,
+                enabled: *enabled,
+            }),
             Action::ChangePosition { axis, by } => {
                 let by = self.eval_f32(by, actor, params, temps, out);
                 out.push(Effect::ChangePosition {

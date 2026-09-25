@@ -72,7 +72,7 @@ QtObject {
     }
     function attachableOptions() {
         const held = (actor ? actor.components : []).map(componentName);
-        const extra = ["Look","Render","Body","Camera","Material","Emitter","Trail"].filter(n => held.indexOf(n) < 0);
+        const extra = ["Look","Render","Body","Joint","Brain","Camera","Material","Emitter","Trail"].filter(n => held.indexOf(n) < 0);
         return opts(held.filter(n => n !== "Place" && n !== "Script").concat(extra));
     }
     function detachableOptions() { return opts((actor ? actor.components : []).map(componentName).filter(n => n !== "Place")); }
@@ -116,7 +116,7 @@ QtObject {
         BlockHeader:"blocks", Move:"arrow-right", GoTo:"move", NavigateTo:"navigation", ChangePosition:"move-3d", Glide:"wind", Turn:"rotate-cw",
         SetRotation:"rotate-cw", PointTowards:"target", SetScale:"maximize", SetBody:"boxes", SetTrigger:"ghost", SetCollisionLayer:"layers",
         SetCollisionMask:"filter", ApplyImpulse:"zap", SetVelocity:"trending-up", SetGravity:"cloud", SetDensity:"weight", SetMass:"weight",
-        Say:"message-square", SetVisible:"eye", SetColor:"palette", PlaySound:"volume-2", PlaySoundAt:"map-pin", StopSound:"square",
+        Say:"message-square", SetVisible:"eye", SetColor:"palette", BurstParticles:"sparkles", SetEmitterDial:"sliders-horizontal", SetTrailEnabled:"wind", PlaySound:"volume-2", PlaySoundAt:"map-pin", StopSound:"square",
         SetSoundVolume:"volume-1", SetSoundPitch:"music", SetBusVolume:"sliders-horizontal", SetComponentField:"panels-top-left",
         SetCameraView:"camera", SetCameraPitch:"video", SetCameraFov:"video", AttachComponent:"plus", DetachComponent:"x", SetParent:"link",
         CreateClone:"copy", CreateActor:"sparkles", DeleteActor:"trash-2", Wait:"clock", WaitUntil:"hand", If:"git-branch", IfElse:"git-fork",
@@ -172,6 +172,9 @@ QtObject {
             Say: row([lb("say"), slot("SayText", "text")]),
             SetVisible: row([flagDefaultTrue("visible", visibleOptions), lb("myself")]),
             SetColor: row([lb("set color to"), slot("ColorText", "color")]),
+            BurstParticles: row([lb("burst"), slot("ParticleCount", "count"), lb("particles")]),
+            SetEmitterDial: row([lb("set emitter"), dd("dial", () => opts(["Rate","Lifetime","Speed","Spread","Gravity","SizeStart","SizeEnd","Max"])), lb("to"), slot("EmitterValue", "value")]),
+            SetTrailEnabled: row([flagDefaultTrue("enabled", visibleOptions), lb("my trail")]),
             // Sound
             PlaySound: row([lb("play sound"), slot("SoundAsset", "sound"), lb("volume"), slot("SoundVolume", "volume"), lb("pitch"), slot("SoundPitch", "pitch"), flag("loop", soundLoopOptions), lb("on"), dd("bus", soundBusOptions)]),
             PlaySoundAt: row([lb("play sound"), slot("SoundAsset", "sound"), lb("volume"), slot("SoundVolume", "volume"), lb("pitch"), slot("SoundPitch", "pitch"), flag("loop", soundLoopOptions), lb("on"), dd("bus", soundBusOptions), lb("at"), slot("SoundTarget", "target")]),
@@ -282,6 +285,9 @@ QtObject {
         case "Say": return { text: txt("Hello!") };
         case "SetVisible": return { visible: true };
         case "SetColor": return { color: txt("#FFAB19") };
+        case "BurstParticles": return { count: num(24) };
+        case "SetEmitterDial": return { dial: "Rate", value: num(24) };
+        case "SetTrailEnabled": return { enabled: true };
         case "PlaySound": return { sound: txt("assets/sounds/sound.wav"), volume: num(100), pitch: num(1), loop: false, bus: "Sfx" };
         case "PlaySoundAt": return { sound: txt("assets/sounds/sound.wav"), volume: num(100), pitch: num(1), loop: false, bus: "Sfx", target: txt("") };
         case "StopSound": return { sound: txt("") };
@@ -425,7 +431,7 @@ QtObject {
         { label: "Events", types: ["WhenStarted","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenUiClicked","WhenUiChanged","Broadcast"] },
         { label: "Motion", types: ["Move","GoTo","NavigateTo","ChangePosition","Glide","Turn","SetRotation","PointTowards","SetScale"] },
         { label: "Physics", types: ["SetBody","ApplyImpulse","SetVelocity","SetGravity","SetDensity","SetMass","SetTrigger","SetCollisionLayer","SetCollisionMask"] },
-        { label: "Looks", types: ["Say","SetVisible","SetColor"] },
+        { label: "Looks", types: ["Say","SetVisible","SetColor","BurstParticles","SetEmitterDial","SetTrailEnabled"] },
         { label: "Sound", types: ["PlaySound","PlaySoundAt","StopSound","SetSoundVolume","SetSoundPitch","SetBusVolume"] },
         { label: "Components", types: ["SetComponentField","SetCameraView","SetCameraPitch","SetCameraFov","AttachComponent","DetachComponent","SetParent"] },
         { label: "Actors", types: ["CreateClone","CreateActor","DeleteActor"] },
@@ -476,7 +482,7 @@ QtObject {
         Glide:"glide to", Turn:"turn", SetRotation:"point in direction", PointTowards:"point towards", SetScale:"set size", SetBody:"set body",
         SetTrigger:"make me solid or a trigger", SetCollisionLayer:"set my collision layer", SetCollisionMask:"set my collision mask",
         ApplyImpulse:"push", SetVelocity:"set velocity", SetGravity:"set gravity", SetDensity:"set density", SetMass:"set mass", Say:"say",
-        SetVisible:"show or hide", SetColor:"set color", PlaySound:"play sound", PlaySoundAt:"play sound at an actor", StopSound:"stop sound",
+        SetVisible:"show or hide", SetColor:"set color", BurstParticles:"burst particles", SetEmitterDial:"set an emitter dial", SetTrailEnabled:"start or stop my trail", PlaySound:"play sound", PlaySoundAt:"play sound at an actor", StopSound:"stop sound",
         SetSoundVolume:"set sound volume", SetSoundPitch:"set sound pitch", SetBusVolume:"set bus volume", SetComponentField:"set a component field",
         SetCameraView:"set my camera view", SetCameraPitch:"set camera pitch", SetCameraFov:"set camera fov", AttachComponent:"attach a component",
         DetachComponent:"detach a component", SetParent:"attach me to an actor", CreateClone:"create a clone", CreateActor:"create an actor",

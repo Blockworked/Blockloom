@@ -8,25 +8,35 @@
 //!
 //! 2D particles are sprites; 3D ones are small emissive spheres sharing one
 //! mesh, each with its own material so it can fade alone. Ghosts copy a
-//! sprite or a standard mesh; custom-shaded actors leave no ghosts, since
-//! their material can't be cloned into a fade.
+//! sprite or mesh, with a private fading material for each ghost.
 
+use bevy::mesh::Mesh2d;
 use bevy::prelude::*;
+use bevy::sprite_render::{ColorMaterial, MeshMaterial2d};
+use blockloom_core::blocks::EmitterDial;
 use blockloom_core::material::ParticleSpec;
+use blockloom_core::vm::Effect;
 
 use crate::engine::ActorId;
 use crate::engine::{Dimension, Engine};
+use crate::materials::{GraphMaterial2d, GraphMaterial3d, TilemapMesh};
 use crate::world::{forward_of, parse_color};
 
 /// Live emission bookkeeping on an actor carrying an emitter.
 #[derive(Component)]
 pub struct EmitterState {
     acc: f32,
+    spec: Option<ParticleSpec>,
+    burst: u32,
 }
 
 impl EmitterState {
     pub fn fresh() -> Self {
-        Self { acc: 0.0 }
+        Self {
+            acc: 0.0,
+            spec: None,
+            burst: 0,
+        }
     }
 }
 
@@ -34,11 +44,15 @@ impl EmitterState {
 #[derive(Component)]
 pub struct TrailState {
     timer: f32,
+    enabled: bool,
 }
 
 impl TrailState {
     pub fn fresh() -> Self {
-        Self { timer: 0.0 }
+        Self {
+            timer: 0.0,
+            enabled: true,
+        }
     }
 }
 
@@ -91,6 +105,64 @@ pub fn despawn_fx(
 /// emitting rather than spawning unbounded entities.
 pub const MAX_FX: usize = 1024;
 
+/// Apply block changes before the pending effects are cleared this step.
+pub fn apply_fx_effects(
+    effects: Res<crate::engine::PendingEffects>,
+    engine: NonSend<Engine>,
+    mut emitters: Query<&mut EmitterState>,
+    mut trails: Query<&mut TrailState>,
+) {
+    if !engine.running || engine.paused {
+        return;
+    }
+    for effect in &effects.0 {
+        match effect {
+            Effect::BurstParticles { actor, count } => {
+                if let Some(entity) = engine.entities.get(actor) {
+                    if let Ok(mut state) = emitters.get_mut(*entity) {
+                        state.burst = state.burst.saturating_add(*count).min(512);
+                    }
+                }
+            }
+            Effect::SetEmitterDial { actor, dial, value } => {
+                if !value.is_finite() {
+                    continue;
+                }
+                let Some(entity) = engine.entities.get(actor) else {
+                    continue;
+                };
+                let Ok(mut state) = emitters.get_mut(*entity) else {
+                    continue;
+                };
+                let Some(base) = engine.actor(actor).and_then(|a| a.components.emitter()) else {
+                    continue;
+                };
+                let spec = state.spec.get_or_insert_with(|| base.clone());
+                match dial {
+                    EmitterDial::Rate => spec.rate = *value,
+                    EmitterDial::Lifetime => spec.lifetime = *value,
+                    EmitterDial::Speed => spec.speed = *value,
+                    EmitterDial::Spread => spec.spread = *value,
+                    EmitterDial::Gravity => spec.gravity_scale = *value,
+                    EmitterDial::SizeStart => spec.size_start = *value,
+                    EmitterDial::SizeEnd => spec.size_end = *value,
+                    EmitterDial::Max => spec.max = (*value as i64).clamp(1, 512) as u32,
+                }
+                spec.normalize();
+            }
+            Effect::SetTrailEnabled { actor, enabled } => {
+                if let Some(entity) = engine.entities.get(actor) {
+                    if let Ok(mut state) = trails.get_mut(*entity) {
+                        state.enabled = *enabled;
+                        state.timer = 0.0;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Insert emission state for an actor that carries the matching component.
 /// Called everywhere an actor entity is born: both rebuild loops and the
 /// runtime spawner, so a mid-run attach and an authored component agree.
@@ -126,6 +198,7 @@ pub fn emit_particles(
     mut cache: ResMut<FxCache>,
     mut emitters: Query<(&ActorId, &Transform, &mut EmitterState)>,
     particles: Query<&Particle>,
+    ghosts: Query<&Ghost>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut seed: Local<u64>,
@@ -137,7 +210,7 @@ pub fn emit_particles(
         *seed = 0x9E3779B97F4A7C15;
     }
     let dt = time.delta_secs();
-    let living = particles.iter().count();
+    let mut living = particles.iter().count() + ghosts.iter().count();
     if living >= MAX_FX {
         return;
     }
@@ -155,19 +228,19 @@ pub fn emit_particles(
         if !engine.has_component(&id.0, "Emitter") {
             continue;
         }
-        let Some(spec) = engine
+        let Some(authored) = engine
             .actor(&id.0)
             .and_then(|actor| actor.components.emitter())
             .cloned()
         else {
             continue;
         };
-        if spec.rate <= 0.0 {
-            continue;
-        }
+        let spec = state.spec.as_ref().unwrap_or(&authored).clone();
         state.acc += spec.rate * dt;
-        let mut count = state.acc.floor() as usize;
-        state.acc -= count as f32;
+        let due = state.acc.floor() as usize;
+        state.acc -= due as f32;
+        let mut count = due.saturating_add(state.burst as usize);
+        state.burst = 0;
         // One emitter never takes more than its share of the pool.
         let owned = particles.iter().filter(|p| p.owner == id.0).count();
         count = count.min(spec.max.saturating_sub(owned as u32) as usize);
@@ -189,6 +262,7 @@ pub fn emit_particles(
                 &id.0,
             );
         }
+        living += count;
     }
 }
 
@@ -317,21 +391,45 @@ pub fn snapshot_trails(
         &Transform,
         &mut TrailState,
         Option<&Sprite>,
+        Option<&Mesh2d>,
+        Option<&MeshMaterial2d<ColorMaterial>>,
+        Option<&MeshMaterial2d<GraphMaterial2d>>,
         Option<&Mesh3d>,
         Option<&MeshMaterial3d<StandardMaterial>>,
+        Option<&MeshMaterial3d<GraphMaterial3d>>,
+        Option<&TilemapMesh>,
     )>,
+    tile_children: Query<(&Mesh2d, &MeshMaterial2d<ColorMaterial>)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut tiles: ResMut<Assets<ColorMaterial>>,
+    mut graphs_2d: ResMut<Assets<GraphMaterial2d>>,
+    mut graphs_3d: ResMut<Assets<GraphMaterial3d>>,
     ghosts: Query<&Ghost>,
+    particles: Query<&Particle>,
 ) {
     if !engine.running || engine.paused {
         return;
     }
-    if ghosts.iter().count() >= MAX_FX {
+    let mut living = ghosts.iter().count() + particles.iter().count();
+    if living >= MAX_FX {
         return;
     }
     let dt = time.delta_secs();
-    for (id, transform, mut state, sprite, mesh, handle) in &mut trailed {
-        if !engine.has_component(&id.0, "Trail") {
+    for (
+        id,
+        transform,
+        mut state,
+        sprite,
+        mesh_2d,
+        tile,
+        graph_2d,
+        mesh,
+        handle,
+        graph_3d,
+        child,
+    ) in &mut trailed
+    {
+        if !state.enabled || !engine.has_component(&id.0, "Trail") {
             continue;
         }
         let Some(spec) = engine
@@ -346,8 +444,12 @@ pub fn snapshot_trails(
             continue;
         }
         state.timer = 0.0;
+        if living >= MAX_FX {
+            break;
+        }
         let mut tint = parse_color(&spec.color);
         tint.set_alpha(0.5);
+        let tile_child = child.and_then(|child| tile_children.get(child.0).ok());
         if let Some(sprite) = sprite {
             let mut ghost = sprite.clone();
             ghost.color = tint;
@@ -360,6 +462,51 @@ pub fn snapshot_trails(
                 *transform,
                 ghost,
             ));
+            living += 1;
+        } else if let Some((mesh, handle)) = tile_child.or_else(|| mesh_2d.zip(tile)) {
+            let mut faded = tiles.get(&handle.0).cloned().unwrap_or_default();
+            faded.color = tint;
+            commands.spawn((
+                Ghost {
+                    age: 0.0,
+                    life: spec.life,
+                    base: 0.5,
+                },
+                *transform,
+                Mesh2d(mesh.0.clone()),
+                MeshMaterial2d(tiles.add(faded)),
+            ));
+            living += 1;
+        } else if let (Some(mesh), Some(handle)) = (mesh_2d, graph_2d) {
+            if let Some(mut faded) = graphs_2d.get(&handle.0).cloned() {
+                faded.tint = Vec4::from_array(tint.to_linear().to_f32_array());
+                commands.spawn((
+                    Ghost {
+                        age: 0.0,
+                        life: spec.life,
+                        base: 0.5,
+                    },
+                    *transform,
+                    Mesh2d(mesh.0.clone()),
+                    MeshMaterial2d(graphs_2d.add(faded)),
+                ));
+                living += 1;
+            }
+        } else if let (Some(mesh), Some(handle)) = (mesh, graph_3d) {
+            if let Some(mut faded) = graphs_3d.get(&handle.0).cloned() {
+                faded.tint = Vec4::from_array(tint.to_linear().to_f32_array());
+                commands.spawn((
+                    Ghost {
+                        age: 0.0,
+                        life: spec.life,
+                        base: 0.5,
+                    },
+                    *transform,
+                    Mesh3d(mesh.0.clone()),
+                    MeshMaterial3d(graphs_3d.add(faded)),
+                ));
+                living += 1;
+            }
         } else if let (Some(mesh), Some(handle)) = (mesh, handle) {
             let mut faded = materials.get(&handle.0).cloned().unwrap_or_default();
             faded.base_color = tint;
@@ -374,9 +521,8 @@ pub fn snapshot_trails(
                 Mesh3d(mesh.0.clone()),
                 MeshMaterial3d(materials.add(faded)),
             ));
+            living += 1;
         }
-        // Anything else (tilemap quads, custom shaders) leaves no ghost:
-        // their material can't be faded by cloning.
     }
 }
 
@@ -389,15 +535,21 @@ pub fn step_ghosts(
         Entity,
         &mut Ghost,
         Option<&mut Sprite>,
+        Option<&MeshMaterial2d<ColorMaterial>>,
+        Option<&MeshMaterial2d<GraphMaterial2d>>,
         Option<&MeshMaterial3d<StandardMaterial>>,
+        Option<&MeshMaterial3d<GraphMaterial3d>>,
     )>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut tiles: ResMut<Assets<ColorMaterial>>,
+    mut graphs_2d: ResMut<Assets<GraphMaterial2d>>,
+    mut graphs_3d: ResMut<Assets<GraphMaterial3d>>,
 ) {
     if !engine.running || engine.paused {
         return;
     }
     let dt = time.delta_secs();
-    for (entity, mut ghost, sprite, handle) in &mut ghosts {
+    for (entity, mut ghost, sprite, tile, graph_2d, handle, graph_3d) in &mut ghosts {
         ghost.age += dt;
         if ghost.age >= ghost.life {
             commands.entity(entity).despawn();
@@ -406,6 +558,18 @@ pub fn step_ghosts(
         let alpha = ghost.base * (1.0 - (ghost.age / ghost.life).clamp(0.0, 1.0));
         if let Some(mut sprite) = sprite {
             sprite.color.set_alpha(alpha);
+        } else if let Some(handle) = tile {
+            if let Some(mut material) = tiles.get_mut(&handle.0) {
+                material.color.set_alpha(alpha);
+            }
+        } else if let Some(handle) = graph_2d {
+            if let Some(mut material) = graphs_2d.get_mut(&handle.0) {
+                material.tint.w = alpha;
+            }
+        } else if let Some(handle) = graph_3d {
+            if let Some(mut material) = graphs_3d.get_mut(&handle.0) {
+                material.tint.w = alpha;
+            }
         } else if let Some(handle) = handle {
             if let Some(mut material) = materials.get_mut(&handle.0) {
                 material.base_color.set_alpha(alpha);

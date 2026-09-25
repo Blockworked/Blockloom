@@ -22,6 +22,8 @@ BwDialog {
     function clamp(n, lo, hi) { return Math.min(Math.max(n, lo), hi); }
     function postOf() { return Object.assign({ exposure_ev: 9.7, tonemapping: "TonyMcMapface", bloom_enabled: false, bloom_threshold: 1, bloom_intensity: 0.15, vignette_strength: 0 }, world && world.post ? world.post : {}); }
     function soundOf() { return Object.assign({ master_volume: 1, music_volume: 1, sfx_volume: 1 }, world && world.sound ? world.sound : {}); }
+    function navigationOf() { return Object.assign({ areas: [], links: [] }, world && world.navigation ? world.navigation : {}); }
+    function writeNavigation(next) { invoke("set_navigation", { navigation: Object.assign(navigationOf(), next) }); }
     function writeCamera(next) { invoke("set_camera", { camera: Object.assign(JSON.parse(JSON.stringify(world.camera)), next) }); }
     function writeLighting(next) { invoke("set_lighting", { lighting: Object.assign(JSON.parse(JSON.stringify(world.lighting)), next) }); }
     function writePost(next) { invoke("set_post_process", { post: Object.assign(postOf(), next) }); }
@@ -84,6 +86,22 @@ BwDialog {
                 InspectorRow { visible: root.is3d; label: "Camera at"; labelWidth: 110; Layout.fillWidth: true
                     Repeater { model: 3; delegate: NumberField { required property int index; value: root.world.camera.position[index]; onCommitted: n => root.writeCamera({ position: root.withIndex(root.world.camera.position, index, n) }) } } }
                 Note { text: "Where the camera stands when no actor has a Camera component. A 2D unit is a pixel and a 3D unit is a metre." }
+            }
+            Section {
+                heading: "Navigation"; visible: !!root.world
+                Note { text: root.is3d ? "Coordinates use X and Z. Areas add travel cost; links cross gaps or join separate surfaces. A zero layer mask applies to every agent." : "Coordinates use X and Y. Areas add travel cost; links cross gaps or join separate surfaces. A zero layer mask applies to every agent." }
+                Note { text: "Cost areas: center, size, cost, layers. Higher cost discourages travel through an area." }
+                TextField { Layout.fillWidth: true; text: JSON.stringify(root.navigationOf().areas); placeholderText: "Cost areas JSON"
+                    onEditingFinished: {
+                        try { const areas = JSON.parse(text); if (Array.isArray(areas)) root.writeNavigation({ areas: areas }); }
+                        catch (e) { text = JSON.stringify(root.navigationOf().areas); }
+                    } }
+                Note { text: "Off-mesh links: from, to, cost, bidirectional, layers." }
+                TextField { Layout.fillWidth: true; text: JSON.stringify(root.navigationOf().links); placeholderText: "Links JSON"
+                    onEditingFinished: {
+                        try { const links = JSON.parse(text); if (Array.isArray(links)) root.writeNavigation({ links: links }); }
+                        catch (e) { text = JSON.stringify(root.navigationOf().links); }
+                    } }
             }
             Section {
                 heading: "Lighting"; visible: !!root.world && root.is3d

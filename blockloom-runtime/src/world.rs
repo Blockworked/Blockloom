@@ -47,14 +47,62 @@ pub struct WorldCamera;
 #[derive(Component)]
 pub struct WorldLight;
 
-/// The baked navmesh the `navigate to` block walks. Rebuilt from the
-/// project's static geometry every time the world is, so Play always walks
-/// what the editor shows. `None` means the bake had nothing to stand on, and
-/// navigation falls back to a straight step at the target.
+/// The navmesh the `navigate to` block walks. It is rebaked when static
+/// geometry changes. `None` falls back to a straight step at the target.
 #[derive(Resource, Default)]
 pub struct NavMesh {
     pub mesh: Option<polyanya::Mesh>,
     pub mode: Mode,
+    pub settings: nav::NavSettings,
+    signature: Vec<(String, [f32; 3], Visual)>,
+}
+
+/// Re-bake when a running static collider changes. Dynamic actors stay out of
+/// the mesh, so moving crowds do not trigger expensive bakes.
+pub fn sync_navmesh(
+    engine: NonSend<Engine>,
+    mut navmesh: ResMut<NavMesh>,
+    transforms: Query<&Transform, With<ActorId>>,
+) {
+    if !engine.running || engine.paused {
+        return;
+    }
+    let mut signature = Vec::new();
+    let mut actors = Vec::new();
+    for (id, entity) in &engine.entities {
+        if !engine.has_component(id, "Body") || !engine.has_component(id, "Look") {
+            continue;
+        }
+        let Some(actor) = engine.actor(id) else {
+            continue;
+        };
+        if actor.physics().body != BodyKind::Static {
+            continue;
+        }
+        let Ok(transform) = transforms.get(*entity) else {
+            continue;
+        };
+        let Some(visual) = actor.visual().cloned() else {
+            continue;
+        };
+        let position = transform.translation.to_array();
+        signature.push((id.clone(), position, visual));
+        let mut live = actor.clone();
+        live.components.placement_mut().position = position;
+        actors.push(live);
+    }
+    signature.sort_by(|a, b| a.0.cmp(&b.0));
+    if signature == navmesh.signature {
+        return;
+    }
+    navmesh.signature = signature;
+    let mut project = engine.project.clone();
+    project.actors = actors;
+    navmesh.mesh = nav::build_mesh(&project, nav::DEFAULT_AGENT_RADIUS)
+        .map_err(|error| tracing::warn!("navmesh rebake failed: {error}"))
+        .ok();
+    navmesh.mode = project.world.mode;
+    navmesh.settings = project.world.navigation.clone();
 }
 
 /// The systems that advance the simulation itself, kept apart from the input
@@ -616,6 +664,7 @@ pub fn rebuild_world(
             .map_err(|error| tracing::warn!("navmesh bake failed: {error}"))
             .ok();
         nav.mode = project.world.mode;
+        nav.settings = project.world.navigation.clone();
     }
     open_scripts(&mut engine, &project);
 }
@@ -1684,6 +1733,10 @@ pub fn apply_common(
     navmesh: Option<Res<NavMesh>>,
     mut exit: MessageWriter<AppExit>,
     mut transforms: Query<(&mut Transform, &mut Visibility)>,
+    mut controllers_2d: Query<&mut bevy_rapier2d::prelude::KinematicCharacterController>,
+    mut controllers_3d: Query<&mut bevy_rapier3d::prelude::KinematicCharacterController>,
+    mut velocities_2d: Query<&mut bevy_rapier2d::prelude::Velocity>,
+    mut velocities_3d: Query<&mut bevy_rapier3d::prelude::Velocity>,
 ) {
     if !engine.running || engine.paused {
         return;
@@ -1725,7 +1778,7 @@ pub fn apply_common(
                 // dimension's own system - teleporting one every frame stops
                 // the solver ever resolving a contact, and it walks through
                 // walls and floors. See `dim2::apply_effects`.
-                if is_dynamic(&engine, actor) {
+                if is_dynamic(&engine, actor) || is_character(&engine, actor) {
                     continue;
                 }
                 let forward = forward_of(&transform, dimension.0);
@@ -1744,18 +1797,95 @@ pub fn apply_common(
                 let to = nav::plane_coords(mode, *target);
                 let rate = engine.project.world.fixed_rate.clamp(1.0, 1000.0);
                 let max_step = speed.max(0.0) / rate;
-                let mesh = navmesh.as_deref().and_then(|nav| nav.mesh.as_ref());
-                let next = match mesh.and_then(|mesh| nav::find_path(mesh, from, to)) {
-                    Some(path) => nav::next_step(&path, from, max_step),
-                    None => nav::next_step(&[to], from, max_step),
+                let nav = navmesh.as_deref();
+                let layer = engine
+                    .actor(actor)
+                    .and_then(|a| a.components.brain())
+                    .map(|brain| brain.layer)
+                    .unwrap_or(1);
+                let route = nav.and_then(|nav| {
+                    nav.mesh.as_ref().and_then(|mesh| {
+                        nav::find_route(mesh, from, to, &nav.settings, layer)
+                            .map(|path| (path, &nav.settings))
+                    })
+                });
+                let (mut next, linked) = match route {
+                    Some((path, settings)) => {
+                        nav::next_route_step(&path, from, max_step, settings, layer)
+                    }
+                    None => (nav::next_step(&[to], from, max_step), false),
                 };
-                transform.translation = match mode {
+                if !linked {
+                    if let Some(radius) = engine
+                        .actor(actor)
+                        .and_then(|a| a.components.brain())
+                        .map(|brain| brain.separation.max(0.0))
+                        .filter(|radius| *radius > 0.0)
+                    {
+                        let mut away = Vec2::ZERO;
+                        for (other, position) in &positions {
+                            if other == actor || !engine.has_component(other, "Brain") {
+                                continue;
+                            }
+                            let point = nav::plane_coords(mode, position.to_array());
+                            if (point[0] - to[0]).hypot(point[1] - to[1]) < radius * 0.5 {
+                                continue;
+                            }
+                            let offset = Vec2::new(from[0] - point[0], from[1] - point[1]);
+                            let distance = offset.length();
+                            if distance > 1e-4 && distance < radius {
+                                away += offset / distance * (1.0 - distance / radius);
+                            }
+                        }
+                        let desired = Vec2::new(next[0] - from[0], next[1] - from[1]);
+                        let step = (desired + away * max_step).clamp_length_max(max_step);
+                        next = [from[0] + step.x, from[1] + step.y];
+                    }
+                }
+                let destination = match mode {
                     Mode::TwoD => Vec3::new(next[0], next[1], from3.z),
                     Mode::ThreeD => Vec3::new(next[0], from3.y, next[1]),
                 };
+                if linked {
+                    transform.translation = destination;
+                } else if is_character(&engine, actor) {
+                    let delta = destination - from3;
+                    match mode {
+                        Mode::TwoD => {
+                            if let Ok(mut controller) = controllers_2d.get_mut(entity) {
+                                controller.translation = Some(
+                                    controller.translation.unwrap_or(Vec2::ZERO) + delta.truncate(),
+                                );
+                            }
+                        }
+                        Mode::ThreeD => {
+                            if let Ok(mut controller) = controllers_3d.get_mut(entity) {
+                                controller.translation =
+                                    Some(controller.translation.unwrap_or(Vec3::ZERO) + delta);
+                            }
+                        }
+                    }
+                } else if is_dynamic(&engine, actor) {
+                    let delta = (destination - from3) * rate;
+                    match mode {
+                        Mode::TwoD => {
+                            if let Ok(mut velocity) = velocities_2d.get_mut(entity) {
+                                velocity.linear = delta.truncate();
+                            }
+                        }
+                        Mode::ThreeD => {
+                            if let Ok(mut velocity) = velocities_3d.get_mut(entity) {
+                                velocity.linear.x = delta.x;
+                                velocity.linear.z = delta.z;
+                            }
+                        }
+                    }
+                } else {
+                    transform.translation = destination;
+                }
             }
             Effect::ChangePosition { axis, by, .. } => {
-                if is_dynamic(&engine, actor) {
+                if is_dynamic(&engine, actor) || is_character(&engine, actor) {
                     continue;
                 }
                 if let Some(index) = position_axis(dimension.0, *axis) {
@@ -2087,7 +2217,7 @@ fn camera_of(engine: &Engine, actor: &str) -> Option<blockloom_core::components:
 /// materials need the dimension's own pipeline, so `dim2`/`dim3` pick those
 /// up from the same effect list.
 fn is_dimensions_own(component: &str) -> bool {
-    matches!(component, "Body" | "Look" | "Material")
+    matches!(component, "Body" | "Joint" | "Brain" | "Look" | "Material")
 }
 
 fn attach(
@@ -2295,7 +2425,8 @@ pub fn apply_lifetimes(
                 if let Some(entity) = engine.entities.get(of).copied() {
                     if let Ok(transform) = transforms.get(entity) {
                         let stretch = copy.placement().stretch;
-                        copy.components.set_placement(placement_of(transform, stretch));
+                        copy.components
+                            .set_placement(placement_of(transform, stretch));
                         // The live z carries the sort layer, and the spawner
                         // re-adds it: take it back off so a clone of a layered
                         // actor doesn't sort twice as high.
@@ -2365,7 +2496,10 @@ pub fn apply_lifetimes(
 
 /// A transform, as the `Place` component spells one.
 /// `stretch` is the actor's own, since a transform can't tell it from size.
-pub(crate) fn placement_of(transform: &Transform, stretch: [f32; 3]) -> blockloom_core::scene::Placement {
+pub(crate) fn placement_of(
+    transform: &Transform,
+    stretch: [f32; 3],
+) -> blockloom_core::scene::Placement {
     let (rx, ry, rz) = transform.rotation.to_euler(EulerRot::XYZ);
     blockloom_core::scene::Placement {
         position: transform.translation.to_array(),
@@ -3000,6 +3134,9 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         Effect::Move { actor, .. }
         | Effect::GoTo { actor, .. }
         | Effect::NavigateTo { actor, .. }
+        | Effect::BurstParticles { actor, .. }
+        | Effect::SetEmitterDial { actor, .. }
+        | Effect::SetTrailEnabled { actor, .. }
         | Effect::ChangePosition { actor, .. }
         | Effect::Glide { actor, .. }
         | Effect::Turn { actor, .. }
@@ -3079,6 +3216,13 @@ pub fn is_dynamic(engine: &Engine, actor: &str) -> bool {
     engine
         .actor(actor)
         .is_some_and(|actor| actor.physics().body == BodyKind::Dynamic)
+}
+
+pub fn is_character(engine: &Engine, actor: &str) -> bool {
+    engine.actor(actor).is_some_and(|actor| {
+        let physics = actor.physics();
+        physics.body == BodyKind::Kinematic && physics.character_controller
+    })
 }
 
 /// Which coordinate an axis names. A 2D project has no depth to change, so Z
@@ -3946,6 +4090,60 @@ mod tests {
         let local = local_of(&parent, child);
         assert!((local[0] - 10.0).abs() < 0.001, "{local:?}");
         assert!(local[1].abs() < 0.001, "{local:?}");
+    }
+
+    #[test]
+    fn navigation_drives_a_dynamic_body_without_teleporting_it() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::ThreeD);
+        engine.running = true;
+        let mut actor = Actor::new(
+            "walker",
+            Visual::Cuboid {
+                color: "#fff".into(),
+                size: [1.0; 3],
+            },
+        );
+        actor.id = "walker".into();
+        actor
+            .components
+            .set_physics(blockloom_core::scene::Physics {
+                body: BodyKind::Dynamic,
+                ..Default::default()
+            });
+        engine.project.actors = vec![actor];
+        let mut app = App::new();
+        app.add_message::<AppExit>();
+        app.insert_resource(Dimension(Mode::ThreeD));
+        app.insert_resource(PendingEffects(vec![Effect::NavigateTo {
+            actor: "walker".into(),
+            target: [10.0, 0.0, 0.0],
+            speed: 4.0,
+        }]));
+        let entity = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                Visibility::Inherited,
+                bevy_rapier3d::prelude::Velocity::zero(),
+            ))
+            .id();
+        engine.entities.insert("walker".into(), entity);
+        app.insert_non_send(engine);
+        app.add_systems(Update, apply_common);
+        app.update();
+        let body = app.world().entity(entity);
+        assert_eq!(body.get::<Transform>().unwrap().translation, Vec3::ZERO);
+        assert!(
+            (body
+                .get::<bevy_rapier3d::prelude::Velocity>()
+                .unwrap()
+                .linear
+                .x
+                - 4.0)
+                .abs()
+                < 1e-4
+        );
     }
 
     /// A running app with a parent at (100, 50) and a child at (7, 7)

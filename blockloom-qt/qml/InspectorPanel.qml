@@ -32,12 +32,14 @@ Rectangle {
 
     // ─── Components with defaults for what an old document left out ────────
     function physicsOf(c) {
-        return Object.assign({ body: "None", gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5, density: 1, mass: null, trigger: false, collision_layer: 1, collision_mask: 255 }, c.physics || {});
+        return Object.assign({ body: "None", gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5, density: 1, mass: null, trigger: false, one_way: false, character_controller: false, collision_layer: 1, collision_mask: 255 }, c.physics || {});
     }
     function cameraOf(c) { return Object.assign({ view: "Follow", offset: [0, 0.6, 0], distance: 6, pitch: 15, fov: 75 }, c.camera || {}); }
     function materialOf(c) { return Object.assign({ metallic: 0, roughness: 0.6, emissive: "#000000", emissive_energy: 0, albedo_texture: "", double_sided: false, shader: null }, c.material || {}); }
     function emitterOf(c) { return Object.assign({ rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: "#FFFFFF", color_end: "#FFAB19", max: 128 }, c.emitter || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
+    function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
+    function brainOf(c) { return Object.assign({ target: "", speed: 4, sight: 12, fov: 120, separation: 1, tree: { node: "Selector", children: [{ node: "Sequence", children: [{ node: "CanSeeTarget" }, { node: "NavigateToTarget" }] }, { node: "Idle" }] } }, c.brain || {}); }
     function tilemapOf(v) {
         return Object.assign({ tileset: "", tile_size: [32, 32], width: 8, height: 8, sheet_columns: 4, sheet_rows: 4, tiles: [], solid: false, passable: [], animations: [] }, v && v.tilemap ? v.tilemap : {});
     }
@@ -58,6 +60,8 @@ Rectangle {
     function writeShader(c, next) { writeMaterial(c, { shader: merged(materialOf(c).shader || { mode: "Solid", speed: 1, strength: 0.5, color: "#FFFFFF" }, next) }); }
     function writeEmitter(c, next) { write("Emitter", { component: "Emitter", emitter: merged(emitterOf(c), next) }); }
     function writeTrail(c, next) { write("Trail", { component: "Trail", trail: merged(trailOf(c), next) }); }
+    function writeJoint(c, next) { write("Joint", { component: "Joint", joint: merged(jointOf(c), next) }); }
+    function writeBrain(c, next) { write("Brain", { component: "Brain", brain: merged(brainOf(c), next) }); }
     function writeRender(c, next) { write("Render", { component: "Render", visible: next.visible !== undefined ? next.visible : c.visible, layer: next.layer !== undefined ? next.layer : (c.layer || 0) }); }
     function writeParent(c, next) {
         write("Parent", { component: "Parent", parent: next.parent !== undefined ? next.parent : c.parent, offset: next.offset !== undefined ? next.offset : (c.offset || null) });
@@ -117,10 +121,11 @@ Rectangle {
         return false;
     }
     readonly property var parentOptions: actor ? [{ value: "", label: "nothing" }].concat(appState.project.actors.filter(a => a.id !== actor.id && !hangsOffMe(a.id)).map(a => ({ value: a.id, label: a.name }))) : []
+    readonly property var jointOptions: actor ? [{ value: "", label: "choose actor" }].concat(appState.project.actors.filter(a => a.id !== actor.id).map(a => ({ value: a.id, label: a.name }))) : []
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Camera","Script","Parent","Material","Emitter","Trail","Custom"]
+        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Custom"]
             .filter(n => n === "Custom" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }));
     }
     function blank(name) {
@@ -128,6 +133,8 @@ Rectangle {
         case "Look": return { component: "Look", visual: is3d ? { shape: "Cuboid", color: "#4C97FF", size: [1, 1, 1] } : { shape: "Rect", color: "#4C97FF", size: [60, 60] } };
         case "Render": return { component: "Render", visible: true, layer: 0 };
         case "Body": return { component: "Body", physics: { body: "Dynamic", gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5, density: 1, mass: null, trigger: false, collision_layer: 1, collision_mask: 255 } };
+        case "Joint": return { component: "Joint", joint: jointOf({}) };
+        case "Brain": return { component: "Brain", brain: brainOf({}) };
         case "Camera": return { component: "Camera", camera: { view: "ThirdPerson", offset: [0, 0.6, 0], distance: 6, pitch: 15, fov: 75 } };
         case "Parent": return { component: "Parent", parent: "", offset: null };
         case "Material": return { component: "Material", material: materialOf({}) };
@@ -185,7 +192,7 @@ Rectangle {
                         Loader {
                             Layout.fillWidth: true
                             readonly property var c: card.c
-                            sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Camera: cameraCard,
+                            sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
                                                 Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard })[card.c.component] || null
                         }
                     }
@@ -426,6 +433,8 @@ Rectangle {
                 InspectorRow { label: "Mass"; Layout.fillWidth: true; NumberField { value: body.p.mass; allowEmpty: true; fallback: 1; placeholderText: "density decides"; onCommitted: n => root.writePhysics(body.c, { mass: n }) } }
                 InspectorRow { label: "Upright"; Layout.fillWidth: true; SwitchField { value: body.p.lock_rotation; onToggled: on => root.writePhysics(body.c, { lock_rotation: on }) } Item { Layout.fillWidth: true } }
                 InspectorRow { label: "Trigger"; Layout.fillWidth: true; SwitchField { value: body.p.trigger; onToggled: on => root.writePhysics(body.c, { trigger: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { label: "One-way"; visible: !root.is3d && body.p.body === "Static"; Layout.fillWidth: true; SwitchField { value: body.p.one_way; onToggled: on => root.writePhysics(body.c, { one_way: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { label: "Character control"; visible: body.p.body === "Kinematic"; Layout.fillWidth: true; SwitchField { value: body.p.character_controller; onToggled: on => root.writePhysics(body.c, { character_controller: on }) } Item { Layout.fillWidth: true } }
                 InspectorRow { label: "Layer"; Layout.fillWidth: true
                     ChoiceField { options: Blocks.layerOptions; value: String(body.p.collision_layer); onChosen: v => root.writePhysics(body.c, { collision_layer: Number(v) }) } }
                 InspectorRow { label: "Hits"; Layout.fillWidth: true
@@ -441,6 +450,57 @@ Rectangle {
                         }
                     }
                     Item { Layout.fillWidth: true }
+                }
+            }
+        }
+    }
+    Component {
+        id: jointCard
+        ColumnLayout {
+            id: joint
+            readonly property var c: parent.c
+            readonly property var j: root.jointOf(c)
+            spacing: 6
+            InspectorRow { label: "Connect to"; Layout.fillWidth: true
+                ChoiceField { options: root.jointOptions; value: joint.j.target; onChosen: v => root.writeJoint(joint.c, { target: v }) } }
+            InspectorRow { label: "Kind"; Layout.fillWidth: true
+                ChoiceField { options: [{ value: "Fixed", label: "Fixed" }, { value: "Hinge", label: "Hinge" }, { value: "Rope", label: "Rope" }]; value: joint.j.kind; onChosen: v => root.writeJoint(joint.c, { kind: v }) } }
+            InspectorRow { label: "Anchor X"; Layout.fillWidth: true
+                NumberField { value: joint.j.anchor[0]; onCommitted: n => root.writeJoint(joint.c, { anchor: root.withIndex(joint.j.anchor, 0, n) }) } }
+            InspectorRow { label: "Anchor Y"; Layout.fillWidth: true
+                NumberField { value: joint.j.anchor[1]; onCommitted: n => root.writeJoint(joint.c, { anchor: root.withIndex(joint.j.anchor, 1, n) }) } }
+            InspectorRow { label: "Anchor Z"; visible: root.is3d; Layout.fillWidth: true
+                NumberField { value: joint.j.anchor[2]; onCommitted: n => root.writeJoint(joint.c, { anchor: root.withIndex(joint.j.anchor, 2, n) }) } }
+            InspectorRow { label: "Rope length"; visible: joint.j.kind === "Rope"; Layout.fillWidth: true
+                NumberField { value: joint.j.length; fallback: 2; onCommitted: n => root.writeJoint(joint.c, { length: n }) } }
+        }
+    }
+    Component {
+        id: brainCard
+        ColumnLayout {
+            id: brain
+            readonly property var c: parent.c
+            readonly property var b: root.brainOf(c)
+            spacing: 6
+            InspectorRow { label: "Target"; Layout.fillWidth: true
+                ChoiceField { options: root.jointOptions; value: brain.b.target; onChosen: v => root.writeBrain(brain.c, { target: v }) } }
+            InspectorRow { label: "Speed"; Layout.fillWidth: true
+                NumberField { value: brain.b.speed; fallback: 4; onCommitted: n => root.writeBrain(brain.c, { speed: n }) } }
+            InspectorRow { label: "Sight"; Layout.fillWidth: true
+                NumberField { value: brain.b.sight; fallback: 12; onCommitted: n => root.writeBrain(brain.c, { sight: n }) } }
+            InspectorRow { label: "View angle"; Layout.fillWidth: true
+                NumberField { value: brain.b.fov; fallback: 120; onCommitted: n => root.writeBrain(brain.c, { fov: n }) } }
+            InspectorRow { label: "Separation"; Layout.fillWidth: true
+                NumberField { value: brain.b.separation; fallback: 1; onCommitted: n => root.writeBrain(brain.c, { separation: n }) } }
+            InspectorRow { label: "Nav layer mask"; Layout.fillWidth: true
+                NumberField { value: brain.b.layer === undefined ? 1 : brain.b.layer; fallback: 1; onCommitted: n => root.writeBrain(brain.c, { layer: Math.max(0, Math.round(n)) }) } }
+            TextField {
+                Layout.fillWidth: true; font.pixelSize: 11
+                text: JSON.stringify(brain.b.tree)
+                placeholderText: "Behavior tree JSON"
+                onEditingFinished: {
+                    try { const tree = JSON.parse(text); if (tree && tree.node) root.writeBrain(brain.c, { tree: tree }); }
+                    catch (e) { text = JSON.stringify(brain.b.tree); }
                 }
             }
         }

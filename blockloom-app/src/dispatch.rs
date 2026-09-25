@@ -6,6 +6,7 @@ use crate::commands;
 use crate::state::{InstrPath, ValueLocation};
 use blockloom_core::blocks::{BlockPiece, BlockShape, Instruction};
 use blockloom_core::components::ActorComponent;
+use blockloom_core::nav::NavSettings;
 use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, PostProcess, Visual};
 use blockloom_core::sound::SoundMixer;
 use blockloom_core::value::Value as BlockValue;
@@ -108,6 +109,10 @@ impl Backend {
             "set_post_process" => {
                 let post: PostProcess = arg(&args, "post")?;
                 to_json(commands::set_post_process(state, app, post)?)
+            }
+            "set_navigation" => {
+                let navigation: NavSettings = arg(&args, "navigation")?;
+                to_json(commands::set_navigation(state, app, navigation)?)
             }
 
             // ── Actors ─────────────────────────────────────────────────────

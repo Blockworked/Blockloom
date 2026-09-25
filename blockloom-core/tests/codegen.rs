@@ -19,8 +19,8 @@
 //! tests make.
 
 use blockloom_core::blocks::{
-    BlockDef, BlockPiece, BlockShape, DictDef, DictEntry, DictItem, InputValueType, Instruction,
-    InstructionKind as K, ListDef, ListItem, Strand, VariableDef,
+    BlockDef, BlockPiece, BlockShape, DictDef, DictEntry, DictItem, EmitterDial, InputValueType,
+    Instruction, InstructionKind as K, ListDef, ListItem, Strand, VariableDef,
 };
 use blockloom_core::input::ActionSense;
 use blockloom_core::project::{Actor, Project};
@@ -900,6 +900,9 @@ fn line_of(act: &Act) -> String {
         Act::Move { steps } => format!("Move {steps:?}"),
         Act::GoTo { position } => format!("GoTo {position:?}"),
         Act::NavigateTo { target, speed } => format!("NavigateTo {target:?} {speed:?}"),
+        Act::BurstParticles { count } => format!("BurstParticles {count}"),
+        Act::SetEmitterDial { dial, value } => format!("SetEmitterDial {dial} {value:?}"),
+        Act::SetTrailEnabled { enabled } => format!("SetTrailEnabled {enabled}"),
         Act::ChangePosition { axis, by } => format!("ChangePosition {axis} {by:?}"),
         Act::Glide { seconds, target } => format!("Glide {seconds:?} {target:?}"),
         Act::Turn { axis, degrees } => format!("Turn {axis} {degrees:?}"),
@@ -1038,6 +1041,11 @@ fn line_of(effect: &Effect) -> Option<String> {
             target,
             speed,
         } => format!("{actor}|NavigateTo {target:?} {speed:?}"),
+        Effect::BurstParticles { actor, count } => format!("{actor}|BurstParticles {count}"),
+        Effect::SetEmitterDial { actor, dial, value } => {
+            format!("{actor}|SetEmitterDial {dial:?} {value:?}")
+        }
+        Effect::SetTrailEnabled { actor, enabled } => format!("{actor}|SetTrailEnabled {enabled}"),
         Effect::ChangePosition { actor, axis, by } => {
             format!("{actor}|ChangePosition {} {by:?}", axis.index())
         }
@@ -2107,6 +2115,14 @@ fn the_rest_of_the_leaf_blocks_land_the_same() {
                 z: number(0.0),
                 speed: op("Add", vec![number(2.0), number(3.0)]),
             },
+            K::BurstParticles {
+                count: number(17.0),
+            },
+            K::SetEmitterDial {
+                dial: EmitterDial::Speed,
+                value: number(42.0),
+            },
+            K::SetTrailEnabled { enabled: false },
             K::SetVisible { visible: false },
             K::SetMouseLocked { locked: true },
             K::RumbleGamepad {

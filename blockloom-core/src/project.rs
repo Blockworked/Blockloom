@@ -367,12 +367,24 @@ impl Project {
         let Some(index) = self.actors.iter().position(|actor| actor.id == id) else {
             return false;
         };
-        self.actors.remove(index);
+        let removed = self.actors.remove(index);
         // Its children are left where they are rather than going with it -
         // a parent is an attachment, not an owner.
         for actor in &mut self.actors {
             if actor.components.parent() == Some(id) {
                 actor.components.remove("Parent");
+            }
+            if actor
+                .components
+                .joint()
+                .is_some_and(|joint| joint.target == id)
+            {
+                actor.components.remove("Joint");
+            }
+            if let Some(ActorComponent::Brain { brain }) = actor.components.get_mut("Brain") {
+                if brain.target == id || brain.target.eq_ignore_ascii_case(&removed.name) {
+                    brain.target.clear();
+                }
             }
         }
         true
@@ -480,6 +492,11 @@ impl Project {
             return Err(format!("An actor named \"{trimmed}\" already exists"));
         }
         for actor in &mut self.actors {
+            if let Some(ActorComponent::Brain { brain }) = actor.components.get_mut("Brain") {
+                if brain.target.eq_ignore_ascii_case(&old) {
+                    brain.target.clone_from(&trimmed);
+                }
+            }
             actor
                 .graph
                 .walk_instructions_mut(&mut |ins| match &mut ins.kind {
@@ -726,6 +743,16 @@ impl Project {
     pub fn normalize(&mut self) {
         self.migrate_camera_follow();
         self.prune_parents();
+        let known: std::collections::HashSet<String> =
+            self.actors.iter().map(|a| a.id.clone()).collect();
+        for actor in &mut self.actors {
+            if actor.components.joint().is_some_and(|joint| {
+                joint.target == actor.id
+                    || (!joint.target.is_empty() && !known.contains(&joint.target))
+            }) {
+                actor.components.remove("Joint");
+            }
+        }
         self.world.input.normalize();
         for actor in &mut self.actors {
             actor.graph.migrate_bool_slots();
@@ -1380,6 +1407,33 @@ mod tests {
             panic!("expected a PointTowards");
         };
         assert_eq!(target, "Floor");
+    }
+
+    #[test]
+    fn actor_references_in_brains_and_joints_follow_edits() {
+        let mut project = Project::starter("p", Mode::TwoD);
+        let target = project.actors[1].id.clone();
+        project.actors[0].components.insert(ActorComponent::Brain {
+            brain: crate::ai::BrainSpec {
+                target: "Ground".to_string(),
+                ..Default::default()
+            },
+        });
+        project.actors[0].components.insert(ActorComponent::Joint {
+            joint: crate::components::JointSpec {
+                target: target.clone(),
+                ..Default::default()
+            },
+        });
+        project.rename_actor(&target, "Floor").unwrap();
+        assert_eq!(
+            project.actors[0].components.brain().unwrap().target,
+            "Floor"
+        );
+        assert_eq!(project.actors[0].components.joint().unwrap().target, target);
+        project.remove_actor(&target);
+        assert!(project.actors[0].components.joint().is_none());
+        assert_eq!(project.actors[0].components.brain().unwrap().target, "");
     }
 
     #[test]

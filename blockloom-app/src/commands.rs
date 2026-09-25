@@ -19,6 +19,7 @@ use blockloom_core::codegen;
 use blockloom_core::components::{ActorComponent, Components};
 use blockloom_core::library;
 use blockloom_core::material::GraphEffect;
+use blockloom_core::nav::NavSettings;
 use blockloom_core::pipeline;
 use blockloom_core::project::{self, Actor, Project};
 use blockloom_core::scene::{Camera, Lighting, Mode, Physics, Placement, PostProcess, Visual};
@@ -521,6 +522,35 @@ pub(crate) fn set_fixed_rate(
     push_undo(&mut s);
     if let Some(project) = s.project_mut() {
         project.world.fixed_rate = fixed_rate.clamp(1.0, 1000.0);
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+pub(crate) fn set_navigation(
+    state: &SharedState,
+    app: &AppHandle,
+    navigation: NavSettings,
+) -> Result<(), String> {
+    if navigation.links.len() > 16 || navigation.areas.len() > 8 {
+        return Err("Too many navigation links or areas".into());
+    }
+    let valid_point = |point: [f32; 2]| point.into_iter().all(f32::is_finite);
+    if navigation.areas.iter().any(|a| {
+        !valid_point(a.center) || !valid_point(a.size) || !a.cost.is_finite() || a.cost < 0.0
+    }) || navigation
+        .links
+        .iter()
+        .any(|l| !valid_point(l.from) || !valid_point(l.to) || !l.cost.is_finite() || l.cost < 0.0)
+    {
+        return Err("Navigation coordinates and costs must be finite and costs nonnegative".into());
+    }
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    if let Some(project) = s.project_mut() {
+        project.world.navigation = navigation;
     }
     auto_save(&s);
     sync_runtime(&mut s);

@@ -70,6 +70,16 @@ pub enum Act {
         target: [f32; 3],
         speed: f32,
     },
+    BurstParticles {
+        count: u32,
+    },
+    SetEmitterDial {
+        dial: &'static str,
+        value: f32,
+    },
+    SetTrailEnabled {
+        enabled: bool,
+    },
     ChangePosition {
         axis: usize,
         by: f32,
@@ -950,7 +960,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 12;
+pub const LOGIC_ABI_VERSION: u32 = 13;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1058,6 +1068,12 @@ pub const ACT_SET_TRIGGER: u32 = 57;
 pub const ACT_SET_COLLISION_LAYER: u32 = 58;
 /// `n0` = bitmask of the layers the actor pairs with.
 pub const ACT_SET_COLLISION_MASK: u32 = 59;
+/// `n0` = count, capped by the emitter and global pools.
+pub const ACT_BURST_PARTICLES: u32 = 64;
+/// `a` = emitter dial name, `n0` = value.
+pub const ACT_SET_EMITTER_DIAL: u32 = 65;
+/// `n0` != 0 records trail snapshots.
+pub const ACT_SET_TRAIL_ENABLED: u32 = 66;
 /// `n0` = strength 0-100, `n1` = seconds. Window-global: no actor.
 pub const ACT_RUMBLE_GAMEPAD: u32 = 60;
 /// `a` = action, `b` = binding text.
@@ -1279,6 +1295,30 @@ impl Host for AbiHost {
                     target[2] as f64,
                     speed as f64,
                 ],
+                &zero,
+            ),
+            Act::BurstParticles { count } => self.act_wire(
+                actor,
+                ACT_BURST_PARTICLES,
+                "",
+                "",
+                [count as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetEmitterDial { dial, value } => self.act_wire(
+                actor,
+                ACT_SET_EMITTER_DIAL,
+                dial,
+                "",
+                [value as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetTrailEnabled { enabled } => self.act_wire(
+                actor,
+                ACT_SET_TRAIL_ENABLED,
+                "",
+                "",
+                [f64::from(enabled as u8), 0.0, 0.0],
                 &zero,
             ),
             Act::ChangePosition { axis, by } => self.act_wire(

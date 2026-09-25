@@ -186,6 +186,13 @@ pub struct Physics {
     /// a contact against it. What a coin, a goal zone or a vision cone wants.
     #[serde(default)]
     pub trigger: bool,
+    /// In 2D, a static platform supports actors from above while letting
+    /// them pass through its underside and sides.
+    #[serde(default)]
+    pub one_way: bool,
+    /// Use Rapier's collision-aware movement for a kinematic actor.
+    #[serde(default)]
+    pub character_controller: bool,
     /// Which collision layer the actor lives on, 1-8. The solver only pairs
     /// two bodies when each one's mask names the other's layer, so walls can
     /// ignore the player while the player's feet still raycast against them.
@@ -228,6 +235,8 @@ impl Default for Physics {
             density: 1.0,
             mass: None,
             trigger: false,
+            one_way: false,
+            character_controller: false,
             collision_layer: 1,
             collision_mask: 0xFF,
         }
@@ -628,6 +637,9 @@ pub struct World {
     /// vignette. Neutral by default, so old projects look the same.
     #[serde(default)]
     pub post: PostProcess,
+    /// Cost regions and explicit links in the navigation plane.
+    #[serde(default)]
+    pub navigation: crate::nav::NavSettings,
 }
 
 fn default_background() -> String {
@@ -658,6 +670,7 @@ impl Default for World {
             sound: SoundMixer::default(),
             input: InputConfig::default(),
             post: PostProcess::default(),
+            navigation: crate::nav::NavSettings::default(),
         }
     }
 }
