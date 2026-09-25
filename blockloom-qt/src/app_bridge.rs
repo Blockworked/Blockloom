@@ -48,6 +48,12 @@ pub mod qobject {
         /// Closes the game window, if one is open. Called as the editor exits.
         #[qinvokable]
         fn shutdown(self: Pin<&mut AppBridge>);
+
+        /// The Bevy `KeyCode` name of the key behind a key event's
+        /// `nativeScanCode`, or "" where the platform gives none.
+        #[qinvokable]
+        #[cxx_name = "physicalKey"]
+        fn physical_key(self: &AppBridge, scan_code: i32) -> QString;
     }
 
     unsafe extern "RustQt" {
@@ -214,6 +220,13 @@ impl qobject::AppBridge {
             });
         });
         self.as_mut().rust_mut().preview = Some(watch);
+    }
+
+    pub fn physical_key(&self, scan_code: i32) -> QString {
+        let name = u32::try_from(scan_code)
+            .ok()
+            .and_then(blockloom_protocol::keys::physical_key);
+        QString::from(name.unwrap_or_default())
     }
 
     pub fn shutdown(mut self: Pin<&mut Self>) {

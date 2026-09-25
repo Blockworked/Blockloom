@@ -84,6 +84,9 @@ Rectangle {
     function input(payload) { app.invoke("preview_input", { input: payload }, null, () => {}); }
     // Viewport pixels plus the viewport's size, so the runtime can scale onto its own window.
     function box(x, y) { return { x: x, y: y, w: frame.width, h: frame.height }; }
+    // The key by where it sits, so WASD stays WASD on any layout. Qt's key
+    // name is the fallback where the platform has no scan code (macOS).
+    function keyCode(event) { return app.physicalKey(event.nativeScanCode) || webCode(event); }
     // Qt keys as the `KeyboardEvent.code` names the runtime expects.
     function webCode(event) {
         if (event.key >= Qt.Key_A && event.key <= Qt.Key_Z) return "Key" + String.fromCharCode(65 + event.key - Qt.Key_A);
@@ -95,6 +98,8 @@ Rectangle {
         codes[Qt.Key_Right] = "ArrowRight"; codes[Qt.Key_Up] = "ArrowUp"; codes[Qt.Key_Down] = "ArrowDown"; codes[Qt.Key_Shift] = "ShiftLeft";
         codes[Qt.Key_Control] = "ControlLeft"; codes[Qt.Key_Alt] = "AltLeft"; codes[Qt.Key_Minus] = "Minus"; codes[Qt.Key_Equal] = "Equal";
         codes[Qt.Key_Comma] = "Comma"; codes[Qt.Key_Period] = "Period"; codes[Qt.Key_Slash] = "Slash"; codes[Qt.Key_Semicolon] = "Semicolon";
+        codes[Qt.Key_BracketLeft] = "BracketLeft"; codes[Qt.Key_BracketRight] = "BracketRight"; codes[Qt.Key_Apostrophe] = "Quote";
+        codes[Qt.Key_QuoteLeft] = "Backquote"; codes[Qt.Key_Backslash] = "Backslash";
         return codes[event.key] || "";
     }
 
@@ -194,17 +199,32 @@ Rectangle {
                     onPositionChanged: mouse => root.input(Object.assign({ kind: "mouse_move" }, root.box(mouse.x, mouse.y)))
                     onPressed: mouse => { frame.forceActiveFocus(); root.pointerSuspended = false; root.input(Object.assign({ kind: "mouse_button", button: buttons[mouse.button], down: true }, root.box(mouse.x, mouse.y))); }
                     onReleased: mouse => root.input(Object.assign({ kind: "mouse_button", button: buttons[mouse.button], down: false }, root.box(mouse.x, mouse.y)))
+                    // Notches from a wheel, pixels from a touchpad that reports them.
+                    onWheel: wheel => {
+                        const px = wheel.pixelDelta, line = px.x === 0 && px.y === 0;
+                        const dx = line ? wheel.angleDelta.x / 120 : px.x, dy = line ? wheel.angleDelta.y / 120 : px.y;
+                        if (dx !== 0 || dy !== 0) root.input(Object.assign({ kind: "scroll", dx: dx, dy: dy, line: line }, root.box(wheel.x, wheel.y)));
+                    }
+                }
+                // Fingers go to the game as touches, not as a mouse; the mouse passes through.
+                MultiPointTouchArea {
+                    anchors.fill: parent; mouseEnabled: false
+                    function send(points, phase) { for (const p of points) root.input(Object.assign({ kind: "touch", id: p.pointId, phase: phase }, root.box(p.x, p.y))); }
+                    onPressed: points => { frame.forceActiveFocus(); send(points, "start"); }
+                    onUpdated: points => send(points, "move")
+                    onReleased: points => send(points, "end")
+                    onCanceled: points => send(points, "cancel")
                 }
                 Keys.onPressed: event => {
                     // Escape always frees the pointer, and the game still hears it.
                     if (event.key === Qt.Key_Escape && gameView.pointerLocked) root.pointerSuspended = true;
-                    const code = root.webCode(event);
+                    const code = root.keyCode(event);
                     if (code) root.input({ kind: "key", code: code, down: true });
                     // Printable characters also travel as text, for a focused in-game input.
                     if (event.text.length === 1 && !(event.modifiers & Qt.ControlModifier)) root.input({ kind: "text", text: event.text });
                     event.accepted = true;
                 }
-                Keys.onReleased: event => { const code = root.webCode(event); if (code && !event.isAutoRepeat) root.input({ kind: "key", code: code, down: false }); event.accepted = true; }
+                Keys.onReleased: event => { const code = root.keyCode(event); if (code && !event.isAutoRepeat) root.input({ kind: "key", code: code, down: false }); event.accepted = true; }
             }
         }
     }

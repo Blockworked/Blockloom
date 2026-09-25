@@ -93,6 +93,7 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
         .init_resource::<preview::PreviewPointer>()
         .init_resource::<preview::PreviewButtons>()
         .init_resource::<preview::PreviewKeys>()
+        .init_resource::<preview::PreviewTouches>()
         .insert_non_send(engine);
     // Custom shader materials plus the tilemap material. Every dimension
     // registers all three, so systems can take their asset stores

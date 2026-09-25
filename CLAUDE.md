@@ -340,8 +340,13 @@ binding on each status or `say` stuttered the view. `RunLog.qml` appends by
 `log.total` rather than rebuilding its list.
 
 Input is `PreviewInput`, as it is for the MJPEG preview: keys, buttons,
-position, text, plus `focus` (which, once sent, decides whether the game is
-focused, and releases held keys when lost) and `mouse_delta`. A windowless
+position, text, scroll, touch, plus `focus` (which, once sent, decides whether
+the game is focused, and releases held keys and fingers when lost) and
+`mouse_delta`. Keys travel by physical position: the view turns Qt's
+`nativeScanCode` into a `KeyCode` name through `blockloom_protocol::keys`,
+falling back to Qt's key name where there is no scan code (macOS). Scroll and
+touch become Bevy's own `MouseWheel`/`TouchInput` messages in
+`preview::drain_preview_inputs`. A windowless
 world answers `lock mouse` with `RuntimeMessage::PointerLock`; the view then
 locks the pointer while it has the keyboard - Wayland pointer constraints and
 relative pointer (the generated glue is vendored in `blockloom-qt/src/wayland/`),

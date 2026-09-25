@@ -6,6 +6,8 @@
 //! its stdin and stdout - no sockets, no ports, and the pipe closing is all the
 //! shutdown handshake either side needs.
 
+pub mod keys;
+
 use blockloom_core::project::Project;
 use blockloom_core::value::Evaluated;
 use serde::{Deserialize, Serialize};
@@ -13,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -45,12 +47,41 @@ pub enum PreviewInput {
     },
     /// Physical key went down or up, by Bevy [`KeyCode`](https://docs.rs/bevy/latest/bevy/prelude/struct.KeyCode.html) name (`"KeyW"`, `"Space"`, ...).
     Key { code: String, down: bool },
+    /// Wheel or touchpad scroll over the view. `line` says `dx`/`dy` count
+    /// notches rather than pixels; positive `dy` scrolls up.
+    Scroll {
+        dx: f32,
+        dy: f32,
+        line: bool,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    },
+    /// One finger on a touch screen, `id` stable from `start` to `end`.
+    Touch {
+        id: u64,
+        phase: TouchPhase,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    },
     /// Text typed into a focused in-game input while the preview has focus.
     Text { text: String },
     /// Raw pointer motion while the view holds the pointer locked.
     MouseDelta { dx: f32, dy: f32 },
     /// The view gained or lost the keyboard. Once sent, it decides focus.
     Focus { focused: bool },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TouchPhase {
+    Start,
+    Move,
+    End,
+    Cancel,
 }
 
 /// Editor -> runtime.

@@ -95,10 +95,10 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 - [x] Step 3 - GPU texture sharing (Linux): the camera renders offscreen and each frame lands in a ring of dma-bufs, imported into Qt's GL through EGL. Wayland and X11.
 - [ ] Step 4 - input parity:
   - [x] Keys, mouse buttons and position, text, focus.
-  - [ ] Pointer lock plus raw deltas (Wayland pointer constraints, X11 warp fallback) - built, awaiting a test on KDE. X11 path untested.
-  - [ ] Scroll wheel and touch.
+  - [x] Pointer lock plus raw deltas (Wayland pointer constraints, X11 warp fallback)
+  - [x] Scroll wheel and touch.
   - [ ] Gamepads: probably already read straight from the system in-process - verify.
-  - [ ] Keyboard by physical key, not Qt key name (non-QWERTY layouts land WASD elsewhere). Right Shift/Ctrl/Alt arrive as left; numpad, brackets, quote and backtick aren't sent.
+  - [x] Keyboard by physical key, not Qt key name (non-QWERTY layouts land WASD elsewhere). Right Shift/Ctrl/Alt arrive as left; numpad, brackets, quote and backtick aren't sent. macOS has no scan code in Qt and still goes by key name.
 - [x] Update CLAUDE.md: it still describes the world as a separate process with its own window.
 - [x] Frame pacing: the world runs on its own 60 Hz timer, not the display's, so 120/144 Hz screens get uneven frames. Tie it to Qt's frame signal.
 - [x] Log stutter: every `say`/error line still emits the whole editor state to QML. Give log lines their own event like status has.

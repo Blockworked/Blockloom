@@ -44,6 +44,7 @@ ApplicationWindow {
     readonly property string previewFrame: bridge.previewFrame
     readonly property string appVersion: bridge.appVersion
     function watchPreview(port) { bridge.watchPreview(port); }
+    function physicalKey(scanCode) { return bridge.physicalKey(scanCode); }
 
     // ─── Talking to the backend ────────────────────────────────────────────
     property var pending: ({})

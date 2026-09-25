@@ -1391,15 +1391,25 @@ pub fn scroll_ui_lists(
     manager: Res<crate::ui::UiManager>,
     laid_out: Query<(&ComputedNode, &UiGlobalTransform)>,
     mut scrolls: Query<(&mut ScrollPosition, &Node, &ComputedNode)>,
+    preview_pointer: Option<Res<crate::preview::PreviewPointer>>,
 ) {
-    let Ok(window) = windows.single() else {
+    // Drained whatever happens, so a wheel over nothing never lands later.
+    let wheels: Vec<MouseWheel> = wheels.read().copied().collect();
+    if wheels.is_empty() {
         return;
-    };
-    let Some(point) = window.cursor_position() else {
+    }
+    // Embedded there is no window, only the preview pointer, as for clicks.
+    let window = windows.iter().next();
+    let Some(point) = preview_pointer
+        .as_ref()
+        .filter(|pointer| crate::preview::pointer_live(pointer))
+        .and_then(|pointer| pointer.pos)
+        .or_else(|| window.and_then(Window::cursor_position))
+    else {
         return;
     };
     // Physical boxes, logical cursor: scaled up like a click is.
-    let point = point * window.scale_factor();
+    let point = point * window.map_or(1.0, Window::scale_factor);
     let Some(hit) = manager.hit(point, |node| screen_rect(&laid_out, node.entity)) else {
         return;
     };
@@ -1409,7 +1419,7 @@ pub fn scroll_ui_lists(
     let Ok((mut position, node, computed)) = scrolls.get_mut(list.entity) else {
         return;
     };
-    for wheel in wheels.read() {
+    for wheel in wheels {
         let scale = if wheel.unit == MouseScrollUnit::Line {
             24.0
         } else {
@@ -3175,6 +3185,20 @@ fn key_name(code: &KeyCode) -> Option<String> {
         KeyCode::Digit7 | KeyCode::Numpad7 => "7",
         KeyCode::Digit8 | KeyCode::Numpad8 => "8",
         KeyCode::Digit9 | KeyCode::Numpad9 => "9",
+        // Punctuation answers to what it prints on a US layout.
+        KeyCode::Minus | KeyCode::NumpadSubtract => "-",
+        KeyCode::Equal => "=",
+        KeyCode::NumpadAdd => "+",
+        KeyCode::NumpadMultiply => "*",
+        KeyCode::Slash | KeyCode::NumpadDivide => "/",
+        KeyCode::Period | KeyCode::NumpadDecimal => ".",
+        KeyCode::Comma => ",",
+        KeyCode::Semicolon => ";",
+        KeyCode::Quote => "'",
+        KeyCode::Backquote => "`",
+        KeyCode::BracketLeft => "[",
+        KeyCode::BracketRight => "]",
+        KeyCode::Backslash => "\\",
         _ => return None,
     };
     Some(normalize_key(name))

@@ -159,7 +159,8 @@ BwDialog {
                         x: editor.leftPadding; y: editor.topPadding
                         font: editor.font; color: "#dcdfe4"
                         textFormat: Text.RichText
-                        text: "<pre style=\"margin:0\">" + root.highlight(editor.text) + "</pre>"
+                        // Not <pre>: that swaps in its own font, whose line height then drifts from the editor's.
+                        text: "<div style=\"white-space:pre\">" + root.highlight(editor.text) + "</div>"
                     }
                     Rectangle {
                         z: -2; x: 0; width: editor.width; height: editor.cursorRectangle.height; y: editor.cursorRectangle.y

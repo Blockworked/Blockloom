@@ -8,6 +8,8 @@
 //! the OS window up beside the viewport; headless mode hides it and the
 //! hidden window keeps rendering the same stream.
 
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+use bevy::input::touch::{TouchInput, TouchPhase};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use blockloom_protocol::PreviewInput;
@@ -81,6 +83,13 @@ pub struct PreviewButtons {
 #[derive(Resource, Default)]
 pub struct PreviewKeys {
     pub held: std::collections::HashSet<String>,
+}
+
+/// Fingers down on the embedded viewport, in window pixels, so a lost focus
+/// can lift every one of them.
+#[derive(Resource, Default)]
+pub struct PreviewTouches {
+    pub held: std::collections::HashMap<u64, Vec2>,
 }
 
 /// Starts the sidecar: binds loopback on an ephemeral port, serves MJPEG on a
@@ -276,6 +285,9 @@ pub fn apply_input(
             }
         }
         PreviewInput::MouseDelta { dx, dy } => pointer.delta += Vec2::new(*dx, *dy),
+        PreviewInput::Scroll { x, y, w, h, .. } => {
+            move_pointer(pointer, *x, *y, *w, *h, window_size, now);
+        }
         PreviewInput::Focus { focused } => {
             pointer.focus = Some(*focused);
             // No key-ups follow a lost focus, so nothing may stay held.
@@ -284,8 +296,59 @@ pub fn apply_input(
                 *buttons = PreviewButtons::default();
             }
         }
-        PreviewInput::Text { .. } => {}
+        PreviewInput::Text { .. } | PreviewInput::Touch { .. } => {}
     }
+}
+
+/// Turns a forwarded touch into Bevy's own, so `Touches` tracks it the way a
+/// real touch screen's would. `None` for a finger nothing knows about.
+pub fn touch_input(
+    touches: &mut PreviewTouches,
+    id: u64,
+    phase: blockloom_protocol::TouchPhase,
+    at: Vec2,
+) -> Option<TouchInput> {
+    use blockloom_protocol::TouchPhase as Phase;
+    let phase = match phase {
+        Phase::Start => {
+            touches.held.insert(id, at);
+            TouchPhase::Started
+        }
+        Phase::Move => {
+            *touches.held.get_mut(&id)? = at;
+            TouchPhase::Moved
+        }
+        Phase::End => {
+            touches.held.remove(&id)?;
+            TouchPhase::Ended
+        }
+        Phase::Cancel => {
+            touches.held.remove(&id)?;
+            TouchPhase::Canceled
+        }
+    };
+    Some(TouchInput {
+        phase,
+        position: at,
+        window: Entity::PLACEHOLDER,
+        force: None,
+        id,
+    })
+}
+
+/// Cancels every finger still down, for a view that lost focus.
+fn lift_touches(touches: &mut PreviewTouches) -> Vec<TouchInput> {
+    touches
+        .held
+        .drain()
+        .map(|(id, at)| TouchInput {
+            phase: TouchPhase::Canceled,
+            position: at,
+            window: Entity::PLACEHOLDER,
+            force: None,
+            id,
+        })
+        .collect()
 }
 
 fn move_pointer(
@@ -321,8 +384,8 @@ pub fn pointer_live(pointer: &PreviewPointer) -> bool {
             .is_some_and(|seen| seen.elapsed() < Duration::from_secs(5))
 }
 
-/// Parses a forwarded key name into a [`KeyCode`]. The viewport sends
-/// `KeyboardEvent.code` spellings (`KeyW`, `Space`, `ArrowLeft`, `Digit0`).
+/// Parses a forwarded key name into a [`KeyCode`]: Bevy's own variant names,
+/// which are also `KeyboardEvent.code`'s (`KeyW`, `Space`, `ArrowLeft`).
 pub fn parse_key(code: &str) -> Option<KeyCode> {
     Some(match code {
         "KeyA" => KeyCode::KeyA,
@@ -351,31 +414,101 @@ pub fn parse_key(code: &str) -> Option<KeyCode> {
         "KeyX" => KeyCode::KeyX,
         "KeyY" => KeyCode::KeyY,
         "KeyZ" => KeyCode::KeyZ,
-        "Digit0" | "Numpad0" => KeyCode::Digit0,
-        "Digit1" | "Numpad1" => KeyCode::Digit1,
-        "Digit2" | "Numpad2" => KeyCode::Digit2,
-        "Digit3" | "Numpad3" => KeyCode::Digit3,
-        "Digit4" | "Numpad4" => KeyCode::Digit4,
-        "Digit5" | "Numpad5" => KeyCode::Digit5,
-        "Digit6" | "Numpad6" => KeyCode::Digit6,
-        "Digit7" | "Numpad7" => KeyCode::Digit7,
-        "Digit8" | "Numpad8" => KeyCode::Digit8,
-        "Digit9" | "Numpad9" => KeyCode::Digit9,
+        "Digit0" => KeyCode::Digit0,
+        "Digit1" => KeyCode::Digit1,
+        "Digit2" => KeyCode::Digit2,
+        "Digit3" => KeyCode::Digit3,
+        "Digit4" => KeyCode::Digit4,
+        "Digit5" => KeyCode::Digit5,
+        "Digit6" => KeyCode::Digit6,
+        "Digit7" => KeyCode::Digit7,
+        "Digit8" => KeyCode::Digit8,
+        "Digit9" => KeyCode::Digit9,
+        "Numpad0" => KeyCode::Numpad0,
+        "Numpad1" => KeyCode::Numpad1,
+        "Numpad2" => KeyCode::Numpad2,
+        "Numpad3" => KeyCode::Numpad3,
+        "Numpad4" => KeyCode::Numpad4,
+        "Numpad5" => KeyCode::Numpad5,
+        "Numpad6" => KeyCode::Numpad6,
+        "Numpad7" => KeyCode::Numpad7,
+        "Numpad8" => KeyCode::Numpad8,
+        "Numpad9" => KeyCode::Numpad9,
+        "NumpadAdd" => KeyCode::NumpadAdd,
+        "NumpadSubtract" => KeyCode::NumpadSubtract,
+        "NumpadMultiply" => KeyCode::NumpadMultiply,
+        "NumpadDivide" => KeyCode::NumpadDivide,
+        "NumpadDecimal" => KeyCode::NumpadDecimal,
+        "NumpadEqual" => KeyCode::NumpadEqual,
+        "NumpadComma" => KeyCode::NumpadComma,
+        "NumpadEnter" => KeyCode::NumpadEnter,
+        "NumLock" => KeyCode::NumLock,
+        "Minus" => KeyCode::Minus,
+        "Equal" => KeyCode::Equal,
+        "BracketLeft" => KeyCode::BracketLeft,
+        "BracketRight" => KeyCode::BracketRight,
+        "Backslash" => KeyCode::Backslash,
+        "IntlBackslash" => KeyCode::IntlBackslash,
+        "IntlRo" => KeyCode::IntlRo,
+        "IntlYen" => KeyCode::IntlYen,
+        "Semicolon" => KeyCode::Semicolon,
+        "Quote" => KeyCode::Quote,
+        "Backquote" => KeyCode::Backquote,
+        "Comma" => KeyCode::Comma,
+        "Period" => KeyCode::Period,
+        "Slash" => KeyCode::Slash,
         "Space" => KeyCode::Space,
         "ArrowUp" => KeyCode::ArrowUp,
         "ArrowDown" => KeyCode::ArrowDown,
         "ArrowLeft" => KeyCode::ArrowLeft,
         "ArrowRight" => KeyCode::ArrowRight,
-        "Enter" | "NumpadEnter" => KeyCode::Enter,
+        "Home" => KeyCode::Home,
+        "End" => KeyCode::End,
+        "PageUp" => KeyCode::PageUp,
+        "PageDown" => KeyCode::PageDown,
+        "Insert" => KeyCode::Insert,
+        "Delete" => KeyCode::Delete,
+        "Enter" => KeyCode::Enter,
         "Escape" => KeyCode::Escape,
         "Tab" => KeyCode::Tab,
         "Backspace" => KeyCode::Backspace,
+        "CapsLock" => KeyCode::CapsLock,
+        "ScrollLock" => KeyCode::ScrollLock,
+        "PrintScreen" => KeyCode::PrintScreen,
+        "Pause" => KeyCode::Pause,
+        "ContextMenu" => KeyCode::ContextMenu,
         "ShiftLeft" => KeyCode::ShiftLeft,
         "ShiftRight" => KeyCode::ShiftRight,
         "ControlLeft" => KeyCode::ControlLeft,
         "ControlRight" => KeyCode::ControlRight,
         "AltLeft" => KeyCode::AltLeft,
         "AltRight" => KeyCode::AltRight,
+        "SuperLeft" | "MetaLeft" => KeyCode::SuperLeft,
+        "SuperRight" | "MetaRight" => KeyCode::SuperRight,
+        "F1" => KeyCode::F1,
+        "F2" => KeyCode::F2,
+        "F3" => KeyCode::F3,
+        "F4" => KeyCode::F4,
+        "F5" => KeyCode::F5,
+        "F6" => KeyCode::F6,
+        "F7" => KeyCode::F7,
+        "F8" => KeyCode::F8,
+        "F9" => KeyCode::F9,
+        "F10" => KeyCode::F10,
+        "F11" => KeyCode::F11,
+        "F12" => KeyCode::F12,
+        "F13" => KeyCode::F13,
+        "F14" => KeyCode::F14,
+        "F15" => KeyCode::F15,
+        "F16" => KeyCode::F16,
+        "F17" => KeyCode::F17,
+        "F18" => KeyCode::F18,
+        "F19" => KeyCode::F19,
+        "F20" => KeyCode::F20,
+        "F21" => KeyCode::F21,
+        "F22" => KeyCode::F22,
+        "F23" => KeyCode::F23,
+        "F24" => KeyCode::F24,
         _ => return None,
     })
 }
@@ -391,6 +524,9 @@ pub fn drain_preview_inputs(
     mut pointer: ResMut<PreviewPointer>,
     mut buttons: ResMut<PreviewButtons>,
     mut keys: ResMut<PreviewKeys>,
+    mut touches: ResMut<PreviewTouches>,
+    mut touch_out: MessageWriter<TouchInput>,
+    mut wheel_out: MessageWriter<MouseWheel>,
     mut manager: ResMut<crate::ui::UiManager>,
     mut mouse_buttons: ResMut<ButtonInput<MouseButton>>,
     mut key_buttons: ResMut<ButtonInput<KeyCode>>,
@@ -413,7 +549,43 @@ pub fn drain_preview_inputs(
             PreviewInput::Text { text } => {
                 type_preview_text(&mut manager, &mut engine, text);
             }
-            _ => apply_input(&input, &mut pointer, &mut buttons, &mut keys, window_size),
+            PreviewInput::Touch {
+                id,
+                phase,
+                x,
+                y,
+                w,
+                h,
+            } => {
+                let at = preview_to_window(*x, *y, *w, *h, window_size);
+                if let Some(touch) = touch_input(&mut touches, *id, *phase, at) {
+                    touch_out.write(touch);
+                }
+            }
+            _ => {
+                apply_input(&input, &mut pointer, &mut buttons, &mut keys, window_size);
+                match input {
+                    // Read by `scroll_ui_lists` later this same frame.
+                    PreviewInput::Scroll { dx, dy, line, .. } => {
+                        wheel_out.write(MouseWheel {
+                            unit: if line {
+                                MouseScrollUnit::Line
+                            } else {
+                                MouseScrollUnit::Pixel
+                            },
+                            x: dx,
+                            y: dy,
+                            window: Entity::PLACEHOLDER,
+                            phase: TouchPhase::Moved,
+                        });
+                    }
+                    // No touch-ends follow a lost focus either.
+                    PreviewInput::Focus { focused: false } => {
+                        touch_out.write_batch(lift_touches(&mut touches));
+                    }
+                    _ => {}
+                }
+            }
         }
     }
     // Forwarded input means attention on the preview, which the OS window
@@ -565,5 +737,32 @@ mod tests {
         assert!(keys.held.is_empty());
         // Hovering an unfocused view steers nothing.
         assert!(!pointer_live(&pointer));
+    }
+
+    #[test]
+    fn touches_track_their_finger_and_a_lost_focus_lifts_them() {
+        use blockloom_protocol::TouchPhase as Phase;
+        let mut touches = PreviewTouches::default();
+        // A finger nothing started is not news.
+        assert!(touch_input(&mut touches, 1, Phase::Move, Vec2::ZERO).is_none());
+        let start = touch_input(&mut touches, 1, Phase::Start, Vec2::new(4.0, 5.0)).unwrap();
+        assert_eq!(start.phase, TouchPhase::Started);
+        touch_input(&mut touches, 2, Phase::Start, Vec2::ONE).unwrap();
+        let moved = touch_input(&mut touches, 1, Phase::Move, Vec2::new(6.0, 5.0)).unwrap();
+        assert_eq!(moved.position, Vec2::new(6.0, 5.0));
+        touch_input(&mut touches, 2, Phase::End, Vec2::ONE).unwrap();
+        let lifted = lift_touches(&mut touches);
+        assert_eq!(lifted.len(), 1);
+        assert_eq!(lifted[0].phase, TouchPhase::Canceled);
+        assert_eq!(lifted[0].position, Vec2::new(6.0, 5.0));
+        assert!(touches.held.is_empty());
+    }
+
+    #[test]
+    fn keys_the_old_mapping_dropped_now_arrive() {
+        assert_eq!(parse_key("Numpad1"), Some(KeyCode::Numpad1));
+        assert_eq!(parse_key("BracketLeft"), Some(KeyCode::BracketLeft));
+        assert_eq!(parse_key("Backquote"), Some(KeyCode::Backquote));
+        assert_eq!(parse_key("ShiftRight"), Some(KeyCode::ShiftRight));
     }
 }
