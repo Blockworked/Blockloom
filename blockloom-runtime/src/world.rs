@@ -122,47 +122,6 @@ pub fn parse_color(hex: &str) -> Color {
     }
 }
 
-/// The project's tonemapper as the camera component. TonyMcMapface is
-/// Bevy's own default, so spelling it out changes nothing for old projects.
-pub fn tonemapping_of(
-    name: blockloom_core::scene::TonemapName,
-) -> bevy::core_pipeline::tonemapping::Tonemapping {
-    use bevy::core_pipeline::tonemapping::Tonemapping;
-    use blockloom_core::scene::TonemapName;
-    match name {
-        // Linear is what `None` meant before 0.20: an identity curve that still
-        // applies exposure and grading. `None` now skips those too.
-        TonemapName::None => Tonemapping::Linear,
-        TonemapName::Reinhard => Tonemapping::Reinhard,
-        TonemapName::ReinhardLuminance => Tonemapping::ReinhardLuminance,
-        TonemapName::AcesFitted => Tonemapping::AcesFitted,
-        TonemapName::TonyMcMapface => Tonemapping::TonyMcMapface,
-        TonemapName::Filmic => Tonemapping::BlenderFilmic,
-    }
-}
-
-/// Bloom from the project's post settings: threshold and intensity are the
-/// two dials a game usefully turns.
-pub fn bloom_of(post: &blockloom_core::scene::PostProcess) -> bevy::post_process::bloom::Bloom {
-    bevy::post_process::bloom::Bloom {
-        intensity: post.bloom_intensity,
-        prefilter: bevy::post_process::bloom::BloomPrefilter {
-            threshold: post.bloom_threshold,
-            ..default()
-        },
-        ..default()
-    }
-}
-
-/// Vignette from a single strength dial. Radius and softness stay at
-/// Bevy's defaults; games tune how dark the corners get.
-pub fn vignette_of(strength: f32) -> bevy::post_process::effect_stack::Vignette {
-    bevy::post_process::effect_stack::Vignette {
-        intensity: strength.clamp(0.0, 1.0),
-        ..default()
-    }
-}
-
 /// Where an asset the project names - an image, a font - actually sits. Bevy's
 /// asset root is this process's own folder, not the project's, so a path the
 /// editor stores (`assets/player.png`) is resolved against the project folder
@@ -522,7 +481,6 @@ pub fn rebuild_world(
     mut engine: NonSendMut<Engine>,
     dimension: Res<Dimension>,
     mut effects: ResMut<PendingEffects>,
-    mut clear_color: ResMut<ClearColor>,
     assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -610,11 +568,11 @@ pub fn rebuild_world(
     // once, before anything is spawned from these placements.
     place_authored_children(&mut project);
     let dir = engine.project_dir.clone();
-    clear_color.0 = parse_color(&project.world.background);
     match dimension.0 {
         Mode::TwoD => {
-            let post = project.world.post.clone();
-            let mut camera_entity = commands.spawn((
+            // Exposure, tonemapping and post come from the blended
+            // environment (`environment::apply_environment`).
+            commands.spawn((
                 Camera2d,
                 Projection::Orthographic(OrthographicProjection {
                     scale: 1.0 / project.world.camera.zoom.max(0.05),
@@ -624,17 +582,7 @@ pub fn rebuild_world(
                 // The one listener positional voices pan against. It rides
                 // the camera, so what the player sees is what they hear.
                 bevy::audio::SpatialListener::default(),
-                bevy::camera::Exposure {
-                    ev100: post.exposure_ev,
-                },
-                tonemapping_of(post.tonemapping),
             ));
-            if post.bloom_enabled {
-                camera_entity.insert(bloom_of(&post));
-            }
-            if post.vignette_strength > 0.0 {
-                camera_entity.insert(vignette_of(post.vignette_strength));
-            }
             for actor in &project.actors {
                 let entity = dim2::spawn_actor(
                     &mut commands,
@@ -653,12 +601,7 @@ pub fn rebuild_world(
             }
         }
         Mode::ThreeD => {
-            dim3::spawn_scenery(
-                &mut commands,
-                &project.world.camera,
-                &project.world.lighting,
-                &project.world.post,
-            );
+            dim3::spawn_scenery(&mut commands, &project.world.camera);
             for actor in &project.actors {
                 let entity = dim3::spawn_actor(
                     &mut commands,

@@ -4,9 +4,7 @@
 use crate::engine::{Engine, PendingEffects, PhysicsPose, PrevPose};
 use crate::materials::GraphMaterial3d;
 use bevy::ecs::system::EntityCommands;
-use bevy::pbr::ScreenSpaceAmbientOcclusion;
 use bevy::prelude::*;
-use bevy::render::view::Msaa;
 use bevy_rapier3d::prelude as rp;
 use blockloom_core::components::JointKind;
 use blockloom_core::project::Actor;
@@ -966,18 +964,11 @@ pub fn record_poses(mut posed: Query<(&Transform, &mut PhysicsPose, &mut PrevPos
     }
 }
 
-/// A light and a camera, so a fresh 3D project isn't a black window. The
-/// light and the ambient come from the project's lighting settings; AO is a
-/// component on the camera, so it is only there when the project asks for it.
-/// Post-process rides the camera the same way: exposure and tonemapping
-/// always, bloom and vignette only when enabled.
-pub fn spawn_scenery(
-    commands: &mut Commands,
-    camera: &blockloom_core::scene::Camera,
-    lighting: &blockloom_core::scene::Lighting,
-    post: &blockloom_core::scene::PostProcess,
-) {
-    let mut camera_entity = commands.spawn((
+/// A camera and a sun, so a fresh 3D project isn't a black window. How they
+/// look - exposure, post, AO, the light itself - comes from the blended
+/// environment (`environment::apply_environment`).
+pub fn spawn_scenery(commands: &mut Commands, camera: &blockloom_core::scene::Camera) {
+    commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
             fov: 75.0_f32.to_radians(),
@@ -991,64 +982,17 @@ pub fn spawn_scenery(
         // The one listener positional voices pan against. It rides the
         // camera, so what the player sees is what they hear.
         bevy::audio::SpatialListener::default(),
-        bevy::camera::Exposure {
-            ev100: post.exposure_ev,
-        },
-        crate::world::tonemapping_of(post.tonemapping),
         // Bevy's depth pyramid culls hidden meshes after the depth prepass;
         // `culling::configure_cameras` adds `OcclusionCulling` per policy.
         bevy::core_pipeline::prepass::DepthPrepass,
     ));
-    if lighting.ao_enabled {
-        // SSAO needs multisampling off on the same camera, or `bevy_pbr`
-        // logs a mismatch error and skips the effect.
-        camera_entity.insert((ScreenSpaceAmbientOcclusion::default(), Msaa::Off));
-    }
-    if post.bloom_enabled {
-        camera_entity.insert(crate::world::bloom_of(post));
-    }
-    if post.vignette_strength > 0.0 {
-        camera_entity.insert(crate::world::vignette_of(post.vignette_strength));
-    }
-    // A zero direction has nowhere to point, so fall back to straight down.
-    let dir = lighting.light_direction;
-    let from = if dir.iter().all(|v| *v == 0.0) {
-        Vec3::new(0.0, 16.0, 0.0)
-    } else {
-        Vec3::new(dir[0], dir[1], dir[2])
-    };
     commands.spawn((
         DirectionalLight {
-            color: crate::world::parse_color(&lighting.light_color),
-            illuminance: lighting.illuminance.max(0.0),
             shadow_maps_enabled: true,
-            shadow_depth_bias: lighting.shadow_bias,
             ..default()
         },
-        Transform::from_translation(from).looking_at(Vec3::ZERO, Vec3::Y),
         crate::world::WorldLight,
     ));
-    // Shadow map size is a resource, not a light field: one size for every
-    // cascade. Powers of two only; anything else falls back to 2048.
-    commands.insert_resource(bevy::light::DirectionalLightShadowMap {
-        size: shadow_map_size(lighting.shadow_map_size),
-    });
-    commands.insert_resource(GlobalAmbientLight {
-        color: crate::world::parse_color(&lighting.ambient_color),
-        brightness: lighting.ambient_brightness.max(0.0),
-        ..default()
-    });
-}
-
-/// Snap a shadow map size to the powers of two Bevy accepts.
-fn shadow_map_size(size: u32) -> usize {
-    const SIZES: &[usize] = &[512, 1024, 2048, 4096, 8192];
-    let wanted = size.max(512) as usize;
-    SIZES
-        .iter()
-        .copied()
-        .min_by_key(|candidate| candidate.abs_diff(wanted))
-        .unwrap_or(2048)
 }
 
 #[cfg(test)]

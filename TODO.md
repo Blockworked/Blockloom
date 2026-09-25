@@ -210,13 +210,20 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         report (Metal) fall back to sizing the views' own textures. The
         profiler says when an adapter has no timestamps.
 - [ ] Refactors to clear the path for Phase 5 (do these first, not mid-stack):
-  - [ ] One blended environment resource: volume blending writes a single
+  - [x] One blended environment resource: volume blending writes a single
         `Environment` render resource (sky, fog, light, exposure deltas) that the
         dim2/dim3 passes read, instead of each pass reading the project. Sky,
         clouds, fog, water and post then consume the same blended values.
         `Environment.exposure` is the single EV value every pass reads; writers
         resolve by precedence (director track beats post auto-exposure beats
         manual EV), so the four exposure dials below never fight.
+        Done in `blockloom-runtime/src/environment.rs`: the project's settings
+        plus weighted `EnvironmentVolumes` blend into `Environment` every
+        frame, exposure resolves through `ExposureClaims`, and
+        `apply_environment` is the only writer of camera exposure, tonemapping,
+        bloom, vignette, AO, the sun, ambient and the clear color. It is
+        extracted to the render world for the Phase 5 passes. Nothing fills
+        the volume list or the claims yet; the volume framework does.
   - [ ] Shared shader library and pass plumbing: common WESL chunks (hash, noise,
         FBM, scattering helpers, standard UBO layout) plus one FP16 working-target
         set with a half-res scratch pair and bilateral upsample, used by both

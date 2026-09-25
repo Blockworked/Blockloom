@@ -461,6 +461,19 @@ At build time `build::check_shaders` compiles every `.wesl` surface file the
 project draws with, and a broken one fails the build. Counts reach the
 profiler as `streaming/*`.
 
+### Environment
+
+`blockloom-runtime/src/environment.rs`. `Environment` is the one resource
+the background, sun, ambient, AO, exposure and post come from: each frame
+`blend_environment` starts from the project's `World` settings, lays
+`EnvironmentVolumes` over them by weight (numbers and colors lerp, switches
+flip at half weight), and resolves exposure through `ExposureClaims`
+(director beats auto-exposure beats the manual EV). `apply_environment`
+writes it onto the world camera, the sun and `ClearColor` when it changes or
+a rebuild spawns new ones, and it is extracted to the render world. Passes
+read `Environment`, never `project.world.lighting`/`post`; the rebuild only
+spawns a bare camera and sun.
+
 ### Models, tilemaps and surface shaders
 
 A `Visual::Model` draws its glTF/GLB file's first scene as a child of the

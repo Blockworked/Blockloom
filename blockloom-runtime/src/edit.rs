@@ -1243,6 +1243,7 @@ pub fn draw(
     engine: NonSend<Engine>,
     editor: Res<SceneEditor>,
     dimension: Res<Dimension>,
+    environment: Res<crate::environment::Environment>,
     ui_scale: Res<UiScale>,
     cameras: Query<&Camera, With<WorldCamera>>,
     actors: Query<(&ActorId, &Visibility)>,
@@ -1269,7 +1270,7 @@ pub fn draw(
     let lens = lens(&editor, mode, camera, size, px_scale);
 
     if editor.view.show_grid {
-        let ink = grid_ink(&engine.project.world.background);
+        let ink = grid_ink(environment.background);
         match mode {
             Mode::ThreeD => draw_grid_3d(&mut lines, &editor, ink),
             Mode::TwoD => draw_grid_2d(&mut lines, &editor, size, px_scale, ink),
@@ -1451,10 +1452,8 @@ fn grid_spacing(step: f32, world_per_px: f32, min_px: f32) -> f32 {
 }
 
 /// Dark lines over a light background, light over a dark one.
-fn grid_ink(background: &str) -> Color {
-    let luminance = crate::world::parse_color(background)
-        .to_linear()
-        .luminance();
+fn grid_ink(background: Color) -> Color {
+    let luminance = background.to_linear().luminance();
     if luminance > 0.35 {
         Color::BLACK
     } else {

@@ -27,6 +27,7 @@ mod edit;
 #[cfg(target_os = "linux")]
 pub mod embed;
 mod engine;
+mod environment;
 mod fx;
 mod gpu;
 mod logic;
@@ -108,6 +109,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .init_resource::<preview::PreviewKeys>()
         .init_resource::<preview::PreviewTouches>()
         .insert_non_send(engine);
+    environment::register(app);
     streaming::register(app);
     gpu::register(app);
     // Custom shader materials plus the tilemap material. Every dimension
@@ -185,7 +187,12 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     preview::apply_preview_visibility,
                     preview::drain_preview_inputs,
                     fx::despawn_fx,
-                    world::rebuild_world.run_if(dim2::sprite_shaders_ready),
+                    (
+                        world::rebuild_world.run_if(dim2::sprite_shaders_ready),
+                        environment::blend_environment,
+                        environment::apply_environment,
+                    )
+                        .chain(),
                     dim2::relay_collisions,
                     overlay::draw_ui,
                     world::type_into_focused_input,
@@ -290,7 +297,12 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         preview::apply_preview_visibility,
                         preview::drain_preview_inputs,
                         fx::despawn_fx,
-                        world::rebuild_world,
+                        (
+                            world::rebuild_world,
+                            environment::blend_environment,
+                            environment::apply_environment,
+                        )
+                            .chain(),
                         dim3::relay_collisions,
                         overlay::draw_ui,
                         world::type_into_focused_input,
