@@ -156,11 +156,28 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         tint and UV transform per `MeshTag` slot, static merges per streaming
         cell, per-frame dynamic merges, all tuned by `BatchPolicy`. 3D only;
         Bevy's sprite batcher already covers 2D.
-  - [ ] LOD and occlusion (framework plus hooks; Phase 5 plugs policy in):
+  - [x] LOD and occlusion (framework plus hooks; Phase 5 plugs policy in):
         screen-size LOD selection with hysteresis bands and a per-level swap API
         for meshes, software Hi-Z or query-based occlusion culling for interiors
         and caves, GPU frustum culling where Bevy does not already do it. Terrain
         chunks, trees and VFX supply thresholds and levels, never new selectors.
+        Done in `blockloom-runtime/src/culling.rs`: `LodGroup` levels with
+        `LodChanged`, a CPU Hi-Z over solid `Occluder` boxes, and GPU occlusion
+        and GPU frustum culling as camera toggles, tuned by `LodPolicy` and
+        `OcclusionPolicy`. Merged dynamic batches now carry real bounds.
+  - [ ] Bevy 0.20 migration (do right after LOD, before anything else below is
+        written): bump the workspace from 0.19.1 to 0.20.0-rc.1 now and follow to
+        final on release, so async streaming, GPU measurement and the Phase 5
+        refactors below target the new APIs instead of being migrated twice.
+        Translate custom shaders to WESL (naga_oil is gone; plain WGSL without
+        preprocessor directives keeps working), move 2D sprites onto the
+        SpriteMesh/Mesh2d backend, update observer syntax (`On<Add<A>>`), pointer
+        events (`PointerPress`), exclusive-system code paths, `bevy_math` imports
+        (`bevy_shape`/`bevy_curve` split), tonemapping paths plus `Linear` for the
+        old `None` behavior, and extraction generics (`bevy_extract`). Re-add
+        `ScreenSpaceTransmission` on 3D cameras that need it (now opt-in).
+        Confirm bevy_rapier has a 0.20-compatible release first; if it lags the
+        RC, timebox on the RC and land the upgrade when rapier lands.
   - [ ] Async loading and streaming (owns the cell system; Phase 5 content only
         registers into it): background asset loads with placeholder or fade-in,
         world streaming cells with hysteresis so borders never thrash, shader

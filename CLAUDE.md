@@ -403,6 +403,24 @@ actor keeps its entity and only loses its own draw, through
 UVs. `BatchPolicy` holds every threshold. Counts reach the profiler as
 `batching/*` render metrics.
 
+### LOD and occlusion
+
+`blockloom-runtime/src/culling.rs`, 3D only. `LodGroup` is the one LOD
+selector: levels of a screen-size threshold (bounding diameter over viewport
+height) plus an optional mesh, picked with a hysteresis band in `select_lod`
+and announced by `LodChanged`; below the last level the entity leaves the main
+view. Content hands it levels (`RenderCache::lod` does spheres and capsules)
+rather than selecting its own, and batching leaves LOD'd actors instanced.
+
+`cull_views` runs between Bevy's frustum pass and
+`MarkNewlyHiddenEntitiesInvisible`, removing LOD-culled and occluded meshes
+from the world camera's `VisibleEntities` only, so shadows are untouched.
+Occlusion is a software Hi-Z: the camera-facing faces of solid, opaque
+`Occluder` boxes (cuboid and plane actors) are rasterized, eroded a texel and
+reduced to a max-depth pyramid. Bevy's GPU `OcclusionCulling` and GPU frustum
+culling (`NoCpuCulling`) are camera toggles in `OcclusionPolicy`. Counts reach
+the profiler as `culling/*`.
+
 ### Models, tilemaps and surface shaders
 
 A `Visual::Model` draws its glTF/GLB file's first scene as a child of the

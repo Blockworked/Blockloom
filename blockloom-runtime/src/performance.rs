@@ -93,7 +93,7 @@ pub fn update_streaming_cells(
 pub struct RenderCache {
     meshes: HashMap<MeshKey, Handle<Mesh>>,
     scaled_meshes: HashMap<MeshKey, Handle<Mesh>>,
-    low_spheres: HashMap<u32, Handle<Mesh>>,
+    lod_meshes: HashMap<(MeshKey, u8), Handle<Mesh>>,
     materials: HashMap<String, Handle<StandardMaterial>>,
     box_materials: HashMap<String, Handle<crate::materials::BoxMaterial>>,
     instanced: HashMap<String, Handle<crate::batching::InstancedMaterial>>,
@@ -151,21 +151,48 @@ impl RenderCache {
         Some(handle)
     }
 
+    /// Coarser levels for the round primitives; boxes and planes have none.
     pub fn lod(
         &mut self,
         visual: &Visual,
         high: &Handle<Mesh>,
         meshes: &mut Assets<Mesh>,
-    ) -> Option<LodMesh> {
-        let Visual::Sphere { radius, .. } = visual else {
-            return None;
+    ) -> Option<crate::culling::LodGroup> {
+        let key = MeshKey::of(visual)?;
+        let (radius, make): (f32, fn(&Visual, u8) -> Mesh) = match visual {
+            Visual::Sphere { radius, .. } => (*radius, |visual, level| {
+                let Visual::Sphere { radius, .. } = visual else {
+                    unreachable!()
+                };
+                let (sectors, stacks) = if level == 1 { (24, 16) } else { (12, 8) };
+                Sphere::new(*radius).mesh().uv(sectors, stacks)
+            }),
+            Visual::Capsule { radius, height, .. } => (radius + height * 0.5, |visual, level| {
+                let Visual::Capsule { radius, height, .. } = visual else {
+                    unreachable!()
+                };
+                let (longitudes, latitudes) = if level == 1 { (16, 8) } else { (8, 4) };
+                Capsule3d::new(*radius, *height)
+                    .mesh()
+                    .longitudes(longitudes)
+                    .latitudes(latitudes)
+                    .build()
+            }),
+            _ => return None,
         };
-        let low = self
-            .low_spheres
-            .entry(radius.to_bits())
-            .or_insert_with(|| meshes.add(Sphere::new(*radius).mesh().uv(12, 8)))
-            .clone();
-        Some(LodMesh::new(high.clone(), low, *radius))
+        let mut level = |level: u8| {
+            self.lod_meshes
+                .entry((key, level))
+                .or_insert_with(|| meshes.add(make(visual, level)))
+                .clone()
+        };
+        let (medium, low) = (level(1), level(2));
+        Some(
+            crate::culling::LodGroup::new(radius)
+                .level(0.25, Some(high.clone()))
+                .level(0.05, Some(medium))
+                .level(0.0, Some(low)),
+        )
     }
 
     pub fn material(
@@ -213,62 +240,10 @@ impl RenderCache {
     pub fn clear(&mut self) {
         self.meshes.clear();
         self.scaled_meshes.clear();
-        self.low_spheres.clear();
+        self.lod_meshes.clear();
         self.materials.clear();
         self.box_materials.clear();
         self.instanced.clear();
-    }
-}
-
-/// A cheaper primitive mesh selected by projected diameter.
-#[derive(Component)]
-pub struct LodMesh {
-    high: Handle<Mesh>,
-    low: Handle<Mesh>,
-    radius: f32,
-    low_active: bool,
-}
-
-impl LodMesh {
-    /// Terrain chunks and props can supply their own low mesh through this hook.
-    pub fn new(high: Handle<Mesh>, low: Handle<Mesh>, radius: f32) -> Self {
-        Self {
-            high,
-            low,
-            radius,
-            low_active: false,
-        }
-    }
-}
-
-fn use_low_lod(pixel_diameter: f32, currently_low: bool) -> bool {
-    if currently_low {
-        pixel_diameter < 88.0
-    } else {
-        pixel_diameter < 72.0
-    }
-}
-
-pub fn update_lod(
-    camera: Query<(&Transform, &Projection), With<crate::world::WorldCamera>>,
-    mut actors: Query<(&Transform, &mut Mesh3d, &mut LodMesh)>,
-) {
-    let Ok((camera, Projection::Perspective(projection))) = camera.single() else {
-        return;
-    };
-    let pixels_per_radian = blockloom_protocol::GAME_SIZE.1 as f32 / (projection.fov * 0.5).tan();
-    for (transform, mut mesh, mut lod) in &mut actors {
-        let distance = camera.translation.distance(transform.translation).max(0.01);
-        let diameter = lod.radius * transform.scale.max_element() * pixels_per_radian / distance;
-        let low = use_low_lod(diameter, lod.low_active);
-        if low != lod.low_active {
-            mesh.0 = if low {
-                lod.low.clone()
-            } else {
-                lod.high.clone()
-            };
-            lod.low_active = low;
-        }
     }
 }
 
@@ -302,13 +277,6 @@ mod tests {
         let second = cache.material("stone".into(), StandardMaterial::default, &mut materials);
         assert_eq!(first, second);
         assert_eq!(materials.len(), 1);
-    }
-
-    #[test]
-    fn lod_hysteresis_does_not_flip_at_the_boundary() {
-        assert!(use_low_lod(80.0, true));
-        assert!(!use_low_lod(80.0, false));
-        assert!(!use_low_lod(90.0, true));
     }
 
     #[test]

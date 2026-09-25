@@ -196,6 +196,15 @@ fn insert_look_extras(
     dir: Option<&Path>,
     assets: &AssetServer,
 ) {
+    let solid = match visual {
+        Visual::Cuboid { size, .. } => Some(Vec3::from(*size)),
+        Visual::Plane { size, .. } => Some(Vec3::new(size[0], PLANE_THICKNESS, size[1])),
+        _ => None,
+    };
+    if let Some(size) = solid {
+        let aabb = bevy::camera::primitives::Aabb::from_min_max(-size * 0.5, size * 0.5);
+        commands.entity(id).insert(crate::culling::Occluder(aabb));
+    }
     match visual {
         Visual::Model { .. } => {
             crate::model::attach(commands, id, &actor.id, visual, dir, assets);
@@ -752,7 +761,7 @@ pub fn apply_effects(
                         commands.entity(entity).insert(Mesh3d(mesh.clone()));
                         commands
                             .entity(entity)
-                            .remove::<crate::performance::LodMesh>();
+                            .remove::<(crate::culling::LodGroup, crate::culling::Occluder)>();
                         if let Some(lod) = cache.lod(&visual, &mesh, &mut meshes) {
                             commands.entity(entity).insert(lod);
                         }
@@ -823,7 +832,8 @@ pub fn apply_effects(
                         commands.entity(id).remove::<(
                             Mesh3d,
                             crate::materials::AnimatedTiles,
-                            crate::performance::LodMesh,
+                            crate::culling::LodGroup,
+                            crate::culling::Occluder,
                         )>();
                         remove_surface(&mut commands, id);
                         crate::model::detach(&mut commands, id, &models);
@@ -985,9 +995,9 @@ pub fn spawn_scenery(
             ev100: post.exposure_ev,
         },
         crate::world::tonemapping_of(post.tonemapping),
-        // Bevy's depth pyramid culls hidden meshes after the depth prepass.
+        // Bevy's depth pyramid culls hidden meshes after the depth prepass;
+        // `culling::configure_cameras` adds `OcclusionCulling` per policy.
         bevy::core_pipeline::prepass::DepthPrepass,
-        bevy::render::occlusion_culling::OcclusionCulling,
     ));
     if lighting.ao_enabled {
         // SSAO needs multisampling off on the same camera, or `bevy_pbr`

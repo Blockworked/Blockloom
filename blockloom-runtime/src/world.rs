@@ -2922,6 +2922,7 @@ pub fn report_status(
     diagnostics: Option<Res<bevy::diagnostic::DiagnosticsStore>>,
     target_bytes: Option<Res<crate::performance::GameViewTargetBytes>>,
     batches: Option<Res<crate::batching::Batches>>,
+    culling: Option<Res<crate::culling::Culling>>,
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
     let now = time.elapsed_secs() as f64;
@@ -2989,6 +2990,23 @@ pub fn report_status(
             ("batching/static_members", stats.static_members),
             ("batching/dynamic_batches", stats.dynamic_batches),
             ("batching/dynamic_members", stats.dynamic_members),
+        ] {
+            render_metrics.push(RenderMetric {
+                name: name.into(),
+                value: value as f64,
+                unit: "count".into(),
+            });
+        }
+    }
+    if let Some(culling) = culling {
+        let stats = culling.stats;
+        for (name, value) in [
+            ("culling/lod_groups", stats.lod_groups),
+            ("culling/lod_reduced", stats.lod_reduced),
+            ("culling/lod_culled", stats.lod_culled),
+            ("culling/occluders", stats.occluders),
+            ("culling/occlusion_tested", stats.tested),
+            ("culling/occluded", stats.occluded),
         ] {
             render_metrics.push(RenderMetric {
                 name: name.into(),

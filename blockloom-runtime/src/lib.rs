@@ -20,6 +20,7 @@
 mod ai;
 mod batching;
 mod bridge;
+mod culling;
 mod dim2;
 mod dim3;
 mod edit;
@@ -217,14 +218,22 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
         Mode::ThreeD => {
             app.init_resource::<model::ModelCache>();
             batching::register(app);
+            culling::register(app);
+            use bevy::camera::visibility::VisibilitySystems;
             app.add_systems(
                 PostUpdate,
                 (
-                    batching::batch_meshes
+                    (culling::select_lod, batching::batch_meshes)
+                        .chain()
                         .after(bevy::transform::TransformSystems::Propagate)
-                        .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate)
-                        .before(bevy::camera::visibility::VisibilitySystems::CheckVisibility),
+                        .after(VisibilitySystems::VisibilityPropagate)
+                        .before(VisibilitySystems::CalculateBounds)
+                        .before(VisibilitySystems::CheckVisibility),
                     batching::upload_instances,
+                    culling::configure_cameras,
+                    culling::cull_views
+                        .after(VisibilitySystems::CheckVisibility)
+                        .before(VisibilitySystems::MarkNewlyHiddenEntitiesInvisible),
                 ),
             );
             app.insert_resource(bevy_rapier3d::prelude::TimestepMode::Fixed {
@@ -287,7 +296,7 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
                         sound::maintain_voices,
                         world::interpolate_poses,
                         (world::drive_camera, edit::apply_view, edit::draw).chain(),
-                        (performance::update_lod, performance::update_streaming_cells).chain(),
+                        performance::update_streaming_cells,
                         overlay::update_speech_bubbles,
                         preview::capture_preview_frame,
                         world::report_status.run_if(bridge::editor_attached),

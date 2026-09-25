@@ -17,7 +17,7 @@ use crate::materials::BoxMaterial;
 use crate::performance::StreamingCells;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::primitives::MeshAabb;
-use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
+use bevy::camera::visibility::RenderLayers;
 use bevy::math::{Affine3A, Vec3A};
 use bevy::mesh::{Indices, MeshTag, PrimitiveTopology, VertexAttributeValues};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
@@ -435,6 +435,7 @@ pub fn batch_meshes(
             &GlobalTransform,
             &InheritedVisibility,
             Option<&rp::RigidBody>,
+            Option<&crate::culling::LodGroup>,
         ),
         (
             With<ActorId>,
@@ -445,8 +446,9 @@ pub fn batch_meshes(
 ) {
     let batches = &mut *batches;
     let mut candidates = Vec::new();
-    for (entity, mesh, inst, boxed, slot, transform, visible, body) in &actors {
-        if !visible.get() {
+    for (entity, mesh, inst, boxed, slot, transform, visible, body, lod) in &actors {
+        // A merged mesh can't change level, so LOD'd actors stay instanced.
+        if !visible.get() || lod.is_some_and(|lod| lod.swaps_meshes()) {
             continue;
         }
         let surface = match (inst, boxed) {
@@ -610,9 +612,8 @@ pub fn batch_meshes(
             (Some(mesh), entity) => {
                 let aabb = mesh.compute_aabb();
                 let handle = meshes.add(mesh);
-                let entity = entity.unwrap_or_else(|| {
-                    spawn_batch(&mut commands, &key.surface, handle.clone(), false)
-                });
+                let entity = entity
+                    .unwrap_or_else(|| spawn_batch(&mut commands, &key.surface, handle.clone()));
                 commands.entity(entity).insert(Mesh3d(handle));
                 if let Some(aabb) = aabb {
                     commands.entity(entity).insert(aabb);
@@ -683,14 +684,21 @@ pub fn batch_meshes(
         };
         match batches.dynamic.get_mut(&surface) {
             Some(group) => {
+                if let Some(aabb) = mesh.compute_aabb() {
+                    commands.entity(group.entity).insert(aabb);
+                }
                 if let Some(mut asset) = meshes.get_mut(&group.mesh) {
                     *asset = mesh;
                 }
                 group.members = list;
             }
             None => {
+                let aabb = mesh.compute_aabb();
                 let handle = meshes.add(mesh);
-                let entity = spawn_batch(&mut commands, &surface, handle.clone(), true);
+                let entity = spawn_batch(&mut commands, &surface, handle.clone());
+                if let Some(aabb) = aabb {
+                    commands.entity(entity).insert(aabb);
+                }
                 batches.dynamic.insert(
                     surface,
                     DynamicGroup {
@@ -727,21 +735,12 @@ pub fn batch_meshes(
     batches.stats = stats;
 }
 
-fn spawn_batch(
-    commands: &mut Commands,
-    surface: &Surface,
-    mesh: Handle<Mesh>,
-    dynamic: bool,
-) -> Entity {
+fn spawn_batch(commands: &mut Commands, surface: &Surface, mesh: Handle<Mesh>) -> Entity {
     let mut entity = commands.spawn((MergedBatch, Mesh3d(mesh), Transform::IDENTITY));
     match surface {
         Surface::Instanced(handle) => entity.insert(MeshMaterial3d(handle.clone())),
         Surface::Boxed(handle) => entity.insert(MeshMaterial3d(handle.clone())),
     };
-    if dynamic {
-        // Rebuilt every frame: bounds would always be a frame behind.
-        entity.insert(NoFrustumCulling);
-    }
     entity.id()
 }
 
