@@ -313,9 +313,6 @@ pub fn pump_editor(
                     bridge::send(&RuntimeMessage::PreviewStopped);
                 }
             }
-            EditorMessage::PreviewResize { width, height } => {
-                engine.preview_resize = Some((width.max(64), height.max(64)));
-            }
             EditorMessage::PreviewInput { input } => {
                 engine.preview_inputs.push(input);
             }
@@ -852,7 +849,7 @@ pub fn publish_sensors(
         .as_ref()
         .and_then(|pointer| {
             let pos = pointer.pos.filter(|_| preview_live)?;
-            screen_to_world(dimension.0, pos, &windows, &cameras)
+            screen_to_world(dimension.0, pos, &cameras)
         })
         .or_else(|| mouse_world_position(dimension.0, &windows, &cameras))
         .unwrap_or_default();
@@ -1035,7 +1032,7 @@ pub fn publish_sensors(
     let mut touch_started = false;
     if focused {
         for touch in touches.iter() {
-            if let Some(point) = screen_to_world(dimension.0, touch.position(), &windows, &cameras)
+            if let Some(point) = screen_to_world(dimension.0, touch.position(), &cameras)
             {
                 touch_points.push(TouchSense {
                     id: touch.id(),
@@ -1140,7 +1137,7 @@ fn mouse_world_position(
 ) -> Option<[f32; 2]> {
     let window = windows.iter().next()?;
     let cursor = window.cursor_position()?;
-    screen_to_world(mode, cursor, windows, cameras)
+    screen_to_world(mode, cursor, cameras)
 }
 
 /// The same projection for a touch point: a finger names the same place the
@@ -1148,10 +1145,8 @@ fn mouse_world_position(
 fn screen_to_world(
     mode: Mode,
     screen: Vec2,
-    windows: &Query<&Window, With<PrimaryWindow>>,
     cameras: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) -> Option<[f32; 2]> {
-    let _ = windows.iter().next()?;
     let (camera, camera_transform) = cameras.iter().next()?;
     match mode {
         Mode::TwoD => {
@@ -1257,9 +1252,8 @@ pub fn detect_clicks(
     if !engine.running || !buttons.just_pressed(MouseButton::Left) {
         return;
     }
-    let Some(window) = windows.iter().next() else {
-        return;
-    };
+    // Embedded in the editor there is no window, only the preview pointer.
+    let window = windows.iter().next();
     // Clicks land in the focused window, so a click in the editor beside a
     // running game must never start its click strands. Event truth, same as
     // the motion gate above: the component defaults to focused. A live
@@ -1273,14 +1267,14 @@ pub fn detect_clicks(
     let Some(cursor) = preview_pointer
         .as_ref()
         .and_then(|pointer| pointer.pos.filter(|_| preview_live))
-        .or_else(|| window.cursor_position())
+        .or_else(|| window.and_then(Window::cursor_position))
     else {
         return;
     };
     // Boxes are laid out in physical pixels while the cursor reads logical:
     // scale it up the way Bevy's own picking does, or every click falls
     // through on a scaled display.
-    let cursor = cursor * window.scale_factor();
+    let cursor = cursor * window.map_or(1.0, Window::scale_factor);
 
     // The interface first, topmost-first, over the rectangles Bevy laid out
     // this frame - so a panel and a label are as clickable as a button.
@@ -2887,18 +2881,28 @@ pub fn apply_cursor_lock(
     effects: Res<PendingEffects>,
     mut targets: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
 ) {
+    let wanted = engine.wants_cursor_locked;
+    if !engine.running {
+        engine.wants_cursor_locked = false;
+    } else {
+        for effect in &effects.0 {
+            if let Effect::SetMouseLocked { locked } = effect {
+                engine.wants_cursor_locked = *locked;
+            }
+        }
+    }
     let Ok((mut window, mut cursor)) = targets.single_mut() else {
+        // Embedded there is no window: the editor's view holds the pointer.
+        if engine.wants_cursor_locked != wanted {
+            crate::bridge::send(&RuntimeMessage::PointerLock {
+                locked: engine.wants_cursor_locked,
+            });
+        }
         return;
     };
     if !engine.running {
-        engine.wants_cursor_locked = false;
         set_cursor_locked(&mut cursor, false);
         return;
-    }
-    for effect in &effects.0 {
-        if let Effect::SetMouseLocked { locked } = effect {
-            engine.wants_cursor_locked = *locked;
-        }
     }
     // Re-asserted every tick, not just when the block runs. The first request
     // usually lands before the window is focused, and the backend answers an
@@ -3277,12 +3281,6 @@ mod tests {
             })
             .unwrap();
         sender
-            .send(EditorMessage::PreviewResize {
-                width: 640,
-                height: 360,
-            })
-            .unwrap();
-        sender
             .send(EditorMessage::Preview {
                 enabled: true,
                 headless: false,
@@ -3295,7 +3293,6 @@ mod tests {
         assert!(engine.paused);
         assert!(!engine.pause_after_tick);
         assert_eq!(engine.preview_inputs.len(), 1);
-        assert_eq!(engine.preview_resize, Some((640, 360)));
     }
 
     /// Runs `drive_camera` once over a world holding one rigged actor and one

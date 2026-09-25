@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 description = "The game world: a Bevy app that renders a Blockloom project and runs its blocks."
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "blockloom-runtime"
 path = "src/main.rs"
@@ -33,3 +36,12 @@ libloading.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+
+# The embedded Game view hands frames to the editor as dma-bufs, which takes
+# the raw Vulkan device under Bevy's wgpu. Versions match Bevy's own.
+[target.'cfg(target_os = "linux")'.dependencies]
+wgpu = "29"
+ash = "0.38"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = "0.2"

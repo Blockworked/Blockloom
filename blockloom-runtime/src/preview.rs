@@ -60,6 +60,9 @@ pub struct PreviewPointer {
     /// Movement since `publish_sensors` last consumed it, for the mouse-delta
     /// reporter. Drained once a frame.
     pub delta: Vec2,
+    /// What the view last said about the keyboard. Once set, hovering no
+    /// longer counts as attention.
+    pub focus: Option<bool>,
 }
 
 /// Buttons held from the embedded viewport. Applied onto Bevy's own
@@ -272,6 +275,15 @@ pub fn apply_input(
                 keys.held.remove(code);
             }
         }
+        PreviewInput::MouseDelta { dx, dy } => pointer.delta += Vec2::new(*dx, *dy),
+        PreviewInput::Focus { focused } => {
+            pointer.focus = Some(*focused);
+            // No key-ups follow a lost focus, so nothing may stay held.
+            if !focused {
+                keys.held.clear();
+                *buttons = PreviewButtons::default();
+            }
+        }
         PreviewInput::Text { .. } => {}
     }
 }
@@ -302,7 +314,8 @@ fn preview_to_window(x: f32, y: f32, w: f32, h: f32, window: Vec2) -> Vec2 {
 
 /// Whether the preview pointer is fresh enough to steer the game.
 pub fn pointer_live(pointer: &PreviewPointer) -> bool {
-    pointer.pos.is_some()
+    pointer.focus != Some(false)
+        && pointer.pos.is_some()
         && pointer
             .seen
             .is_some_and(|seen| seen.elapsed() < Duration::from_secs(5))
@@ -382,6 +395,7 @@ pub fn drain_preview_inputs(
     mut mouse_buttons: ResMut<ButtonInput<MouseButton>>,
     mut key_buttons: ResMut<ButtonInput<KeyCode>>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    #[cfg(target_os = "linux")] surface: Option<Res<crate::embed::GameSurface>>,
 ) {
     let inputs = std::mem::take(&mut engine.preview_inputs);
     if inputs.is_empty() {
@@ -391,9 +405,9 @@ pub fn drain_preview_inputs(
         .single()
         .map(|window| Vec2::new(window.width(), window.height()))
         .unwrap_or(Vec2::new(960.0, 720.0));
-    // Forwarded input means attention on the preview, which the OS window
-    // behind the editor would otherwise never report as focused.
-    engine.window_focused = true;
+    // Embedded, the pointer lands on the shared image rather than a window.
+    #[cfg(target_os = "linux")]
+    let window_size = surface.map_or(window_size, |surface| surface.size());
     for input in inputs {
         match &input {
             PreviewInput::Text { text } => {
@@ -402,6 +416,9 @@ pub fn drain_preview_inputs(
             _ => apply_input(&input, &mut pointer, &mut buttons, &mut keys, window_size),
         }
     }
+    // Forwarded input means attention on the preview, which the OS window
+    // behind the editor would otherwise never report, unless the view says.
+    engine.window_focused = pointer.focus.unwrap_or(true);
     // Mirror onto Bevy's inputs. Repeated presses are transition-only inside
     // `ButtonInput`, so holding doesn't retrigger an edge.
     set_button(&mut mouse_buttons, MouseButton::Left, buttons.left);
@@ -491,21 +508,6 @@ fn on_screenshot(
     }
 }
 
-/// Applies a viewport-requested resize to the window, so the stream is 1:1
-/// with the viewport. A hidden headless window resizes freely: nobody sees
-/// it change.
-pub fn apply_preview_resize(
-    mut engine: NonSendMut<crate::engine::Engine>,
-    mut windows: Query<&mut Window, With<PrimaryWindow>>,
-) {
-    let Some((width, height)) = engine.preview_resize.take() else {
-        return;
-    };
-    if let Ok(mut window) = windows.single_mut() {
-        window.resolution.set(width as f32, height as f32);
-    }
-}
-
 /// Hides the OS window while headless previewing, shows it otherwise. The
 /// hidden window keeps rendering, so screenshots keep flowing; on platforms
 /// where hiding is unsupported (Wayland) the window simply stays up.
@@ -518,5 +520,50 @@ pub fn apply_preview_visibility(
         && window.visible != wanted
     {
         window.visible = wanted;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_locked_view_moves_by_raw_motion_and_a_lost_focus_lets_go() {
+        let mut pointer = PreviewPointer::default();
+        let mut buttons = PreviewButtons::default();
+        let mut keys = PreviewKeys::default();
+        let size = Vec2::new(960.0, 720.0);
+        let mut apply = |input: PreviewInput, pointer: &mut PreviewPointer| {
+            apply_input(&input, pointer, &mut buttons, &mut keys, size)
+        };
+        apply(PreviewInput::Focus { focused: true }, &mut pointer);
+        apply(
+            PreviewInput::MouseMove {
+                x: 10.0,
+                y: 10.0,
+                w: 960.0,
+                h: 720.0,
+            },
+            &mut pointer,
+        );
+        apply(
+            PreviewInput::Key {
+                code: "KeyW".into(),
+                down: true,
+            },
+            &mut pointer,
+        );
+        apply(PreviewInput::MouseDelta { dx: 3.5, dy: -2.0 }, &mut pointer);
+        apply(PreviewInput::MouseDelta { dx: 1.5, dy: 0.0 }, &mut pointer);
+        // Raw motion isn't scaled onto the window, and never moves the position.
+        assert_eq!(pointer.delta, Vec2::new(5.0, -2.0));
+        assert_eq!(pointer.pos, Some(Vec2::new(10.0, 10.0)));
+        assert!(pointer_live(&pointer));
+
+        apply(PreviewInput::Focus { focused: false }, &mut pointer);
+        // No key-up ever comes for a key held while focus left.
+        assert!(keys.held.is_empty());
+        // Hovering an unfocused view steers nothing.
+        assert!(!pointer_live(&pointer));
     }
 }

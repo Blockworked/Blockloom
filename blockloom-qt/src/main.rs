@@ -7,12 +7,13 @@
 //!
 //! This process owns the backend (`blockloom-app`) directly - there's no
 //! daemon - and every command from QML goes through `AppBridge` into
-//! `Backend::dispatch`. The one other process is the game world
-//! (`blockloom-runtime`), spawned on Play, because Bevy needs an event loop
-//! of its own and this one belongs to Qt.
+//! `Backend::dispatch`. On Linux the game world runs here too, on a thread
+//! of its own, drawing into GPU images the Game view shows (see
+//! `game_view`). Elsewhere it is still a child process (`blockloom-runtime`).
 
 mod app_bridge;
 mod app_icon;
+mod game_view;
 mod preview;
 mod qt_diagnostics;
 
@@ -27,6 +28,7 @@ fn main() {
         // SAFETY: still single-threaded; nothing else reads the environment yet.
         unsafe { std::env::set_var("QT_QUICK_CONTROLS_STYLE", "Basic") };
     }
+    game_view::prefer_opengl();
     qt_diagnostics::install();
     tracing_subscriber::fmt::init();
     let _ = tracing_log::LogTracer::init();

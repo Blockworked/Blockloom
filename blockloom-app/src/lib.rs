@@ -8,6 +8,8 @@ mod runtime;
 pub mod shell;
 mod state;
 
+pub use runtime::EmbeddedRuntime;
+
 use crate::state::{AppState, SharedState, UNDO_STACK_LIMIT, state_dto};
 use blockloom_core::library;
 use std::sync::{Arc, Mutex};
@@ -17,6 +19,10 @@ use std::sync::{Arc, Mutex};
 pub enum Event {
     /// The whole snapshot, already serialized, after any change.
     State(Arc<str>),
+    /// A running world's periodic status alone, serialized. It arrives
+    /// several times a second, so a frontend can apply it without re-reading
+    /// the whole snapshot; the next snapshot carries it too.
+    Status(Arc<str>),
     /// The game window closed on its own.
     RuntimeClosed,
 }
@@ -58,6 +64,16 @@ impl Backend {
     /// Lists the projects the Dashboard offers and opens none of them - the
     /// editor starts on the Dashboard.
     pub fn start(app: AppHandle) -> Backend {
+        Self::start_with(app, None)
+    }
+
+    /// [`start`](Self::start), with the game world run inside this process
+    /// by `embedded` rather than spawned as a child.
+    pub fn start_embedded(app: AppHandle, embedded: Arc<dyn EmbeddedRuntime>) -> Backend {
+        Self::start_with(app, Some(embedded))
+    }
+
+    fn start_with(app: AppHandle, embedded: Option<Arc<dyn EmbeddedRuntime>>) -> Backend {
         // Registers Blockloom's reporter blocks before any project loads.
         blockloom_core::init();
 
@@ -73,11 +89,12 @@ impl Backend {
             paused: false,
             status: None,
             log: Vec::new(),
-            preview_enabled: false,
+            // An embedded world is always shown, so it is always previewing.
+            preview_enabled: embedded.is_some(),
             preview_headless: false,
             preview_port: None,
-            preview_width: 480,
-            preview_height: 270,
+            pointer_locked: false,
+            embedded,
         };
         Backend {
             state: Arc::new(Mutex::new(state)),

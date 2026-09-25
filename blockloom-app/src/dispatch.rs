@@ -281,12 +281,6 @@ impl Backend {
                 app,
                 arg(&args, "headless")?,
             )?),
-            "set_preview_size" => to_json(commands::set_preview_size(
-                state,
-                app,
-                arg(&args, "width")?,
-                arg(&args, "height")?,
-            )?),
             "preview_input" => to_json(commands::preview_input(
                 state,
                 arg::<blockloom_protocol::PreviewInput>(&args, "input")?,

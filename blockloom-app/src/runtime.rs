@@ -1,8 +1,10 @@
-//! Supervising the game world's process.
+//! Supervising the game world.
 //!
-//! The runtime is spawned on Play and kept for as long as the editor lives (or
+//! The runtime is started on Play and kept for as long as the editor lives (or
 //! until the project switches dimension, which needs a different plugin set and
-//! so a fresh process). Its stdout is read on a thread that folds every message
+//! so a fresh world). It is either a child process, whose stdout is read on a
+//! thread, or - when the host supplies an [`EmbeddedRuntime`] - a world inside
+//! this process talking over channels. Either way every message is folded
 //! straight into app state.
 
 use crate::state::LogLine;
@@ -11,13 +13,39 @@ use blockloom_core::scene::Mode;
 use blockloom_protocol::{EditorMessage, RuntimeMessage, decode, encode, runtime_path};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 static NEXT_RUNTIME_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Starts a game world inside this process instead of as a child. The Qt
+/// editor supplies one, so its Game view can show the world's frames.
+pub trait EmbeddedRuntime: Send + Sync {
+    /// Starts a world for `mode` reading `incoming`. It reports through
+    /// `outgoing`, and dropping that is how it says it has gone. Dropping
+    /// the returned guard waits for the world to finish.
+    fn start(
+        &self,
+        mode: Mode,
+        incoming: Receiver<EditorMessage>,
+        outgoing: Sender<RuntimeMessage>,
+    ) -> Result<Box<dyn Send>, String>;
+}
+
+enum Link {
+    Child {
+        child: Child,
+        stdin: ChildStdin,
+    },
+    Embedded {
+        incoming: Sender<EditorMessage>,
+        world: Option<Box<dyn Send>>,
+    },
+}
+
 pub(crate) struct RuntimeHandle {
-    child: Child,
-    stdin: ChildStdin,
+    link: Link,
     pub(crate) id: u64,
     /// Which dimension this process was started for.
     pub(crate) mode: Mode,
@@ -26,8 +54,15 @@ pub(crate) struct RuntimeHandle {
 impl RuntimeHandle {
     /// Starts the runtime binary sitting next to this one and begins reading
     /// its messages into `backend`'s state.
-    pub(crate) fn spawn(mode: Mode, backend: Backend) -> Result<Self, String> {
+    pub(crate) fn spawn(
+        mode: Mode,
+        backend: Backend,
+        embedded: Option<Arc<dyn EmbeddedRuntime>>,
+    ) -> Result<Self, String> {
         let id = NEXT_RUNTIME_ID.fetch_add(1, Ordering::Relaxed);
+        if let Some(host) = embedded {
+            return Self::embed(id, mode, backend, host.as_ref());
+        }
         let path = runtime_path();
         if !path.exists() {
             return Err(format!(
@@ -65,28 +100,75 @@ impl RuntimeHandle {
             .map_err(|e| e.to_string())?;
 
         Ok(Self {
-            child,
-            stdin,
+            link: Link::Child { child, stdin },
             id,
             mode,
         })
     }
 
-    /// Sends a message. `false` means the pipe is gone and the handle should
+    /// Starts the host's in-process world, and reads what it reports the way
+    /// a child's stdout is read.
+    fn embed(
+        id: u64,
+        mode: Mode,
+        backend: Backend,
+        host: &dyn EmbeddedRuntime,
+    ) -> Result<Self, String> {
+        let (incoming, from_editor) = channel();
+        let (to_editor, outgoing) = channel();
+        let world = host.start(mode, from_editor, to_editor)?;
+        std::thread::Builder::new()
+            .name("runtime-reader".to_string())
+            .spawn(move || {
+                for message in outgoing {
+                    backend.on_runtime_message(id, message);
+                }
+                backend.on_runtime_exit(id);
+            })
+            .map_err(|e| e.to_string())?;
+        Ok(Self {
+            link: Link::Embedded {
+                incoming,
+                world: Some(world),
+            },
+            id,
+            mode,
+        })
+    }
+
+    /// Sends a message. `false` means the link is gone and the handle should
     /// be dropped.
     pub(crate) fn send(&mut self, message: &EditorMessage) -> bool {
-        let line = encode(message);
-        self.stdin.write_all(line.as_bytes()).is_ok() && self.stdin.flush().is_ok()
+        match &mut self.link {
+            Link::Child { stdin, .. } => {
+                let line = encode(message);
+                stdin.write_all(line.as_bytes()).is_ok() && stdin.flush().is_ok()
+            }
+            // An embedded world always draws into the Game view, so there is
+            // no sidecar to start or stop.
+            Link::Embedded { .. } if matches!(message, EditorMessage::Preview { .. }) => true,
+            Link::Embedded { incoming, .. } => incoming.send(message.clone()).is_ok(),
+        }
     }
 }
 
 impl Drop for RuntimeHandle {
     fn drop(&mut self) {
-        // Ask first, then insist: a clean exit closes the window without
-        // Chromium-style orphans, but a wedged renderer still has to go.
         let _ = self.send(&EditorMessage::Shutdown);
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        match &mut self.link {
+            // Ask first, then insist: a clean exit closes the window without
+            // orphans, but a wedged renderer still has to go.
+            Link::Child { child, .. } => {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            // Closing the channel stops the world even if it missed the
+            // Shutdown; then wait, so two worlds never share the GPU.
+            Link::Embedded { incoming, world } => {
+                *incoming = channel().0;
+                drop(world.take());
+            }
+        }
     }
 }
 
@@ -138,19 +220,35 @@ impl Backend {
                 s.push_log(line);
             }
             RuntimeMessage::Status(status) => {
+                let unchanged = s.running == status.running && s.paused == status.paused;
                 s.running = status.running;
                 s.paused = status.paused;
+                // Only positions and values moved: send those on their own.
+                if unchanged {
+                    let json = serde_json::to_string(&status);
+                    s.status = Some(status);
+                    drop(s);
+                    match json {
+                        Ok(json) => self.app.send(Event::Status(json.into())),
+                        Err(e) => tracing::warn!("Couldn't serialize the run status: {e}"),
+                    }
+                    return;
+                }
                 s.status = Some(status);
             }
             RuntimeMessage::Stopped => {
                 s.running = false;
                 s.paused = false;
+                s.pointer_locked = false;
             }
             RuntimeMessage::PreviewReady { port } => {
                 s.preview_port = Some(port);
             }
             RuntimeMessage::PreviewStopped => {
                 s.preview_port = None;
+            }
+            RuntimeMessage::PointerLock { locked } => {
+                s.pointer_locked = locked;
             }
             RuntimeMessage::Fatal { message } => {
                 s.running = false;
@@ -183,6 +281,7 @@ impl Backend {
         s.status = None;
         s.runtime = None;
         s.preview_port = None;
+        s.pointer_locked = false;
         let dto = crate::state::state_dto(&s);
         drop(s);
         self.app.send(Event::RuntimeClosed);

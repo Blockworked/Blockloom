@@ -2057,6 +2057,9 @@ version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
  "blockloom-app",
+ "blockloom-core",
+ "blockloom-protocol",
+ "blockloom-runtime",
  "blockstitch-qml",
  "cxx",
  "cxx-qt",
@@ -2122,17 +2125,20 @@ dependencies = [
 name = "blockloom-runtime"
 version = "0.0.1"
 dependencies = [
+ "ash",
  "bevy",
  "bevy_rapier2d",
  "bevy_rapier3d",
  "blockloom-core",
  "blockloom-protocol",
  "image",
+ "libc",
  "libloading 0.9.0",
  "polyanya",
  "serde",
  "serde_json",
  "tracing",
+ "wgpu",
 ]
 
 [[package]]
@@ -7788,12 +7794,14 @@ dependencies = [
  "js-sys",
  "log",
  "naga",
+ "parking_lot",
  "portable-atomic",
  "profiling",
  "raw-window-handle",
  "smallvec",
  "static_assertions",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
  "wgpu-core",
  "wgpu-hal",
@@ -7826,6 +7834,7 @@ dependencies = [
  "smallvec",
  "thiserror 2.0.20",
  "wgpu-core-deps-apple",
+ "wgpu-core-deps-emscripten",
  "wgpu-core-deps-wasm",
  "wgpu-core-deps-windows-linux-android",
  "wgpu-hal",
@@ -7838,6 +7847,15 @@ name = "wgpu-core-deps-apple"
 version = "29.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5e39e26c4c0e07589e67d18546cf79ff45383659fc72fca4dd293358a0347f3"
+dependencies = [
+ "wgpu-hal",
+]
+
+[[package]]
+name = "wgpu-core-deps-emscripten"
+version = "29.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01e09be551dc939498bdd5f6b2c66e55ab275dad25825267a08605a80fc9f0af"
 dependencies = [
  "wgpu-hal",
 ]

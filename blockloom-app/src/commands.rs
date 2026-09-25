@@ -398,7 +398,7 @@ fn close_open_project(s: &mut AppState, save: bool) {
     s.running = false;
     s.paused = false;
     s.status = None;
-    s.preview_enabled = false;
+    s.preview_enabled = s.embedded.is_some();
     s.preview_headless = false;
     s.preview_port = None;
     s.log.clear();
@@ -439,7 +439,7 @@ pub(crate) fn set_mode(
         let dir = s
             .project_dir()
             .map(|dir| dir.to_string_lossy().into_owned());
-        match RuntimeHandle::spawn(mode, backend.clone()) {
+        match RuntimeHandle::spawn(mode, backend.clone(), s.embedded.clone()) {
             Ok(mut runtime) => {
                 let loaded = runtime.send(&blockloom_protocol::EditorMessage::Load {
                     project: Box::new(project),
@@ -451,20 +451,13 @@ pub(crate) fn set_mode(
                             || runtime
                                 .send(&blockloom_protocol::EditorMessage::Pause { paused: true })));
                 if loaded && started {
-                    if s.preview_enabled {
-                        let (width, height) = (s.preview_width, s.preview_height);
-                        let headless = s.preview_headless;
-                        if runtime.send(&blockloom_protocol::EditorMessage::Preview {
+                    if s.preview_enabled
+                        && !runtime.send(&blockloom_protocol::EditorMessage::Preview {
                             enabled: true,
-                            headless,
-                        }) {
-                            runtime.send(&blockloom_protocol::EditorMessage::PreviewResize {
-                                width,
-                                height,
-                            });
-                        } else {
-                            s.preview_port = None;
-                        }
+                            headless: s.preview_headless,
+                        })
+                    {
+                        s.preview_port = None;
                     }
                     s.runtime = Some(runtime);
                 } else {
@@ -1050,7 +1043,11 @@ pub(crate) fn run_project(
         s.runtime = None;
     }
     if s.runtime.is_none() {
-        s.runtime = Some(RuntimeHandle::spawn(project.world.mode, backend.clone())?);
+        s.runtime = Some(RuntimeHandle::spawn(
+            project.world.mode,
+            backend.clone(),
+            s.embedded.clone(),
+        )?);
     }
 
     let Some(runtime) = s.runtime.as_mut() else {
@@ -1066,15 +1063,12 @@ pub(crate) fn run_project(
     }
     // The sidecar belongs to the process, so a fresh runtime re-enables it.
     if s.preview_enabled {
-        let (width, height) = (s.preview_width, s.preview_height);
         let headless = s.preview_headless;
         let runtime = s.runtime.as_mut().expect("checked above");
-        if runtime.send(&blockloom_protocol::EditorMessage::Preview {
+        if !runtime.send(&blockloom_protocol::EditorMessage::Preview {
             enabled: true,
             headless,
         }) {
-            runtime.send(&blockloom_protocol::EditorMessage::PreviewResize { width, height });
-        } else {
             s.preview_port = None;
         }
     }
@@ -1127,7 +1121,7 @@ pub(crate) fn close_runtime(state: &SharedState, app: &AppHandle) -> Result<(), 
     s.paused = false;
     s.status = None;
     s.preview_port = None;
-    s.preview_enabled = false;
+    s.preview_enabled = s.embedded.is_some();
     emit(app, &s);
     Ok(())
 }
@@ -1141,25 +1135,23 @@ pub(crate) fn set_preview_enabled(
     enabled: bool,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
+    // An embedded world has nowhere else to be seen.
+    let enabled = enabled || s.embedded.is_some();
     s.preview_enabled = enabled;
     if !enabled {
         s.preview_port = None;
     }
-    let (width, height) = (s.preview_width, s.preview_height);
     let headless = s.preview_headless;
-    if let Some(runtime) = s.runtime.as_mut() {
-        if !runtime.send(&blockloom_protocol::EditorMessage::Preview { enabled, headless }) {
-            s.runtime = None;
-            s.running = false;
-            s.paused = false;
-            s.status = None;
-            s.preview_port = None;
-            emit(app, &s);
-            return Err("Lost the connection to the game runtime".to_string());
-        }
-        if enabled {
-            runtime.send(&blockloom_protocol::EditorMessage::PreviewResize { width, height });
-        }
+    if let Some(runtime) = s.runtime.as_mut()
+        && !runtime.send(&blockloom_protocol::EditorMessage::Preview { enabled, headless })
+    {
+        s.runtime = None;
+        s.running = false;
+        s.paused = false;
+        s.status = None;
+        s.preview_port = None;
+        emit(app, &s);
+        return Err("Lost the connection to the game runtime".to_string());
     }
     emit(app, &s);
     Ok(())
@@ -1179,35 +1171,6 @@ pub(crate) fn set_preview_headless(
     if enabled
         && let Some(runtime) = s.runtime.as_mut()
         && !runtime.send(&blockloom_protocol::EditorMessage::Preview { enabled, headless })
-    {
-        s.runtime = None;
-        s.running = false;
-        s.paused = false;
-        s.status = None;
-        s.preview_port = None;
-        emit(app, &s);
-        return Err("Lost the connection to the game runtime".to_string());
-    }
-    emit(app, &s);
-    Ok(())
-}
-
-/// Asks the preview stream to follow `width`x`height`. The runtime resizes
-/// its window to match, so the stream is 1:1 with the viewport.
-pub(crate) fn set_preview_size(
-    state: &SharedState,
-    app: &AppHandle,
-    width: u32,
-    height: u32,
-) -> Result<(), String> {
-    let mut s = lock(state)?;
-    s.preview_width = width.clamp(160, 1920);
-    s.preview_height = height.clamp(90, 1080);
-    let (width, height) = (s.preview_width, s.preview_height);
-    let enabled = s.preview_enabled;
-    if enabled
-        && let Some(runtime) = s.runtime.as_mut()
-        && !runtime.send(&blockloom_protocol::EditorMessage::PreviewResize { width, height })
     {
         s.runtime = None;
         s.running = false;

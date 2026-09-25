@@ -757,24 +757,6 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
-        name: "set-preview-size",
-        cmd: "set_preview_size",
-        aliases: &["set_preview_size", "preview-size"],
-        summary: "Ask the preview stream to follow width x height.",
-        args: &[
-            ArgSpec {
-                name: "width",
-                ty: "number",
-                required: true,
-            },
-            ArgSpec {
-                name: "height",
-                ty: "number",
-                required: true,
-            },
-        ],
-    },
-    CommandSpec {
         name: "preview-input",
         cmd: "preview_input",
         aliases: &["preview_input"],

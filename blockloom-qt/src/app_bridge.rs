@@ -23,6 +23,7 @@ pub mod qobject {
         #[qobject]
         #[qml_element]
         #[qproperty(QString, state_json, cxx_name = "stateJson")]
+        #[qproperty(QString, status_json, cxx_name = "statusJson")]
         #[qproperty(QString, preview_frame, cxx_name = "previewFrame")]
         #[qproperty(QString, app_version, cxx_name = "appVersion")]
         type AppBridge = super::AppBridgeRust;
@@ -64,6 +65,7 @@ struct Job {
 
 pub struct AppBridgeRust {
     state_json: QString,
+    status_json: QString,
     preview_frame: QString,
     app_version: QString,
     backend: Option<Backend>,
@@ -75,6 +77,7 @@ impl Default for AppBridgeRust {
     fn default() -> Self {
         Self {
             state_json: QString::from("{}"),
+            status_json: QString::default(),
             preview_frame: QString::default(),
             app_version: QString::from(env!("CARGO_PKG_VERSION")),
             backend: None,
@@ -114,6 +117,10 @@ fn apply_state(bridge: Pin<&mut qobject::AppBridge>, json: String) {
     bridge.set_state_json(QString::from(&json));
 }
 
+fn apply_status(bridge: Pin<&mut qobject::AppBridge>, json: String) {
+    bridge.set_status_json(QString::from(&json));
+}
+
 impl qobject::AppBridge {
     pub fn start(mut self: Pin<&mut Self>) {
         if self.rust().backend.is_some() {
@@ -121,13 +128,22 @@ impl qobject::AppBridge {
         }
         let thread = self.qt_thread();
         let pending: Latest = Arc::new(Mutex::new(None));
+        let status: Latest = Arc::new(Mutex::new(None));
         let sink_thread = thread.clone();
         let sink_pending = pending.clone();
-        let backend = Backend::start(BackendHandle::new(move |event| {
-            if let Event::State(json) = event {
+        let handle = BackendHandle::new(move |event| match event {
+            Event::State(json) => {
                 post_latest(&sink_pending, &sink_thread, json.to_string(), apply_state);
             }
-        }));
+            Event::Status(json) => {
+                post_latest(&status, &sink_thread, json.to_string(), apply_status);
+            }
+            Event::RuntimeClosed => {}
+        });
+        let backend = match crate::game_view::host() {
+            Some(host) => Backend::start_embedded(handle, host),
+            None => Backend::start(handle),
+        };
 
         let (tx, rx) = mpsc::channel::<Job>();
         let worker = backend.clone();

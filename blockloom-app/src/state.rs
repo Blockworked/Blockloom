@@ -48,9 +48,10 @@ pub(crate) struct AppState {
     pub(crate) preview_headless: bool,
     /// The sidecar's loopback port, while it is serving.
     pub(crate) preview_port: Option<u16>,
-    /// The size the viewport asked the stream to follow.
-    pub(crate) preview_width: u32,
-    pub(crate) preview_height: u32,
+    /// The embedded world asked for the pointer locked.
+    pub(crate) pointer_locked: bool,
+    /// Runs the game world inside this process, when the host supplies one.
+    pub(crate) embedded: Option<Arc<dyn crate::runtime::EmbeddedRuntime>>,
 }
 
 impl AppState {
@@ -128,9 +129,13 @@ pub(crate) struct StateDto {
     /// The sidecar's loopback port, while it is serving. The viewport reads
     /// `http://127.0.0.1:{port}/preview.mjpg` directly.
     pub(crate) preview_port: Option<u16>,
-    /// The size the viewport asked the stream to follow.
-    pub(crate) preview_width: u32,
-    pub(crate) preview_height: u32,
+    /// The size a game draws at, which the Game view scales to fit.
+    pub(crate) game_size: (u32, u32),
+    /// The world runs inside the editor and draws into its Game view, so
+    /// there is no window, sidecar or headless mode to offer.
+    pub(crate) runtime_embedded: bool,
+    /// The Game view should hold the pointer while it has the keyboard.
+    pub(crate) pointer_locked: bool,
 }
 
 /// One Dashboard card.
@@ -189,12 +194,13 @@ pub(crate) fn state_dto(s: &AppState) -> StateDto {
         paused: s.paused,
         status: s.status.clone(),
         log: s.log.clone(),
-        runtime_available: blockloom_protocol::runtime_path().exists(),
+        runtime_available: s.embedded.is_some() || blockloom_protocol::runtime_path().exists(),
         runtime_open: s.runtime.is_some(),
         preview_enabled: s.preview_enabled,
         preview_headless: s.preview_headless,
         preview_port: s.preview_port,
-        preview_width: s.preview_width,
-        preview_height: s.preview_height,
+        game_size: blockloom_protocol::GAME_SIZE,
+        runtime_embedded: s.embedded.is_some(),
+        pointer_locked: s.pointer_locked && s.running && s.runtime.is_some(),
     }
 }

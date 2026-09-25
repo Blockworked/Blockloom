@@ -22,6 +22,13 @@ tracing.workspace = true
 tracing-log.workspace = true
 tracing-subscriber.workspace = true
 
+# The game world runs inside the editor where its frames can be shared with
+# Qt without a copy; elsewhere it stays a child process.
+[target.'cfg(target_os = "linux")'.dependencies]
+blockloom-runtime = { path = "../blockloom-runtime" }
+blockloom-core = { path = "../blockloom-core" }
+blockloom-protocol = { path = "../blockloom-protocol" }
+
 [build-dependencies]
 cxx-qt-build = { version = "0.10", features = ["link_qt_object_files"] }
 qt-build-utils = { version = "0.10", features = ["qt_minimal"] }

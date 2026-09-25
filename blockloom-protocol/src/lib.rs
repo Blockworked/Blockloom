@@ -13,7 +13,12 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 5;
+
+/// The size a game's window opens at, in pixels - and so the size the
+/// editor's Game view draws it at, scaled to fit, so it shows exactly what a
+/// player would see.
+pub const GAME_SIZE: (u32, u32) = (960, 720);
 
 /// Where the embedded preview streams: the runtime's MJPEG sidecar, which
 /// the editor's viewport reads directly so frames never clog the control
@@ -42,6 +47,10 @@ pub enum PreviewInput {
     Key { code: String, down: bool },
     /// Text typed into a focused in-game input while the preview has focus.
     Text { text: String },
+    /// Raw pointer motion while the view holds the pointer locked.
+    MouseDelta { dx: f32, dy: f32 },
+    /// The view gained or lost the keyboard. Once sent, it decides focus.
+    Focus { focused: bool },
 }
 
 /// Editor -> runtime.
@@ -77,12 +86,6 @@ pub enum EditorMessage {
         #[serde(default)]
         headless: bool,
     },
-    /// Asks the preview stream to follow this size. The runtime resizes its
-    /// window to match, so the stream is 1:1 with the viewport.
-    PreviewResize {
-        width: u32,
-        height: u32,
-    },
     /// A pointer or keyboard event from the embedded viewport.
     PreviewInput {
         input: PreviewInput,
@@ -111,6 +114,9 @@ pub enum RuntimeMessage {
     PreviewReady { port: u16 },
     /// The preview sidecar stopped (turned off or failed to bind).
     PreviewStopped,
+    /// The game wants the pointer locked (or free). A windowless world asks
+    /// the view to hold it instead.
+    PointerLock { locked: bool },
     /// The runtime is giving up (a fatal renderer or physics error).
     Fatal { message: String },
 }

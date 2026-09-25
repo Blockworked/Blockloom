@@ -39,7 +39,7 @@ Rectangle {
         Rectangle {
             visible: root.appState.running
             implicitWidth: fpsText.implicitWidth + 16; implicitHeight: 24; radius: 12; color: Theme.panelRaised; border.color: Theme.border
-            Text { id: fpsText; anchors.centerIn: parent; text: Math.round(root.appState.status ? root.appState.status.fps : 0) + " fps"; color: Theme.textDim; font.pixelSize: 11 }
+            Text { id: fpsText; anchors.centerIn: parent; text: Math.round(root.app.status ? root.app.status.fps : 0) + " fps"; color: Theme.textDim; font.pixelSize: 11 }
         }
         IconButton { visible: root.appState.runtime_open; iconName: "monitor-x"; tip: "Close the game window"; onClicked: root.app.invoke("close_runtime") }
         IconButton {

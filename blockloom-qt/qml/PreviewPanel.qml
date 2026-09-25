@@ -3,20 +3,37 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import com.blockworked.Blockstitch 1.0
+import com.blockworked.Blockloom 1.0
 
-// The embedded preview: the runtime's MJPEG sidecar shown in place, with run
-// controls, a resolution switch, headless mode, single-step and input
-// forwarding. Windowed mode keeps the OS game window up beside the viewport;
-// headless hides it while the hidden window keeps rendering the stream.
+// The Game view, with run controls, single-step and input forwarding. The
+// game draws at its own window size and is scaled to fit, so the view shows
+// exactly what a player sees. An embedded world (Linux) draws straight into GameView
+// on the GPU. A child-process world streams MJPEG instead, and can keep its
+// OS window up beside the view or hide it (headless).
 Rectangle {
     id: root
     required property var app
     readonly property var appState: app.appState
+    readonly property bool embedded: appState.runtime_embedded === true
     implicitHeight: 36 + (appState.preview_enabled ? frameArea.height + 8 : 0)
     color: Theme.panel
     border.color: Theme.borderSoft
 
-    readonly property var resolutions: [{ label: "270p", width: 480, height: 270 }, { label: "360p", width: 640, height: 360 }, { label: "540p", width: 960, height: 540 }]
+    readonly property var gameSize: appState.game_size || [960, 720]
+    // Play hands the keyboard to the game, the way its own window took it.
+    readonly property bool running: appState.running === true
+    onRunningChanged: {
+        pointerSuspended = false;
+        if (running && embedded) {
+            frame.forceActiveFocus();
+            input({ kind: "focus", focused: attentive });
+        }
+    }
+    // The view has the keyboard in the active window: the game's idea of focus.
+    readonly property bool attentive: frame.activeFocus && frame.Window.active
+    onAttentiveChanged: if (embedded) input({ kind: "focus", focused: attentive })
+    // Escape or the system let go of the pointer; a click on the game takes it back.
+    property bool pointerSuspended: false
     // Follow the stream whenever the sidecar has a port.
     readonly property int port: appState.preview_port || 0
     onPortChanged: app.watchPreview(port)
@@ -45,8 +62,8 @@ Rectangle {
         anchors.fill: parent; spacing: 4
         RowLayout {
             Layout.fillWidth: true; Layout.preferredHeight: 32; Layout.leftMargin: 6; Layout.rightMargin: 6; spacing: 4
-            SwitchField { value: root.appState.preview_enabled; onToggled: on => root.report("set_preview_enabled", { enabled: on }) }
-            Text { text: "Preview"; color: Theme.text; font.pixelSize: 12; Layout.rightMargin: 8 }
+            SwitchField { visible: !root.embedded; value: root.appState.preview_enabled; onToggled: on => root.report("set_preview_enabled", { enabled: on }) }
+            Text { text: root.embedded ? "Game" : "Preview"; color: Theme.text; font.pixelSize: 12; Layout.rightMargin: 8 }
             IconButton {
                 visible: root.appState.preview_enabled
                 iconName: root.appState.running ? "square" : "play"; tip: root.appState.running ? "Stop" : "Play"
@@ -59,45 +76,77 @@ Rectangle {
             }
             IconButton { visible: root.appState.preview_enabled && root.appState.running && root.appState.paused; iconName: "step-forward"; tip: "Advance one tick"; onClicked: root.report("step_project") }
             Item { Layout.fillWidth: true }
-            ChoiceField {
-                visible: root.appState.preview_enabled
-                Layout.fillWidth: false; implicitWidth: 90
-                options: root.resolutions.map(r => ({ value: r.width + "x" + r.height, label: r.label }))
-                value: root.appState.preview_width + "x" + root.appState.preview_height
-                onChosen: v => { const r = root.resolutions.find(r => r.width + "x" + r.height === v); if (r) root.report("set_preview_size", { width: r.width, height: r.height }); }
-            }
-            SwitchField { visible: root.appState.preview_enabled; value: root.appState.preview_headless; onToggled: on => root.report("set_preview_headless", { headless: on }) }
-            Text { visible: root.appState.preview_enabled; text: "Headless"; color: Theme.textDim; font.pixelSize: 12 }
+            SwitchField { visible: root.appState.preview_enabled && !root.embedded; value: root.appState.preview_headless; onToggled: on => root.report("set_preview_headless", { headless: on }) }
+            Text { visible: root.appState.preview_enabled && !root.embedded; text: "Headless"; color: Theme.textDim; font.pixelSize: 12 }
         }
         Item {
             id: frameArea
             visible: root.appState.preview_enabled
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(root.appState.preview_height, 360)
+            Layout.preferredHeight: 360
             Rectangle {
                 id: frame
                 anchors.centerIn: parent
-                height: parent.height; width: height * root.appState.preview_width / Math.max(1, root.appState.preview_height)
+                height: parent.height; width: height * root.gameSize[0] / root.gameSize[1]
                 color: "black"; border.color: frame.activeFocus ? Theme.accent : Theme.border
                 focus: true
-                Image {
+                readonly property bool showing: root.embedded ? gameView.hasFrame : !!root.app.previewFrame
+                GameView {
+                    id: gameView
+                    visible: root.embedded
                     anchors.fill: parent; anchors.margins: 1
-                    source: root.app.previewFrame; cache: false; fillMode: Image.PreserveAspectFit
+                    pointerLocked: root.embedded && root.appState.pointer_locked === true && root.attentive && !root.pointerSuspended
+                    onPointerMoved: (dx, dy) => root.input({ kind: "mouse_delta", dx: dx, dy: dy })
+                    onPointerReleased: root.pointerSuspended = true
+                    onPointerHeldChanged: if (pointerHeld) escapeHint.shown = true
+                }
+                Image {
+                    visible: !root.embedded
+                    anchors.fill: parent; anchors.margins: 1
+                    source: root.embedded ? "" : root.app.previewFrame; cache: false; fillMode: Image.PreserveAspectFit
                 }
                 Text {
-                    visible: !root.app.previewFrame
-                    anchors.centerIn: parent; color: Theme.textDim; font.pixelSize: 12
-                    text: root.appState.running ? "Waiting for the first frame…" : "Press Play to see the game here."
+                    visible: !frame.showing || gameView.error !== ""
+                    anchors.centerIn: parent; width: parent.width - 24
+                    horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
+                    color: gameView.error ? Theme.danger : Theme.textDim; font.pixelSize: 12
+                    text: gameView.error ? "Can't show the game: " + gameView.error
+                        : root.appState.runtime_open ? "Waiting for the first frame…" : "Press Play to see the game here."
+                }
+                Rectangle {
+                    readonly property string text: !frame.activeFocus ? "Click to control the game"
+                        : gameView.pointerLocked && !gameView.pointerHeld ? "Point at the game to lock the pointer"
+                        : root.pointerSuspended && root.appState.pointer_locked === true ? "Click to lock the pointer" : ""
+                    visible: root.embedded && root.running && frame.showing && text !== ""
+                    anchors.bottom: parent.bottom; anchors.horizontalCenter: parent.horizontalCenter; anchors.bottomMargin: 8
+                    width: hint.implicitWidth + 16; height: hint.implicitHeight + 8; radius: 4
+                    color: "#b0000000"
+                    Text { id: hint; anchors.centerIn: parent; text: parent.text; color: "white"; font.pixelSize: 11 }
+                }
+                Rectangle {
+                    id: escapeHint
+                    property bool shown: false
+                    onShownChanged: if (shown) escapeTimer.restart()
+                    visible: shown && gameView.pointerHeld
+                    anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; anchors.topMargin: 8
+                    width: escapeText.implicitWidth + 16; height: escapeText.implicitHeight + 8; radius: 4
+                    color: "#b0000000"
+                    Text { id: escapeText; anchors.centerIn: parent; text: "Press Esc to release the pointer"; color: "white"; font.pixelSize: 11 }
+                    Timer { id: escapeTimer; interval: 2500; onTriggered: escapeHint.shown = false }
                 }
                 MouseArea {
                     anchors.fill: parent; hoverEnabled: true
                     acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
-                    readonly property var buttons: { const b = {}; b[Qt.LeftButton] = 0; b[Qt.MiddleButton] = 1; b[Qt.RightButton] = 2; return b; }
+                    // A held pointer is the game's to draw, if it draws one at all.
+                    cursorShape: gameView.pointerHeld ? Qt.BlankCursor : Qt.ArrowCursor
+                    readonly property var buttons: { const b = {}; b[Qt.LeftButton] = 0; b[Qt.RightButton] = 1; b[Qt.MiddleButton] = 2; return b; }
                     onPositionChanged: mouse => root.input(Object.assign({ kind: "mouse_move" }, root.box(mouse.x, mouse.y)))
-                    onPressed: mouse => { frame.forceActiveFocus(); root.input(Object.assign({ kind: "mouse_button", button: buttons[mouse.button], down: true }, root.box(mouse.x, mouse.y))); }
+                    onPressed: mouse => { frame.forceActiveFocus(); root.pointerSuspended = false; root.input(Object.assign({ kind: "mouse_button", button: buttons[mouse.button], down: true }, root.box(mouse.x, mouse.y))); }
                     onReleased: mouse => root.input(Object.assign({ kind: "mouse_button", button: buttons[mouse.button], down: false }, root.box(mouse.x, mouse.y)))
                 }
                 Keys.onPressed: event => {
+                    // Escape always frees the pointer, and the game still hears it.
+                    if (event.key === Qt.Key_Escape && gameView.pointerLocked) root.pointerSuspended = true;
                     const code = root.webCode(event);
                     if (code) root.input({ kind: "key", code: code, down: true });
                     // Printable characters also travel as text, for a focused in-game input.

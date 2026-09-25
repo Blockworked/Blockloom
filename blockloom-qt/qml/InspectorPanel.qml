@@ -18,7 +18,7 @@ Rectangle {
     readonly property string mode: appState.project ? appState.project.world.mode : "TwoD"
     readonly property bool is3d: mode === "ThreeD"
     // Where the actor is right now, while a run is going.
-    readonly property var live: actor && appState.status ? (appState.status.actors.find(a => a.id === actor.id) || null) : null
+    readonly property var live: actor && app.status ? (app.status.actors.find(a => a.id === actor.id) || null) : null
     color: Theme.panel
     border.color: Theme.borderSoft
     clip: true

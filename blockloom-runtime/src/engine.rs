@@ -162,8 +162,6 @@ pub struct Engine {
     /// Input events forwarded from the embedded preview, drained once a
     /// frame by the preview systems.
     pub preview_inputs: Vec<PreviewInput>,
-    /// A resize the preview viewport asked for, applied to the window.
-    pub preview_resize: Option<(u32, u32)>,
     /// A single fixed tick to run while paused, then re-pause. What the
     /// editor's step button asks for.
     pub pause_after_tick: bool,
@@ -210,7 +208,6 @@ impl Engine {
             input_overrides: HashMap::new(),
             prev_action_held: HashMap::new(),
             preview_inputs: Vec::new(),
-            preview_resize: None,
             pause_after_tick: false,
         }
     }

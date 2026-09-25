@@ -5,6 +5,9 @@
 //! [`RuntimeMessage`]s the same way. Nothing else may print to stdout - a
 //! stray `println!` would corrupt the stream, so logs go to stderr.
 //!
+//! Embedded in the editor, the same messages travel over channels instead:
+//! [`attach`] hands [`send`] a sender and the engine is given the receiver.
+//!
 //! A built game has no editor on the other end: [`listen`] is never called,
 //! [`attached`] is false, and the reports the editor would have shown are
 //! dropped apart from the ones worth a line on stderr.
@@ -12,9 +15,14 @@
 use blockloom_protocol::{EditorMessage, RuntimeMessage, decode, encode};
 use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::Mutex;
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 static ATTACHED: AtomicBool = AtomicBool::new(false);
+
+/// The embedded world's outgoing channel, tagged with which world owns it so
+/// a world finishing late can't detach its successor.
+static SINK: Mutex<Option<(u64, Sender<RuntimeMessage>)>> = Mutex::new(None);
 
 /// Whether an editor is on the other end of the pipes. False in a built game,
 /// which is how the runtime knows not to report, and that nothing can press
@@ -56,6 +64,23 @@ pub fn listen() -> Receiver<EditorMessage> {
     rx
 }
 
+/// Routes [`send`] into `outgoing` for the embedded world `world`.
+pub fn attach(world: u64, outgoing: Sender<RuntimeMessage>) {
+    ATTACHED.store(true, Ordering::Relaxed);
+    if let Ok(mut sink) = SINK.lock() {
+        *sink = Some((world, outgoing));
+    }
+}
+
+/// Drops `world`'s sender, which is how the editor hears it has gone.
+pub fn detach(world: u64) {
+    if let Ok(mut sink) = SINK.lock()
+        && sink.as_ref().is_some_and(|(owner, _)| *owner == world)
+    {
+        *sink = None;
+    }
+}
+
 /// Sends one message to the editor. A closed pipe is ignored: the editor is
 /// gone and the window is about to follow. With no editor at all, only the
 /// messages a player might need to see reach stderr.
@@ -66,6 +91,12 @@ pub fn send(message: &RuntimeMessage) {
             RuntimeMessage::Fatal { message } => eprintln!("blockloom: {message}"),
             _ => {}
         }
+        return;
+    }
+    if let Ok(sink) = SINK.lock()
+        && let Some((_, outgoing)) = sink.as_ref()
+    {
+        let _ = outgoing.send(message.clone());
         return;
     }
     let line = encode(message);

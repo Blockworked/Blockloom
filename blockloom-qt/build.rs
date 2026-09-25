@@ -46,14 +46,29 @@ fn main() {
     .file("src/app_bridge.rs")
     .file("src/app_icon.rs")
     .file("src/qt_diagnostics.rs")
+    .file("src/game_view.rs")
+    // The Game view item: moc'd into this QML module, then compiled.
+    .cpp_file("src/game_view.h")
+    .cpp_file("src/game_view.cpp")
     // Runtime window icon (see src/app_icon.cpp, addressed as ":/icons/...").
-    .qrc_resources(QResources::new().resource(
-        QResource::new()
-            .prefix("/icons")
-            .file(QResourceFile::new("../res/icons/blockloom.png").alias("blockloom.png")),
-    ))
+    .qrc_resources(
+        QResources::new().resource(
+            QResource::new()
+                .prefix("/icons")
+                .file(QResourceFile::new("../res/icons/blockloom.png").alias("blockloom.png")),
+        ),
+    )
     .qt_module("QuickControls2")
     .qt_module("QuickDialogs2");
+
+    // Frames arrive as dma-bufs imported through EGL, and the pointer is
+    // locked through Wayland's own protocols.
+    let linux = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux");
+    if linux {
+        println!("cargo:rustc-link-lib=EGL");
+        println!("cargo:rustc-link-lib=wayland-client");
+    }
+    let qpa = qt_private_headers("QtGui");
 
     unsafe {
         builder
@@ -61,7 +76,40 @@ fn main() {
                 cc.include("src");
                 cc.file("src/qt_diagnostics.cpp");
                 cc.file("src/app_icon.cpp");
+                cc.file("src/pointer_lock.cpp");
+                if let Some(qpa) = &qpa {
+                    cc.include(qpa);
+                }
+                if linux {
+                    cc.file("src/wayland/pointer-constraints-unstable-v1-protocol.cpp");
+                    cc.file("src/wayland/relative-pointer-unstable-v1-protocol.cpp");
+                }
             })
             .build();
     }
+}
+
+/// `<headers>/<module>/<version>`, where Qt keeps the QPA headers
+/// (`QtGui/qpa/...`) the Wayland surface is reached through.
+fn qt_private_headers(module: &str) -> Option<std::path::PathBuf> {
+    let qmake = std::env::var("QMAKE").ok();
+    let query = |key: &str| {
+        qmake
+            .iter()
+            .map(String::as_str)
+            .chain(["qmake6", "qmake"])
+            .find_map(|qmake| {
+                let out = std::process::Command::new(qmake)
+                    .args(["-query", key])
+                    .output()
+                    .ok()?;
+                out.status
+                    .success()
+                    .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            })
+    };
+    let dir = std::path::Path::new(&query("QT_INSTALL_HEADERS")?)
+        .join(module)
+        .join(query("QT_VERSION")?);
+    dir.is_dir().then_some(dir)
 }

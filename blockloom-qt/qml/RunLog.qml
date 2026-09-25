@@ -9,7 +9,7 @@ Rectangle {
     id: root
     required property var app
     readonly property var appState: app.appState
-    readonly property var globals: appState.status ? appState.status.globals : []
+    readonly property var globals: app.status ? app.status.globals : []
     implicitHeight: 30 + (remembered.open ? 96 : 0)
     color: Theme.panel
     border.color: Theme.borderSoft
@@ -24,7 +24,7 @@ Rectangle {
             IconButton { iconName: remembered.open ? "chevron-down" : "chevron-up"; tip: remembered.open ? "Hide the log" : "Show the log"; implicitWidth: 24; implicitHeight: 24; onClicked: remembered.open = !remembered.open }
             Text {
                 color: Theme.textDim; font.pixelSize: 12
-                text: root.appState.running ? "Running" + (root.appState.paused ? " (paused)" : "") + " · " + (root.appState.status ? root.appState.status.time : 0).toFixed(1) + "s" : "Not running"
+                text: root.appState.running ? "Running" + (root.appState.paused ? " (paused)" : "") + " · " + (root.app.status ? root.app.status.time : 0).toFixed(1) + "s" : "Not running"
             }
             Repeater {
                 model: root.globals
