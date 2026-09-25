@@ -147,6 +147,15 @@ pub enum Act {
     SetPeakBrightness {
         nits: f32,
     },
+    /// An environment volume by id or name, empty for this actor.
+    EnableVolume {
+        volume: String,
+        enabled: bool,
+    },
+    SetVolumeWeight {
+        volume: String,
+        weight: f32,
+    },
     SetBody {
         body: &'static str,
     },
@@ -1010,7 +1019,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 16;
+pub const LOGIC_ABI_VERSION: u32 = 17;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1157,6 +1166,10 @@ pub const ACT_SET_EMISSIVE_STRENGTH: u32 = 76;
 pub const ACT_SET_HDR_OUTPUT: u32 = 77;
 /// `n0` = nits. Window-global: no actor.
 pub const ACT_SET_PEAK_BRIGHTNESS: u32 = 78;
+/// `a` = volume by id or name, empty for this actor; `n0` != 0 turns it on.
+pub const ACT_ENABLE_VOLUME: u32 = 79;
+/// `a` = volume by id or name, empty for this actor; `n0` = weight 0-1.
+pub const ACT_SET_VOLUME_WEIGHT: u32 = 80;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1538,6 +1551,22 @@ impl Host for AbiHost {
                 "",
                 "",
                 [nits as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::EnableVolume { volume, enabled } => self.act_wire(
+                actor,
+                ACT_ENABLE_VOLUME,
+                &volume,
+                "",
+                [if enabled { 1.0 } else { 0.0 }, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetVolumeWeight { volume, weight } => self.act_wire(
+                actor,
+                ACT_SET_VOLUME_WEIGHT,
+                &volume,
+                "",
+                [weight as f64, 0.0, 0.0],
                 &zero,
             ),
             Act::SetBody { body } => self.act_wire(actor, ACT_SET_BODY, body, "", [0.0; 3], &zero),

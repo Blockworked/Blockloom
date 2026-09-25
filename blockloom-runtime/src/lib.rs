@@ -53,6 +53,7 @@ mod sound;
 mod streaming;
 mod ui;
 mod ui_systems;
+mod volumes;
 mod world;
 
 use bevy::asset::{AssetPlugin, UnapprovedPathMode};
@@ -133,6 +134,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .insert_non_send(engine);
     environment::register(app);
     atmosphere::register(app);
+    volumes::register(app);
     streaming::register(app);
     gpu::register(app);
     // Custom shader materials plus the tilemap material. Every dimension
@@ -190,6 +192,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         world::apply_common,
                         environment::apply_exposure_effects,
                         hdr::apply_hdr_effects,
+                        volumes::apply_volume_effects,
                     )
                         .chain(),
                     dim2::apply_effects,
@@ -226,6 +229,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     fx::despawn_fx,
                     (
                         world::rebuild_world.run_if(dim2::sprite_shaders_ready),
+                        volumes::gather_volumes,
                         environment::blend_environment,
                         hdr::resolve_frame,
                         environment::apply_environment,
@@ -250,7 +254,13 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     world::publish_sensors,
                     sound::maintain_voices,
                     world::interpolate_poses,
-                    (world::drive_camera, edit::apply_view, edit::draw).chain(),
+                    (
+                        world::drive_camera,
+                        edit::apply_view,
+                        edit::draw,
+                        volumes::draw_volumes,
+                    )
+                        .chain(),
                     overlay::update_speech_bubbles,
                     preview::capture_preview_frame,
                     world::report_status.run_if(bridge::editor_attached),
@@ -324,6 +334,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         world::apply_common,
                         environment::apply_exposure_effects,
                         hdr::apply_hdr_effects,
+                        volumes::apply_volume_effects,
                     )
                         .chain(),
                         dim3::apply_effects,
@@ -355,6 +366,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         fx::despawn_fx,
                         (
                             world::rebuild_world,
+                            volumes::gather_volumes,
                             environment::blend_environment,
                             hdr::resolve_frame,
                             environment::apply_environment,
@@ -369,7 +381,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         world::publish_sensors,
                         sound::maintain_voices,
                         world::interpolate_poses,
-                        (world::drive_camera, edit::apply_view, edit::draw).chain(),
+                        (world::drive_camera, edit::apply_view, edit::draw, volumes::draw_volumes).chain(),
                         streaming::update_streaming_cells,
                         overlay::update_speech_bubbles,
                         preview::capture_preview_frame,

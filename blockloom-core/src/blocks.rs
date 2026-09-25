@@ -215,6 +215,17 @@ pub enum InstructionKind {
     SetPeakBrightness {
         nits: Value,
     },
+    /// Switches an environment volume on or off for the rest of the run.
+    /// Names an actor or an id; empty means this actor.
+    EnableVolume {
+        enabled: bool,
+        volume: Value,
+    },
+    /// Sets an environment volume's weight, 0-1, for the rest of the run.
+    SetVolumeWeight {
+        volume: Value,
+        weight: Value,
+    },
 
     // ─── Physics ────────────────────────────────────────────────────────────
     SetBody {
@@ -815,6 +826,11 @@ impl BlockKind for InstructionKind {
                 f(speed, InputValueType::Any);
             }
             K::SetAnimationSpeed { speed } => f(speed, InputValueType::Any),
+            K::EnableVolume { volume, .. } => f(volume, InputValueType::Any),
+            K::SetVolumeWeight { volume, weight } => {
+                f(volume, InputValueType::Any);
+                f(weight, InputValueType::Any);
+            }
             K::CreateActor { name, x, y, z } => {
                 f(name, InputValueType::Any);
                 f(x, InputValueType::Any);

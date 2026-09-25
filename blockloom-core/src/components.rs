@@ -20,6 +20,7 @@ use crate::animation::AnimationSpec;
 use crate::material::{ParticleSpec, SurfaceMaterial, TrailSpec};
 use crate::scene::{Physics, Placement, Visual};
 use crate::value::Evaluated;
+use crate::volume::VolumeSpec;
 use serde::{Deserialize, Serialize};
 
 /// The components every project knows about by name. A custom component
@@ -39,6 +40,7 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Trail",
     "Light",
     "Animation",
+    "Volume",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -224,6 +226,9 @@ pub enum ActorComponent {
     /// swaps the displayed frame; `play clip` changes state and `when
     /// animation ends` fires the transition.
     Animation { animation: AnimationSpec },
+    /// An environment volume: a region that lays its own look over the
+    /// project's, blended by where the camera stands.
+    Volume { volume: VolumeSpec },
 }
 
 impl ActorComponent {
@@ -244,6 +249,7 @@ impl ActorComponent {
             ActorComponent::Trail { .. } => "Trail",
             ActorComponent::Light { .. } => "Light",
             ActorComponent::Animation { .. } => "Animation",
+            ActorComponent::Volume { .. } => "Volume",
             ActorComponent::Custom { name, .. } => name,
         }
     }
@@ -526,6 +532,13 @@ impl Components {
     }
 
     /// The light, if the actor carries one.
+    pub fn volume(&self) -> Option<&VolumeSpec> {
+        match self.get("Volume") {
+            Some(ActorComponent::Volume { volume }) => Some(volume),
+            _ => None,
+        }
+    }
+
     pub fn light(&self) -> Option<&LightSpec> {
         match self.get("Light") {
             Some(ActorComponent::Light { light }) => Some(light),

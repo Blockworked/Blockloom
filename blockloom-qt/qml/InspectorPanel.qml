@@ -41,6 +41,36 @@ Rectangle {
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
     function animationOf(c) { return Object.assign({ clips: [], states: [] }, c.animation || {}); }
+    function volumeOf(c) {
+        const size = is3d ? 5 : 200;
+        return Object.assign({ shape: "Box", half_extents: [size, size, size], radius: size, priority: 0, blend_distance: is3d ? 1 : 50, weight: 1, enabled: true, overrides: {} }, c.volume || {});
+    }
+    // What a volume property reads as before it is checked: the project's own.
+    function projectValue(key) {
+        const w = appState.project ? appState.project.world : {};
+        const l = Object.assign({ light_direction: [8, 16, 8], light_color: "#FFFFFF", illuminance: 10000, ambient_color: "#FFFFFF", ambient_brightness: 80, ao_enabled: false }, w.lighting || {});
+        const p = Object.assign({ exposure_ev: 9.7, tonemapping: "TonyMcMapface", bloom_enabled: false, bloom_threshold: 1, bloom_intensity: 0.15, vignette_strength: 0 }, w.post || {});
+        return ({ background: w.background || "#1B2431", sun_direction: l.light_direction, sun_color: l.light_color, illuminance: l.illuminance,
+                  ambient_color: l.ambient_color, ambient_brightness: l.ambient_brightness, ao: l.ao_enabled, exposure: p.exposure_ev,
+                  tonemapping: p.tonemapping, bloom: p.bloom_enabled, bloom_threshold: p.bloom_threshold, bloom_intensity: p.bloom_intensity,
+                  vignette: p.vignette_strength })[key];
+    }
+    function overrideOf(v, key) { return Object.assign({ on: false, value: projectValue(key) }, (v.overrides || {})[key] || {}); }
+    readonly property var volumeProperties: [
+        { key: "background", label: "Background", kind: "color" },
+        { key: "sun_direction", label: "Sun from", kind: "vec3", only3d: true },
+        { key: "sun_color", label: "Sun color", kind: "color", only3d: true },
+        { key: "illuminance", label: "Sun lux", kind: "number", only3d: true },
+        { key: "ambient_color", label: "Ambient", kind: "color", only3d: true },
+        { key: "ambient_brightness", label: "Ambient ×", kind: "number", only3d: true },
+        { key: "ao", label: "AO", kind: "bool", only3d: true },
+        { key: "exposure", label: "Exposure EV", kind: "number" },
+        { key: "tonemapping", label: "Tonemap", kind: "tonemap" },
+        { key: "bloom", label: "Bloom", kind: "bool" },
+        { key: "bloom_threshold", label: "Bloom from", kind: "number" },
+        { key: "bloom_intensity", label: "Bloom ×", kind: "number" },
+        { key: "vignette", label: "Vignette", kind: "number" }
+    ]
     function brainOf(c) { return Object.assign({ target: "", speed: 4, sight: 12, fov: 120, separation: 1, tree: { node: "Selector", children: [{ node: "Sequence", children: [{ node: "CanSeeTarget" }, { node: "NavigateToTarget" }] }, { node: "Idle" }] } }, c.brain || {}); }
     function tilemapOf(v) {
         return Object.assign({ tileset: "", tile_size: [32, 32], width: 8, height: 8, sheet_columns: 4, sheet_rows: 4, tiles: [], solid: false, passable: [], animations: [] }, v && v.tilemap ? v.tilemap : {});
@@ -65,6 +95,13 @@ Rectangle {
     function writeTrail(c, next) { write("Trail", { component: "Trail", trail: merged(trailOf(c), next) }); }
     function writeJoint(c, next) { write("Joint", { component: "Joint", joint: merged(jointOf(c), next) }); }
     function writeAnimation(c, next) { write("Animation", { component: "Animation", animation: merged(animationOf(c), next) }); }
+    function writeVolume(c, next) { write("Volume", { component: "Volume", volume: merged(volumeOf(c), next) }); }
+    function writeOverride(c, key, next) {
+        const v = volumeOf(c);
+        const overrides = copy(v.overrides || {});
+        overrides[key] = Object.assign(overrideOf(v, key), next);
+        writeVolume(c, { overrides: overrides });
+    }
     function writeBrain(c, next) { write("Brain", { component: "Brain", brain: merged(brainOf(c), next) }); }
     function writeRender(c, next) { write("Render", { component: "Render", visible: next.visible !== undefined ? next.visible : c.visible, layer: next.layer !== undefined ? next.layer : (c.layer || 0) }); }
     function writeParent(c, next) {
@@ -129,7 +166,7 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Custom"]
+        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Volume","Custom"]
             .filter(n => n === "Custom" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }));
     }
     function blank(name) {
@@ -146,6 +183,7 @@ Rectangle {
         case "Trail": return { component: "Trail", trail: trailOf({}) };
         case "Light": return { component: "Light", light: lightOf({}) };
         case "Animation": return { component: "Animation", animation: { clips: [], states: [] } };
+        case "Volume": return { component: "Volume", volume: volumeOf({}) };
         case "Custom": return { component: "Custom", name: "Component", fields: [{ name: "value", value: { kind: "Number", value: 0 } }] };
         default: return null;
         }
@@ -199,7 +237,7 @@ Rectangle {
                             Layout.fillWidth: true
                             readonly property var c: card.c
                             sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard })[card.c.component] || null
+                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Volume: volumeCard })[card.c.component] || null
                         }
                     }
                 }
@@ -695,6 +733,92 @@ Rectangle {
                 text: root.is3d
                     ? "About " + Math.round(li.l.intensity / (4 * Math.PI)) + " candela. A spot shines down the actor's forward axis; its cone doesn't gather the light, so narrowing it isn't brighter."
                     : "Lights need a 3D world; in 2D this rests." }
+        }
+    }
+    Component {
+        id: volumeCard
+        ColumnLayout {
+            id: vo
+            readonly property var c: parent.c
+            readonly property var v: root.volumeOf(c)
+            readonly property var live: root.actor && root.app.status && root.app.status.volumes
+                ? (root.app.status.volumes.find(x => x.actor === root.actor.id) || null) : null
+            spacing: 6
+            InspectorRow { label: "Enabled"; Layout.fillWidth: true
+                SwitchField { value: vo.v.enabled; onToggled: on => root.writeVolume(vo.c, { enabled: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Shape"; Layout.fillWidth: true
+                ChoiceField { options: [{ value: "Box", label: root.is3d ? "Box" : "Rectangle" }, { value: "Sphere", label: root.is3d ? "Sphere" : "Circle" }, { value: "Global", label: "Global" }]
+                    value: vo.v.shape; onChosen: s => root.writeVolume(vo.c, { shape: s }) } }
+            InspectorRow { visible: vo.v.shape === "Box"; label: "Half size"; Layout.fillWidth: true
+                NumberField { value: vo.v.half_extents[0]; onCommitted: n => root.writeVolume(vo.c, { half_extents: root.withIndex(vo.v.half_extents, 0, Math.max(0, n)) }) }
+                NumberField { value: vo.v.half_extents[1]; onCommitted: n => root.writeVolume(vo.c, { half_extents: root.withIndex(vo.v.half_extents, 1, Math.max(0, n)) }) }
+                NumberField { visible: root.is3d; value: vo.v.half_extents[2]; onCommitted: n => root.writeVolume(vo.c, { half_extents: root.withIndex(vo.v.half_extents, 2, Math.max(0, n)) }) } }
+            InspectorRow { visible: vo.v.shape === "Sphere"; label: "Radius"; Layout.fillWidth: true
+                NumberField { value: vo.v.radius; onCommitted: n => root.writeVolume(vo.c, { radius: Math.max(0, n) }) } }
+            InspectorRow { visible: vo.v.shape !== "Global"; label: "Blend dist"; Layout.fillWidth: true
+                NumberField { value: vo.v.blend_distance; onCommitted: n => root.writeVolume(vo.c, { blend_distance: Math.max(0, n) }) } }
+            InspectorRow { label: "Priority"; Layout.fillWidth: true
+                NumberField { value: vo.v.priority; onCommitted: n => root.writeVolume(vo.c, { priority: n }) } }
+            InspectorRow { label: "Weight"; Layout.fillWidth: true
+                NumberField { value: vo.v.weight; fallback: 1; onCommitted: n => root.writeVolume(vo.c, { weight: Math.min(1, Math.max(0, n)) }) } }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: vo.live
+                    ? "Blending at " + Math.round(vo.live.weight * 100) + "%, covering " + Math.round(vo.live.coverage * 100) + "% of the camera."
+                    : "Not over the camera right now. Higher priority blends last and wins." }
+            Text { text: "Overrides"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            Repeater {
+                model: root.volumeProperties.filter(p => root.is3d || !p.only3d)
+                delegate: RowLayout {
+                    id: prop
+                    required property var modelData
+                    readonly property var o: root.overrideOf(vo.v, modelData.key)
+                    Layout.fillWidth: true; spacing: 4
+                    BwCheckBox { Layout.preferredWidth: 112; text: prop.modelData.label; checked: prop.o.on
+                        onToggled: root.writeOverride(vo.c, prop.modelData.key, { on: checked }) }
+                    Loader {
+                        Layout.fillWidth: true
+                        opacity: prop.o.on ? 1 : 0.45
+                        readonly property var o: prop.o
+                        readonly property string key: prop.modelData.key
+                        sourceComponent: ({ number: overrideNumber, color: overrideColor, bool: overrideBool, vec3: overrideVec3, tonemap: overrideTonemap })[prop.modelData.kind]
+                    }
+                }
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Checked properties blend over the project's settings; the rest are left to what lies under this volume." }
+            Component { id: overrideNumber
+                NumberField { value: parent.o.value; onCommitted: n => root.writeOverride(vo.c, parent.key, { value: n, on: true }) } }
+            Component { id: overrideColor
+                RowLayout {
+                    id: tint
+                    readonly property var o: parent.o
+                    readonly property string key: parent.key
+                    ColorField { value: tint.o.value; onPicked: col => root.writeOverride(vo.c, tint.key, { value: col, on: true }) }
+                    Item { Layout.fillWidth: true }
+                } }
+            Component { id: overrideBool
+                RowLayout {
+                    id: flip
+                    readonly property var o: parent.o
+                    readonly property string key: parent.key
+                    SwitchField { value: flip.o.value; onToggled: on => root.writeOverride(vo.c, flip.key, { value: on, on: true }) }
+                    Item { Layout.fillWidth: true }
+                } }
+            Component { id: overrideVec3
+                RowLayout {
+                    id: vec
+                    readonly property var o: parent.o
+                    readonly property string key: parent.key
+                    spacing: 4
+                    Repeater {
+                        model: 3
+                        NumberField { required property int index; Layout.fillWidth: true; value: vec.o.value[index]
+                            onCommitted: n => root.writeOverride(vo.c, vec.key, { value: root.withIndex(vec.o.value, index, n), on: true }) }
+                    }
+                } }
+            Component { id: overrideTonemap
+                ChoiceField { options: Blocks.opts(["TonyMcMapface","None","Reinhard","ReinhardLuminance","AcesFitted","Filmic"]); value: parent.o.value
+                    onChosen: t => root.writeOverride(vo.c, parent.key, { value: t, on: true }) } }
         }
     }
     Component {

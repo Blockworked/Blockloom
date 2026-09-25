@@ -947,6 +947,45 @@ pub const BLOCKS: &[BlockSpec] = &[
         bools: NO_BOOLS,
         bodies: NO_BODIES,
     },
+    BlockSpec {
+        r#type: "EnableVolume",
+        category: "Looks",
+        purpose: "Switches an environment volume on or off for the rest of the run. Names an actor with a Volume component, by name or id; an empty slot means this actor.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "volume",
+            id: "VolumeTarget",
+            value: "Any",
+        }],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: &["enabled"],
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetVolumeWeight",
+        category: "Looks",
+        purpose: "Sets an environment volume's weight, 0 to 1, for the rest of the run: how much of it shows where it fully covers the camera. Names the volume like `enable volume`.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "volume",
+                id: "VolumeTarget",
+                value: "Any",
+            },
+            Slot {
+                field: "weight",
+                id: "VolumeWeight",
+                value: "Any",
+            },
+        ],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
     // ── Sound ──────────────────────────────────────────────────────────────
     BlockSpec {
         r#type: "PlaySound",

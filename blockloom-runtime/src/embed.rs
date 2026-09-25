@@ -1371,6 +1371,42 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_volume_over_the_camera_repaints_the_background() {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::scene::Visual;
+        use blockloom_core::volume::{Override, VolumeOverrides, VolumeSpec};
+        let mut world = blockloom_core::project::Project::starter("Volumes", Mode::TwoD);
+        world.world.background = "#0000ff".to_string();
+        let mut cave = blockloom_core::project::Actor::new(
+            "Cave",
+            Visual::Rect {
+                color: "#FFFFFF".to_string(),
+                size: [1.0, 1.0],
+            },
+        );
+        cave.components.remove("Look");
+        cave.components.insert(ActorComponent::Volume {
+            volume: VolumeSpec {
+                half_extents: [5000.0; 3],
+                overrides: VolumeOverrides {
+                    background: Override {
+                        on: true,
+                        value: "#ff0000".to_string(),
+                    },
+                    ..VolumeOverrides::default()
+                },
+                ..VolumeSpec::default()
+            },
+        });
+        world.actors.push(cave);
+        let (set, index, errors) = run_world(world, |_| {}, game_camera(), 0, is_red);
+        let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
+        let pixel = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        assert!(is_red(pixel), "expected the volume's red, read {pixel:?}");
+    }
+
     fn red_world(mode: Mode) -> blockloom_core::project::Project {
         let mut red = blockloom_core::project::Project::starter("Embedded", mode);
         red.world.background = "#ff0000".to_string();

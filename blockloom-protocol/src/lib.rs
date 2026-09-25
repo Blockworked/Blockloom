@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 12;
+pub const PROTOCOL_VERSION: u32 = 13;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -229,6 +229,31 @@ pub struct SceneView {
     pub show_grid: bool,
     /// Applies while a game runs too, since exposure is judged in play.
     pub debug_view: DebugView,
+    pub volumes: VolumeDebug,
+}
+
+/// The environment volumes' debug views.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VolumeDebug {
+    /// Each volume's shape and blend feather, in the scene view.
+    pub bounds: bool,
+    /// How much volume a spot on the ground plane (the screen in 2D) is
+    /// under, as a heat grid around the camera. Shows in play too.
+    pub heatmap: bool,
+    /// Holds the blend where it is so it can be inspected: the camera moves
+    /// but the look doesn't, and the status carries each property's lerp.
+    pub freeze: bool,
+}
+
+impl Default for VolumeDebug {
+    fn default() -> Self {
+        Self {
+            bounds: true,
+            heatmap: false,
+            freeze: false,
+        }
+    }
 }
 
 impl Default for SceneView {
@@ -243,6 +268,7 @@ impl Default for SceneView {
             scale: 0.1,
             show_grid: true,
             debug_view: DebugView::Lit,
+            volumes: VolumeDebug::default(),
         }
     }
 }
@@ -259,6 +285,45 @@ pub struct Status {
     pub actors: Vec<ActorStatus>,
     /// Project-wide variables, by name.
     pub globals: Vec<VariableValue>,
+    /// The environment volumes showing at the camera, in blend order.
+    #[serde(default)]
+    pub volumes: Vec<VolumeStatus>,
+    /// Each blended property's lerp, only while the blend is frozen.
+    #[serde(default)]
+    pub volume_trace: Vec<VolumeTraceRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VolumeStatus {
+    pub actor: String,
+    pub name: String,
+    pub priority: f32,
+    /// How much of the camera the shape covers, 0-1.
+    pub coverage: f32,
+    /// What it blends at: coverage times its weight.
+    pub weight: f32,
+    /// The properties it overrides.
+    pub overrides: Vec<String>,
+}
+
+/// One property's way from the project's value through every volume that
+/// touches it. Values are display text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VolumeTraceRow {
+    pub property: String,
+    pub base: String,
+    pub steps: Vec<VolumeTraceStep>,
+    pub result: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VolumeTraceStep {
+    pub volume: String,
+    pub weight: f32,
+    /// What the volume asks for.
+    pub target: String,
+    /// The value once this volume has blended in.
+    pub after: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -42,12 +42,20 @@ Rectangle {
         property real scaleStep: 0.1
         property bool showGrid: true
         property string debugView: "lit"
+        property bool volumeBounds: true
+        property bool volumeHeatmap: false
+        property bool volumePanel: false
     }
+    // Holding the blend still is for this look only, never remembered.
+    property bool volumeFreeze: false
+    readonly property var volumeStatus: app.status && app.status.volumes ? app.status.volumes : []
+    readonly property var volumeTrace: app.status && app.status.volume_trace ? app.status.volume_trace.filter(r => r.steps.length > 0) : []
     readonly property bool is3d: !!appState.project && appState.project.world.mode === "ThreeD"
     readonly property var sceneView: ({
         enabled: scene.enabled, tool: scene.tool, local: scene.local, snap: scene.snap,
         grid: is3d ? scene.grid3d : scene.grid2d, angle: scene.angle, scale: scene.scaleStep, show_grid: scene.showGrid,
-        debug_view: scene.debugView
+        debug_view: scene.debugView,
+        volumes: { bounds: scene.volumeBounds, heatmap: scene.volumeHeatmap, freeze: root.volumeFreeze }
     })
     onSceneViewChanged: app.invoke("set_scene_view", { view: sceneView }, null, () => {})
     // The scene view is what's showing: a world is up and nothing runs.
@@ -171,6 +179,10 @@ Rectangle {
                     + "Clipping stripes whatever the display can't show. Histogram and waveform plot luminance in stops.\n"
                     + "Calibration shows patches at black, paper white and peak brightness.\n"
                     + "HDR preview shows the HDR output at paper white, clipping what only an HDR display could show."
+            }
+            IconButton {
+                iconName: "layers"; tip: "Environment volumes: bounds, heat map, the blend and its lerp"
+                onClicked: scene.volumePanel = !scene.volumePanel
             }
             IconButton {
                 visible: root.embedded || root.appState.preview_enabled
@@ -329,6 +341,70 @@ Rectangle {
                             tip: root.is3d
                                 ? "Hold the right button to look around, and fly with W A S D, Q and E (Shift to hurry, wheel for speed).\nMiddle-drag pans, Alt-drag orbits, the wheel dollies.\nClick an actor to select it; drag it or its handles to place it. Esc cancels a drag."
                                 : "Right- or middle-drag pans, the wheel zooms.\nClick an actor to select it; drag it or its handles to place it. Esc cancels a drag."
+                        }
+                    }
+                }
+                // Environment volumes: what is blending at the camera, and why.
+                Rectangle {
+                    visible: scene.volumePanel && root.appState.runtime_open === true
+                    anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 8
+                    width: 300; height: Math.min(parent.height - 16, volumeColumn.implicitHeight + 16); radius: 6
+                    color: "#e0202124"; border.color: Theme.borderSoft; clip: true
+                    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }
+                    Flickable {
+                        anchors.fill: parent; anchors.margins: 8
+                        contentHeight: volumeColumn.implicitHeight; boundsBehavior: Flickable.StopAtBounds
+                        ColumnLayout {
+                            id: volumeColumn
+                            width: parent.width; spacing: 4
+                            RowLayout {
+                                spacing: 2
+                                BwCheckBox { text: "Bounds"; checked: scene.volumeBounds; onToggled: scene.volumeBounds = checked }
+                                BwCheckBox { text: "Heat map"; checked: scene.volumeHeatmap; onToggled: scene.volumeHeatmap = checked }
+                                BwCheckBox { text: "Freeze"; checked: root.volumeFreeze; onToggled: root.volumeFreeze = checked
+                                    ToolTip.visible: hovered; ToolTip.delay: 500
+                                    ToolTip.text: "Holds the blend where it is: the camera can move but the look stays, and each property's lerp shows below." }
+                            }
+                            Text { text: "Blending at the camera"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+                            Text { visible: root.volumeStatus.length === 0; text: "Only the project's own settings."; color: Theme.textDim; font.pixelSize: 11 }
+                            Repeater {
+                                model: root.volumeStatus
+                                delegate: ColumnLayout {
+                                    required property var modelData
+                                    Layout.fillWidth: true; spacing: 1
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Text { Layout.fillWidth: true; text: modelData.name; color: Theme.text; font.pixelSize: 12; elide: Text.ElideRight }
+                                        Text { text: "priority " + modelData.priority; color: Theme.textDim; font.pixelSize: 11 }
+                                        Text { text: Math.round(modelData.weight * 100) + "%"; color: Theme.accent; font.pixelSize: 12; Layout.preferredWidth: 36; horizontalAlignment: Text.AlignRight }
+                                    }
+                                    Rectangle { Layout.fillWidth: true; height: 3; radius: 1; color: Theme.border
+                                        Rectangle { width: parent.width * modelData.weight; height: parent.height; radius: 1; color: Theme.accent } }
+                                    Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 10
+                                        text: modelData.overrides.length ? modelData.overrides.join(", ").replace(/_/g, " ") : "overrides nothing" }
+                                }
+                            }
+                            Text { visible: root.volumeFreeze; text: "Frozen lerp"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold; Layout.topMargin: 4 }
+                            Text { visible: root.volumeFreeze && root.volumeTrace.length === 0; text: "No volume is changing anything."; color: Theme.textDim; font.pixelSize: 11 }
+                            Repeater {
+                                model: root.volumeFreeze ? root.volumeTrace : []
+                                delegate: ColumnLayout {
+                                    required property var modelData
+                                    Layout.fillWidth: true; spacing: 1
+                                    Text { text: modelData.property.replace(/_/g, " "); color: Theme.text; font.pixelSize: 11; font.weight: Font.DemiBold }
+                                    Text { text: "project  " + modelData.base; color: Theme.textDim; font.pixelSize: 10; font.family: "monospace" }
+                                    Repeater {
+                                        model: modelData.steps
+                                        Text {
+                                            required property var modelData
+                                            Layout.fillWidth: true; elide: Text.ElideRight
+                                            text: "+ " + modelData.volume + " " + Math.round(modelData.weight * 100) + "% of " + modelData.target + " = " + modelData.after
+                                            color: Theme.textDim; font.pixelSize: 10; font.family: "monospace"
+                                        }
+                                    }
+                                    Text { text: "result   " + modelData.result; color: Theme.accent; font.pixelSize: 10; font.family: "monospace" }
+                                }
+                            }
                         }
                     }
                 }

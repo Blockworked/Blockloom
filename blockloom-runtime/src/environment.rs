@@ -17,6 +17,7 @@ use bevy::render::RenderApp;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::view::Msaa;
 use blockloom_core::scene::{self, Mode, TonemapName};
+use blockloom_core::volume::VolumeOverrides;
 
 pub fn register(app: &mut App) {
     app.init_resource::<Environment>()
@@ -142,8 +143,6 @@ impl Environment {
 }
 
 /// What one volume changes. `None` leaves the value to whatever is under it.
-// Filled by the volume framework; only the tests build one yet.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EnvironmentOverride {
     pub background: Option<Color>,
@@ -159,6 +158,91 @@ pub struct EnvironmentOverride {
     pub bloom_threshold: Option<f32>,
     pub bloom_intensity: Option<f32>,
     pub vignette: Option<f32>,
+}
+
+impl EnvironmentOverride {
+    /// A `Volume` component's checked properties.
+    pub fn from_volume(overrides: &VolumeOverrides) -> Self {
+        let color = |value: Option<String>| value.map(|hex| parse_color(&hex));
+        Self {
+            background: color(overrides.background.get()),
+            sun_direction: overrides.sun_direction.get().map(Vec3::from),
+            sun_color: color(overrides.sun_color.get()),
+            illuminance: overrides.illuminance.get().map(|lux| lux.max(0.0)),
+            ambient_color: color(overrides.ambient_color.get()),
+            ambient_brightness: overrides.ambient_brightness.get().map(|b| b.max(0.0)),
+            ao: overrides.ao.get(),
+            exposure: overrides.exposure.get(),
+            tonemapping: overrides.tonemapping.get(),
+            bloom: overrides.bloom.get(),
+            bloom_threshold: overrides.bloom_threshold.get(),
+            bloom_intensity: overrides.bloom_intensity.get(),
+            vignette: overrides.vignette.get().map(|v| v.clamp(0.0, 1.0)),
+        }
+    }
+
+    /// What it asks for, as display text, by the names `Environment::readings`
+    /// uses. Unchecked properties are left out.
+    pub fn readings(&self) -> Vec<(&'static str, String)> {
+        [
+            ("background", self.background.map(show_color)),
+            ("sun_direction", self.sun_direction.map(show_vec)),
+            ("sun_color", self.sun_color.map(show_color)),
+            ("illuminance", self.illuminance.map(show_number)),
+            ("ambient_color", self.ambient_color.map(show_color)),
+            (
+                "ambient_brightness",
+                self.ambient_brightness.map(show_number),
+            ),
+            ("ao", self.ao.map(show_bool)),
+            ("exposure", self.exposure.map(show_number)),
+            ("tonemapping", self.tonemapping.map(|t| format!("{t:?}"))),
+            ("bloom", self.bloom.map(show_bool)),
+            ("bloom_threshold", self.bloom_threshold.map(show_number)),
+            ("bloom_intensity", self.bloom_intensity.map(show_number)),
+            ("vignette", self.vignette.map(show_number)),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| Some((name, value?)))
+        .collect()
+    }
+}
+
+impl Environment {
+    /// Every property a volume can blend, as display text.
+    pub fn readings(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("background", show_color(self.background)),
+            ("sun_direction", show_vec(self.sun.direction)),
+            ("sun_color", show_color(self.sun.color)),
+            ("illuminance", show_number(self.sun.illuminance)),
+            ("ambient_color", show_color(self.ambient_color)),
+            ("ambient_brightness", show_number(self.ambient_brightness)),
+            ("ao", show_bool(self.ao)),
+            ("exposure", show_number(self.exposure)),
+            ("tonemapping", format!("{:?}", self.tonemapping)),
+            ("bloom", show_bool(self.bloom)),
+            ("bloom_threshold", show_number(self.bloom_threshold)),
+            ("bloom_intensity", show_number(self.bloom_intensity)),
+            ("vignette", show_number(self.vignette)),
+        ]
+    }
+}
+
+fn show_color(color: Color) -> String {
+    color.to_srgba().to_hex()
+}
+
+fn show_vec(v: Vec3) -> String {
+    format!("{:.3}, {:.3}, {:.3}", v.x, v.y, v.z)
+}
+
+fn show_number(n: f32) -> String {
+    format!("{n:.3}")
+}
+
+fn show_bool(b: bool) -> String {
+    if b { "on" } else { "off" }.to_string()
 }
 
 /// The volumes over the project's settings this frame, lowest priority

@@ -231,6 +231,7 @@ pub fn pump_editor(
     mut manager: ResMut<crate::ui::UiManager>,
     mut scene: Option<ResMut<crate::edit::SceneEditor>>,
     mut debug: Option<ResMut<crate::hdr::HdrDebug>>,
+    mut volume_debug: Option<ResMut<crate::volumes::VolumeDebugView>>,
     mut captures: Option<ResMut<crate::capture::ExrCaptures>>,
     time: Res<Time>,
     mut fixed: ResMut<Time<Fixed>>,
@@ -360,6 +361,9 @@ pub fn pump_editor(
             EditorMessage::SceneView(view) => {
                 if let Some(debug) = debug.as_mut() {
                     debug.set_if_neq(crate::hdr::HdrDebug(view.debug_view));
+                }
+                if let Some(volumes) = volume_debug.as_mut() {
+                    volumes.set_if_neq(crate::volumes::VolumeDebugView(view.volumes));
                 }
                 let Some(scene) = scene.as_mut() else {
                     continue;
@@ -556,6 +560,8 @@ pub fn rebuild_world(
     engine.clones.clear();
     engine.last_created.clear();
     engine.light_intensity.clear();
+    engine.volume_enabled.clear();
+    engine.volume_weight.clear();
     engine.hdr_output = None;
     engine.peak_nits = None;
     engine.parents = engine
@@ -3291,6 +3297,7 @@ pub fn report_status(
     culling: Option<Res<crate::culling::Culling>>,
     streaming: crate::streaming::StreamingReport,
     gpu: crate::gpu::GpuReport,
+    volumes: Option<Res<crate::volumes::VolumeBlend>>,
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
     let now = time.elapsed_secs() as f64;
@@ -3413,6 +3420,8 @@ pub fn report_status(
         render_metrics,
         actors: statuses,
         globals,
+        volumes: volumes.as_ref().map(|v| v.statuses()).unwrap_or_default(),
+        volume_trace: volumes.map(|v| v.trace.clone()).unwrap_or_default(),
     }));
 }
 
@@ -3648,6 +3657,8 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetExposure { .. }
         | Effect::SetHdrOutput { .. }
         | Effect::SetPeakBrightness { .. }
+        | Effect::SetVolumeEnabled { .. }
+        | Effect::SetVolumeWeight { .. }
         | Effect::SetBusVolume { .. }
         | Effect::RumbleGamepad { .. }
         | Effect::Stopped

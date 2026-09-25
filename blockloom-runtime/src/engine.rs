@@ -193,6 +193,10 @@ pub struct Engine {
     pub last_created: HashMap<String, String>,
     /// Actor id -> lumens a block or script set its light to this run.
     pub light_intensity: HashMap<String, f32>,
+    /// Actor id -> what `enable volume` and `set weight of volume` set this
+    /// run, over the authored `Volume`.
+    pub volume_enabled: HashMap<String, bool>,
+    pub volume_weight: HashMap<String, f32>,
     /// `set HDR output` and `set peak brightness` this run, over the
     /// project's display settings.
     pub hdr_output: Option<bool>,
@@ -263,6 +267,8 @@ impl Engine {
             clones: HashMap::new(),
             parents: HashMap::new(),
             light_intensity: HashMap::new(),
+            volume_enabled: HashMap::new(),
+            volume_weight: HashMap::new(),
             hdr_output: None,
             peak_nits: None,
             last_created: HashMap::new(),

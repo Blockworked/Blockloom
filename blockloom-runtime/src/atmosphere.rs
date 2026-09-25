@@ -10,6 +10,7 @@ use crate::engine::Engine;
 use crate::environment::Environment;
 use crate::hdr::HdrFrame;
 use crate::luminance::SceneLuminance;
+use crate::volumes::VolumeBlend;
 use bevy::prelude::*;
 use blockloom_core::sense::{self, ATMOSPHERE_VERSION, AtmosphereSense};
 
@@ -64,6 +65,7 @@ pub fn sample_atmosphere(
     environment: Res<Environment>,
     sources: Res<AtmosphereSources>,
     display: Display,
+    volumes: Option<Res<VolumeBlend>>,
     mut atmosphere: ResMut<Atmosphere>,
 ) {
     let tick = if !engine.running {
@@ -74,6 +76,7 @@ pub fn sample_atmosphere(
         atmosphere.0.tick + 1
     };
     atmosphere.0 = sample(tick, &environment, &sources, &display.reading(&environment));
+    atmosphere.0.volumes = volumes.map(|v| v.names()).unwrap_or_default();
     sense::publish_atmosphere(atmosphere.0.clone());
 }
 
@@ -139,6 +142,7 @@ fn sample(
         luminance: display.luminance,
         hdr_display: display.hdr,
         peak_brightness: display.peak,
+        volumes: Vec::new(),
     }
 }
 

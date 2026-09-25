@@ -1311,6 +1311,23 @@ impl Vm {
                 let nits = self.eval_f32(nits, actor, params, temps, out);
                 out.push(Effect::SetPeakBrightness { nits });
             }
+            Action::EnableVolume { volume, enabled } => {
+                let volume = self.eval(volume, actor, params, temps, out).as_text();
+                out.push(Effect::SetVolumeEnabled {
+                    actor: owner,
+                    volume: volume.trim().to_string(),
+                    enabled: *enabled,
+                });
+            }
+            Action::SetVolumeWeight { volume, weight } => {
+                let volume = self.eval(volume, actor, params, temps, out).as_text();
+                let weight = self.eval_f32(weight, actor, params, temps, out);
+                out.push(Effect::SetVolumeWeight {
+                    actor: owner,
+                    volume: volume.trim().to_string(),
+                    weight,
+                });
+            }
             Action::SetBody(body) => out.push(Effect::SetBody {
                 actor: owner,
                 body: *body,

@@ -198,6 +198,9 @@ pub struct AtmosphereSense {
     pub hdr_display: bool,
     /// The peak brightness the HDR tone curve aims at, in nits.
     pub peak_brightness: f32,
+    /// Names of the environment volumes showing at the camera, lowest
+    /// priority first. What `active volumes` reports.
+    pub volumes: Vec<String>,
 }
 
 impl Default for AtmosphereSense {
@@ -222,6 +225,7 @@ impl Default for AtmosphereSense {
             luminance: 0.0,
             hdr_display: false,
             peak_brightness: 1000.0,
+            volumes: Vec::new(),
         }
     }
 }

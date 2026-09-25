@@ -124,6 +124,20 @@ pub enum Effect {
     SetPeakBrightness {
         nits: f32,
     },
+    /// An environment volume on or off for the rest of the run. `volume` is
+    /// whatever the block said - empty for `actor` itself, an id or a name -
+    /// which the host resolves, the way it does a parent.
+    SetVolumeEnabled {
+        actor: String,
+        volume: String,
+        enabled: bool,
+    },
+    /// An environment volume's weight, 0-1, for the rest of the run.
+    SetVolumeWeight {
+        actor: String,
+        volume: String,
+        weight: f32,
+    },
     SetBody {
         actor: String,
         body: BodyKind,

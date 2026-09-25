@@ -917,6 +917,42 @@ impl Actor {
         );
     }
 
+    /// Switches an environment volume on or off for the rest of the run.
+    /// Names it by id or name; empty means this actor.
+    pub fn enable_volume(&self, volume: &str, enabled: bool) {
+        self.act(
+            ACT_ENABLE_VOLUME,
+            Str::borrow(volume),
+            Str::EMPTY,
+            Str::EMPTY,
+            if enabled { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        );
+    }
+
+    /// An environment volume's weight, 0-1, for the rest of the run.
+    pub fn set_volume_weight(&self, volume: &str, weight: f32) {
+        self.act(
+            ACT_SET_VOLUME_WEIGHT,
+            Str::borrow(volume),
+            Str::EMPTY,
+            Str::EMPTY,
+            weight as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Names of the environment volumes showing at the camera, lowest
+    /// priority first, as of this fixed tick.
+    pub fn active_volumes(&self) -> Vec<String> {
+        let json = self
+            .text(TEXT_ACTIVE_VOLUMES, Str::EMPTY, Str::EMPTY)
+            .unwrap_or_default();
+        parse_names(&json)
+    }
+
     /// A one-shot push. Only a dynamic body responds.
     pub fn push(&self, x: f32, y: f32, z: f32) {
         self.act(
@@ -1592,6 +1628,39 @@ impl<'a> Ui<'a> {
         self.flag = true;
         self
     }
+}
+
+/// The strings of a JSON array of strings. A script gets `std` alone, so this
+/// is the little of JSON the host hands back.
+fn parse_names(json: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut chars = json.chars();
+    while let Some(c) = chars.next() {
+        if c != '"' {
+            continue;
+        }
+        let mut name = String::new();
+        while let Some(c) = chars.next() {
+            match c {
+                '"' => break,
+                '\\' => match chars.next() {
+                    Some('n') => name.push('\n'),
+                    Some('t') => name.push('\t'),
+                    Some('u') => {
+                        let hex: String = chars.by_ref().take(4).collect();
+                        if let Some(c) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                            name.push(c);
+                        }
+                    }
+                    Some(other) => name.push(other),
+                    None => break,
+                },
+                c => name.push(c),
+            }
+        }
+        names.push(name);
+    }
+    names
 }
 
 /// Runs `f`, turning a panic into a log line instead of letting it cross the

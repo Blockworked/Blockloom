@@ -129,6 +129,14 @@ pub enum Action {
     SetEmissiveStrength(Value),
     SetHdrOutput(bool),
     SetPeakBrightness(Value),
+    EnableVolume {
+        volume: Value,
+        enabled: bool,
+    },
+    SetVolumeWeight {
+        volume: Value,
+        weight: Value,
+    },
     SetBody(BodyKind),
     ApplyImpulse([Value; 3]),
     SetVelocity([Value; 3]),
@@ -621,6 +629,8 @@ fn action_values(action: &Action) -> Vec<&Value> {
         } => vec![degrees, seconds],
         Action::TweenColor { color, seconds, .. } => vec![color, seconds],
         Action::PlayAnimation { clip, speed } => vec![clip, speed],
+        Action::EnableVolume { volume, .. } => vec![volume],
+        Action::SetVolumeWeight { volume, weight } => vec![volume, weight],
         Action::PlaySound {
             sound,
             volume,
@@ -845,6 +855,14 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         Action::SetLightIntensity(v) => Action::SetLightIntensity(lift_one(v, ctx)),
         Action::SetEmissiveStrength(v) => Action::SetEmissiveStrength(lift_one(v, ctx)),
         Action::SetPeakBrightness(v) => Action::SetPeakBrightness(lift_one(v, ctx)),
+        Action::EnableVolume { volume, enabled } => Action::EnableVolume {
+            volume: lift_one(volume, ctx),
+            enabled,
+        },
+        Action::SetVolumeWeight { volume, weight } => Action::SetVolumeWeight {
+            volume: lift_one(volume, ctx),
+            weight: lift_one(weight, ctx),
+        },
         Action::ApplyImpulse(mut t) => {
             for v in &mut t {
                 *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
@@ -1326,6 +1344,16 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::SetHdrOutput { enabled } => steps.push(Step::Action(Action::SetHdrOutput(*enabled))),
         K::SetPeakBrightness { nits } => {
             steps.push(Step::Action(Action::SetPeakBrightness(nits.clone())))
+        }
+        K::EnableVolume { enabled, volume } => steps.push(Step::Action(Action::EnableVolume {
+            volume: volume.clone(),
+            enabled: *enabled,
+        })),
+        K::SetVolumeWeight { volume, weight } => {
+            steps.push(Step::Action(Action::SetVolumeWeight {
+                volume: volume.clone(),
+                weight: weight.clone(),
+            }))
         }
         K::SetBody { body } => steps.push(Step::Action(Action::SetBody(*body))),
         K::ApplyImpulse { x, y, z } => steps.push(Step::Action(Action::ApplyImpulse([

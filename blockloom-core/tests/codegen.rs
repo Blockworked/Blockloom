@@ -135,6 +135,7 @@ fn publish_world() {
     sensors.atmosphere.luminance = 42.0;
     sensors.atmosphere.hdr_display = true;
     sensors.atmosphere.peak_brightness = 600.0;
+    sensors.atmosphere.volumes = vec!["Cave".to_string()];
     blockloom_core::sense::publish(sensors);
 }
 
@@ -365,6 +366,7 @@ impl Host for Recorder {
             "SceneLuminance" => Ok(Val::Num(42.0)),
             "IsHdrDisplay" => Ok(Val::Bool(true)),
             "PeakBrightness" => Ok(Val::Num(600.0)),
+            "ActiveVolumes" => Ok(Val::Text("[\"Cave\"]".into())),
             "Atmosphere" => match args[0].as_text().as_str() {
                 "wind speed" => Ok(Val::Num(3.0)),
                 other => Err(format!("the atmosphere has no \"{other}\" reading")),
@@ -963,6 +965,8 @@ fn line_of(act: &Act) -> String {
         Act::SetEmissiveStrength { strength } => format!("SetEmissiveStrength {strength:?}"),
         Act::SetHdrOutput { enabled } => format!("SetHdrOutput {enabled}"),
         Act::SetPeakBrightness { nits } => format!("SetPeakBrightness {nits:?}"),
+        Act::EnableVolume { volume, enabled } => format!("SetVolumeEnabled {volume} {enabled}"),
+        Act::SetVolumeWeight { volume, weight } => format!("SetVolumeWeight {volume} {weight:?}"),
         Act::Say { text } => format!("Say {text}"),
         Act::SetColor { color } => format!("SetColor {color}"),
         Act::SetVisible { visible } => format!("SetVisible {visible}"),
@@ -1162,6 +1166,16 @@ fn line_of(effect: &Effect) -> Option<String> {
         }
         Effect::SetHdrOutput { enabled } => format!("|SetHdrOutput {enabled}"),
         Effect::SetPeakBrightness { nits } => format!("|SetPeakBrightness {nits:?}"),
+        Effect::SetVolumeEnabled {
+            actor,
+            volume,
+            enabled,
+        } => format!("{actor}|SetVolumeEnabled {volume} {enabled}"),
+        Effect::SetVolumeWeight {
+            actor,
+            volume,
+            weight,
+        } => format!("{actor}|SetVolumeWeight {volume} {weight:?}"),
         Effect::Say { actor, text } => format!("{actor}|Say {text}"),
         Effect::SetColor { actor, color } => format!("{actor}|SetColor {color}"),
         Effect::SetVisible { actor, visible } => format!("{actor}|SetVisible {visible}"),
@@ -1674,6 +1688,23 @@ fn arithmetic_lands_on_the_same_numbers() {
                 nits: op("Add", vec![number(600.0), number(400.0)]),
             },
             K::SetHdrOutput { enabled: false },
+            K::EnableVolume {
+                enabled: false,
+                volume: op("Join", vec![Value::text(" Ca"), Value::text("ve ")]),
+            },
+            K::EnableVolume {
+                enabled: true,
+                volume: Value::text(""),
+            },
+            K::SetVolumeWeight {
+                volume: Value::text("Cave"),
+                weight: op("Div", vec![number(1.0), number(4.0)]),
+            },
+            // A weight that isn't a number stands a zero, the same both ways.
+            K::SetVolumeWeight {
+                volume: Value::text("Cave"),
+                weight: Value::text("heavy"),
+            },
             K::Move {
                 steps: op("Math", vec![Value::text("Sqrt"), number(2.0)]),
             },
@@ -1841,6 +1872,9 @@ fn sensing_reads_the_same_world() {
             },
             K::Say {
                 text: op("PeakBrightness", vec![]),
+            },
+            K::Say {
+                text: op("ActiveVolumes", vec![]),
             },
             K::ChangePosition {
                 axis: Axis::X,

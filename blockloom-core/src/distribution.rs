@@ -432,25 +432,28 @@ mod tests {
         archive(&build, &destination, &[binary]).unwrap();
 
         assert_eq!(&std::fs::read(&destination).unwrap()[..2], b"PK");
-        if let Ok(output) = std::process::Command::new("tar")
-            .arg("-tf")
-            .arg(&destination)
-            .output()
-        {
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let listing = String::from_utf8_lossy(&output.stdout);
-            assert!(
-                listing.contains("Pond Game (Linux x64)/game/game.pack"),
-                "{listing}"
-            );
-            assert!(
-                listing.contains("Pond Game (Linux x64)/game/assets/pond.txt"),
-                "{listing}"
-            );
+        // Read it back with an independent reader, not the system `tar`.
+        let mut zip = zip::ZipArchive::new(File::open(&destination).unwrap()).unwrap();
+        let mut names: Vec<_> = zip.file_names().map(str::to_owned).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "Pond Game (Linux x64)/Pond Game",
+                "Pond Game (Linux x64)/game/assets/pond.txt",
+                "Pond Game (Linux x64)/game/game.pack",
+            ]
+        );
+        for (name, contents, mode) in [
+            ("Pond Game (Linux x64)/Pond Game", "player", 0o100755),
+            ("Pond Game (Linux x64)/game/game.pack", "pack", 0o100644),
+            ("Pond Game (Linux x64)/game/assets/pond.txt", "ripples", 0o100644),
+        ] {
+            let mut entry = zip.by_name(name).unwrap();
+            assert_eq!(entry.unix_mode(), Some(mode), "{name}");
+            let mut data = String::new();
+            entry.read_to_string(&mut data).unwrap();
+            assert_eq!(data, contents, "{name}");
         }
         let _ = std::fs::remove_dir_all(root);
     }

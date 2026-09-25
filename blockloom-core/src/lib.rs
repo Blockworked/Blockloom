@@ -60,6 +60,7 @@ pub mod ui;
 pub mod value;
 pub mod vm;
 pub mod vocabulary;
+pub mod volume;
 pub mod wire;
 
 /// Registers Blockloom's own reporter blocks with blockstitch, so a saved

@@ -495,6 +495,9 @@ extern "C" fn read_text(
         abi::TEXT_CURRENT_CLIP => me(ctx.actor)
             .map(|me| me.anim_clip)
             .filter(|clip| !clip.is_empty()),
+        abi::TEXT_ACTIVE_VOLUMES => {
+            serde_json::to_string(&sense::read(|s| s.atmosphere.volumes.clone())).ok()
+        }
         _ => None,
     };
     let Some(answer) = answer else {
@@ -825,6 +828,16 @@ extern "C" fn act(
         },
         abi::ACT_SET_HDR_OUTPUT => Effect::SetHdrOutput { enabled: n0 != 0.0 },
         abi::ACT_SET_PEAK_BRIGHTNESS => Effect::SetPeakBrightness { nits: n0 as f32 },
+        abi::ACT_ENABLE_VOLUME => Effect::SetVolumeEnabled {
+            actor,
+            volume: a.trim().to_string(),
+            enabled: n0 != 0.0,
+        },
+        abi::ACT_SET_VOLUME_WEIGHT => Effect::SetVolumeWeight {
+            actor,
+            volume: a.trim().to_string(),
+            weight: n0 as f32,
+        },
         abi::ACT_SET_BUS_VOLUME => Effect::SetBusVolume {
             bus: SoundBus::parse(a).unwrap_or(SoundBus::Sfx),
             volume: user_to_gain(n0),

@@ -309,12 +309,25 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         encoder is single-region mode only, and only the sky uses it; no HDR
         color picker for emissive yet; the HDR/SDR flag is a build option
         rather than set per target automatically.
-  - [ ] Volume framework (the backbone everything below plugs into): global default
+  - [x] Volume framework (the backbone everything below plugs into): global default
         plus box/sphere volumes with priority, blend distance and weight. Every
         property has an override checkbox HDRP-style, so a cave volume can take fog
         and exposure without touching sky. Debug views: volume heatmap, active blend
         list, frozen-frame lerp inspector. Block API: `enable volume _`, `set weight
         of volume _ to`, reporter `active volumes`.
+        Done: the project's settings are the global default and a `Volume`
+        component (`blockloom-core/src/volume.rs`) adds box, sphere or global
+        layers with priority, outer blend distance, weight and a checkbox per
+        property (background, sun, ambient, AO, exposure, tonemapper, bloom,
+        vignette). `blockloom-runtime/src/volumes.rs` weighs them at the camera
+        into `EnvironmentVolumes`. Blocks, compiled logic and scripts share
+        `enable volume`, `set weight of volume` and `active volumes` (a JSON
+        list, sampled on the fixed tick). The Game view's volumes panel has
+        bounds with their feather, a ground-plane heat grid, the live blend
+        list and freeze, which holds the blend and shows each property's lerp.
+        Not covered: the heat grid is gizmo cells on one plane rather than a
+        per-pixel view, and there is no scene-view handle for resizing a
+        volume; its size is set in the inspector.
   - [ ] Lighting rig (makes interiors and nights look right): irradiance/light-probe
         volumes (brick grid like HDRP APV, bake button plus auto-dirty on move),
         reflection probes (box-projected cubemaps, capture on demand, blend by volume),

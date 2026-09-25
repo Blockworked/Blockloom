@@ -38,6 +38,8 @@ pub enum FieldId {
     LightIntensity,
     EmissiveStrength,
     PeakNits,
+    VolumeTarget,
+    VolumeWeight,
     ImpulseX,
     ImpulseY,
     ImpulseZ,
@@ -132,6 +134,7 @@ impl FieldId {
                 | FieldId::ParentTarget
                 | FieldId::NewActorName
                 | FieldId::DeleteTarget
+                | FieldId::VolumeTarget
                 | FieldId::ActionName
                 | FieldId::ActionBinding
                 | FieldId::UiId
@@ -180,6 +183,8 @@ impl std::fmt::Display for FieldId {
             FieldId::LightIntensity => write!(f, "LightIntensity"),
             FieldId::EmissiveStrength => write!(f, "EmissiveStrength"),
             FieldId::PeakNits => write!(f, "PeakNits"),
+            FieldId::VolumeTarget => write!(f, "VolumeTarget"),
+            FieldId::VolumeWeight => write!(f, "VolumeWeight"),
             FieldId::ImpulseX => write!(f, "ImpulseX"),
             FieldId::ImpulseY => write!(f, "ImpulseY"),
             FieldId::ImpulseZ => write!(f, "ImpulseZ"),
@@ -284,6 +289,8 @@ impl FromStr for FieldId {
             "LightIntensity" => FieldId::LightIntensity,
             "EmissiveStrength" => FieldId::EmissiveStrength,
             "PeakNits" => FieldId::PeakNits,
+            "VolumeTarget" => FieldId::VolumeTarget,
+            "VolumeWeight" => FieldId::VolumeWeight,
             "ImpulseX" => FieldId::ImpulseX,
             "ImpulseY" => FieldId::ImpulseY,
             "ImpulseZ" => FieldId::ImpulseZ,
@@ -388,6 +395,9 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::SetLightIntensity { intensity }, F::LightIntensity) => Some(intensity),
         (K::SetEmissiveStrength { strength }, F::EmissiveStrength) => Some(strength),
         (K::SetPeakBrightness { nits }, F::PeakNits) => Some(nits),
+        (K::EnableVolume { volume, .. }, F::VolumeTarget)
+        | (K::SetVolumeWeight { volume, .. }, F::VolumeTarget) => Some(volume),
+        (K::SetVolumeWeight { weight, .. }, F::VolumeWeight) => Some(weight),
         (K::ApplyImpulse { x, .. }, F::ImpulseX) => Some(x),
         (K::ApplyImpulse { y, .. }, F::ImpulseY) => Some(y),
         (K::ApplyImpulse { z, .. }, F::ImpulseZ) => Some(z),
@@ -583,6 +593,8 @@ mod tests {
             FieldId::LightIntensity,
             FieldId::EmissiveStrength,
             FieldId::PeakNits,
+            FieldId::VolumeTarget,
+            FieldId::VolumeWeight,
             FieldId::Condition,
             FieldId::CallArg(3),
         ] {

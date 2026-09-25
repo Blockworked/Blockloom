@@ -2398,6 +2398,7 @@ dependencies = [
  "wesl",
  "wgsl-parse",
  "windows-sys 0.61.2",
+ "zip",
 ]
 
 [[package]]

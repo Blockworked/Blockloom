@@ -653,6 +653,20 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "ActiveVolumes",
+        op: "ActiveVolumes",
+        arity: 0,
+        default_args: Vec::new,
+        // A JSON list of names in blend order, so `load json into list`
+        // takes it. Sampled with the air on the fixed tick.
+        eval: |_| {
+            let names = sense::read(|s| s.atmosphere.volumes.clone());
+            Ok(Evaluated::Text(
+                serde_json::to_string(&names).unwrap_or_else(|_| "[]".to_string()),
+            ))
+        },
+    },
+    ExtOperator {
         kind: "IsTrigger",
         op: "IsTrigger",
         arity: 1,

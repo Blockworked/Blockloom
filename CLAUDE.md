@@ -482,6 +482,30 @@ a rebuild spawns new ones, and it is extracted to the render world. Passes
 read `Environment`, never `project.world.lighting`/`post`; the rebuild only
 spawns a bare camera and sun.
 
+### Environment volumes
+
+`blockloom-core/src/volume.rs` is the model: a `Volume` component
+(`VolumeSpec`) makes an actor a box, a sphere or a global layer with a
+priority, a blend distance (outside the shape, in world units) and a weight.
+Every property carries an HDRP-style override checkbox (`Override { on,
+value }`, the value kept while unchecked), so a volume only changes what it
+ticks. `coverage` is the shape maths, flat in 2D; `blend_order` sorts lowest
+priority first so the highest wins.
+
+`blockloom-runtime/src/volumes.rs` is the rest. `gather_volumes` weighs every
+carried volume at the world camera (the editor camera in the scene view),
+fills `EnvironmentVolumes` for `blend_environment`, and keeps the list in
+`VolumeBlend`, which the atmosphere sample turns into `active volumes` and the
+status reports as `Status.volumes`. `enable volume` and `set weight of volume`
+(and a script's `enable_volume`/`set_volume_weight`) name a volume the way
+`set my parent to` names a parent and last for the run
+(`engine.volume_enabled`/`volume_weight`). The debug views are
+`SceneView.volumes`: bounds with their blend feather, a heat grid on the ground
+plane (the screen in 2D), and freeze, which holds the blend and sends each
+property's lerp as `Status.volume_trace`. A property the Phase 5 systems add
+is one field on `VolumeOverrides`, `EnvironmentOverride` and `Environment`,
+plus its row in the inspector's `volumeProperties`.
+
 ### HDR frame and lights
 
 Every world camera carries `Hdr` (`environment::apply_environment`), bloom or

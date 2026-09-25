@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 19;
+pub const ABI_VERSION: u32 = 20;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -169,6 +169,9 @@ pub const TEXT_RAY_HIT: u32 = 9;
 pub const TEXT_CIRCLE_HIT: u32 = 10;
 /// The clip the animation player is holding, or [`MISSING`] for none.
 pub const TEXT_CURRENT_CLIP: u32 = 11;
+/// The environment volumes showing at the camera, as a JSON list of names
+/// in blend order. What `active volumes` reports.
+pub const TEXT_ACTIVE_VOLUMES: u32 = 12;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -301,6 +304,10 @@ pub const ACT_SET_EMISSIVE_STRENGTH: u32 = 58;
 pub const ACT_SET_HDR_OUTPUT: u32 = 59;
 /// `n0` = the display's peak brightness in nits.
 pub const ACT_SET_PEAK_BRIGHTNESS: u32 = 60;
+/// `a` = volume by id or name, empty for this actor; `n0` != 0 turns it on.
+pub const ACT_ENABLE_VOLUME: u32 = 61;
+/// `a` = volume by id or name, empty for this actor; `n0` = weight 0-1.
+pub const ACT_SET_VOLUME_WEIGHT: u32 = 62;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

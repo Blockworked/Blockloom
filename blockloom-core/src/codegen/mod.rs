@@ -60,8 +60,8 @@ pub use runtime::{
     ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH, ACT_BIND_ACTION,
     ACT_BROADCAST, ACT_BURST_PARTICLES, ACT_CHANGE_POSITION, ACT_CLEAR_ACTION_BINDINGS,
     ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR, ACT_DELETE_ELEMENT, ACT_DETACH,
-    ACT_DICT_CLEAR, ACT_DICT_DELETE_KEY, ACT_DICT_SET, ACT_ERROR, ACT_GLIDE, ACT_GO_TO,
-    ACT_HIDE_ELEMENT, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD, ACT_LIST_CLEAR,
+    ACT_DICT_CLEAR, ACT_DICT_DELETE_KEY, ACT_DICT_SET, ACT_ENABLE_VOLUME, ACT_ERROR, ACT_GLIDE,
+    ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD, ACT_LIST_CLEAR,
     ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE, ACT_LIST_SHIFT, ACT_MOVE,
     ACT_NAVIGATE_TO, ACT_PLAY_ANIMATION, ACT_PLAY_SOUND, ACT_POINT_TOWARDS, ACT_RUMBLE_GAMEPAD,
     ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_ANIMATION_SPEED, ACT_SET_BODY, ACT_SET_BUS_VOLUME,
@@ -71,10 +71,10 @@ pub use runtime::{
     ACT_SET_HDR_OUTPUT, ACT_SET_LIGHT_INTENSITY, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED,
     ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_PEAK_BRIGHTNESS, ACT_SET_ROTATION, ACT_SET_SCALE,
     ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER,
-    ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SHOW_ELEMENT,
-    ACT_STOP_ANIMATION, ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_TURN, ACT_TWEEN_COLOR,
-    ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, Act, Actors, Entry, Host,
-    LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI,
+    ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT,
+    ACT_SHOW_ELEMENT, ACT_STOP_ANIMATION, ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_TURN,
+    ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, Act, Actors, Entry,
+    Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI,
     SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
     SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
     Val,
@@ -1029,6 +1029,17 @@ impl<'a> Pass<'a> {
             Action::SetPeakBrightness(nits) => {
                 reading(self.number(nits)?, "Act::SetPeakBrightness { nits: slot }")
             }
+            Action::EnableVolume { volume, enabled } => format!(
+                "    let volume = {}.trim().to_string();\n    \
+                 h.act(&me, Act::EnableVolume {{ volume, enabled: {enabled} }});\n",
+                self.text(volume)?,
+            ),
+            Action::SetVolumeWeight { volume, weight } => format!(
+                "    let volume = {}.trim().to_string();\n    let weight = {};\n    \
+                 h.act(&me, Act::SetVolumeWeight {{ volume, weight }});\n",
+                self.text(volume)?,
+                self.number(weight)?,
+            ),
             Action::SetBody(body) => act(format!("Act::SetBody {{ body: {} }}", name_of(body))),
             Action::ApplyImpulse(vector) => {
                 reading(self.vec3(vector)?, "Act::ApplyImpulse { impulse: slot }")
