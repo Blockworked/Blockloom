@@ -385,6 +385,24 @@ centre handle the size. Handles are gizmo lines in their own `HandleGizmos`
 group, drawn over the world. In 3D the editor holds the view's pointer lock
 while the right button is down, so looking around reads raw motion.
 
+### Instancing and batching
+
+`blockloom-runtime/src/batching.rs`, 3D only. A plain surface (no graph
+shader, no box projection, not a tilemap) draws through `InstancedMaterial`:
+the shared material is keyed by `surface_key`, the surface minus color and
+UV transform, and those two ride per actor in one storage buffer indexed by
+its `MeshTag` (`InstanceTable`, slot 0 the identity). So `set color` writes a
+slot rather than making a material, and same-mesh actors stay one draw.
+
+`batch_meshes` (PostUpdate) merges what instancing can't group: actors with
+no body or a fixed one that hold still for `settle_frames` merge per
+streaming cell and surface, and one that moves after merging draws itself for
+the rest of the run; small movers merge per surface every frame. A batched
+actor keeps its entity and only loses its own draw, through
+`RenderLayers::none()`. Merged meshes bake tint and UVs into vertex colors and
+UVs. `BatchPolicy` holds every threshold. Counts reach the profiler as
+`batching/*` render metrics.
+
 ### Models, tilemaps and surface shaders
 
 A `Visual::Model` draws its glTF/GLB file's first scene as a child of the

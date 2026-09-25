@@ -96,6 +96,7 @@ pub struct RenderCache {
     low_spheres: HashMap<u32, Handle<Mesh>>,
     materials: HashMap<String, Handle<StandardMaterial>>,
     box_materials: HashMap<String, Handle<crate::materials::BoxMaterial>>,
+    instanced: HashMap<String, Handle<crate::batching::InstancedMaterial>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -191,6 +192,22 @@ impl RenderCache {
             .clone()
     }
 
+    pub fn has_instanced(&self, key: &str) -> bool {
+        self.instanced.contains_key(key)
+    }
+
+    pub fn instanced_material(
+        &mut self,
+        key: String,
+        make: impl FnOnce() -> crate::batching::InstancedMaterial,
+        materials: &mut Assets<crate::batching::InstancedMaterial>,
+    ) -> Handle<crate::batching::InstancedMaterial> {
+        self.instanced
+            .entry(key)
+            .or_insert_with(|| materials.add(make()))
+            .clone()
+    }
+
     /// A rebuild starts a new authored world. Old handles remain alive only
     /// while old entities still reference them.
     pub fn clear(&mut self) {
@@ -199,6 +216,7 @@ impl RenderCache {
         self.low_spheres.clear();
         self.materials.clear();
         self.box_materials.clear();
+        self.instanced.clear();
     }
 }
 

@@ -293,27 +293,27 @@ fn insert_surface(
         commands.entity(id).insert(MeshMaterial3d(handle));
         return;
     }
-    let key = format!(
-        "surface:{:?}:{}:{}",
-        dir,
-        visual.color().unwrap_or(""),
-        serde_json::to_string(&material).unwrap_or_default()
-    );
-    let handle = cache.material(
-        key,
-        || match material {
+    // Everything else draws instanced: the shared material holds what the
+    // surface is made of, the actor's slot its tint and UV transform.
+    let key = crate::batching::surface_key(dir, material);
+    let base = (!cache.has_instanced(&key)).then(|| {
+        let mut base = match material {
             Some(material) => {
-                crate::materials::surface_standard(commands, material, color, dir, assets)
+                crate::materials::surface_standard(commands, material, Color::WHITE, dir, assets)
             }
             None => StandardMaterial {
-                base_color: color,
                 perceptual_roughness: 0.6,
                 ..default()
             },
-        },
-        materials,
-    );
-    commands.entity(id).insert(MeshMaterial3d(handle));
+        };
+        base.uv_transform = bevy::math::Affine2::IDENTITY;
+        base.opaque_render_method = bevy::material::OpaqueRendererMethod::Forward;
+        base
+    });
+    let record = crate::batching::InstanceRecord::of(material, color);
+    commands.queue(move |world: &mut World| {
+        crate::batching::attach_instanced(world, id, key, base, record);
+    });
 }
 
 /// Drop whatever surface the actor renders with: standard or graph.
@@ -327,6 +327,11 @@ fn remove_surface(commands: &mut Commands, id: Entity) {
     commands
         .entity(id)
         .remove::<MeshMaterial3d<crate::materials::BoxMaterial>>();
+    commands.entity(id).remove::<(
+        MeshMaterial3d<crate::batching::InstancedMaterial>,
+        bevy::mesh::MeshTag,
+        crate::batching::InstanceSlot,
+    )>();
 }
 
 /// Gives an actor the rigid body its `Body` component asks for, with the
@@ -465,7 +470,6 @@ pub fn apply_effects(
     mut controllers: Query<&mut rp::KinematicCharacterController>,
     mut transforms: Query<&mut Transform>,
     mut config: Query<&mut rp::RapierConfiguration>,
-    surfaces: Query<&MeshMaterial3d<StandardMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     assets: Res<AssetServer>,
@@ -626,20 +630,30 @@ pub fn apply_effects(
                 }
             }
             Effect::SetColor { actor, color } => {
-                if let Some(material) = engine
-                    .entities
-                    .get(actor)
-                    .and_then(|entity| surfaces.get(*entity).ok())
-                    .and_then(|handle| materials.get(&handle.0))
-                {
-                    let mut unique = material.clone();
-                    unique.base_color = crate::world::parse_color(color);
-                    if let Some(entity) = engine.entities.get(actor) {
-                        commands
-                            .entity(*entity)
-                            .insert(MeshMaterial3d(materials.add(unique)));
+                let Some(entity) = engine.entities.get(actor).copied() else {
+                    continue;
+                };
+                // An instanced actor recolors its own slot; anything else
+                // gets a material of its own.
+                let color = crate::world::parse_color(color);
+                commands.queue(move |world: &mut World| {
+                    if crate::batching::set_tint(world, entity, color) {
+                        return;
                     }
-                }
+                    let Some(handle) = world
+                        .get::<MeshMaterial3d<StandardMaterial>>(entity)
+                        .cloned()
+                    else {
+                        return;
+                    };
+                    let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
+                    let Some(mut unique) = materials.get(&handle.0).cloned() else {
+                        return;
+                    };
+                    unique.base_color = color;
+                    let unique = materials.add(unique);
+                    world.entity_mut(entity).insert(MeshMaterial3d(unique));
+                });
             }
             Effect::SetBody { actor, body } => {
                 let Some(id) = engine.entities.get(actor).copied() else {

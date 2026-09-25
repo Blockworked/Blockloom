@@ -146,12 +146,16 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         Bevy instancing, sphere screen-size LOD, depth-pyramid occlusion,
         hysteretic XZ cell activation, and live render timings, mesh allocation
         and Game view target footprint.
-  - [ ] Batching and instancing (the mechanism; Phase 5 sets the numbers): static
+  - [x] Batching and instancing (the mechanism; Phase 5 sets the numbers): static
         batching for level geometry, GPU instancing for repeated meshes (one draw
         per mesh, per-instance data in storage buffers, batch keys independent of
         material slot layout so texturing changes never re-key), dynamic batching
         for small meshes. Phase 5 decides what scatters by the thousand; this is
         how the thousand draws become one.
+        Done in `blockloom-runtime/src/batching.rs`: an instanced PBR surface with
+        tint and UV transform per `MeshTag` slot, static merges per streaming
+        cell, per-frame dynamic merges, all tuned by `BatchPolicy`. 3D only;
+        Bevy's sprite batcher already covers 2D.
   - [ ] LOD and occlusion (framework plus hooks; Phase 5 plugs policy in):
         screen-size LOD selection with hysteresis bands and a per-level swap API
         for meshes, software Hi-Z or query-based occlusion culling for interiors

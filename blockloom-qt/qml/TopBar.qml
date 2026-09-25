@@ -82,7 +82,9 @@ Rectangle {
                     Text {
                         required property var modelData
                         text: modelData.name.replace(/^render\//, "").replace(/\/elapsed_(gpu|cpu)$/, " ($1)") + ": " +
-                              (modelData.unit === "bytes" ? (modelData.value / 1048576).toFixed(1) + " MiB" : modelData.value.toFixed(2) + " ms")
+                              (modelData.unit === "bytes" ? (modelData.value / 1048576).toFixed(1) + " MiB"
+                               : modelData.unit === "count" ? Math.round(modelData.value)
+                               : modelData.value.toFixed(2) + " ms")
                         color: Theme.textDim; font.pixelSize: 11
                     }
                 }

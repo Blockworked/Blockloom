@@ -2921,6 +2921,7 @@ pub fn report_status(
     time: Res<Time>,
     diagnostics: Option<Res<bevy::diagnostic::DiagnosticsStore>>,
     target_bytes: Option<Res<crate::performance::GameViewTargetBytes>>,
+    batches: Option<Res<crate::batching::Batches>>,
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
     let now = time.elapsed_secs() as f64;
@@ -2978,6 +2979,23 @@ pub fn report_status(
             value: bytes.0 as f64,
             unit: "bytes".into(),
         });
+    }
+    if let Some(batches) = batches {
+        let stats = batches.stats;
+        for (name, value) in [
+            ("batching/instanced_draws", stats.instanced_draws),
+            ("batching/instanced_actors", stats.instanced_actors),
+            ("batching/static_batches", stats.static_batches),
+            ("batching/static_members", stats.static_members),
+            ("batching/dynamic_batches", stats.dynamic_batches),
+            ("batching/dynamic_members", stats.dynamic_members),
+        ] {
+            render_metrics.push(RenderMetric {
+                name: name.into(),
+                value: value as f64,
+                unit: "count".into(),
+            });
+        }
     }
     bridge::send(&RuntimeMessage::Status(Status {
         running: engine.running,

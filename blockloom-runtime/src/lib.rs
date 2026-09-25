@@ -18,6 +18,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod ai;
+mod batching;
 mod bridge;
 mod dim2;
 mod dim3;
@@ -215,6 +216,17 @@ fn add_world(app: &mut App, mode: Mode, engine: engine::Engine) {
         }
         Mode::ThreeD => {
             app.init_resource::<model::ModelCache>();
+            batching::register(app);
+            app.add_systems(
+                PostUpdate,
+                (
+                    batching::batch_meshes
+                        .after(bevy::transform::TransformSystems::Propagate)
+                        .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate)
+                        .before(bevy::camera::visibility::VisibilitySystems::CheckVisibility),
+                    batching::upload_instances,
+                ),
+            );
             app.insert_resource(bevy_rapier3d::prelude::TimestepMode::Fixed {
                 dt: 1.0 / 60.0,
                 substeps: 1,

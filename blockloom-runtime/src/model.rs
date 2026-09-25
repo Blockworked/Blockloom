@@ -156,6 +156,9 @@ fn on_ready(
             MeshMaterial3d<StandardMaterial>,
             MeshMaterial3d<GraphMaterial3d>,
             MeshMaterial3d<crate::materials::BoxMaterial>,
+            MeshMaterial3d<crate::batching::InstancedMaterial>,
+            bevy::mesh::MeshTag,
+            crate::batching::InstanceSlot,
         )>();
     }
     for entity in children.iter_descendants(ready.entity) {

@@ -399,6 +399,7 @@ pub fn snapshot_trails(
         Option<&MeshMaterial3d<GraphMaterial3d>>,
         Option<&MeshMaterial3d<crate::materials::BoxMaterial>>,
         Option<&TilemapMesh>,
+        Option<&MeshMaterial3d<crate::batching::InstancedMaterial>>,
     )>,
     tile_children: Query<(&Mesh2d, &MeshMaterial2d<ColorMaterial>)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -406,6 +407,7 @@ pub fn snapshot_trails(
     mut graphs_2d: ResMut<Assets<GraphMaterial2d>>,
     mut graphs_3d: ResMut<Assets<GraphMaterial3d>>,
     mut boxes: ResMut<Assets<crate::materials::BoxMaterial>>,
+    instanced: Option<Res<Assets<crate::batching::InstancedMaterial>>>,
     ghosts: Query<&Ghost>,
     particles: Query<&Particle>,
 ) {
@@ -430,6 +432,7 @@ pub fn snapshot_trails(
         graph_3d,
         box_3d,
         child,
+        instanced_3d,
     ) in &mut trailed
     {
         if !state.enabled || !engine.has_component(&id.0, "Trail") {
@@ -526,8 +529,19 @@ pub fn snapshot_trails(
                 ));
                 living += 1;
             }
-        } else if let (Some(mesh), Some(handle)) = (mesh, handle) {
-            let mut faded = materials.get(&handle.0).cloned().unwrap_or_default();
+        } else if let Some(mesh) = mesh
+            && (handle.is_some() || instanced_3d.is_some())
+        {
+            // An instanced actor's ghost fades on its own, so it gets a plain
+            // copy of the shared surface.
+            let mut faded = match (handle, instanced_3d, instanced.as_ref()) {
+                (Some(handle), _, _) => materials.get(&handle.0).cloned(),
+                (None, Some(handle), Some(instanced)) => instanced
+                    .get(&handle.0)
+                    .map(|material| material.base.clone()),
+                _ => None,
+            }
+            .unwrap_or_default();
             faded.base_color = tint;
             faded.alpha_mode = AlphaMode::Blend;
             commands.spawn((
