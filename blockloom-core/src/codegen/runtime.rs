@@ -156,6 +156,13 @@ pub enum Act {
         volume: String,
         weight: f32,
     },
+    CaptureProbes,
+    SetShadowDistance {
+        distance: f32,
+    },
+    SetLightShadows {
+        enabled: bool,
+    },
     SetBody {
         body: &'static str,
     },
@@ -1019,7 +1026,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 17;
+pub const LOGIC_ABI_VERSION: u32 = 18;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1170,6 +1177,12 @@ pub const ACT_SET_PEAK_BRIGHTNESS: u32 = 78;
 pub const ACT_ENABLE_VOLUME: u32 = 79;
 /// `a` = volume by id or name, empty for this actor; `n0` = weight 0-1.
 pub const ACT_SET_VOLUME_WEIGHT: u32 = 80;
+/// Window-global: no actor.
+pub const ACT_CAPTURE_PROBES: u32 = 81;
+/// `n0` = metres. Window-global: no actor.
+pub const ACT_SET_SHADOW_DISTANCE: u32 = 82;
+/// `n0` != 0 turns the actor's light's shadows on.
+pub const ACT_SET_LIGHT_SHADOWS: u32 = 83;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1567,6 +1580,23 @@ impl Host for AbiHost {
                 &volume,
                 "",
                 [weight as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::CaptureProbes => self.act_wire(actor, ACT_CAPTURE_PROBES, "", "", [0.0; 3], &zero),
+            Act::SetShadowDistance { distance } => self.act_wire(
+                actor,
+                ACT_SET_SHADOW_DISTANCE,
+                "",
+                "",
+                [distance as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetLightShadows { enabled } => self.act_wire(
+                actor,
+                ACT_SET_LIGHT_SHADOWS,
+                "",
+                "",
+                [if enabled { 1.0 } else { 0.0 }, 0.0, 0.0],
                 &zero,
             ),
             Act::SetBody { body } => self.act_wire(actor, ACT_SET_BODY, body, "", [0.0; 3], &zero),

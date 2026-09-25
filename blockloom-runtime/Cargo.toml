@@ -29,7 +29,11 @@ bevy = { workspace = true, features = [
     "tga",
     "webp",
     "ktx2",
-    "basis-universal"
+    "basis-universal",
+    # Rect lights' LTC tables, light cookies and IES masks, and PCSS.
+    "area_light_luts",
+    "pbr_light_textures",
+    "experimental_pbr_pcss",
 ] }
 bevy_rapier2d.workspace = true
 bevy_rapier3d.workspace = true

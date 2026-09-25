@@ -12,6 +12,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::camera::{Hdr, RenderTarget};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::Image;
+use bevy::light::Skybox;
 use bevy::prelude::*;
 use bevy::render::gpu_readback::{ReadbackComplete, ReadbackOnce};
 use bevy::render::render_resource::{
@@ -59,6 +60,8 @@ pub enum ProbeRefresh {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProbeRequest {
     pub position: Vec3,
+    /// Turns the whole cube, so its faces follow a rotated probe's own axes.
+    pub rotation: Quat,
     /// Texels per face side. Rounded up to a multiple of 32 so readback rows
     /// need no padding.
     pub resolution: u32,
@@ -75,6 +78,7 @@ impl ProbeRequest {
     fn new(purpose: ProbeUse, position: Vec3, resolution: u32) -> Self {
         Self {
             position,
+            rotation: Quat::IDENTITY,
             resolution,
             near: 0.1,
             far: 1000.0,
@@ -172,6 +176,24 @@ impl ProbeService {
     }
 }
 
+#[cfg(test)]
+impl ProbeService {
+    pub fn live_ids(&self) -> Vec<ProbeId> {
+        self.live.keys().copied().collect()
+    }
+
+    pub fn resolution(&self, id: ProbeId) -> Option<u32> {
+        self.live
+            .get(&id)
+            .map(|capture| face_resolution(capture.request.resolution))
+    }
+
+    /// Stands in for the GPU readback observer.
+    pub fn deliver_for_test(&mut self, id: ProbeId, face: usize, data: Vec<u8>) {
+        self.deliver(id, face, data);
+    }
+}
+
 struct Capture {
     request: ProbeRequest,
     faces: [Handle<Image>; 6],
@@ -218,8 +240,11 @@ pub fn run_captures(
     mut images: ResMut<Assets<Image>>,
     mut cameras: Query<&mut Camera>,
     environment: Res<Environment>,
+    sky: Query<&Skybox, With<crate::world::WorldCamera>>,
     mut captured: MessageWriter<ProbeCaptured>,
 ) {
+    // Faces see the same sky the world camera draws.
+    let skybox = sky.iter().next().cloned();
     let service = &mut *service;
     for id in std::mem::take(&mut service.cancelled) {
         if let Some(capture) = service.live.remove(&id) {
@@ -231,33 +256,37 @@ pub fn run_captures(
         let faces = std::array::from_fn(|_| images.add(face_image(resolution)));
         let cameras = std::array::from_fn(|face| {
             let (forward, up) = FACES[face];
-            commands
-                .spawn((
-                    Camera3d::default(),
-                    Camera {
-                        // Before the world camera, so a frame's faces are
-                        // ready for anything that samples them this frame.
-                        order: -10 - face as isize,
-                        ..default()
-                    },
-                    RenderTarget::from(faces[face].clone()),
-                    Hdr,
-                    // Scene-referred: tonemapping belongs to whoever shows it.
-                    Tonemapping::None,
-                    bevy::camera::Exposure {
-                        ev100: environment.exposure,
-                    },
-                    Projection::Perspective(PerspectiveProjection {
-                        fov: std::f32::consts::FRAC_PI_2,
-                        aspect_ratio: 1.0,
-                        near: request.near,
-                        far: request.far,
-                        ..default()
-                    }),
-                    Transform::from_translation(request.position).looking_to(forward, up),
-                    Name::new(format!("probe {} face {face}", id.0)),
-                ))
-                .id()
+            let mut camera = commands.spawn((
+                Camera3d::default(),
+                Camera {
+                    // Before the world camera, so a frame's faces are
+                    // ready for anything that samples them this frame.
+                    order: -10 - face as isize,
+                    ..default()
+                },
+                RenderTarget::from(faces[face].clone()),
+                Hdr,
+                // Scene-referred: tonemapping belongs to whoever shows it.
+                Tonemapping::None,
+                bevy::camera::Exposure {
+                    ev100: environment.exposure,
+                },
+                Projection::Perspective(PerspectiveProjection {
+                    fov: std::f32::consts::FRAC_PI_2,
+                    aspect_ratio: 1.0,
+                    near: request.near,
+                    far: request.far,
+                    ..default()
+                }),
+                Transform::from_translation(request.position).with_rotation(
+                    request.rotation * Transform::IDENTITY.looking_to(forward, up).rotation,
+                ),
+                Name::new(format!("probe {} face {face}", id.0)),
+            ));
+            if let Some(skybox) = &skybox {
+                camera.insert(skybox.clone());
+            }
+            camera.id()
         });
         service.live.insert(
             id,

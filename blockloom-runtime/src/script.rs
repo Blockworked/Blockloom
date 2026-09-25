@@ -380,6 +380,14 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
                     .map(|other| other.local_position[axis] as f64)
             })
         }
+        abi::READ_CASTS_SHADOWS => {
+            let casts = if a.trim().is_empty() {
+                me(actor)?.casts_shadows
+            } else {
+                sense::read(|sensors| sensors.find(a.trim()).map(|found| found.casts_shadows))?
+            };
+            Some(if casts { 1.0 } else { 0.0 })
+        }
         abi::READ_IS_TRIGGER => {
             let target = trigger_target(actor, a)?;
             Some(if target { 1.0 } else { 0.0 })
@@ -837,6 +845,14 @@ extern "C" fn act(
             actor,
             volume: a.trim().to_string(),
             weight: n0 as f32,
+        },
+        abi::ACT_CAPTURE_PROBES => Effect::CaptureProbes,
+        abi::ACT_SET_SHADOW_DISTANCE => Effect::SetShadowDistance {
+            distance: n0 as f32,
+        },
+        abi::ACT_SET_LIGHT_SHADOWS => Effect::SetLightShadows {
+            actor,
+            enabled: n0 != 0.0,
         },
         abi::ACT_SET_BUS_VOLUME => Effect::SetBusVolume {
             bus: SoundBus::parse(a).unwrap_or(SoundBus::Sfx),

@@ -1328,6 +1328,15 @@ impl Vm {
                     weight,
                 });
             }
+            Action::CaptureProbes => out.push(Effect::CaptureProbes),
+            Action::SetShadowDistance(distance) => {
+                let distance = self.eval_f32(distance, actor, params, temps, out);
+                out.push(Effect::SetShadowDistance { distance });
+            }
+            Action::SetLightShadows(enabled) => out.push(Effect::SetLightShadows {
+                actor: owner,
+                enabled: *enabled,
+            }),
             Action::SetBody(body) => out.push(Effect::SetBody {
                 actor: owner,
                 body: *body,

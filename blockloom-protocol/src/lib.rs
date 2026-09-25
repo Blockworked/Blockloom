@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 13;
+pub const PROTOCOL_VERSION: u32 = 14;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -137,6 +137,13 @@ pub enum EditorMessage {
     CaptureExr {
         path: String,
     },
+    /// Bakes these actors' light probes from where they stand and writes
+    /// them under the project's `.blockloom/probes`; empty bakes every one.
+    /// Each bake is announced with a `say`.
+    BakeProbes {
+        #[serde(default)]
+        actors: Vec<String>,
+    },
     /// Close the window and exit.
     Shutdown,
 }
@@ -170,13 +177,24 @@ pub enum RuntimeMessage {
     Picked { actor: String },
     /// A scene view drag ended: where the actor now stands. `offset` is set
     /// for a child placed in its parent's frame, whose `Place` position the
-    /// world ignores.
+    /// world ignores. `volume` is set when a volume's handles resized it.
     Placed {
         actor: String,
         placement: Placement,
         #[serde(default)]
         offset: Option<[f32; 3]>,
+        #[serde(default)]
+        volume: Option<VolumeBounds>,
     },
+}
+
+/// A volume's size as its scene view handles left it, before the actor's
+/// scale.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct VolumeBounds {
+    pub half_extents: [f32; 3],
+    pub radius: f32,
+    pub blend_distance: f32,
 }
 
 /// Which handle the scene view's gizmo shows.
@@ -238,8 +256,8 @@ pub struct SceneView {
 pub struct VolumeDebug {
     /// Each volume's shape and blend feather, in the scene view.
     pub bounds: bool,
-    /// How much volume a spot on the ground plane (the screen in 2D) is
-    /// under, as a heat grid around the camera. Shows in play too.
+    /// How much volume each pixel's surface is under, drawn over the
+    /// frame. Shows in play too.
     pub heatmap: bool,
     /// Holds the blend where it is so it can be inspected: the camera moves
     /// but the look doesn't, and the status carries each property's lerp.
@@ -436,6 +454,11 @@ mod tests {
             actor: "a1".to_string(),
             placement: Placement::default(),
             offset: Some([1.0, 2.0, 3.0]),
+            volume: Some(VolumeBounds {
+                half_extents: [1.0, 2.0, 3.0],
+                radius: 4.0,
+                blend_distance: 0.5,
+            }),
         };
         assert_eq!(decode::<RuntimeMessage>(&encode(&placed)), Some(Ok(placed)));
     }

@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 20;
+pub const ABI_VERSION: u32 = 21;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -143,6 +143,9 @@ pub const READ_IS_TWEENING: u32 = 41;
 pub const READ_ANIM_FRAME: u32 = 42;
 /// Whether the animation player's clip is still advancing.
 pub const READ_ANIM_PLAYING: u32 = 43;
+/// `a` = actor name, empty for this actor. Whether it carries a light that
+/// casts shadows right now.
+pub const READ_CASTS_SHADOWS: u32 = 44;
 
 // ─── What a script can read as text ────────────────────────────────────────
 
@@ -308,6 +311,12 @@ pub const ACT_SET_PEAK_BRIGHTNESS: u32 = 60;
 pub const ACT_ENABLE_VOLUME: u32 = 61;
 /// `a` = volume by id or name, empty for this actor; `n0` = weight 0-1.
 pub const ACT_SET_VOLUME_WEIGHT: u32 = 62;
+/// Re-captures every light probe where it stands. Window-global.
+pub const ACT_CAPTURE_PROBES: u32 = 63;
+/// `n0` = metres the sun's shadows reach. Window-global.
+pub const ACT_SET_SHADOW_DISTANCE: u32 = 64;
+/// `n0` != 0 turns this actor's light's shadows on.
+pub const ACT_SET_LIGHT_SHADOWS: u32 = 65;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

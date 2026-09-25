@@ -956,6 +956,24 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[],
     },
     CommandSpec {
+        name: "bake-probes",
+        cmd: "bake_probes",
+        aliases: &["bake_probes"],
+        summary: "Bake light probes (reflection cubemaps, irradiance grids) from where they stand into .blockloom/probes. Empty actors bakes every probe. Needs the world open; each bake says so in the run log.",
+        args: &[ArgSpec {
+            name: "actors",
+            ty: "[actor ids]",
+            required: false,
+        }],
+    },
+    CommandSpec {
+        name: "probe-status",
+        cmd: "probe_status",
+        aliases: &["probe_status"],
+        summary: "Every light probe's bake: whether one is on disk and whether the probe or the scene around it changed since.",
+        args: &[],
+    },
+    CommandSpec {
         name: "close-runtime",
         cmd: "close_runtime",
         aliases: &["close_runtime"],

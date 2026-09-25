@@ -18,6 +18,7 @@
 use crate::ai::BrainSpec;
 use crate::animation::AnimationSpec;
 use crate::material::{ParticleSpec, SurfaceMaterial, TrailSpec};
+use crate::probe::ProbeSpec;
 use crate::scene::{Physics, Placement, Visual};
 use crate::value::Evaluated;
 use crate::volume::VolumeSpec;
@@ -41,6 +42,7 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Light",
     "Animation",
     "Volume",
+    "Probe",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -87,9 +89,26 @@ pub enum LightKind {
     Point,
     /// A cone down the actor's forward (-Z) axis.
     Spot,
+    /// A glowing rectangle facing the actor's forward (-Z) axis, `width` by
+    /// `height`. Soft, LTC-shaded speculars; casts no shadow maps.
+    Rect,
+    /// A glowing disc facing forward, `width` across. Drawn as the square of
+    /// the same area, which is what Bevy's area lights offer.
+    Disk,
 }
 
-/// A punctual light in physical units. 3D only: a 2D world has no lights.
+/// What a light's `intensity` is measured in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum LightUnit {
+    /// Luminous power, all directions together.
+    #[default]
+    Lumens,
+    /// Luminous intensity down the brightest direction - what an IES file
+    /// and a fixture's datasheet quote.
+    Candela,
+}
+
+/// A light in physical units. 3D only: a 2D world has no lights.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LightSpec {
     #[serde(default)]
@@ -112,8 +131,48 @@ pub struct LightSpec {
     /// Degrees from the spot's axis where the light ends.
     #[serde(default = "default_outer_angle")]
     pub outer_angle: f32,
+    /// Whether the light casts shadow maps. Area lights have none to cast.
     #[serde(default)]
     pub shadows: bool,
+    #[serde(default)]
+    pub unit: LightUnit,
+    /// Metres across a rect light (or a disk's diameter), and a rect's height.
+    #[serde(default = "default_area_side")]
+    pub width: f32,
+    #[serde(default = "default_area_side")]
+    pub height: f32,
+    /// An image asset projected through the light like a gobo; only its red
+    /// channel counts. Empty for none.
+    #[serde(default)]
+    pub cookie: String,
+    /// How many times the cookie repeats across the beam.
+    #[serde(default = "default_cookie_tiling")]
+    pub cookie_tiling: f32,
+    /// An `.ies` profile shaping a spot's beam. With [`LightUnit::Candela`],
+    /// `intensity` is the profile's peak.
+    #[serde(default)]
+    pub ies: String,
+    /// Screen-space shadows under feet and small clutter, which shadow maps
+    /// are too coarse to catch. Needs the project's contact shadows on.
+    #[serde(default)]
+    pub contact_shadows: bool,
+    /// Shadows that soften with distance from their caster (PCSS). Needs the
+    /// light's `radius` above zero to have a size to soften by.
+    #[serde(default)]
+    pub soft_shadows: bool,
+    /// Overrides Bevy's own shadow biases when set.
+    #[serde(default)]
+    pub shadow_depth_bias: Option<f32>,
+    #[serde(default)]
+    pub shadow_normal_bias: Option<f32>,
+}
+
+fn default_area_side() -> f32 {
+    1.0
+}
+
+fn default_cookie_tiling() -> f32 {
+    1.0
 }
 
 fn default_light_color() -> String {
@@ -147,6 +206,16 @@ impl Default for LightSpec {
             inner_angle: default_inner_angle(),
             outer_angle: default_outer_angle(),
             shadows: false,
+            unit: LightUnit::Lumens,
+            width: default_area_side(),
+            height: default_area_side(),
+            cookie: String::new(),
+            cookie_tiling: default_cookie_tiling(),
+            ies: String::new(),
+            contact_shadows: false,
+            soft_shadows: false,
+            shadow_depth_bias: None,
+            shadow_normal_bias: None,
         }
     }
 }
@@ -158,6 +227,35 @@ impl LightSpec {
         let outer = self.outer_angle.clamp(0.1, 89.9).to_radians();
         let inner = self.inner_angle.clamp(0.0, 89.9).to_radians().min(outer);
         (inner, outer)
+    }
+
+    /// The intensity as lumens, which is what every Bevy light takes. A
+    /// candela figure spreads over the whole sphere, the way Bevy's point
+    /// and spot lights do; `peak` is the brightest direction's share of it
+    /// (an IES profile's max over its own normalised table is 1).
+    pub fn lumens(&self) -> f32 {
+        let intensity = self.intensity.max(0.0);
+        match self.unit {
+            LightUnit::Lumens => intensity,
+            LightUnit::Candela => intensity * 4.0 * std::f32::consts::PI,
+        }
+    }
+
+    /// A rect's sides in metres, or the equal-area square standing in for a
+    /// disk.
+    pub fn area_size(&self) -> (f32, f32) {
+        let width = self.width.max(0.01);
+        match self.kind {
+            LightKind::Disk => {
+                let side = width * std::f32::consts::PI.sqrt() / 2.0;
+                (side, side)
+            }
+            _ => (width, self.height.max(0.01)),
+        }
+    }
+
+    pub fn is_area(&self) -> bool {
+        matches!(self.kind, LightKind::Rect | LightKind::Disk)
     }
 }
 
@@ -229,6 +327,9 @@ pub enum ActorComponent {
     /// An environment volume: a region that lays its own look over the
     /// project's, blended by where the camera stands.
     Volume { volume: VolumeSpec },
+    /// A light probe: a box whose reflections (a cubemap) or bounced light
+    /// (an irradiance grid) are baked from where it stands.
+    Probe { probe: ProbeSpec },
 }
 
 impl ActorComponent {
@@ -250,6 +351,7 @@ impl ActorComponent {
             ActorComponent::Light { .. } => "Light",
             ActorComponent::Animation { .. } => "Animation",
             ActorComponent::Volume { .. } => "Volume",
+            ActorComponent::Probe { .. } => "Probe",
             ActorComponent::Custom { name, .. } => name,
         }
     }
@@ -531,7 +633,7 @@ impl Components {
         }
     }
 
-    /// The light, if the actor carries one.
+    /// The volume, if the actor carries one.
     pub fn volume(&self) -> Option<&VolumeSpec> {
         match self.get("Volume") {
             Some(ActorComponent::Volume { volume }) => Some(volume),
@@ -539,6 +641,15 @@ impl Components {
         }
     }
 
+    /// The light probe, if the actor carries one.
+    pub fn probe(&self) -> Option<&ProbeSpec> {
+        match self.get("Probe") {
+            Some(ActorComponent::Probe { probe }) => Some(probe),
+            _ => None,
+        }
+    }
+
+    /// The light, if the actor carries one.
     pub fn light(&self) -> Option<&LightSpec> {
         match self.get("Light") {
             Some(ActorComponent::Light { light }) => Some(light),

@@ -323,12 +323,13 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         into `EnvironmentVolumes`. Blocks, compiled logic and scripts share
         `enable volume`, `set weight of volume` and `active volumes` (a JSON
         list, sampled on the fixed tick). The Game view's volumes panel has
-        bounds with their feather, a ground-plane heat grid, the live blend
-        list and freeze, which holds the blend and shows each property's lerp.
-        Not covered: the heat grid is gizmo cells on one plane rather than a
-        per-pixel view, and there is no scene-view handle for resizing a
-        volume; its size is set in the inspector.
-  - [ ] Lighting rig (makes interiors and nights look right): irradiance/light-probe
+        bounds with their feather, a per-pixel heat map (depth-reconstructed
+        in 3D), the live blend list and freeze, which holds the blend and
+        shows each property's lerp. A selected volume has scene-view grips
+        for its faces (or radius) and blend distance.
+        Not covered: the heat map measures at most 32 volumes, and leaves
+        out global ones.
+  - [x] Lighting rig (makes interiors and nights look right): irradiance/light-probe
         volumes (brick grid like HDRP APV, bake button plus auto-dirty on move),
         reflection probes (box-projected cubemaps, capture on demand, blend by volume),
         rect/disk area lights with LTC speculars, light cookies (projected texture
@@ -336,6 +337,26 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         contact shadows (screen-space 16-tap raymarch under feet and clutter),
         shadow tuning (PCF/PCSS toggle, cascade splits, normal/slope bias, fade).
         API: `capture probes`, `set shadow distance to`, per-light `casts shadows?`.
+        Done: a `Probe` component (`blockloom-core/src/probe.rs`,
+        `blockloom-runtime/src/light_probes.rs`) as a box-projected reflection
+        probe or an irradiance brick grid, baked through the capture service
+        into `.blockloom/probes` from the inspector or `bake-probes`, stamped
+        so a move marks it stale and auto-bake redoes it in the scene view,
+        shipped by builds, and overlapping probes blend through their falloff.
+        `Light` gains rect and disk area lights (Bevy's LTC `RectLight`),
+        candela, spot cookies with tiling and IES masks (spot and point)
+        baked into Bevy light textures, per-light contact and PCSS shadows and
+        biases. `ShadowSettings` tunes the filter (hardware, Gaussian,
+        temporal), cascades and their split and blend, distance, normal bias,
+        PCSS sun size and contact shadows; the sun can take a tiled cookie.
+        Blocks, compiled logic and scripts share `capture probes`, `set
+        shadow distance to`, `turn my light's shadows` and `casts shadows?`.
+        Not covered: a disk is drawn as the square of its area, area lights
+        cast no shadow maps (Bevy has none for them), a point light takes an
+        IES profile but not a flat cookie, shadows end at the distance rather
+        than fading (cascade blend is the only fade), reflection probes blend
+        by their own falloff rather than through environment volumes, and a
+        probe actor with a Look sees itself in its bake.
   - [ ] Ray-traced lighting (bevy_solari, experimental upstream, RTX-class GPUs):
         - Realtime (`bevy_solari::realtime` via `SolariPlugins`): alternate high-end
           backend beside the raster rig, with ReSTIR direct lighting plus GI,

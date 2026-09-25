@@ -325,6 +325,7 @@ pub fn build(
     let assets = copy_assets(project_dir, &game)?;
     let atlas = bake_sprite_atlas(project, project_dir, &game)?;
     let sky = bake_sky(project, project_dir, &game)?;
+    copy_probes(project, project_dir, &game)?;
     let scripts = copy_scripts(project, project_dir, &game, target)?;
     let compiled = if fast {
         copy_logic(project_dir, &game, target)?;
@@ -655,6 +656,37 @@ fn bake_sky(project: &Project, project_dir: &Path, game: &Path) -> Result<bool, 
         let _ = std::fs::remove_file(copied);
     }
     Ok(true)
+}
+
+/// Copies the light probes' bakes, so a built game lights the way the
+/// editor did. A probe that was never baked ships dark, as it plays.
+fn copy_probes(project: &Project, project_dir: &Path, game: &Path) -> Result<(), String> {
+    use crate::probe;
+    for actor in &project.actors {
+        if actor.components.probe().is_none() {
+            continue;
+        }
+        for path in [
+            probe::info_path(project_dir, &actor.id),
+            probe::cube_path(project_dir, &actor.id),
+            probe::grid_path(project_dir, &actor.id),
+        ] {
+            let Ok(relative) = path.strip_prefix(project_dir) else {
+                continue;
+            };
+            if !path.is_file() {
+                continue;
+            }
+            let to = game.join(relative);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("{}: {e}", parent.display()))?;
+            }
+            std::fs::copy(&path, &to)
+                .map_err(|e| format!("{} -> {}: {e}", path.display(), to.display()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Copies each scripted actor's library for this platform to where the

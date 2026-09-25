@@ -37,7 +37,9 @@ Rectangle {
     function cameraOf(c) { return Object.assign({ view: "Follow", offset: [0, 0.6, 0], distance: 6, pitch: 15, fov: 75 }, c.camera || {}); }
     function materialOf(c) { return Object.assign({ metallic: 0, roughness: 0.6, emissive: "#000000", emissive_energy: 0, albedo_texture: "", normal_texture: "", roughness_texture: "", tiling: [1, 1], offset: [0, 0], rotation: 0, sampler: "Clamp", anisotropy: 0, box_projection: false, texel_density: 1, double_sided: false, shader: null }, c.material || {}); }
     function emitterOf(c) { return Object.assign({ rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: "#FFFFFF", color_end: "#FFAB19", max: 128 }, c.emitter || {}); }
-    function lightOf(c) { return Object.assign({ kind: "Point", color: "#FFFFFF", intensity: 800, range: 20, radius: 0, inner_angle: 30, outer_angle: 45, shadows: false }, c.light || {}); }
+    function lightOf(c) { return Object.assign({ kind: "Point", color: "#FFFFFF", intensity: 800, range: 20, radius: 0, inner_angle: 30, outer_angle: 45, shadows: false,
+        unit: "Lumens", width: 1, height: 1, cookie: "", cookie_tiling: 1, ies: "", contact_shadows: false, soft_shadows: false, shadow_depth_bias: null, shadow_normal_bias: null }, c.light || {}); }
+    function probeOf(c) { return Object.assign({ kind: "Reflection", size: [10, 5, 10], falloff: 0.2, resolution: 256, grid: [4, 3, 4], intensity: 1, box_projection: true, auto_bake: true }, c.probe || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
     function animationOf(c) { return Object.assign({ clips: [], states: [] }, c.animation || {}); }
@@ -95,6 +97,7 @@ Rectangle {
     function writeTrail(c, next) { write("Trail", { component: "Trail", trail: merged(trailOf(c), next) }); }
     function writeJoint(c, next) { write("Joint", { component: "Joint", joint: merged(jointOf(c), next) }); }
     function writeAnimation(c, next) { write("Animation", { component: "Animation", animation: merged(animationOf(c), next) }); }
+    function writeProbe(c, next) { write("Probe", { component: "Probe", probe: merged(probeOf(c), next) }); }
     function writeVolume(c, next) { write("Volume", { component: "Volume", volume: merged(volumeOf(c), next) }); }
     function writeOverride(c, key, next) {
         const v = volumeOf(c);
@@ -166,7 +169,7 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Volume","Custom"]
+        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Volume","Probe","Custom"]
             .filter(n => n === "Custom" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }));
     }
     function blank(name) {
@@ -184,6 +187,7 @@ Rectangle {
         case "Light": return { component: "Light", light: lightOf({}) };
         case "Animation": return { component: "Animation", animation: { clips: [], states: [] } };
         case "Volume": return { component: "Volume", volume: volumeOf({}) };
+        case "Probe": return { component: "Probe", probe: probeOf({}) };
         case "Custom": return { component: "Custom", name: "Component", fields: [{ name: "value", value: { kind: "Number", value: 0 } }] };
         default: return null;
         }
@@ -237,7 +241,7 @@ Rectangle {
                             Layout.fillWidth: true
                             readonly property var c: card.c
                             sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Volume: volumeCard })[card.c.component] || null
+                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Volume: volumeCard, Probe: probeCard })[card.c.component] || null
                         }
                     }
                 }
@@ -715,24 +719,95 @@ Rectangle {
             readonly property var c: parent.c
             readonly property var l: root.lightOf(c)
             spacing: 6
+            readonly property bool area: l.kind === "Rect" || l.kind === "Disk"
             InspectorRow { label: "Kind"; Layout.fillWidth: true
-                ChoiceField { options: [{ value: "Point", label: "Point" }, { value: "Spot", label: "Spot" }]; value: li.l.kind; onChosen: k => root.writeLight(li.c, { kind: k }) } }
+                ChoiceField { options: [{ value: "Point", label: "Point" }, { value: "Spot", label: "Spot" }, { value: "Rect", label: "Rect" }, { value: "Disk", label: "Disk" }]; value: li.l.kind; onChosen: k => root.writeLight(li.c, { kind: k }) } }
             InspectorRow { label: "Color"; Layout.fillWidth: true; ColorField { value: li.l.color; onPicked: col => root.writeLight(li.c, { color: col }) } Item { Layout.fillWidth: true } }
-            InspectorRow { label: "Lumens"; Layout.fillWidth: true
-                NumberField { value: li.l.intensity; fallback: 800; onCommitted: n => root.writeLight(li.c, { intensity: Math.max(0, n) }) } }
+            InspectorRow { label: "Intensity"; Layout.fillWidth: true
+                NumberField { value: li.l.intensity; fallback: 800; onCommitted: n => root.writeLight(li.c, { intensity: Math.max(0, n) }) }
+                ChoiceField { options: [{ value: "Lumens", label: "lm" }, { value: "Candela", label: "cd" }]; value: li.l.unit; onChosen: u => root.writeLight(li.c, { unit: u }) } }
             InspectorRow { label: "Range m"; Layout.fillWidth: true
                 NumberField { value: li.l.range; fallback: 20; onCommitted: n => root.writeLight(li.c, { range: Math.max(0.01, n) }) } }
-            InspectorRow { label: "Radius m"; Layout.fillWidth: true
+            InspectorRow { visible: !li.area; label: "Radius m"; Layout.fillWidth: true
                 NumberField { value: li.l.radius; fallback: 0; onCommitted: n => root.writeLight(li.c, { radius: Math.max(0, n) }) } }
+            InspectorRow { visible: li.area; label: li.l.kind === "Disk" ? "Diameter m" : "Size m"; Layout.fillWidth: true
+                NumberField { value: li.l.width; fallback: 1; onCommitted: n => root.writeLight(li.c, { width: Math.max(0.01, n) }) }
+                NumberField { visible: li.l.kind === "Rect"; value: li.l.height; fallback: 1; onCommitted: n => root.writeLight(li.c, { height: Math.max(0.01, n) }) } }
             InspectorRow { visible: li.l.kind === "Spot"; label: "Cone °"; Layout.fillWidth: true
                 NumberField { value: li.l.inner_angle; fallback: 30; onCommitted: n => root.writeLight(li.c, { inner_angle: n }) }
                 NumberField { value: li.l.outer_angle; fallback: 45; onCommitted: n => root.writeLight(li.c, { outer_angle: n }) } }
-            InspectorRow { label: "Shadows"; Layout.fillWidth: true
+            InspectorRow { visible: li.l.kind === "Spot"; label: "Cookie"; Layout.fillWidth: true
+                AssetField { app: root.app; accept: ["image"]; value: li.l.cookie; placeholderText: "Drag an image here"; onCommitted: p => root.writeLight(li.c, { cookie: p }) } }
+            InspectorRow { visible: li.l.kind === "Spot" && li.l.cookie !== ""; label: "Tiling"; Layout.fillWidth: true
+                NumberField { value: li.l.cookie_tiling; fallback: 1; onCommitted: n => root.writeLight(li.c, { cookie_tiling: Math.max(0.01, n) }) } }
+            InspectorRow { visible: !li.area; label: "IES profile"; Layout.fillWidth: true
+                AssetField { app: root.app; accept: ["light"]; value: li.l.ies; placeholderText: "Drag an .ies file here"; onCommitted: p => root.writeLight(li.c, { ies: p }) } }
+            InspectorRow { visible: !li.area; label: "Shadows"; Layout.fillWidth: true
                 SwitchField { value: li.l.shadows; onToggled: on => root.writeLight(li.c, { shadows: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { visible: !li.area && li.l.shadows; label: "Soft (PCSS)"; Layout.fillWidth: true
+                SwitchField { value: li.l.soft_shadows; onToggled: on => root.writeLight(li.c, { soft_shadows: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { visible: !li.area && li.l.shadows; label: "Bias"; Layout.fillWidth: true
+                NumberField { value: li.l.shadow_depth_bias !== null ? li.l.shadow_depth_bias : (li.l.kind === "Spot" ? 0.02 : 0.08); fallback: 0.02; onCommitted: n => root.writeLight(li.c, { shadow_depth_bias: Math.max(0, n) }) }
+                NumberField { value: li.l.shadow_normal_bias !== null ? li.l.shadow_normal_bias : (li.l.kind === "Spot" ? 1.8 : 0.6); fallback: 0.6; onCommitted: n => root.writeLight(li.c, { shadow_normal_bias: Math.max(0, n) }) } }
+            InspectorRow { visible: !li.area; label: "Contact"; Layout.fillWidth: true
+                SwitchField { value: li.l.contact_shadows; onToggled: on => root.writeLight(li.c, { contact_shadows: on }) } Item { Layout.fillWidth: true } }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
-                text: root.is3d
-                    ? "About " + Math.round(li.l.intensity / (4 * Math.PI)) + " candela. A spot shines down the actor's forward axis; its cone doesn't gather the light, so narrowing it isn't brighter."
-                    : "Lights need a 3D world; in 2D this rests." }
+                text: !root.is3d ? "Lights need a 3D world; in 2D this rests."
+                    : li.area ? "An area light glows from a " + (li.l.kind === "Disk" ? "disc" : "rectangle") + " facing the actor's forward axis, with soft LTC highlights. It casts no shadow maps."
+                    : li.l.unit === "Candela"
+                    ? "Candela down the brightest direction (an IES profile's peak). About " + Math.round(li.l.intensity * 4 * Math.PI) + " lumens. Contact shadows also need them on in Project Settings."
+                    : "About " + Math.round(li.l.intensity / (4 * Math.PI)) + " candela. A spot's cone doesn't gather the light, so narrowing it isn't brighter. Contact shadows also need them on in Project Settings." }
+        }
+    }
+    Component {
+        id: probeCard
+        ColumnLayout {
+            id: pr
+            readonly property var c: parent.c
+            readonly property var p: root.probeOf(c)
+            property var status: null
+            spacing: 6
+            function refresh() {
+                if (!root.actor) return;
+                const id = root.actor.id;
+                root.app.invoke("probe_status", {}, list => { pr.status = (list || []).find(x => x.actor === id) || null; });
+            }
+            Component.onCompleted: refresh()
+            Timer { interval: 2000; running: pr.visible && root.is3d; repeat: true; onTriggered: pr.refresh() }
+            InspectorRow { label: "Kind"; Layout.fillWidth: true
+                ChoiceField { options: [{ value: "Reflection", label: "Reflection" }, { value: "Irradiance", label: "Irradiance" }]; value: pr.p.kind; onChosen: k => root.writeProbe(pr.c, { kind: k }) } }
+            InspectorRow { label: "Size m"; Layout.fillWidth: true
+                NumberField { value: pr.p.size[0]; fallback: 10; onCommitted: n => root.writeProbe(pr.c, { size: root.withIndex(pr.p.size, 0, Math.max(0.01, n)) }) }
+                NumberField { value: pr.p.size[1]; fallback: 5; onCommitted: n => root.writeProbe(pr.c, { size: root.withIndex(pr.p.size, 1, Math.max(0.01, n)) }) }
+                NumberField { value: pr.p.size[2]; fallback: 10; onCommitted: n => root.writeProbe(pr.c, { size: root.withIndex(pr.p.size, 2, Math.max(0.01, n)) }) } }
+            InspectorRow { label: "Falloff"; Layout.fillWidth: true
+                NumberField { value: pr.p.falloff; fallback: 0.2; onCommitted: n => root.writeProbe(pr.c, { falloff: Math.min(1, Math.max(0, n)) }) } }
+            InspectorRow { label: "Intensity"; Layout.fillWidth: true
+                NumberField { value: pr.p.intensity; fallback: 1; onCommitted: n => root.writeProbe(pr.c, { intensity: Math.max(0, n) }) } }
+            InspectorRow { visible: pr.p.kind === "Reflection"; label: "Resolution"; Layout.fillWidth: true
+                ChoiceField { options: [64, 128, 256, 512, 1024].map(n => ({ value: String(n), label: n + " px" })); value: String(pr.p.resolution); onChosen: v => root.writeProbe(pr.c, { resolution: Number(v) }) } }
+            InspectorRow { visible: pr.p.kind === "Reflection"; label: "Box projection"; Layout.fillWidth: true
+                SwitchField { value: pr.p.box_projection; onToggled: on => root.writeProbe(pr.c, { box_projection: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { visible: pr.p.kind === "Irradiance"; label: "Bricks"; Layout.fillWidth: true
+                NumberField { value: pr.p.grid[0]; fallback: 4; onCommitted: n => root.writeProbe(pr.c, { grid: root.withIndex(pr.p.grid, 0, Math.min(16, Math.max(1, Math.round(n)))) }) }
+                NumberField { value: pr.p.grid[1]; fallback: 3; onCommitted: n => root.writeProbe(pr.c, { grid: root.withIndex(pr.p.grid, 1, Math.min(16, Math.max(1, Math.round(n)))) }) }
+                NumberField { value: pr.p.grid[2]; fallback: 4; onCommitted: n => root.writeProbe(pr.c, { grid: root.withIndex(pr.p.grid, 2, Math.min(16, Math.max(1, Math.round(n)))) }) } }
+            InspectorRow { label: "Auto-bake"; Layout.fillWidth: true
+                SwitchField { value: pr.p.auto_bake; onToggled: on => root.writeProbe(pr.c, { auto_bake: on }) } Item { Layout.fillWidth: true } }
+            RowLayout {
+                Layout.fillWidth: true; spacing: 8
+                BwButton { text: "Bake"; iconName: "aperture"; implicitHeight: 30; enabled: root.is3d
+                    onClicked: root.app.invoke("bake_probes", { actors: [root.actor.id] }, () => bakeCheck.restart()) }
+                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 11
+                    color: pr.status && pr.status.dirty ? Theme.warning : Theme.textDim
+                    text: !pr.status ? "" : !pr.status.baked ? "Not baked yet" : pr.status.dirty ? "Stale: the probe or the scene moved since the bake" : "Baked and up to date" }
+                Timer { id: bakeCheck; interval: 1500; onTriggered: pr.refresh() }
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: !root.is3d ? "Light probes need a 3D world; in 2D this rests."
+                    : pr.p.kind === "Reflection"
+                    ? "Captures a cubemap from the actor's position that surfaces inside the box reflect. The box turns with the actor but isn't scaled by it. Give the probe actor no Look, or it sees itself."
+                    : "Captures a grid of ambient cubes that light whatever moves through the box with bounced light." }
         }
     }
     Component {

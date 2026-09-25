@@ -197,6 +197,12 @@ pub struct Engine {
     /// run, over the authored `Volume`.
     pub volume_enabled: HashMap<String, bool>,
     pub volume_weight: HashMap<String, f32>,
+    /// Actor id -> whether `turn my light's shadows` left its light casting.
+    pub light_shadows: HashMap<String, bool>,
+    /// `set shadow distance` this run, over the project's.
+    pub shadow_distance: Option<f32>,
+    /// A `capture probes` waiting for the probes to pick it up.
+    pub capture_probes: bool,
     /// `set HDR output` and `set peak brightness` this run, over the
     /// project's display settings.
     pub hdr_output: Option<bool>,
@@ -269,6 +275,9 @@ impl Engine {
             light_intensity: HashMap::new(),
             volume_enabled: HashMap::new(),
             volume_weight: HashMap::new(),
+            light_shadows: HashMap::new(),
+            shadow_distance: None,
+            capture_probes: false,
             hdr_output: None,
             peak_nits: None,
             last_created: HashMap::new(),

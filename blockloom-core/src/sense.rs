@@ -56,6 +56,9 @@ pub struct ActorSense {
     pub has_body: bool,
     /// True for a sensor collider: it fires touches without pushing back.
     pub trigger: bool,
+    /// True while the actor carries a light that casts shadow maps. What
+    /// `casts shadows?` answers.
+    pub casts_shadows: bool,
     /// The layer the actor lives on, 1-8.
     pub layer: u8,
     /// Bitmask of the layers this actor pairs with. A query fired from this
@@ -326,6 +329,7 @@ impl Default for ActorSense {
             components: HashMap::new(),
             has_body: false,
             trigger: false,
+            casts_shadows: false,
             layer: 1,
             mask: 0xFF,
             shape: ColliderShape::None,

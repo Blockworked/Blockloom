@@ -500,11 +500,19 @@ status reports as `Status.volumes`. `enable volume` and `set weight of volume`
 (and a script's `enable_volume`/`set_volume_weight`) name a volume the way
 `set my parent to` names a parent and last for the run
 (`engine.volume_enabled`/`volume_weight`). The debug views are
-`SceneView.volumes`: bounds with their blend feather, a heat grid on the ground
-plane (the screen in 2D), and freeze, which holds the blend and sends each
-property's lerp as `Status.volume_trace`. A property the Phase 5 systems add
-is one field on `VolumeOverrides`, `EnvironmentOverride` and `Environment`,
-plus its row in the inspector's `volumeProperties`.
+`SceneView.volumes`: bounds with their blend feather, a heat map, and freeze,
+which holds the blend and sends each property's lerp as
+`Status.volume_trace`. The heat map is `volume_heat.rs`, a pass after
+tonemapping that puts each pixel back in the world (the depth prepass in 3D,
+the screen plane in 2D) and runs the same coverage maths in
+`shaders/volume_heat.wesl` over at most `MAX_VOLUMES`; change the two
+together. A selected volume shows grips in the scene view (`edit.rs`): a box
+face moves with the opposite face held, a sphere's edge sets the radius, and
+the outer ring the blend distance. The drag updates the world's copy of the
+spec live, and lands as `Placed` with `volume` set, one undo step. A
+property the Phase 5 systems add is one field on `VolumeOverrides`,
+`EnvironmentOverride` and `Environment`, plus its row in the inspector's
+`volumeProperties`.
 
 ### HDR frame and lights
 
@@ -559,6 +567,44 @@ The GPU half is checked by the ignored tests in `embed.rs` (`cargo test -p
 blockloom-runtime -- --ignored embed`), which read pixels back from a real
 world: false color in both dimensions, a lamp that still lights the floor
 after batching, and an EXR capture that stays linear.
+
+### Lighting rig
+
+`Light` (`LightSpec`) is a point, spot, rect or disk light. Rect and disk are
+Bevy `RectLight`s (LTC speculars, no shadow maps; a disk is the square of the
+same area). `intensity` is lumens or, with `unit: Candela`, the brightest
+direction's candela (x 4 pi to lumens). A spot's cookie (tiled) and an IES
+profile, or a point's profile, are baked on the CPU into one R8 mask in
+`lights.rs` (`spot_mask`/`point_mask`, which invert Bevy's own texture
+lookups) and handed over as `SpotLightTexture`/`PointLightTexture`. Masks are
+cached in `LightMasks` by file, tiling and cone. Per-light contact shadows,
+PCSS and biases ride the same spec; `turn my light's shadows` lands in
+`engine.light_shadows`, which `wanted` lays over the authored spec, and `casts
+shadows?` reads `ActorSense::casts_shadows`.
+
+`Lighting::shadows` (`ShadowSettings`) is the sun and camera half, applied by
+`shadows.rs`: cascades (count, first split, blend, distance - which `set
+shadow distance` overrides as `engine.shadow_distance`), normal bias, a PCSS
+sun size, the camera's `ShadowFilteringMethod` and `ContactShadows` (16 steps).
+`Lighting::sun_cookie` is a tiled `DirectionalLightTexture` whose tile size is
+the sun's scale, which is safe because cascades read only its rotation. The
+depth bias and everything volumes blend stay in `environment.rs`.
+
+A `Probe` component (`blockloom-core/src/probe.rs`) is a reflection probe (a
+box-projected cubemap, `ParallaxCorrection::Auto`) or an irradiance volume (a
+brick grid of ambient cubes in Bevy's `(Rx, 2Ry, 3Rz)` atlas). Its box turns
+with the actor but isn't scaled by it. `light_probes.rs` bakes through the
+capture service: a reflection capture is rotated with the probe, since Bevy
+samples a probe's cube in its own frame, while bricks are world-aligned, since
+the irradiance lookup uses the world normal. Captures are divided back out of
+the camera's exposure into radiance. `BakeProbes` (the inspector's Bake,
+`bake-probes`) writes `.blockloom/probes/<actor>.{dds,irr,json}`; the json
+holds `probe::stamp`, a hash of the probe and every lit component around it,
+so `probe-status` and the scene view know a bake is stale, and an auto-bake
+probe rebakes itself after the next rebuild once warm-up closes. `capture
+probes` does the same capture mid-run and keeps it in memory. Builds copy the
+bakes. The GPU half is the ignored `embed` tests (rect light, cookie, both
+probe kinds).
 
 ### Shader library and pass plumbing
 

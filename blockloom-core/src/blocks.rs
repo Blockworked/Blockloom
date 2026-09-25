@@ -226,6 +226,17 @@ pub enum InstructionKind {
         volume: Value,
         weight: Value,
     },
+    /// Re-captures every light probe from where it stands now, for the rest
+    /// of the run. Nothing is written to disk.
+    CaptureProbes,
+    /// How far the sun's shadows reach, in metres, for the rest of the run.
+    SetShadowDistance {
+        distance: Value,
+    },
+    /// Whether this actor's light casts shadows, for the rest of the run.
+    SetLightShadows {
+        enabled: bool,
+    },
 
     // ─── Physics ────────────────────────────────────────────────────────────
     SetBody {
@@ -762,6 +773,7 @@ impl BlockKind for InstructionKind {
             | K::SetLightIntensity { intensity: v }
             | K::SetEmissiveStrength { strength: v }
             | K::SetPeakBrightness { nits: v }
+            | K::SetShadowDistance { distance: v }
             | K::SetDensity { density: v }
             | K::SetMass { mass: v }
             | K::SetCollisionLayer { layer: v }
@@ -1056,6 +1068,8 @@ impl BlockKind for InstructionKind {
             | K::DetachComponent { .. }
             | K::SetVisible { .. }
             | K::SetTrailEnabled { .. }
+            | K::CaptureProbes
+            | K::SetLightShadows { .. }
             | K::StopTweens
             | K::StopAnimation
             | K::SetHdrOutput { .. }

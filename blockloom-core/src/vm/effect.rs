@@ -138,6 +138,17 @@ pub enum Effect {
         volume: String,
         weight: f32,
     },
+    /// Re-capture every light probe where it stands. Window-global.
+    CaptureProbes,
+    /// Metres the sun's shadows reach, for the rest of the run.
+    SetShadowDistance {
+        distance: f32,
+    },
+    /// Whether an actor's light casts shadows, for the rest of the run.
+    SetLightShadows {
+        actor: String,
+        enabled: bool,
+    },
     SetBody {
         actor: String,
         body: BodyKind,

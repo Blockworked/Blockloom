@@ -42,7 +42,8 @@ pub struct SkyState {
 impl SkyKey {
     fn of(engine: &Engine) -> Option<SkyKey> {
         let dir = engine.project_dir.clone()?;
-        let path = blockloom_core::assets::normalize(&engine.project.world.lighting.sky)?;
+        let path = blockloom_core::assets::normalize(&engine.project.world.lighting.sky)
+            .filter(|path| !path.is_empty())?;
         let bias = pipeline::load_manifest(&dir).bias_of(&path);
         Some(SkyKey { dir, path, bias })
     }

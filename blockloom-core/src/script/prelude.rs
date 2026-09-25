@@ -917,6 +917,53 @@ impl Actor {
         );
     }
 
+    /// Re-captures every light probe from where it stands now. Lasts the
+    /// run; nothing is written to disk.
+    pub fn capture_probes(&self) {
+        self.act(
+            ACT_CAPTURE_PROBES,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// How far the sun's shadows reach, in metres, for the rest of the run.
+    pub fn set_shadow_distance(&self, metres: f32) {
+        self.act(
+            ACT_SET_SHADOW_DISTANCE,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            metres as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Whether this actor's light casts shadows, for the rest of the run.
+    pub fn set_light_shadows(&self, enabled: bool) {
+        self.act(
+            ACT_SET_LIGHT_SHADOWS,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            if enabled { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Whether an actor carries a light casting shadows. Empty names this one.
+    pub fn casts_shadows(&self, actor: &str) -> bool {
+        self.number(READ_CASTS_SHADOWS, Str::borrow(actor), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
     /// Switches an environment volume on or off for the rest of the run.
     /// Names it by id or name; empty means this actor.
     pub fn enable_volume(&self, volume: &str, enabled: bool) {

@@ -337,6 +337,11 @@ impl Backend {
             )?),
             "frame_selected" => to_json(commands::frame_selected(state)?),
             "capture_exr" => to_json(commands::capture_exr(state)?),
+            "bake_probes" => to_json(commands::bake_probes(
+                state,
+                arg(&args, "actors").unwrap_or_default(),
+            )?),
+            "probe_status" => to_json(commands::probe_status(state)?),
             "set_preview_enabled" => to_json(commands::set_preview_enabled(
                 state,
                 app,

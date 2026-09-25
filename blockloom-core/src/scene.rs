@@ -460,6 +460,139 @@ pub struct Lighting {
     /// Luminance of a sky texel of 1.0, in nits. Bevy's own skybox default.
     #[serde(default = "default_sky_brightness")]
     pub sky_brightness: f32,
+    #[serde(default)]
+    pub shadows: ShadowSettings,
+    /// An image the sun shines through, tiled across the world like cloud
+    /// shadows or a canopy. Only its red channel counts. Empty for none.
+    #[serde(default)]
+    pub sun_cookie: String,
+    /// Metres one tile of the sun's cookie covers.
+    #[serde(default = "default_sun_cookie_size")]
+    pub sun_cookie_size: f32,
+}
+
+fn default_sun_cookie_size() -> f32 {
+    20.0
+}
+
+/// How shadow maps are filtered on the world camera.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ShadowFilter {
+    /// Hardware 2x2 PCF: fastest, hardest edges.
+    Hardware,
+    /// A 9-tap Gaussian PCF. Bevy's own default.
+    #[default]
+    Gaussian,
+    /// A rotating spiral that TAA smooths out.
+    Temporal,
+}
+
+/// Shadow tuning for the 3D world: the sun's cascades and biases, the
+/// filter every shadow map is read through, soft (PCSS) sun shadows and
+/// screen-space contact shadows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShadowSettings {
+    #[serde(default)]
+    pub filter: ShadowFilter,
+    /// Metres from the camera the sun's shadows reach. `set shadow distance
+    /// to` overrides it for a run.
+    #[serde(default = "default_shadow_distance")]
+    pub distance: f32,
+    /// Sun shadow cascades, 1-4. More keeps near shadows sharp over a long
+    /// distance.
+    #[serde(default = "default_cascades")]
+    pub cascades: u32,
+    /// Where the first cascade ends, in metres. The rest split the remaining
+    /// distance logarithmically.
+    #[serde(default = "default_first_cascade")]
+    pub first_cascade: f32,
+    /// How much neighbouring cascades overlap, 0-0.5, so the step between
+    /// them fades rather than snaps.
+    #[serde(default = "default_cascade_blend")]
+    pub cascade_blend: f32,
+    /// Normal bias for the sun, pushing the lookup out along the surface to
+    /// fight acne on slopes. The depth bias is `Lighting::shadow_bias`.
+    #[serde(default = "default_normal_bias")]
+    pub normal_bias: f32,
+    /// Soft sun shadows (PCSS) as if the sun were this many degrees across;
+    /// 0 keeps them hard. The real sun is about 0.5.
+    #[serde(default)]
+    pub sun_size: f32,
+    /// Screen-space contact shadows: a short raymarch against the depth
+    /// buffer under feet and clutter. The sun takes part; each light opts in.
+    #[serde(default)]
+    pub contact: bool,
+    /// Metres a contact shadow ray travels.
+    #[serde(default = "default_contact_length")]
+    pub contact_length: f32,
+    /// How thick the depth buffer is taken to be, in metres.
+    #[serde(default = "default_contact_thickness")]
+    pub contact_thickness: f32,
+}
+
+fn default_shadow_distance() -> f32 {
+    150.0
+}
+
+fn default_cascades() -> u32 {
+    4
+}
+
+fn default_first_cascade() -> f32 {
+    5.0
+}
+
+fn default_cascade_blend() -> f32 {
+    0.2
+}
+
+fn default_normal_bias() -> f32 {
+    1.8
+}
+
+fn default_contact_length() -> f32 {
+    0.3
+}
+
+fn default_contact_thickness() -> f32 {
+    0.1
+}
+
+impl ShadowSettings {
+    /// The same settings pulled into the ranges the renderer accepts.
+    pub fn sanitized(self) -> Self {
+        let finite = |value: f32, fallback: f32| if value.is_finite() { value } else { fallback };
+        let distance = finite(self.distance, default_shadow_distance()).clamp(1.0, 10_000.0);
+        Self {
+            distance,
+            cascades: self.cascades.clamp(1, 4),
+            first_cascade: finite(self.first_cascade, default_first_cascade()).clamp(0.1, distance),
+            cascade_blend: finite(self.cascade_blend, default_cascade_blend()).clamp(0.0, 0.5),
+            normal_bias: finite(self.normal_bias, default_normal_bias()).clamp(0.0, 10.0),
+            sun_size: finite(self.sun_size, 0.0).clamp(0.0, 10.0),
+            contact_length: finite(self.contact_length, default_contact_length()).clamp(0.01, 10.0),
+            contact_thickness: finite(self.contact_thickness, default_contact_thickness())
+                .clamp(0.001, 2.0),
+            ..self
+        }
+    }
+}
+
+impl Default for ShadowSettings {
+    fn default() -> Self {
+        Self {
+            filter: ShadowFilter::Gaussian,
+            distance: default_shadow_distance(),
+            cascades: default_cascades(),
+            first_cascade: default_first_cascade(),
+            cascade_blend: default_cascade_blend(),
+            normal_bias: default_normal_bias(),
+            sun_size: 0.0,
+            contact: false,
+            contact_length: default_contact_length(),
+            contact_thickness: default_contact_thickness(),
+        }
+    }
 }
 
 fn default_light_direction() -> [f32; 3] {
@@ -505,6 +638,9 @@ impl Default for Lighting {
             shadow_bias: default_shadow_bias(),
             sky: String::new(),
             sky_brightness: default_sky_brightness(),
+            shadows: ShadowSettings::default(),
+            sun_cookie: String::new(),
+            sun_cookie_size: default_sun_cookie_size(),
         }
     }
 }

@@ -233,6 +233,7 @@ pub fn pump_editor(
     mut debug: Option<ResMut<crate::hdr::HdrDebug>>,
     mut volume_debug: Option<ResMut<crate::volumes::VolumeDebugView>>,
     mut captures: Option<ResMut<crate::capture::ExrCaptures>>,
+    mut bakes: Option<ResMut<crate::light_probes::ProbeBaker>>,
     time: Res<Time>,
     mut fixed: ResMut<Time<Fixed>>,
     mut exit: MessageWriter<AppExit>,
@@ -390,6 +391,13 @@ pub fn pump_editor(
                 None => bridge::send(&RuntimeMessage::Error {
                     actor: "Blockloom".into(),
                     message: "This world can't capture EXR screenshots".into(),
+                }),
+            },
+            EditorMessage::BakeProbes { actors } => match bakes.as_mut() {
+                Some(bakes) => bakes.request(actors, true),
+                None => bridge::send(&RuntimeMessage::Error {
+                    actor: "Blockloom".into(),
+                    message: "Light probes need a 3D world".into(),
                 }),
             },
             EditorMessage::Shutdown => {
@@ -562,6 +570,9 @@ pub fn rebuild_world(
     engine.light_intensity.clear();
     engine.volume_enabled.clear();
     engine.volume_weight.clear();
+    engine.light_shadows.clear();
+    engine.shadow_distance = None;
+    engine.capture_probes = false;
     engine.hdr_output = None;
     engine.peak_nits = None;
     engine.parents = engine
@@ -1032,6 +1043,7 @@ pub fn publish_sensors(
                 components: custom.map(|custom| custom.0.clone()).unwrap_or_default(),
                 has_body,
                 trigger,
+                casts_shadows: crate::lights::casts_shadows(&engine, &id.0),
                 layer,
                 mask,
                 shape,
@@ -3616,6 +3628,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::BurstParticles { actor, .. }
         | Effect::SetEmitterDial { actor, .. }
         | Effect::SetTrailEnabled { actor, .. }
+        | Effect::SetLightShadows { actor, .. }
         | Effect::ChangePosition { actor, .. }
         | Effect::Glide { actor, .. }
         | Effect::TweenScale { actor, .. }
@@ -3659,6 +3672,8 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetPeakBrightness { .. }
         | Effect::SetVolumeEnabled { .. }
         | Effect::SetVolumeWeight { .. }
+        | Effect::CaptureProbes
+        | Effect::SetShadowDistance { .. }
         | Effect::SetBusVolume { .. }
         | Effect::RumbleGamepad { .. }
         | Effect::Stopped

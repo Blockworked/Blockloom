@@ -14,7 +14,8 @@ use bevy::prelude::*;
 use bevy::ui::UiScale;
 use bevy::window::PrimaryWindow;
 use blockloom_core::scene::{Mode, Visual};
-use blockloom_protocol::{PreviewInput, RuntimeMessage, SceneTool, SceneView};
+use blockloom_core::volume::{VolumeShape, VolumeSpec};
+use blockloom_protocol::{PreviewInput, RuntimeMessage, SceneTool, SceneView, VolumeBounds};
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::FRAC_PI_2;
 
@@ -28,6 +29,7 @@ const AXIS_COLORS: [Color; 3] = [
     Color::srgb(0.27, 0.51, 0.98),
 ];
 const HOVER: Color = Color::srgb(1.0, 0.84, 0.04);
+const GRIP: Color = Color::srgb(0.55, 0.85, 1.0);
 const SELECTED: Color = Color::srgb(1.0, 0.62, 0.11);
 /// How long a gizmo's axis is on screen, in logical pixels.
 const HANDLE_PX: f32 = 90.0;
@@ -90,6 +92,20 @@ enum Handle {
     Ring(usize),
     /// The actor itself, grabbed rather than a handle.
     Body,
+    /// A volume's face on this axis, the positive one or the negative.
+    Face(usize, bool),
+    /// A volume's outer blend edge.
+    Feather,
+}
+
+/// A volume grip being dragged: the line it slides along, how far along
+/// it the grip sat and the pointer pressed, and the spec it started from.
+struct Grip {
+    origin: Vec3,
+    dir: Vec3,
+    start_len: f32,
+    press: f32,
+    start: VolumeSpec,
 }
 
 /// A drag in progress: everything as it stood when the button went down.
@@ -111,6 +127,7 @@ struct Drag {
     start_stretch: Vec3,
     size: f32,
     stretch: Vec3,
+    grip: Option<Grip>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -351,7 +368,7 @@ pub fn interact(
                     // The release is where the drag ends, not where the
                     // pointer last moved.
                     if index == 0 && editor.drag.is_some() {
-                        update_drag(&engine, editor, &lens, at, mode, px_scale, &mut posed);
+                        update_drag(&mut engine, editor, &lens, at, mode, px_scale, &mut posed);
                         finish_drag(&engine, editor, &posed);
                     }
                     release_nav(editor, index);
@@ -363,7 +380,7 @@ pub fn interact(
             PreviewInput::Key { code, down } => {
                 if down {
                     if code == "Escape" {
-                        cancel_drag(&engine, editor, &mut posed);
+                        cancel_drag(&mut engine, editor, &mut posed);
                     }
                     editor.keys.insert(code);
                 } else {
@@ -371,7 +388,7 @@ pub fn interact(
                 }
             }
             PreviewInput::Focus { focused: false } => {
-                cancel_drag(&engine, editor, &mut posed);
+                cancel_drag(&mut engine, editor, &mut posed);
                 editor.keys.clear();
                 editor.buttons = [false; 3];
                 editor.nav = None;
@@ -397,7 +414,7 @@ pub fn interact(
     }
     if let Some(at) = editor.pointer {
         if editor.drag.is_some() {
-            update_drag(&engine, editor, &lens, at, mode, px_scale, &mut posed);
+            update_drag(&mut engine, editor, &lens, at, mode, px_scale, &mut posed);
         } else if editor.nav.is_none() {
             editor.hover = hovered(&engine, editor, &lens, at, px_scale, &posed);
         }
@@ -779,6 +796,25 @@ fn hovered(
     px_scale: f32,
     posed: &Query<(&mut Transform, &mut PhysicsPose, &mut PrevPose)>,
 ) -> Option<Handle> {
+    // A grip is a small target that can sit on a gizmo arrow, so it wins.
+    let grab = GRAB_PX * px_scale;
+    volume_grips(engine, editor, lens, posed)
+        .into_iter()
+        .filter_map(|(handle, point)| Some((lens.screen(point)?.distance(at), handle)))
+        .filter(|(distance, _)| *distance <= grab)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, handle)| handle)
+        .or_else(|| gizmo_hovered(engine, editor, lens, at, px_scale, posed))
+}
+
+fn gizmo_hovered(
+    engine: &Engine,
+    editor: &SceneEditor,
+    lens: &Lens,
+    at: Vec2,
+    px_scale: f32,
+    posed: &Query<(&mut Transform, &mut PhysicsPose, &mut PrevPose)>,
+) -> Option<Handle> {
     let frame = gizmo_frame(engine, editor, lens, px_scale, posed)?;
     let center = lens.screen(frame.origin)?;
     let grab = GRAB_PX * px_scale;
@@ -858,6 +894,131 @@ fn inside_quad(p: Vec2, quad: &[Vec2]) -> bool {
     true
 }
 
+// ─── Volume grips ──────────────────────────────────────────────────────────
+
+/// The selected actor's volume, as the document has it, and where it stands.
+fn selected_volume(
+    engine: &Engine,
+    editor: &SceneEditor,
+    posed: &Query<(&mut Transform, &mut PhysicsPose, &mut PrevPose)>,
+) -> Option<(VolumeSpec, Transform)> {
+    let id = editor.selected.as_deref()?;
+    if !engine.has_component(id, "Volume") {
+        return None;
+    }
+    let spec = engine.actor(id)?.components.volume()?.clone();
+    if spec.shape == VolumeShape::Global {
+        return None;
+    }
+    Some((spec, selected_transform(engine, editor, posed)?))
+}
+
+/// How far the shape reaches along its own `axis` from the centre, in
+/// world units.
+fn reach(spec: &VolumeSpec, pose: &Transform, axis: usize) -> f32 {
+    let scale = pose.scale.abs();
+    match spec.shape {
+        VolumeShape::Sphere => spec.radius.max(0.0) * scale.max_element(),
+        _ => spec.half_extents[axis].max(0.0) * scale[axis],
+    }
+}
+
+/// A selected volume's grips: one on each face (both ways along each axis
+/// the view offers) and one on the blend edge along x.
+fn volume_grips(
+    engine: &Engine,
+    editor: &SceneEditor,
+    lens: &Lens,
+    posed: &Query<(&mut Transform, &mut PhysicsPose, &mut PrevPose)>,
+) -> Vec<(Handle, Vec3)> {
+    let Some((spec, pose)) = selected_volume(engine, editor, posed) else {
+        return Vec::new();
+    };
+    let mut grips = Vec::new();
+    for &axis in offered(lens, true) {
+        let dir = pose.rotation * Vec3::AXES[axis];
+        let reach = reach(&spec, &pose, axis);
+        for positive in [true, false] {
+            let sign = if positive { 1.0 } else { -1.0 };
+            grips.push((
+                Handle::Face(axis, positive),
+                pose.translation + dir * reach * sign,
+            ));
+        }
+    }
+    let blend = spec.blend_distance.max(0.0);
+    grips.push((
+        Handle::Feather,
+        pose.translation + pose.rotation * Vec3::X * (reach(&spec, &pose, 0) + blend),
+    ));
+    grips
+}
+
+/// The line a grip slides along, and how far along it the grip sits: a box
+/// face from the opposite face, a sphere's edge and the blend edge from the
+/// centre.
+fn grip_line(spec: &VolumeSpec, pose: &Transform, handle: Handle) -> Option<(Vec3, Vec3, f32)> {
+    match handle {
+        Handle::Face(axis, positive) => {
+            let sign = if positive { 1.0 } else { -1.0 };
+            let dir = pose.rotation * Vec3::AXES[axis] * sign;
+            let reach = reach(spec, pose, axis);
+            Some(match spec.shape {
+                VolumeShape::Sphere => (pose.translation, dir, reach),
+                _ => (pose.translation - dir * reach, dir, reach * 2.0),
+            })
+        }
+        Handle::Feather => {
+            let dir = pose.rotation * Vec3::X;
+            let length = reach(spec, pose, 0) + spec.blend_distance.max(0.0);
+            Some((pose.translation, dir, length))
+        }
+        _ => None,
+    }
+}
+
+/// Slides a grip to `length` along its line: the spec and pose it leaves.
+fn resize(grip: &Grip, handle: Handle, pose: &Transform, length: f32) -> (VolumeSpec, Transform) {
+    let mut spec = grip.start.clone();
+    let mut pose = *pose;
+    let scale = pose.scale.abs().max(Vec3::splat(1e-4));
+    match (handle, spec.shape) {
+        (Handle::Feather, _) => {
+            let start = grip.start_len - grip.start.blend_distance.max(0.0);
+            spec.blend_distance = (length - start).max(0.0);
+        }
+        (Handle::Face(..), VolumeShape::Sphere) => {
+            spec.radius = length.max(0.01) / scale.max_element();
+        }
+        (Handle::Face(axis, _), _) => {
+            // The opposite face stays put, so the centre follows half way.
+            let length = length.max(0.02);
+            spec.half_extents[axis] = length / 2.0 / scale[axis];
+            pose.translation = grip.origin + grip.dir * length / 2.0;
+        }
+        _ => {}
+    }
+    (spec, pose)
+}
+
+fn bounds_of(spec: &VolumeSpec) -> VolumeBounds {
+    VolumeBounds {
+        half_extents: spec.half_extents,
+        radius: spec.radius,
+        blend_distance: spec.blend_distance,
+    }
+}
+
+/// Puts `spec` on the document's copy for the drag, so the bounds, the heat
+/// map and the blend follow it live. The reload after `Placed` settles it.
+fn set_volume(engine: &mut Engine, actor: &str, spec: VolumeSpec) {
+    if let Some(actor) = engine.project.actor_mut(actor) {
+        actor
+            .components
+            .insert(blockloom_core::components::ActorComponent::Volume { volume: spec });
+    }
+}
+
 // ─── Dragging ──────────────────────────────────────────────────────────────
 
 fn start_drag(
@@ -897,7 +1058,23 @@ fn start_drag(
         start_stretch: Vec3::from(stretch),
         size,
         stretch: Vec3::from(stretch),
+        grip: None,
     };
+    if let Some((spec, pose)) = selected_volume(engine, editor, posed)
+        && let Some((origin, dir, start_len)) = grip_line(&spec, &pose, handle)
+    {
+        let press = lens
+            .ray(at)
+            .and_then(|ray| closest_on_line(origin, dir, ray))
+            .unwrap_or(start_len);
+        drag.grip = Some(Grip {
+            origin,
+            dir,
+            start_len,
+            press,
+            start: spec,
+        });
+    }
     if let Some(ray) = lens.ray(at) {
         drag.anchor = anchor_for(&drag, lens, ray).unwrap_or(start.translation);
     }
@@ -958,7 +1135,7 @@ fn snap(value: f32, step: f32) -> f32 {
 }
 
 fn update_drag(
-    engine: &Engine,
+    engine: &mut Engine,
     editor: &mut SceneEditor,
     lens: &Lens,
     at: Vec2,
@@ -982,6 +1159,24 @@ fn update_drag(
         return;
     };
     let mut next = drag.start;
+    if let Some(grip) = &drag.grip {
+        let Some(ray) = lens.ray(at) else {
+            return;
+        };
+        let Some(along) = closest_on_line(grip.origin, grip.dir, ray) else {
+            return;
+        };
+        let mut length = grip.start_len + along - grip.press;
+        if snapping {
+            length = snap(length, view.grid);
+        }
+        let (spec, pose) = resize(grip, drag.handle, &drag.start, length);
+        let actor = drag.actor.clone();
+        set_pose(posed, entity, pose);
+        set_volume(engine, &actor, spec);
+        carry_children(engine, &actor, posed);
+        return;
+    }
     match (view.tool, drag.handle) {
         (SceneTool::Rotate, Handle::Ring(axis)) => {
             let Some(center) = lens.screen(drag.start.translation) else {
@@ -1157,10 +1352,14 @@ fn finish_drag(
     else {
         return;
     };
-    if pose == drag.start {
+    let actor = engine.actor(&drag.actor);
+    let volume = drag.grip.as_ref().and_then(|grip| {
+        let now = actor?.components.volume()?;
+        (now != &grip.start).then(|| bounds_of(now))
+    });
+    if pose == drag.start && volume.is_none() {
         return;
     }
-    let actor = engine.actor(&drag.actor);
     // A child placed in its parent's frame keeps that frame.
     let offset = actor
         .filter(|actor| actor.parent_offset().is_some())
@@ -1172,17 +1371,21 @@ fn finish_drag(
         actor: drag.actor,
         placement: crate::world::placement_of(&pose, drag.stretch.to_array()),
         offset,
+        volume,
     });
 }
 
 fn cancel_drag(
-    engine: &Engine,
+    engine: &mut Engine,
     editor: &mut SceneEditor,
     posed: &mut Query<(&mut Transform, &mut PhysicsPose, &mut PrevPose)>,
 ) {
     let Some(drag) = editor.drag.take() else {
         return;
     };
+    if let Some(grip) = drag.grip {
+        set_volume(engine, &drag.actor, grip.start);
+    }
     if let Some(entity) = engine.entities.get(&drag.actor).copied() {
         set_pose(posed, entity, drag.start);
         carry_children(engine, &drag.actor, posed);
@@ -1315,14 +1518,26 @@ pub fn draw(
         }
     }
 
-    let Some(frame) = gizmo_frame(&engine, &editor, &lens, px_scale, &posed) else {
-        return;
-    };
     let active = editor
         .drag
         .as_ref()
         .map(|drag| drag.handle)
         .or(editor.hover);
+    for (handle, point) in volume_grips(&engine, &editor, &lens, &posed) {
+        let color = if active == Some(handle) { HOVER } else { GRIP };
+        let radius = 5.0 * px_scale * lens.world_per_px(point);
+        let facing = Quat::from_rotation_arc(Vec3::Z, -lens.forward());
+        let isometry = Isometry3d::new(point, facing);
+        if handle == Handle::Feather {
+            handles.circle(isometry, radius, color).resolution(16);
+        } else {
+            handles.rect(isometry, Vec2::splat(radius * 2.0), color);
+        }
+    }
+
+    let Some(frame) = gizmo_frame(&engine, &editor, &lens, px_scale, &posed) else {
+        return;
+    };
     let tint = |handle: Handle, color: Color| if active == Some(handle) { HOVER } else { color };
     match editor.view.tool {
         SceneTool::Move => {
@@ -1758,6 +1973,7 @@ mod tests {
             actor,
             placement,
             offset,
+            ..
         } = &editor.outbox[1]
         else {
             panic!("expected a placement, got {:?}", editor.outbox[1]);
@@ -1783,6 +1999,7 @@ mod tests {
             actor,
             placement,
             offset,
+            ..
         }) = editor.outbox.last()
         else {
             panic!("expected a placement, got {:?}", editor.outbox);
@@ -1862,6 +2079,109 @@ mod tests {
         assert!(pose_of(&app, &parent).abs_diff_eq(Vec3::new(100.0, 0.0, 0.0), 1e-3));
         // The game's own input systems get the clicks instead.
         assert_eq!(app.world().non_send::<Engine>().preview_inputs.len(), 2);
+    }
+
+    /// The parent square made a box volume 100 wide with a 20 blend, and
+    /// selected, so its grips are out.
+    fn volume_scene(shape: VolumeShape) -> (App, String) {
+        use blockloom_core::components::ActorComponent;
+        let (mut app, parent, _) = scene();
+        let mut engine = app.world_mut().non_send_mut::<Engine>();
+        let spec = VolumeSpec {
+            shape,
+            half_extents: [50.0, 50.0, 5.0],
+            radius: 50.0,
+            blend_distance: 20.0,
+            ..VolumeSpec::default()
+        };
+        engine
+            .project
+            .actor_mut(&parent)
+            .unwrap()
+            .components
+            .insert(ActorComponent::Volume { volume: spec });
+        engine
+            .attached
+            .entry(parent.clone())
+            .or_default()
+            .insert("Volume".to_string());
+        app.world_mut().resource_mut::<SceneEditor>().selected = Some(parent.clone());
+        (app, parent)
+    }
+
+    fn grip_drag(app: &mut App, from: f32, to: f32) -> Option<RuntimeMessage> {
+        app.world_mut().non_send_mut::<Engine>().preview_inputs =
+            vec![button(0, true, from, 360.0), button(0, false, to, 360.0)];
+        app.update();
+        app.world().resource::<SceneEditor>().outbox.last().cloned()
+    }
+
+    #[test]
+    fn a_box_face_grip_moves_that_face_and_keeps_the_other() {
+        let (mut app, parent) = volume_scene(VolumeShape::Box);
+        // The +x face sits at world 150, screen 630, on the move arrow.
+        let Some(RuntimeMessage::Placed {
+            placement, volume, ..
+        }) = grip_drag(&mut app, 630.0, 650.0)
+        else {
+            panic!("expected a placement");
+        };
+        let volume = volume.expect("the grip resized the volume");
+        assert!((volume.half_extents[0] - 60.0).abs() < 1e-3);
+        assert_eq!(volume.half_extents[1], 50.0);
+        // The -x face stayed at 50, so the centre moved to 110.
+        assert!((placement.position[0] - 110.0).abs() < 1e-3);
+        assert!(pose_of(&app, &parent).abs_diff_eq(Vec3::new(110.0, 0.0, 0.0), 1e-3));
+        // The world's copy follows the drag, for the bounds and the blend.
+        let engine = app.world().non_send::<Engine>();
+        let live = engine.actor(&parent).unwrap().components.volume().unwrap();
+        assert!((live.half_extents[0] - 60.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn sphere_and_blend_grips_resize_around_the_centre() {
+        let (mut app, parent) = volume_scene(VolumeShape::Sphere);
+        let Some(RuntimeMessage::Placed {
+            placement, volume, ..
+        }) = grip_drag(&mut app, 630.0, 640.0)
+        else {
+            panic!("expected a placement");
+        };
+        assert!((volume.unwrap().radius - 60.0).abs() < 1e-3);
+        assert_eq!(placement.position, [100.0, 0.0, 0.0]);
+
+        // The blend edge is 20 past the new radius: world 180, screen 660.
+        let Some(RuntimeMessage::Placed { volume, .. }) = grip_drag(&mut app, 660.0, 675.0) else {
+            panic!("expected a placement");
+        };
+        let volume = volume.unwrap();
+        assert!((volume.blend_distance - 35.0).abs() < 1e-3);
+        assert!((volume.radius - 60.0).abs() < 1e-3);
+        assert!(pose_of(&app, &parent).abs_diff_eq(Vec3::new(100.0, 0.0, 0.0), 1e-3));
+    }
+
+    #[test]
+    fn escape_puts_a_grip_drag_back() {
+        let (mut app, parent) = volume_scene(VolumeShape::Box);
+        app.world_mut().non_send_mut::<Engine>().preview_inputs = vec![
+            button(0, true, 630.0, 360.0),
+            PreviewInput::MouseMove {
+                x: 700.0,
+                y: 360.0,
+                w: 960.0,
+                h: 720.0,
+            },
+        ];
+        app.update();
+        app.world_mut().non_send_mut::<Engine>().preview_inputs = vec![PreviewInput::Key {
+            code: "Escape".into(),
+            down: true,
+        }];
+        app.update();
+        let engine = app.world().non_send::<Engine>();
+        let live = engine.actor(&parent).unwrap().components.volume().unwrap();
+        assert_eq!(live.half_extents[0], 50.0);
+        assert!(pose_of(&app, &parent).abs_diff_eq(Vec3::new(100.0, 0.0, 0.0), 1e-3));
     }
 
     #[test]

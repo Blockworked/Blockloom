@@ -48,6 +48,7 @@ pub mod nav;
 pub mod pack;
 pub mod physics_query;
 pub mod pipeline;
+pub mod probe;
 pub mod project;
 pub mod save;
 pub mod scene;

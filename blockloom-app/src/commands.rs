@@ -839,6 +839,13 @@ pub(crate) fn set_lighting(
             } else {
                 1000.0
             },
+            shadows: lighting.shadows.clone().sanitized(),
+            sun_cookie: lighting.sun_cookie.trim().replace('\\', "/"),
+            sun_cookie_size: if lighting.sun_cookie_size.is_finite() {
+                lighting.sun_cookie_size.clamp(0.01, 100_000.0)
+            } else {
+                20.0
+            },
             ..lighting
         };
     }
@@ -935,6 +942,7 @@ pub(crate) fn place_from_view(
     actor_id: &str,
     placement: Placement,
     offset: Option<[f32; 3]>,
+    volume: Option<blockloom_protocol::VolumeBounds>,
 ) {
     if s.running || s.project().and_then(|p| p.actor(actor_id)).is_none() {
         return;
@@ -954,6 +962,16 @@ pub(crate) fn place_from_view(
             actor
                 .components
                 .set_parent_offset(Some(offset.map(|v| tidy(v, 1e-4))));
+        }
+        if let Some(bounds) = volume
+            && let Some(mut spec) = actor.components.volume().cloned()
+        {
+            spec.half_extents = bounds.half_extents.map(|v| tidy(v, 1e-4));
+            spec.radius = tidy(bounds.radius, 1e-4);
+            spec.blend_distance = tidy(bounds.blend_distance, 1e-4);
+            actor
+                .components
+                .insert(ActorComponent::Volume { volume: spec });
         }
     }
     s.selected_actor = Some(actor_id.to_string());
@@ -1577,6 +1595,54 @@ pub(crate) fn capture_exr(state: &SharedState) -> Result<String, String> {
         return Err("The game world has stopped".to_string());
     }
     Ok(path)
+}
+
+/// Asks the world to bake light probes where they stand - `actors`, or every
+/// probe when empty - into `.blockloom/probes`. Answers with how many were
+/// asked for; each bake says so in the run log once it is written.
+pub(crate) fn bake_probes(state: &SharedState, actors: Vec<String>) -> Result<usize, String> {
+    let mut s = lock(state)?;
+    let project = s.project().ok_or("No project is open")?;
+    if !project.world.mode.is_3d() {
+        return Err("Light probes need a 3D world".to_string());
+    }
+    let probes: Vec<String> = project
+        .actors
+        .iter()
+        .filter(|actor| actor.components.probe().is_some())
+        .map(|actor| actor.id.clone())
+        .collect();
+    let wanted: Vec<String> = if actors.is_empty() {
+        probes
+    } else {
+        if let Some(missing) = actors.iter().find(|id| !probes.contains(id)) {
+            return Err(format!("{missing} has no Probe component"));
+        }
+        actors
+    };
+    if wanted.is_empty() {
+        return Err("Nothing carries a Probe component".to_string());
+    }
+    let count = wanted.len();
+    let Some(runtime) = s.runtime.as_mut() else {
+        return Err("Open the Game view to bake probes".to_string());
+    };
+    if !runtime.send(&blockloom_protocol::EditorMessage::BakeProbes { actors: wanted }) {
+        s.runtime = None;
+        return Err("The game world has stopped".to_string());
+    }
+    Ok(count)
+}
+
+/// Every light probe's bake: whether one is on disk, and whether the probe
+/// or the scene it sees has moved on since.
+pub(crate) fn probe_status(
+    state: &SharedState,
+) -> Result<Vec<blockloom_core::probe::ProbeStatus>, String> {
+    let s = lock(state)?;
+    let dir = s.project_dir().ok_or("No project is open")?;
+    let project = s.project().ok_or("No project is open")?;
+    Ok(blockloom_core::probe::statuses(project, dir))
 }
 
 /// Closes the game window without touching the project.

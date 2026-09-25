@@ -137,6 +137,9 @@ pub enum Action {
         volume: Value,
         weight: Value,
     },
+    CaptureProbes,
+    SetShadowDistance(Value),
+    SetLightShadows(bool),
     SetBody(BodyKind),
     ApplyImpulse([Value; 3]),
     SetVelocity([Value; 3]),
@@ -596,6 +599,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
         | Action::SetLightIntensity(value)
         | Action::SetEmissiveStrength(value)
         | Action::SetPeakBrightness(value)
+        | Action::SetShadowDistance(value)
         | Action::Say(value)
         | Action::SetColor(value)
         | Action::StopSound { sound: value }
@@ -855,6 +859,7 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         Action::SetLightIntensity(v) => Action::SetLightIntensity(lift_one(v, ctx)),
         Action::SetEmissiveStrength(v) => Action::SetEmissiveStrength(lift_one(v, ctx)),
         Action::SetPeakBrightness(v) => Action::SetPeakBrightness(lift_one(v, ctx)),
+        Action::SetShadowDistance(v) => Action::SetShadowDistance(lift_one(v, ctx)),
         Action::EnableVolume { volume, enabled } => Action::EnableVolume {
             volume: lift_one(volume, ctx),
             enabled,
@@ -1354,6 +1359,13 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
                 volume: volume.clone(),
                 weight: weight.clone(),
             }))
+        }
+        K::CaptureProbes => steps.push(Step::Action(Action::CaptureProbes)),
+        K::SetShadowDistance { distance } => {
+            steps.push(Step::Action(Action::SetShadowDistance(distance.clone())))
+        }
+        K::SetLightShadows { enabled } => {
+            steps.push(Step::Action(Action::SetLightShadows(*enabled)))
         }
         K::SetBody { body } => steps.push(Step::Action(Action::SetBody(*body))),
         K::ApplyImpulse { x, y, z } => steps.push(Step::Action(Action::ApplyImpulse([

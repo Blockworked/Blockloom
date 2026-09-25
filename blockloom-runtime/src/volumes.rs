@@ -1,6 +1,6 @@
 //! Environment volumes in the world: which ones cover the camera and how
 //! much, handed to `blend_environment` lowest priority first. Also their
-//! debug views - bounds, a heat grid and the frozen lerp.
+//! debug views - bounds and the frozen lerp (the heat map is `volume_heat`).
 
 use crate::bridge;
 use crate::edit::{SceneEditor, editing};
@@ -97,7 +97,7 @@ fn pose_of(transform: &Transform) -> VolumePose {
 }
 
 /// Every switched-on volume in the world, with where it stands.
-fn placed<'a>(
+pub(crate) fn placed<'a>(
     engine: &'a Engine,
     actors: impl Iterator<Item = (&'a ActorId, &'a Transform)>,
 ) -> Vec<(&'a str, VolumeSpec, VolumePose)> {
@@ -279,21 +279,13 @@ fn trace(
 const COLD: Color = Color::srgba(0.45, 0.6, 0.85, 0.5);
 const HOT: Color = Color::srgba(1.0, 0.6, 0.15, 0.9);
 
-/// Heat colour for a coverage in 0-1: blue towards red.
-fn heat(t: f32) -> Color {
-    let t = t.clamp(0.0, 1.0);
-    Color::hsla(240.0 * (1.0 - t), 0.9, 0.55, 0.3 + 0.6 * t)
-}
-
-/// Volume bounds in the scene view, and the heat grid wherever it is on.
-#[allow(clippy::too_many_arguments)]
+/// Volume bounds in the scene view. The heat map is `volume_heat`'s pass.
 pub fn draw_volumes(
     engine: NonSend<Engine>,
     dimension: Res<Dimension>,
     debug: Res<VolumeDebugView>,
     editor: Option<Res<SceneEditor>>,
     blend: Res<VolumeBlend>,
-    cameras: Query<(&Transform, Option<&Projection>), With<WorldCamera>>,
     actors: Query<(&ActorId, &Transform), Without<WorldCamera>>,
     mut gizmos: Gizmos,
 ) {
@@ -309,52 +301,6 @@ pub fn draw_volumes(
                 .map_or(0.0, |v| v.weight);
             let color = COLD.mix(&HOT, weight);
             draw_bounds(&mut gizmos, spec, pose, mode, color);
-        }
-    }
-    if !debug.0.heatmap {
-        return;
-    }
-    let Some((camera, projection)) = cameras.iter().next() else {
-        return;
-    };
-    const CELLS: i32 = 32;
-    let flat = mode == Mode::TwoD;
-    let (cell, centre) = match mode {
-        Mode::TwoD => {
-            let zoom = match projection {
-                Some(Projection::Orthographic(ortho)) => ortho.scale,
-                _ => 1.0,
-            };
-            (24.0 * zoom, camera.translation.with_z(0.0))
-        }
-        // The ground plane under the camera.
-        Mode::ThreeD => (1.0, camera.translation.with_y(0.0)),
-    };
-    let snap = (centre / cell).round() * cell;
-    for i in -CELLS..CELLS {
-        for j in -CELLS..CELLS {
-            let (a, b) = (i as f32 * cell, j as f32 * cell);
-            let at = match mode {
-                Mode::TwoD => snap + Vec3::new(a, b, 0.0),
-                Mode::ThreeD => snap + Vec3::new(a, 0.0, b),
-            };
-            let total: f32 = volumes
-                .iter()
-                .filter(|(_, spec, _)| spec.shape != VolumeShape::Global)
-                .map(|(_, spec, pose)| spec.coverage(pose, at.to_array(), flat) * spec.weight)
-                .sum();
-            if total <= 0.0 {
-                continue;
-            }
-            let rotation = match mode {
-                Mode::TwoD => Quat::IDENTITY,
-                Mode::ThreeD => Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
-            };
-            gizmos.rect(
-                Isometry3d::new(at, rotation),
-                Vec2::splat(cell * 0.8),
-                heat(total),
-            );
         }
     }
 }

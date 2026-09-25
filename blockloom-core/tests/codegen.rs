@@ -296,6 +296,8 @@ impl Host for Recorder {
             | Act::SetExposure { .. }
             | Act::SetHdrOutput { .. }
             | Act::SetPeakBrightness { .. }
+            | Act::CaptureProbes
+            | Act::SetShadowDistance { .. }
             | Act::SetPaused { .. } => String::new(),
             _ => actor.to_string(),
         };
@@ -397,6 +399,15 @@ impl Host for Recorder {
             // ever finds one, and nobody is a trigger - mirroring what the
             // VM reads off the same published snapshot.
             "IsTrigger" => {
+                let name = args[0].as_text();
+                if name == "Player" || name == "Friend" {
+                    Ok(Val::Bool(false))
+                } else {
+                    Err(format!("there's no actor named \"{name}\""))
+                }
+            }
+            // Nobody carries a light either.
+            "CastsShadows" => {
                 let name = args[0].as_text();
                 if name == "Player" || name == "Friend" {
                     Ok(Val::Bool(false))
@@ -967,6 +978,9 @@ fn line_of(act: &Act) -> String {
         Act::SetPeakBrightness { nits } => format!("SetPeakBrightness {nits:?}"),
         Act::EnableVolume { volume, enabled } => format!("SetVolumeEnabled {volume} {enabled}"),
         Act::SetVolumeWeight { volume, weight } => format!("SetVolumeWeight {volume} {weight:?}"),
+        Act::CaptureProbes => "CaptureProbes".to_string(),
+        Act::SetShadowDistance { distance } => format!("SetShadowDistance {distance:?}"),
+        Act::SetLightShadows { enabled } => format!("SetLightShadows {enabled}"),
         Act::Say { text } => format!("Say {text}"),
         Act::SetColor { color } => format!("SetColor {color}"),
         Act::SetVisible { visible } => format!("SetVisible {visible}"),
@@ -1176,6 +1190,11 @@ fn line_of(effect: &Effect) -> Option<String> {
             volume,
             weight,
         } => format!("{actor}|SetVolumeWeight {volume} {weight:?}"),
+        Effect::CaptureProbes => "|CaptureProbes".to_string(),
+        Effect::SetShadowDistance { distance } => format!("|SetShadowDistance {distance:?}"),
+        Effect::SetLightShadows { actor, enabled } => {
+            format!("{actor}|SetLightShadows {enabled}")
+        }
         Effect::Say { actor, text } => format!("{actor}|Say {text}"),
         Effect::SetColor { actor, color } => format!("{actor}|SetColor {color}"),
         Effect::SetVisible { actor, visible } => format!("{actor}|SetVisible {visible}"),
@@ -1705,6 +1724,12 @@ fn arithmetic_lands_on_the_same_numbers() {
                 volume: Value::text("Cave"),
                 weight: Value::text("heavy"),
             },
+            K::CaptureProbes,
+            K::SetShadowDistance {
+                distance: op("Mul", vec![number(20.0), number(2.5)]),
+            },
+            K::SetLightShadows { enabled: false },
+            K::SetLightShadows { enabled: true },
             K::Move {
                 steps: op("Math", vec![Value::text("Sqrt"), number(2.0)]),
             },
@@ -1875,6 +1900,12 @@ fn sensing_reads_the_same_world() {
             },
             K::Say {
                 text: op("ActiveVolumes", vec![]),
+            },
+            K::Say {
+                text: op("CastsShadows", vec![Value::text("Player")]),
+            },
+            K::Say {
+                text: op("CastsShadows", vec![Value::text("Nobody")]),
             },
             K::ChangePosition {
                 axis: Axis::X,

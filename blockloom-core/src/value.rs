@@ -687,6 +687,26 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "CastsShadows",
+        op: "CastsShadows",
+        arity: 1,
+        default_args: || vec![text("")],
+        // Whether an actor carries a light casting shadows right now, after
+        // any `turn my light's shadows` this run. Empty names this actor.
+        eval: |args| {
+            let target = args[0].as_text();
+            if target.trim().is_empty() {
+                return Ok(Evaluated::Bool(me()?.casts_shadows));
+            }
+            sense::read(|sensors| {
+                let actor = sensors
+                    .find(&target)
+                    .ok_or_else(|| format!("there's no actor named \"{target}\""))?;
+                Ok(Evaluated::Bool(actor.casts_shadows))
+            })
+        },
+    },
+    ExtOperator {
         kind: "CollisionLayer",
         op: "CollisionLayer",
         arity: 1,

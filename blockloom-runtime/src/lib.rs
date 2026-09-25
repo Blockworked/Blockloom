@@ -34,6 +34,7 @@ mod environment;
 mod fx;
 mod gpu;
 mod hdr;
+mod light_probes;
 mod lights;
 mod logic;
 mod luminance;
@@ -48,11 +49,13 @@ pub mod player;
 mod preview;
 mod probes;
 mod script;
+mod shadows;
 mod sky;
 mod sound;
 mod streaming;
 mod ui;
 mod ui_systems;
+mod volume_heat;
 mod volumes;
 mod world;
 
@@ -135,6 +138,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     environment::register(app);
     atmosphere::register(app);
     volumes::register(app);
+    volume_heat::register(app);
     streaming::register(app);
     gpu::register(app);
     // Custom shader materials plus the tilemap material. Every dimension
@@ -259,6 +263,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         edit::apply_view,
                         edit::draw,
                         volumes::draw_volumes,
+                        volume_heat::collect_heat,
                     )
                         .chain(),
                     overlay::update_speech_bubbles,
@@ -290,6 +295,8 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             batching::register(app);
             culling::register(app);
             probes::register(app);
+            light_probes::register(app);
+            app.init_resource::<lights::LightMasks>();
             sky::register(app);
             use bevy::camera::visibility::VisibilitySystems;
             app.add_systems(
@@ -371,6 +378,9 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                             hdr::resolve_frame,
                             environment::apply_environment,
                             lights::sync_lights,
+                            shadows::apply_shadows,
+                            light_probes::load_baked,
+                            light_probes::sync_probes,
                         )
                             .chain(),
                         dim3::relay_collisions,
@@ -381,7 +391,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         world::publish_sensors,
                         sound::maintain_voices,
                         world::interpolate_poses,
-                        (world::drive_camera, edit::apply_view, edit::draw, volumes::draw_volumes).chain(),
+                        (world::drive_camera, edit::apply_view, edit::draw, volumes::draw_volumes, volume_heat::collect_heat).chain(),
                         streaming::update_streaming_cells,
                         overlay::update_speech_bubbles,
                         preview::capture_preview_frame,
@@ -406,7 +416,12 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         materials::animate_tiles,
                         model::watch_models,
                         model::pause_rigs,
-                        probes::run_captures,
+                        (
+                            light_probes::start_bakes,
+                            probes::run_captures,
+                            light_probes::collect_bakes,
+                        )
+                            .chain(),
                     )
                         .chain(),
                 );

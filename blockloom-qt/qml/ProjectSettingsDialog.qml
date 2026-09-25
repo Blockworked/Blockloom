@@ -25,6 +25,11 @@ BwDialog {
     function navigationOf() { return Object.assign({ areas: [], links: [] }, world && world.navigation ? world.navigation : {}); }
     function writeNavigation(next) { invoke("set_navigation", { navigation: Object.assign(navigationOf(), next) }); }
     function writeCamera(next) { invoke("set_camera", { camera: Object.assign(JSON.parse(JSON.stringify(world.camera)), next) }); }
+    function shadowsOf() {
+        return Object.assign({ filter: "Gaussian", distance: 150, cascades: 4, first_cascade: 5, cascade_blend: 0.2, normal_bias: 1.8, sun_size: 0, contact: false, contact_length: 0.3, contact_thickness: 0.1 },
+            world && world.lighting ? world.lighting.shadows || {} : {});
+    }
+    function writeShadows(next) { writeLighting({ shadows: Object.assign(shadowsOf(), next) }); }
     function writeLighting(next) { invoke("set_lighting", { lighting: Object.assign(JSON.parse(JSON.stringify(world.lighting)), next) }); }
     function writePost(next) { invoke("set_post_process", { post: Object.assign(postOf(), next) }); }
     function displayOf() { return Object.assign({ space: "Sdr", peak_nits: 1000, paper_white_nits: 200 }, world && world.display ? world.display : {}); }
@@ -128,6 +133,34 @@ BwDialog {
                 InspectorRow { visible: !!root.world && !!root.world.lighting.sky; label: "Sky brightness"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: root.world && root.world.lighting.sky_brightness !== undefined ? root.world.lighting.sky_brightness : 1000; fallback: 1000; onCommitted: n => root.writeLighting({ sky_brightness: root.clamp(n, 0, 100000) }) } }
                 Note { text: "Where the 3D sun shines from (aimed at the origin), and how the scene's ambient light looks. A sky is an .hdr or .exr panorama (2:1) or a strip of six faces; it lights the scene too, at its brightness in nits. Occlusion darkens creases where objects meet but costs GPU time. Shadow detail snaps to a power of two; raise the bias if striped acne appears on lit faces. Applies on the next run of the game." }
+            }
+            Section {
+                heading: "Shadows"; visible: !!root.world && root.is3d
+                InspectorRow { label: "Filter"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: [{ value: "Hardware", label: "Hardware 2x2" }, { value: "Gaussian", label: "Gaussian PCF" }, { value: "Temporal", label: "Temporal" }]
+                        value: root.shadowsOf().filter; onChosen: v => root.writeShadows({ filter: v }) } }
+                InspectorRow { label: "Distance m"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.shadowsOf().distance; fallback: 150; onCommitted: n => root.writeShadows({ distance: root.clamp(n, 1, 10000) }) } }
+                InspectorRow { label: "Cascades"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.shadowsOf().cascades; fallback: 4; onCommitted: n => root.writeShadows({ cascades: root.clamp(Math.round(n), 1, 4) }) } }
+                InspectorRow { label: "First split m"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.shadowsOf().first_cascade; fallback: 5; onCommitted: n => root.writeShadows({ first_cascade: root.clamp(n, 0.1, 10000) }) } }
+                InspectorRow { label: "Cascade blend"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.shadowsOf().cascade_blend; fallback: 0.2; onCommitted: n => root.writeShadows({ cascade_blend: root.clamp(n, 0, 0.5) }) } }
+                InspectorRow { label: "Normal bias"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.shadowsOf().normal_bias; fallback: 1.8; onCommitted: n => root.writeShadows({ normal_bias: root.clamp(n, 0, 10) }) } }
+                InspectorRow { label: "Soft sun °"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.shadowsOf().sun_size; fallback: 0; onCommitted: n => root.writeShadows({ sun_size: root.clamp(n, 0, 10) }) } }
+                InspectorRow { label: "Contact"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: root.shadowsOf().contact; onToggled: on => root.writeShadows({ contact: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: root.shadowsOf().contact; label: "Contact length"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.shadowsOf().contact_length; fallback: 0.3; onCommitted: n => root.writeShadows({ contact_length: root.clamp(n, 0.01, 10) }) }
+                    NumberField { value: root.shadowsOf().contact_thickness; fallback: 0.1; onCommitted: n => root.writeShadows({ contact_thickness: root.clamp(n, 0.001, 2) }) } }
+                InspectorRow { label: "Sun cookie"; labelWidth: 110; Layout.fillWidth: true
+                    AssetField { app: root.app; accept: ["image"]; value: root.world && root.world.lighting.sun_cookie ? root.world.lighting.sun_cookie : ""; placeholderText: "Drag an image here"; onCommitted: p => root.writeLighting({ sun_cookie: p }) } }
+                InspectorRow { visible: !!root.world && !!root.world.lighting.sun_cookie; label: "Cookie tile m"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.world && root.world.lighting.sun_cookie_size !== undefined ? root.world.lighting.sun_cookie_size : 20; fallback: 20; onCommitted: n => root.writeLighting({ sun_cookie_size: root.clamp(n, 0.01, 100000) }) } }
+                Note { text: "Distance is how far from the camera the sun's shadows reach; cascades split it, the first ending at the first split, and blend fades one into the next. Soft sun gives PCSS penumbras as if the sun were that many degrees across (0 keeps them hard; Temporal smooths their noise). Contact shadows raymarch the depth buffer under feet and small clutter; lights opt in on their own card. A sun cookie tiles across the world like cloud shadows." }
             }
             Section {
                 heading: "Post-process"; visible: !!root.world

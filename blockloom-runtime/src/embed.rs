@@ -1337,6 +1337,172 @@ mod tests {
         );
     }
 
+    fn floor_pixel(result: (Option<Arc<SlotSet>>, usize, Vec<RuntimeMessage>)) -> [u8; 3] {
+        let (set, index, errors) = result;
+        assert!(errors.is_empty(), "{errors:?}");
+        let set = set.unwrap_or_else(|| panic!("no frame arrived"));
+        middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize)
+    }
+
+    /// The dark room with one light hung over the middle of the floor,
+    /// pointing straight down.
+    fn room_with(light: blockloom_core::components::LightSpec) -> blockloom_core::project::Project {
+        use blockloom_core::components::ActorComponent;
+        let mut room = dark_room(false);
+        let mut lamp = blockloom_core::project::Actor::new(
+            "Lamp",
+            blockloom_core::scene::Visual::Sphere {
+                color: "#FFFFFF".to_string(),
+                radius: 0.05,
+            },
+        );
+        lamp.components.remove("Look");
+        let place = lamp.components.placement_mut();
+        place.position = [0.0, 2.0, 0.0];
+        // Forward (-Z) turned to face the floor.
+        place.rotation = [-90.0, 0.0, 0.0];
+        lamp.components.insert(ActorComponent::Light { light });
+        room.actors.push(lamp);
+        room
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_rect_light_lights_the_floor_with_the_shadow_rig_on() {
+        use blockloom_core::components::{LightKind, LightSpec};
+        let mut room = room_with(LightSpec {
+            kind: LightKind::Rect,
+            width: 2.0,
+            height: 2.0,
+            intensity: 1_000_000.0,
+            ..LightSpec::default()
+        });
+        // Every shadow option at once, to show none of them trips the GPU.
+        let shadows = &mut room.world.lighting.shadows;
+        shadows.filter = blockloom_core::scene::ShadowFilter::Temporal;
+        shadows.sun_size = 0.5;
+        shadows.contact = true;
+        shadows.cascades = 2;
+        let lit = floor_pixel(run_world(room, |_| {}, game_camera(), 90, |_| false));
+        assert!(
+            lit.iter().all(|c| *c > 120),
+            "expected a lit floor, read {lit:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_spot_shines_through_its_cookie() {
+        use blockloom_core::components::{LightKind, LightSpec};
+        let dir =
+            std::env::temp_dir().join(format!("blockloom-embed-cookie-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        for (name, level) in [("black.png", 0u8), ("white.png", 255u8)] {
+            image::GrayImage::from_pixel(8, 8, image::Luma([level]))
+                .save(dir.join("assets").join(name))
+                .unwrap();
+        }
+        let spot = |cookie: &str| {
+            let project = room_with(LightSpec {
+                kind: LightKind::Spot,
+                intensity: 1_000_000.0,
+                outer_angle: 60.0,
+                cookie: format!("assets/{cookie}"),
+                ..LightSpec::default()
+            });
+            let load = EditorMessage::Load {
+                project: Box::new(project.clone()),
+                dir: Some(dir.to_string_lossy().into_owned()),
+            };
+            floor_pixel(run_world_sending(
+                project,
+                |_| {},
+                game_camera(),
+                90,
+                |_| false,
+                vec![load],
+            ))
+        };
+        let (lit, masked) = (spot("white.png"), spot("black.png"));
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(
+            lit.iter().all(|c| *c > 120),
+            "expected a lit floor, read {lit:?}"
+        );
+        assert!(
+            masked.iter().all(|c| *c < 30),
+            "expected the cookie's shade, read {masked:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_baked_irradiance_probe_lights_the_floor_with_the_sky() {
+        probe_lights_the_floor(blockloom_core::probe::ProbeKind::Irradiance);
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_baked_reflection_probe_lights_the_floor_with_the_sky() {
+        probe_lights_the_floor(blockloom_core::probe::ProbeKind::Reflection);
+    }
+
+    fn probe_lights_the_floor(kind: blockloom_core::probe::ProbeKind) {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::probe::ProbeSpec;
+        let room = |probe: bool| {
+            let mut room = dark_room(false);
+            // No sun and no ambient: only what the probe saw can light it.
+            room.world.background = "#ffffff".to_string();
+            if probe {
+                let mut volume = blockloom_core::project::Actor::new(
+                    "Probe",
+                    blockloom_core::scene::Visual::Sphere {
+                        color: "#FFFFFF".to_string(),
+                        radius: 0.05,
+                    },
+                );
+                volume.components.remove("Look");
+                volume.components.placement_mut().position = [0.0, 1.0, 0.0];
+                volume.components.insert(ActorComponent::Probe {
+                    probe: ProbeSpec {
+                        kind,
+                        size: [30.0, 4.0, 30.0],
+                        grid: [2, 1, 2],
+                        ..ProbeSpec::default()
+                    },
+                });
+                room.actors.push(volume);
+            }
+            room
+        };
+        let bake = EditorMessage::BakeProbes { actors: Vec::new() };
+        let lit = floor_pixel(run_world_sending(
+            room(true),
+            |_| {},
+            game_camera(),
+            150,
+            |_| false,
+            vec![bake.clone()],
+        ));
+        let dark = floor_pixel(run_world_sending(
+            room(false),
+            |_| {},
+            game_camera(),
+            150,
+            |_| false,
+            vec![bake],
+        ));
+        assert!(
+            dark.iter().all(|c| *c < 30),
+            "expected a dark floor, read {dark:?}"
+        );
+        assert!(
+            lit.iter().all(|c| *c > 90),
+            "expected the sky's bounce, read {lit:?}"
+        );
+    }
+
     #[test]
     #[ignore = "needs a GPU"]
     fn an_exr_capture_keeps_the_frame_linear() {
@@ -1405,6 +1571,78 @@ mod tests {
         let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
         let pixel = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
         assert!(is_red(pixel), "expected the volume's red, read {pixel:?}");
+    }
+
+    /// A plain volume (no overrides) at `at`, and the heat map switched on.
+    fn heat_world(mode: Mode, at: [f32; 3]) -> (blockloom_core::project::Project, SceneView) {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::scene::Visual;
+        use blockloom_core::volume::VolumeSpec;
+        let mut world = blockloom_core::project::Project::starter("Heat", mode);
+        world.world.background = "#000000".to_string();
+        if mode == Mode::ThreeD {
+            world.actors.retain(|actor| actor.name == "Ground");
+            world.actors[0].components.set_visual(Visual::Plane {
+                color: "#FFFFFF".to_string(),
+                size: [40.0, 40.0],
+            });
+        } else {
+            world.actors.clear();
+        }
+        let mut volume = blockloom_core::project::Actor::new(
+            "Zone",
+            Visual::Rect {
+                color: "#FFFFFF".to_string(),
+                size: [1.0, 1.0],
+            },
+        );
+        volume.components.remove("Look");
+        volume.components.placement_mut().position = at;
+        volume.components.insert(ActorComponent::Volume {
+            volume: VolumeSpec {
+                half_extents: [30.0, 3.0, 30.0],
+                blend_distance: 0.0,
+                ..VolumeSpec::default()
+            },
+        });
+        world.actors.push(volume);
+        let mut view = game_camera();
+        view.volumes.heatmap = true;
+        (world, view)
+    }
+
+    /// The heat map's full-cover red, over whatever the scene is.
+    fn is_heat([r, g, b]: [u8; 3]) -> bool {
+        r > 150 && r > g.saturating_add(60) && r > b.saturating_add(60)
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn the_heat_map_tints_what_a_volume_covers_in_2d() {
+        let (world, view) = heat_world(Mode::TwoD, [0.0; 3]);
+        let (set, index, errors) = run_world(world, |_| {}, view, 30, is_heat);
+        let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
+        let pixel = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        assert!(is_heat(pixel), "expected heat, read {pixel:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn the_heat_map_follows_the_surface_in_3d() {
+        // Around the floor: the floor under it lights up.
+        let (world, view) = heat_world(Mode::ThreeD, [0.0; 3]);
+        let (set, index, errors) = run_world(world, |_| {}, view, 60, is_heat);
+        let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
+        assert!(errors.is_empty(), "{errors:?}");
+        let pixel = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        assert!(is_heat(pixel), "expected heat on the floor, read {pixel:?}");
+
+        // High above it, the same volume covers none of the floor.
+        let (world, view) = heat_world(Mode::ThreeD, [0.0, 50.0, 0.0]);
+        let (set, index, errors) = run_world(world, |_| {}, view, 60, |_| false);
+        let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
+        let pixel = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        assert!(!is_heat(pixel), "expected a plain floor, read {pixel:?}");
     }
 
     fn red_world(mode: Mode) -> blockloom_core::project::Project {

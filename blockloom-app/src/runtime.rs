@@ -266,8 +266,9 @@ impl Backend {
                 actor,
                 placement,
                 offset,
+                volume,
             } => {
-                crate::commands::place_from_view(&mut s, &actor, placement, offset);
+                crate::commands::place_from_view(&mut s, &actor, placement, offset, volume);
             }
             RuntimeMessage::Fatal { message } => {
                 s.running = false;
