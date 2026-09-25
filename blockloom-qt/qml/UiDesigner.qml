@@ -13,6 +13,8 @@ Item {
     readonly property var kinds: ["Panel","Label","Button","Image","Input","Slider","Toggle","List","VerticalBox","HorizontalBox","Grid","Canvas","WrapBox","SizeBox","Spacer","Progress","RadialProgress","ListView","Tabs","Select","Scrollbar","RichText","Tooltip"]
     property int previewWidth: 960
     property int previewHeight: 720
+    readonly property var safe: document.safe_area || [0,0,0,0]
+    readonly property real designScale: document.scale === "ScaleWithSize" ? Math.max(0.01, Math.min((previewWidth-safe[0]-safe[2])/(document.reference_size || [960,720])[0], (previewHeight-safe[1]-safe[3])/(document.reference_size || [960,720])[1])) : 1
     property real zoom: Math.min((stage.width - 32) / previewWidth, (stage.height - 32) / previewHeight)
     function copy(v) { return JSON.parse(JSON.stringify(v)); }
     function refresh() {
@@ -34,6 +36,13 @@ Item {
         if (!widget) return;
         const next = copy(document); next.widgets[selected][field] = value; save(next);
     }
+    function paint(field, value) {
+        if (!widget) return;
+        const style = copy(widget.style || {});
+        if (!style[styleState.currentText]) style[styleState.currentText] = {};
+        style[styleState.currentText][field] = value;
+        extra("style", style);
+    }
     function add(kind, x, y) {
         const next = copy(document);
         let id = kind.toLowerCase(), n = 1;
@@ -52,7 +61,7 @@ Item {
     function rect(w, depth) {
         if (depth > 40) return {x:0,y:0,w:100,h:40};
         const e=w.element, parent = document.widgets.find(w => w.element.id === e.parent);
-        const p=parent ? rect(parent,depth+1) : {x:0,y:0,w:previewWidth,h:previewHeight};
+        const p=parent ? rect(parent,depth+1) : {x:0,y:0,w:(previewWidth-safe[0]-safe[2])/designScale,h:(previewHeight-safe[1]-safe[3])/designScale};
         let width = e.size && e.size[0] || (parent ? p.w-24 : 180), height=e.size && e.size[1] || 36;
         const l=w.layout || {};
         if(l.width && l.width.Percent !== undefined) width=p.w*l.width.Percent/100;
@@ -94,7 +103,7 @@ Item {
                                 target: null
                                 onActiveChanged: if (!active) {
                                     const p=canvas.mapFromItem(parent,centroid.position.x,centroid.position.y);
-                                    if (p.x>=0 && p.y>=0 && p.x<canvas.width && p.y<canvas.height) root.add(parent.modelData,p.x,p.y);
+                                    if (p.x>=0 && p.y>=0 && p.x<canvas.width && p.y<canvas.height) root.add(parent.modelData,(p.x-root.safe[0])/root.designScale,(p.y-root.safe[1])/root.designScale);
                                 }
                             }
                         }
@@ -137,7 +146,8 @@ Item {
                             required property var modelData
                             required property int index
                             readonly property var bounds: root.rect(modelData,0)
-                            x: bounds.x; y: bounds.y; width: bounds.w; height: bounds.h
+                            property point dragOffset: Qt.point(0,0)
+                            x: root.safe[0]+bounds.x*root.designScale+dragOffset.x; y: root.safe[1]+bounds.y*root.designScale+dragOffset.y; width: bounds.w*root.designScale; height: bounds.h*root.designScale
                             color: ((modelData.style || {}).normal || {}).background || (modelData.element.kind === "Label" ? "transparent" : "#39465a")
                             radius: ((modelData.style || {}).normal || {}).radius || 4
                             border.width: root.selected === index ? 2 : 1
@@ -146,10 +156,13 @@ Item {
                             MouseArea {
                                 anchors.fill: parent
                                 property point start
-                                onPressed: mouse => { root.selected=tile.index; start=Qt.point(mouse.x,mouse.y); }
+                                onPressed: mouse => { root.selected=tile.index; start=mapToItem(canvas,mouse.x,mouse.y); }
+                                onPositionChanged: mouse => { if(pressed) { const at=mapToItem(canvas,mouse.x,mouse.y); tile.dragOffset=Qt.point(at.x-start.x,at.y-start.y); } }
+                                onCanceled: tile.dragOffset=Qt.point(0,0)
                                 onReleased: mouse => {
-                                    const dx=mouse.x-start.x, dy=mouse.y-start.y;
-                                    if(Math.abs(dx)+Math.abs(dy)>2) { const offset=tile.modelData.element.offset || [0,0]; root.change("offset",[Math.round(offset[0]+dx),Math.round(offset[1]+dy)]); }
+                                    const at=mapToItem(canvas,mouse.x,mouse.y), dx=at.x-start.x, dy=at.y-start.y;
+                                    tile.dragOffset=Qt.point(0,0);
+                                    if(Math.abs(dx)+Math.abs(dy)>2) { const offset=tile.modelData.element.offset || [0,0]; root.change("offset",[Math.round(offset[0]+dx/root.designScale),Math.round(offset[1]+dy/root.designScale)]); }
                                 }
                             }
                         }
@@ -181,8 +194,51 @@ Item {
                 CheckBox { text: "Modal"; checked: root.widget ? root.widget.element.modal === true : false; onToggled: root.change("modal",checked) }
                 TextField { Layout.fillWidth: true; placeholderText: "Tooltip"; text: root.widget ? root.widget.tooltip || "" : ""; onEditingFinished: root.extra("tooltip",text) }
                 TextField { Layout.fillWidth: true; placeholderText: "World actor id"; text: root.widget ? root.widget.world_actor || "" : ""; onEditingFinished: root.extra("world_actor",text) }
+                TextField { Layout.fillWidth: true; placeholderText: "Scrollbar target widget id"; text: root.widget ? root.widget.scroll_target || "" : ""; onEditingFinished: root.extra("scroll_target",text) }
+                TextField { Layout.fillWidth: true; placeholderText: "Tab page number (1-based)"; validator: IntValidator { bottom: 1 } text: root.widget ? root.widget.tab_index ?? "" : ""; onEditingFinished: root.extra("tab_index",text ? Number(text) : null) }
                 Label { text: "Items (one per line)" }
                 TextArea { Layout.fillWidth: true; Layout.preferredHeight: 70; text: root.widget ? (root.widget.items || []).join("\n") : ""; onActiveFocusChanged: if(!activeFocus && root.widget) root.extra("items",text ? text.split("\n") : []) }
+                Label { text: "Style"; font.bold: true }
+                ComboBox { id: styleState; Layout.fillWidth: true; model: ["normal","hover","pressed","disabled","focused"] }
+                Repeater {
+                    model: ["background","text_color","border_color","shadow"]
+                    delegate: TextField {
+                        required property string modelData
+                        Layout.fillWidth: true
+                        placeholderText: modelData.replace(/_/g," ") + " (#RRGGBB)"
+                        text: root.widget ? ((root.widget.style || {})[styleState.currentText] || {})[modelData] || "" : ""
+                        onEditingFinished: root.paint(modelData,text || null)
+                    }
+                }
+                Repeater {
+                    model: ["text_size","border_width","radius"]
+                    delegate: RowLayout {
+                        required property string modelData
+                        Label { text: modelData.replace(/_/g," "); Layout.preferredWidth: 100 }
+                        TextField {
+                            Layout.fillWidth: true; validator: DoubleValidator { bottom: 0 }
+                            text: root.widget ? ((root.widget.style || {})[styleState.currentText] || {})[modelData] ?? "" : ""
+                            onEditingFinished: root.paint(modelData,text ? Number(text) : null)
+                        }
+                    }
+                }
+                RowLayout {
+                    Label { text: "Transition (seconds)" }
+                    TextField { Layout.fillWidth: true; validator: DoubleValidator { bottom: 0 }
+                        text: root.widget ? root.widget.transition || 0 : 0
+                        onEditingFinished: root.extra("transition",Number(text)) }
+                }
+                Label { text: "Variable binding"; font.bold: true }
+                ComboBox { id: bindingProperty; Layout.fillWidth: true; model: ["Text","Value","Visible","SelectedIndex"] }
+                TextField { id: bindingActor; Layout.fillWidth: true; placeholderText: "Actor id (blank for global)" }
+                TextField { id: bindingName; Layout.fillWidth: true; placeholderText: "Variable name" }
+                CheckBox { id: bindingWrite; text: "Write input back to variable" }
+                Button { text: "Bind variable"; enabled: !!root.widget && !!bindingName.text; onClicked: {
+                    const bindings=root.copy(root.widget.bindings || []).filter(b=>b.property!==bindingProperty.currentText);
+                    bindings.push({property:bindingProperty.currentText,source:{Variable:{actor:bindingActor.text,name:bindingName.text}},two_way:bindingWrite.checked});
+                    root.extra("bindings",bindings);
+                } }
+                Label { text: "Advanced properties"; font.bold: true }
                 Repeater {
                     model: ["layout","style","bindings"]
                     delegate: ColumnLayout {
@@ -193,13 +249,18 @@ Item {
                             onActiveFocusChanged: if(!activeFocus && root.widget) { try { root.extra(modelData,JSON.parse(text)); } catch(e) { root.error=String(e); } } }
                     }
                 }
+                Label { text: "Interface assets"; font.bold: true }
+                TextField { id: assetName; Layout.fillWidth: true; placeholderText: "menu.json" }
+                Button { text: "Save as asset"; enabled: !!assetName.text; onClicked: root.app.invoke("save_interface_asset",{name:assetName.text},function(){root.error="";},function(e){root.error=String(e);}) }
+                TextField { id: assetPath; Layout.fillWidth: true; placeholderText: "assets/ui/menu.json" }
+                Button { text: "Load interface asset"; enabled: !!assetPath.text; onClicked: root.app.invoke("load_interface_asset",{path:assetPath.text},function(){root.error="";},function(e){root.error=String(e);}) }
                 Label { text: "Reusable menus"; font.bold: true }
                 TextField { id: prefabName; Layout.fillWidth: true; placeholderText: "Prefab name" }
                 Button { text: "Save interface as prefab"; enabled: !!prefabName.text; onClicked: { const d=root.copy(root.document); if(!d.prefabs)d.prefabs={}; d.prefabs[prefabName.text]=root.copy(d.widgets); root.save(d); } }
                 ComboBox { id: prefab; Layout.fillWidth: true; model: Object.keys(root.document.prefabs || {}) }
                 Button { text: "Insert prefab"; enabled: prefab.currentIndex>=0; onClicked: {
                     const d=root.copy(root.document), prefix="copy"+Date.now()+"_";
-                    const widgets=root.copy(d.prefabs[prefab.currentText]); widgets.forEach(w=>{w.element.id=prefix+w.element.id;if(w.element.parent)w.element.parent=prefix+w.element.parent;});
+                    const widgets=root.copy(d.prefabs[prefab.currentText]); const ids=widgets.map(w=>w.element.id); widgets.forEach(w=>{if(ids.indexOf(w.scroll_target)>=0)w.scroll_target=prefix+w.scroll_target;w.element.id=prefix+w.element.id;if(w.element.parent)w.element.parent=prefix+w.element.parent;});
                     d.widgets=d.widgets.concat(widgets);root.save(d);
                 } }
             }

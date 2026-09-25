@@ -140,6 +140,9 @@ pub enum Action {
     CaptureProbes,
     SetShadowDistance(Value),
     SetLightShadows(bool),
+    SetRayTracing(bool),
+    SetGiBounces(Value),
+    SetGiSamples(Value),
     SetBody(BodyKind),
     ApplyImpulse([Value; 3]),
     SetVelocity([Value; 3]),
@@ -600,6 +603,8 @@ fn action_values(action: &Action) -> Vec<&Value> {
         | Action::SetEmissiveStrength(value)
         | Action::SetPeakBrightness(value)
         | Action::SetShadowDistance(value)
+        | Action::SetGiBounces(value)
+        | Action::SetGiSamples(value)
         | Action::Say(value)
         | Action::SetColor(value)
         | Action::StopSound { sound: value }
@@ -860,6 +865,8 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         Action::SetEmissiveStrength(v) => Action::SetEmissiveStrength(lift_one(v, ctx)),
         Action::SetPeakBrightness(v) => Action::SetPeakBrightness(lift_one(v, ctx)),
         Action::SetShadowDistance(v) => Action::SetShadowDistance(lift_one(v, ctx)),
+        Action::SetGiBounces(v) => Action::SetGiBounces(lift_one(v, ctx)),
+        Action::SetGiSamples(v) => Action::SetGiSamples(lift_one(v, ctx)),
         Action::EnableVolume { volume, enabled } => Action::EnableVolume {
             volume: lift_one(volume, ctx),
             enabled,
@@ -1366,6 +1373,13 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         }
         K::SetLightShadows { enabled } => {
             steps.push(Step::Action(Action::SetLightShadows(*enabled)))
+        }
+        K::SetRayTracing { enabled } => steps.push(Step::Action(Action::SetRayTracing(*enabled))),
+        K::SetGiBounces { bounces } => {
+            steps.push(Step::Action(Action::SetGiBounces(bounces.clone())))
+        }
+        K::SetGiSamples { samples } => {
+            steps.push(Step::Action(Action::SetGiSamples(samples.clone())))
         }
         K::SetBody { body } => steps.push(Step::Action(Action::SetBody(*body))),
         K::ApplyImpulse { x, y, z } => steps.push(Step::Action(Action::ApplyImpulse([

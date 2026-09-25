@@ -957,6 +957,56 @@ impl Actor {
         );
     }
 
+    /// Ray-traced lighting on or off for the rest of the run, where the GPU
+    /// can trace rays.
+    pub fn set_ray_tracing(&self, enabled: bool) {
+        self.act(
+            ACT_SET_RAY_TRACING,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            if enabled { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Most bounces a traced light path takes, for the rest of the run.
+    pub fn set_gi_bounces(&self, bounces: u32) {
+        self.act(
+            ACT_SET_GI_BOUNCES,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            bounces as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Light samples per pixel when tracing, for the rest of the run.
+    pub fn set_gi_samples(&self, samples: u32) {
+        self.act(
+            ACT_SET_GI_SAMPLES,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            samples as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Whether the world is lit by ray tracing right now, as of this tick.
+    pub fn ray_tracing_on(&self) -> bool {
+        self.atmosphere("ray tracing").unwrap_or(0.0) != 0.0
+    }
+
+    /// Whether this GPU and build can trace rays at all.
+    pub fn ray_tracing_available(&self) -> bool {
+        self.atmosphere("ray tracing available").unwrap_or(0.0) != 0.0
+    }
+
     /// Whether an actor carries a light casting shadows. Empty names this one.
     pub fn casts_shadows(&self, actor: &str) -> bool {
         self.number(READ_CASTS_SHADOWS, Str::borrow(actor), Str::EMPTY, 0.0)

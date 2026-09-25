@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 21;
+pub const ABI_VERSION: u32 = 22;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -317,6 +317,13 @@ pub const ACT_CAPTURE_PROBES: u32 = 63;
 pub const ACT_SET_SHADOW_DISTANCE: u32 = 64;
 /// `n0` != 0 turns this actor's light's shadows on.
 pub const ACT_SET_LIGHT_SHADOWS: u32 = 65;
+/// `n0` != 0 turns ray-traced lighting on where the GPU can trace rays.
+/// Window-global.
+pub const ACT_SET_RAY_TRACING: u32 = 66;
+/// `n0` = most bounces a traced light path takes. Window-global.
+pub const ACT_SET_GI_BOUNCES: u32 = 67;
+/// `n0` = light samples per pixel when tracing. Window-global.
+pub const ACT_SET_GI_SAMPLES: u32 = 68;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

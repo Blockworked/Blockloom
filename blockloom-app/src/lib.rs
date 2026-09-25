@@ -100,6 +100,7 @@ impl Backend {
             preview_headless: false,
             preview_port: None,
             pointer_locked: false,
+            ray_tracing: None,
             embedded,
             scene_view: Default::default(),
         };

@@ -52,6 +52,12 @@ wgpu = "30"
 bevy = { workspace = true, features = ["raw_vulkan_init"] }
 ash = "0.38"
 
+[features]
+default = ["ray_tracing"]
+# Solari's ray-traced lighting and reference path tracer. Experimental
+# upstream, so a build can leave it out; the raster rig is the fallback.
+ray_tracing = ["bevy/bevy_solari"]
+
 [dev-dependencies]
 naga.workspace = true
 

@@ -1,8 +1,20 @@
 import bevy_pbr::render::{
-    forward_io::{VertexOutput, FragmentOutput},
     mesh_functions::get_tag,
     pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
+    pbr_functions::alpha_discard,
+};
+
+// The forward pass lights the surface itself; the deferred one (while ray
+// tracing lights the G-buffer) only writes it.
+@if(PREPASS_PIPELINE)
+import bevy_pbr::{
+    prepass::io::{VertexOutput, FragmentOutput},
+    deferred::functions::deferred_output,
+};
+@else
+import bevy_pbr::render::{
+    forward_io::{VertexOutput, FragmentOutput},
+    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
 };
 
 // One record per actor, indexed by its MeshTag. Slot 0 is the identity that
@@ -30,7 +42,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var pbr = pbr_input_from_standard_material(local, is_front);
     pbr.material.base_color *= data.tint;
     pbr.material.base_color = alpha_discard(pbr.material.flags, pbr.material.alpha_cutoff, pbr.material.base_color);
-    var out: FragmentOutput;
-    out.color = main_pass_post_lighting_processing(pbr, apply_pbr_lighting(pbr));
-    return out;
+    @if(PREPASS_PIPELINE) {
+        return deferred_output(in, pbr);
+    }
+    @if(!PREPASS_PIPELINE) {
+        var out: FragmentOutput;
+        out.color = main_pass_post_lighting_processing(pbr, apply_pbr_lighting(pbr));
+        return out;
+    }
 }

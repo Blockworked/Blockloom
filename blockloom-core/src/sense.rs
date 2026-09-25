@@ -201,6 +201,10 @@ pub struct AtmosphereSense {
     pub hdr_display: bool,
     /// The peak brightness the HDR tone curve aims at, in nits.
     pub peak_brightness: f32,
+    /// Whether the world camera is lit by ray tracing right now.
+    pub ray_tracing: bool,
+    /// Whether this GPU and build can trace rays at all.
+    pub ray_tracing_available: bool,
     /// Names of the environment volumes showing at the camera, lowest
     /// priority first. What `active volumes` reports.
     pub volumes: Vec<String>,
@@ -228,6 +232,8 @@ impl Default for AtmosphereSense {
             luminance: 0.0,
             hdr_display: false,
             peak_brightness: 1000.0,
+            ray_tracing: false,
+            ray_tracing_available: false,
             volumes: Vec::new(),
         }
     }
@@ -255,6 +261,8 @@ pub const ATMOSPHERE_FIELDS: &[&str] = &[
     "luminance",
     "hdr",
     "peak brightness",
+    "ray tracing",
+    "ray tracing available",
 ];
 
 impl AtmosphereSense {
@@ -292,6 +300,8 @@ impl AtmosphereSense {
                 }
             }
             "peakbrightness" | "peak" => self.peak_brightness,
+            "raytracing" | "rt" => f32::from(u8::from(self.ray_tracing)),
+            "raytracingavailable" => f32::from(u8::from(self.ray_tracing_available)),
             _ => return None,
         };
         Some(value as f64)

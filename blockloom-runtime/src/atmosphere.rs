@@ -10,6 +10,7 @@ use crate::engine::Engine;
 use crate::environment::Environment;
 use crate::hdr::HdrFrame;
 use crate::luminance::SceneLuminance;
+use crate::ray_tracing::RayTracingState;
 use crate::volumes::VolumeBlend;
 use bevy::prelude::*;
 use blockloom_core::sense::{self, ATMOSPHERE_VERSION, AtmosphereSense};
@@ -66,6 +67,7 @@ pub fn sample_atmosphere(
     sources: Res<AtmosphereSources>,
     display: Display,
     volumes: Option<Res<VolumeBlend>>,
+    tracing: Option<Res<RayTracingState>>,
     mut atmosphere: ResMut<Atmosphere>,
 ) {
     let tick = if !engine.running {
@@ -77,6 +79,10 @@ pub fn sample_atmosphere(
     };
     atmosphere.0 = sample(tick, &environment, &sources, &display.reading(&environment));
     atmosphere.0.volumes = volumes.map(|v| v.names()).unwrap_or_default();
+    if let Some(tracing) = tracing {
+        atmosphere.0.ray_tracing = tracing.active;
+        atmosphere.0.ray_tracing_available = tracing.available;
+    }
     sense::publish_atmosphere(atmosphere.0.clone());
 }
 
@@ -142,6 +148,8 @@ fn sample(
         luminance: display.luminance,
         hdr_display: display.hdr,
         peak_brightness: display.peak,
+        ray_tracing: false,
+        ray_tracing_available: false,
         volumes: Vec::new(),
     }
 }

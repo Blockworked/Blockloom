@@ -1337,6 +1337,15 @@ impl Vm {
                 actor: owner,
                 enabled: *enabled,
             }),
+            Action::SetRayTracing(enabled) => out.push(Effect::SetRayTracing { enabled: *enabled }),
+            Action::SetGiBounces(bounces) => {
+                let bounces = self.eval_f32(bounces, actor, params, temps, out);
+                out.push(Effect::SetGiBounces { bounces });
+            }
+            Action::SetGiSamples(samples) => {
+                let samples = self.eval_f32(samples, actor, params, temps, out);
+                out.push(Effect::SetGiSamples { samples });
+            }
             Action::SetBody(body) => out.push(Effect::SetBody {
                 actor: owner,
                 body: *body,

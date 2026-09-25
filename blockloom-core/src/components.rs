@@ -167,6 +167,14 @@ pub struct LightSpec {
     pub shadow_depth_bias: Option<f32>,
     #[serde(default)]
     pub shadow_normal_bias: Option<f32>,
+    /// Whether ray-traced lighting traces this light. Off leaves it out of
+    /// the traced world, lighting only what the raster rig still draws.
+    #[serde(default = "default_true")]
+    pub ray_traced: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_area_side() -> f32 {
@@ -218,6 +226,7 @@ impl Default for LightSpec {
             soft_shadows: false,
             shadow_depth_bias: None,
             shadow_normal_bias: None,
+            ray_traced: true,
         }
     }
 }

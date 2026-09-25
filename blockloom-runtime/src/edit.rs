@@ -1418,23 +1418,32 @@ pub fn apply_view(
     let px_scale = ui_scale.0.max(0.25);
     store.config_mut::<HandleGizmos>().0.line.width = 2.5 * px_scale;
     store.config_mut::<DefaultGizmoConfigGroup>().0.line.width = 1.5 * px_scale;
+    // Written only when it moves: the path tracer starts over on any change.
     for (mut transform, mut projection) in &mut cameras {
+        let mut next = *transform;
         match dimension.0 {
             Mode::ThreeD => {
-                transform.translation = editor.fly.position;
-                transform.rotation = editor.fly.rotation();
-                if let Projection::Perspective(perspective) = projection.as_mut() {
+                next.translation = editor.fly.position;
+                next.rotation = editor.fly.rotation();
+                if let Projection::Perspective(perspective) = projection.as_ref()
+                    && perspective.fov != FOV.to_radians()
+                    && let Projection::Perspective(perspective) = projection.as_mut()
+                {
                     perspective.fov = FOV.to_radians();
                 }
             }
             Mode::TwoD => {
-                transform.translation.x = editor.flat.center.x;
-                transform.translation.y = editor.flat.center.y;
-                if let Projection::Orthographic(ortho) = projection.as_mut() {
+                next.translation.x = editor.flat.center.x;
+                next.translation.y = editor.flat.center.y;
+                if let Projection::Orthographic(ortho) = projection.as_ref()
+                    && ortho.scale != 1.0 / editor.flat.zoom
+                    && let Projection::Orthographic(ortho) = projection.as_mut()
+                {
                     ortho.scale = 1.0 / editor.flat.zoom;
                 }
             }
         }
+        transform.set_if_neq(next);
     }
 }
 

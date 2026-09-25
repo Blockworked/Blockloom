@@ -52,13 +52,23 @@ pub struct InstanceData {
 
 impl MaterialExtension for InstanceData {
     fn fragment_shader() -> ShaderRef {
-        ShaderRef::Path(
-            bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!(
-                "shaders/instanced_pbr.wesl"
-            ))
-            .with_source("embedded"),
-        )
+        instanced_shader()
     }
+
+    // The same file writes the G-buffer when ray tracing has surfaces go
+    // deferred, so tint and UVs reach what Solari lights.
+    fn deferred_fragment_shader() -> ShaderRef {
+        instanced_shader()
+    }
+}
+
+fn instanced_shader() -> ShaderRef {
+    ShaderRef::Path(
+        bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!(
+            "shaders/instanced_pbr.wesl"
+        ))
+        .with_source("embedded"),
+    )
 }
 
 /// One actor's slot in the instance buffer. The layout is fixed whatever the
@@ -95,6 +105,14 @@ impl InstanceRecord {
                 ..Self::IDENTITY
             },
         }
+    }
+
+    /// The same UV transform as a standard material's, for a surface drawn
+    /// without the instance buffer.
+    pub fn uv_transform(&self) -> bevy::math::Affine2 {
+        bevy::math::Affine2::from_translation(self.uv.zw())
+            * bevy::math::Affine2::from_angle(self.options.x)
+            * bevy::math::Affine2::from_scale(self.uv.xy())
     }
 
     /// The shader's UV transform, for baking into a merged mesh.
@@ -168,6 +186,11 @@ impl InstanceTable {
         };
         self.set(slot, record);
         slot
+    }
+
+    /// What a slot holds right now.
+    pub fn record(&self, slot: u32) -> Option<InstanceRecord> {
+        self.records.get(slot as usize).copied()
     }
 
     pub fn set(&mut self, slot: u32, record: InstanceRecord) {

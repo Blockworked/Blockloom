@@ -38,7 +38,7 @@ Rectangle {
     function materialOf(c) { return Object.assign({ metallic: 0, roughness: 0.6, emissive: "#000000", emissive_energy: 0, albedo_texture: "", normal_texture: "", roughness_texture: "", tiling: [1, 1], offset: [0, 0], rotation: 0, sampler: "Clamp", anisotropy: 0, box_projection: false, texel_density: 1, double_sided: false, shader: null }, c.material || {}); }
     function emitterOf(c) { return Object.assign({ rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: "#FFFFFF", color_end: "#FFAB19", max: 128 }, c.emitter || {}); }
     function lightOf(c) { return Object.assign({ kind: "Point", color: "#FFFFFF", intensity: 800, range: 20, radius: 0, inner_angle: 30, outer_angle: 45, shadows: false,
-        unit: "Lumens", width: 1, height: 1, cookie: "", cookie_tiling: 1, ies: "", contact_shadows: false, soft_shadows: false, shadow_depth_bias: null, shadow_normal_bias: null }, c.light || {}); }
+        unit: "Lumens", width: 1, height: 1, cookie: "", cookie_tiling: 1, ies: "", contact_shadows: false, soft_shadows: false, shadow_depth_bias: null, shadow_normal_bias: null, ray_traced: true }, c.light || {}); }
     function probeOf(c) { return Object.assign({ kind: "Reflection", size: [10, 5, 10], falloff: 0.2, resolution: 256, grid: [4, 3, 4], intensity: 1, box_projection: true, auto_bake: true }, c.probe || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
@@ -753,6 +753,8 @@ Rectangle {
                 NumberField { value: li.l.shadow_normal_bias !== null ? li.l.shadow_normal_bias : (li.l.kind === "Spot" ? 1.8 : 0.6); fallback: 0.6; onCommitted: n => root.writeLight(li.c, { shadow_normal_bias: Math.max(0, n) }) } }
             InspectorRow { visible: !li.area; label: "Contact"; Layout.fillWidth: true
                 SwitchField { value: li.l.contact_shadows; onToggled: on => root.writeLight(li.c, { contact_shadows: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Traced"; Layout.fillWidth: true
+                SwitchField { value: li.l.ray_traced; onToggled: on => root.writeLight(li.c, { ray_traced: on }) } Item { Layout.fillWidth: true } }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: !root.is3d ? "Lights need a 3D world; in 2D this rests."
                     : li.area ? "An area light glows from a " + (li.l.kind === "Disk" ? "disc" : "rectangle") + " facing the actor's forward axis, with soft LTC highlights. It casts no shadow maps."

@@ -840,6 +840,7 @@ pub(crate) fn set_lighting(
                 1000.0
             },
             shadows: lighting.shadows.clone().sanitized(),
+            ray_tracing: lighting.ray_tracing.clone().sanitized(),
             sun_cookie: lighting.sun_cookie.trim().replace('\\', "/"),
             sun_cookie_size: if lighting.sun_cookie_size.is_finite() {
                 lighting.sun_cookie_size.clamp(0.01, 100_000.0)

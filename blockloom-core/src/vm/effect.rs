@@ -149,6 +149,18 @@ pub enum Effect {
         actor: String,
         enabled: bool,
     },
+    /// Ray-traced lighting on or off for the rest of the run. World-global.
+    SetRayTracing {
+        enabled: bool,
+    },
+    /// Most bounces a traced light path takes, for the rest of the run.
+    SetGiBounces {
+        bounces: f32,
+    },
+    /// Light samples per pixel when tracing, for the rest of the run.
+    SetGiSamples {
+        samples: f32,
+    },
     SetBody {
         actor: String,
         body: BodyKind,

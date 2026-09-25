@@ -653,6 +653,24 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "IsRayTracing",
+        op: "IsRayTracing",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| Ok(Evaluated::Bool(sense::read(|s| s.atmosphere.ray_tracing))),
+    },
+    ExtOperator {
+        kind: "RayTracingAvailable",
+        op: "RayTracingAvailable",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| {
+            Ok(Evaluated::Bool(sense::read(|s| {
+                s.atmosphere.ray_tracing_available
+            })))
+        },
+    },
+    ExtOperator {
         kind: "ActiveVolumes",
         op: "ActiveVolumes",
         arity: 0,

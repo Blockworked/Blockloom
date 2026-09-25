@@ -186,6 +186,9 @@ pub struct UiWidget {
     pub items: Vec<String>,
     pub tooltip: String,
     pub world_actor: String,
+    pub scroll_target: String,
+    pub tab_index: Option<usize>,
+    pub transition: f32,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum UiScale {
@@ -313,7 +316,11 @@ impl UiDocument {
             .get(name)
             .ok_or_else(|| format!("No UI prefab named {name}"))?
             .clone();
+        let ids: HashSet<String> = widgets.iter().map(|w| w.element.id.clone()).collect();
         for w in &mut widgets {
+            if ids.contains(&w.scroll_target) {
+                w.scroll_target = format!("{prefix}{}", w.scroll_target);
+            }
             w.element.id = format!("{prefix}{}", w.element.id);
             w.element.parent = if w.element.parent.is_empty() {
                 parent.into()
@@ -359,6 +366,51 @@ mod tests {
         assert!(d.validate().is_ok());
     }
     #[test]
+    fn prefabs_repoint_internal_scroll_targets_and_roundtrip() {
+        let mut document = UiDocument::default();
+        document.prefabs.insert(
+            "inventory".into(),
+            vec![
+                UiWidget {
+                    element: UiElement {
+                        id: "list".into(),
+                        kind: UiKind::ListView,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                UiWidget {
+                    element: UiElement {
+                        id: "bar".into(),
+                        kind: UiKind::Scrollbar,
+                        ..Default::default()
+                    },
+                    scroll_target: "list".into(),
+                    ..Default::default()
+                },
+            ],
+        );
+        document.widgets = document.instantiate("inventory", "copy_", "").unwrap();
+        assert_eq!(document.widgets[1].scroll_target, "copy_list");
+        document.validate().unwrap();
+        let json = serde_json::to_string(&document).unwrap();
+        assert_eq!(serde_json::from_str::<UiDocument>(&json).unwrap(), document);
+    }
+
+    #[test]
+    fn rich_text_preserves_nested_styles_and_unknown_tags() {
+        let runs = rich_text("[b]A[b]B[/b]C[/b][i]D[/i][color=#ff0000]E[/color][unknown]");
+        assert_eq!(
+            runs.iter().map(|r| r.text.as_str()).collect::<String>(),
+            "ABCDE[unknown]"
+        );
+        assert!(runs[..3].iter().all(|r| r.bold));
+        assert!(runs[3].italic);
+        assert_eq!(runs[4].color.as_deref(), Some("#ff0000"));
+        assert!(!runs[5].bold);
+    }
+
+    #[test]
     fn virtual_rows_stay_bounded_for_large_inventories() {
         assert_eq!(visible_rows(100000, 32000., 320., 32.), 999..1011);
         assert_eq!(visible_rows(0, 0., 320., 32.), 0..0);
@@ -394,28 +446,28 @@ pub struct UiTextRun {
 /// Small, literal-safe markup: [b], [i], [color=#rrggbb] and closing tags.
 pub fn rich_text(text: &str) -> Vec<UiTextRun> {
     let mut result = Vec::new();
-    let mut bold = false;
-    let mut italic = false;
+    let mut bold = 0usize;
+    let mut italic = 0usize;
     let mut colors = Vec::new();
     let mut rest = text;
     while !rest.is_empty() {
         if rest.starts_with("[b]") {
-            bold = true;
+            bold += 1;
             rest = &rest[3..];
             continue;
         }
         if rest.starts_with("[/b]") {
-            bold = false;
+            bold = bold.saturating_sub(1);
             rest = &rest[4..];
             continue;
         }
         if rest.starts_with("[i]") {
-            italic = true;
+            italic += 1;
             rest = &rest[3..];
             continue;
         }
         if rest.starts_with("[/i]") {
-            italic = false;
+            italic = italic.saturating_sub(1);
             rest = &rest[4..];
             continue;
         }
@@ -442,8 +494,8 @@ pub fn rich_text(text: &str) -> Vec<UiTextRun> {
             .map_or(rest.len(), |(i, _)| i);
         result.push(UiTextRun {
             text: rest[..len].into(),
-            bold,
-            italic,
+            bold: bold > 0,
+            italic: italic > 0,
             color: colors.last().cloned(),
         });
         rest = &rest[len..];

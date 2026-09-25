@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 14;
+pub const PROTOCOL_VERSION: u32 = 15;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -186,6 +186,27 @@ pub enum RuntimeMessage {
         #[serde(default)]
         volume: Option<VolumeBounds>,
     },
+    /// What ray tracing can do and is doing, whenever that changes, and a
+    /// few times a second while the path tracer converges.
+    RayTracing(RayTracingStatus),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RayTracingStatus {
+    /// Whether this GPU and build can trace rays.
+    pub available: bool,
+    /// Why not, when not.
+    pub reason: String,
+    /// Realtime ray-traced lighting is on the world camera.
+    pub active: bool,
+    /// The reference path tracer is drawing the view.
+    pub path_tracing: bool,
+    /// Samples per pixel since the path tracer's image last started over.
+    pub samples: u32,
+    pub seconds: f32,
+    /// The path tracer met its sample or time budget.
+    pub converged: bool,
 }
 
 /// A volume's size as its scene view handles left it, before the actor's
@@ -248,6 +269,30 @@ pub struct SceneView {
     /// Applies while a game runs too, since exposure is judged in play.
     pub debug_view: DebugView,
     pub volumes: VolumeDebug,
+    pub path_tracer: PathTracerView,
+}
+
+/// The reference path tracer in place of the lit image, for checking a
+/// scene's lighting against ground truth. Not for gameplay.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PathTracerView {
+    pub enabled: bool,
+    /// Samples per pixel that count as converged. The image keeps refining
+    /// past it; an EXR capture waits for it.
+    pub samples: u32,
+    /// Seconds that count as converged too; 0 for no limit.
+    pub seconds: f32,
+}
+
+impl Default for PathTracerView {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            samples: 256,
+            seconds: 60.0,
+        }
+    }
 }
 
 /// The environment volumes' debug views.
@@ -287,6 +332,7 @@ impl Default for SceneView {
             show_grid: true,
             debug_view: DebugView::Lit,
             volumes: VolumeDebug::default(),
+            path_tracer: PathTracerView::default(),
         }
     }
 }

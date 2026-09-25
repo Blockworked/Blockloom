@@ -49,6 +49,7 @@ mod performance;
 pub mod player;
 mod preview;
 mod probes;
+mod ray_tracing;
 mod script;
 mod shadows;
 mod sky;
@@ -150,6 +151,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     hdr::register(app);
     luminance::register(app);
     capture::register(app);
+    ray_tracing::register(app, mode);
     edit::configure(app);
     // Both of these only exist to talk to an editor, and a built game has
     // none: no corner status, no handshake.
@@ -320,6 +322,16 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         .before(VisibilitySystems::MarkNewlyHiddenEntitiesInvisible),
                 ),
             );
+            #[cfg(feature = "ray_tracing")]
+            app.add_systems(
+                PostUpdate,
+                (
+                    ray_tracing::sync_traced_scene,
+                    ray_tracing::drive_path_tracer,
+                )
+                    .chain()
+                    .after(bevy::transform::TransformSystems::Propagate),
+            );
             app.insert_resource(bevy_rapier3d::prelude::TimestepMode::Fixed {
                 dt: 1.0 / 60.0,
                 substeps: 1,
@@ -350,7 +362,12 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     )
                         .chain(),
                         dim3::apply_effects,
-                        (world::apply_component_effects, lights::apply_light_effects).chain(),
+                        (
+                            world::apply_component_effects,
+                            lights::apply_light_effects,
+                            ray_tracing::apply_ray_tracing_effects,
+                        )
+                            .chain(),
                         dim3::sync_joints,
                         fx::apply_fx_effects,
                         sound::apply_sound_effects,
@@ -384,6 +401,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                             environment::apply_environment,
                             lights::sync_lights,
                             shadows::apply_shadows,
+                            ray_tracing::apply_ray_tracing,
                             light_probes::load_baked,
                             light_probes::sync_probes,
                         )
@@ -401,7 +419,11 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         overlay::update_speech_bubbles,
                         preview::capture_preview_frame,
                         world::report_status.run_if(bridge::editor_attached),
-                        overlay::update_status.run_if(bridge::editor_attached),
+                        (
+                            overlay::update_status,
+                            ray_tracing::report_ray_tracing,
+                        )
+                            .run_if(bridge::editor_attached),
                     )
                         .chain(),
                 )

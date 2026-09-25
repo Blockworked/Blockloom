@@ -14,7 +14,8 @@ pub fn bindings(
     customs: Query<&CustomComponents>,
     mut effects: ResMut<PendingEffects>,
 ) {
-    for (binding, value) in std::mem::take(&mut manager.binding_writes) {
+    let pending = std::mem::take(&mut manager.binding_writes);
+    for (binding, value) in pending.iter().cloned() {
         match binding.source {
             UiSource::Variable { actor, name } => engine.variables.write(&actor, &name, value),
             UiSource::Component {
@@ -35,20 +36,25 @@ pub fn bindings(
             continue;
         };
         for binding in &n.bindings {
-            let value = match &binding.source {
-                UiSource::Variable { actor, name } => Some(engine.variables.read(actor, name)),
-                UiSource::Component {
-                    actor,
-                    component,
-                    field,
-                } => engine
-                    .entities
-                    .get(actor)
-                    .and_then(|entity| customs.get(*entity).ok())
-                    .and_then(|c| c.0.get(component))
-                    .and_then(|fields| fields.get(field))
-                    .cloned(),
-            };
+            let value = pending
+                .iter()
+                .rev()
+                .find(|(b, _)| b.source == binding.source)
+                .map(|(_, value)| value.clone())
+                .or_else(|| match &binding.source {
+                    UiSource::Variable { actor, name } => Some(engine.variables.read(actor, name)),
+                    UiSource::Component {
+                        actor,
+                        component,
+                        field,
+                    } => engine
+                        .entities
+                        .get(actor)
+                        .and_then(|entity| customs.get(*entity).ok())
+                        .and_then(|c| c.0.get(component))
+                        .and_then(|fields| fields.get(field))
+                        .cloned(),
+                });
             if let Some(value) = value {
                 let value = binding.converter.read(value);
                 let same = match binding.property {
@@ -75,6 +81,36 @@ pub fn collections(
     mut manager: ResMut<UiManager>,
     mut scrolls: Query<(&mut ScrollPosition, &ComputedNode)>,
 ) {
+    for id in manager.ids().to_vec() {
+        let node = manager.get(&id).unwrap();
+        if let Some(index) = node.tab_index {
+            let active = manager.get(&node.parent).is_some_and(|parent| {
+                parent.kind == UiKind::Tabs && parent.value.as_number() == Ok(index as f64)
+            });
+            let node = manager.get_mut(&id).unwrap();
+            if node.tab_active != active {
+                node.tab_active = active;
+                node.dirty = true;
+            }
+        }
+        let target = manager.get(&id).unwrap().scroll_target.clone();
+        if let Some(owner) = manager.get(&target) {
+            let height = owner.layout.as_ref().map_or(32., |l| l.row_height);
+            let viewport = scrolls
+                .get(owner.entity)
+                .map_or(owner.spec.size[1].max(240.), |(_, n)| {
+                    n.size().y * n.inverse_scale_factor()
+                });
+            let range = [0., (owner.items.len() as f32 * height - viewport).max(0.)];
+            let value = Evaluated::Number(owner.scroll.clamp(0., range[1]) as f64);
+            let node = manager.get_mut(&id).unwrap();
+            if node.range != range || node.value != value {
+                node.range = range;
+                node.value = value;
+                node.dirty = true;
+            }
+        }
+    }
     let ids: Vec<String> = manager
         .ids()
         .iter()
@@ -113,6 +149,10 @@ pub fn collections(
             node.scroll_dirty = false;
             continue;
         }
+        let selected = n.value.as_number().unwrap_or(0.) as usize;
+        let theme = n.theme;
+        let mut row_style = n.styles.clone();
+        row_style.normal.background = None;
         let items: Vec<_> = range.clone().map(|i| n.items[i].clone()).collect();
         let node = manager.get_mut(&id).unwrap();
         node.collection_range = Some(span);
@@ -150,6 +190,16 @@ pub fn collections(
                 row.dirty = true;
             }
             row.value = Evaluated::Number((index + 1) as f64);
+            let mut style = row_style.clone();
+            if selected == index + 1 {
+                style.normal = style.focused.over(&style.normal);
+                style.normal.background.get_or_insert("#355882".into());
+            }
+            if row.styles != style || row.theme != theme {
+                row.styles = style;
+                row.theme = theme;
+                row.dirty = true;
+            }
         }
         let stale: Vec<String> = manager
             .ids()
@@ -186,6 +236,8 @@ pub fn project_widgets(
     let Some((camera, transform)) = cameras.iter().next() else {
         return;
     };
+    let scale = manager.canvas_scale;
+    let origin = manager.canvas_origin;
     let ids = manager.ids().to_vec();
     for id in ids {
         let Some(node) = manager.get_mut(&id) else {
@@ -199,11 +251,12 @@ pub fn project_widgets(
             .find(|(actor, _)| actor.0 == node.world_actor)
             .and_then(|(_, at)| camera.world_to_viewport(transform, at.translation()).ok());
         let visible = point.is_some();
-        if node.visible != visible {
-            node.visible = visible;
+        if node.projected != visible {
+            node.projected = visible;
             node.dirty = true;
         }
         if let Some(point) = point {
+            let point = (point - origin) / scale.max(0.001);
             let offset = [point.x, point.y];
             if node.spec.offset != offset {
                 node.spec.offset = offset;
@@ -245,9 +298,7 @@ pub fn activate(manager: &mut UiManager, engine: &mut Engine, id: &str) {
             n.collection_dirty = true;
         }
     }
-    if node.kind == UiKind::Input {
-        manager.focus_on(Some(id));
-    }
+    manager.focus_on((node.kind == UiKind::Input).then_some(id));
     for target in manager.bubble(id) {
         engine.fire(Event::UiClicked { id: target });
     }
@@ -426,6 +477,7 @@ pub fn hover(
         .filter(|n| !n.tooltip.is_empty())
         .map(|n| n.tooltip.clone());
     if let (Some(text), Some(point)) = (tooltip, point) {
+        let point = (point - manager.canvas_origin) / manager.canvas_scale.max(0.01);
         manager.show(UiElement {
             id: "__tooltip".into(),
             kind: UiKind::Tooltip,
@@ -473,8 +525,8 @@ pub fn canvas(
     } else {
         1.
     };
-    manager.canvas_scale = scale;
-    manager.canvas_origin = Vec2::new(left, top);
+    manager.canvas_scale = scale * ui_scale.0.max(0.01);
+    manager.canvas_origin = Vec2::new(left, top) * ui_scale.0.max(0.01);
     let logical = available / scale;
     for (mut node, mut transform) in &mut roots {
         let wanted = Node {
@@ -503,6 +555,7 @@ pub struct UiTween {
     pub width: (Val, Val),
     pub height: (Val, Val),
     pub hide: bool,
+    pub show: bool,
 }
 pub fn animate(
     mut commands: Commands,
@@ -528,6 +581,8 @@ pub fn animate(
         node.height = lerp(tween.height);
         if tween.hide {
             transform.scale = Vec2::splat((1. - eased).max(0.001));
+        } else if tween.show {
+            transform.scale = Vec2::splat(eased.max(0.001));
         } else {
             transform.scale = Vec2::ONE;
         }
@@ -546,7 +601,7 @@ pub fn touch(
     mut engine: NonSendMut<Engine>,
     boxes: Query<(&ComputedNode, &UiGlobalTransform)>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    mut capture: Local<std::collections::HashMap<u64, (String, Vec2)>>,
+    mut capture: Local<std::collections::HashMap<u64, (String, Vec2, bool)>>,
 ) {
     use bevy::input::touch::TouchPhase;
     for touch in touches.read() {
@@ -561,13 +616,18 @@ pub fn touch(
                     .map(|n| n.spec.id.clone());
                 if let Some(id) = hit {
                     emit_event(&manager, &mut engine, &id, "press");
-                    capture.insert(touch.id, (id, point));
+                    touch_slider(&mut manager, &mut engine, &boxes, &id, point);
+                    capture.insert(touch.id, (id, point, false));
                 }
             }
             TouchPhase::Moved => {
-                if let Some((id, previous)) = capture.get_mut(&touch.id) {
+                if let Some((id, previous, dragged)) = capture.get_mut(&touch.id) {
+                    *dragged |= previous.distance(point) > 3.;
                     emit_event(&manager, &mut engine, id, "drag");
-                    let owner = manager.scroll_owner(id).map(|n| n.spec.id.clone());
+                    let slider = touch_slider(&mut manager, &mut engine, &boxes, id, point);
+                    let owner = (!slider)
+                        .then(|| manager.scroll_owner(id).map(|n| n.spec.id.clone()))
+                        .flatten();
                     if let Some(owner) = owner {
                         let scroll = manager.get(&owner).unwrap().scroll + previous.y - point.y;
                         manager.set(&owner, UiProp::Scroll, &Evaluated::Number(scroll as f64));
@@ -576,12 +636,13 @@ pub fn touch(
                 }
             }
             TouchPhase::Ended => {
-                if let Some((id, _)) = capture.remove(&touch.id) {
+                if let Some((id, _, dragged)) = capture.remove(&touch.id) {
                     emit_event(&manager, &mut engine, &id, "release");
-                    if manager
-                        .get(&id)
-                        .and_then(|n| crate::world::screen_rect(&boxes, n.entity))
-                        .is_some_and(|r| r.contains(point))
+                    if !dragged
+                        && manager
+                            .get(&id)
+                            .and_then(|n| crate::world::screen_rect(&boxes, n.entity))
+                            .is_some_and(|r| r.contains(point))
                     {
                         activate(&mut manager, &mut engine, &id);
                     }
@@ -592,6 +653,32 @@ pub fn touch(
             }
         }
     }
+}
+
+fn touch_slider(
+    manager: &mut UiManager,
+    engine: &mut Engine,
+    boxes: &Query<(&ComputedNode, &UiGlobalTransform)>,
+    id: &str,
+    point: Vec2,
+) -> bool {
+    let Some(node) = manager.get(id) else {
+        return false;
+    };
+    if !matches!(node.kind, UiKind::Slider | UiKind::Scrollbar) {
+        return false;
+    }
+    if let Some(rect) = crate::world::screen_rect(boxes, node.entity) {
+        let fraction = (point.x - rect.min.x) / rect.width().max(1.);
+        let value = crate::ui::slider_at(node.range, node.step(), fraction);
+        if let Some(value) = manager.changed(id, Evaluated::Number(value)) {
+            engine.fire(Event::UiChanged {
+                id: id.into(),
+                value,
+            });
+        }
+    }
+    true
 }
 
 #[cfg(test)]
@@ -607,6 +694,100 @@ mod tests {
             .init_resource::<PendingEffects>();
         app
     }
+    #[test]
+    fn tab_pages_follow_selection_without_overwriting_authored_visibility() {
+        let mut app = app();
+        app.add_systems(Update, collections);
+        let mut m = app.world_mut().resource_mut::<UiManager>();
+        m.show_widget(UiWidget {
+            element: UiElement {
+                id: "tabs".into(),
+                kind: UiKind::Tabs,
+                ..default()
+            },
+            items: vec!["First".into(), "Second".into()],
+            ..default()
+        });
+        m.show_widget(UiWidget {
+            element: UiElement {
+                id: "page".into(),
+                parent: "tabs".into(),
+                ..default()
+            },
+            tab_index: Some(2),
+            ..default()
+        });
+        drop(m);
+        app.update();
+        let m = app.world().resource::<UiManager>();
+        assert!(!m.shown(m.get("page").unwrap()));
+        app.world_mut()
+            .resource_mut::<UiManager>()
+            .changed("tabs", Evaluated::Number(2.));
+        app.update();
+        let m = app.world().resource::<UiManager>();
+        assert!(m.shown(m.get("page").unwrap()));
+        app.world_mut()
+            .resource_mut::<UiManager>()
+            .hide("page", false);
+        app.update();
+        let m = app.world().resource::<UiManager>();
+        assert!(!m.shown(m.get("page").unwrap()));
+    }
+
+    #[test]
+    fn a_scrollbar_updates_its_list_and_follows_programmatic_scrolling() {
+        let mut app = app();
+        app.add_systems(Update, collections);
+        let mut m = app.world_mut().resource_mut::<UiManager>();
+        m.show_widget(UiWidget {
+            element: UiElement {
+                id: "list".into(),
+                kind: UiKind::ListView,
+                size: [200., 240.],
+                ..default()
+            },
+            items: vec!["Item".into(); 100],
+            ..default()
+        });
+        m.show_widget(UiWidget {
+            element: UiElement {
+                id: "scroll".into(),
+                kind: UiKind::Scrollbar,
+                ..default()
+            },
+            scroll_target: "list".into(),
+            ..default()
+        });
+        drop(m);
+        app.update();
+        app.world_mut()
+            .resource_mut::<UiManager>()
+            .changed("scroll", Evaluated::Number(320.));
+        assert_eq!(
+            app.world()
+                .resource::<UiManager>()
+                .get("list")
+                .unwrap()
+                .scroll,
+            320.
+        );
+        app.world_mut().resource_mut::<UiManager>().set(
+            "list",
+            UiProp::Scroll,
+            &Evaluated::Number(640.),
+        );
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<UiManager>()
+                .get("scroll")
+                .unwrap()
+                .value,
+            Evaluated::Number(640.)
+        );
+    }
+
     #[test]
     fn list_view_recycles_a_bounded_pool_and_maps_to_absolute_indices() {
         let mut app = app();
@@ -780,21 +961,27 @@ pub fn atlas(
         }
         cache.sources = sources;
     }
-    let Some(sheet) = &cache.sheet else {
-        return;
-    };
     for id in manager.ids() {
         let Some(node) = manager.get(id).filter(|n| n.kind == UiKind::Image) else {
             continue;
         };
-        if let (Some(rect), Ok(mut image)) = (
-            cache.rects.get(node.spec.content.trim()),
-            nodes.get_mut(node.entity),
-        ) {
-            if image.image != *sheet || image.rect != Some(*rect) {
-                image.image = sheet.clone();
-                image.rect = Some(*rect);
-            }
+        let Ok(mut image) = nodes.get_mut(node.entity) else {
+            continue;
+        };
+        let path = node.spec.content.trim();
+        let (handle, rect) = match (&cache.sheet, cache.rects.get(path)) {
+            (Some(sheet), Some(rect)) => (sheet.clone(), Some(*rect)),
+            _ => (
+                server.load(crate::world::asset_path(
+                    engine.project_dir.as_deref(),
+                    path,
+                )),
+                None,
+            ),
+        };
+        if image.image != handle || image.rect != rect {
+            image.image = handle;
+            image.rect = rect;
         }
     }
 }

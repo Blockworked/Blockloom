@@ -237,6 +237,20 @@ pub enum InstructionKind {
     SetLightShadows {
         enabled: bool,
     },
+    /// Ray-traced lighting on or off for the rest of the run, where the GPU
+    /// can trace rays. Window-global.
+    SetRayTracing {
+        enabled: bool,
+    },
+    /// Most bounces a ray-traced light path takes, for the rest of the run.
+    SetGiBounces {
+        bounces: Value,
+    },
+    /// Light samples per pixel for ray-traced lighting, for the rest of the
+    /// run.
+    SetGiSamples {
+        samples: Value,
+    },
 
     // ─── Physics ────────────────────────────────────────────────────────────
     SetBody {
@@ -774,6 +788,8 @@ impl BlockKind for InstructionKind {
             | K::SetEmissiveStrength { strength: v }
             | K::SetPeakBrightness { nits: v }
             | K::SetShadowDistance { distance: v }
+            | K::SetGiBounces { bounces: v }
+            | K::SetGiSamples { samples: v }
             | K::SetDensity { density: v }
             | K::SetMass { mass: v }
             | K::SetCollisionLayer { layer: v }
@@ -1070,6 +1086,7 @@ impl BlockKind for InstructionKind {
             | K::SetTrailEnabled { .. }
             | K::CaptureProbes
             | K::SetLightShadows { .. }
+            | K::SetRayTracing { .. }
             | K::StopTweens
             | K::StopAnimation
             | K::SetHdrOutput { .. }

@@ -163,6 +163,16 @@ pub enum Act {
     SetLightShadows {
         enabled: bool,
     },
+    /// Window-global.
+    SetRayTracing {
+        enabled: bool,
+    },
+    SetGiBounces {
+        bounces: f32,
+    },
+    SetGiSamples {
+        samples: f32,
+    },
     SetBody {
         body: &'static str,
     },
@@ -1183,6 +1193,12 @@ pub const ACT_CAPTURE_PROBES: u32 = 81;
 pub const ACT_SET_SHADOW_DISTANCE: u32 = 82;
 /// `n0` != 0 turns the actor's light's shadows on.
 pub const ACT_SET_LIGHT_SHADOWS: u32 = 83;
+/// `n0` != 0 turns ray-traced lighting on. Window-global: no actor.
+pub const ACT_SET_RAY_TRACING: u32 = 84;
+/// `n0` = most bounces. Window-global: no actor.
+pub const ACT_SET_GI_BOUNCES: u32 = 85;
+/// `n0` = samples per pixel. Window-global: no actor.
+pub const ACT_SET_GI_SAMPLES: u32 = 86;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1599,6 +1615,30 @@ impl Host for AbiHost {
                 [if enabled { 1.0 } else { 0.0 }, 0.0, 0.0],
                 &zero,
             ),
+            Act::SetRayTracing { enabled } => self.act_wire(
+                actor,
+                ACT_SET_RAY_TRACING,
+                "",
+                "",
+                [if enabled { 1.0 } else { 0.0 }, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetGiBounces { bounces } => self.act_wire(
+                actor,
+                ACT_SET_GI_BOUNCES,
+                "",
+                "",
+                [bounces as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetGiSamples { samples } => self.act_wire(
+                actor,
+                ACT_SET_GI_SAMPLES,
+                "",
+                "",
+                [samples as f64, 0.0, 0.0],
+                &zero,
+            ),
             Act::SetBody { body } => self.act_wire(actor, ACT_SET_BODY, body, "", [0.0; 3], &zero),
             Act::ApplyImpulse { impulse } => self.act_wire(
                 actor,
@@ -1947,7 +1987,7 @@ pub fn ui_value(kind: usize, value: Val) -> Val {
     match kind {
         // Toggle, Slider, Button; everything else reports its own words.
         6 => Val::Bool(value.as_bool()),
-        5 => Val::Num(value.as_number().unwrap_or(0.0)),
+        5 | 15..=20 => Val::Num(value.as_number().unwrap_or(0.0)),
         2 => Val::Bool(false),
         _ => Val::Text(value.as_text()),
     }
@@ -1960,7 +2000,7 @@ pub fn ui_value(kind: usize, value: Val) -> Val {
 pub fn ui_blank(kind: usize, flag: bool) -> Val {
     match kind {
         6 => Val::Bool(flag),
-        5 => Val::Num(0.0),
+        5 | 15..=20 => Val::Num(0.0),
         2 => Val::Bool(false),
         _ => Val::Text(String::new()),
     }

@@ -95,6 +95,8 @@ pub(crate) struct AppState {
     pub(crate) preview_port: Option<u16>,
     /// The embedded world asked for the pointer locked.
     pub(crate) pointer_locked: bool,
+    /// What ray tracing can do in the open world, and is doing.
+    pub(crate) ray_tracing: Option<blockloom_protocol::RayTracingStatus>,
     /// Runs the game world inside this process, when the host supplies one.
     pub(crate) embedded: Option<Arc<dyn crate::runtime::EmbeddedRuntime>>,
     /// How the scene view edits, re-sent to every world that comes up.
@@ -192,6 +194,9 @@ pub(crate) struct StateDto {
     pub(crate) runtime_embedded: bool,
     /// The Game view should hold the pointer while it has the keyboard.
     pub(crate) pointer_locked: bool,
+    /// What ray tracing can do in the open world, and is doing. Absent until
+    /// a 3D world has come up.
+    pub(crate) ray_tracing: Option<blockloom_protocol::RayTracingStatus>,
     /// How this copy relates to the project folder on disk, for agents and
     /// the editor to tell a stale copy from a live one.
     pub(crate) sync: SyncDto,
@@ -284,6 +289,7 @@ pub(crate) fn state_dto(s: &AppState) -> StateDto {
         game_size: blockloom_protocol::GAME_SIZE,
         runtime_embedded: s.embedded.is_some(),
         pointer_locked: s.pointer_locked && s.running && s.runtime.is_some(),
+        ray_tracing: s.runtime.as_ref().and(s.ray_tracing.clone()),
         sync: sync_dto(s),
     }
 }

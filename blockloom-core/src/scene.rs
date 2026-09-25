@@ -469,6 +469,72 @@ pub struct Lighting {
     /// Metres one tile of the sun's cookie covers.
     #[serde(default = "default_sun_cookie_size")]
     pub sun_cookie_size: f32,
+    #[serde(default)]
+    pub ray_tracing: RayTracingSettings,
+}
+
+/// What cleans up ray-traced lighting's noise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Denoiser {
+    /// The best this build has. That is ReSTIR's reuse for now: no build
+    /// carries DLSS Ray Reconstruction yet.
+    #[default]
+    Auto,
+    /// ReSTIR's temporal and spatial reuse only.
+    Restir,
+    /// The raw samples, for judging what a denoiser is working from.
+    None,
+}
+
+/// Ray-traced lighting for a 3D world (Bevy Solari): traced direct light
+/// and shadows, bounced light and reflections, in place of the raster rig
+/// on a GPU that can trace rays. Elsewhere the raster rig carries on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RayTracingSettings {
+    /// Off by default: it needs a ray-tracing GPU and costs a lot of it.
+    pub enabled: bool,
+    /// Most bounces a light path takes, 1-8. `set GI bounces to` overrides
+    /// it for a run.
+    pub bounces: u32,
+    /// Light samples per pixel at the first hit, 1-32. `set GI samples to`
+    /// overrides it for a run.
+    pub samples: u32,
+    pub denoiser: Denoiser,
+    /// Metres a bounced-light ray reaches before it gives up.
+    pub gi_distance: f32,
+}
+
+impl Default for RayTracingSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bounces: 3,
+            samples: 8,
+            denoiser: Denoiser::Auto,
+            gi_distance: 50.0,
+        }
+    }
+}
+
+impl RayTracingSettings {
+    pub const MAX_BOUNCES: u32 = 8;
+    pub const MAX_SAMPLES: u32 = 32;
+
+    /// The same settings pulled into the ranges the renderer accepts.
+    pub fn sanitized(self) -> Self {
+        let gi_distance = if self.gi_distance.is_finite() {
+            self.gi_distance.clamp(1.0, 10_000.0)
+        } else {
+            50.0
+        };
+        Self {
+            bounces: self.bounces.clamp(1, Self::MAX_BOUNCES),
+            samples: self.samples.clamp(1, Self::MAX_SAMPLES),
+            gi_distance,
+            ..self
+        }
+    }
 }
 
 fn default_sun_cookie_size() -> f32 {
@@ -651,6 +717,7 @@ impl Default for Lighting {
             shadows: ShadowSettings::default(),
             sun_cookie: String::new(),
             sun_cookie_size: default_sun_cookie_size(),
+            ray_tracing: RayTracingSettings::default(),
         }
     }
 }

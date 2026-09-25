@@ -19,6 +19,8 @@ use std::sync::{Arc, Mutex};
 
 /// Frames the capture camera renders before its image is read.
 const SETTLE_FRAMES: u32 = 3;
+/// The same under realtime ray tracing.
+const TRACED_SETTLE_FRAMES: u32 = 30;
 /// Frames a request waits for a world camera with a size, as one asked for
 /// while the world is still coming up.
 const CAMERA_WAIT_FRAMES: u32 = 120;
@@ -47,12 +49,19 @@ struct Live {
     camera: Entity,
     size: UVec2,
     frames: u32,
+    /// Frames to render before reading: more while tracing, so the image
+    /// has converged.
+    settle: u32,
+    /// Seconds a path traced capture may take, 0 for no limit.
+    deadline: f32,
+    elapsed: f32,
     /// Filled by the readback observer.
     pixels: Option<Arc<Mutex<Option<Vec<u8>>>>>,
 }
 
 /// What the capture camera copies off the world camera.
 type CapturedView = (
+    Entity,
     &'static Camera,
     &'static Projection,
     &'static GlobalTransform,
@@ -66,18 +75,22 @@ fn run_exr_captures(
     mut captures: ResMut<ExrCaptures>,
     mut images: ResMut<Assets<Image>>,
     environment: Res<Environment>,
+    tracing: Option<Res<crate::ray_tracing::RayTracingState>>,
+    editor: Option<Res<crate::edit::SceneEditor>>,
+    time: Res<Time<Real>>,
     world_cameras: Query<CapturedView, With<WorldCamera>>,
 ) {
     let captures = &mut *captures;
     if captures.live.is_none() && !captures.queued.is_empty() {
         let ready = world_cameras
             .iter()
-            .filter(|(camera, ..)| camera.is_active)
+            .filter(|(_, camera, ..)| camera.is_active)
             .find_map(|found| {
-                let size = found.0.physical_target_size()?;
+                let size = found.1.physical_target_size()?;
                 (size.min_element() > 0).then_some((found, size))
             });
-        let Some(((camera, projection, transform, is_3d, skybox, bloom), size)) = ready else {
+        let Some(((source, camera, projection, transform, is_3d, skybox, bloom), size)) = ready
+        else {
             captures.waited += 1;
             if captures.waited > CAMERA_WAIT_FRAMES {
                 captures.waited = 0;
@@ -124,11 +137,27 @@ fn run_exr_captures(
         if let Some(bloom) = bloom {
             entity.insert(bloom.clone());
         }
+        let capture = entity.id();
+        commands.queue(move |world: &mut World| {
+            crate::ray_tracing::trace_like(world, source, capture);
+        });
+        let budget = editor
+            .map(|editor| editor.view.path_tracer)
+            .unwrap_or_default();
+        let (settle, deadline) = match tracing.as_deref() {
+            Some(state) if state.path_tracing => (budget.samples.clamp(1, 1 << 16), budget.seconds),
+            // Solari's temporal reuse needs a few frames of history.
+            Some(state) if state.active => (TRACED_SETTLE_FRAMES, 0.0),
+            _ => (SETTLE_FRAMES, 0.0),
+        };
         captures.live = Some(Live {
             path,
-            camera: entity.id(),
+            camera: capture,
             size,
             frames: 0,
+            settle,
+            deadline,
+            elapsed: 0.0,
             pixels: None,
         });
         return;
@@ -138,8 +167,11 @@ fn run_exr_captures(
         return;
     };
     live.frames += 1;
+    live.elapsed += time.delta_secs();
+    let settled = live.frames >= live.settle
+        || (live.deadline > 0.0 && live.elapsed >= live.deadline && live.frames >= SETTLE_FRAMES);
     match &live.pixels {
-        None if live.frames >= SETTLE_FRAMES => {
+        None if settled => {
             let slot = Arc::new(Mutex::new(None));
             let sink = slot.clone();
             let camera = live.camera;

@@ -45,7 +45,12 @@ Rectangle {
         property bool volumeBounds: true
         property bool volumeHeatmap: false
         property bool volumePanel: false
+        property int pathSamples: 256
+        property real pathSeconds: 60
     }
+    // The reference path tracer is heavy, so it is never remembered on.
+    property bool pathTracing: false
+    readonly property var tracing: appState.ray_tracing || null
     // Holding the blend still is for this look only, never remembered.
     property bool volumeFreeze: false
     readonly property var volumeStatus: app.status && app.status.volumes ? app.status.volumes : []
@@ -55,7 +60,8 @@ Rectangle {
         enabled: scene.enabled, tool: scene.tool, local: scene.local, snap: scene.snap,
         grid: is3d ? scene.grid3d : scene.grid2d, angle: scene.angle, scale: scene.scaleStep, show_grid: scene.showGrid,
         debug_view: scene.debugView,
-        volumes: { bounds: scene.volumeBounds, heatmap: scene.volumeHeatmap, freeze: root.volumeFreeze }
+        volumes: { bounds: scene.volumeBounds, heatmap: scene.volumeHeatmap, freeze: root.volumeFreeze },
+        path_tracer: { enabled: root.pathTracing && is3d, samples: scene.pathSamples, seconds: scene.pathSeconds }
     })
     onSceneViewChanged: app.invoke("set_scene_view", { view: sceneView }, null, () => {})
     // The scene view is what's showing: a world is up and nothing runs.
@@ -185,8 +191,14 @@ Rectangle {
                 onClicked: scene.volumePanel = !scene.volumePanel
             }
             IconButton {
+                visible: root.is3d
+                iconName: "sparkles"; highlighted: root.pathTracing
+                tip: "Path tracer: a converging reference image of the scene's lighting, to check the raster and ray-traced looks against. Not for play."
+                onClicked: root.pathTracing = !root.pathTracing
+            }
+            IconButton {
                 visible: root.embedded || root.appState.preview_enabled
-                iconName: "camera"; tip: "Save this frame as an EXR file (linear, before tonemapping)"
+                iconName: "camera"; tip: "Save this frame as an EXR file (linear, before tonemapping). With the path tracer on, it waits for the sample budget."
                 onClicked: root.report("capture_exr", {})
             }
             Text { text: "Aspect"; color: Theme.textDim; font.pixelSize: 12; Layout.leftMargin: 6 }
@@ -342,6 +354,30 @@ Rectangle {
                                 ? "Hold the right button to look around, and fly with W A S D, Q and E (Shift to hurry, wheel for speed).\nMiddle-drag pans, Alt-drag orbits, the wheel dollies.\nClick an actor to select it; drag it or its handles to place it. Esc cancels a drag."
                                 : "Right- or middle-drag pans, the wheel zooms.\nClick an actor to select it; drag it or its handles to place it. Esc cancels a drag."
                         }
+                    }
+                }
+                // The path tracer's progress and budget.
+                Rectangle {
+                    visible: root.pathTracing && root.is3d && root.appState.runtime_open === true
+                    anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 8
+                    width: pathRow.implicitWidth + 16; height: pathRow.implicitHeight + 10; radius: 4
+                    color: "#e0202124"; border.color: Theme.borderSoft
+                    RowLayout {
+                        id: pathRow
+                        anchors.centerIn: parent; spacing: 6
+                        Text {
+                            color: root.tracing && !root.tracing.available ? Theme.warning : Theme.text; font.pixelSize: 11
+                            text: !root.tracing ? "Path tracer starting…"
+                                : !root.tracing.available ? "No path tracer here: " + root.tracing.reason
+                                : !root.tracing.path_tracing ? "Path tracer starting…"
+                                : "Path tracing  " + root.tracing.samples + " samples, " + Math.round(root.tracing.seconds) + " s"
+                                    + (root.tracing.converged ? "  (converged)" : "")
+                        }
+                        Text { text: "Budget"; color: Theme.textDim; font.pixelSize: 11; Layout.leftMargin: 6 }
+                        NumberField { Layout.preferredWidth: 64; value: scene.pathSamples; fallback: 256; onCommitted: n => scene.pathSamples = Math.max(1, Math.round(n)) }
+                        Text { text: "samples or"; color: Theme.textDim; font.pixelSize: 11 }
+                        NumberField { Layout.preferredWidth: 52; value: scene.pathSeconds; fallback: 60; onCommitted: n => scene.pathSeconds = Math.max(0, n) }
+                        Text { text: "s"; color: Theme.textDim; font.pixelSize: 11 }
                     }
                 }
                 // Environment volumes: what is blending at the camera, and why.

@@ -1337,6 +1337,130 @@ mod tests {
         );
     }
 
+    /// The dark room lit only by what ray tracing traces: the lamp stands in
+    /// as a glowing sphere, and the floor is a deferred instanced surface
+    /// Solari lights in place of the raster lights. Leaving the lamp out of
+    /// the traced world leaves the floor dark, which shows the raster lamp
+    /// isn't what lit it.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn ray_tracing_lights_the_floor_from_a_traced_lamp() {
+        use blockloom_core::components::ActorComponent;
+        let traced = |lamp_traced: bool| {
+            let mut room = dark_room(true);
+            room.world.lighting.ray_tracing.enabled = true;
+            for actor in &mut room.actors {
+                if let Some(ActorComponent::Light { light }) = actor.components.get_mut("Light") {
+                    light.ray_traced = lamp_traced;
+                }
+            }
+            // Traced light is noisy for its first frames: a lit floor is
+            // waited for, a dark one settles.
+            let settle = if lamp_traced { 0 } else { 120 };
+            let done = move |pixel| lamp_traced && lit_floor(pixel);
+            floor_pixel(run_world(room, |_| {}, game_camera(), settle, done))
+        };
+        let (lit, dark) = (traced(true), traced(false));
+        assert!(lit_floor(lit), "expected a traced, lit floor, read {lit:?}");
+        assert!(
+            dark.iter().all(|c| *c < 20),
+            "expected the untraced lamp to leave the floor dark, read {dark:?}"
+        );
+    }
+
+    /// `turn ray tracing` mid-run moves the floor between Solari and the
+    /// raster lights both ways, re-preparing every surface in between. The
+    /// lamp is left out of the traced world, so only its raster light shows.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn turning_ray_tracing_mid_run_switches_between_the_rigs() {
+        use blockloom_core::blocks::{Instruction, InstructionKind as K, Strand};
+        use blockloom_core::components::ActorComponent;
+        let run = |start_traced: bool, switch: Option<bool>| {
+            let mut room = dark_room(true);
+            room.world.lighting.ray_tracing.enabled = start_traced;
+            for actor in &mut room.actors {
+                if let Some(ActorComponent::Light { light }) = actor.components.get_mut("Light") {
+                    light.ray_traced = false;
+                }
+            }
+            if let Some(enabled) = switch {
+                room.actors[0].graph.strands.push(Strand::with_instructions(
+                    0,
+                    0,
+                    vec![
+                        Instruction::new(K::WhenStarted),
+                        Instruction::new(K::SetRayTracing { enabled }),
+                    ],
+                ));
+            }
+            // Lit is waited for; dark settles.
+            let lit = switch == Some(false);
+            floor_pixel(run_world_sending(
+                room,
+                |_| {},
+                game_camera(),
+                if lit { 0 } else { 120 },
+                move |pixel| lit && pixel.iter().all(|c| *c > 120),
+                vec![EditorMessage::Start],
+            ))
+        };
+        let traced = run(true, None);
+        assert!(
+            traced.iter().all(|c| *c < 20),
+            "expected the untraced lamp to leave the floor dark, read {traced:?}"
+        );
+        let off = run(true, Some(false));
+        assert!(
+            off.iter().all(|c| *c > 120),
+            "expected the raster lamp back once tracing is off, read {off:?}"
+        );
+        let on = run(false, Some(true));
+        assert!(
+            on.iter().all(|c| *c < 20),
+            "expected tracing turned on to take the raster lamp away, read {on:?}"
+        );
+    }
+
+    /// The reference path tracer draws the view from the same traced world:
+    /// lit by the traced lamp, dark without it whatever the raster lamp does.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn the_path_tracer_lights_the_floor_from_a_traced_lamp() {
+        use blockloom_core::components::ActorComponent;
+        let view = SceneView {
+            path_tracer: blockloom_protocol::PathTracerView {
+                enabled: true,
+                ..Default::default()
+            },
+            ..game_camera()
+        };
+        let traced = |lamp_traced: bool| {
+            let mut room = dark_room(true);
+            for actor in &mut room.actors {
+                if let Some(ActorComponent::Light { light }) = actor.components.get_mut("Light") {
+                    light.ray_traced = lamp_traced;
+                }
+            }
+            let settle = if lamp_traced { 0 } else { 120 };
+            let done = move |pixel| lamp_traced && lit_floor(pixel);
+            floor_pixel(run_world(room, |_| {}, view.clone(), settle, done))
+        };
+        let (lit, dark) = (traced(true), traced(false));
+        assert!(
+            lit_floor(lit),
+            "expected a path traced, lit floor, read {lit:?}"
+        );
+        assert!(
+            dark.iter().all(|c| *c < 20),
+            "expected the untraced lamp to leave the floor dark, read {dark:?}"
+        );
+    }
+
+    fn lit_floor(pixel: [u8; 3]) -> bool {
+        pixel.iter().all(|c| *c > 60)
+    }
+
     fn floor_pixel(result: (Option<Arc<SlotSet>>, usize, Vec<RuntimeMessage>)) -> [u8; 3] {
         let (set, index, errors) = result;
         assert!(errors.is_empty(), "{errors:?}");
@@ -1643,6 +1767,43 @@ mod tests {
         assert!(
             r > 0.5 && g < 0.05 && b < 0.05,
             "expected linear red, read {r} {g} {b}"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Under the path tracer an EXR capture traces too, and waits for the
+    /// sample budget: the dark room's floor comes out lit by the traced lamp.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_path_traced_exr_capture_waits_for_its_samples() {
+        let dir =
+            std::env::temp_dir().join(format!("blockloom-embed-pt-exr-{}", std::process::id()));
+        let path = dir.join("traced.exr");
+        let capture = EditorMessage::CaptureExr {
+            path: path.to_string_lossy().into_owned(),
+        };
+        let view = SceneView {
+            path_tracer: blockloom_protocol::PathTracerView {
+                enabled: true,
+                samples: 32,
+                seconds: 0.0,
+            },
+            ..game_camera()
+        };
+        let (_, _, errors) =
+            run_world_sending(dark_room(true), |_| {}, view, 200, |_| false, vec![capture]);
+        assert!(errors.is_empty(), "{errors:?}");
+        let started = std::time::Instant::now();
+        while !path.exists() && started.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let shot = image::open(&path)
+            .unwrap_or_else(|error| panic!("no EXR at {}: {error}", path.display()))
+            .into_rgba32f();
+        let [r, g, b, _] = shot.get_pixel(shot.width() / 2, shot.height() / 2).0;
+        assert!(
+            r > 0.05 && g > 0.05 && b > 0.05,
+            "expected a lit floor, read {r} {g} {b}"
         );
         std::fs::remove_dir_all(dir).ok();
     }

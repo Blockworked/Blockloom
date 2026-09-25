@@ -30,6 +30,13 @@ BwDialog {
             world && world.lighting ? world.lighting.shadows || {} : {});
     }
     function writeShadows(next) { writeLighting({ shadows: Object.assign(shadowsOf(), next) }); }
+    function tracingOf() {
+        return Object.assign({ enabled: false, bounces: 3, samples: 8, denoiser: "Auto", gi_distance: 50 },
+            world && world.lighting ? world.lighting.ray_tracing || {} : {});
+    }
+    function writeTracing(next) { writeLighting({ ray_tracing: Object.assign(tracingOf(), next) }); }
+    // What the open world's GPU can do, once a 3D world has come up.
+    readonly property var tracingStatus: app.appState.ray_tracing || null
     function writeLighting(next) { invoke("set_lighting", { lighting: Object.assign(JSON.parse(JSON.stringify(world.lighting)), next) }); }
     function writePost(next) { invoke("set_post_process", { post: Object.assign(postOf(), next) }); }
     function displayOf() { return Object.assign({ space: "Sdr", peak_nits: 1000, paper_white_nits: 200 }, world && world.display ? world.display : {}); }
@@ -163,6 +170,23 @@ BwDialog {
                 InspectorRow { visible: !!root.world && !!root.world.lighting.sun_cookie; label: "Cookie tile m"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: root.world && root.world.lighting.sun_cookie_size !== undefined ? root.world.lighting.sun_cookie_size : 20; fallback: 20; onCommitted: n => root.writeLighting({ sun_cookie_size: root.clamp(n, 0.01, 100000) }) } }
                 Note { text: "Distance is how far from the camera the sun's shadows reach; cascades split it, the first ending at the first split, and blend fades one into the next. Soft sun gives PCSS penumbras as if the sun were that many degrees across (0 keeps them hard; Temporal smooths their noise). Contact shadows raymarch the depth buffer under feet and small clutter; lights opt in on their own card. A sun cookie tiles across the world like cloud shadows." }
+            }
+            Section {
+                heading: "Ray tracing"; visible: !!root.world && root.is3d
+                InspectorRow { label: "Ray traced"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: root.tracingOf().enabled; onToggled: on => root.writeTracing({ enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: root.tracingOf().enabled; label: "Bounces"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.tracingOf().bounces; fallback: 3; onCommitted: n => root.writeTracing({ bounces: root.clamp(Math.round(n), 1, 8) }) } }
+                InspectorRow { visible: root.tracingOf().enabled; label: "Samples"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.tracingOf().samples; fallback: 8; onCommitted: n => root.writeTracing({ samples: root.clamp(Math.round(n), 1, 32) }) } }
+                InspectorRow { visible: root.tracingOf().enabled; label: "Denoiser"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: [{ value: "Auto", label: "Auto" }, { value: "Restir", label: "ReSTIR reuse" }, { value: "None", label: "None (raw)" }]
+                        value: root.tracingOf().denoiser; onChosen: v => root.writeTracing({ denoiser: v }) } }
+                InspectorRow { visible: root.tracingOf().enabled; label: "GI reach m"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.tracingOf().gi_distance; fallback: 50; onCommitted: n => root.writeTracing({ gi_distance: root.clamp(n, 1, 10000) }) } }
+                Note { visible: !!root.tracingStatus && !root.tracingStatus.available; color: Theme.warning
+                    text: "Not on this machine: " + (root.tracingStatus ? root.tracingStatus.reason : "") + ". The raster lighting stands in." }
+                Note { text: "Traces the sun, glowing surfaces and every light marked Traced for shadows, bounced light and reflections, in place of the raster lighting, on a GPU that can trace rays (Vulkan or DX12 ray queries). Bounces and samples trade noise and reach for speed; blocks can change both mid-run. Box-projected and shader surfaces keep the raster lights. Elsewhere the raster rig carries on." }
             }
             Section {
                 heading: "Post-process"; visible: !!root.world

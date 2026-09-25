@@ -575,6 +575,9 @@ pub fn rebuild_world(
     engine.capture_probes = false;
     engine.hdr_output = None;
     engine.peak_nits = None;
+    engine.ray_tracing = None;
+    engine.gi_bounces = None;
+    engine.gi_samples = None;
     engine.parents = engine
         .project
         .actors
@@ -1592,8 +1595,8 @@ pub(crate) fn screen_rect(
     }
     let centre = transform.translation;
     let size = Vec2::new(
-        transform.matrix2.x_axis.abs().dot(size),
-        transform.matrix2.y_axis.abs().dot(size),
+        transform.matrix2.x_axis.x.abs() * size.x + transform.matrix2.y_axis.x.abs() * size.y,
+        transform.matrix2.x_axis.y.abs() * size.x + transform.matrix2.y_axis.y.abs() * size.y,
     );
     Some(Rect::from_center_size(centre, size))
 }
@@ -2369,15 +2372,23 @@ pub fn step_animations(
 pub fn drive_camera(
     engine: NonSend<Engine>,
     dimension: Res<Dimension>,
+    editor: Option<Res<crate::edit::SceneEditor>>,
     rigs: Query<(&CameraRig, &Transform), Without<WorldCamera>>,
     mut cameras: Query<(&mut Transform, Option<&mut Projection>), With<WorldCamera>>,
 ) {
+    // The scene view flies the camera itself.
+    if editor.is_some_and(|editor| crate::edit::editing(&engine, &editor)) {
+        return;
+    }
     let Some((rig, target)) = rigs.iter().next() else {
         return;
     };
-    let Ok((mut camera, projection)) = cameras.single_mut() else {
+    let Ok((mut live, projection)) = cameras.single_mut() else {
         return;
     };
+    // Written only when it moves, so a still camera stays unchanged.
+    let mut next = *live;
+    let camera = &mut next;
     let rig = rig.0;
     let offset = Vec3::from(rig.offset);
     if let Mode::TwoD = dimension.0 {
@@ -2386,6 +2397,7 @@ pub fn drive_camera(
             target.translation.y + offset.y,
             camera.translation.z,
         );
+        live.set_if_neq(next);
         return;
     }
     // The offset is in the actor's own frame, so an eye stays on its head
@@ -2411,6 +2423,7 @@ pub fn drive_camera(
             camera.look_at(target.translation, Vec3::Y);
         }
     }
+    live.set_if_neq(next);
     if dimension.0 == Mode::ThreeD
         && let Some(mut projection) = projection
         && let Projection::Perspective(perspective) = projection.as_mut()
@@ -3674,6 +3687,9 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetVolumeWeight { .. }
         | Effect::CaptureProbes
         | Effect::SetShadowDistance { .. }
+        | Effect::SetRayTracing { .. }
+        | Effect::SetGiBounces { .. }
+        | Effect::SetGiSamples { .. }
         | Effect::SetBusVolume { .. }
         | Effect::RumbleGamepad { .. }
         | Effect::Stopped

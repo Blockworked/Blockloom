@@ -885,6 +885,11 @@ impl Project {
                 changed = true;
             }
         };
+        for style in self.world.interface.styles.values_mut() {
+            for paint in [&mut style.normal, &mut style.hover, &mut style.pressed, &mut style.disabled, &mut style.focused] {
+                for font in &mut paint.fonts { repoint(font); }
+            }
+        }
         for path in &mut self.world.interface.stylesheets {
             repoint(path);
         }

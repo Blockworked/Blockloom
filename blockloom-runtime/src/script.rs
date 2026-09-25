@@ -854,6 +854,9 @@ extern "C" fn act(
             actor,
             enabled: n0 != 0.0,
         },
+        abi::ACT_SET_RAY_TRACING => Effect::SetRayTracing { enabled: n0 != 0.0 },
+        abi::ACT_SET_GI_BOUNCES => Effect::SetGiBounces { bounces: n0 as f32 },
+        abi::ACT_SET_GI_SAMPLES => Effect::SetGiSamples { samples: n0 as f32 },
         abi::ACT_SET_BUS_VOLUME => Effect::SetBusVolume {
             bus: SoundBus::parse(a).unwrap_or(SoundBus::Sfx),
             volume: user_to_gain(n0),

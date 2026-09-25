@@ -314,7 +314,8 @@ fn insert_surface(
             },
         };
         base.uv_transform = bevy::math::Affine2::IDENTITY;
-        base.opaque_render_method = bevy::material::OpaqueRendererMethod::Forward;
+        // Forward, or deferred while ray tracing lights the G-buffer.
+        base.opaque_render_method = bevy::material::OpaqueRendererMethod::Auto;
         base
     });
     let record = crate::batching::InstanceRecord::of(material, color);

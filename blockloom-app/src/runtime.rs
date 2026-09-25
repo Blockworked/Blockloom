@@ -252,6 +252,9 @@ impl Backend {
             RuntimeMessage::PointerLock { locked } => {
                 s.pointer_locked = locked;
             }
+            RuntimeMessage::RayTracing(status) => {
+                s.ray_tracing = Some(status);
+            }
             RuntimeMessage::Picked { actor } => {
                 if s.project()
                     .and_then(|project| project.actor(&actor))
@@ -316,6 +319,7 @@ impl Backend {
         s.runtime = None;
         s.preview_port = None;
         s.pointer_locked = false;
+        s.ray_tracing = None;
         let dto = crate::state::state_dto(&s);
         drop(s);
         self.app.send(Event::RuntimeClosed);

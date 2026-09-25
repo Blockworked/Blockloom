@@ -624,6 +624,46 @@ light shadows, cookie, both probe kinds, a bake leaving out its own actor).
 Those tests start their worlds one at a time: concurrent Vulkan instance
 creation crashes in the loader.
 
+### Ray-traced lighting
+
+`blockloom-runtime/src/ray_tracing.rs`, 3D only, behind the runtime's default
+`ray_tracing` cargo feature (Bevy Solari, pinned with Bevy).
+`Lighting::ray_tracing` (`RayTracingSettings`) turns it on; `turn ray
+tracing`, `set GI bounces to` and `set GI samples to` (and a script's
+`set_ray_tracing`, `set_gi_bounces` and `set_gi_samples`) override it for the
+run as
+`engine.ray_tracing`/`gi_bounces`/`gi_samples`. `RayTracingState` probes the
+device once for `SolariPlugins::required_wgpu_features`; without them the
+raster rig carries on and the editor hears why once. The atmosphere sample
+copies `active`/`available` on the fixed tick, so `is ray tracing on?` and
+`ray tracing available?` agree between the VM and compiled logic.
+
+Realtime tracing puts `SolariLighting` on the world camera (plus `Msaa::Off`,
+`Hdr` and a storage-capable main texture) and turns sun shadow maps off.
+Solari lights the G-buffer, so while it is on `DefaultOpaqueRendererMethod`
+is deferred and every standard and instanced material is touched to
+re-prepare; off, both go back to forward. `instanced_pbr.wesl` is therefore
+the instanced material's deferred shader too. Box-projected and graph
+surfaces stay forward and keep the raster lights.
+
+Solari only traces `RaytracingMesh3d` + `StandardMaterial` in one vertex
+layout, and only the sun and emissive meshes light. So `sync_traced_scene`
+(PostUpdate, after propagation) keeps a copy: one proxy per visible drawn
+mesh (no `Mesh3d`, `traceable` converting the mesh, a standard material
+standing in for instanced, box and graph surfaces) and one emissive stand-in
+per `Light` whose `ray_traced` is on (a sphere for a point, a disk down a
+spot's beam, the rect or disk itself), glowing with the light's power.
+Merged batches, placeholders and particles are left out.
+
+The path tracer is `SceneView::path_tracer`, an editor preference: the world
+camera gets `Pathtracer` instead, which traces the same copy and starts over
+when it or the camera moves (`drive_path_tracer`); progress and availability
+reach the editor as `RuntimeMessage::RayTracing` and `state.ray_tracing`. An
+EXR capture copies the camera's tracing (`trace_like`) and, under the path
+tracer, waits for the sample or time budget. The GPU half is the ignored
+`embed` tests (traced vs. untraced lamps, switching mid-run, the path tracer
+and its EXR).
+
 ### Shader library and pass plumbing
 
 `blockloom-core/src/shader_lib.rs` holds Blockloom's own WESL modules

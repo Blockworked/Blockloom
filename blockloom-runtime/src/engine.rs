@@ -207,6 +207,11 @@ pub struct Engine {
     /// project's display settings.
     pub hdr_output: Option<bool>,
     pub peak_nits: Option<f32>,
+    /// `enable ray tracing`, `set GI bounces` and `set GI samples` this run,
+    /// over the project's ray tracing settings.
+    pub ray_tracing: Option<bool>,
+    pub gi_bounces: Option<u32>,
+    pub gi_samples: Option<u32>,
     /// Dynamic actors a walk verb (`move`, `change position`) drove this
     /// tick. A walk sets an absolute velocity, so when a driven actor goes
     /// quiet the dimension pass brakes it - otherwise the last written
@@ -280,6 +285,9 @@ impl Engine {
             capture_probes: false,
             hdr_output: None,
             peak_nits: None,
+            ray_tracing: None,
+            gi_bounces: None,
+            gi_samples: None,
             last_created: HashMap::new(),
             driven: HashSet::new(),
             physics_filter: HashMap::new(),

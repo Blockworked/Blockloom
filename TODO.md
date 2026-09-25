@@ -61,35 +61,36 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 ### Phase 2 - Ship a complete single-player game
 - [x] Input actions plus remapping, gamepad/rumble, touch/multitouch, mouse lock.
 - [x] Tweens plus sprite animation plus animation player/state machine.
-- [ ] In-game UI framework (UMG/UI-Toolkit grade, builds on the 7 widgets we have):
-  - [ ] Layout engine: measure/arrange pass with desired-size bubbling, containers
+- [x] In-game UI framework (UMG/UI-Toolkit grade, builds on the 7 widgets we have):
+  - [x] Layout engine: measure/arrange pass with desired-size bubbling, containers
         (vertical/horizontal box, grid, overlay/canvas, scroll box, wrap box, size
         box, spacer), padding/margin, 9-point anchors plus offsets, fill/align
         policies. Retained mode with dirty-flag reflow plus batched draws over a
         shared atlas, so static HUDs cost nothing per frame.
-  - [ ] Widgets: progress bars (linear and radial), virtualized list view with row
+  - [x] Widgets: progress bars (linear and radial), virtualized list view with row
         recycling for long inventories, tabs, dropdown/select, scrollbar, tooltip,
         rich-text label (markup, wrapping, auto-size), world-space widgets
         (nameplates, prompts projected from 3D actors).
-  - [ ] Style and themes: stylesheet assets over the existing three global themes,
+  - [x] Style and themes: stylesheet assets over the existing three global themes,
         state styles (normal/hover/pressed/disabled/focused), font fallback chain,
         borders/shadows/rounded corners, per-element overrides kept.
-  - [ ] Data binding: bind widget text/value/visibility to variables and custom
+  - [x] Data binding: bind widget text/value/visibility to variables and custom
         components with converters, one-way plus two-way (inputs write back), so
         HUDs update without per-frame rebuild blocks.
-  - [ ] Events and navigation: click/press/hover/drag/scroll events with bubbling,
+  - [x] Events and navigation: click/press/hover/drag/scroll events with bubbling,
         gamepad directional focus navigation plus focus memory, touch and wheel
         routing, existing modal and focus rules kept.
-  - [ ] Polish: hover/press transitions and tweens on UI properties, show/hide
+  - [x] Polish: hover/press transitions and tweens on UI properties, show/hide
         animations, screen-safe areas, DPI and canvas scaling (scale-with-size vs
         constant-pixel), resolution-independent sizes.
-  - [ ] Editor: visual UI designer (drag widgets onto a canvas, live resolution
+  - [x] Editor: visual UI designer (drag widgets onto a canvas, live resolution
         previews, hierarchy outliner, style inspector), UI prefabs for
         menus/dialogs shared across scenes.
-  - [ ] Blocks and scripts: `show/hide/delete` kept, plus `bind _ to _`, `set items
+  - [x] Blocks and scripts: `show/hide/delete` kept, plus `bind _ to _`, `set items
         of _ to`, `scroll _ to`, `set theme of _ to`, reporters (`value of`,
         `is shown?` kept) plus `selected index of _`. Fixed-tick sampling like
         other reporters so VM and codegen agree.
+  Implementation and usage: [Interface guide](docs/interface.md).
 - [ ] Save slots/profiles plus localization: builds on save system we have.
 
 ### Phase 3 - Dev productivity, before API surface explodes
@@ -363,7 +364,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         12-gon; area lights take no contact shadows; the fade is a shader
         constant, so changing it recompiles the PBR pipelines; the patches
         are exact text against Bevy 0.20 and need redoing on a bump.
-  - [ ] Ray-traced lighting (bevy_solari, experimental upstream, RTX-class GPUs):
+  - [x] Ray-traced lighting (bevy_solari, experimental upstream, RTX-class GPUs):
         - Realtime (`bevy_solari::realtime` via `SolariPlugins`): alternate high-end
           backend beside the raster rig, with ReSTIR direct lighting plus GI,
           ray-traced sun/spot/point shadows, and ray-traced reflections where the
@@ -381,6 +382,26 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         - Blocks and scripts: `enable ray tracing`, `set GI bounces/samples to`,
           reporters `is ray tracing on?`, `ray tracing available?`. Fixed-tick
           sampling like the weather director so VM and codegen agree.
+        Done: `blockloom-runtime/src/ray_tracing.rs` behind a default
+        `ray_tracing` cargo feature, probing the device for Solari's features
+        once and saying why in the editor when it can't. Project Settings has
+        a Ray tracing section (on, bounces, samples, denoiser, GI reach); the
+        world camera then takes `SolariLighting`, surfaces go deferred for its
+        G-buffer (and back to forward when it is off, mid-run too), and sun
+        shadow maps give way to traced shadows. The traced world is a copy:
+        a proxy per drawn mesh and an emissive stand-in of the same power per
+        light, which each light's Traced switch leaves out. The path tracer
+        is a Game view button with a sample/time budget and progress, and the
+        EXR camera waits for the budget. Blocks, compiled logic and scripts
+        share `turn ray tracing`, `set GI bounces/samples to`, `ray tracing
+        on?` and `ray tracing available?`, sampled on the fixed tick.
+        Not covered: DLSS Ray Reconstruction (no build carries the SDK, so
+        Auto is ReSTIR's reuse); converging stills in the inspector; a spot
+        traces as a disk down its beam, not a cone, and cookies and IES
+        profiles aren't traced; box-projected and shader surfaces stay forward
+        with raster lights; skinned meshes trace in their bind pose; the path
+        tracer shows a flat background as black (a sky shows); only run here
+        on Intel Arc through Mesa, not yet on RTX or DX12.
   - [ ] Sky types (all feed background, ambient probe and reflections together):
         - Procedural physical sky: sun disk (size, limb darkening, intensity) plus
           moon disk (size, phase 0-1, halo power), Rayleigh RGB scattering, Mie

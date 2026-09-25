@@ -135,6 +135,8 @@ fn publish_world() {
     sensors.atmosphere.luminance = 42.0;
     sensors.atmosphere.hdr_display = true;
     sensors.atmosphere.peak_brightness = 600.0;
+    sensors.atmosphere.ray_tracing = true;
+    sensors.atmosphere.ray_tracing_available = true;
     sensors.atmosphere.volumes = vec!["Cave".to_string()];
     blockloom_core::sense::publish(sensors);
 }
@@ -298,6 +300,9 @@ impl Host for Recorder {
             | Act::SetPeakBrightness { .. }
             | Act::CaptureProbes
             | Act::SetShadowDistance { .. }
+            | Act::SetRayTracing { .. }
+            | Act::SetGiBounces { .. }
+            | Act::SetGiSamples { .. }
             | Act::SetPaused { .. } => String::new(),
             _ => actor.to_string(),
         };
@@ -349,7 +354,7 @@ impl Host for Recorder {
             "GamepadButtonDown" => Ok(Val::Bool(
                 args[0].as_text().to_lowercase().replace([' ', '_', '-'], "") == "south",
             )),
-            "UiValue" => match args[0].as_text().as_str() {
+            "UiValue" | "UiSelectedIndex" => match args[0].as_text().as_str() {
                 "volume" => Ok(Val::Num(4.0)),
                 "hint" => Ok(Val::Text(String::new())),
                 other => Err(format!("there's no interface element called \"{other}\"")),
@@ -368,6 +373,8 @@ impl Host for Recorder {
             "SceneLuminance" => Ok(Val::Num(42.0)),
             "IsHdrDisplay" => Ok(Val::Bool(true)),
             "PeakBrightness" => Ok(Val::Num(600.0)),
+            "IsRayTracing" => Ok(Val::Bool(true)),
+            "RayTracingAvailable" => Ok(Val::Bool(true)),
             "ActiveVolumes" => Ok(Val::Text("[\"Cave\"]".into())),
             "Atmosphere" => match args[0].as_text().as_str() {
                 "wind speed" => Ok(Val::Num(3.0)),
@@ -981,6 +988,9 @@ fn line_of(act: &Act) -> String {
         Act::CaptureProbes => "CaptureProbes".to_string(),
         Act::SetShadowDistance { distance } => format!("SetShadowDistance {distance:?}"),
         Act::SetLightShadows { enabled } => format!("SetLightShadows {enabled}"),
+        Act::SetRayTracing { enabled } => format!("SetRayTracing {enabled}"),
+        Act::SetGiBounces { bounces } => format!("SetGiBounces {bounces:?}"),
+        Act::SetGiSamples { samples } => format!("SetGiSamples {samples:?}"),
         Act::Say { text } => format!("Say {text}"),
         Act::SetColor { color } => format!("SetColor {color}"),
         Act::SetVisible { visible } => format!("SetVisible {visible}"),
@@ -1081,6 +1091,7 @@ fn main() {
     let mut runner = Runner::new(NAMES);
     runner.fire(ENTRIES, "Started", "", "", "");
     runner.fire(ENTRIES, "UiClicked", "", "resume", "");
+    runner.fire(ENTRIES, "UiEvent", "", "hover\nresume", "");
     // A Walk clip ending on the harness player, beside the green flag: a
     // case with a `when animation ends` strand gets one, and nothing else
     // sees it.
@@ -1195,6 +1206,9 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetLightShadows { actor, enabled } => {
             format!("{actor}|SetLightShadows {enabled}")
         }
+        Effect::SetRayTracing { enabled } => format!("|SetRayTracing {enabled}"),
+        Effect::SetGiBounces { bounces } => format!("|SetGiBounces {bounces:?}"),
+        Effect::SetGiSamples { samples } => format!("|SetGiSamples {samples:?}"),
         Effect::Say { actor, text } => format!("{actor}|Say {text}"),
         Effect::SetColor { actor, color } => format!("{actor}|SetColor {color}"),
         Effect::SetVisible { actor, visible } => format!("{actor}|SetVisible {visible}"),
@@ -1451,6 +1465,7 @@ fn by_vm(project: &Project) -> Vec<String> {
     vm.fire(Event::UiClicked {
         id: "resume".to_string(),
     });
+    vm.fire(Event::UiEvent { id: "resume".into(), event: "hover".into() });
     // A Walk clip ending on the harness player, beside the green flag: a
     // case with a `when animation ends` strand gets one, like above.
     vm.fire(Event::AnimationEnded {
@@ -1730,6 +1745,15 @@ fn arithmetic_lands_on_the_same_numbers() {
             },
             K::SetLightShadows { enabled: false },
             K::SetLightShadows { enabled: true },
+            K::SetRayTracing { enabled: true },
+            K::SetGiBounces {
+                bounces: op("Add", vec![number(2.0), number(2.0)]),
+            },
+            // A count that isn't a number stands a zero, the same both ways.
+            K::SetGiSamples {
+                samples: Value::text("lots"),
+            },
+            K::SetRayTracing { enabled: false },
             K::Move {
                 steps: op("Math", vec![Value::text("Sqrt"), number(2.0)]),
             },
@@ -1897,6 +1921,12 @@ fn sensing_reads_the_same_world() {
             },
             K::Say {
                 text: op("PeakBrightness", vec![]),
+            },
+            K::Say {
+                text: op("IsRayTracing", vec![]),
+            },
+            K::Say {
+                text: op("RayTracingAvailable", vec![]),
             },
             K::Say {
                 text: op("ActiveVolumes", vec![]),
@@ -3832,6 +3862,7 @@ fn every_reporter_over_an_element_answers_the_same_on_both_sides() {
         "interface-reporters",
         vec![
             say_value(op("UiValue", vec![Value::text("volume")])),
+            say_value(op("UiSelectedIndex", vec![Value::text("volume")])),
             say_value(op("UiText", vec![Value::text("hint")])),
             say_value(op("UiShown", vec![Value::text("volume")])),
             say_value(op("UiShown", vec![Value::text("hint")])),
@@ -4039,4 +4070,14 @@ fn framework_widgets_and_property_blocks_match_native_logic() {
         },
     ]);
     assert_same("interface-framework", blocks, &[]);
+}
+
+#[test]
+fn bubbled_ui_event_strands_run_while_the_world_is_paused() {
+    assert_same_headed("interface-hover", vec![
+        (K::WhenStarted, vec![K::PauseGame]),
+        (K::WhenUiEvent { element: "resume".into(), event: "hover".into() },
+            vec![say("hover"), K::Wait { duration: number(0.05) }, say("still alive")]),
+        (K::WhenUiEvent { element: "other".into(), event: "hover".into() }, vec![say("wrong widget")]),
+    ]);
 }

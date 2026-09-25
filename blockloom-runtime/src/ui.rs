@@ -77,6 +77,8 @@ pub struct UiNode {
     pub parent: String,
     pub modal: bool,
     pub visible: bool,
+    pub projected: bool,
+    pub tab_active: bool,
     /// A slider's ends, for turning a drag into a number.
     pub range: [f32; 2],
     /// What `value of (id)` answers with.
@@ -99,6 +101,8 @@ pub struct UiNode {
     pub theme: Option<UiTheme>,
     pub tooltip: String,
     pub world_actor: String,
+    pub scroll_target: String,
+    pub tab_index: Option<usize>,
     pub hovered: bool,
     pub pressed: bool,
     pub transition: f32,
@@ -163,7 +167,8 @@ impl UiManager {
             self.show_widget(widget.clone());
         }
     }
-    pub fn show_widget(&mut self, widget: UiWidget) {
+    pub fn show_widget(&mut self, mut widget: UiWidget) {
+        widget.element.value = UiElement::initial_value(widget.element.kind, &widget.element.value);
         let id = widget.element.id.clone();
         self.show(widget.element);
         if let Some(n) = self.nodes.get_mut(&id) {
@@ -185,6 +190,9 @@ impl UiManager {
             n.items = widget.items;
             n.tooltip = widget.tooltip;
             n.world_actor = widget.world_actor;
+            n.scroll_target = widget.scroll_target;
+            n.tab_index = widget.tab_index;
+            n.transition = widget.transition.max(0.);
         }
     }
     pub fn bubble(&self, id: &str) -> Vec<String> {
@@ -324,6 +332,8 @@ impl UiManager {
                         parent: spec.parent.clone(),
                         modal: spec.modal,
                         visible: true,
+                        projected: true,
+                        tab_active: true,
                         range: spec.range,
                         value: spec.value.clone(),
                         spec,
@@ -339,6 +349,8 @@ impl UiManager {
                         theme: None,
                         tooltip: String::new(),
                         world_actor: String::new(),
+                        scroll_target: String::new(),
+                        tab_index: None,
                         hovered: false,
                         pressed: false,
                         transition: 0.,
@@ -435,7 +447,7 @@ impl UiManager {
 
     /// Whether an element and every ancestor of it is visible.
     pub fn shown(&self, node: &UiNode) -> bool {
-        if !node.visible {
+        if !node.visible || !node.projected || !node.tab_active {
             return false;
         }
         let mut parent = node.parent.clone();
@@ -444,7 +456,7 @@ impl UiManager {
             let Some(above) = self.nodes.get(&parent) else {
                 return true;
             };
-            if !above.visible {
+            if !above.visible || !above.projected || !above.tab_active {
                 return false;
             }
             parent = above.parent.clone();
@@ -470,7 +482,11 @@ impl UiManager {
                 return None;
             }
             let node = self.nodes.get(id)?;
-            if !node.enabled || !self.shown(node) || node.entity == Entity::PLACEHOLDER {
+            if node.kind == UiKind::Spacer
+                || !node.enabled
+                || !self.shown(node)
+                || node.entity == Entity::PLACEHOLDER
+            {
                 return None;
             }
             if !rect_of(node).is_some_and(|rect| rect.contains(point)) {
@@ -571,6 +587,7 @@ impl UiManager {
                 node.scroll_dirty = true;
             }
             UiProp::SelectedIndex => {
+                node.collection_dirty = true;
                 node.value = Evaluated::Number(
                     (number(value).max(0.) as usize).min(node.items.len()) as f64,
                 );
@@ -605,7 +622,10 @@ impl UiManager {
                 node.style.step = Some(number(value).max(0.0));
                 node.value = settled(node, &node.value.clone());
             }
-            UiProp::Value => node.value = settled(node, value),
+            UiProp::Value => {
+                node.value = settled(node, value);
+                node.collection_dirty = true;
+            }
             UiProp::Allow => node.style.allow = Some(UiAllow::from_name(&value.as_text())),
             UiProp::MaxLength => node.style.max_length = Some(number(value).max(0.0) as usize),
             UiProp::Text => node.style.text = Some(value.as_text()),
@@ -644,7 +664,12 @@ impl UiManager {
             }
         }
         node.value = next.clone();
+        node.collection_dirty = true;
         node.dirty = true;
+        let target = node.scroll_target.clone();
+        if !target.is_empty() {
+            self.set(&target, UiProp::Scroll, &next);
+        }
         Some(next)
     }
 
@@ -1020,6 +1045,41 @@ mod tests {
     }
 
     #[test]
+    fn canvas_layout_keeps_offsets_and_margins_together() {
+        let mut manager = UiManager::default();
+        manager.show_widget(UiWidget {
+            element: UiElement {
+                id: "hud".into(),
+                anchor: UiAnchor::TopRight,
+                offset: [-20., 15.],
+                ..Default::default()
+            },
+            layout: Some(UiLayout {
+                margin: [3., 4., 0., 0.],
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let node = layout_node(manager.get("hud").unwrap(), false);
+        assert_eq!(node.left, Val::Percent(100.));
+        assert_eq!(node.margin.left, Val::Px(-17.));
+        assert_eq!(node.margin.top, Val::Px(19.));
+    }
+
+    #[test]
+    fn spacers_do_not_steal_clicks_and_projection_respects_hidden_widgets() {
+        let mut manager = UiManager::default();
+        manager.show(spec("button", UiKind::Button));
+        manager.show(spec("extent", UiKind::Spacer));
+        drawn(&mut manager);
+        let bounds = |_: &UiNode| Some(Rect::from_center_size(Vec2::ZERO, Vec2::splat(100.)));
+        assert_eq!(manager.hit(Vec2::ZERO, bounds).unwrap().spec.id, "button");
+        manager.hide("button", false);
+        manager.get_mut("button").unwrap().projected = true;
+        assert!(!manager.shown(manager.get("button").unwrap()));
+    }
+
+    #[test]
     fn re_showing_the_same_element_updates_it_rather_than_making_a_second() {
         let mut manager = UiManager::default();
         assert!(manager.show(spec("hud", UiKind::Label)));
@@ -1388,7 +1448,12 @@ pub fn layout_node(element: &UiNode, canvas: bool) -> Node {
             node.max_height = Val::Px(layout.max_size[1]);
         }
         node.padding = edges(layout.padding);
-        node.margin = edges(layout.margin);
+        let mut margin = layout.margin;
+        if (element.parent.is_empty() || canvas) && !layout.absolute {
+            margin[0] += element.spec.offset[0];
+            margin[1] += element.spec.offset[1];
+        }
+        node.margin = edges(margin);
         node.row_gap = Val::Px(layout.gap);
         node.column_gap = Val::Px(layout.gap);
         node.flex_grow = layout.grow.max(0.);
@@ -1416,7 +1481,7 @@ pub fn layout_node(element: &UiNode, canvas: bool) -> Node {
     if let Some(padding) = element.style.padding {
         node.padding = UiRect::all(Val::Px(padding));
     }
-    if !element.visible {
+    if !element.visible || !element.projected || !element.tab_active {
         node.display = Display::None;
     }
     node

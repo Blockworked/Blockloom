@@ -414,6 +414,7 @@ pub fn draw_ui(
             .get(&element.parent)
             .is_some_and(|n| n.kind == UiKind::Canvas);
         let old_size = (node.width, node.height);
+        let was_hidden = node.display == Display::None;
         *node = crate::ui::layout_node(element, canvas);
         if element.transition > 0. {
             node.display = if element.kind == UiKind::Grid {
@@ -453,7 +454,8 @@ pub fn draw_ui(
                     duration: element.transition,
                     width: (old_size.0, node.width),
                     height: (old_size.1, node.height),
-                    hide: !element.visible,
+                    hide: !element.visible || !element.projected || !element.tab_active,
+                    show: was_hidden && element.visible && element.projected && element.tab_active,
                 });
         } else {
             *background = BackgroundColor(target);
@@ -484,7 +486,9 @@ pub fn draw_ui(
                 })
                 .unwrap_or_default(),
         ));
-        if element.parent.is_empty() || canvas {
+        if (element.parent.is_empty() || canvas)
+            && element.layout.as_ref().is_none_or(|l| !l.absolute)
+        {
             let at = crate::ui::anchoring(element.spec.anchor, element.spec.offset);
             commands
                 .entity(element.entity)
@@ -502,6 +506,26 @@ pub fn draw_ui(
         for (text_entity, owner, mut text, mut font, mut color) in &mut labels {
             if owner.0 != id {
                 continue;
+            }
+            font.font_size = FontSize::Px(paint.text_size.unwrap_or_else(crate::ui::text_size));
+            if !paint.fonts.is_empty() {
+                font.font = bevy::text::FontSource::List(
+                    paint
+                        .fonts
+                        .iter()
+                        .map(|f| {
+                            if f.starts_with("assets/") {
+                                bevy::text::FontSource::Handle(
+                                    assets.load(world::asset_path(dir.as_deref(), f)),
+                                )
+                            } else {
+                                bevy::text::FontSource::Family(f.clone().into())
+                            }
+                        })
+                        .collect(),
+                );
+            } else {
+                font.font = default();
             }
             if element.kind == UiKind::RichText {
                 text.0.clear();
@@ -522,37 +546,25 @@ pub fn draw_ui(
                                 } else {
                                     bevy::text::FontStyle::Normal
                                 },
-                                ..default()
+                                ..font.clone()
                             },
                             TextColor(
                                 run.color
                                     .as_ref()
                                     .map(|c| world::parse_color(c))
-                                    .unwrap_or_else(|| crate::ui::text_color(local_theme)),
+                                    .unwrap_or_else(|| {
+                                        paint
+                                            .text_color
+                                            .as_ref()
+                                            .map(|c| world::parse_color(c))
+                                            .unwrap_or_else(|| crate::ui::text_color(local_theme))
+                                    }),
                             ),
                         ));
                     }
                 });
             } else if text.0 != wanted {
                 text.0.clone_from(&wanted);
-            }
-            font.font_size = FontSize::Px(paint.text_size.unwrap_or_else(crate::ui::text_size));
-            if !paint.fonts.is_empty() {
-                font.font = bevy::text::FontSource::List(
-                    paint
-                        .fonts
-                        .iter()
-                        .map(|f| {
-                            if f.starts_with("assets/") {
-                                bevy::text::FontSource::Handle(
-                                    assets.load(world::asset_path(dir.as_deref(), f)),
-                                )
-                            } else {
-                                bevy::text::FontSource::Family(f.clone().into())
-                            }
-                        })
-                        .collect(),
-                );
             }
             *color = TextColor(match &paint.text_color {
                 Some(hex) => world::parse_color(hex),

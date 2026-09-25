@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 /// nothing.
 #[derive(Component)]
 pub struct Lit {
-    spec: LightSpec,
+    pub spec: LightSpec,
     child: Entity,
 }
 
