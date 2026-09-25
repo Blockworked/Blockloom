@@ -538,9 +538,7 @@ fn build_surface(
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: TARGET_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         views.insert(
@@ -595,14 +593,22 @@ fn build_surface(
         textures.push(slot.texture);
         images.push(slot.image);
     }
-    copy.views = textures
-        .iter()
-        .map(|texture| {
-            texture
-                .create_view(&wgpu::TextureViewDescriptor::default())
-                .into()
-        })
-        .collect();
+    // A linear ring is only copied into, never drawn or sampled through
+    // wgpu: a view on a COPY_DST-only image fails Vulkan validation
+    // (VUID-VkImageViewCreateInfo-image-04441), so only a direct ring gets
+    // views. `aim_cameras` only reads them when `direct` is set.
+    copy.views = if direct {
+        textures
+            .iter()
+            .map(|texture| {
+                texture
+                    .create_view(&wgpu::TextureViewDescriptor::default())
+                    .into()
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     copy.ring = textures;
     target_bytes.0 = size.x as u64 * size.y as u64 * 4 * (copy.ring.len() as u64 + 1);
     copy.direct = direct;

@@ -239,9 +239,12 @@ impl FrameTimer {
                 ty: wgpu::QueryType::Timestamp,
                 count: (SLOTS * 2) as u32,
             });
+        // Resolve offsets must be multiples of
+        // `QUERY_RESOLVE_BUFFER_ALIGNMENT` (256), not of the 16 bytes two
+        // timestamps write.
         let resolve = device.create_buffer(&BufferDescriptor {
             label: Some("gpu_frame_timer_resolve"),
-            size: (SLOTS * 16) as u64,
+            size: SLOTS as u64 * wgpu::QUERY_RESOLVE_BUFFER_ALIGNMENT,
             usage: BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -350,7 +353,7 @@ fn end_frame(
         label: Some("gpu_frame_timer_end"),
     });
     let first = (index * 2) as u32;
-    let offset = (index * 16) as u64;
+    let offset = index as u64 * wgpu::QUERY_RESOLVE_BUFFER_ALIGNMENT;
     encoder.write_timestamp(&timer.set, first + 1);
     encoder.resolve_query_set(&timer.set, first..first + 2, &timer.resolve, offset);
     let slot = &mut timer.slots[index];
