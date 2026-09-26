@@ -77,4 +77,5 @@ pub fn init() {
     value::register_blockloom_operators();
 }
 
+pub mod cloud_layers;
 pub mod clouds;

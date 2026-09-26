@@ -784,6 +784,7 @@ impl Project {
         self.world.sky.normalize();
         self.world.fog.normalize();
         self.world.clouds.normalize();
+        crate::cloud_layers::normalize(&mut self.world.cloud_layers);
         self.world.lightning.normalize();
         self.world.wind.normalize();
         self.world.surface.normalize();
@@ -952,6 +953,10 @@ impl Project {
         repoint(&mut self.world.lightning.thunder_sound);
         repoint(&mut self.world.clouds.shape_volume);
         repoint(&mut self.world.clouds.detail_volume);
+        for layer in &mut self.world.cloud_layers {
+            repoint(&mut layer.coverage_texture);
+            repoint(&mut layer.flow_map);
+        }
         if let Some(font) = self.world.speech_bubble.font_asset.as_mut() {
             repoint(font);
         }

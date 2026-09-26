@@ -194,6 +194,11 @@ pub enum Act {
         property: &'static str,
         value: f32,
     },
+    SetCloudLayer {
+        layer: f32,
+        property: &'static str,
+        value: f32,
+    },
     SetCloudDrift {
         drift: [f32; 3],
     },
@@ -1060,7 +1065,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 21;
+pub const LOGIC_ABI_VERSION: u32 = 22;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1239,6 +1244,9 @@ pub const ACT_SET_CLOUD_DRIFT: u32 = 92;
 /// `a` = cloud dial (`Coverage`, `Density`, `Type`); `n0` = value.
 /// Window-global: no actor.
 pub const ACT_SET_CLOUDS: u32 = 93;
+/// `a` = cloud layer dial (`Coverage`, `Opacity`, ...); `n0` = layer from 1,
+/// `n1` = value. Window-global: no actor.
+pub const ACT_SET_CLOUD_LAYER: u32 = 94;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1720,6 +1728,18 @@ impl Host for AbiHost {
                 property,
                 "",
                 [value as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetCloudLayer {
+                layer,
+                property,
+                value,
+            } => self.act_wire(
+                actor,
+                ACT_SET_CLOUD_LAYER,
+                property,
+                "",
+                [layer as f64, value as f64, 0.0],
                 &zero,
             ),
             Act::SetCloudDrift { drift } => self.act_wire(

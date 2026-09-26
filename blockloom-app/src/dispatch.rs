@@ -154,6 +154,18 @@ impl Backend {
                 let clouds: blockloom_core::clouds::Clouds = arg(&args, "clouds")?;
                 to_json(commands::set_clouds(state, app, clouds)?)
             }
+            "set_cloud_layers" => {
+                let layers: Vec<blockloom_core::cloud_layers::CloudLayer> = arg(&args, "layers")?;
+                to_json(commands::set_cloud_layers(state, app, layers)?)
+            }
+            "paint_cloud_layer" => {
+                let layer: usize = arg(&args, "layer")?;
+                let brush: blockloom_core::cloud_layers::Brush = arg(&args, "brush")?;
+                let points: Vec<[f32; 2]> = arg(&args, "points")?;
+                to_json(commands::paint_cloud_layer(
+                    state, app, layer, brush, points,
+                )?)
+            }
             "bake_cloud_noise" => to_json(commands::bake_cloud_noise(state, app)?),
             "set_lightning" => {
                 let lightning: blockloom_core::lightning::Lightning = arg(&args, "lightning")?;

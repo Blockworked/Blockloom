@@ -982,6 +982,9 @@ pub struct World {
     pub fog: crate::fog::Fog,
     #[serde(default)]
     pub clouds: crate::clouds::Clouds,
+    /// Planar cloud layers, at most `cloud_layers::MAX_LAYERS`, 3D only.
+    #[serde(default)]
+    pub cloud_layers: Vec<crate::cloud_layers::CloudLayer>,
     /// Strikes and the storm that throws them.
     #[serde(default)]
     pub lightning: crate::lightning::Lightning,
@@ -1028,6 +1031,7 @@ impl Default for World {
             sky: crate::sky::Sky::default(),
             fog: crate::fog::Fog::default(),
             clouds: crate::clouds::Clouds::default(),
+            cloud_layers: Vec::new(),
             lightning: crate::lightning::Lightning::default(),
             wind: crate::wind::Wind::default(),
             surface: crate::material::SurfaceWeather::default(),

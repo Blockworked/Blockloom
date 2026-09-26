@@ -70,10 +70,37 @@ ApplicationWindow {
     // An asset path relative to the open project folder, as a file URL.
     function assetUrl(path) { return path && appState.project_path ? toFileUrl(appState.project_path + "/" + path) : ""; }
 
+    // `next` with every part that equals the same part of `old` swapped for
+    // the old object, so an unchanged actor, project or list stays the same
+    // value and nothing bound to it re-evaluates when a snapshot lands.
+    function reuse(old, next) {
+        if (old === next || old === null || next === null || typeof old !== "object" || typeof next !== "object") return next;
+        if (Array.isArray(next) !== Array.isArray(old)) return next;
+        let same = true;
+        if (Array.isArray(next)) {
+            // Match by id where there is one, so an insert doesn't shift every match.
+            const byId = new Map();
+            for (const o of old) if (o && o.id !== undefined) byId.set(o.id, o);
+            for (let i = 0; i < next.length; ++i) {
+                const n = next[i];
+                next[i] = reuse(n && n.id !== undefined && byId.has(n.id) ? byId.get(n.id) : old[i], n);
+                if (next[i] !== old[i]) same = false;
+            }
+            return same && old.length === next.length ? old : next;
+        }
+        const keys = Object.keys(next);
+        if (keys.length !== Object.keys(old).length) same = false;
+        for (const key of keys) {
+            next[key] = reuse(old[key], next[key]);
+            if (next[key] !== old[key]) same = false;
+        }
+        return same ? old : next;
+    }
+
     AppBridge {
         id: bridge
         onStateJsonChanged: {
-            try { root.appState = JSON.parse(stateJson); }
+            try { root.appState = root.reuse(root.appState, JSON.parse(stateJson)); }
             catch (error) { console.warn("Invalid Blockloom state", error); return; }
             Blocks.appState = root.appState;
             root.status = root.appState.status || null;

@@ -1555,6 +1555,10 @@ pub fn draw(
         draw_game_camera(&mut lines, game_camera);
     }
 
+    if mode == Mode::ThreeD {
+        draw_cloud_layers(&mut lines, &engine.project.world.cloud_layers, &editor);
+    }
+
     // Actors with nothing to draw still get a marker, so they can be found.
     for (id, visibility) in &actors {
         let Some(entity) = engine.entities.get(&id.0) else {
@@ -1821,6 +1825,39 @@ fn draw_grid_2d(lines: &mut Gizmos, editor: &SceneEditor, size: Vec2, px_scale: 
 }
 
 /// Where the game's own camera stands, and which way it looks.
+/// Each cloud layer as one tile of grid at its altitude, under the view,
+/// plus a ring round the pivot of a spinning one.
+fn draw_cloud_layers(
+    lines: &mut Gizmos,
+    layers: &[blockloom_core::cloud_layers::CloudLayer],
+    editor: &SceneEditor,
+) {
+    let flat = Quat::from_rotation_x(-FRAC_PI_2);
+    for layer in layers.iter().filter(|l| l.enabled) {
+        let tile = layer.tiling_km * 1000.0;
+        let color = Color::srgba(0.7, 0.85, 1.0, 0.35);
+        let center = Vec3::new(
+            snap(editor.fly.position.x, tile),
+            layer.altitude,
+            snap(editor.fly.position.z, tile),
+        );
+        lines.grid(
+            Isometry3d::new(center, flat),
+            UVec2::splat(8),
+            Vec2::splat(tile / 8.0),
+            color,
+        );
+        if layer.spin != 0.0 {
+            let pivot = Vec3::new(layer.pivot[0], layer.altitude, layer.pivot[1]);
+            lines.circle(
+                Isometry3d::new(pivot, flat),
+                tile * 0.1,
+                color.with_alpha(0.7),
+            );
+        }
+    }
+}
+
 fn draw_game_camera(lines: &mut Gizmos, camera: &blockloom_core::scene::Camera) {
     let from = Vec3::from(camera.position);
     let at = Vec3::from(camera.look_at);

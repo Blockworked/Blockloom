@@ -400,6 +400,40 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-cloud-layers",
+        cmd: "set_cloud_layers",
+        aliases: &["set_cloud_layers"],
+        summary: "Set the planar cloud layers (up to 4): coverage texture or seeded FBM, coverage, contrast, tiling, opacity, altitude, parallax, tints and ramps, horizon fade, scroll, wind, flow map and spin.",
+        args: &[ArgSpec {
+            name: "layers",
+            ty: "[layer objects]",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "paint-cloud-layer",
+        cmd: "paint_cloud_layer",
+        aliases: &["paint_cloud_layer"],
+        summary: "Paint a stroke into a cloud layer's coverage (assets/clouds/layer-N.png): layer index from 0, brush {tool: Cloud|Eraser|Blur|Advect, radius, strength, falloff}, points [[u,v],...] across the tile.",
+        args: &[
+            ArgSpec {
+                name: "layer",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "brush",
+                ty: "object {tool, radius, strength, falloff}",
+                required: true,
+            },
+            ArgSpec {
+                name: "points",
+                ty: "[[u, v]]",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
         name: "bake-cloud-noise",
         cmd: "bake_cloud_noise",
         aliases: &["bake_cloud_noise"],

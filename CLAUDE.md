@@ -919,6 +919,26 @@ cache under the spec the editor will send back, so the reload doesn't flash.
 `EditorMessage::PreviewErosion` shows an erosion filter without saving it.
 Triangle, chunk and instance counts reach the profiler as `terrain/*`.
 
+### Cloud layers
+
+`World.cloud_layers` (`blockloom-core/src/cloud_layers.rs`) is up to four
+flat layers, 3D only. Coverage is an image's luma or tileable FBM baked from
+the layer's seed (`bake_coverage`), always at `COVERAGE_SIZE`, and `remap`
+turns it into cloud by coverage and contrast; `cloud_layers.wesl` mirrors
+`remap`, so change the two together. `paint-cloud-layer` paints strokes
+(`paint`, wrapping at the tile's edges) into `assets/clouds/layer-N.png` and
+bumps the layer's `revision`, which is how the runtime knows to reread a file
+whose path didn't change. Each stroke keeps a snapshot per revision under
+`.blockloom/cloud-paint`, and undo/redo call `restore_painted` to put the
+file back. `set cloud layer` lands in `engine.cloud_layers`
+(`CloudLayerOverrides`), laid over the project's layers each frame. `blockloom-runtime/src/cloud_layers.rs` loads or
+bakes every layer into one texture array when their keys change, and draws
+them in `CloudPass`: layers beyond the volumetric slab before `CloudMarch`,
+layers between the camera and it after, so the fog pass lays height fog over
+all of them. The same shader's `shadow` entry point multiplies the ground by
+what the layers let through towards the sun, drawn first. Scroll, flow and
+spin run on `CloudOffsets::time`, cloud time.
+
 ### Shader library and pass plumbing
 
 `blockloom-core/src/shader_lib.rs` holds Blockloom's own WESL modules
@@ -1297,6 +1317,11 @@ row and an icon in `Blocks.qml`'s `buildRows()`, a label in its `labels`, a
 field id if it has value slots, and a `Step`/`Effect` if it does something
 new** - not a new QML file. `BlockHeader` and `CallBlock` take their row from
 a `BlockDef` rather than their type, which blockstitch draws itself.
+
+Keep the canvas's inputs identity-stable, since any change rebuilds what is
+bound to it. `Main.qml`'s `reuse` swaps every unchanged part of a new
+snapshot for the old object, and `Blocks.qml` bumps `BlockRegistry.revision`
+only when `optionSource` (the names its dropdowns list) changes.
 
 The asset tray along the bottom (`AssetTray.qml`) is a file manager
 over the project folder: it lists, makes, imports, renames, moves and deletes
