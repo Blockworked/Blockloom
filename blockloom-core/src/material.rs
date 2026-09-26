@@ -1108,6 +1108,10 @@ pub struct ParticleSpec {
     /// Live particles per emitter before the oldest is reused.
     #[serde(default = "default_max")]
     pub max: u32,
+    /// How much of the wind carries particles along, 0-1. Calm air carries
+    /// nothing, so it only shows once the project has wind.
+    #[serde(default = "default_wind")]
+    pub wind: f32,
 }
 
 fn default_rate() -> f32 {
@@ -1140,6 +1144,9 @@ fn default_color_end() -> String {
 fn default_max() -> u32 {
     128
 }
+fn default_wind() -> f32 {
+    1.0
+}
 
 impl Default for ParticleSpec {
     fn default() -> Self {
@@ -1154,6 +1161,7 @@ impl Default for ParticleSpec {
             color_start: default_color_start(),
             color_end: default_color_end(),
             max: default_max(),
+            wind: default_wind(),
         }
     }
 }
@@ -1169,6 +1177,11 @@ impl ParticleSpec {
         self.size_start = self.size_start.clamp(0.5, 256.0);
         self.size_end = self.size_end.clamp(0.0, 256.0);
         self.max = self.max.clamp(1, 512);
+        self.wind = if self.wind.is_finite() {
+            self.wind.clamp(0.0, 4.0)
+        } else {
+            default_wind()
+        };
     }
 
     pub fn validate(&self) -> Result<(), String> {

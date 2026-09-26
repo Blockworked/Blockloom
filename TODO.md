@@ -513,7 +513,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         `beams` multiplier. Not covered: beams are unshadowed like the other
         fog lights; shafts are spots only and ignore occluders past depth
         testing; motes and height dust are unshadowed and don't collide.
-  - [ ] Movement and animation (one wind system drives clouds, layers, vegetation,
+  - [x] Movement and animation (one wind system drives clouds, layers, vegetation,
         water and particles so a storm reads as one storm):
         - Global wind asset: direction, base speed, gust strength plus gust frequency
           (1D Perlin over time), vertical log-law profile (calm at ground, fast aloft),
@@ -527,6 +527,29 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         - Blocks and scripts: `set wind direction/speed/gust/storm to`,
           `set cloud drift to`, reporters `wind speed`, `wind direction`, `storm`.
           All sampled on fixed tick so replays stay deterministic.
+        Done: `World::wind` (`blockloom-core/src/wind.rs`) holds direction,
+        speed, gust strength and frequency (two octaves of seeded 1D gradient
+        noise, which also veer the direction), a log-law profile from a
+        roughness length to a reference height, and a storm dial that
+        triples the speed, quadruples gusts and triples turbulence at 1.
+        Volumes carry local wind zones (blow instead, blow on top, or swirl
+        round the actor's up axis with inflow and updraft), each with
+        turbulence and the volume's own blend falloff, weight and priority.
+        `CloudDrift` takes the wind at the clouds' altitude times a follow
+        factor plus its own advection, an erosion drift, a layer scroll
+        multiplier and a 1-1000x time-lapse, with a cloud seed the Project
+        Settings Shuffle button rerolls. `blockloom-runtime/src/wind.rs`
+        steps it on the fixed tick's clock into `WindField`; particles ride
+        it (per-emitter `wind` factor), volumetric fog's noise drifts with
+        it, and the cloud offsets are integrated there for the cloud passes.
+        Blocks, compiled logic and scripts share `set wind [direction/speed/
+        gust/storm] to` and `set cloud drift to`; `wind direction` and
+        `storm` join the atmosphere readings beside `wind speed`.
+        Not covered: nothing draws clouds, cloud layers, vegetation or water
+        yet, so the cloud offsets have no reader until those items land;
+        wind doesn't push rigid bodies; dust motes and beam motes keep
+        their own drift rather than the wind; there are no wind arrows in
+        the viewport (the editor item below).
   - [ ] Volumetric clouds (the hero feature, raymarched in sky pass at half res with
         temporal reprojection and depth-aware upsample):
         - Shape: tileable 128 cubed Worley plus Perlin-Worley FBM asset (authored or

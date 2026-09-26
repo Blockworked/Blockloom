@@ -89,6 +89,7 @@ const TWEEN_EASINGS: &[&str] = &[
     "Elastic",
 ];
 const SOUND_BUSES: &[&str] = &["Master", "Music", "Sfx"];
+const WIND_PROPERTIES: &[&str] = &["Direction", "Speed", "Gust", "Storm"];
 const UI_ANCHORS: &[&str] = &[
     "TopLeft",
     "Top",
@@ -1141,6 +1142,53 @@ pub const BLOCKS: &[BlockSpec] = &[
             id: "LightningRate",
             value: "Any",
         }],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetWind",
+        category: "Looks",
+        purpose: "Sets one of the wind's dials for the rest of the run: Direction in degrees clockwise from north (-Z in 3D, up the screen in 2D), Speed in world units per second at the reference height, Gust as the extra speed at a gust's peak, or Storm 0-1, which triples the speed, quadruples gusts and triples turbulence at 1. Particles, fog and clouds all ride it; the `wind speed`, `wind direction` and `storm` atmosphere readings report it.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "value",
+            id: "WindValue",
+            value: "Any",
+        }],
+        dropdowns: &[Dropdown {
+            field: "property",
+            options: WIND_PROPERTIES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetCloudDrift",
+        category: "Looks",
+        purpose: "Sets how fast the clouds drift on top of the wind aloft, world units per second, for the rest of the run. Replaces the project's own cloud advection.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "x",
+                id: "CloudDriftX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "CloudDriftY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "CloudDriftZ",
+                value: "Any",
+            },
+        ],
         dropdowns: NO_DROPDOWNS,
         strings: NO_STRINGS,
         bools: NO_BOOLS,

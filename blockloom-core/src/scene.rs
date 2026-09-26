@@ -949,6 +949,10 @@ pub struct World {
     /// Strikes and the storm that throws them.
     #[serde(default)]
     pub lightning: crate::lightning::Lightning,
+    /// The wind everything that moves with the air reads, and the clouds'
+    /// drift on it.
+    #[serde(default)]
+    pub wind: crate::wind::Wind,
 }
 
 fn default_background() -> String {
@@ -985,6 +989,7 @@ impl Default for World {
             sky: crate::sky::Sky::default(),
             fog: crate::fog::Fog::default(),
             lightning: crate::lightning::Lightning::default(),
+            wind: crate::wind::Wind::default(),
         }
     }
 }

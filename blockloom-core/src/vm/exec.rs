@@ -1380,6 +1380,17 @@ impl Vm {
                 let rate = self.eval_f32(rate, actor, params, temps, out);
                 out.push(Effect::SetLightningRate { rate });
             }
+            Action::SetWind { property, value } => {
+                let value = self.eval_f32(value, actor, params, temps, out);
+                out.push(Effect::SetWind {
+                    property: *property,
+                    value,
+                });
+            }
+            Action::SetCloudDrift(vector) => {
+                let drift = self.eval_vec3(vector, actor, params, temps, out);
+                out.push(Effect::SetCloudDrift { drift });
+            }
             Action::SetGravity(vector) => {
                 let gravity = self.eval_vec3(vector, actor, params, temps, out);
                 out.push(Effect::SetGravity { gravity });

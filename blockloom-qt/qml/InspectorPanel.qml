@@ -36,7 +36,7 @@ Rectangle {
     }
     function cameraOf(c) { return Object.assign({ view: "Follow", offset: [0, 0.6, 0], distance: 6, pitch: 15, fov: 75 }, c.camera || {}); }
     function materialOf(c) { return Object.assign({ metallic: 0, roughness: 0.6, emissive: "#000000", emissive_energy: 0, albedo_texture: "", normal_texture: "", roughness_texture: "", tiling: [1, 1], offset: [0, 0], rotation: 0, sampler: "Clamp", anisotropy: 0, box_projection: false, texel_density: 1, double_sided: false, shader: null }, c.material || {}); }
-    function emitterOf(c) { return Object.assign({ rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: "#FFFFFF", color_end: "#FFAB19", max: 128 }, c.emitter || {}); }
+    function emitterOf(c) { return Object.assign({ rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: "#FFFFFF", color_end: "#FFAB19", max: 128, wind: 1 }, c.emitter || {}); }
     function lightOf(c) { return Object.assign({ kind: "Point", color: "#FFFFFF", intensity: 800, range: 20, radius: 0, inner_angle: 30, outer_angle: 45, shadows: false,
         unit: "Lumens", width: 1, height: 1, cookie: "", cookie_tiling: 1, ies: "", contact_shadows: false, soft_shadows: false, shadow_depth_bias: null, shadow_normal_bias: null, ray_traced: true, volumetric: true }, c.light || {}); }
     function beamOf(l) {
@@ -723,6 +723,7 @@ Rectangle {
             InspectorRow { label: "Speed"; Layout.fillWidth: true; NumberField { value: em.e.speed; fallback: 120; onCommitted: n => root.writeEmitter(em.c, { speed: n }) } }
             InspectorRow { label: "Spread"; Layout.fillWidth: true; NumberField { value: em.e.spread; fallback: 60; onCommitted: n => root.writeEmitter(em.c, { spread: n }) } }
             InspectorRow { label: "Gravity ×"; Layout.fillWidth: true; NumberField { value: em.e.gravity_scale; fallback: 0.5; onCommitted: n => root.writeEmitter(em.c, { gravity_scale: n }) } }
+            InspectorRow { label: "Wind ×"; Layout.fillWidth: true; NumberField { value: em.e.wind; fallback: 1; onCommitted: n => root.writeEmitter(em.c, { wind: Math.min(4, Math.max(0, n)) }) } }
             InspectorRow { label: "Size"; Layout.fillWidth: true
                 NumberField { value: em.e.size_start; fallback: 6; onCommitted: n => root.writeEmitter(em.c, { size_start: n }) }
                 NumberField { value: em.e.size_end; fallback: 1; onCommitted: n => root.writeEmitter(em.c, { size_end: n }) } }
@@ -876,6 +877,8 @@ Rectangle {
             readonly property var c: parent.c
             readonly property var v: root.volumeOf(c)
             readonly property var fog: Object.assign({ enabled: false, density: 0.2, albedo: "#FFFFFF", emissive: "#000000", emissive_strength: 0 }, v.fog || {})
+            readonly property var wind: Object.assign({ enabled: false, mode: "Override", direction: 0, speed: 0, swirl: 20, inflow: 2, updraft: 5, turbulence: 0, turbulence_scale: 10 }, v.wind || {})
+            function writeWind(next) { root.writeVolume(vo.c, { wind: Object.assign({}, vo.wind, next) }); }
             readonly property var live: root.actor && root.app.status && root.app.status.volumes
                 ? (root.app.status.volumes.find(x => x.actor === root.actor.id) || null) : null
             spacing: 6
@@ -932,6 +935,23 @@ Rectangle {
                 NumberField { value: vo.fog.emissive_strength; fallback: 0; onCommitted: n => root.writeVolume(vo.c, { fog: Object.assign({}, vo.fog, { emissive_strength: Math.max(0, n) }) }) } }
             Text { visible: root.is3d && vo.v.shape !== "Global" && vo.fog.enabled; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Adds volumetric fog inside the shape, fading out across the blend distance and scaled by the weight, wherever the camera is. Lit like the project's volumetric fog; glow nits are per unit of density." }
+            Text { text: "Local wind"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            InspectorRow { label: "Enabled"; Layout.fillWidth: true
+                SwitchField { value: vo.wind.enabled; onToggled: on => vo.writeWind({ enabled: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { visible: vo.wind.enabled; label: "Mode"; Layout.fillWidth: true
+                ChoiceField { options: [{ value: "Override", label: "Blow instead" }, { value: "Add", label: "Blow on top" }, { value: "Swirl", label: "Swirl" }]; value: vo.wind.mode; onChosen: m => vo.writeWind({ mode: m }) } }
+            InspectorRow { visible: vo.wind.enabled && vo.wind.mode !== "Swirl"; label: "Direction, speed"; Layout.fillWidth: true
+                NumberField { value: vo.wind.direction; fallback: 0; onCommitted: n => vo.writeWind({ direction: ((n % 360) + 360) % 360 }) }
+                NumberField { value: vo.wind.speed; fallback: 0; onCommitted: n => vo.writeWind({ speed: Math.min(10000, Math.max(0, n)) }) } }
+            InspectorRow { visible: vo.wind.enabled && vo.wind.mode === "Swirl"; label: root.is3d ? "Round, in, up" : "Round, in"; Layout.fillWidth: true
+                NumberField { value: vo.wind.swirl; fallback: 20; onCommitted: n => vo.writeWind({ swirl: n }) }
+                NumberField { value: vo.wind.inflow; fallback: 2; onCommitted: n => vo.writeWind({ inflow: n }) }
+                NumberField { visible: root.is3d; value: vo.wind.updraft; fallback: 5; onCommitted: n => vo.writeWind({ updraft: n }) } }
+            InspectorRow { visible: vo.wind.enabled; label: "Turbulence, size"; Layout.fillWidth: true
+                NumberField { value: vo.wind.turbulence; fallback: 0; onCommitted: n => vo.writeWind({ turbulence: Math.min(10000, Math.max(0, n)) }) }
+                NumberField { value: vo.wind.turbulence_scale; fallback: 10; onCommitted: n => vo.writeWind({ turbulence_scale: Math.max(0.01, n) }) } }
+            Text { visible: vo.wind.enabled; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Changes the project's wind inside the shape, fading out across the blend distance and scaled by the weight; higher priority zones act last. Blow instead with speed 0 is still air indoors. Swirl spins round the actor's up axis" + (root.is3d ? ", pulls in and lifts: a funnel." : " and pulls in.") + " Turbulence stirs eddies about the size given, harder in a storm." }
             Component { id: overrideNumber
                 NumberField { value: parent.o.value; onCommitted: n => root.writeOverride(vo.c, parent.key, { value: n, on: true }) } }
             Component { id: overrideColor

@@ -186,6 +186,13 @@ pub enum Act {
     SetLightningRate {
         rate: f32,
     },
+    SetWind {
+        property: &'static str,
+        value: f32,
+    },
+    SetCloudDrift {
+        drift: [f32; 3],
+    },
     SetBody {
         body: &'static str,
     },
@@ -1049,7 +1056,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 19;
+pub const LOGIC_ABI_VERSION: u32 = 20;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1220,6 +1227,11 @@ pub const ACT_SET_AURORA: u32 = 88;
 pub const ACT_STRIKE_LIGHTNING: u32 = 89;
 /// `n0` = strikes a minute. Window-global: no actor.
 pub const ACT_SET_LIGHTNING_RATE: u32 = 90;
+/// `a` = wind dial (`Direction`, `Speed`, `Gust`, `Storm`); `n0` = value.
+/// Window-global: no actor.
+pub const ACT_SET_WIND: u32 = 91;
+/// `n0..n2` = extra cloud drift per second. Window-global: no actor.
+pub const ACT_SET_CLOUD_DRIFT: u32 = 92;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1685,6 +1697,22 @@ impl Host for AbiHost {
                 "",
                 "",
                 [rate as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetWind { property, value } => self.act_wire(
+                actor,
+                ACT_SET_WIND,
+                property,
+                "",
+                [value as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetCloudDrift { drift } => self.act_wire(
+                actor,
+                ACT_SET_CLOUD_DRIFT,
+                "",
+                "",
+                drift.map(f64::from),
                 &zero,
             ),
             Act::SetBody { body } => self.act_wire(actor, ACT_SET_BODY, body, "", [0.0; 3], &zero),

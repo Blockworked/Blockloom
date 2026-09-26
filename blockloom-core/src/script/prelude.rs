@@ -1051,6 +1051,49 @@ impl Actor {
         );
     }
 
+    /// One of the wind's dials for the rest of the run: `"direction"` in
+    /// degrees clockwise from north, `"speed"`, `"gust"` or `"storm"` 0-1.
+    pub fn set_wind(&self, dial: &str, value: f32) {
+        self.act(
+            ACT_SET_WIND,
+            Str::borrow(dial),
+            Str::EMPTY,
+            Str::EMPTY,
+            value as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Extra cloud drift, world units per second, for the rest of the run.
+    pub fn set_cloud_drift(&self, x: f32, y: f32, z: f32) {
+        self.act(
+            ACT_SET_CLOUD_DRIFT,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            x as f64,
+            y as f64,
+            z as f64,
+        );
+    }
+
+    /// The wind where the camera is, world units per second, as of this
+    /// tick.
+    pub fn wind_speed(&self) -> f32 {
+        self.atmosphere("wind speed").unwrap_or(0.0) as f32
+    }
+
+    /// Degrees the wind blows towards, clockwise from north, as of this tick.
+    pub fn wind_direction(&self) -> f32 {
+        self.atmosphere("wind direction").unwrap_or(0.0) as f32
+    }
+
+    /// How stormy the wind is, 0-1, as of this tick.
+    pub fn storm(&self) -> f32 {
+        self.atmosphere("storm").unwrap_or(0.0) as f32
+    }
+
     /// Whether the world is lit by ray tracing right now, as of this tick.
     pub fn ray_tracing_on(&self) -> bool {
         self.atmosphere("ray tracing").unwrap_or(0.0) != 0.0

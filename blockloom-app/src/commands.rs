@@ -33,6 +33,7 @@ use blockloom_core::sound::SoundMixer;
 use blockloom_core::sync;
 use blockloom_core::sync::LockInfo;
 use blockloom_core::value::{Evaluated, Value};
+use blockloom_core::wind::Wind;
 use blockstitch_core::editor::{ValueEdit, prune_value_buffers};
 use blockstitch_core::value::operator_kind;
 use std::collections::HashMap;
@@ -914,6 +915,22 @@ pub(crate) fn set_lightning(
         .ok_or("Choose a valid lightning color".to_string())?;
     if let Some(project) = s.project_mut() {
         project.world.lightning = lightning;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Sets the wind: direction, speed, gusts, the profile near the ground, the
+/// storm dial and how the clouds ride it.
+pub(crate) fn set_wind(state: &SharedState, app: &AppHandle, wind: Wind) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut wind = wind;
+    wind.normalize();
+    if let Some(project) = s.project_mut() {
+        project.world.wind = wind;
     }
     auto_save(&s);
     sync_runtime(&mut s);

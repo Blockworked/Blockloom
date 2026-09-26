@@ -916,6 +916,17 @@ extern "C" fn act(
         abi::ACT_SET_AURORA => Effect::SetAurora { kp: n0 as f32 },
         abi::ACT_STRIKE_LIGHTNING => Effect::StrikeLightning { at: vector },
         abi::ACT_SET_LIGHTNING_RATE => Effect::SetLightningRate { rate: n0 as f32 },
+        abi::ACT_SET_WIND => match blockloom_core::wind::WindProperty::parse(a) {
+            Some(property) => Effect::SetWind {
+                property,
+                value: n0 as f32,
+            },
+            None => Effect::Error {
+                actor,
+                message: format!("there's no wind dial called \"{a}\""),
+            },
+        },
+        abi::ACT_SET_CLOUD_DRIFT => Effect::SetCloudDrift { drift: vector },
         abi::ACT_SET_BUS_VOLUME => Effect::SetBusVolume {
             bus: SoundBus::parse(a).unwrap_or(SoundBus::Sfx),
             volume: user_to_gain(n0),

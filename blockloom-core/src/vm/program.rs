@@ -147,6 +147,11 @@ pub enum Action {
     SetAurora(Value),
     StrikeLightning([Value; 3]),
     SetLightningRate(Value),
+    SetWind {
+        property: crate::wind::WindProperty,
+        value: Value,
+    },
+    SetCloudDrift([Value; 3]),
     SetBody(BodyKind),
     ApplyImpulse([Value; 3]),
     SetVelocity([Value; 3]),
@@ -612,6 +617,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
         | Action::SetFogDensity(value)
         | Action::SetAurora(value)
         | Action::SetLightningRate(value)
+        | Action::SetWind { value, .. }
         | Action::Say(value)
         | Action::SetColor(value)
         | Action::StopSound { sound: value }
@@ -624,7 +630,8 @@ fn action_values(action: &Action) -> Vec<&Value> {
         | Action::ApplyImpulse(target)
         | Action::SetVelocity(target)
         | Action::SetGravity(target)
-        | Action::StrikeLightning(target) => target.iter().collect(),
+        | Action::StrikeLightning(target)
+        | Action::SetCloudDrift(target) => target.iter().collect(),
         Action::NavigateTo { target, speed } => {
             let mut values: Vec<&Value> = target.iter().collect();
             values.push(speed);
@@ -883,6 +890,16 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
                 *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
             }
             Action::StrikeLightning(t)
+        }
+        Action::SetWind { property, value } => Action::SetWind {
+            property,
+            value: lift_one(value, ctx),
+        },
+        Action::SetCloudDrift(mut t) => {
+            for v in &mut t {
+                *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
+            }
+            Action::SetCloudDrift(t)
         }
         Action::EnableVolume { volume, enabled } => Action::EnableVolume {
             volume: lift_one(volume, ctx),
@@ -1410,6 +1427,15 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::SetLightningRate { rate } => {
             steps.push(Step::Action(Action::SetLightningRate(rate.clone())))
         }
+        K::SetWind { property, value } => steps.push(Step::Action(Action::SetWind {
+            property: *property,
+            value: value.clone(),
+        })),
+        K::SetCloudDrift { x, y, z } => steps.push(Step::Action(Action::SetCloudDrift([
+            x.clone(),
+            y.clone(),
+            z.clone(),
+        ]))),
         K::SetBody { body } => steps.push(Step::Action(Action::SetBody(*body))),
         K::ApplyImpulse { x, y, z } => steps.push(Step::Action(Action::ApplyImpulse([
             x.clone(),

@@ -154,6 +154,10 @@ impl Backend {
                 let lightning: blockloom_core::lightning::Lightning = arg(&args, "lightning")?;
                 to_json(commands::set_lightning(state, app, lightning)?)
             }
+            "set_wind" => {
+                let wind: blockloom_core::wind::Wind = arg(&args, "wind")?;
+                to_json(commands::set_wind(state, app, wind)?)
+            }
             "set_post_process" => {
                 let post: PostProcess = arg(&args, "post")?;
                 to_json(commands::set_post_process(state, app, post)?)

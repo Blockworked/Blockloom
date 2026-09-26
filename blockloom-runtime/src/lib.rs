@@ -43,6 +43,7 @@ mod logic;
 mod luminance;
 mod materials;
 mod model;
+mod wind;
 // Plumbing the Phase 5 passes build on; nothing reads most of it yet.
 mod overlay;
 #[allow(dead_code)]
@@ -159,6 +160,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     capture::register(app);
     ray_tracing::register(app, mode);
     lightning::register(app);
+    wind::register(app);
     edit::configure(app);
     // Both of these only exist to talk to an editor, and a built game has
     // none: no corner status, no handshake.

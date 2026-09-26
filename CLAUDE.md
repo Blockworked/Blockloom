@@ -666,6 +666,30 @@ The GPU half is the ignored `embed` tests: height fog, volumetric glow,
 sunlit fog and a roof's shadow in it, a volume's local fog, aurora, stars
 and a lightning block.
 
+### Wind
+
+`World::wind` (`blockloom-core/src/wind.rs`) is the one wind, both
+dimensions: a direction (degrees clockwise from north, -Z in 3D and up the
+screen in 2D), a speed at the reference height, gusts on seeded 1D gradient
+noise that also veer the direction, a log-law profile towards the ground (3D
+only), and a storm dial that scales the rest (`StormScale`). A `Volume` can
+carry a `LocalWind` zone (override, add or swirl round the actor's up axis,
+plus turbulence), blended in `blend_order` like the rest of a volume.
+`CloudDrift` is how the clouds ride it: the wind at their altitude times
+`follow`, their own drift, an erosion drift and a time-lapse; `CloudOffsets`
+integrates it. The public API speaks arrays because core's glam isn't
+Bevy's.
+
+`blockloom-runtime/src/wind.rs` steps it on the fixed tick's own clock
+(`step_wind`, before `sample_atmosphere`), so a replay gusts the same and
+the atmosphere slot's `wind speed`, `wind direction` and `storm` are the
+wind at the camera that tick. Everything that moves with the air reads the
+resulting `WindField`: particles ease into `field.at(position)` scaled by
+their emitter's `wind`, the fog's noise scrolls by `field.drift`, and the
+cloud passes are meant to take `field.clouds`. `set wind [dial] to` and
+`set cloud drift to` (and a script's `set_wind`/`set_cloud_drift`) land in
+`engine.wind` for the run.
+
 ### Lighting rig
 
 `Light` (`LightSpec`) is a point, spot, rect or disk light. Rect and disk are

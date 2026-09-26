@@ -41,6 +41,8 @@ BwDialog {
     function writeSkyPart(part, next) { const o = {}; o[part] = Object.assign(JSON.parse(JSON.stringify(world.sky[part])), next); writeSky(o); }
     function writeFogPart(part, next) { const fog = JSON.parse(JSON.stringify(world.fog)); fog[part] = Object.assign(fog[part], next); invoke("set_fog", { fog: fog }); }
     function writeLightning(next) { invoke("set_lightning", { lightning: Object.assign(JSON.parse(JSON.stringify(world.lightning)), next) }); }
+    function writeWind(next) { invoke("set_wind", { wind: Object.assign(JSON.parse(JSON.stringify(world.wind)), next) }); }
+    function writeClouds(next) { writeWind({ clouds: Object.assign(JSON.parse(JSON.stringify(world.wind.clouds)), next) }); }
     function writeLighting(next) { invoke("set_lighting", { lighting: Object.assign(JSON.parse(JSON.stringify(world.lighting)), next) }); }
     function writePost(next) { invoke("set_post_process", { post: Object.assign(postOf(), next) }); }
     function displayOf() { return Object.assign({ space: "Sdr", peak_nits: 1000, paper_white_nits: 200 }, world && world.display ? world.display : {}); }
@@ -406,6 +408,45 @@ BwDialog {
                 InspectorRow { label: "Seed"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: lightningSection.l.seed; fallback: 1; onCommitted: n => root.writeLightning({ seed: Math.max(Math.round(n), 0) }) } }
                 Note { text: "A strike flashes a light above where it lands (3D), pulses the ambient light and the sky by the sky pulse, and its thunder arrives later the further away it is, at the speed of sound. A storm strikes at random inside the region at about its rate; one seed always throws the same storm. Blocks: `strike lightning at` and `set lightning storm to`." }
+            }
+            Section {
+                id: windSection
+                heading: "Wind"; visible: !!root.world && !!root.world.wind
+                readonly property var w: root.world && root.world.wind ? root.world.wind : ({})
+                readonly property var c: windSection.w.clouds || ({})
+                InspectorRow { label: "Direction, speed"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: windSection.w.direction; fallback: 45; onCommitted: n => root.writeWind({ direction: ((n % 360) + 360) % 360 }) }
+                    NumberField { value: windSection.w.speed; fallback: 0; onCommitted: n => root.writeWind({ speed: root.clamp(n, 0, 10000) }) } }
+                InspectorRow { label: "Gust, a second"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: windSection.w.gust; fallback: 0; onCommitted: n => root.writeWind({ gust: root.clamp(n, 0, 10000) }) }
+                    NumberField { value: windSection.w.gust_frequency; fallback: 0.2; onCommitted: n => root.writeWind({ gust_frequency: root.clamp(n, 0, 10) }) } }
+                InspectorRow { label: "Veer, storm"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: windSection.w.veer; fallback: 15; onCommitted: n => root.writeWind({ veer: root.clamp(n, 0, 180) }) }
+                    NumberField { value: windSection.w.storm; fallback: 0; onCommitted: n => root.writeWind({ storm: root.clamp(n, 0, 1) }) } }
+                InspectorRow { visible: root.is3d; label: "Ground profile"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: windSection.w.profile !== false; onToggled: on => root.writeWind({ profile: on }) } }
+                InspectorRow { visible: root.is3d && windSection.w.profile !== false; label: "At m, roughness"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: windSection.w.reference_height; fallback: 10; onCommitted: n => root.writeWind({ reference_height: root.clamp(n, 0.01, 10000) }) }
+                    NumberField { value: windSection.w.roughness; fallback: 0.1; onCommitted: n => root.writeWind({ roughness: root.clamp(n, 0.0001, 10) }) } }
+                InspectorRow { visible: root.is3d && windSection.w.profile !== false; label: "Ground y"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: windSection.w.ground; fallback: 0; onCommitted: n => root.writeWind({ ground: n }) } }
+                InspectorRow { label: "Seed"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: windSection.w.seed; fallback: 1; onCommitted: n => root.writeWind({ seed: Math.max(Math.round(n), 0) }) } }
+                InspectorRow { visible: root.is3d; label: "Clouds at m"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: windSection.c.altitude; fallback: 1500; onCommitted: n => root.writeClouds({ altitude: root.clamp(n, 0, 100000) }) } }
+                InspectorRow { label: "Follow, layers"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: windSection.c.follow; fallback: 1; onCommitted: n => root.writeClouds({ follow: root.clamp(n, 0, 100) }) }
+                    NumberField { value: windSection.c.layer_scroll; fallback: 1; onCommitted: n => root.writeClouds({ layer_scroll: root.clamp(n, 0, 100) }) } }
+                InspectorRow { label: "Cloud drift"; labelWidth: 110; Layout.fillWidth: true
+                    Repeater { model: root.is3d ? 3 : 2; delegate: NumberField { required property int index; value: windSection.c.advection ? windSection.c.advection[index] : 0; onCommitted: n => root.writeClouds({ advection: root.withIndex(windSection.c.advection || [0, 0, 0], index, root.clamp(n, -10000, 10000)) }) } } }
+                InspectorRow { label: "Erosion drift"; labelWidth: 110; Layout.fillWidth: true
+                    Repeater { model: root.is3d ? 3 : 2; delegate: NumberField { required property int index; value: windSection.c.erosion ? windSection.c.erosion[index] : 0; onCommitted: n => root.writeClouds({ erosion: root.withIndex(windSection.c.erosion || [0, 0.5, 0], index, root.clamp(n, -10000, 10000)) }) } } }
+                InspectorRow { label: "Time-lapse"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: windSection.c.time_lapse; fallback: 1; onCommitted: n => root.writeClouds({ time_lapse: root.clamp(n, 1, 1000) }) } }
+                InspectorRow { label: "Cloud seed"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: windSection.c.seed; fallback: 1; onCommitted: n => root.writeClouds({ seed: Math.max(Math.round(n), 0) }) }
+                    BwButton { text: "Shuffle"; iconName: "refresh-cw"; implicitHeight: 30; onClicked: root.writeClouds({ seed: 1 + Math.floor(Math.random() * 2147483646) }) } }
+                Note { text: "Direction is where the wind blows towards, in degrees clockwise from north (-Z in 3D, up the screen in 2D), and speed is measured at the reference height. Gusts come and go on smooth noise, swinging the direction by up to the veer; one seed always blows the same. In 3D the ground profile calms the wind towards the ground on a log law. Storm (0 to 1) triples the speed, quadruples the gusts and triples zone turbulence at full. Particles ride it (each emitter says how much), volumetric fog's noise drifts with it, and the clouds take the wind at their altitude times follow, plus their own drift; time-lapse runs them up to 1000x faster. Volumes can make local wind zones. Blocks: `set wind`, `set cloud drift to`, and the `wind speed`, `wind direction` and `storm` atmosphere readings." }
             }
             Section {
                 heading: "Shadows"; visible: !!root.world && root.is3d

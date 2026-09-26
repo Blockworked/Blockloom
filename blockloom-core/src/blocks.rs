@@ -271,6 +271,19 @@ pub enum InstructionKind {
     SetLightningRate {
         rate: Value,
     },
+    /// One of the wind's dials for the rest of the run: its direction in
+    /// degrees, speed, gust strength or storm 0-1. Window-global.
+    SetWind {
+        property: crate::wind::WindProperty,
+        value: Value,
+    },
+    /// Extra drift of the clouds, world units per second, for the rest of
+    /// the run.
+    SetCloudDrift {
+        x: Value,
+        y: Value,
+        z: Value,
+    },
 
     // ─── Physics ────────────────────────────────────────────────────────────
     SetBody {
@@ -813,6 +826,7 @@ impl BlockKind for InstructionKind {
             | K::SetFogDensity { density: v }
             | K::SetAurora { kp: v }
             | K::SetLightningRate { rate: v }
+            | K::SetWind { value: v, .. }
             | K::SetDensity { density: v }
             | K::SetMass { mass: v }
             | K::SetCollisionLayer { layer: v }
@@ -836,6 +850,7 @@ impl BlockKind for InstructionKind {
             | K::Repeat { count: v, .. } => f(v, InputValueType::Any),
             K::GoTo { x, y, z }
             | K::StrikeLightning { x, y, z }
+            | K::SetCloudDrift { x, y, z }
             | K::ApplyImpulse { x, y, z }
             | K::SetVelocity { x, y, z }
             | K::SetGravity { x, y, z } => {

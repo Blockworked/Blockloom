@@ -181,6 +181,11 @@ pub struct AtmosphereSense {
     pub wind_speed: f32,
     /// Extra speed a gust adds on top right now.
     pub wind_gust: f32,
+    /// Degrees the wind blows towards, clockwise from north, as the wind's
+    /// own direction dial measures it.
+    pub wind_heading: f32,
+    /// How stormy the wind is, 0-1.
+    pub storm: f32,
     /// Extinction per world unit, 0 for clear air.
     pub fog_density: f32,
     pub fog_color: [f32; 3],
@@ -225,6 +230,8 @@ impl Default for AtmosphereSense {
             wind_direction: [0.0; 3],
             wind_speed: 0.0,
             wind_gust: 0.0,
+            wind_heading: 0.0,
+            storm: 0.0,
             fog_density: 0.0,
             fog_color: [1.0; 3],
             cloud_cover: 0.0,
@@ -257,6 +264,8 @@ pub const ATMOSPHERE_FIELDS: &[&str] = &[
     "wind z",
     "wind speed",
     "wind gust",
+    "wind direction",
+    "storm",
     "fog density",
     "cloud cover",
     "rain",
@@ -292,6 +301,8 @@ impl AtmosphereSense {
             "windz" => self.wind_direction[2] * self.wind_speed,
             "windspeed" => self.wind_speed,
             "windgust" => self.wind_gust,
+            "winddirection" | "windheading" => self.wind_heading,
+            "storm" => self.storm,
             "fogdensity" | "fog" => self.fog_density,
             "cloudcover" | "clouds" => self.cloud_cover,
             "rain" => self.rain,

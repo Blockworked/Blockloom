@@ -400,6 +400,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-wind",
+        cmd: "set_wind",
+        aliases: &["set_wind"],
+        summary: "Set the wind: direction (degrees clockwise from north), speed, gusts, log-law profile, storm 0-1, and the clouds' drift, erosion, layer scroll, time-lapse and seed.",
+        args: &[ArgSpec {
+            name: "wind",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-post-process",
         cmd: "set_post_process",
         aliases: &["set_post_process"],

@@ -68,7 +68,13 @@ pub struct Particle {
     color0: Color,
     color1: Color,
     gravity: f32,
+    /// How much of the wind carries it, and the air speed it has picked up.
+    wind: f32,
+    air: Vec3,
 }
+
+/// Seconds the wind takes to mostly carry a new particle along.
+const WIND_CATCH: f32 = 0.25;
 
 /// One fading snapshot left by a trail, with the alpha it started at.
 #[derive(Component)]
@@ -297,6 +303,8 @@ fn spawn_particle(
         color0,
         color1: parse_color(&spec.color_end),
         gravity: spec.gravity_scale,
+        wind: spec.wind,
+        air: Vec3::ZERO,
     };
     if mode.is_3d() {
         let material = materials.add(StandardMaterial {
@@ -339,6 +347,7 @@ pub fn step_particles(
     mut commands: Commands,
     engine: NonSend<Engine>,
     time: Res<Time>,
+    wind: Option<Res<crate::wind::WindField>>,
     mut particles: Query<(
         Entity,
         &mut Particle,
@@ -360,7 +369,13 @@ pub fn step_particles(
             continue;
         }
         particle.vel.y += gravity * particle.gravity * dt;
-        transform.translation += particle.vel * dt;
+        if let Some(wind) = wind.as_deref().filter(|_| particle.wind > 0.0) {
+            // The air eases in rather than kicking, and launch speed keeps.
+            let carried = wind.at(transform.translation) * particle.wind;
+            let catch = (dt / WIND_CATCH).min(1.0);
+            particle.air = particle.air.lerp(carried, catch);
+        }
+        transform.translation += (particle.vel + particle.air) * dt;
         let t = (particle.age / particle.life).clamp(0.0, 1.0);
         // Linear in sRGB reads fine for sparks and smoke; physical blending
         // would cost a round trip nobody sees at this size.

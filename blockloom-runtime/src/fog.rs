@@ -215,6 +215,8 @@ pub struct FogScene {
     pub sky: bool,
     /// Seconds, for the noise's drift.
     pub time: f32,
+    /// How far the wind has carried the air, which the noise drifts by too.
+    pub wind_drift: Vec3,
 }
 
 impl FogUniforms {
@@ -283,7 +285,7 @@ impl FogUniforms {
             u.volumetric_albedo = linear(env.volumetric_albedo).extend(v.ambient);
             u.volumetric_emissive =
                 (linear(parse_color(&v.emissive)) * v.emissive_strength).extend(v.range);
-            u.noise = (Vec3::from(v.noise_wind) * -scene.time).extend(v.noise);
+            u.noise = (Vec3::from(v.noise_wind) * -scene.time - scene.wind_drift).extend(v.noise);
             u.noise_scale = Vec4::new(1.0 / v.noise_scale, HISTORY_BLEND, 1.0, 0.0);
             u.locals[..locals].copy_from_slice(&scene.locals[..locals]);
             u.lights = picked;
@@ -395,6 +397,7 @@ fn resolve_fog(
     lit: Query<&Lit>,
     transforms: Query<&GlobalTransform>,
     cameras: Query<&GlobalTransform, With<WorldCamera>>,
+    wind: Option<Res<crate::wind::WindField>>,
     mut sources: Option<ResMut<crate::atmosphere::AtmosphereSources>>,
     mut render: ResMut<FogRender>,
 ) {
@@ -427,6 +430,7 @@ fn resolve_fog(
         moon: moon.map_or((Vec3::Y, Vec3::ZERO), |moon| (moon.direction, moon.lux)),
         sky: sky.is_some_and(|sky| sky.params.is_some()) && world.sky.lighting,
         time: time.elapsed_secs_wrapped(),
+        wind_drift: wind.map_or(Vec3::ZERO, |wind| wind.drift),
     };
     let uniforms = FogUniforms::resolve(&world.fog, &environment, &scene);
     if let Some(sources) = sources.as_mut() {

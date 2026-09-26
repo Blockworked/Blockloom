@@ -177,6 +177,15 @@ pub enum Effect {
     SetLightningRate {
         rate: f32,
     },
+    /// One of the wind's dials, for the rest of the run. Window-global.
+    SetWind {
+        property: crate::wind::WindProperty,
+        value: f32,
+    },
+    /// Extra cloud drift, for the rest of the run. Window-global.
+    SetCloudDrift {
+        drift: [f32; 3],
+    },
     SetBody {
         actor: String,
         body: BodyKind,

@@ -781,6 +781,7 @@ impl Project {
         self.world.sky.normalize();
         self.world.fog.normalize();
         self.world.lightning.normalize();
+        self.world.wind.normalize();
     }
 
     /// Pre-component projects named the followed actor on the world camera.

@@ -183,6 +183,9 @@ pub struct VolumeSpec {
     /// Fog it adds inside its shape, whoever is looking from where.
     #[serde(default)]
     pub fog: crate::fog::LocalFog,
+    /// Wind it makes inside its shape.
+    #[serde(default)]
+    pub wind: crate::wind::LocalWind,
 }
 
 fn default_half_extents() -> [f32; 3] {
@@ -217,6 +220,7 @@ impl Default for VolumeSpec {
             enabled: true,
             overrides: VolumeOverrides::default(),
             fog: crate::fog::LocalFog::default(),
+            wind: crate::wind::LocalWind::default(),
         }
     }
 }

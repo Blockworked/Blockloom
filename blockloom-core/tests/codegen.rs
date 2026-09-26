@@ -31,6 +31,7 @@ use blockloom_core::sound::SoundBus;
 use blockloom_core::ui::{UiAnchor, UiProp, UiTheme};
 use blockloom_core::value::{Evaluated, Op, Value};
 use blockloom_core::vm::{Effect, Event, Vm};
+use blockloom_core::wind::WindProperty;
 use std::process::Command;
 
 // ─── The world both halves see ──────────────────────────────────────────────
@@ -307,6 +308,8 @@ impl Host for Recorder {
             | Act::SetAurora { .. }
             | Act::StrikeLightning { .. }
             | Act::SetLightningRate { .. }
+            | Act::SetWind { .. }
+            | Act::SetCloudDrift { .. }
             | Act::SetPaused { .. } => String::new(),
             _ => actor.to_string(),
         };
@@ -999,6 +1002,8 @@ fn line_of(act: &Act) -> String {
         Act::SetAurora { kp } => format!("SetAurora {kp:?}"),
         Act::StrikeLightning { at } => format!("StrikeLightning {at:?}"),
         Act::SetLightningRate { rate } => format!("SetLightningRate {rate:?}"),
+        Act::SetWind { property, value } => format!("SetWind {property} {value:?}"),
+        Act::SetCloudDrift { drift } => format!("SetCloudDrift {drift:?}"),
         Act::Say { text } => format!("Say {text}"),
         Act::SetColor { color } => format!("SetColor {color}"),
         Act::SetVisible { visible } => format!("SetVisible {visible}"),
@@ -1221,6 +1226,10 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetAurora { kp } => format!("|SetAurora {kp:?}"),
         Effect::StrikeLightning { at } => format!("|StrikeLightning {at:?}"),
         Effect::SetLightningRate { rate } => format!("|SetLightningRate {rate:?}"),
+        Effect::SetWind { property, value } => {
+            format!("|SetWind {} {value:?}", property.name())
+        }
+        Effect::SetCloudDrift { drift } => format!("|SetCloudDrift {drift:?}"),
         Effect::Say { actor, text } => format!("{actor}|Say {text}"),
         Effect::SetColor { actor, color } => format!("{actor}|SetColor {color}"),
         Effect::SetVisible { actor, visible } => format!("{actor}|SetVisible {visible}"),
@@ -1786,6 +1795,24 @@ fn arithmetic_lands_on_the_same_numbers() {
             },
             K::SetLightningRate {
                 rate: op("Mul", vec![number(3.0), number(4.0)]),
+            },
+            K::SetWind {
+                property: WindProperty::Direction,
+                value: op("Add", vec![number(200.0), number(70.0)]),
+            },
+            K::SetWind {
+                property: WindProperty::Speed,
+                value: op("Mul", vec![number(2.5), number(4.0)]),
+            },
+            // A dial that isn't a number stands a zero, the same both ways.
+            K::SetWind {
+                property: WindProperty::Storm,
+                value: Value::text("wild"),
+            },
+            K::SetCloudDrift {
+                x: number(3.0),
+                y: op("Sub", vec![number(0.0), number(0.5)]),
+                z: op("Mul", vec![number(-2.0), number(1.5)]),
             },
             K::Move {
                 steps: op("Math", vec![Value::text("Sqrt"), number(2.0)]),

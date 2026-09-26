@@ -217,6 +217,9 @@ pub struct Engine {
     pub fog_density: Option<f32>,
     pub aurora_kp: Option<f32>,
     pub lightning_rate: Option<f32>,
+    /// `set wind`, `set storm` and `set cloud drift` this run, over the
+    /// project's wind.
+    pub wind: blockloom_core::wind::WindOverrides,
     /// Dynamic actors a walk verb (`move`, `change position`) drove this
     /// tick. A walk sets an absolute velocity, so when a driven actor goes
     /// quiet the dimension pass brakes it - otherwise the last written
@@ -296,6 +299,7 @@ impl Engine {
             fog_density: None,
             aurora_kp: None,
             lightning_rate: None,
+            wind: Default::default(),
             last_created: HashMap::new(),
             driven: HashSet::new(),
             physics_filter: HashMap::new(),

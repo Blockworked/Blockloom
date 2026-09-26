@@ -2,8 +2,8 @@
 //! once per fixed tick so the VM, compiled logic and scripts all read the
 //! same air on the same tick.
 //!
-//! The sun comes from the blended `Environment`. The fog, the aurora and
-//! lightning fill their parts of `AtmosphereSources`; wind and weather have
+//! The sun comes from the blended `Environment`. The wind, the fog, the
+//! aurora and lightning fill their parts of `AtmosphereSources`; weather has
 //! no writer yet.
 
 use crate::engine::Dimension;
@@ -28,6 +28,10 @@ pub struct AtmosphereSources {
     /// Direction times speed, world units per second.
     pub wind: Vec3,
     pub gust: f32,
+    /// Degrees the wind blows towards, clockwise from north.
+    pub wind_heading: f32,
+    /// 0-1.
+    pub storm: f32,
     pub fog_density: f32,
     pub fog_color: LinearRgba,
     pub cloud_cover: f32,
@@ -47,6 +51,8 @@ impl Default for AtmosphereSources {
         Self {
             wind: Vec3::ZERO,
             gust: calm.wind_gust,
+            wind_heading: calm.wind_heading,
+            storm: calm.storm,
             fog_density: calm.fog_density,
             fog_color: LinearRgba::WHITE,
             cloud_cover: calm.cloud_cover,
@@ -144,6 +150,8 @@ fn sample(
         wind_direction: sources.wind.normalize_or_zero().to_array(),
         wind_speed,
         wind_gust: sources.gust.max(0.0),
+        wind_heading: sources.wind_heading.rem_euclid(360.0),
+        storm: sources.storm.clamp(0.0, 1.0),
         fog_density: sources.fog_density.max(0.0),
         fog_color: rgb(sources.fog_color),
         cloud_cover: sources.cloud_cover.clamp(0.0, 1.0),
