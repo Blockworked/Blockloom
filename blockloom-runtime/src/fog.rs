@@ -6,9 +6,9 @@
 //! Volumetric fog lives in a froxel grid (`shaders/fog_froxels.wesl`): a
 //! compute pass works out each froxel's medium and in-scattered light -
 //! Bevy's directional lights through their own shadow cascades, plus up to
-//! `MAX_FOG_LIGHTS` point and spot lights unshadowed - blends it with last
-//! frame's grid reprojected, and a second pass integrates each column front
-//! to back. The composite (`shaders/fog_composite.wesl`) then reads each
+//! `MAX_FOG_LIGHTS` point and spot lights unshadowed (beams first, then
+//! nearest), each adding its own beam's medium - blends it with last frame's
+//! grid reprojected, and a second pass integrates each column front to back. The composite (`shaders/fog_composite.wesl`) then reads each
 //! pixel's distance from the depth prepass and fetches once.
 //!
 //! Everything the passes read is worked out here in the main world from the
@@ -43,7 +43,7 @@ use bevy::render::view::{ExtractedView, Msaa, ViewTarget};
 use bevy::render::{GpuResourceAppExt, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::Shader;
 use blockloom_core::components::LightKind;
-use blockloom_core::fog::{Fog, color_weights};
+use blockloom_core::fog::{Fog, VolumetricFog, color_weights};
 use blockloom_core::volume::VolumeShape;
 
 /// As many local fog volumes and lights as the froxels read; the rest are
@@ -117,6 +117,7 @@ pub struct FogLight {
     pub color: Vec4,
     pub direction: Vec4,
     pub cone: Vec4,
+    pub beam: Vec4,
 }
 
 /// `FogUniforms` in `shaders/fog.wesl`, field for field. The per-view half
@@ -259,7 +260,14 @@ impl FogUniforms {
         let v = &fog.volumetric;
         let locals = scene.locals.len().min(MAX_LOCAL_FOG);
         let lights = scene.lights.len().min(MAX_FOG_LIGHTS);
-        if env.volumetric_density > 0.0 || locals > 0 {
+        // Beams thicken and thin with the air's own density.
+        let mut picked = [FogLight::default(); MAX_FOG_LIGHTS];
+        picked[..lights].copy_from_slice(&scene.lights[..lights]);
+        for light in &mut picked[..lights] {
+            light.beam.x = (light.beam.x * env.beams).max(0.0);
+        }
+        let beams = picked[..lights].iter().filter(|l| l.beam.x > 0.0).count();
+        if env.volumetric_density > 0.0 || locals > 0 || beams > 0 {
             flags |= FLAG_VOLUMETRIC;
             if v.sun {
                 flags |= FLAG_SUN_VOLUMETRIC;
@@ -278,7 +286,7 @@ impl FogUniforms {
             u.noise = (Vec3::from(v.noise_wind) * -scene.time).extend(v.noise);
             u.noise_scale = Vec4::new(1.0 / v.noise_scale, HISTORY_BLEND, 1.0, 0.0);
             u.locals[..locals].copy_from_slice(&scene.locals[..locals]);
-            u.lights[..lights].copy_from_slice(&scene.lights[..lights]);
+            u.lights = picked;
         } else {
             u.grid = UVec4::new(1, 1, 1, 0);
             u.volumetric_emissive.w = 1.0;
@@ -290,7 +298,7 @@ impl FogUniforms {
             flags |= FLAG_SKY;
         }
         u.grid.w = flags;
-        u.counts = UVec4::new(locals as u32, lights as u32, 1, 0);
+        u.counts = UVec4::new(locals as u32, lights as u32, 1, beams as u32);
         Some(u)
     }
 }
@@ -324,26 +332,54 @@ fn local_fog(spec: &blockloom_core::volume::VolumeSpec, transform: &Transform) -
     }
 }
 
-/// A light as the froxels read it: candela, where it stands and points.
-fn fog_light(spec: &blockloom_core::components::LightSpec, at: &GlobalTransform) -> FogLight {
+/// A light as the froxels read it: candela, where it stands and points,
+/// and its beam unless that is drawn as a shaft cone instead.
+fn fog_light(
+    spec: &blockloom_core::components::LightSpec,
+    at: &GlobalTransform,
+    fog: &VolumetricFog,
+) -> FogLight {
     let candela = spec.lumens() / (4.0 * std::f32::consts::PI);
     let color = linear(parse_color(&spec.color)) * candela;
-    let (direction, cone) = match spec.kind {
+    let mut beam = spec.beam.clone();
+    beam.normalize();
+    let (direction, inner) = match spec.kind {
         LightKind::Spot => {
             let (inner, outer) = spec.cone();
-            (
-                at.forward().extend(outer.cos()),
-                Vec4::new(inner.cos(), 0.0, 0.0, 0.0),
-            )
+            (at.forward().extend(outer.cos()), inner.cos())
         }
-        _ => (Vec4::new(0.0, -1.0, 0.0, -2.0), Vec4::ZERO),
+        _ => (Vec4::new(0.0, -1.0, 0.0, -2.0), 0.0),
     };
+    // A shaft stands in for the beam; a point has no cone to draw one.
+    let shaft = beam.uses_shaft(fog) && spec.kind == LightKind::Spot;
+    let density = if shaft { 0.0 } else { beam.density };
     FogLight {
         position: at.translation().extend(spec.range.max(0.01)),
         color: color.extend(0.0),
         direction,
-        cone,
+        cone: Vec4::new(inner, beam.near_fade, beam.far_fade, 0.0),
+        beam: Vec4::new(
+            density,
+            beam.anisotropy.unwrap_or(fog.anisotropy),
+            beam.falloff,
+            0.0,
+        ),
     }
+}
+
+/// The lights the froxels read: those with a beam first, then by how near
+/// the camera is to the edge of their reach, at most `MAX_FOG_LIGHTS`.
+pub fn pick_fog_lights(mut lights: Vec<FogLight>, camera: Vec3) -> Vec<FogLight> {
+    let key = |light: &FogLight| {
+        let reach = light.position.truncate().distance(camera) - light.position.w;
+        (light.beam.x <= 0.0, reach.max(0.0))
+    };
+    lights.sort_by(|a, b| {
+        let (a, b) = (key(a), key(b));
+        a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
+    });
+    lights.truncate(MAX_FOG_LIGHTS);
+    lights
 }
 
 /// Works out this frame's air from the blended environment, the volumes
@@ -358,6 +394,7 @@ fn resolve_fog(
     actors: Query<(&ActorId, &Transform)>,
     lit: Query<&Lit>,
     transforms: Query<&GlobalTransform>,
+    cameras: Query<&GlobalTransform, With<WorldCamera>>,
     mut sources: Option<ResMut<crate::atmosphere::AtmosphereSources>>,
     mut render: ResMut<FogRender>,
 ) {
@@ -371,12 +408,19 @@ fn resolve_fog(
         })
         .take(MAX_LOCAL_FOG)
         .collect();
+    let camera = cameras
+        .iter()
+        .next()
+        .map_or(Vec3::ZERO, GlobalTransform::translation);
     let lights = lit
         .iter()
         .filter(|lit| lit.spec.volumetric && lit.spec.lumens() > 0.0)
-        .filter_map(|lit| Some(fog_light(&lit.spec, transforms.get(lit.child).ok()?)))
-        .take(MAX_FOG_LIGHTS)
+        .filter_map(|lit| {
+            let at = transforms.get(lit.child).ok()?;
+            Some(fog_light(&lit.spec, at, &world.fog.volumetric))
+        })
         .collect();
+    let lights = pick_fog_lights(lights, camera);
     let scene = FogScene {
         locals,
         lights,
@@ -978,12 +1022,103 @@ mod tests {
         let at = GlobalTransform::from(
             Transform::from_xyz(1.0, 2.0, 3.0).looking_to(Vec3::NEG_Y, Vec3::X),
         );
-        let light = fog_light(&spec, &at);
+        let fog = VolumetricFog::default();
+        let light = fog_light(&spec, &at, &fog);
         assert!((light.color.x - 100.0).abs() < 1e-3);
         assert!((light.direction.truncate() - Vec3::NEG_Y).length() < 1e-5);
         assert!(light.direction.w > 0.0 && light.cone.x > light.direction.w);
-        let point = fog_light(&default(), &at);
+        // No beam asked for, and the fog's own g.
+        assert_eq!(light.beam.x, 0.0);
+        assert_eq!(light.beam.y, fog.anisotropy);
+        let point = fog_light(&default(), &at, &fog);
         assert_eq!(point.direction.w, -2.0);
+    }
+
+    fn beam_spot(density: f32) -> blockloom_core::components::LightSpec {
+        let mut spec = blockloom_core::components::LightSpec {
+            kind: LightKind::Spot,
+            ..default()
+        };
+        spec.beam.density = density;
+        spec.beam.anisotropy = Some(0.3);
+        spec.beam.near_fade = 1.5;
+        spec.beam.far_fade = 4.0;
+        spec.beam.falloff = 2.0;
+        spec
+    }
+
+    #[test]
+    fn a_spot_carries_its_beam_into_the_froxels() {
+        let at = GlobalTransform::IDENTITY;
+        let mut fog = VolumetricFog {
+            enabled: true,
+            ..default()
+        };
+        let light = fog_light(&beam_spot(0.2), &at, &fog);
+        assert_eq!(light.beam, Vec4::new(0.2, 0.3, 2.0, 0.0));
+        assert_eq!((light.cone.y, light.cone.z), (1.5, 4.0));
+        // Low quality hands an Auto beam to a shaft cone instead.
+        fog.quality = blockloom_core::fog::FogQuality::Low;
+        assert_eq!(fog_light(&beam_spot(0.2), &at, &fog).beam.x, 0.0);
+        // A point has no shaft, so its beam stays in the froxels.
+        let mut point = beam_spot(0.2);
+        point.kind = LightKind::Point;
+        assert_eq!(fog_light(&point, &at, &fog).beam.x, 0.2);
+    }
+
+    #[test]
+    fn beams_alone_run_the_froxels_and_follow_the_air() {
+        let world = world();
+        let beam = FogLight {
+            beam: Vec4::new(0.1, 0.6, 1.0, 0.0),
+            ..default()
+        };
+        let scene = FogScene {
+            lights: vec![beam, FogLight::default()],
+            ..default()
+        };
+        let mut e = env(&world);
+        let u = FogUniforms::resolve(&world.fog, &e, &scene).unwrap();
+        assert_ne!(u.grid.w & FLAG_VOLUMETRIC, 0);
+        assert_eq!((u.counts.y, u.counts.w), (2, 1));
+        e.set_fog_density(&world.fog, 0.03);
+        let thick = FogUniforms::resolve(&world.fog, &e, &scene).unwrap();
+        assert!(thick.lights[0].beam.x > u.lights[0].beam.x);
+        // A clear day takes every beam, and with nothing else, the pass.
+        e.set_fog_density(&world.fog, 0.0);
+        assert!(FogUniforms::resolve(&world.fog, &e, &scene).is_none());
+    }
+
+    #[test]
+    fn set_fog_density_scales_volumetric_fog_too() {
+        let mut world = world();
+        world.fog.volumetric.enabled = true;
+        let mut e = env(&world);
+        let base = e.volumetric_density;
+        let default = blockloom_core::fog::density_for_distance(400.0);
+        e.set_fog_density(&world.fog, default * 2.0);
+        assert!((e.volumetric_density - base * 2.0).abs() < 1e-6);
+        assert!((e.beams - 2.0).abs() < 1e-5);
+        assert!((e.fog_density - default * 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_froxels_keep_beams_then_the_nearest_lights() {
+        let at = |x: f32, beam: f32| FogLight {
+            position: Vec4::new(x, 0.0, 0.0, 5.0),
+            beam: Vec4::new(beam, 0.0, 0.0, 0.0),
+            ..default()
+        };
+        let mut lights: Vec<_> = (0..20).map(|i| at(10.0 + i as f32, 0.0)).collect();
+        lights.push(at(500.0, 0.1));
+        lights.push(at(-3.0, 0.0));
+        let picked = pick_fog_lights(lights, Vec3::ZERO);
+        assert_eq!(picked.len(), MAX_FOG_LIGHTS);
+        assert_eq!(picked[0].position.x, 500.0);
+        // Inside a light's reach counts as nearest of all.
+        assert_eq!(picked[1].position.x, -3.0);
+        assert_eq!(picked[2].position.x, 10.0);
+        assert!(picked.iter().all(|l| l.position.x < 30.0 || l.beam.x > 0.0));
     }
 
     #[test]
@@ -992,13 +1127,17 @@ mod tests {
         let vec4s = 2 * 4 + 22;
         assert_eq!(
             FogUniforms::min_size().get(),
-            (vec4s * 16 + MAX_LOCAL_FOG * 80 + MAX_FOG_LIGHTS * 64) as u64
+            (vec4s * 16 + MAX_LOCAL_FOG * 80 + MAX_FOG_LIGHTS * 80) as u64
         );
         let source = shader_lib::module("fog").unwrap();
         let body = source.split("struct FogUniforms {").nth(1).unwrap();
         let body = &body[..body.find("\n}").unwrap()];
         let fields = body.lines().filter(|l| l.contains(": vec4<")).count();
         assert_eq!(fields, 22);
+        let lights = source.split("struct FogLight {").nth(1).unwrap();
+        let lights = &lights[..lights.find("\n}").unwrap()];
+        let fields = lights.lines().filter(|l| l.contains(": vec4<")).count();
+        assert_eq!(FogLight::min_size().get(), fields as u64 * 16);
     }
 
     // Bevy's modules only exist on the GPU side, so the tests stand in for

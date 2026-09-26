@@ -38,8 +38,10 @@ struct FogLight {
     color: vec4<f32>,
     // xyz where a spot points, w cos of the outer angle (-2 for a point).
     direction: vec4<f32>,
-    // x cos of the inner angle.
+    // x cos of the inner angle, y beam near fade, z beam far fade (metres).
     cone: vec4<f32>,
+    // x beam density per metre (0 for none), y g, z falloff curve.
+    beam: vec4<f32>,
 }
 
 struct FogUniforms {
@@ -56,7 +58,7 @@ struct FogUniforms {
     screen_size: vec4<f32>,
     // xyz froxels across, down and deep, w flags.
     grid: vec4<u32>,
-    // x local volumes, y lights, z sky cube mip count.
+    // x local volumes, y lights, z sky cube mip count, w lights with beams.
     counts: vec4<u32>,
 
     // Height fog: x density per metre, y falloff, z base height, w start.
@@ -150,4 +152,70 @@ fn local_coverage(volume: LocalFogVolume, p: vec3<f32>) -> f32 {
 // gray at 0, Rayleigh's blue-heavy spread at 1.
 fn haze_weights(blue_shift: f32) -> vec3<f32> {
     return mix(vec3<f32>(1.0), vec3<f32>(0.43, 1.0, 2.44), blue_shift);
+}
+
+// How much of a beam is left `distance` metres from its light.
+// `fog::beam_fade` on the CPU.
+fn beam_fade(distance: f32, range: f32, near: f32, far: f32, curve: f32) -> f32 {
+    let r = max(range, 0.01);
+    let t = clamp(distance / r, 0.0, 1.0);
+    var fade = pow(max(1.0 - t, 1e-6), curve);
+    if near > 0.0 {
+        fade *= smoothstep(0.0, near, distance);
+    }
+    if far > 0.0 {
+        fade *= 1.0 - smoothstep(r - far, r, distance);
+    }
+    return fade;
+}
+
+// A spot's soft cone edge, 1 for a point light (`cos_outer` -2).
+fn cone_window(cos_angle: f32, cos_outer: f32, cos_inner: f32) -> f32 {
+    if cos_outer < -1.5 {
+        return 1.0;
+    }
+    return smoothstep(cos_outer, cos_inner, cos_angle);
+}
+
+// Where mote `seed` (each 0-1) sits in a beam's frame at `time`: a cone
+// down -Z of `range` metres and `tan_outer` spread, or a ball for a point
+// (`tan_outer` < 0). Wanders `drift` metres per second and wraps along
+// the beam so the field never empties.
+fn mote_in_beam(seed: vec3<f32>, time: f32, range: f32, tan_outer: f32, near: f32, drift: f32) -> vec3<f32> {
+    let wander = vec3<f32>(
+        sin(time * 0.37 + seed.y * 40.0),
+        sin(time * 0.29 + seed.z * 40.0) - 0.4,
+        sin(time * 0.23 + seed.x * 40.0),
+    ) * drift;
+    let angle = seed.y * 2.0 * PI;
+    let spread = sqrt(seed.z);
+    if tan_outer < 0.0 {
+        // Uniform in the ball's volume: radius goes as the cube root.
+        let r = range * pow(fract(seed.x + time * drift * 0.02), 0.333);
+        let up = spread * 2.0 - 1.0;
+        let flat = sqrt(max(1.0 - up * up, 0.0));
+        return vec3<f32>(cos(angle) * flat, up, sin(angle) * flat) * r + wander;
+    }
+    let near_end = min(near, range * 0.5);
+    let along = near_end + (range - near_end) * pow(fract(seed.x + time * drift / max(range, 0.01)), 0.333);
+    let radius = tan_outer * along * spread;
+    return vec3<f32>(cos(angle) * radius, sin(angle) * radius, -along) + wander;
+}
+
+// Where mote `seed` sits in a `size` metre box around `camera`, wrapped
+// so the field follows the camera without popping.
+fn mote_in_box(seed: vec3<f32>, time: f32, camera: vec3<f32>, size: f32, drift: f32) -> vec3<f32> {
+    let wander = vec3<f32>(
+        sin(time * 0.31 + seed.y * 40.0) + time * 0.2,
+        sin(time * 0.27 + seed.z * 40.0) - time * 0.05,
+        sin(time * 0.19 + seed.x * 40.0),
+    ) * drift;
+    let p = seed * size + wander;
+    return camera + (fract((p - camera) / size) - 0.5) * size;
+}
+
+// A mote's flicker, 1 - twinkle to 1.
+fn mote_twinkle(seed: vec3<f32>, time: f32, twinkle: f32) -> f32 {
+    let wave = sin(time * (2.0 + seed.z * 5.0) + seed.x * 60.0) * 0.5 + 0.5;
+    return 1.0 - twinkle * wave * wave;
 }

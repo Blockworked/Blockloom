@@ -1073,7 +1073,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "SetFogDensity",
         category: "Looks",
-        purpose: "Sets the height fog's extinction per metre at its base for the rest of the run; 0 clears the air. 0.01 lets you see about 300 m. Also what the `fog density` atmosphere reading reports.",
+        purpose: "Sets the height fog's extinction per metre at its base for the rest of the run, and scales volumetric fog and every light's beam by the same ratio against the project's own; 0 clears the air and every beam. 0.01 lets you see about 300 m. Also what the `fog density` atmosphere reading reports.",
         header: false,
         three_d: true,
         slots: &[Slot {

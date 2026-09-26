@@ -629,6 +629,20 @@ field. Fog properties on `Environment` (`fog_density`, `fog_colors`,
 properties too, and a `Volume` can also add local fog in its own shape
 (`VolumeSpec::fog`).
 
+A light's `beam` (`fog::Beam`) is extra medium only that light scatters:
+density, its own g, a falloff curve over the range and near/far fades,
+mirrored by `beam_fade` in `blockloom::fog`. In the froxels it rides
+`FogLight.beam`, and a beam alone runs the pass. `fog::pick_fog_lights` keeps
+beams first, then the nearest, up to `MAX_FOG_LIGHTS`. `Environment.beams`
+multiplies every beam (a volume property too), and `set fog density`
+(`Environment::set_fog_density`) scales it and `volumetric_density` by the
+asked density over the project's own, so a clear day has no beams.
+`blockloom-runtime/src/beams.rs` is the geometry: a `BeamMode::Auto` beam
+becomes an additive fresnel-faded shaft cone (`shaders/beam_shaft.wesl`,
+spots only) while volumetric fog is off or Low, and `Motes` are GPU-placed
+billboards (`shaders/beam_motes.wesl`) in a beam or, as
+`VolumetricFog::dust`, in a box wrapped round the camera.
+
 Stars, the Milky Way and aurora (`Sky::stars`, `Sky::aurora`) are drawn by
 the sky's background pass in the main view only, never in probe faces or
 the light cubes, from `space::SpaceRender` (`blockloom::space`). They sit in

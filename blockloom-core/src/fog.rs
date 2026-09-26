@@ -111,6 +111,11 @@ pub struct VolumetricFog {
     pub sun: bool,
     /// Multiplier on the ambient light it scatters.
     pub ambient: f32,
+    /// Dust motes hanging in the air near the ground around the camera,
+    /// whether or not the froxels are on.
+    pub dust: Motes,
+    /// Metres above `base_height` the dust reaches.
+    pub dust_height: f32,
 }
 
 impl Default for VolumetricFog {
@@ -131,6 +136,11 @@ impl Default for VolumetricFog {
             quality: FogQuality::Medium,
             sun: true,
             ambient: 1.0,
+            dust: Motes {
+                count: 600,
+                ..Motes::default()
+            },
+            dust_height: 3.0,
         }
     }
 }
@@ -193,6 +203,160 @@ impl Default for LocalFog {
     }
 }
 
+/// How a light's beam is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum BeamMode {
+    /// In the froxels while volumetric fog is on above Low quality, as a
+    /// shaft cone otherwise.
+    #[default]
+    Auto,
+    /// Always in the froxels, which then run for the beam alone.
+    Volumetric,
+    /// Always a shaft cone: additive geometry, cheap, spots only.
+    Shaft,
+}
+
+/// A visible beam: extra medium inside a spot's cone (or around a point)
+/// that only its own light scatters. Scaled by `set fog density`, so it
+/// thickens in fog and vanishes on a clear day.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Beam {
+    /// Extinction per metre added in the beam. 0 for no beam.
+    pub density: f32,
+    /// Henyey-Greenstein g for this light alone, or the fog's when unset.
+    pub anisotropy: Option<f32>,
+    /// Exponent on `1 - distance / range`: 0 flat, 1 linear, 2 quadratic.
+    pub falloff: f32,
+    /// Metres from the light over which the beam fades in.
+    pub near_fade: f32,
+    /// Metres before the range over which it fades out.
+    pub far_fade: f32,
+    pub mode: BeamMode,
+    /// Shaft cone brightness multiplier.
+    pub shaft_intensity: f32,
+    /// How much the shaft's noise carves it, 0-1, and how fast it scrolls.
+    pub shaft_noise: f32,
+    pub shaft_scroll: f32,
+    pub motes: Motes,
+}
+
+impl Default for Beam {
+    fn default() -> Self {
+        Self {
+            density: 0.0,
+            anisotropy: None,
+            falloff: 1.0,
+            near_fade: 0.5,
+            far_fade: 2.0,
+            mode: BeamMode::Auto,
+            shaft_intensity: 1.0,
+            shaft_noise: 0.4,
+            shaft_scroll: 0.3,
+            motes: Motes::default(),
+        }
+    }
+}
+
+/// Billboard dust drifting in a beam or in the air.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Motes {
+    pub enabled: bool,
+    pub count: u32,
+    /// Metres across one mote.
+    pub size: f32,
+    /// 0-1 opacity at full light.
+    pub alpha: f32,
+    /// 0-1: how much each mote flickers.
+    pub twinkle: f32,
+    /// Metres per second each mote wanders.
+    pub drift: f32,
+}
+
+impl Default for Motes {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            count: 160,
+            size: 0.012,
+            alpha: 0.6,
+            twinkle: 0.5,
+            drift: 0.05,
+        }
+    }
+}
+
+/// Most motes one field draws.
+pub const MAX_MOTES: u32 = 4096;
+
+impl Motes {
+    pub fn normalize(&mut self) {
+        let d = Motes::default();
+        self.count = self.count.min(MAX_MOTES);
+        self.size = finite(self.size, d.size).clamp(0.001, 1.0);
+        self.alpha = finite(self.alpha, d.alpha).clamp(0.0, 1.0);
+        self.twinkle = finite(self.twinkle, d.twinkle).clamp(0.0, 1.0);
+        self.drift = finite(self.drift, d.drift).clamp(0.0, 10.0);
+    }
+}
+
+impl Beam {
+    pub fn normalize(&mut self) {
+        let d = Beam::default();
+        self.density = finite(self.density, 0.0).clamp(0.0, 10.0);
+        self.anisotropy = self
+            .anisotropy
+            .filter(|g| g.is_finite())
+            .map(|g| g.clamp(-0.9, 0.9));
+        self.falloff = finite(self.falloff, d.falloff).clamp(0.0, 8.0);
+        self.near_fade = finite(self.near_fade, d.near_fade).clamp(0.0, 1000.0);
+        self.far_fade = finite(self.far_fade, d.far_fade).clamp(0.0, 1000.0);
+        self.shaft_intensity = finite(self.shaft_intensity, 1.0).clamp(0.0, 1000.0);
+        self.shaft_noise = finite(self.shaft_noise, d.shaft_noise).clamp(0.0, 1.0);
+        self.shaft_scroll = finite(self.shaft_scroll, d.shaft_scroll).clamp(-100.0, 100.0);
+        self.motes.normalize();
+    }
+
+    /// Whether this beam is a shaft cone rather than froxel medium, given
+    /// the project's volumetric fog.
+    pub fn uses_shaft(&self, fog: &VolumetricFog) -> bool {
+        match self.mode {
+            BeamMode::Shaft => true,
+            BeamMode::Volumetric => false,
+            BeamMode::Auto => !fog.enabled || fog.quality == FogQuality::Low,
+        }
+    }
+}
+
+/// How much of a beam is left `distance` metres from its light: the
+/// falloff curve over the range, faded in near the light and out near the
+/// range. Mirrors `beam_fade` in `shaders/fog.wesl`.
+pub fn beam_fade(distance: f32, range: f32, near: f32, far: f32, curve: f32) -> f32 {
+    let range = range.max(0.01);
+    let t = (distance / range).clamp(0.0, 1.0);
+    let mut fade = (1.0 - t).max(1e-6).powf(curve);
+    if near > 0.0 {
+        fade *= smoothstep(0.0, near, distance);
+    }
+    if far > 0.0 {
+        fade *= 1.0 - smoothstep(range - far, range, distance);
+    }
+    fade
+}
+
+/// What `set fog density to` multiplies volumetric fog and beams by: the
+/// asked density over the project's own height fog (or the default one's
+/// when the project has none), so 0 clears every beam.
+pub fn fog_scale(fog: &Fog, density: f32) -> f32 {
+    let distance = if fog.height.enabled {
+        fog.height.distance
+    } else {
+        HeightFog::default().distance
+    };
+    (density.max(0.0) / density_for_distance(distance)).clamp(0.0, 50.0)
+}
+
 /// Extinction per metre that swallows 95% of the light over `distance`:
 /// e^-3 is 5%.
 pub fn density_for_distance(distance: f32) -> f32 {
@@ -231,6 +395,8 @@ impl Fog {
         v.noise_wind = v.noise_wind.map(|w| finite(w, 0.0).clamp(-1000.0, 1000.0));
         v.range = finite(v.range, d.range).clamp(4.0, 2000.0);
         v.ambient = finite(v.ambient, 1.0).clamp(0.0, 100.0);
+        v.dust.normalize();
+        v.dust_height = finite(v.dust_height, 3.0).clamp(0.0, 10_000.0);
 
         let a = &mut self.aerial;
         let d = AerialPerspective::default();
@@ -355,6 +521,59 @@ mod tests {
         assert_eq!(fog.volumetric.anisotropy, 0.9);
         assert_eq!(fog.volumetric.noise_wind, [0.0, 1.0, 2.0]);
         assert_eq!(fog.aerial.desaturation, 1.0);
+    }
+
+    #[test]
+    fn a_beam_fades_in_at_the_light_and_out_at_its_range() {
+        assert!(beam_fade(0.0, 10.0, 1.0, 2.0, 1.0) < 1e-5);
+        assert!(beam_fade(10.0, 10.0, 1.0, 2.0, 1.0) < 1e-5);
+        // Flat curve with no fades is the whole beam.
+        assert!((beam_fade(5.0, 10.0, 0.0, 0.0, 0.0) - 1.0).abs() < 1e-5);
+        let linear = beam_fade(5.0, 10.0, 0.0, 0.0, 1.0);
+        let quadratic = beam_fade(5.0, 10.0, 0.0, 0.0, 2.0);
+        assert!((linear - 0.5).abs() < 1e-5 && (quadratic - 0.25).abs() < 1e-5);
+        assert!(beam_fade(10.0, 10.0, 0.0, 0.0, 0.0).is_finite());
+    }
+
+    #[test]
+    fn fog_density_scales_beams_against_the_projects_height_fog() {
+        let mut fog = Fog::default();
+        let default = density_for_distance(HeightFog::default().distance);
+        assert!((fog_scale(&fog, default) - 1.0).abs() < 1e-5);
+        assert_eq!(fog_scale(&fog, 0.0), 0.0);
+        fog.height.enabled = true;
+        fog.height.distance = 300.0;
+        assert!((fog_scale(&fog, 0.02) - 2.0).abs() < 1e-4);
+        assert_eq!(fog_scale(&fog, 1000.0), 50.0);
+    }
+
+    #[test]
+    fn auto_beams_fall_back_to_shafts_without_good_froxels() {
+        let mut fog = VolumetricFog::default();
+        let beam = Beam::default();
+        assert!(beam.uses_shaft(&fog));
+        fog.enabled = true;
+        assert!(!beam.uses_shaft(&fog));
+        fog.quality = FogQuality::Low;
+        assert!(beam.uses_shaft(&fog));
+        let froxel = Beam {
+            mode: BeamMode::Volumetric,
+            ..Beam::default()
+        };
+        assert!(!froxel.uses_shaft(&fog));
+    }
+
+    #[test]
+    fn beams_and_motes_normalize() {
+        let mut beam: Beam = serde_json::from_str("{}").unwrap();
+        assert_eq!(beam, Beam::default());
+        beam.density = -1.0;
+        beam.anisotropy = Some(4.0);
+        beam.motes.count = 1_000_000;
+        beam.normalize();
+        assert_eq!(beam.density, 0.0);
+        assert_eq!(beam.anisotropy, Some(0.9));
+        assert_eq!(beam.motes.count, MAX_MOTES);
     }
 
     #[test]

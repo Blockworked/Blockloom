@@ -351,6 +351,19 @@ BwDialog {
                 InspectorRow { visible: !!fogSection.vf.enabled; label: "Sun & moon, ambient"; labelWidth: 110; Layout.fillWidth: true
                     SwitchField { value: !!fogSection.vf.sun; onToggled: on => root.writeFogPart("volumetric", { sun: on }) }
                     NumberField { value: fogSection.vf.ambient; fallback: 1; onCommitted: n => root.writeFogPart("volumetric", { ambient: root.clamp(n, 0, 100) }) } }
+                readonly property var dust: Object.assign({ enabled: false, count: 600, size: 0.012, alpha: 0.6, twinkle: 0.5, drift: 0.05 }, fogSection.vf.dust || {})
+                function writeDust(next) { root.writeFogPart("volumetric", { dust: Object.assign(Object.assign({}, fogSection.dust), next) }); }
+                InspectorRow { label: "Height dust"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!fogSection.dust.enabled; onToggled: on => fogSection.writeDust({ enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: !!fogSection.dust.enabled; label: "Up to m, count"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: fogSection.vf.dust_height; fallback: 3; onCommitted: n => root.writeFogPart("volumetric", { dust_height: root.clamp(n, 0, 10000) }) }
+                    NumberField { value: fogSection.dust.count; fallback: 600; onCommitted: n => fogSection.writeDust({ count: root.clamp(Math.round(n), 0, 4096) }) } }
+                InspectorRow { visible: !!fogSection.dust.enabled; label: "Size m, alpha"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: fogSection.dust.size; fallback: 0.012; onCommitted: n => fogSection.writeDust({ size: root.clamp(n, 0.001, 1) }) }
+                    NumberField { value: fogSection.dust.alpha; fallback: 0.6; onCommitted: n => fogSection.writeDust({ alpha: root.clamp(n, 0, 1) }) } }
+                InspectorRow { visible: !!fogSection.dust.enabled; label: "Twinkle, drift"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: fogSection.dust.twinkle; fallback: 0.5; onCommitted: n => fogSection.writeDust({ twinkle: root.clamp(n, 0, 1) }) }
+                    NumberField { value: fogSection.dust.drift; fallback: 0.05; onCommitted: n => fogSection.writeDust({ drift: root.clamp(n, 0, 10) }) } }
 
                 InspectorRow { label: "Aerial haze"; labelWidth: 110; Layout.fillWidth: true
                     SwitchField { value: !!fogSection.af.enabled; onToggled: on => root.writeFogPart("aerial", { enabled: on }) } Item { Layout.fillWidth: true } }
@@ -362,7 +375,7 @@ BwDialog {
                 InspectorRow { visible: !!fogSection.af.enabled; label: "Height m, blue"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: fogSection.af.height_scale; fallback: 1200; onCommitted: n => root.writeFogPart("aerial", { height_scale: root.clamp(n, 1, 100000) }) }
                     NumberField { value: fogSection.af.blue_shift; fallback: 0.7; onCommitted: n => root.writeFogPart("aerial", { blue_shift: root.clamp(n, 0, 1) }) } }
-                Note { text: "Height fog thickens towards its base and thins going up; see-through is how far you can see at the base (95% gone). Its color follows the sun from day to dusk to night, and glows towards the sun. It covers the sky too, so the horizon melts into it. Volumetric fog fills a grid over the camera's first range metres: the sun and moon light it through their shadows (light shafts), lights opt in on their own card, it can glow by itself, and noise drifts through it with the wind. Volumes can add local fog inside their box. Aerial haze fades far things into the sky's color and grays them, less so higher up. `set fog density to` changes the height fog while the game runs." }
+                Note { text: "Height fog thickens towards its base and thins going up; see-through is how far you can see at the base (95% gone). Its color follows the sun from day to dusk to night, and glows towards the sun. It covers the sky too, so the horizon melts into it. Volumetric fog fills a grid over the camera's first range metres: the sun and moon light it through their shadows (light shafts), lights opt in on their own card, it can glow by itself, and noise drifts through it with the wind. Volumes can add local fog inside their box. Aerial haze fades far things into the sky's color and grays them, less so higher up. Height dust hangs in the air near the volumetric base around the camera, lit by the sun and ambient, whether or not volumetric fog is on. `set fog density to` changes the height fog while the game runs, and scales volumetric fog and every light's beam by the same ratio, so 0 clears them all." }
             }
             Section {
                 id: lightningSection

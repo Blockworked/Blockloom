@@ -998,7 +998,7 @@ impl Actor {
     }
 
     /// Height fog's extinction per metre at its base, for the rest of the
-    /// run. 0 clears the air.
+    /// run; volumetric fog and beams scale with it. 0 clears the air.
     pub fn set_fog_density(&self, density: f32) {
         self.act(
             ACT_SET_FOG_DENSITY,

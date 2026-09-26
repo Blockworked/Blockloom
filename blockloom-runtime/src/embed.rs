@@ -1960,6 +1960,150 @@ mod tests {
         assert!(green(pixel), "expected green fog, read {pixel:?}");
     }
 
+    /// A spot over the floor with a beam, drawn one way or the other.
+    fn beam_room(
+        density: f32,
+        mode: blockloom_core::fog::BeamMode,
+    ) -> blockloom_core::project::Project {
+        use blockloom_core::components::{LightKind, LightSpec};
+        let mut light = LightSpec {
+            kind: LightKind::Spot,
+            color: "#FF0000".to_string(),
+            intensity: 100_000.0,
+            range: 6.0,
+            ..LightSpec::default()
+        };
+        light.beam.density = density;
+        light.beam.mode = mode;
+        light.beam.near_fade = 0.0;
+        light.beam.far_fade = 0.0;
+        light.beam.falloff = 0.0;
+        let mut room = room_with(light);
+        // A black floor, so only the beam can add light.
+        room.actors[0]
+            .components
+            .set_visual(blockloom_core::scene::Visual::Plane {
+                color: "#000000".to_string(),
+                size: [20.0, 20.0],
+            });
+        room.world.fog.volumetric.enabled = true;
+        room.world.fog.volumetric.density = 0.0;
+        room.world.fog.volumetric.sun = false;
+        room
+    }
+
+    fn red(pixel: [u8; 3]) -> u32 {
+        pixel[0] as u32
+    }
+
+    fn brightness(pixel: [u8; 3]) -> u32 {
+        pixel.iter().map(|c| *c as u32).sum()
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_froxel_beam_glows_between_the_lamp_and_the_floor() {
+        use blockloom_core::fog::BeamMode;
+        let bare = floor_pixel(run_world(
+            beam_room(0.0, BeamMode::Volumetric),
+            |_| {},
+            game_camera(),
+            60,
+            |_| false,
+        ));
+        let beam = floor_pixel(run_world(
+            beam_room(2.0, BeamMode::Volumetric),
+            |_| {},
+            game_camera(),
+            60,
+            |_| false,
+        ));
+        assert!(
+            red(beam) > red(bare) + 10,
+            "expected the beam to add light, read {bare:?} then {beam:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_shaft_cone_stands_in_for_the_froxels() {
+        use blockloom_core::fog::BeamMode;
+        let bare = floor_pixel(run_world(
+            beam_room(0.0, BeamMode::Shaft),
+            |_| {},
+            game_camera(),
+            60,
+            |_| false,
+        ));
+        let shaft = floor_pixel(run_world(
+            beam_room(2.0, BeamMode::Shaft),
+            |_| {},
+            game_camera(),
+            60,
+            |_| false,
+        ));
+        assert!(
+            red(shaft) > red(bare) + 10,
+            "expected the shaft to add light, read {bare:?} then {shaft:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn motes_glitter_in_a_beam_and_dust_in_the_air() {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::fog::BeamMode;
+        let dusty = |motes: bool| {
+            let mut room = beam_room(0.0, BeamMode::Shaft);
+            if let Some(ActorComponent::Light { light }) =
+                room.actors[1].components.get_mut("Light")
+            {
+                let m = &mut light.beam.motes;
+                m.enabled = motes;
+                m.count = 4096;
+                m.size = 0.3;
+                m.alpha = 1.0;
+            }
+            room
+        };
+        let bare = floor_pixel(run_world(
+            dusty(false),
+            |_| {},
+            game_camera(),
+            60,
+            |_| false,
+        ));
+        let motes = floor_pixel(run_world(dusty(true), |_| {}, game_camera(), 60, |_| false));
+        assert!(
+            red(motes) > red(bare) + 10,
+            "expected motes in the beam, read {bare:?} then {motes:?}"
+        );
+        // Height dust in an ambient-lit room.
+        let air = |dust: bool| {
+            let mut room = foggy_room(|fog| {
+                let d = &mut fog.volumetric.dust;
+                d.enabled = dust;
+                d.count = 4096;
+                d.size = 0.3;
+                d.alpha = 1.0;
+                fog.volumetric.dust_height = 50.0;
+            });
+            room.actors[0]
+                .components
+                .set_visual(blockloom_core::scene::Visual::Plane {
+                    color: "#000000".to_string(),
+                    size: [20.0, 20.0],
+                });
+            room
+        };
+        let clear = floor_pixel(run_world(air(false), |_| {}, game_camera(), 60, |_| false));
+        let dust = floor_pixel(run_world(air(true), |_| {}, game_camera(), 60, |_| false));
+        assert!(
+            brightness(dust) > brightness(clear) + 10,
+            "expected dust, read {clear:?} then {dust:?}"
+        );
+    }
+
     #[test]
     #[ignore = "needs a GPU"]
     fn a_volume_fills_its_box_with_local_fog() {

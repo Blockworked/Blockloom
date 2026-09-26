@@ -20,6 +20,7 @@
 mod ai;
 mod atmosphere;
 mod batching;
+mod beams;
 mod bridge;
 mod capture;
 mod culling;
@@ -355,6 +356,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             sky::register(app);
             space::register(app);
             fog::register(app);
+            beams::register(app);
             use bevy::camera::visibility::VisibilitySystems;
             app.add_systems(
                 PostUpdate,

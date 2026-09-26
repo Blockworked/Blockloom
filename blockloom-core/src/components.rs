@@ -174,6 +174,9 @@ pub struct LightSpec {
     /// Whether it lights volumetric fog.
     #[serde(default = "default_true")]
     pub volumetric: bool,
+    /// A visible beam of its own, and the dust drifting in it.
+    #[serde(default)]
+    pub beam: crate::fog::Beam,
 }
 
 fn default_true() -> bool {
@@ -231,6 +234,7 @@ impl Default for LightSpec {
             shadow_normal_bias: None,
             ray_traced: true,
             volumetric: true,
+            beam: crate::fog::Beam::default(),
         }
     }
 }

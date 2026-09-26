@@ -59,6 +59,8 @@ pub struct Environment {
     /// Volumetric fog's extinction per metre at its base, 0 for none.
     pub volumetric_density: f32,
     pub volumetric_albedo: Color,
+    /// Multiplier on every light's beam density.
+    pub beams: f32,
     /// Aerial haze's extinction per metre, 0 for none.
     pub haze: f32,
 }
@@ -139,6 +141,7 @@ impl Environment {
                 0.0
             },
             volumetric_albedo: parse_color(&world.fog.volumetric.albedo),
+            beams: 1.0,
             haze: if world.fog.aerial.enabled {
                 haze_for_distance(world.fog.aerial.distance)
             } else {
@@ -169,6 +172,15 @@ impl Environment {
             .into();
         }
         self.sun.illuminance *= peak;
+    }
+
+    /// `set fog density to`: height fog takes the density, and volumetric
+    /// fog and beams scale by it against the project's own.
+    pub fn set_fog_density(&mut self, fog: &blockloom_core::fog::Fog, density: f32) {
+        let scale = blockloom_core::fog::fog_scale(fog, density);
+        self.fog_density = density.max(0.0);
+        self.volumetric_density *= scale;
+        self.beams *= scale;
     }
 
     /// Lays one volume over this at `weight` (0 to 1). Numbers and colors
@@ -223,6 +235,7 @@ impl Environment {
         number(&mut self.fog_height, over.fog_height);
         number(&mut self.volumetric_density, over.volumetric_density);
         color(&mut self.volumetric_albedo, over.volumetric_albedo);
+        number(&mut self.beams, over.beams);
         number(&mut self.haze, over.haze);
     }
 }
@@ -252,6 +265,7 @@ pub struct EnvironmentOverride {
     pub fog_height: Option<f32>,
     pub volumetric_density: Option<f32>,
     pub volumetric_albedo: Option<Color>,
+    pub beams: Option<f32>,
     /// Extinction per metre, from the volume's haze distance.
     pub haze: Option<f32>,
 }
@@ -297,6 +311,11 @@ impl EnvironmentOverride {
                 .filter(|d| d.is_finite())
                 .map(|d| d.max(0.0)),
             volumetric_albedo: color(overrides.volumetric_albedo.get()),
+            beams: overrides
+                .beams
+                .get()
+                .filter(|m| m.is_finite())
+                .map(|m| m.max(0.0)),
             haze: overrides
                 .haze_distance
                 .get()
@@ -337,6 +356,7 @@ impl EnvironmentOverride {
                 self.volumetric_density.map(show_number),
             ),
             ("volumetric_albedo", self.volumetric_albedo.map(show_color)),
+            ("beams", self.beams.map(show_number)),
             ("haze_distance", self.haze.map(show_haze)),
         ]
         .into_iter()
@@ -371,6 +391,7 @@ impl Environment {
             ("fog_height", show_number(self.fog_height)),
             ("volumetric_density", show_number(self.volumetric_density)),
             ("volumetric_albedo", show_color(self.volumetric_albedo)),
+            ("beams", show_number(self.beams)),
             ("haze_distance", show_haze(self.haze)),
         ]
     }
@@ -452,9 +473,10 @@ pub fn blend_environment(
     }
     blended.through_air(&engine.project.world.sky);
     blended.exposure = claims.resolve(blended.exposure);
-    // `set fog density` outlasts every volume, like the director's exposure.
+    // `set fog density` outlasts every volume, like the director's exposure,
+    // and moves volumetric fog and beams by the same ratio.
     if let Some(density) = engine.fog_density.filter(|d| d.is_finite()) {
-        blended.fog_density = density.max(0.0);
+        blended.set_fog_density(&engine.project.world.fog, density);
     }
     environment.set_if_neq(blended);
 }

@@ -80,6 +80,8 @@ pub struct VolumeOverrides {
     /// Volumetric fog's extinction per metre; turns it on inside.
     pub volumetric_density: Override<f32>,
     pub volumetric_albedo: Override<String>,
+    /// Multiplies every light's beam density.
+    pub beams: Override<f32>,
     /// Metres at which aerial haze takes half a far object's light.
     pub haze_distance: Override<f32>,
 }
@@ -112,6 +114,7 @@ impl Default for VolumeOverrides {
             fog_height: Override::off(world.fog.height.base_height),
             volumetric_density: Override::off(world.fog.volumetric.density),
             volumetric_albedo: Override::off(world.fog.volumetric.albedo.clone()),
+            beams: Override::off(1.0),
             haze_distance: Override::off(world.fog.aerial.distance),
         }
     }
@@ -143,6 +146,7 @@ impl VolumeOverrides {
             ("fog_height", self.fog_height.on),
             ("volumetric_density", self.volumetric_density.on),
             ("volumetric_albedo", self.volumetric_albedo.on),
+            ("beams", self.beams.on),
             ("haze_distance", self.haze_distance.on),
         ]
         .into_iter()

@@ -8,7 +8,7 @@
 import bevy_pbr::render::mesh_view_types::{Lights, DIRECTIONAL_LIGHT_FLAGS_VOLUMETRIC_BIT};
 import blockloom::fog::{
     FogUniforms, FLAG_HISTORY, FLAG_SUN_VOLUMETRIC, MAX_LOCAL_FOG, MAX_FOG_LIGHTS,
-    slice_distance, distance_slice, local_coverage,
+    slice_distance, distance_slice, local_coverage, beam_fade, cone_window,
 };
 import blockloom::scattering::henyey_greenstein;
 import blockloom::fbm::fbm3;
@@ -89,10 +89,20 @@ fn medium_at(p: vec3<f32>) -> Medium {
     return out;
 }
 
-// Light arriving at `p` that scatters along `-view`, per unit scattering.
-fn light_at(p: vec3<f32>, view: vec3<f32>) -> vec3<f32> {
+struct Lit {
+    // Light per unit of the fog's own scattering.
+    fog: vec3<f32>,
+    // Light the beams scatter themselves, and their extinction.
+    beams: vec3<f32>,
+    beam_extinction: f32,
+}
+
+// Light arriving at `p` that scatters along `-view`, plus what the lights'
+// own beams scatter there.
+fn light_at(p: vec3<f32>, view: vec3<f32>) -> Lit {
+    var out: Lit;
     let g = fog.volumetric.w;
-    var light = fog.ambient.rgb * fog.volumetric_albedo.w;
+    out.fog = fog.ambient.rgb * fog.volumetric_albedo.w;
     if (fog.grid.w & FLAG_SUN_VOLUMETRIC) != 0u {
         for (var i = 0u; i < lights.n_directional_lights; i++) {
             let sun = &lights.directional_lights[i];
@@ -101,7 +111,7 @@ fn light_at(p: vec3<f32>, view: vec3<f32>) -> vec3<f32> {
             }
             let towards = (*sun).direction_to_light;
             let phase = henyey_greenstein(dot(view, towards), g);
-            light += (*sun).color.rgb * phase * sun_shadow(i, p);
+            out.fog += (*sun).color.rgb * phase * sun_shadow(i, p);
         }
     }
     for (var i = 0u; i < min(fog.counts.y, MAX_FOG_LIGHTS); i++) {
@@ -112,15 +122,19 @@ fn light_at(p: vec3<f32>, view: vec3<f32>) -> vec3<f32> {
         // Bevy's own range window, so the fog fades where the light does.
         let factor = d2 / (range * range);
         let window = clamp(1.0 - factor * factor, 0.0, 1.0);
-        var falloff = window * window / d2;
         let towards = offset * inverseSqrt(d2);
-        if lamp.direction.w > -1.5 {
-            let cos_angle = dot(-towards, lamp.direction.xyz);
-            falloff *= smoothstep(lamp.direction.w, lamp.cone.x, cos_angle);
+        let cone = cone_window(dot(-towards, lamp.direction.xyz), lamp.direction.w, lamp.cone.x);
+        let arriving = lamp.color.rgb * window * window / d2 * cone
+            * henyey_greenstein(dot(view, towards), lamp.beam.y);
+        out.fog += arriving;
+        if lamp.beam.x > 0.0 && cone > 0.0 {
+            let density = lamp.beam.x
+                * beam_fade(sqrt(d2), range, lamp.cone.y, lamp.cone.z, lamp.beam.z);
+            out.beams += arriving * density;
+            out.beam_extinction += density;
         }
-        light += lamp.color.rgb * falloff * henyey_greenstein(dot(view, towards), g);
     }
-    return light;
+    return out;
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -138,12 +152,14 @@ fn inject(@builtin(global_invocation_id) id: vec3<u32>) {
     let p = fog.camera.xyz + view * slice_distance(w, range);
 
     let m = medium_at(p);
-    var scattered = vec3<f32>(0.0);
-    if m.extinction > 0.0 {
-        scattered = m.scattering * light_at(p, view) + m.emissive;
+    var value = vec4<f32>(0.0);
+    // No medium and no beams: nothing to light.
+    if m.extinction > 0.0 || fog.counts.w > 0u {
+        let lit = light_at(p, view);
+        let scattered = m.scattering * lit.fog + m.emissive + lit.beams;
+        // Light is stored exposed, so bright fog stays inside FP16.
+        value = vec4<f32>(scattered * fog.camera.w, m.extinction + lit.beam_extinction);
     }
-    // Light is stored exposed, so bright fog stays inside FP16.
-    var value = vec4<f32>(scattered * fog.camera.w, m.extinction);
 
     if (fog.grid.w & FLAG_HISTORY) != 0u {
         // Where this froxel's centre sat in last frame's grid.

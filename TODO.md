@@ -500,13 +500,19 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         only in the main view (not in reflections or probes) and light
         nothing; aurora assumes flat ground; the flash light casts no
         shadows, there is no bolt to see, and thunder is not positional; no
-        fog in 2D; `set fog density` moves height fog only. GPU-checked on
+        fog in 2D. GPU-checked on
         Intel Arc through Mesa only.
-  - [ ] Volumetric light volumes: per spot/point cone inscatter (density, anisotropy,
+  - [x] Volumetric light volumes: per spot/point cone inscatter (density, anisotropy,
         falloff curve, near/far fade) for visible beams, dust motes (billboard points
         drifting in beam, size/alpha/twinkle), fake shaft cones (additive fresnel-faded
         geometry with noise scroll) for cheap beams, height-dust global toggle. Tied
         to fog density so beams thicken in fog and vanish on clear days.
+        A light's `beam` adds medium in the froxels (beams first, then nearest,
+        16 lights) or, in Auto with volumetric fog off or Low, a shaft cone;
+        `set fog density` scales beams and volumetric fog, and volumes carry a
+        `beams` multiplier. Not covered: beams are unshadowed like the other
+        fog lights; shafts are spots only and ignore occluders past depth
+        testing; motes and height dust are unshadowed and don't collide.
   - [ ] Movement and animation (one wind system drives clouds, layers, vegetation,
         water and particles so a storm reads as one storm):
         - Global wind asset: direction, base speed, gust strength plus gust frequency

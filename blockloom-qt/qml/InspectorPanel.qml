@@ -39,6 +39,11 @@ Rectangle {
     function emitterOf(c) { return Object.assign({ rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: "#FFFFFF", color_end: "#FFAB19", max: 128 }, c.emitter || {}); }
     function lightOf(c) { return Object.assign({ kind: "Point", color: "#FFFFFF", intensity: 800, range: 20, radius: 0, inner_angle: 30, outer_angle: 45, shadows: false,
         unit: "Lumens", width: 1, height: 1, cookie: "", cookie_tiling: 1, ies: "", contact_shadows: false, soft_shadows: false, shadow_depth_bias: null, shadow_normal_bias: null, ray_traced: true, volumetric: true }, c.light || {}); }
+    function beamOf(l) {
+        const b = Object.assign({ density: 0, anisotropy: null, falloff: 1, near_fade: 0.5, far_fade: 2, mode: "Auto", shaft_intensity: 1, shaft_noise: 0.4, shaft_scroll: 0.3, motes: {} }, l.beam || {});
+        b.motes = Object.assign({ enabled: false, count: 160, size: 0.012, alpha: 0.6, twinkle: 0.5, drift: 0.05 }, b.motes);
+        return b;
+    }
     function probeOf(c) { return Object.assign({ kind: "Reflection", size: [10, 5, 10], falloff: 0.2, resolution: 256, grid: [4, 3, 4], intensity: 1, box_projection: true, auto_bake: true }, c.probe || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
@@ -60,7 +65,7 @@ Rectangle {
                   sky_exposure: w.sky ? w.sky.exposure : 0, ambient_dimmer: w.sky ? w.sky.ambient_dimmer : 1,
                   fog_density: 3 / (f.height.distance || 400), fog_color: f.height.day_color || "#C2CAD2", fog_height: f.height.base_height || 0,
                   volumetric_density: f.volumetric.density !== undefined ? f.volumetric.density : 0.02, volumetric_albedo: f.volumetric.albedo || "#FFFFFF",
-                  haze_distance: f.aerial.distance || 8000 })[key];
+                  beams: 1, haze_distance: f.aerial.distance || 8000 })[key];
     }
     function overrideOf(v, key) { return Object.assign({ on: false, value: projectValue(key) }, (v.overrides || {})[key] || {}); }
     readonly property var volumeProperties: [
@@ -86,6 +91,7 @@ Rectangle {
         { key: "fog_height", label: "Fog base", kind: "number", only3d: true },
         { key: "volumetric_density", label: "Volumetric /m", kind: "number", only3d: true },
         { key: "volumetric_albedo", label: "Volumetric color", kind: "color", only3d: true },
+        { key: "beams", label: "Beams ×", kind: "number", only3d: true },
         { key: "haze_distance", label: "Haze m", kind: "number", only3d: true }
     ]
     function brainOf(c) { return Object.assign({ target: "", speed: 4, sight: 12, fov: 120, separation: 1, tree: { node: "Selector", children: [{ node: "Sequence", children: [{ node: "CanSeeTarget" }, { node: "NavigateToTarget" }] }, { node: "Idle" }] } }, c.brain || {}); }
@@ -109,6 +115,8 @@ Rectangle {
     function writeShader(c, next) { writeMaterial(c, { shader: merged(materialOf(c).shader || { mode: "Solid", speed: 1, strength: 0.5, color: "#FFFFFF" }, next) }); }
     function writeEmitter(c, next) { write("Emitter", { component: "Emitter", emitter: merged(emitterOf(c), next) }); }
     function writeLight(c, next) { write("Light", { component: "Light", light: merged(lightOf(c), next) }); }
+    function writeBeam(c, next) { writeLight(c, { beam: merged(beamOf(lightOf(c)), next) }); }
+    function writeMotes(c, next) { writeBeam(c, { motes: merged(beamOf(lightOf(c)).motes, next) }); }
     function writeTrail(c, next) { write("Trail", { component: "Trail", trail: merged(trailOf(c), next) }); }
     function writeJoint(c, next) { write("Joint", { component: "Joint", joint: merged(jointOf(c), next) }); }
     function writeAnimation(c, next) { write("Animation", { component: "Animation", animation: merged(animationOf(c), next) }); }
@@ -770,12 +778,44 @@ Rectangle {
                 SwitchField { value: li.l.ray_traced; onToggled: on => root.writeLight(li.c, { ray_traced: on }) } Item { Layout.fillWidth: true } }
             InspectorRow { label: "Lights fog"; Layout.fillWidth: true
                 SwitchField { value: li.l.volumetric; onToggled: on => root.writeLight(li.c, { volumetric: on }) } Item { Layout.fillWidth: true } }
+            readonly property var b: root.beamOf(l)
+            readonly property bool beams: !area && l.volumetric
+            readonly property bool beamOn: beams && b.density > 0
+            InspectorRow { visible: li.beams; label: "Beam /m"; Layout.fillWidth: true
+                NumberField { value: li.b.density; fallback: 0; onCommitted: n => root.writeBeam(li.c, { density: Math.min(Math.max(n, 0), 10) }) } }
+            InspectorRow { visible: li.beamOn; label: "Drawn as"; Layout.fillWidth: true
+                ChoiceField { options: [{ value: "Auto", label: "Auto" }, { value: "Volumetric", label: "Volumetric fog" }, { value: "Shaft", label: "Shaft cone" }]; value: li.b.mode; onChosen: m => root.writeBeam(li.c, { mode: m }) } }
+            InspectorRow { visible: li.beamOn; label: "Own g"; Layout.fillWidth: true
+                SwitchField { value: li.b.anisotropy !== null; onToggled: on => root.writeBeam(li.c, { anisotropy: on ? 0.6 : null }) }
+                NumberField { visible: li.b.anisotropy !== null; value: li.b.anisotropy !== null ? li.b.anisotropy : 0.6; fallback: 0.6; onCommitted: n => root.writeBeam(li.c, { anisotropy: Math.min(Math.max(n, -0.9), 0.9) }) } }
+            InspectorRow { visible: li.beamOn; label: "Falloff curve"; Layout.fillWidth: true
+                NumberField { value: li.b.falloff; fallback: 1; onCommitted: n => root.writeBeam(li.c, { falloff: Math.min(Math.max(n, 0), 8) }) } }
+            InspectorRow { visible: li.beamOn; label: "Fade near, far m"; Layout.fillWidth: true
+                NumberField { value: li.b.near_fade; fallback: 0.5; onCommitted: n => root.writeBeam(li.c, { near_fade: Math.max(n, 0) }) }
+                NumberField { value: li.b.far_fade; fallback: 2; onCommitted: n => root.writeBeam(li.c, { far_fade: Math.max(n, 0) }) } }
+            InspectorRow { visible: li.beamOn && li.l.kind === "Spot" && li.b.mode !== "Volumetric"; label: "Shaft ×, noise"; Layout.fillWidth: true
+                NumberField { value: li.b.shaft_intensity; fallback: 1; onCommitted: n => root.writeBeam(li.c, { shaft_intensity: Math.max(n, 0) }) }
+                NumberField { value: li.b.shaft_noise; fallback: 0.4; onCommitted: n => root.writeBeam(li.c, { shaft_noise: Math.min(Math.max(n, 0), 1) }) } }
+            InspectorRow { visible: li.beamOn && li.l.kind === "Spot" && li.b.mode !== "Volumetric"; label: "Scroll m/s"; Layout.fillWidth: true
+                NumberField { value: li.b.shaft_scroll; fallback: 0.3; onCommitted: n => root.writeBeam(li.c, { shaft_scroll: n }) } }
+            InspectorRow { visible: !li.area; label: "Dust motes"; Layout.fillWidth: true
+                SwitchField { value: li.b.motes.enabled; onToggled: on => root.writeMotes(li.c, { enabled: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { visible: !li.area && li.b.motes.enabled; label: "Count, size m"; Layout.fillWidth: true
+                NumberField { value: li.b.motes.count; fallback: 160; onCommitted: n => root.writeMotes(li.c, { count: Math.min(Math.max(Math.round(n), 0), 4096) }) }
+                NumberField { value: li.b.motes.size; fallback: 0.012; onCommitted: n => root.writeMotes(li.c, { size: Math.min(Math.max(n, 0.001), 1) }) } }
+            InspectorRow { visible: !li.area && li.b.motes.enabled; label: "Alpha, twinkle"; Layout.fillWidth: true
+                NumberField { value: li.b.motes.alpha; fallback: 0.6; onCommitted: n => root.writeMotes(li.c, { alpha: Math.min(Math.max(n, 0), 1) }) }
+                NumberField { value: li.b.motes.twinkle; fallback: 0.5; onCommitted: n => root.writeMotes(li.c, { twinkle: Math.min(Math.max(n, 0), 1) }) } }
+            InspectorRow { visible: !li.area && li.b.motes.enabled; label: "Drift m/s"; Layout.fillWidth: true
+                NumberField { value: li.b.motes.drift; fallback: 0.05; onCommitted: n => root.writeMotes(li.c, { drift: Math.min(Math.max(n, 0), 10) }) } }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: !root.is3d ? "Lights need a 3D world; in 2D this rests."
                     : li.area ? "An area light glows from a " + (li.l.kind === "Disk" ? "disc" : "rectangle") + " facing the actor's forward axis, with soft LTC highlights. It casts no shadow maps."
                     : li.l.unit === "Candela"
                     ? "Candela down the brightest direction (an IES profile's peak). About " + Math.round(li.l.intensity * 4 * Math.PI) + " lumens. Contact shadows also need them on in Project Settings."
                     : "About " + Math.round(li.l.intensity / (4 * Math.PI)) + " candela. A spot's cone doesn't gather the light, so narrowing it isn't brighter. Contact shadows also need them on in Project Settings." }
+            Text { visible: li.beams && root.is3d; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "A beam is extra haze only this light scatters, thickening and thinning with `set fog density to`. Auto draws it in volumetric fog while that is on above Low quality, and as a cheap shaft cone otherwise; a point light's beam is a glow round it and needs volumetric fog. Motes drift in the light's reach." }
         }
     }
     Component {

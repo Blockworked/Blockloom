@@ -423,6 +423,7 @@ pub fn sync_traced_scene(
             Without<crate::streaming::Placeholder>,
             Without<crate::fx::Particle>,
             Without<crate::fx::Ghost>,
+            Without<crate::beams::Additive>,
         ),
     >,
     mut proxies: Query<
