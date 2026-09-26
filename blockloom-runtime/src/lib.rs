@@ -23,6 +23,7 @@ mod batching;
 mod beams;
 mod bridge;
 mod capture;
+mod clouds;
 mod culling;
 mod dim2;
 mod dim3;

@@ -133,6 +133,63 @@ impl Clouds {
         }
     }
 }
+/// Which dial `set clouds _ to` writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CloudProperty {
+    Coverage,
+    Density,
+    Type,
+}
+impl CloudProperty {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Coverage => "Coverage",
+            Self::Density => "Density",
+            Self::Type => "Type",
+        }
+    }
+    /// Case-insensitive, so a script's `"coverage"` works too.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "coverage" | "cover" => Some(Self::Coverage),
+            "density" => Some(Self::Density),
+            "type" | "cloud_type" => Some(Self::Type),
+            _ => None,
+        }
+    }
+}
+/// What `set clouds` set this run, laid over the blended clouds.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CloudOverrides {
+    pub coverage: Option<f32>,
+    pub density: Option<f32>,
+    pub cloud_type: Option<f32>,
+}
+impl CloudOverrides {
+    /// Clamped as the project's own would be. A value that isn't finite is
+    /// ignored.
+    pub fn set(&mut self, property: CloudProperty, value: f32) {
+        if !value.is_finite() {
+            return;
+        }
+        match property {
+            CloudProperty::Coverage => self.coverage = Some(value.clamp(0.0, 1.0)),
+            CloudProperty::Density => self.density = Some(value.clamp(0.0, 10.0)),
+            CloudProperty::Type => self.cloud_type = Some(value.clamp(0.0, 1.0)),
+        }
+    }
+    pub fn apply(&self, clouds: &mut Clouds) {
+        if let Some(v) = self.coverage {
+            clouds.coverage = v;
+        }
+        if let Some(v) = self.density {
+            clouds.density = v;
+        }
+        if let Some(v) = self.cloud_type {
+            clouds.cloud_type = v;
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,5 +230,18 @@ mod tests {
             .map(CloudQuality::steps),
             [(16, 3), (32, 5), (48, 6), (64, 8)]
         );
+    }
+    #[test]
+    fn run_overrides_clamp_and_apply() {
+        let mut over = CloudOverrides::default();
+        over.set(CloudProperty::parse("coverage").unwrap(), 3.0);
+        over.set(CloudProperty::Density, f32::NAN);
+        over.set(CloudProperty::parse(" Type ").unwrap(), 0.25);
+        let mut c = Clouds::default();
+        over.apply(&mut c);
+        assert_eq!(c.coverage, 1.0);
+        assert_eq!(c.density, Clouds::default().density);
+        assert_eq!(c.cloud_type, 0.25);
+        assert_eq!(CloudProperty::parse("rain"), None);
     }
 }

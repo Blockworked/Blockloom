@@ -586,6 +586,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         Profiler: average primary steps and contributing samples per pixel
         (`clouds/steps`, `clouds/overdraw`) plus GPU `cloud_march` timing.
         Noise is generated on demand, not imported from authored volume assets.
+        Blocks, compiled logic and scripts share `set clouds [coverage/density/
+        type] to`, laid over the project's clouds and any volume for the run.
   - [ ] Cloud layers (planar 2D cover above and below volumetrics, also the full
         fallback when volumetrics are off):
         - Up to 4 layers, each: coverage texture or procedural FBM (seed, scale,

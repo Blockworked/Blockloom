@@ -507,6 +507,7 @@ pub fn blend_environment(
     if let Some(density) = engine.fog_density.filter(|d| d.is_finite()) {
         blended.set_fog_density(&engine.project.world.fog, density);
     }
+    engine.clouds.apply(&mut blended.clouds);
     environment.set_if_neq(blended);
 }
 

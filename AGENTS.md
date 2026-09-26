@@ -752,7 +752,9 @@ and its EXR).
 
 `World.clouds` (`blockloom-core/src/clouds.rs`) persists shape, altitude,
 lighting and quality, edited by `set_clouds` and Project Settings. The blended
-`Environment.clouds` carries volume coverage, density and type overrides.
+`Environment.clouds` carries volume coverage, density and type overrides, and
+`set clouds [coverage/density/type] to` (a script's `set_clouds`) lays
+`engine.clouds` over them for the run.
 `blockloom-runtime/src/clouds.rs` bakes seeded, repeating 128³ shape and 32³
 erosion volumes on the GPU, raymarches at half resolution before fog, and
 uses the shared bilateral upsampler over the scene. WindField supplies drift.

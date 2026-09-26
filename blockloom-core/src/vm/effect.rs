@@ -182,6 +182,11 @@ pub enum Effect {
         property: crate::wind::WindProperty,
         value: f32,
     },
+    /// A volumetric cloud dial, for the rest of the run. Window-global.
+    SetClouds {
+        property: crate::clouds::CloudProperty,
+        value: f32,
+    },
     /// Extra cloud drift, for the rest of the run. Window-global.
     SetCloudDrift {
         drift: [f32; 3],

@@ -277,6 +277,12 @@ pub enum InstructionKind {
         property: crate::wind::WindProperty,
         value: Value,
     },
+    /// Volumetric cloud coverage, density or type for the rest of the run.
+    /// Window-global.
+    SetClouds {
+        property: crate::clouds::CloudProperty,
+        value: Value,
+    },
     /// Extra drift of the clouds, world units per second, for the rest of
     /// the run.
     SetCloudDrift {
@@ -827,6 +833,7 @@ impl BlockKind for InstructionKind {
             | K::SetAurora { kp: v }
             | K::SetLightningRate { rate: v }
             | K::SetWind { value: v, .. }
+            | K::SetClouds { value: v, .. }
             | K::SetDensity { density: v }
             | K::SetMass { mass: v }
             | K::SetCollisionLayer { layer: v }

@@ -90,6 +90,7 @@ const TWEEN_EASINGS: &[&str] = &[
 ];
 const SOUND_BUSES: &[&str] = &["Master", "Music", "Sfx"];
 const WIND_PROPERTIES: &[&str] = &["Direction", "Speed", "Gust", "Storm"];
+const CLOUD_PROPERTIES: &[&str] = &["Coverage", "Density", "Type"];
 const UI_ANCHORS: &[&str] = &[
     "TopLeft",
     "Top",
@@ -1161,6 +1162,25 @@ pub const BLOCKS: &[BlockSpec] = &[
         dropdowns: &[Dropdown {
             field: "property",
             options: WIND_PROPERTIES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetClouds",
+        category: "Looks",
+        purpose: "Sets one of the volumetric clouds' dials for the rest of the run, over the project's own and any volume's: Coverage 0-1, Density 0-10, or Type 0-1 (stratus to cumulus). The `cloud cover` atmosphere reading reports the coverage. 3D only; the project's clouds must be enabled.",
+        header: false,
+        three_d: true,
+        slots: &[Slot {
+            field: "value",
+            id: "CloudValue",
+            value: "Any",
+        }],
+        dropdowns: &[Dropdown {
+            field: "property",
+            options: CLOUD_PROPERTIES,
         }],
         strings: NO_STRINGS,
         bools: NO_BOOLS,
