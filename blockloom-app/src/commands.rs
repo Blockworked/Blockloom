@@ -3983,11 +3983,7 @@ pub(crate) fn tile_stroke(
     let mut map = tilemap_of(s, actor_id)?;
     let mut changed = std::collections::HashSet::new();
     for segment in segments {
-        changed.extend(map.apply_brush(
-            brush,
-            (segment[0], segment[1]),
-            (segment[2], segment[3]),
-        ));
+        changed.extend(map.apply_brush(brush, (segment[0], segment[1]), (segment[2], segment[3])));
     }
     if !changed.is_empty() {
         store_tilemap(s, actor_id, map);
@@ -4042,8 +4038,12 @@ pub(crate) fn import_tileset(
     let folder = assets::normalize(&path)
         .and_then(|p| p.rsplit_once('/').map(|(folder, _)| folder.to_string()))
         .unwrap_or_default();
-    import.image = join_in_project(&folder, &import.image)
-        .ok_or_else(|| format!("The tileset's image \"{}\" is outside the project", import.image))?;
+    import.image = join_in_project(&folder, &import.image).ok_or_else(|| {
+        format!(
+            "The tileset's image \"{}\" is outside the project",
+            import.image
+        )
+    })?;
     let mut map = tilemap_of(&s, &actor_id)?;
     map.apply_import(&import);
     store_tilemap(&mut s, &actor_id, map);
@@ -4089,7 +4089,8 @@ pub(crate) fn add_autotile(
             first.max(0)
         ));
     }
-    map.autotiles.retain(|other| !other.name.eq_ignore_ascii_case(name));
+    map.autotiles
+        .retain(|other| !other.name.eq_ignore_ascii_case(name));
     map.autotiles.push(set);
     store_tilemap(&mut s, &actor_id, map);
     emit(app, &s);
