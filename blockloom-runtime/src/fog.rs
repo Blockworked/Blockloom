@@ -88,10 +88,14 @@ pub fn register(app: &mut App) {
         )
         .add_systems(
             Core3d,
+            // Strictly before post: the stages are only weakly chained, and
+            // a post pass that ran first would read the frame without fog.
             draw_fog
                 .after(crate::clouds::CloudPass)
+                .after(Core3dSystems::Prepass)
                 .after(Core3dSystems::MainPass)
-                .before(Core3dSystems::EarlyPostProcess),
+                .before(Core3dSystems::EarlyPostProcess)
+                .before(Core3dSystems::PostProcess),
         );
 }
 

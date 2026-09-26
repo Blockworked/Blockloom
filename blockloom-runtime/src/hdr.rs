@@ -11,12 +11,20 @@
 //! reporters share.
 
 use crate::engine::{Engine, PendingEffects};
-use bevy::core_pipeline::fullscreen_material::{FullscreenMaterial, FullscreenMaterialPlugin};
+use bevy::core_pipeline::fullscreen_material::{
+    FullscreenMaterial, FullscreenMaterialPlugin, fullscreen_material_system,
+};
 use bevy::core_pipeline::tonemapping::tonemapping;
 use bevy::core_pipeline::upscaling::upscaling;
-use bevy::core_pipeline::{Core2d, Core2dSystems, Core3dSystems};
-use bevy::ecs::schedule::{ScheduleConfigs, ScheduleLabel};
+use bevy::core_pipeline::{Core2d, Core2dSystems, Core3d, Core3dSystems};
+use bevy::ecs::schedule::graph::{DiGraph, Direction};
+use bevy::ecs::schedule::{
+    FlattenedDependencies, NodeId, ScheduleBuildError, ScheduleBuildPass, ScheduleConfigs,
+    ScheduleGraph, ScheduleLabel, SystemKey, SystemSetKey,
+};
 use bevy::ecs::system::BoxedSystem;
+use bevy::platform::hash::FixedHasher;
+use bevy::post_process::bloom::bloom;
 use bevy::prelude::*;
 use bevy::render::RenderApp;
 use bevy::render::extract_component::ExtractComponent;
@@ -27,6 +35,8 @@ use bevy::ui_render::ui_pass;
 use blockloom_core::scene::{DisplayOutput, OutputSpace};
 use blockloom_core::vm::Effect;
 use blockloom_protocol::DebugView;
+use indexmap::IndexSet;
+use std::any::TypeId;
 use std::sync::{Arc, Mutex};
 
 pub fn register(app: &mut App) {
@@ -48,12 +58,117 @@ pub fn register(app: &mut App) {
     }
     let offers = app.world().resource::<DisplayOffers>().clone();
     if let Some(render) = app.get_sub_app_mut(RenderApp) {
+        render.edit_schedule(Core3d, |schedule| {
+            schedule.add_build_pass(ToneInputs::new(vec![
+                crate::luminance::meter_type(),
+                system_type(fullscreen_material_system::<HdrDebugView3d>),
+                system_type(fullscreen_material_system::<HdrTone3d>),
+            ]));
+        });
+        render.edit_schedule(Core2d, |schedule| {
+            schedule.add_build_pass(ToneInputs::new(vec![
+                crate::luminance::meter_type(),
+                system_type(fullscreen_material_system::<HdrDebugView2d>),
+                system_type(fullscreen_material_system::<HdrTone2d>),
+            ]));
+        });
         render.insert_resource(offers);
         // The extractor only carries this over once the first frame runs,
         // while the windowed surface takeover reads it in that same frame:
         // seed the default so frame one never finds it missing.
         render.init_resource::<HdrFrame>();
     }
+}
+
+/// Puts the meter, debug views and tone curve after everything the tonemapper
+/// runs after. Bevy's effect stack and path tracer can't be named, and a pass
+/// unordered against them can flip the main texture in one order and submit
+/// in the other.
+#[derive(Debug)]
+struct ToneInputs {
+    /// The tonemapper, whose inputs become ours.
+    anchor: TypeId,
+    systems: Vec<TypeId>,
+}
+
+impl ToneInputs {
+    fn new(systems: Vec<TypeId>) -> Self {
+        Self {
+            anchor: system_type(tonemapping),
+            systems,
+        }
+    }
+}
+
+/// A system's type, which is how a build pass finds it.
+pub(crate) fn system_type<M>(system: impl IntoSystem<(), (), M>) -> TypeId {
+    IntoSystem::into_system(system).system_type()
+}
+
+impl ScheduleBuildPass for ToneInputs {
+    type EdgeOptions = ();
+
+    fn add_dependency(&mut self, _: NodeId, _: NodeId, _: Option<&()>) {}
+
+    fn collapse_set(
+        &mut self,
+        _: SystemSetKey,
+        _: &IndexSet<SystemKey, FixedHasher>,
+        _: &DiGraph<NodeId>,
+    ) -> impl Iterator<Item = (NodeId, NodeId)> {
+        std::iter::empty()
+    }
+
+    fn build(
+        &mut self,
+        _: &mut World,
+        graph: &mut ScheduleGraph,
+        mut dependencies: FlattenedDependencies<'_>,
+    ) -> Result<(), ScheduleBuildError> {
+        let key_of = |ty: TypeId| {
+            graph
+                .systems
+                .iter()
+                .find(|(_, system, _)| system.system_type() == ty)
+                .map(|(key, ..)| key)
+        };
+        let Some(tonemapper) = key_of(self.anchor) else {
+            return Ok(());
+        };
+        let ours: Vec<SystemKey> = self.systems.iter().filter_map(|ty| key_of(*ty)).collect();
+        let inputs: Vec<SystemKey> = dependencies
+            .graph()
+            .neighbors_directed(tonemapper, Direction::Incoming)
+            .filter(|key| !ours.contains(key))
+            .collect();
+        for &system in &ours {
+            for &input in &inputs {
+                // Something the tonemapper runs after that runs after us too
+                // stays where it is; an edge back would be a cycle.
+                if !reaches(&dependencies, system, input) {
+                    dependencies.add_edge(input, system);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn reaches(dependencies: &FlattenedDependencies, from: SystemKey, to: SystemKey) -> bool {
+    let mut stack = vec![from];
+    let mut seen = vec![from];
+    while let Some(key) = stack.pop() {
+        for next in dependencies.graph().neighbors(key) {
+            if next == to {
+                return true;
+            }
+            if !seen.contains(&next) {
+                seen.push(next);
+                stack.push(next);
+            }
+        }
+    }
+    false
 }
 
 /// What this runtime may do about HDR: a build made SDR-only never renders
@@ -407,17 +522,34 @@ impl HdrDebugView2d {
     }
 }
 
-// Debug views and the tone curve read the exposed scene, before the
-// tonemapper; the encode goes after the UI so the HUD is encoded too.
+// Debug views and the tone curve read the exposed scene, bloom included,
+// before the tonemapper; the encode goes after the UI so the HUD is encoded
+// too. Bloom and these share a set, so without the order they swap from
+// frame to frame and the picture flickers.
 impl FullscreenMaterial for HdrDebugView3d {
     fn fragment_shader() -> ShaderRef {
         shader()
+    }
+
+    fn schedule_configs(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {
+        system
+            .in_set(Core3dSystems::PostProcess)
+            .after(bloom)
+            .before(tonemapping)
     }
 }
 
 impl FullscreenMaterial for HdrTone3d {
     fn fragment_shader() -> ShaderRef {
         shader()
+    }
+
+    fn schedule_configs(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {
+        system
+            .in_set(Core3dSystems::PostProcess)
+            .after(bloom)
+            .after(fullscreen_material_system::<HdrDebugView3d>)
+            .before(tonemapping)
     }
 }
 
@@ -446,6 +578,7 @@ impl FullscreenMaterial for HdrDebugView2d {
     fn schedule_configs(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {
         system
             .in_set(Core2dSystems::PostProcess)
+            .after(bloom)
             .before(tonemapping)
     }
 }
@@ -462,6 +595,8 @@ impl FullscreenMaterial for HdrTone2d {
     fn schedule_configs(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {
         system
             .in_set(Core2dSystems::PostProcess)
+            .after(bloom)
+            .after(fullscreen_material_system::<HdrDebugView2d>)
             .before(tonemapping)
     }
 }
@@ -486,6 +621,65 @@ impl FullscreenMaterial for HdrEncode2d {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::schedule::Schedule;
+
+    #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
+    struct Post;
+
+    fn vignette() {}
+    fn tonemapper() {}
+    fn tone() {}
+    fn meter() {}
+    fn late() {}
+
+    /// Edges the pass added, as (from, to) system types.
+    fn added_edges(schedule: &mut Schedule) -> Vec<(TypeId, TypeId)> {
+        let mut world = World::new();
+        let metadata = schedule.initialize(&mut world).unwrap().unwrap();
+        let types: std::collections::HashMap<_, _> = schedule
+            .systems()
+            .unwrap()
+            .map(|(key, system)| (key, system.system_type()))
+            .collect();
+        metadata
+            .edges_added_by_build_passes
+            .iter()
+            .map(|(from, to)| (types[from], types[to]))
+            .collect()
+    }
+
+    #[test]
+    fn tone_inputs_follow_everything_the_tonemapper_follows() {
+        let mut schedule = Schedule::new(Post);
+        schedule.add_systems((
+            tonemapper,
+            vignette.before(tonemapper),
+            meter.before(tone),
+            tone.before(tonemapper),
+            // Already after the tone curve: ordering it before would be a cycle.
+            late.after(tone).before(tonemapper),
+        ));
+        schedule.add_build_pass(ToneInputs {
+            anchor: system_type(tonemapper),
+            systems: vec![system_type(meter), system_type(tone)],
+        });
+        let edges = added_edges(&mut schedule);
+        let (vignette, tone, meter, late) = (
+            system_type(vignette),
+            system_type(tone),
+            system_type(meter),
+            system_type(late),
+        );
+        assert!(edges.contains(&(vignette, meter)));
+        assert!(edges.contains(&(vignette, tone)));
+        assert!(!edges.contains(&(late, tone)));
+        assert!(!edges.contains(&(late, meter)));
+        assert!(
+            !edges
+                .iter()
+                .any(|(from, _)| *from == tone || *from == meter)
+        );
+    }
 
     #[test]
     fn tonemap_cost_sums_whichever_passes_ran() {

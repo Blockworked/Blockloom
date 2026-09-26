@@ -173,10 +173,13 @@ pub fn register(app: &mut App) {
         .add_systems(Render, prepare.in_set(RenderSystems::PrepareResources))
         .add_systems(
             Core3d,
-            draw.after(Core3dSystems::MainPass)
+            // Strictly before post, as fog is: the stages are weakly chained.
+            draw.after(Core3dSystems::Prepass)
+                .after(Core3dSystems::MainPass)
                 .in_set(CloudPass)
                 .in_set(CloudMarch)
-                .before(Core3dSystems::EarlyPostProcess),
+                .before(Core3dSystems::EarlyPostProcess)
+                .before(Core3dSystems::PostProcess),
         );
 }
 fn resolve(
