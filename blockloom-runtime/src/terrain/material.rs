@@ -390,13 +390,6 @@ pub fn follow_rotation(
     }
 }
 
-/// Rewrites a terrain's weight or surface map in place after a brush.
-pub fn update_grid(images: &mut Assets<Image>, handle: &Handle<Image>, texels: &[[u8; 4]]) {
-    if let Some(mut image) = images.get_mut(handle) {
-        image.data = Some(bytes(texels));
-    }
-}
-
 /// One grass material per layer.
 pub fn grass_material(
     materials: &mut Assets<GrassMaterial>,

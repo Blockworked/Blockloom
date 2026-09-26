@@ -45,6 +45,12 @@ Rectangle {
         return b;
     }
     function probeOf(c) { return Object.assign({ kind: "Reflection", size: [10, 5, 10], falloff: 0.2, resolution: 256, grid: [4, 3, 4], intensity: 1, box_projection: true, auto_bake: true }, c.probe || {}); }
+    function terrainOf(c) { return Object.assign({ size: [256, 256], height: 40, resolution: 257, heights: "", splat: "", holes: "", layers: [newLayer(0)], pixel_error: 4, collision: true, texturing: {}, grass: [], scatter: [] }, c.terrain || {}); }
+    function newLayer(n) {
+        const looks = [["Grass", "#5E7D3A"], ["Rock", "#77716A"], ["Dirt", "#7A5C3E"], ["Snow", "#E8ECF0"]][n % 4];
+        return { name: looks[0], color: looks[1], albedo_texture: "", normal_texture: "", roughness_texture: "", roughness: 0.85, texel_density: 0.25,
+                 rules: { enabled: n > 0, slope: n === 1 ? [30, 90] : [0, 90], height: [-100000, 100000], curvature: 0, softness: 0.3 } };
+    }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
     function animationOf(c) { return Object.assign({ clips: [], states: [] }, c.animation || {}); }
@@ -125,6 +131,13 @@ Rectangle {
     function writeJoint(c, next) { write("Joint", { component: "Joint", joint: merged(jointOf(c), next) }); }
     function writeAnimation(c, next) { write("Animation", { component: "Animation", animation: merged(animationOf(c), next) }); }
     function writeProbe(c, next) { write("Probe", { component: "Probe", probe: merged(probeOf(c), next) }); }
+    function writeTerrain(c, next) { write("Terrain", { component: "Terrain", terrain: merged(terrainOf(c), next) }); }
+    function writeTerrainItem(c, list, index, next) {
+        const l = copy(terrainOf(c)[list]);
+        l[index] = Object.assign(l[index], next);
+        const change = {}; change[list] = l;
+        writeTerrain(c, change);
+    }
     function writeVolume(c, next) { write("Volume", { component: "Volume", volume: merged(volumeOf(c), next) }); }
     function writeOverride(c, key, next) {
         const v = volumeOf(c);
@@ -196,7 +209,7 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Volume","Probe","Custom"]
+        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Volume","Probe","Terrain","Custom"]
             .filter(n => n === "Custom" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }));
     }
     function blank(name) {
@@ -215,6 +228,7 @@ Rectangle {
         case "Animation": return { component: "Animation", animation: { clips: [], states: [] } };
         case "Volume": return { component: "Volume", volume: volumeOf({}) };
         case "Probe": return { component: "Probe", probe: probeOf({}) };
+        case "Terrain": return { component: "Terrain", terrain: terrainOf({}) };
         case "Custom": return { component: "Custom", name: "Component", fields: [{ name: "value", value: { kind: "Number", value: 0 } }] };
         default: return null;
         }
@@ -268,7 +282,7 @@ Rectangle {
                             Layout.fillWidth: true
                             readonly property var c: card.c
                             sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Volume: volumeCard, Probe: probeCard })[card.c.component] || null
+                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard })[card.c.component] || null
                         }
                     }
                 }
@@ -684,6 +698,8 @@ Rectangle {
                 SwitchField { value: mat.m.box_projection; onToggled: on => root.writeMaterial(mat.c, { box_projection: on }) } Item { Layout.fillWidth: true } }
             InspectorRow { label: "Tiles / unit"; Layout.fillWidth: true
                 NumberField { value: mat.m.texel_density; fallback: 1; onCommitted: n => root.writeMaterial(mat.c, { texel_density: n }) } }
+            SurfaceDetailRows { Layout.fillWidth: true; visible: root.is3d && mat.m.shader === null; app: root.app; detail: mat.m.detail || {}
+                onEdited: d => root.writeMaterial(mat.c, { detail: d }) }
             InspectorRow { label: "Two-sided"; Layout.fillWidth: true; SwitchField { value: mat.m.double_sided; onToggled: on => root.writeMaterial(mat.c, { double_sided: on }) } Item { Layout.fillWidth: true } }
             InspectorRow { label: "Effect"; Layout.fillWidth: true
                 SwitchField { value: mat.m.shader !== null; onToggled: on => root.writeMaterial(mat.c, { shader: on ? { mode: "Solid", speed: 1, strength: 0.5, color: "#FFFFFF" } : null }) } Item { Layout.fillWidth: true } }
@@ -821,6 +837,200 @@ Rectangle {
                     : "About " + Math.round(li.l.intensity / (4 * Math.PI)) + " candela. A spot's cone doesn't gather the light, so narrowing it isn't brighter. Contact shadows also need them on in Project Settings." }
             Text { visible: li.beams && root.is3d; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "A beam is extra haze only this light scatters, thickening and thinning with `set fog density to`. Auto draws it in volumetric fog while that is on above Low quality, and as a cheap shaft cone otherwise; a point light's beam is a glow round it and needs volumetric fog. Motes drift in the light's reach." }
+        }
+    }
+    Component {
+        id: terrainCard
+        ColumnLayout {
+            id: ter
+            readonly property var c: parent.c
+            readonly property var t: root.terrainOf(c)
+            property string erosionKind: "hydraulic"
+            property real talus: 35
+            property int iterations: 20
+            property real erodeStrength: 0.3
+            property bool previewing: false
+            function erosion() {
+                return erosionKind === "thermal" ? { kind: "thermal", iterations: iterations, talus: talus }
+                                                 : { kind: "hydraulic", droplets: 0, seed: 7, erosion: erodeStrength, deposition: 0.3, inertia: 0.05 };
+            }
+            function preview() { previewing = true; root.app.invoke("preview_terrain_erosion", { actorId: root.actor.id, erosion: erosion() }); }
+            spacing: 6
+            InspectorRow { label: "Size X / Z"; Layout.fillWidth: true
+                NumberField { value: ter.t.size[0]; fallback: 256; onCommitted: n => root.writeTerrain(ter.c, { size: root.withIndex(ter.t.size, 0, n) }) }
+                NumberField { value: ter.t.size[1]; fallback: 256; onCommitted: n => root.writeTerrain(ter.c, { size: root.withIndex(ter.t.size, 1, n) }) } }
+            InspectorRow { label: "Height"; Layout.fillWidth: true
+                NumberField { value: ter.t.height; fallback: 40; onCommitted: n => root.writeTerrain(ter.c, { height: n }) } }
+            InspectorRow { label: "Resolution"; Layout.fillWidth: true
+                ChoiceField { options: Blocks.opts(["129", "257", "513", "1025", "2049", "4097"]); value: String(ter.t.resolution); onChosen: v => root.writeTerrain(ter.c, { resolution: Number(v) }) } }
+            InspectorRow { label: "Pixel error"; Layout.fillWidth: true
+                NumberField { value: ter.t.pixel_error; fallback: 4; onCommitted: n => root.writeTerrain(ter.c, { pixel_error: n }) } }
+            InspectorRow { label: "Collision"; Layout.fillWidth: true
+                SwitchField { value: ter.t.collision; onToggled: on => root.writeTerrain(ter.c, { collision: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Heightmap"; Layout.fillWidth: true
+                AssetField { app: root.app; value: ""; placeholderText: "Import PNG, .r16 or .r32"
+                    onCommitted: p => { if (p.trim() !== "") root.app.invoke("import_terrain_heightmap", { actorId: root.actor.id, path: p.trim() }); } } }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Sculpt and paint with the Brush tool in the scene view. A heightmap is resampled to the resolution and replaces the heights." }
+
+            Text { text: "Erosion"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            InspectorRow { label: "Kind"; Layout.fillWidth: true
+                ChoiceField { options: [{ value: "hydraulic", label: "Hydraulic" }, { value: "thermal", label: "Thermal" }]; value: ter.erosionKind
+                    onChosen: v => { ter.erosionKind = v; if (ter.previewing) ter.preview(); } } }
+            InspectorRow { label: "Strength"; Layout.fillWidth: true; visible: ter.erosionKind === "hydraulic"
+                NumberField { value: ter.erodeStrength; fallback: 0.3; onCommitted: n => { ter.erodeStrength = Math.min(1, Math.max(0, n)); if (ter.previewing) ter.preview(); } } }
+            InspectorRow { label: "Passes / talus"; Layout.fillWidth: true; visible: ter.erosionKind === "thermal"
+                NumberField { value: ter.iterations; fallback: 20; onCommitted: n => { ter.iterations = Math.max(1, Math.round(n)); if (ter.previewing) ter.preview(); } }
+                NumberField { value: ter.talus; fallback: 35; onCommitted: n => { ter.talus = n; if (ter.previewing) ter.preview(); } } }
+            RowLayout {
+                Layout.leftMargin: 84; spacing: 4
+                BwButton { text: ter.previewing ? "Clear preview" : "Preview"; implicitHeight: 28; font.pixelSize: 12
+                    onClicked: {
+                        if (ter.previewing) { ter.previewing = false; root.app.invoke("preview_terrain_erosion", { actorId: root.actor.id, erosion: null }); }
+                        else ter.preview();
+                    } }
+                BwButton { text: "Apply"; implicitHeight: 28; font.pixelSize: 12
+                    onClicked: { ter.previewing = false; root.app.invoke("erode_terrain", { actorId: root.actor.id, erosion: ter.erosion() }); } }
+            }
+
+            Text { text: "Paint layers"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            Repeater {
+                model: ter.t.layers
+                delegate: ColumnLayout {
+                    required property int index
+                    required property var modelData
+                    readonly property var r: modelData.rules || {}
+                    Layout.fillWidth: true; spacing: 4
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "Layer"
+                            onEditingFinished: root.writeTerrainItem(ter.c, "layers", index, { name: text.trim() }) }
+                        ColorField { value: modelData.color; onPicked: col => root.writeTerrainItem(ter.c, "layers", index, { color: col }) }
+                        IconButton { visible: ter.t.layers.length > 1; iconName: "x"; tip: "Remove this layer"; implicitWidth: 24; implicitHeight: 24
+                            onClicked: { const l = root.copy(ter.t.layers); l.splice(index, 1); root.writeTerrain(ter.c, { layers: l }); } }
+                    }
+                    InspectorRow { label: "Albedo"; Layout.fillWidth: true
+                        AssetField { app: root.app; accept: ["image"]; value: modelData.albedo_texture; placeholderText: "Flat color"; onCommitted: p => root.writeTerrainItem(ter.c, "layers", index, { albedo_texture: p }) } }
+                    InspectorRow { label: "Normal"; Layout.fillWidth: true
+                        AssetField { app: root.app; accept: ["image"]; value: modelData.normal_texture; placeholderText: "Optional"; onCommitted: p => root.writeTerrainItem(ter.c, "layers", index, { normal_texture: p }) } }
+                    InspectorRow { label: "Tiles / m, rough"; Layout.fillWidth: true
+                        NumberField { value: modelData.texel_density; fallback: 0.25; onCommitted: n => root.writeTerrainItem(ter.c, "layers", index, { texel_density: n }) }
+                        NumberField { value: modelData.roughness; fallback: 0.85; onCommitted: n => root.writeTerrainItem(ter.c, "layers", index, { roughness: n }) } }
+                    InspectorRow { label: "Rules"; Layout.fillWidth: true
+                        SwitchField { value: !!r.enabled; onToggled: on => root.writeTerrainItem(ter.c, "layers", index, { rules: Object.assign(root.copy(r), { enabled: on }) }) } Item { Layout.fillWidth: true } }
+                    InspectorRow { label: "Slope from / to"; Layout.fillWidth: true; visible: !!r.enabled
+                        NumberField { value: r.slope[0]; onCommitted: n => root.writeTerrainItem(ter.c, "layers", index, { rules: Object.assign(root.copy(r), { slope: root.withIndex(r.slope, 0, n) }) }) }
+                        NumberField { value: r.slope[1]; fallback: 90; onCommitted: n => root.writeTerrainItem(ter.c, "layers", index, { rules: Object.assign(root.copy(r), { slope: root.withIndex(r.slope, 1, n) }) }) } }
+                    InspectorRow { label: "Height from / to"; Layout.fillWidth: true; visible: !!r.enabled
+                        NumberField { value: r.height[0]; onCommitted: n => root.writeTerrainItem(ter.c, "layers", index, { rules: Object.assign(root.copy(r), { height: root.withIndex(r.height, 0, n) }) }) }
+                        NumberField { value: r.height[1]; onCommitted: n => root.writeTerrainItem(ter.c, "layers", index, { rules: Object.assign(root.copy(r), { height: root.withIndex(r.height, 1, n) }) }) } }
+                    InspectorRow { label: "Curve / soft"; Layout.fillWidth: true; visible: !!r.enabled
+                        NumberField { value: r.curvature; onCommitted: n => root.writeTerrainItem(ter.c, "layers", index, { rules: Object.assign(root.copy(r), { curvature: n }) }) }
+                        NumberField { value: r.softness; fallback: 0.3; onCommitted: n => root.writeTerrainItem(ter.c, "layers", index, { rules: Object.assign(root.copy(r), { softness: n }) }) } }
+                }
+            }
+            BwButton { visible: ter.t.layers.length < 4; iconName: "plus"; text: "Add layer"; implicitHeight: 28; font.pixelSize: 12
+                onClicked: { const l = root.copy(ter.t.layers); l.push(root.newLayer(l.length)); root.writeTerrain(ter.c, { layers: l }); } }
+
+            Text { text: "Grass"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            Repeater {
+                model: ter.t.grass
+                delegate: ColumnLayout {
+                    required property int index
+                    required property var modelData
+                    Layout.fillWidth: true; spacing: 4
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "Grass"
+                            onEditingFinished: root.writeTerrainItem(ter.c, "grass", index, { name: text.trim() }) }
+                        IconButton { iconName: "x"; tip: "Remove this grass"; implicitWidth: 24; implicitHeight: 24
+                            onClicked: { const l = root.copy(ter.t.grass); l.splice(index, 1); root.writeTerrain(ter.c, { grass: l }); } }
+                    }
+                    InspectorRow { label: "On layer"; Layout.fillWidth: true
+                        ChoiceField { options: [{ value: -1, label: "Everywhere" }].concat(ter.t.layers.map((l, i) => ({ value: i, label: l.name }))); value: modelData.layer
+                            onChosen: v => root.writeTerrainItem(ter.c, "grass", index, { layer: v }) } }
+                    InspectorRow { label: "Blades / m²"; Layout.fillWidth: true
+                        NumberField { value: modelData.density; fallback: 16; onCommitted: n => root.writeTerrainItem(ter.c, "grass", index, { density: n }) } }
+                    InspectorRow { label: "Height min / max"; Layout.fillWidth: true
+                        NumberField { value: modelData.height[0]; fallback: 0.25; onCommitted: n => root.writeTerrainItem(ter.c, "grass", index, { height: root.withIndex(modelData.height, 0, n) }) }
+                        NumberField { value: modelData.height[1]; fallback: 0.6; onCommitted: n => root.writeTerrainItem(ter.c, "grass", index, { height: root.withIndex(modelData.height, 1, n) }) } }
+                    InspectorRow { label: "Base / tip"; Layout.fillWidth: true
+                        ColorField { value: modelData.base_color; onPicked: col => root.writeTerrainItem(ter.c, "grass", index, { base_color: col }) }
+                        ColorField { value: modelData.tip_color; onPicked: col => root.writeTerrainItem(ter.c, "grass", index, { tip_color: col }) } }
+                    InspectorRow { label: "Variation"; Layout.fillWidth: true
+                        NumberField { value: modelData.variation; fallback: 0.2; onCommitted: n => root.writeTerrainItem(ter.c, "grass", index, { variation: n }) } }
+                    InspectorRow { label: "Stiff / wind"; Layout.fillWidth: true
+                        NumberField { value: modelData.stiffness; fallback: 0.5; onCommitted: n => root.writeTerrainItem(ter.c, "grass", index, { stiffness: n }) }
+                        NumberField { value: modelData.wind; fallback: 1; onCommitted: n => root.writeTerrainItem(ter.c, "grass", index, { wind: n }) } }
+                    InspectorRow { label: "Fade / cull"; Layout.fillWidth: true
+                        NumberField { value: modelData.fade_start; fallback: 30; onCommitted: n => root.writeTerrainItem(ter.c, "grass", index, { fade_start: n }) }
+                        NumberField { value: modelData.cull_distance; fallback: 60; onCommitted: n => root.writeTerrainItem(ter.c, "grass", index, { cull_distance: n }) } }
+                    InspectorRow { label: "Max slope"; Layout.fillWidth: true
+                        NumberField { value: modelData.max_slope; fallback: 40; onCommitted: n => root.writeTerrainItem(ter.c, "grass", index, { max_slope: n }) } }
+                }
+            }
+            BwButton { iconName: "plus"; text: "Add grass"; implicitHeight: 28; font.pixelSize: 12
+                onClicked: { const l = root.copy(ter.t.grass); l.push({ name: "Grass", layer: 0, density: 16, height: [0.25, 0.6], width: 0.05, base_color: "#2E4A1B", tip_color: "#93AE4F",
+                    variation: 0.2, stiffness: 0.5, wind: 1, max_slope: 40, fade_start: 30, cull_distance: 60, density_map: "", seed: l.length + 1 }); root.writeTerrain(ter.c, { grass: l }); } }
+
+            Text { text: "Trees and rocks"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            Repeater {
+                model: ter.t.scatter
+                delegate: ColumnLayout {
+                    required property int index
+                    required property var modelData
+                    Layout.fillWidth: true; spacing: 4
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "Trees"
+                            onEditingFinished: root.writeTerrainItem(ter.c, "scatter", index, { name: text.trim() }) }
+                        IconButton { iconName: "x"; tip: "Remove this scatter layer"; implicitWidth: 24; implicitHeight: 24
+                            onClicked: { const l = root.copy(ter.t.scatter); l.splice(index, 1); root.writeTerrain(ter.c, { scatter: l }); } }
+                    }
+                    InspectorRow { label: "Shape"; Layout.fillWidth: true
+                        ChoiceField { options: Blocks.opts(["Tree", "Pine", "Bush", "Rock"]); value: modelData.shape; onChosen: v => root.writeTerrainItem(ter.c, "scatter", index, { shape: v }) }
+                        ColorField { value: modelData.color; onPicked: col => root.writeTerrainItem(ter.c, "scatter", index, { color: col }) } }
+                    InspectorRow { label: "Model"; Layout.fillWidth: true
+                        AssetField { app: root.app; accept: ["model"]; value: modelData.model; placeholderText: "Procedural shape"; onCommitted: p => root.writeTerrainItem(ter.c, "scatter", index, { model: p }) } }
+                    InspectorRow { label: "Model LOD1"; Layout.fillWidth: true; visible: modelData.model !== ""
+                        AssetField { app: root.app; accept: ["model"]; value: modelData.model_lod1; placeholderText: "Keeps the model"; onCommitted: p => root.writeTerrainItem(ter.c, "scatter", index, { model_lod1: p }) } }
+                    InspectorRow { label: "Billboard"; Layout.fillWidth: true
+                        AssetField { app: root.app; accept: ["image"]; value: modelData.billboard; placeholderText: "No billboard level"; onCommitted: p => root.writeTerrainItem(ter.c, "scatter", index, { billboard: p }) } }
+                    InspectorRow { label: "On layer"; Layout.fillWidth: true
+                        ChoiceField { options: [{ value: -1, label: "Everywhere" }].concat(ter.t.layers.map((l, i) => ({ value: i, label: l.name }))); value: modelData.layer
+                            onChosen: v => root.writeTerrainItem(ter.c, "scatter", index, { layer: v }) } }
+                    InspectorRow { label: "Per 100 m², gap"; Layout.fillWidth: true
+                        NumberField { value: modelData.density; fallback: 0.5; onCommitted: n => root.writeTerrainItem(ter.c, "scatter", index, { density: n }) }
+                        NumberField { value: modelData.spacing; fallback: 3; onCommitted: n => root.writeTerrainItem(ter.c, "scatter", index, { spacing: n }) } }
+                    InspectorRow { label: "Clump / size"; Layout.fillWidth: true
+                        NumberField { value: modelData.clumping; fallback: 0.4; onCommitted: n => root.writeTerrainItem(ter.c, "scatter", index, { clumping: n }) }
+                        NumberField { value: modelData.clump_size; fallback: 24; onCommitted: n => root.writeTerrainItem(ter.c, "scatter", index, { clump_size: n }) } }
+                    InspectorRow { label: "Slope from / to"; Layout.fillWidth: true
+                        NumberField { value: modelData.slope[0]; onCommitted: n => root.writeTerrainItem(ter.c, "scatter", index, { slope: root.withIndex(modelData.slope, 0, n) }) }
+                        NumberField { value: modelData.slope[1]; fallback: 30; onCommitted: n => root.writeTerrainItem(ter.c, "scatter", index, { slope: root.withIndex(modelData.slope, 1, n) }) } }
+                    InspectorRow { label: "Altitude"; Layout.fillWidth: true
+                        NumberField { value: modelData.altitude[0]; onCommitted: n => root.writeTerrainItem(ter.c, "scatter", index, { altitude: root.withIndex(modelData.altitude, 0, n) }) }
+                        NumberField { value: modelData.altitude[1]; onCommitted: n => root.writeTerrainItem(ter.c, "scatter", index, { altitude: root.withIndex(modelData.altitude, 1, n) }) } }
+                    InspectorRow { label: "Scale min / max"; Layout.fillWidth: true
+                        NumberField { value: modelData.scale[0]; fallback: 0.8; onCommitted: n => root.writeTerrainItem(ter.c, "scatter", index, { scale: root.withIndex(modelData.scale, 0, n) }) }
+                        NumberField { value: modelData.scale[1]; fallback: 1.3; onCommitted: n => root.writeTerrainItem(ter.c, "scatter", index, { scale: root.withIndex(modelData.scale, 1, n) }) } }
+                    InspectorRow { label: "Tint / align"; Layout.fillWidth: true
+                        NumberField { value: modelData.tint; fallback: 0.12; onCommitted: n => root.writeTerrainItem(ter.c, "scatter", index, { tint: n }) }
+                        NumberField { value: modelData.align; onCommitted: n => root.writeTerrainItem(ter.c, "scatter", index, { align: n }) } }
+                    InspectorRow { label: "LOD1 / cull"; Layout.fillWidth: true
+                        NumberField { value: modelData.lod1_distance; fallback: 60; onCommitted: n => root.writeTerrainItem(ter.c, "scatter", index, { lod1_distance: n }) }
+                        NumberField { value: modelData.cull_distance; fallback: 450; onCommitted: n => root.writeTerrainItem(ter.c, "scatter", index, { cull_distance: n }) } }
+                    InspectorRow { label: "Collide / avoid"; Layout.fillWidth: true
+                        SwitchField { value: modelData.collide; onToggled: on => root.writeTerrainItem(ter.c, "scatter", index, { collide: on }) }
+                        SwitchField { value: modelData.avoid_actors; onToggled: on => root.writeTerrainItem(ter.c, "scatter", index, { avoid_actors: on }) } }
+                }
+            }
+            BwButton { iconName: "plus"; text: "Add trees"; implicitHeight: 28; font.pixelSize: 12
+                onClicked: { const l = root.copy(ter.t.scatter); l.push({ name: "Trees", shape: "Tree", seed: l.length + 1 }); root.writeTerrain(ter.c, { scatter: l }); } }
+
+            Text { text: "Texturing"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            SurfaceDetailRows { Layout.fillWidth: true; app: root.app; terrain: true; detail: ter.t.texturing || {}
+                onEdited: d => root.writeTerrain(ter.c, { texturing: d }) }
         }
     }
     Component {

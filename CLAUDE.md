@@ -809,6 +809,66 @@ render diagnostics time the march. GPU tests cover sky, terrain preservation
 and ground shadows (`cargo test -p blockloom-runtime volumetric_clouds --lib
 -- --ignored`).
 
+### World-space texturing
+
+`Material::detail` (`SurfaceDetail`, `blockloom-core/src/material.rs`) is the
+advanced pass over box projection, shared by materials and terrain (a
+terrain's `texturing`): stochastic texture bombing (three hex tiles, randomly
+offset and turned, blended by `stochastic_contrast`), macro variation (an
+image or noise multiplied over albedo), a detail normal map faded by camera
+distance, and a `MaskStack` of slope, height and cavity rule masks plus snow
+and wetness. Cavity is baked per terrain sample; other surfaces read none.
+The shader half is `blockloom::texturing` (core's `shaders/texturing.wesl`),
+which `box_pbr.wesl`, `terrain.wesl` and `grass.wesl` import. Snow and
+wetness also follow `World.surface`, volume overrides (`snow`, `wetness`) and
+`engine.surface`; `materials::SurfaceGlobals` is one storage buffer of weather
+and wind every surface reads, written only on change. `DebugView::SurfaceBlend`
+draws layer weights and masks as flat colors.
+
+### Terrain and vegetation
+
+A `Terrain` component (`blockloom-core/src/terrain/`, `TerrainSpec`) is a
+heightfield of 2ⁿ+1 samples (129 to 4097) over `size` metres, `height` metres
+tall, with up to four paint layers (each with slope, height and curvature
+rules), optional holes, grass layers and scatter layers. Grids never live in
+the document: `store.rs` keeps them content-addressed under
+`.blockloom/terrain` (64² tiles plus a manifest), the spec names the manifest,
+and `open_project` prunes what no terrain names. `store::name_of` predicts a
+save's name without writing it.
+
+`sculpt.rs` is every edit: a `Brush` (raise, lower, smooth, flatten, noise,
+terrace, paint, erase) on a `BrushTarget` (heights, a layer, holes, a grass
+or scatter density map), a `Stroke` of stamps applied to an `Editable`, and
+`Erosion` (thermal or droplet hydraulic). The editor applies strokes
+(`paint_terrain`, or the scene view's `TerrainStroke`), imports heightmaps
+through `pipeline::load_heightmap` and erodes, each as one undo step.
+
+`blockloom-runtime/src/terrain/` draws it, 3D only. `Geometry` cuts the
+field into chunks (`mesh::ChunkLayout`), each a `LodGroup` of levels picked
+by `pixel_error`; skirts hide the cracks between levels. Coarse levels stay
+resident and finer ones stream as `CellTasks` payloads on `StreamingCells`.
+Builds run off the main thread and are cached by spec (`TerrainCache`), so a
+rebuild that didn't touch a terrain reuses it. Collision is one rapier
+heightfield with holes removed. The material (`material.rs`) samples baked
+layer weights and a normal/cavity surface map at the grid UV, and the
+layers' maps triplanar from texture arrays.
+
+`vegetation.rs` streams grass in 32 m cells within its cull distance: seeded
+blades (`scatter::grass_blades`) merged into one mesh per cell, bent by the
+`WindField` and thinned by distance in `grass.wesl`. Scatter layers place
+trees and rocks once per build (`scatter::scatter_instances`: density,
+clumping noise, slope, altitude and actor-avoidance filters, tint and scale
+jitter); each instance is a holder `LodGroup` with a child per level (LOD0,
+LOD1, crossed-quad billboard), procedural shapes or glTF parts drawn
+instanced, and an optional trunk collider.
+
+The scene view's Brush tool (`SceneTool::Brush`, `brush.rs`) stamps onto a
+working copy and redraws touched chunks, weights and the surface map in
+place; on release it sends the stroke and files the predicted result in the
+cache under the spec the editor will send back, so the reload doesn't flash.
+`EditorMessage::PreviewErosion` shows an erosion filter without saving it.
+Triangle, chunk and instance counts reach the profiler as `terrain/*`.
+
 ### Shader library and pass plumbing
 
 `blockloom-core/src/shader_lib.rs` holds Blockloom's own WESL modules

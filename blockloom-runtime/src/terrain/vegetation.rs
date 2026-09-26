@@ -66,7 +66,7 @@ pub fn stream_grass(
     mut jobs: ResMut<TerrainJobs>,
     mut cells: ResMut<StreamingCells>,
     camera: Query<&GlobalTransform, With<WorldCamera>>,
-    mut roots: Query<(&crate::engine::ActorId, &GlobalTransform, &mut Terrained)>,
+    mut roots: Query<(&crate::engine::ActorId, &Transform, &mut Terrained)>,
 ) {
     let Ok(camera) = camera.single() else {
         return;
@@ -79,7 +79,7 @@ pub fn stream_grass(
         if terrained.spec.grass.is_empty() {
             continue;
         }
-        let affine = transform.affine();
+        let affine = transform.compute_affine();
         let local_eye = affine.inverse().transform_point3(eye);
         let shape = built.geometry.shape;
         let half = [shape.size[0] * 0.5, shape.size[1] * 0.5];

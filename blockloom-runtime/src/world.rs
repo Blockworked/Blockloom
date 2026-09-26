@@ -3367,6 +3367,7 @@ pub fn report_status(
     streaming: crate::streaming::StreamingReport,
     gpu: crate::gpu::GpuReport,
     volumes: Option<Res<crate::volumes::VolumeBlend>>,
+    terrain: Option<Res<crate::terrain::TerrainStats>>,
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
     let now = time.elapsed_secs() as f64;
@@ -3480,6 +3481,15 @@ pub fn report_status(
             ("culling/occlusion_tested", stats.tested),
             ("culling/occluded", stats.occluded),
         ] {
+            render_metrics.push(RenderMetric {
+                name: name.into(),
+                value: value as f64,
+                unit: "count".into(),
+            });
+        }
+    }
+    if let Some(terrain) = terrain.filter(|t| t.terrains > 0) {
+        for (name, value) in terrain.metrics() {
             render_metrics.push(RenderMetric {
                 name: name.into(),
                 value: value as f64,

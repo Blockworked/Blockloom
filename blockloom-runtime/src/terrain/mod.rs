@@ -8,6 +8,7 @@
 //! lands. Chunk levels coarser than `ChunkLayout::resident_level` are built
 //! with the terrain; finer ones stream in for chunks under an active cell.
 
+pub mod brush;
 pub mod material;
 pub mod vegetation;
 
@@ -28,7 +29,7 @@ use blockloom_core::terrain::store::{self, Grid};
 use blockloom_core::terrain::{Heightfield, Shape, TerrainSpec, bake_weights};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 /// Most instances one scatter layer places.
@@ -40,12 +41,15 @@ pub fn register(app: &mut App) {
         .init_resource::<TerrainJobs>()
         .init_resource::<TerrainIndex>()
         .init_resource::<TerrainStats>()
+        .init_resource::<brush::LiveStroke>()
         .add_observer(vegetation::swap_levels)
         .add_systems(
             Update,
             (
                 sync_terrains,
                 land_terrains,
+                preview_erosion,
+                brush::paint,
                 stream_chunks,
                 vegetation::stream_grass,
                 vegetation::land_grass,
@@ -91,23 +95,10 @@ impl Geometry {
         Self::from_parts(field, holes, spec)
     }
 
-    fn from_parts(field: Heightfield, holes: Option<Grid>, spec: &TerrainSpec) -> Geometry {
+    pub fn from_parts(field: Heightfield, holes: Option<Grid>, spec: &TerrainSpec) -> Geometry {
         let shape = spec.shape();
         let layout = ChunkLayout::for_side(shape.side);
-        let cavity = field.cavity_map(&shape);
-        let surface = (0..shape.side)
-            .flat_map(|j| (0..shape.side).map(move |i| (i, j)))
-            .map(|(i, j)| {
-                let n = field.normal(&shape, i, j);
-                let byte = |v: f32| ((v * 0.5 + 0.5) * 255.0).round().clamp(0.0, 255.0) as u8;
-                [
-                    byte(n[0]),
-                    byte(n[1]),
-                    byte(n[2]),
-                    cavity[field.index(i, j)],
-                ]
-            })
-            .collect();
+        let surface = field.surface_map(&shape);
         let mut geometry = Geometry {
             field,
             shape,
@@ -170,37 +161,34 @@ impl Geometry {
         }
     }
 
-    /// Where a world-space ray first meets the ground, in the root's frame,
-    /// marching the heightfield and refining the crossing.
-    pub fn raycast(&self, origin: Vec3, direction: Vec3, max: f32) -> Option<Vec3> {
-        let spacing = self.shape.spacing();
-        let step = (spacing[0].min(spacing[1]) * 0.5).max(0.05);
-        let above = |p: Vec3| {
-            self.field
-                .height_at(&self.shape, p.x, p.z)
-                .map(|h| p.y - h)
-        };
-        let mut t = 0.0;
-        let mut last: Option<(f32, f32)> = None;
-        while t <= max {
-            let p = origin + direction * t;
-            match above(p) {
-                Some(gap) if gap <= 0.0 => {
-                    let Some((t0, g0)) = last else {
-                        return Some(p);
-                    };
-                    let f = g0 / (g0 - gap).max(1e-6);
-                    return Some(origin + direction * (t0 + (t - t0) * f));
-                }
-                Some(gap) => last = Some((t, gap)),
-                None => last = None,
+}
+
+/// Where a ray (in the terrain's frame) first meets the ground, marching
+/// the heightfield and refining the crossing.
+pub fn raycast(field: &Heightfield, shape: &Shape, origin: Vec3, direction: Vec3, max: f32) -> Option<Vec3> {
+    let spacing = shape.spacing();
+    let step = (spacing[0].min(spacing[1]) * 0.5).max(0.05);
+    let above = |p: Vec3| field.height_at(shape, p.x, p.z).map(|h| p.y - h);
+    let mut t = 0.0;
+    let mut last: Option<(f32, f32)> = None;
+    while t <= max {
+        let p = origin + direction * t;
+        match above(p) {
+            Some(gap) if gap <= 0.0 => {
+                let Some((t0, g0)) = last else {
+                    return Some(p);
+                };
+                let f = g0 / (g0 - gap).max(1e-6);
+                return Some(origin + direction * (t0 + (t - t0) * f));
             }
-            // Big strides while far above the ground.
-            let gap = last.map_or(step, |(_, g)| g);
-            t += (gap * 0.5).clamp(step, step * 16.0);
+            Some(gap) => last = Some((t, gap)),
+            None => last = None,
         }
-        None
+        // Big strides while far above the ground.
+        let gap = last.map_or(step, |(_, g)| g);
+        t += (gap * 0.5).clamp(step, step * 16.0);
     }
+    None
 }
 
 /// What a whole terrain draws from once built.
@@ -210,7 +198,10 @@ pub struct Built {
     pub splat: Option<Grid>,
     pub weights: Arc<Vec<[u8; 4]>>,
     pub grass_maps: Vec<Option<Grid>>,
+    pub scatter_maps: Vec<Option<Grid>>,
     pub scatter: Vec<Vec<Instance>>,
+    /// Other actors' footprints, as scatter kept clear of them.
+    pub avoid: Vec<Avoid>,
 }
 
 /// Finished builds by what they were built from, so a rebuild that changed
@@ -267,6 +258,7 @@ pub struct TerrainJobs {
     builds: CellTasks<String, (u64, Built)>,
     fine: CellTasks<(String, u32), Vec<(u32, TerrainMesh)>>,
     grass: CellTasks<vegetation::GrassKey, Option<(Mesh, usize, [f32; 3])>>,
+    preview: CellTasks<String, Built>,
 }
 
 /// Lets the scene view find a terrain by actor: its data and root.
@@ -292,13 +284,13 @@ pub struct Terrained {
     pub grass_materials: Vec<Handle<material::GrassMaterial>>,
     pub triangles: usize,
     pub instances: usize,
+    /// Whether streaming has counted the cells active when it landed.
+    pub seeded: bool,
 }
 
 /// One chunk of a terrain's ground.
 #[derive(Component)]
-pub struct TerrainChunk {
-    pub index: u32,
-}
+pub struct TerrainChunk;
 
 /// The ground collider under a terrain root.
 #[derive(Component)]
@@ -318,7 +310,7 @@ pub fn wanted(engine: &Engine, actor: &str) -> Option<TerrainSpec> {
 pub fn sync_terrains(
     mut commands: Commands,
     engine: NonSend<Engine>,
-    mut cache: ResMut<TerrainCache>,
+    cache: Res<TerrainCache>,
     mut jobs: ResMut<TerrainJobs>,
     mut cells: ResMut<StreamingCells>,
     mut index: ResMut<TerrainIndex>,
@@ -360,6 +352,7 @@ pub fn sync_terrains(
             grass_materials: Vec::new(),
             triangles: 0,
             instances: 0,
+            seeded: false,
         });
         if let Some(built) = cache.built.get(&key) {
             commands.queue(spawn_built(id.0.clone(), entity, built.clone()));
@@ -420,6 +413,28 @@ pub fn paint(
 ) -> Built {
     let side = spec.resolution;
     let splat = store::grid_for(dir, &spec.splat, side);
+    let grass_maps = spec
+        .grass
+        .iter()
+        .map(|grass| store::grid_for(dir, &grass.density_map, side))
+        .collect();
+    let scatter_maps = spec
+        .scatter
+        .iter()
+        .map(|layer| store::grid_for(dir, &layer.density_map, side))
+        .collect();
+    paint_from(spec, geometry, splat, grass_maps, scatter_maps, avoid)
+}
+
+/// [`paint`] from grids already in hand.
+pub fn paint_from(
+    spec: &TerrainSpec,
+    geometry: Arc<Geometry>,
+    splat: Option<Grid>,
+    grass_maps: Vec<Option<Grid>>,
+    scatter_maps: Vec<Option<Grid>>,
+    avoid: &[Avoid],
+) -> Built {
     let painted = splat.as_ref().and_then(Grid::to_weights);
     let weights = bake_weights(
         &geometry.field,
@@ -427,21 +442,17 @@ pub fn paint(
         &spec.layers,
         painted.as_deref(),
     );
-    let grass_maps = spec
-        .grass
-        .iter()
-        .map(|grass| store::grid_for(dir, &grass.density_map, side))
-        .collect();
     let scatter = spec
         .scatter
         .iter()
-        .map(|layer| {
-            let map = store::grid_for(dir, &layer.density_map, side);
+        .enumerate()
+        .map(|(k, layer)| {
+            let map = scatter_maps.get(k).and_then(Option::as_ref);
             let avoid = if layer.avoid_actors { avoid } else { &[] };
             scatter_instances(
                 &geometry.ground(Some(&weights)),
                 layer,
-                map.as_ref().and_then(Grid::mask),
+                map.and_then(Grid::mask),
                 avoid,
                 SCATTER_LIMIT,
             )
@@ -452,7 +463,9 @@ pub fn paint(
         splat,
         weights: Arc::new(weights),
         grass_maps,
+        scatter_maps,
         scatter,
+        avoid: avoid.to_vec(),
     }
 }
 
@@ -514,14 +527,12 @@ fn spawn_built(id: String, root: Entity, built: Arc<Built>) -> impl FnOnce(&mut 
         let geometry = &built.geometry;
         let mut chunks = Vec::with_capacity(geometry.chunks.len());
         let mut triangles = 0;
-        for (index, chunk) in geometry.chunks.iter().enumerate() {
+        for chunk in &geometry.chunks {
             let (group, first, count) = resident_group(world, geometry, chunk);
             triangles += count;
             let entity = world
                 .spawn((
-                    TerrainChunk {
-                        index: index as u32,
-                    },
+                    TerrainChunk,
                     Mesh3d(first),
                     MeshMaterial3d(material.clone()),
                     group,
@@ -547,14 +558,85 @@ fn spawn_built(id: String, root: Entity, built: Arc<Built>) -> impl FnOnce(&mut 
             terrained.grass_materials = grass_materials;
             terrained.triangles = triangles;
             terrained.instances = instances;
+            terrained.seeded = false;
+            terrained.fine.clear();
         }
         world
             .resource_mut::<TerrainIndex>()
             .terrains
             .insert(id, (root, built));
-        // Chunks under cells that are already active want their fine levels.
-        let active: Vec<Cell> = world.resource::<StreamingCells>().active.iter().copied().collect();
-        world.write_message_batch(active.into_iter().map(CellEntered));
+    }
+}
+
+/// Takes a terrain's chunks, collider, grass and scatter down and spawns
+/// them again from `built`, for an erosion preview and putting it back.
+pub fn respawn(commands: &mut Commands, id: String, root: Entity, terrained: &mut Terrained, built: Arc<Built>) {
+    for &part in terrained.chunks.iter().chain(&terrained.parts) {
+        commands.entity(part).try_despawn();
+    }
+    for slot in terrained.grass_cells.values() {
+        if let vegetation::GrassSlot::Drawn(part) = *slot {
+            commands.entity(part).try_despawn();
+        }
+    }
+    terrained.chunks.clear();
+    terrained.parts.clear();
+    terrained.grass_cells.clear();
+    terrained.fine.clear();
+    terrained.built = None;
+    commands.queue(spawn_built(id, root, built));
+}
+
+/// Runs the erosion previews the editor asked for off the main thread, and
+/// swaps each terrain to its preview (or back) when ready.
+pub fn preview_erosion(
+    mut commands: Commands,
+    mut engine: NonSendMut<Engine>,
+    cache: Res<TerrainCache>,
+    mut jobs: ResMut<TerrainJobs>,
+    mut cells: ResMut<StreamingCells>,
+    mut roots: Query<(&Transform, &mut Terrained)>,
+) {
+    for (id, erosion) in std::mem::take(&mut engine.terrain_previews) {
+        let Some(&root) = engine.entities.get(&id) else {
+            continue;
+        };
+        let Ok((transform, mut terrained)) = roots.get_mut(root) else {
+            continue;
+        };
+        jobs.preview.cancel(&mut cells, &id);
+        let Some(erosion) = erosion else {
+            if let Some(built) = cache.built.get(&terrained.key).cloned() {
+                respawn(&mut commands, id, root, &mut terrained, built);
+            }
+            continue;
+        };
+        let Some(built) = cache.built.get(&terrained.key).cloned() else {
+            continue;
+        };
+        let spec = terrained.spec.clone();
+        let cell = StreamingCells::cell_at(transform.translation);
+        jobs.preview.spawn(&mut cells, id, cell, move || {
+            let mut field = built.geometry.field.clone();
+            erosion.apply(&mut field, &built.geometry.shape);
+            let geometry = Geometry::from_parts(field, built.geometry.holes.clone(), &spec);
+            paint_from(
+                &spec,
+                Arc::new(geometry),
+                built.splat.clone(),
+                built.grass_maps.clone(),
+                built.scatter_maps.clone(),
+                &built.avoid,
+            )
+        });
+    }
+    for (id, preview) in jobs.preview.poll(&mut cells) {
+        let Some(&root) = engine.entities.get(&id) else {
+            continue;
+        };
+        if let Ok((_, mut terrained)) = roots.get_mut(root) {
+            respawn(&mut commands, id, root, &mut terrained, Arc::new(preview));
+        }
     }
 }
 
@@ -627,8 +709,8 @@ pub fn stream_chunks(
     mut cells: ResMut<StreamingCells>,
     mut meshes: ResMut<Assets<Mesh>>,
     engine: NonSend<Engine>,
-    mut roots: Query<(&ActorId, &GlobalTransform, &mut Terrained)>,
-    mut chunks: Query<(&TerrainChunk, &mut LodGroup, &mut Mesh3d)>,
+    mut roots: Query<(&ActorId, &Transform, &mut Terrained)>,
+    mut chunks: Query<(&mut LodGroup, &mut Mesh3d), With<TerrainChunk>>,
 ) {
     let entered: Vec<Cell> = entered.read().map(|m| m.0).collect();
     let left: Vec<Cell> = left.read().map(|m| m.0).collect();
@@ -640,12 +722,19 @@ pub fn stream_chunks(
         if geometry.layout.resident_level() == 0 {
             continue;
         }
-        let affine = transform.affine();
-        for (cell, delta) in entered
-            .iter()
-            .map(|c| (*c, 1i32))
-            .chain(left.iter().map(|c| (*c, -1)))
-        {
+        // A terrain that just landed starts from every cell already active.
+        let events: Vec<(Cell, i32)> = if terrained.seeded {
+            entered
+                .iter()
+                .map(|c| (*c, 1))
+                .chain(left.iter().map(|c| (*c, -1)))
+                .collect()
+        } else {
+            terrained.seeded = true;
+            cells.active.iter().map(|c| (*c, 1)).collect()
+        };
+        let affine = transform.compute_affine();
+        for (cell, delta) in events {
             for chunk in &geometry.chunks {
                 if !covers(&affine, &chunk.bounds, cell) {
                     continue;
@@ -694,7 +783,7 @@ pub fn stream_chunks(
         let Some(&entity) = terrained.chunks.get(index as usize) else {
             continue;
         };
-        let Ok((_, mut group, mut mesh)) = chunks.get_mut(entity) else {
+        let Ok((mut group, mut mesh)) = chunks.get_mut(entity) else {
             continue;
         };
         let chunk = &built.geometry.chunks[index as usize];
@@ -725,10 +814,10 @@ fn resident_only(
     chunk: &Chunk,
     meshes: &mut Assets<Mesh>,
     entities: &[Entity],
-    chunks: &mut Query<(&TerrainChunk, &mut LodGroup, &mut Mesh3d)>,
+    chunks: &mut Query<(&mut LodGroup, &mut Mesh3d), With<TerrainChunk>>,
 ) -> Option<usize> {
     let index = (chunk.cz * geometry.layout.chunks + chunk.cx) as usize;
-    let (_, mut group, mut mesh) = chunks.get_mut(*entities.get(index)?).ok()?;
+    let (mut group, mut mesh) = chunks.get_mut(*entities.get(index)?).ok()?;
     let resident = geometry.layout.levels - geometry.layout.resident_level();
     let levels = group.levels().to_vec();
     if levels.len() <= resident as usize {
@@ -824,7 +913,102 @@ fn count_stats(
     *stats = next;
 }
 
-/// Where a project's terrain store lives, for the brushes.
-pub fn project_dir(engine: &Engine) -> Option<PathBuf> {
-    engine.project_dir.clone()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn spec(resolution: u32) -> TerrainSpec {
+        TerrainSpec {
+            size: [64.0, 64.0],
+            height: 10.0,
+            resolution,
+            ..TerrainSpec::default()
+        }
+    }
+
+    /// A 0.2-high plain with a round hill in the middle.
+    fn hill(side: u32) -> Heightfield {
+        let mut field = Heightfield::flat(side, 0.2);
+        let c = (side - 1) as f32 * 0.5;
+        for j in 0..side {
+            for i in 0..side {
+                let d = ((i as f32 - c).powi(2) + (j as f32 - c).powi(2)).sqrt() / c;
+                let k = field.index(i, j);
+                field.samples[k] += (1.0 - d).max(0.0) * 0.5;
+            }
+        }
+        field
+    }
+
+    #[test]
+    fn geometry_keeps_resident_levels_and_raycasts_onto_the_ground() {
+        let spec = spec(1025);
+        let geometry = Geometry::from_parts(hill(1025), None, &spec);
+        let layout = geometry.layout;
+        assert_eq!(geometry.chunks.len() as u32, layout.chunks * layout.chunks);
+        let resident = (layout.levels - layout.resident_level()) as usize;
+        assert!(geometry.chunks.iter().all(|c| c.resident.len() == resident));
+        assert!(layout.resident_level() > 0, "1025 streams its finest levels");
+        let top = raycast(
+            &geometry.field,
+            &geometry.shape,
+            Vec3::new(0.0, 50.0, 0.0),
+            Vec3::NEG_Y,
+            100.0,
+        )
+        .unwrap();
+        assert!((top.y - 7.0).abs() < 0.1, "hilltop at 7 m, got {}", top.y);
+        let slanted = raycast(
+            &geometry.field,
+            &geometry.shape,
+            Vec3::new(-40.0, 30.0, -40.0),
+            Vec3::new(1.0, -1.0, 1.0).normalize(),
+            200.0,
+        )
+        .unwrap();
+        let ground = geometry.field.height_at(&geometry.shape, slanted.x, slanted.z).unwrap();
+        assert!((slanted.y - ground).abs() < 0.05);
+    }
+
+    fn drop_ball(holes: Option<Grid>) -> f32 {
+        let spec = spec(129);
+        let geometry = Geometry::from_parts(hill(129), holes, &spec);
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, TransformPlugin));
+        app.init_resource::<Assets<Mesh>>();
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f32(1.0 / 60.0),
+        ));
+        app.add_plugins(rp::RapierPhysicsPlugin::<rp::NoUserData>::default());
+        let root = app.world_mut().spawn(Transform::default()).id();
+        spawn_collider(app.world_mut(), root, &geometry);
+        let ball = app
+            .world_mut()
+            .spawn((
+                rp::RigidBody::Dynamic,
+                rp::Collider::ball(0.5),
+                Transform::from_xyz(0.0, 12.0, 0.0),
+            ))
+            .id();
+        for _ in 0..180 {
+            app.update();
+        }
+        app.world().get::<Transform>(ball).unwrap().translation.y
+    }
+
+    #[test]
+    fn bodies_land_on_the_ground_and_fall_through_its_holes() {
+        let landed = drop_ball(None);
+        assert!((landed - 7.5).abs() < 0.3, "rests on the hilltop, got {landed}");
+        let mut holes = Grid::new(store::GridKind::Mask8, 129);
+        let mask = holes.mask_mut().unwrap();
+        for j in 60..68 {
+            for i in 60..68 {
+                mask[j * 129 + i] = 255;
+            }
+        }
+        let fell = drop_ball(Some(holes));
+        assert!(fell < 0.0, "fell through the cave mouth, got {fell}");
+    }
 }

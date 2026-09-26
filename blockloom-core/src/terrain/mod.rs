@@ -425,11 +425,31 @@ impl Heightfield {
         let mut out = Vec::with_capacity(self.samples.len());
         for j in 0..self.side {
             for i in 0..self.side {
-                let c = self.curvature(shape, i, j);
-                out.push(((c * 0.5 + 0.5) * 255.0).round() as u8);
+                out.push(self.cavity(shape, i, j));
             }
         }
         out
+    }
+
+    fn cavity(&self, shape: &Shape, i: u32, j: u32) -> u8 {
+        let c = self.curvature(shape, i, j);
+        ((c * 0.5 + 0.5) * 255.0).round() as u8
+    }
+
+    /// A sample's texel in the terrain's surface map: its normal as 0-255
+    /// and its cavity.
+    pub fn surface_texel(&self, shape: &Shape, i: u32, j: u32) -> [u8; 4] {
+        let n = self.normal(shape, i, j);
+        let byte = |v: f32| ((v * 0.5 + 0.5) * 255.0).round().clamp(0.0, 255.0) as u8;
+        [byte(n[0]), byte(n[1]), byte(n[2]), self.cavity(shape, i, j)]
+    }
+
+    /// The whole surface map, row by row.
+    pub fn surface_map(&self, shape: &Shape) -> Vec<[u8; 4]> {
+        (0..self.side)
+            .flat_map(|j| (0..self.side).map(move |i| (i, j)))
+            .map(|(i, j)| self.surface_texel(shape, i, j))
+            .collect()
     }
 
     /// The lowest and highest sample.
@@ -452,45 +472,57 @@ pub fn bake_weights(
     layers: &[TerrainLayer],
     splat: Option<&[[u8; 4]]>,
 ) -> Vec<[u8; 4]> {
-    let count = layers.len().clamp(1, MAX_LAYERS);
-    let any_rule = layers.iter().skip(1).any(|layer| layer.rules.enabled);
     let mut out = Vec::with_capacity(field.samples.len());
     for j in 0..field.side {
         for i in 0..field.side {
-            let mut w = [1.0f32, 0.0, 0.0, 0.0];
-            if any_rule {
-                let slope = field.slope(shape, i, j);
-                let height = field.at(i, j) * shape.height;
-                let curvature = field.curvature(shape, i, j);
-                for (k, layer) in layers.iter().enumerate().take(count).skip(1) {
-                    let a = layer.rules.weight(slope, height, curvature);
-                    if a > 0.0 {
-                        for weight in w.iter_mut().take(k) {
-                            *weight *= 1.0 - a;
-                        }
-                        w[k] = a;
-                    }
-                }
-            }
-            if let Some(splat) = splat {
-                let painted = splat[field.index(i, j)];
-                let sum: u32 = painted.iter().map(|&v| v as u32).sum();
-                if sum > 0 {
-                    let coverage = (sum as f32 / 255.0).min(1.0);
-                    for (k, weight) in w.iter_mut().enumerate() {
-                        let paint = if k < count {
-                            painted[k] as f32 / sum as f32
-                        } else {
-                            0.0
-                        };
-                        *weight = *weight * (1.0 - coverage) + paint * coverage;
-                    }
-                }
-            }
-            out.push(pack_weights(w));
+            out.push(bake_weight(field, shape, layers, splat, i, j));
         }
     }
     out
+}
+
+/// [`bake_weights`] for one sample, so a brush can re-bake just what it
+/// touched.
+pub fn bake_weight(
+    field: &Heightfield,
+    shape: &Shape,
+    layers: &[TerrainLayer],
+    splat: Option<&[[u8; 4]]>,
+    i: u32,
+    j: u32,
+) -> [u8; 4] {
+    let count = layers.len().clamp(1, MAX_LAYERS);
+    let mut w = [1.0f32, 0.0, 0.0, 0.0];
+    if layers.iter().skip(1).any(|layer| layer.rules.enabled) {
+        let slope = field.slope(shape, i, j);
+        let height = field.at(i, j) * shape.height;
+        let curvature = field.curvature(shape, i, j);
+        for (k, layer) in layers.iter().enumerate().take(count).skip(1) {
+            let a = layer.rules.weight(slope, height, curvature);
+            if a > 0.0 {
+                for weight in w.iter_mut().take(k) {
+                    *weight *= 1.0 - a;
+                }
+                w[k] = a;
+            }
+        }
+    }
+    if let Some(splat) = splat {
+        let painted = splat[field.index(i, j)];
+        let sum: u32 = painted.iter().map(|&v| v as u32).sum();
+        if sum > 0 {
+            let coverage = (sum as f32 / 255.0).min(1.0);
+            for (k, weight) in w.iter_mut().enumerate() {
+                let paint = if k < count {
+                    painted[k] as f32 / sum as f32
+                } else {
+                    0.0
+                };
+                *weight = *weight * (1.0 - coverage) + paint * coverage;
+            }
+        }
+    }
+    pack_weights(w)
 }
 
 /// Four weights summing to 1 as bytes summing to 255.
