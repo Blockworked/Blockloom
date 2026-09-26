@@ -373,7 +373,9 @@ Linux too. Windows and macOS have no GPU sharing yet.
 
 While nothing runs, the Game view is a scene view over the same world:
 loaded, never started, and seen through an editor camera instead of the
-game's. `commands::open_world` brings a world up for it when the tab is shown
+game's. A run ends the same way whether the Stop button or a `stop all`
+ended it (`world::end_run`): the world is rebuilt from the document, so the
+scene view never keeps where the run left things. `commands::open_world` brings a world up for it when the tab is shown
 (embedded, or with the preview on), so editing never waits for Play.
 `blockloom-runtime/src/edit.rs` is all of it: `SceneEditor` holds the camera
 (a flying one in 3D, pan and zoom in 2D), the selection and any drag.
