@@ -13,6 +13,7 @@
 
 mod effect;
 mod exec;
+mod ops;
 mod program;
 
 pub use effect::Effect;

@@ -17,6 +17,7 @@ just build              # cargo build --release --workspace (the normal build)
 just run                # build, then launch target/release/blockloom
 cargo build --workspace && target/debug/blockloom   # debug build/run - faster iteration
 just test               # cargo test --workspace (blockloom-core has the bulk of them)
+cargo bench -p blockloom-core --bench vm   # block VM ns/tick over a few canvases
 just player             # stage the hard-optimized player a built game ships
 just web-check          # runtime check-build for wasm32-unknown-unknown (Phase 8)
 just web-build [out] [pack=game-dir]  # wasm player folder; serve with just web-serve
