@@ -418,6 +418,8 @@ struct ViewTextures<'w, 's> {
     shadows: Query<'w, 's, &'static ViewShadowBindings>,
 }
 
+// wgpu textures hash by id, so the interior mutability clippy sees is harmless.
+#[allow(clippy::mutable_key_type)]
 impl ViewTextures<'_, '_> {
     /// The views' FP16 color targets, each counted once. Labels don't say a
     /// format, so this reads the textures even when the allocator reports.

@@ -459,9 +459,11 @@ mod tests {
 
     #[test]
     fn frame_uniforms_carry_the_environment() {
-        let mut environment = Environment::default();
-        environment.exposure = 3.5;
-        environment.ambient_brightness = 80.0;
+        let environment = Environment {
+            exposure: 3.5,
+            ambient_brightness: 80.0,
+            ..Default::default()
+        };
         let uniforms = FrameUniforms::new(&environment, &Time::default(), 7, UVec2::new(640, 360));
         assert_eq!(uniforms.frame, 7);
         assert_eq!(uniforms.exposure, 3.5);

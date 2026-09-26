@@ -227,7 +227,6 @@ mod tests {
             }
             .visible()
         );
-        drop(decision);
         sensors.actors.insert(
             "wall".to_string(),
             ActorSense {

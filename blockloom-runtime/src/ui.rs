@@ -657,10 +657,9 @@ impl UiManager {
                     binding.property,
                     UiProp::Value | UiProp::Text | UiProp::SelectedIndex
                 )
+                && let Some(value) = binding.converter.write(&next)
             {
-                if let Some(value) = binding.converter.write(&next) {
-                    self.binding_writes.push((binding.clone(), value));
-                }
+                self.binding_writes.push((binding.clone(), value));
             }
         }
         node.value = next.clone();
@@ -1022,6 +1021,80 @@ pub fn text_of(node: &UiNode) -> String {
             .unwrap_or_else(|| node.spec.content.clone()),
         UiKind::Slider => String::new(),
         _ => written.unwrap_or_else(|| node.spec.content.clone()),
+    }
+}
+
+pub fn layout_node(element: &UiNode, canvas: bool) -> Node {
+    use blockloom_core::ui::{UiAlign, UiLength};
+    let mut node = node_for(&element.spec, !element.parent.is_empty() && !canvas);
+    if element.kind == UiKind::Spacer {
+        node.flex_shrink = 0.;
+    }
+    if let Some(layout) = &element.layout {
+        let length = |v| match v {
+            UiLength::Auto => Val::Auto,
+            UiLength::Px(n) => Val::Px(n.max(0.)),
+            UiLength::Percent(n) => Val::Percent(n.max(0.)),
+        };
+        if layout.width != UiLength::Auto {
+            node.width = length(layout.width);
+        }
+        if layout.height != UiLength::Auto {
+            node.height = length(layout.height);
+        }
+        node.min_width = Val::Px(layout.min_size[0].max(0.));
+        node.min_height = Val::Px(layout.min_size[1].max(0.));
+        if layout.max_size[0] > 0. {
+            node.max_width = Val::Px(layout.max_size[0]);
+        }
+        if layout.max_size[1] > 0. {
+            node.max_height = Val::Px(layout.max_size[1]);
+        }
+        node.padding = edges(layout.padding);
+        let mut margin = layout.margin;
+        if (element.parent.is_empty() || canvas) && !layout.absolute {
+            margin[0] += element.spec.offset[0];
+            margin[1] += element.spec.offset[1];
+        }
+        node.margin = edges(margin);
+        node.row_gap = Val::Px(layout.gap);
+        node.column_gap = Val::Px(layout.gap);
+        node.flex_grow = layout.grow.max(0.);
+        node.align_items = match layout.align {
+            UiAlign::Stretch => AlignItems::Stretch,
+            UiAlign::Start => AlignItems::Start,
+            UiAlign::Center => AlignItems::Center,
+            UiAlign::End => AlignItems::End,
+        };
+        if element.kind == UiKind::Grid {
+            node.grid_template_columns = RepeatedGridTrack::flex(layout.columns.clamp(1, 256), 1.);
+        }
+        if layout.absolute {
+            node.position_type = PositionType::Absolute;
+            node.left = Val::Px(element.spec.offset[0]);
+            node.top = Val::Px(element.spec.offset[1]);
+        }
+    }
+    if let Some(width) = element.style.width {
+        node.width = Val::Px(width);
+    }
+    if let Some(height) = element.style.height {
+        node.height = Val::Px(height);
+    }
+    if let Some(padding) = element.style.padding {
+        node.padding = UiRect::all(Val::Px(padding));
+    }
+    if !element.visible || !element.projected || !element.tab_active {
+        node.display = Display::None;
+    }
+    node
+}
+fn edges([left, top, right, bottom]: [f32; 4]) -> UiRect {
+    UiRect {
+        left: Val::Px(left),
+        top: Val::Px(top),
+        right: Val::Px(right),
+        bottom: Val::Px(bottom),
     }
 }
 
@@ -1418,79 +1491,5 @@ mod tests {
         assert_eq!(text_of(manager.get("name").unwrap()), "your name");
         manager.changed("name", Evaluated::Text("Ada".to_string()));
         assert_eq!(text_of(manager.get("name").unwrap()), "Ada");
-    }
-}
-
-pub fn layout_node(element: &UiNode, canvas: bool) -> Node {
-    use blockloom_core::ui::{UiAlign, UiLength};
-    let mut node = node_for(&element.spec, !element.parent.is_empty() && !canvas);
-    if element.kind == UiKind::Spacer {
-        node.flex_shrink = 0.;
-    }
-    if let Some(layout) = &element.layout {
-        let length = |v| match v {
-            UiLength::Auto => Val::Auto,
-            UiLength::Px(n) => Val::Px(n.max(0.)),
-            UiLength::Percent(n) => Val::Percent(n.max(0.)),
-        };
-        if layout.width != UiLength::Auto {
-            node.width = length(layout.width);
-        }
-        if layout.height != UiLength::Auto {
-            node.height = length(layout.height);
-        }
-        node.min_width = Val::Px(layout.min_size[0].max(0.));
-        node.min_height = Val::Px(layout.min_size[1].max(0.));
-        if layout.max_size[0] > 0. {
-            node.max_width = Val::Px(layout.max_size[0]);
-        }
-        if layout.max_size[1] > 0. {
-            node.max_height = Val::Px(layout.max_size[1]);
-        }
-        node.padding = edges(layout.padding);
-        let mut margin = layout.margin;
-        if (element.parent.is_empty() || canvas) && !layout.absolute {
-            margin[0] += element.spec.offset[0];
-            margin[1] += element.spec.offset[1];
-        }
-        node.margin = edges(margin);
-        node.row_gap = Val::Px(layout.gap);
-        node.column_gap = Val::Px(layout.gap);
-        node.flex_grow = layout.grow.max(0.);
-        node.align_items = match layout.align {
-            UiAlign::Stretch => AlignItems::Stretch,
-            UiAlign::Start => AlignItems::Start,
-            UiAlign::Center => AlignItems::Center,
-            UiAlign::End => AlignItems::End,
-        };
-        if element.kind == UiKind::Grid {
-            node.grid_template_columns = RepeatedGridTrack::flex(layout.columns.clamp(1, 256), 1.);
-        }
-        if layout.absolute {
-            node.position_type = PositionType::Absolute;
-            node.left = Val::Px(element.spec.offset[0]);
-            node.top = Val::Px(element.spec.offset[1]);
-        }
-    }
-    if let Some(width) = element.style.width {
-        node.width = Val::Px(width);
-    }
-    if let Some(height) = element.style.height {
-        node.height = Val::Px(height);
-    }
-    if let Some(padding) = element.style.padding {
-        node.padding = UiRect::all(Val::Px(padding));
-    }
-    if !element.visible || !element.projected || !element.tab_active {
-        node.display = Display::None;
-    }
-    node
-}
-fn edges([left, top, right, bottom]: [f32; 4]) -> UiRect {
-    UiRect {
-        left: Val::Px(left),
-        top: Val::Px(top),
-        right: Val::Px(right),
-        bottom: Val::Px(bottom),
     }
 }

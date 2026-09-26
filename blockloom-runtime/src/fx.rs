@@ -124,10 +124,10 @@ pub fn apply_fx_effects(
     for effect in &effects.0 {
         match effect {
             Effect::BurstParticles { actor, count } => {
-                if let Some(entity) = engine.entities.get(actor) {
-                    if let Ok(mut state) = emitters.get_mut(*entity) {
-                        state.burst = state.burst.saturating_add(*count).min(512);
-                    }
+                if let Some(entity) = engine.entities.get(actor)
+                    && let Ok(mut state) = emitters.get_mut(*entity)
+                {
+                    state.burst = state.burst.saturating_add(*count).min(512);
                 }
             }
             Effect::SetEmitterDial { actor, dial, value } => {
@@ -157,11 +157,11 @@ pub fn apply_fx_effects(
                 spec.normalize();
             }
             Effect::SetTrailEnabled { actor, enabled } => {
-                if let Some(entity) = engine.entities.get(actor) {
-                    if let Ok(mut state) = trails.get_mut(*entity) {
-                        state.enabled = *enabled;
-                        state.timer = 0.0;
-                    }
+                if let Some(entity) = engine.entities.get(actor)
+                    && let Ok(mut state) = trails.get_mut(*entity)
+                {
+                    state.enabled = *enabled;
+                    state.timer = 0.0;
                 }
             }
             _ => {}
@@ -624,10 +624,10 @@ pub fn step_ghosts(
             if let Some(mut material) = boxes.get_mut(&handle.0) {
                 material.base.base_color.set_alpha(alpha);
             }
-        } else if let Some(handle) = handle {
-            if let Some(mut material) = materials.get_mut(&handle.0) {
-                material.base_color.set_alpha(alpha);
-            }
+        } else if let Some(handle) = handle
+            && let Some(mut material) = materials.get_mut(&handle.0)
+        {
+            material.base_color.set_alpha(alpha);
         }
     }
 }
