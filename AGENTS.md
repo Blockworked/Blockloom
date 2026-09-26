@@ -366,6 +366,18 @@ relative pointer (the generated glue is vendored in `blockloom-qt/src/wayland/`)
 cursor warping on X11 - and forwards raw motion. Escape always releases it and
 a click takes it back.
 
+HDR frames can't go through the 8-bit ring or Qt's 8-bit window. On Wayland
+the view makes a subsurface *under* its window (`makePlane` in
+`game_view.cpp`, input passing straight through, sized by `wp_viewporter`)
+and offers it through `FrameExchange::offer_hdr_surface`; the world makes a
+swapchain on it (`embed::HdrPlane`), which is what `DisplayOffers` then
+reports. While the frame resolves HDR, the cameras' view takes the
+swapchain's format and `aim_plane` points them at its texture instead of a
+ring slot, and `hdr_live` tells the view to draw a zero-alpha texture Qt
+thinks is opaque, which shows through to the plane while overlays still
+draw on top. That is why the window has an alpha buffer on Wayland.
+`BLOCKLOOM_HDR_VIEW=0` turns the plane off.
+
 `BLOCKLOOM_RUNTIME=process` forces the child process and MJPEG preview on
 Linux too. Windows and macOS have no GPU sharing yet.
 
@@ -541,7 +553,11 @@ when the display offers an HDR color space, and hands Bevy's views its
 texture each frame; otherwise Bevy keeps the window. On an HDR frame the
 tonemapper stands aside for `HdrTone*` (a curve to the display's headroom)
 and `HdrEncode*` (scRGB or PQ, after the UI so the HUD sits at paper white).
-The editor's Game view is always SDR, since its ring is 8-bit.
+An HDR swapchain also gets HDR10 static metadata
+(`display::send_metadata`: `VK_EXT_hdr_metadata`, turned on by
+`add_vulkan_extensions`, or DXGI), resent whenever the swapchain is remade.
+The Game view's ring is 8-bit, so on Wayland an HDR frame bypasses it (see
+Game view).
 
 `hdr.rs` also holds the Game view's debug views, a `FullscreenMaterial` per
 dimension over the exposed image before tonemapping (`shaders/hdr.wesl`): false
@@ -551,7 +567,10 @@ The choice is `SceneView::debug_view`, an editor preference that applies while
 a game runs too. `luminance.rs` meters the world camera's exposed image with a
 compute pass and reads it back; the atmosphere sample turns it into the
 `scene luminance` reporter's nits on the fixed tick, beside `is HDR display?`
-and `peak brightness`. `capture.rs` answers `EditorMessage::CaptureExr`: a
+and `peak brightness`. The meter, the debug views and the tone curve run after
+everything Bevy's tonemapper runs after: `hdr::ToneInputs`, a schedule build
+pass, adds those edges, since passes that flip the main texture must be
+ordered or they submit out of the order they flipped in. `capture.rs` answers `EditorMessage::CaptureExr`: a
 second camera renders the same view untonemapped into FP16, read back and
 written as OpenEXR (`capture_exr`, the Game view's camera button).
 
@@ -746,7 +765,9 @@ batched. Volumes scale probe light through `reflections` (reflection probes
 and the sky's light) and `indirect` (irradiance volumes); probes blend with
 each other by their own falloff. `capture
 probes` does the same capture mid-run and keeps it in memory. Builds copy the
-bakes. The GPU half is the ignored `embed` tests (rect and disk lights, area
+bakes. A reflection bake loads as BC6H where the GPU samples BC, and is
+decoded to FP16 elsewhere, as the sky is. `pipeline::bc6h` encodes all 14
+modes, and its decoder matches bcdec bit for bit. The GPU half is the ignored `embed` tests (rect and disk lights, area
 light shadows, cookie, both probe kinds, a bake leaving out its own actor).
 Those tests start their worlds one at a time: concurrent Vulkan instance
 creation crashes in the loader.

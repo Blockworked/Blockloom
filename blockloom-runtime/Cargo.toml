@@ -18,6 +18,8 @@ blockloom-core = { path = "../blockloom-core" }
 blockloom-protocol = { path = "../blockloom-protocol" }
 polyanya.workspace = true
 half = "2"
+# The key set Bevy hands a schedule build pass (see `hdr::ToneInputs`).
+indexmap = "2"
 bytemuck = { version = "1.25", features = ["derive"] }
 bevy = { workspace = true, features = [
     "wav",

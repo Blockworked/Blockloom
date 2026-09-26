@@ -819,19 +819,10 @@ fn draw_fog(
     images: Res<RenderAssets<GpuImage>>,
     mut ctx: RenderContext,
 ) {
-    let view_entity = view.entity();
     let (target, view_fog, grid, prepass, lights_offset, shadows) = view.into_inner();
-    let dbg = std::env::var("BL_FLICKER").is_ok();
     let (Some(froxel), Some(composite)) = (froxel, composite) else {
-        if dbg { eprintln!("FOG skip: no pipelines res"); }
         return;
     };
-    if dbg {
-        eprintln!("FOG view {:?} cur {} pipe {} uni {} depth {} vol {} lights {} off {} shadows {}",
-            view_entity, grid.current, cache.get_render_pipeline(view_fog.pipeline).is_some(), buffer.0.binding().is_some(),
-            prepass.and_then(ViewPrepassTextures::depth_only_view).is_some(), view_fog.volumetric,
-            light_meta.as_ref().and_then(|meta| meta.view_gpu_lights.binding()).is_some(), lights_offset.is_some(), shadows.is_some());
-    }
     let (Some(pipeline), Some(uniforms), Some(depth)) = (
         cache.get_render_pipeline(view_fog.pipeline),
         buffer.0.binding(),

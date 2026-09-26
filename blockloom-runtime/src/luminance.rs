@@ -182,6 +182,11 @@ fn init_pipeline(
     commands.insert_resource(MeterPipeline { layout, pipeline });
 }
 
+/// The meter, as `hdr::ToneInputs` finds it in a schedule.
+pub(crate) fn meter_type() -> std::any::TypeId {
+    crate::hdr::system_type(meter)
+}
+
 fn meter(
     view: ViewQuery<&ViewTarget, With<LuminanceMeter>>,
     meter: Option<Res<MeterPipeline>>,

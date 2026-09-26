@@ -135,7 +135,6 @@ fn paced(mut app: App, frames: &FrameExchange) -> AppExit {
         let wait_start = std::time::Instant::now();
         seen = frames.wait_presented(seen, PACE_TIMEOUT);
         let wait_ms = wait_start.elapsed().as_secs_f64() * 1000.0;
-        if std::env::var("BL_FLICKER").is_ok() { eprintln!("FLICK pace {update_ms:.1} {wait_ms:.1}"); }
         if let Some(mut pace) = app
             .world_mut()
             .get_resource_mut::<crate::performance::LoopPace>()
@@ -732,9 +731,6 @@ fn finish_frame(
     queue: Res<RenderQueue>,
 ) {
     let drawn = drawing.0.take();
-    if std::env::var("BL_FAKE_HDR").is_ok() && let Some(copy) = &copy && (copy.hdr.is_some() || std::env::var("BL_SDR").is_ok()) && let Some(src) = &copy.scratch {
-        hdr_dump(src, &device, &queue);
-    }
     if let Some(texture) = plane.frame.take() {
         queue.present(texture);
         if let Some(copy) = &copy {
@@ -758,48 +754,6 @@ fn finish_frame(
     }
     // Callbacks only fire when the device is polled.
     let _ = device.poll(wgpu::PollType::Poll);
-}
-
-fn hdr_dump(src: &wgpu::Texture, device: &RenderDevice, queue: &RenderQueue) {
-    let size = src.size();
-    let bpp = if src.format() == wgpu::TextureFormat::Rgba16Float { 8 } else { 4 };
-    let row = (size.width * bpp).div_ceil(256) * 256;
-    let buffer = device.wgpu_device().create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * size.height) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
-    let mut encoder = device.wgpu_device().create_command_encoder(&Default::default());
-    encoder.copy_texture_to_buffer(src.as_image_copy(), wgpu::TexelCopyBufferInfo { buffer: &buffer, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: None } }, size);
-    queue.submit([encoder.finish()]);
-    buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-    let _ = device.poll(wgpu::PollType::wait_indefinitely());
-    let data = buffer.slice(..).get_mapped_range().unwrap();
-    let (w, h) = (size.width as usize, size.height as usize);
-    let (mut all, mut top, mut max) = (0f64, 0f64, 0f32);
-    for y in 0..h { for x in 0..w {
-        let at = y * row as usize + x * bpp as usize;
-        let c = |i: usize| if bpp == 8 { half::f16::from_le_bytes([data[at + i * 2], data[at + i * 2 + 1]]).to_f32() } else { data[at + i] as f32 / 255.0 };
-        let l = 0.2126 * c(0) + 0.7152 * c(1) + 0.0722 * c(2);
-        all += l as f64; if y < h / 4 { top += l as f64; } max = max.max(l);
-    }}
-    use std::io::Write;
-    static PREV: Mutex<Option<(f64, Vec<u8>)>> = Mutex::new(None);
-    static SAVED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let mean = all / (w * h) as f64;
-    let mut rgb = Vec::with_capacity(w * h * 3);
-    for y in 0..h { for x in 0..w { for i in 0..3 {
-        if bpp == 4 { rgb.push(data[y * row as usize + x * 4 + i]); continue; }
-        let at = y * row as usize + x * 8 + i * 2;
-        rgb.push(((half::f16::from_le_bytes([data[at], data[at + 1]]).to_f32() / 2.0).clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0) as u8);
-    }}}
-    let mut prev = PREV.lock().unwrap();
-    if let Some((pm, prgb)) = prev.as_ref() && (mean - pm).abs() / pm > 0.05 && SAVED.load(std::sync::atomic::Ordering::Relaxed) < 3 {
-        let n = SAVED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let base = std::env::var("BL_FAKE_HDR").unwrap();
-        image::RgbImage::from_raw(w as u32, h as u32, prgb.clone()).unwrap().save(format!("{base}.{n}a.png")).unwrap();
-        image::RgbImage::from_raw(w as u32, h as u32, rgb.clone()).unwrap().save(format!("{base}.{n}b.png")).unwrap();
-    }
-    *prev = Some((mean, rgb));
-    let mut f = std::fs::OpenOptions::new().append(true).create(true).open(std::env::var("BL_FAKE_HDR").unwrap()).unwrap();
-    let _ = writeln!(f, "{:.4} {:.4} {:.3}", all / (w * h) as f64, top / (w * h / 4) as f64, max);
-    eprintln!("DUMP {:.4}", all / (w * h) as f64);
 }
 
 /// Copies the scratch target into a free linear slot, and answers which.
@@ -862,9 +816,6 @@ fn aim_plane(
     mut attachments: ResMut<ViewTargetAttachments>,
 ) {
     let Some(copy) = copy else { return };
-    if std::env::var("BL_FAKE_HDR").is_ok() && std::env::var("BL_SDR").is_err() && offers.get().is_none() {
-        offers.set(vec![OutputSpace::Sdr, OutputSpace::Scrgb]);
-    }
     let plane = &mut *plane;
     if !plane.tried
         && let Some((display, surface)) = copy.exchange.hdr_target()
@@ -3092,111 +3043,5 @@ mod tests {
             libc::munmap(mapped, length);
             pixel
         }
-    }
-}
-
-#[cfg(test)]
-mod flicker_probe {
-    use super::*;
-    use blockloom_protocol::SceneView;
-
-    fn grab(image: &SharedImage, width: usize, height: usize) -> Vec<u8> {
-        use std::os::fd::AsRawFd;
-        let length = image.offset as usize + image.stride as usize * height;
-        unsafe {
-            let mapped = libc::mmap(std::ptr::null_mut(), length, libc::PROT_READ, libc::MAP_SHARED, image.fd.as_raw_fd(), 0);
-            let bytes = std::slice::from_raw_parts(mapped as *const u8, length);
-            let mut out = Vec::with_capacity(width * height * 3);
-            let rows = std::env::var("FP_ROWS").map_or(1, |v| v.parse().unwrap());
-            for y in (0..height).step_by(rows) { for x in 0..width {
-                let at = image.offset as usize + y * image.stride as usize + x * 4;
-                out.extend_from_slice(&bytes[at..at + 3]);
-            }}
-            libc::munmap(mapped, length);
-            out
-        }
-    }
-
-    #[allow(dead_code)]
-    fn stats(image: &SharedImage, width: usize, height: usize) -> (f32, f32) {
-        use std::os::fd::AsRawFd;
-        let length = image.offset as usize + image.stride as usize * height;
-        unsafe {
-            let mapped = libc::mmap(std::ptr::null_mut(), length, libc::PROT_READ, libc::MAP_SHARED, image.fd.as_raw_fd(), 0);
-            assert_ne!(mapped, libc::MAP_FAILED);
-            let bytes = std::slice::from_raw_parts(mapped as *const u8, length);
-            let (mut sum, mut top) = (0f64, 0f64);
-            for y in 0..height {
-                for x in 0..width {
-                    let at = image.offset as usize + y * image.stride as usize + x * 4;
-                    let l = bytes[at] as f64 * 0.2126 + bytes[at + 1] as f64 * 0.7152 + bytes[at + 2] as f64 * 0.0722;
-                    sum += l;
-                    if y < height / 2 { top += l; }
-                }
-            }
-            libc::munmap(mapped, length);
-            ((sum / (width * height) as f64) as f32, (top / (width * height / 2) as f64) as f32)
-        }
-    }
-
-    #[test]
-    #[ignore = "probe"]
-    fn first_person_flicker() {
-        blockloom_core::init();
-        let dir = std::path::PathBuf::from(std::env::var("FP_DIR").unwrap());
-        let project = blockloom_core::project::read_project_dir(&dir).unwrap();
-        let play = std::env::var("FP_PLAY").is_ok();
-        let (to_world, incoming) = std::sync::mpsc::channel();
-        let (outgoing, reports) = std::sync::mpsc::channel();
-        let exchange = FrameExchange::new(|| {});
-        exchange.resize(640, 360, 1.0);
-        let size = exchange.wanted().size;
-        let frames = exchange.clone();
-        let mode = project.world.mode;
-        let world = std::thread::spawn(move || run(Embedded { mode, incoming, outgoing, frames }));
-        to_world.send(EditorMessage::SceneView(SceneView { enabled: !play, ..SceneView::default() })).unwrap();
-        to_world.send(EditorMessage::Load { project: Box::new(project), dir: Some(dir.to_string_lossy().into_owned()) }).unwrap();
-        if play { to_world.send(EditorMessage::Start).unwrap(); to_world.send(EditorMessage::PreviewInput { input: blockloom_protocol::PreviewInput::Focus { focused: true } }).unwrap(); }
-        let started = std::time::Instant::now();
-        let mut last = None; let mut prev: Option<Vec<u8>> = None; let mut count = 0;
-        let mut out = String::new();
-        while started.elapsed() < Duration::from_secs(40) {
-            if let (Some(set), Some((generation, index))) = (exchange.slots(), exchange.latest())
-                && set.width == size.x && set.generation == generation && last != Some((generation, index))
-            {
-                exchange.hold(generation, index);
-                let (w, h) = (size.x as usize, size.y as usize);
-                let now = grab(&set.images[index], w, h);
-                if let Some(prev) = &prev {
-                    let prev: &Vec<u8> = prev;
-                    let (mut sum, mut big) = (0u64, 0u32);
-                    for (a, b) in now.iter().zip(prev) { let d = (*a as i32 - *b as i32).unsigned_abs(); sum += d as u64; if d > 6 { big += 1; } }
-                    let mean = now.iter().map(|v| *v as f64).sum::<f64>() / now.len() as f64;
-                    let top = now[..now.len() / 4].iter().map(|v| *v as f64).sum::<f64>() / (now.len() / 4) as f64;
-                    let ground = now[now.len() * 3 / 4..].iter().map(|v| *v as f64).sum::<f64>() / (now.len() / 4) as f64;
-                    out += &format!("{:.3} {:.3} {big} {mean:.2} {top:.2} {ground:.2}\n", started.elapsed().as_secs_f32(), sum as f64 / now.len() as f64);
-                    count += 1;
-                    if count == 300 || count == 301 || count == 302 {
-                        image::RgbImage::from_raw(w as u32, (now.len() / 3 / w) as u32, now.clone()).unwrap().save(format!("{}{count}.png", std::env::var("FP_OUT").unwrap())).unwrap();
-                        let diff: Vec<u8> = now.iter().zip(prev).map(|(a, b)| ((*a as i32 - *b as i32).unsigned_abs() * 8).min(255) as u8).collect();
-                        image::RgbImage::from_raw(w as u32, (now.len() / 3 / w) as u32, diff).unwrap().save(format!("{}{count}d.png", std::env::var("FP_OUT").unwrap())).unwrap();
-                    }
-                }
-                prev = Some(now);
-                if std::env::var("FP_TURN").is_ok() && started.elapsed().as_secs() > 8 {
-                    let _ = to_world.send(EditorMessage::PreviewInput { input: blockloom_protocol::PreviewInput::MouseDelta { dx: 2.0, dy: 0.0 } });
-                    let _ = to_world.send(EditorMessage::PreviewInput { input: blockloom_protocol::PreviewInput::MouseMove { x: 320.0, y: 180.0, w: 640.0, h: 360.0 } });
-                }
-                exchange.presented();
-            }
-            if let Some(l) = exchange.latest() { last = Some(l); }
-            exchange.presented();
-            std::thread::sleep(Duration::from_millis(std::env::var("FP_MS").map_or(2, |v| v.parse().unwrap())));
-        }
-        std::fs::write(std::env::var("FP_OUT").unwrap(), out).unwrap();
-        to_world.send(EditorMessage::Shutdown).unwrap();
-        drop(to_world);
-        world.join().unwrap();
-        for r in reports.try_iter() { let t = format!("{r:?}"); if !t.contains("Status") && !t.contains("Metrics") { eprintln!("REPORT {}", &t[..t.len().min(300)]); } }
     }
 }

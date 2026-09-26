@@ -567,7 +567,10 @@ The choice is `SceneView::debug_view`, an editor preference that applies while
 a game runs too. `luminance.rs` meters the world camera's exposed image with a
 compute pass and reads it back; the atmosphere sample turns it into the
 `scene luminance` reporter's nits on the fixed tick, beside `is HDR display?`
-and `peak brightness`. `capture.rs` answers `EditorMessage::CaptureExr`: a
+and `peak brightness`. The meter, the debug views and the tone curve run after
+everything Bevy's tonemapper runs after: `hdr::ToneInputs`, a schedule build
+pass, adds those edges, since passes that flip the main texture must be
+ordered or they submit out of the order they flipped in. `capture.rs` answers `EditorMessage::CaptureExr`: a
 second camera renders the same view untonemapped into FP16, read back and
 written as OpenEXR (`capture_exr`, the Game view's camera button).
 
