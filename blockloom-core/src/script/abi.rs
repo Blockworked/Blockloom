@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 26;
+pub const ABI_VERSION: u32 = 27;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -146,6 +146,13 @@ pub const READ_ANIM_PLAYING: u32 = 43;
 /// `a` = actor name, empty for this actor. Whether it carries a light that
 /// casts shadows right now.
 pub const READ_CASTS_SHADOWS: u32 = 44;
+/// `a` = "x z", `b` = what to read there: `height`, `normal x|y|z`,
+/// `velocity x|y|z` or `foam` (how pinched the crest is, 0-1). The water as
+/// of this fixed tick; [`MISSING`] over dry land.
+pub const READ_WATER: u32 = 45;
+/// `a` = actor name, empty for this actor. Whether it is below a water
+/// surface and above that body's bottom.
+pub const READ_UNDERWATER: u32 = 46;
 
 // ─── What a script can read as text ────────────────────────────────────────
 
@@ -343,6 +350,9 @@ pub const ACT_SET_CLOUDS: u32 = 75;
 /// `a` = cloud layer dial (`coverage`, `opacity`, `contrast`, `altitude` or
 /// `spin`), `n0` = layer from 1, `n1` = value. Window-global.
 pub const ACT_SET_CLOUD_LAYER: u32 = 76;
+/// `a` = water dial (`level`, `chop` or `foam`), `n0` = value. This actor's
+/// own water when it has some, every body's otherwise.
+pub const ACT_SET_WATER: u32 = 77;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

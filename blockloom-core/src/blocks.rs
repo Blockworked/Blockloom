@@ -283,6 +283,12 @@ pub enum InstructionKind {
         property: crate::clouds::CloudProperty,
         value: Value,
     },
+    /// A water dial for the rest of the run: the running actor's own water
+    /// when it has some, every body's otherwise.
+    SetWater {
+        property: crate::water::WaterProperty,
+        value: Value,
+    },
     /// One cloud layer's dial (layer counted from 1) for the rest of the run.
     /// Window-global.
     SetCloudLayer {
@@ -841,6 +847,7 @@ impl BlockKind for InstructionKind {
             | K::SetLightningRate { rate: v }
             | K::SetWind { value: v, .. }
             | K::SetClouds { value: v, .. }
+            | K::SetWater { value: v, .. }
             | K::SetDensity { density: v }
             | K::SetMass { mass: v }
             | K::SetCollisionLayer { layer: v }

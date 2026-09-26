@@ -194,6 +194,10 @@ pub enum Act {
         property: &'static str,
         value: f32,
     },
+    SetWater {
+        property: &'static str,
+        value: f32,
+    },
     SetCloudLayer {
         layer: f32,
         property: &'static str,
@@ -1065,7 +1069,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 22;
+pub const LOGIC_ABI_VERSION: u32 = 23;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1247,6 +1251,9 @@ pub const ACT_SET_CLOUDS: u32 = 93;
 /// `a` = cloud layer dial (`Coverage`, `Opacity`, ...); `n0` = layer from 1,
 /// `n1` = value. Window-global: no actor.
 pub const ACT_SET_CLOUD_LAYER: u32 = 94;
+/// `a` = water dial (`Level`, `Chop`, `Foam`); `n0` = value. The actor's own
+/// water when it has some, every body's otherwise.
+pub const ACT_SET_WATER: u32 = 95;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1725,6 +1732,14 @@ impl Host for AbiHost {
             Act::SetClouds { property, value } => self.act_wire(
                 actor,
                 ACT_SET_CLOUDS,
+                property,
+                "",
+                [value as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetWater { property, value } => self.act_wire(
+                actor,
+                ACT_SET_WATER,
                 property,
                 "",
                 [value as f64, 0.0, 0.0],

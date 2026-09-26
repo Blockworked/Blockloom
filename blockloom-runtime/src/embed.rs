@@ -2628,6 +2628,47 @@ mod tests {
 
     #[test]
     #[ignore = "needs a GPU"]
+    fn a_lake_tints_the_floor_under_it() {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::water::{ReflectionMode, WaterSpec};
+        let blue = |[r, _, b]: [u8; 3]| b > 60 && b > r.saturating_add(40);
+        let mut room = dark_room(true);
+        let mut spec = WaterSpec {
+            depth: 3.0,
+            ..WaterSpec::default()
+        };
+        spec.look.shallow = "#0040FF".to_string();
+        spec.look.deep = "#0020C0".to_string();
+        spec.look.absorption = 0.5;
+        spec.foam.amount = 0.0;
+        spec.underwater.caustics = 0.0;
+        spec.reflections.mode = ReflectionMode::Sky;
+        spec.waves.amplitude = 0.02;
+        let mut lake = blockloom_core::project::Actor::new(
+            "Lake",
+            blockloom_core::scene::Visual::Sphere {
+                color: "#FFFFFF".to_string(),
+                radius: 0.05,
+            },
+        );
+        lake.components.remove("Look");
+        lake.components.placement_mut().position = [0.0, 1.0, 0.0];
+        lake.components
+            .insert(ActorComponent::Water { water: spec });
+        room.actors.push(lake);
+        let (set, index, errors) = run_world(room, |_| {}, game_camera(), 600, blue);
+        assert!(errors.is_empty(), "{errors:?}");
+        let set = set.expect("no frame arrived");
+        dump(
+            "lake",
+            &frame_pixels(&set.images[index], SIZE.x as usize, SIZE.y as usize),
+        );
+        let pixel = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        assert!(blue(pixel), "expected blue water, read {pixel:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
     fn volumetric_fog_glows_with_its_emissive() {
         let green =
             |[r, g, b]: [u8; 3]| g > 150 && g > r.saturating_add(60) && g > b.saturating_add(60);
