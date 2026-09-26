@@ -161,6 +161,22 @@ pub enum Effect {
     SetGiSamples {
         samples: f32,
     },
+    /// Height fog's extinction per metre, for the rest of the run.
+    SetFogDensity {
+        density: f32,
+    },
+    /// The aurora's KP index, for the rest of the run.
+    SetAurora {
+        kp: f32,
+    },
+    /// A lightning strike landing at a point. Window-global.
+    StrikeLightning {
+        at: [f32; 3],
+    },
+    /// Strikes a minute the storm throws, for the rest of the run.
+    SetLightningRate {
+        rate: f32,
+    },
     SetBody {
         actor: String,
         body: BodyKind,

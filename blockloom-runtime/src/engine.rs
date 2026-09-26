@@ -212,6 +212,11 @@ pub struct Engine {
     pub ray_tracing: Option<bool>,
     pub gi_bounces: Option<u32>,
     pub gi_samples: Option<u32>,
+    /// `set fog density`, `set aurora` and `set lightning storm` this run,
+    /// over the project's fog, sky and lightning.
+    pub fog_density: Option<f32>,
+    pub aurora_kp: Option<f32>,
+    pub lightning_rate: Option<f32>,
     /// Dynamic actors a walk verb (`move`, `change position`) drove this
     /// tick. A walk sets an absolute velocity, so when a driven actor goes
     /// quiet the dimension pass brakes it - otherwise the last written
@@ -288,6 +293,9 @@ impl Engine {
             ray_tracing: None,
             gi_bounces: None,
             gi_samples: None,
+            fog_density: None,
+            aurora_kp: None,
+            lightning_rate: None,
             last_created: HashMap::new(),
             driven: HashSet::new(),
             physics_filter: HashMap::new(),

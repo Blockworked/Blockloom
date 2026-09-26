@@ -1,5 +1,7 @@
 //! Shared render assets and measurements for the game world.
 
+// `std::time::Instant` panics on wasm (no OS clock there); `web_time` reads
+// the browser's clock instead and wraps std everywhere else.
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use blockloom_core::scene::Visual;
@@ -22,7 +24,7 @@ pub struct LoopPace {
     pub render_ms: f64,
     /// This frame's main window before smoothing, for the `other` bucket.
     pub frame_main_ms: f64,
-    main_start: Option<std::time::Instant>,
+    main_start: Option<web_time::Instant>,
 }
 
 impl LoopPace {
@@ -38,7 +40,7 @@ impl LoopPace {
     }
 
     pub fn begin_main(&mut self) {
-        self.main_start = Some(std::time::Instant::now());
+        self.main_start = Some(web_time::Instant::now());
     }
 
     pub fn end_main(&mut self) {
@@ -64,7 +66,7 @@ pub fn mark_main_end(mut pace: ResMut<LoopPace>) {
 /// `FixedLast`, so one number says whether the sim is the slow half.
 #[derive(Resource, Default, Debug)]
 pub struct SimSplit {
-    step_start: Option<std::time::Instant>,
+    step_start: Option<web_time::Instant>,
     accum_ms: f64,
     steps: u32,
     pub fixed_ms: f64,
@@ -92,7 +94,7 @@ impl SimSplit {
 }
 
 pub fn mark_step_start(mut split: ResMut<SimSplit>) {
-    split.step_start = Some(std::time::Instant::now());
+    split.step_start = Some(web_time::Instant::now());
 }
 
 pub fn mark_step_end(mut split: ResMut<SimSplit>) {
@@ -114,8 +116,8 @@ pub fn publish_sim_split(mut split: ResMut<SimSplit>) {
 /// sim minus the measured spans.
 #[derive(Resource, Default, Debug)]
 pub struct UpdateSplit {
-    marks: Vec<std::time::Instant>,
-    post_start: Option<std::time::Instant>,
+    marks: Vec<web_time::Instant>,
+    post_start: Option<web_time::Instant>,
     pub segments: Vec<(String, f64)>,
 }
 
@@ -161,11 +163,11 @@ impl UpdateSplit {
 }
 
 pub fn mark_update_segment(mut split: ResMut<UpdateSplit>) {
-    split.marks.push(std::time::Instant::now());
+    split.marks.push(web_time::Instant::now());
 }
 
 pub fn mark_post_start(mut split: ResMut<UpdateSplit>) {
-    split.post_start = Some(std::time::Instant::now());
+    split.post_start = Some(web_time::Instant::now());
 }
 
 pub fn publish_update_split(

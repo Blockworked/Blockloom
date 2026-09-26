@@ -17,6 +17,7 @@
 
 use crate::engine::Engine;
 use crate::environment::Environment;
+use crate::space::{SpaceParams, SpaceRender};
 use crate::world::{WorldCamera, parse_color};
 use bevy::asset::RenderAssetUsages;
 use bevy::core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT;
@@ -26,13 +27,13 @@ use bevy::prelude::*;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::binding_types::{
-    self, texture_cube, texture_storage_2d_array, uniform_buffer,
+    self, texture_2d, texture_cube, texture_storage_2d_array, uniform_buffer,
 };
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue};
 use bevy::render::sync_component::{SyncComponent, SyncComponentPlugin};
 use bevy::render::sync_world::RenderEntity;
-use bevy::render::texture::GpuImage;
+use bevy::render::texture::{FallbackImage, GpuImage};
 use bevy::render::view::{ExtractedView, Msaa, ViewUniform, ViewUniforms};
 use bevy::render::{
     Extract, ExtractSchedule, GpuResourceAppExt, Render, RenderApp, RenderStartup, RenderSystems,
@@ -732,6 +733,8 @@ struct SkyUniforms {
     offsets: [u32; 2],
     /// The compute pass's own copy.
     cube: UniformBuffer<SkyParams>,
+    /// Stars, aurora and flash, which move every frame.
+    space: UniformBuffer<SpaceParams>,
 }
 
 fn init_pipelines(
@@ -784,6 +787,8 @@ fn init_pipelines(
                 texture_cube(TextureSampleType::Float { filterable: true }),
                 texture_cube(TextureSampleType::Float { filterable: true }),
                 binding_types::sampler(SamplerBindingType::Filtering),
+                uniform_buffer::<SpaceParams>(false),
+                texture_2d(TextureSampleType::Float { filterable: true }),
             ),
         ),
     );
@@ -813,6 +818,8 @@ fn prepare_sky_views(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     mut uniforms: ResMut<SkyUniforms>,
+    space: Option<Res<SpaceRender>>,
+    fallback: Res<FallbackImage>,
     views: Query<(Entity, &SkyView, &ExtractedView, &Msaa)>,
 ) {
     let ready = (|| {
@@ -857,9 +864,19 @@ fn prepare_sky_views(
         uniforms.buffer.push(&with_disks),
     ];
     uniforms.buffer.write_buffer(&device, &queue);
-    let Some(sky_binding) = uniforms.buffer.binding() else {
+    let space = space.map(|space| space.clone()).unwrap_or_default();
+    uniforms.space.set(space.params);
+    uniforms.space.write_buffer(&device, &queue);
+    let (Some(sky_binding), Some(space_binding)) =
+        (uniforms.buffer.binding(), uniforms.space.binding())
+    else {
         return;
     };
+    let milky_way = space
+        .milky_way
+        .as_ref()
+        .and_then(|handle| images.get(handle))
+        .map_or(&fallback.d2.texture_view, |image| &image.texture_view);
     let bind_group = device.create_bind_group(
         "sky_background",
         &pipeline_cache.get_bind_group_layout(&background.layout),
@@ -870,6 +887,8 @@ fn prepare_sky_views(
             &source.texture_view,
             &blurred.texture_view,
             &pipelines.sampler,
+            space_binding,
+            milky_way,
         )),
     );
     for (entity, view, extracted, msaa) in &views {

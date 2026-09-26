@@ -1364,6 +1364,22 @@ impl Vm {
                     velocity,
                 });
             }
+            Action::SetFogDensity(density) => {
+                let density = self.eval_f32(density, actor, params, temps, out);
+                out.push(Effect::SetFogDensity { density });
+            }
+            Action::SetAurora(kp) => {
+                let kp = self.eval_f32(kp, actor, params, temps, out);
+                out.push(Effect::SetAurora { kp });
+            }
+            Action::StrikeLightning(vector) => {
+                let at = self.eval_vec3(vector, actor, params, temps, out);
+                out.push(Effect::StrikeLightning { at });
+            }
+            Action::SetLightningRate(rate) => {
+                let rate = self.eval_f32(rate, actor, params, temps, out);
+                out.push(Effect::SetLightningRate { rate });
+            }
             Action::SetGravity(vector) => {
                 let gravity = self.eval_vec3(vector, actor, params, temps, out);
                 out.push(Effect::SetGravity { gravity });

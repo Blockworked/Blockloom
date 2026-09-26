@@ -97,12 +97,15 @@ pub fn detach(world: u64) {
 
 /// Sends one message to the editor. A closed pipe is ignored: the editor is
 /// gone and the window is about to follow. With no editor at all, only the
-/// messages a player might need to see reach stderr.
+/// messages a player might need to see reach stderr - the devtools console
+/// on the web, where printing would panic instead.
 pub fn send(message: &RuntimeMessage) {
     if !attached() {
         match message {
-            RuntimeMessage::Error { actor, message } => eprintln!("blockloom: {actor}: {message}"),
-            RuntimeMessage::Fatal { message } => eprintln!("blockloom: {message}"),
+            RuntimeMessage::Error { actor, message } => {
+                report(&format!("blockloom: {actor}: {message}"))
+            }
+            RuntimeMessage::Fatal { message } => report(&format!("blockloom: {message}")),
             _ => {}
         }
         return;
@@ -118,4 +121,14 @@ pub fn send(message: &RuntimeMessage) {
     let mut stdout = stdout.lock();
     let _ = stdout.write_all(line.as_bytes());
     let _ = stdout.flush();
+}
+
+#[cfg(target_arch = "wasm32")]
+fn report(message: &str) {
+    crate::web::console_error(message);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn report(message: &str) {
+    eprintln!("{message}");
 }

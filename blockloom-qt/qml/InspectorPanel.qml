@@ -38,7 +38,7 @@ Rectangle {
     function materialOf(c) { return Object.assign({ metallic: 0, roughness: 0.6, emissive: "#000000", emissive_energy: 0, albedo_texture: "", normal_texture: "", roughness_texture: "", tiling: [1, 1], offset: [0, 0], rotation: 0, sampler: "Clamp", anisotropy: 0, box_projection: false, texel_density: 1, double_sided: false, shader: null }, c.material || {}); }
     function emitterOf(c) { return Object.assign({ rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: "#FFFFFF", color_end: "#FFAB19", max: 128 }, c.emitter || {}); }
     function lightOf(c) { return Object.assign({ kind: "Point", color: "#FFFFFF", intensity: 800, range: 20, radius: 0, inner_angle: 30, outer_angle: 45, shadows: false,
-        unit: "Lumens", width: 1, height: 1, cookie: "", cookie_tiling: 1, ies: "", contact_shadows: false, soft_shadows: false, shadow_depth_bias: null, shadow_normal_bias: null, ray_traced: true }, c.light || {}); }
+        unit: "Lumens", width: 1, height: 1, cookie: "", cookie_tiling: 1, ies: "", contact_shadows: false, soft_shadows: false, shadow_depth_bias: null, shadow_normal_bias: null, ray_traced: true, volumetric: true }, c.light || {}); }
     function probeOf(c) { return Object.assign({ kind: "Reflection", size: [10, 5, 10], falloff: 0.2, resolution: 256, grid: [4, 3, 4], intensity: 1, box_projection: true, auto_bake: true }, c.probe || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
@@ -51,12 +51,16 @@ Rectangle {
     function projectValue(key) {
         const w = appState.project ? appState.project.world : {};
         const l = Object.assign({ light_direction: [8, 16, 8], light_color: "#FFFFFF", illuminance: 10000, ambient_color: "#FFFFFF", ambient_brightness: 80, ao_enabled: false }, w.lighting || {});
+        const f = w.fog || { height: {}, volumetric: {}, aerial: {} };
         const p = Object.assign({ exposure_ev: 9.7, tonemapping: "TonyMcMapface", bloom_enabled: false, bloom_threshold: 1, bloom_intensity: 0.15, vignette_strength: 0 }, w.post || {});
         return ({ background: w.background || "#1B2431", sun_direction: l.light_direction, sun_color: l.light_color, illuminance: l.illuminance,
                   ambient_color: l.ambient_color, ambient_brightness: l.ambient_brightness, ao: l.ao_enabled, exposure: p.exposure_ev,
                   tonemapping: p.tonemapping, bloom: p.bloom_enabled, bloom_threshold: p.bloom_threshold, bloom_intensity: p.bloom_intensity,
                   vignette: p.vignette_strength, reflections: 1, indirect: 1,
-                  sky_exposure: w.sky ? w.sky.exposure : 0, ambient_dimmer: w.sky ? w.sky.ambient_dimmer : 1 })[key];
+                  sky_exposure: w.sky ? w.sky.exposure : 0, ambient_dimmer: w.sky ? w.sky.ambient_dimmer : 1,
+                  fog_density: 3 / (f.height.distance || 400), fog_color: f.height.day_color || "#C2CAD2", fog_height: f.height.base_height || 0,
+                  volumetric_density: f.volumetric.density !== undefined ? f.volumetric.density : 0.02, volumetric_albedo: f.volumetric.albedo || "#FFFFFF",
+                  haze_distance: f.aerial.distance || 8000 })[key];
     }
     function overrideOf(v, key) { return Object.assign({ on: false, value: projectValue(key) }, (v.overrides || {})[key] || {}); }
     readonly property var volumeProperties: [
@@ -76,7 +80,13 @@ Rectangle {
         { key: "reflections", label: "Reflections ×", kind: "number", only3d: true },
         { key: "indirect", label: "Indirect ×", kind: "number", only3d: true },
         { key: "sky_exposure", label: "Sky EV", kind: "number", only3d: true },
-        { key: "ambient_dimmer", label: "Sky ambient ×", kind: "number", only3d: true }
+        { key: "ambient_dimmer", label: "Sky ambient ×", kind: "number", only3d: true },
+        { key: "fog_density", label: "Fog /m", kind: "number", only3d: true },
+        { key: "fog_color", label: "Fog color", kind: "color", only3d: true },
+        { key: "fog_height", label: "Fog base", kind: "number", only3d: true },
+        { key: "volumetric_density", label: "Volumetric /m", kind: "number", only3d: true },
+        { key: "volumetric_albedo", label: "Volumetric color", kind: "color", only3d: true },
+        { key: "haze_distance", label: "Haze m", kind: "number", only3d: true }
     ]
     function brainOf(c) { return Object.assign({ target: "", speed: 4, sight: 12, fov: 120, separation: 1, tree: { node: "Selector", children: [{ node: "Sequence", children: [{ node: "CanSeeTarget" }, { node: "NavigateToTarget" }] }, { node: "Idle" }] } }, c.brain || {}); }
     function tilemapOf(v) {
@@ -758,6 +768,8 @@ Rectangle {
                 SwitchField { value: li.l.contact_shadows; onToggled: on => root.writeLight(li.c, { contact_shadows: on }) } Item { Layout.fillWidth: true } }
             InspectorRow { label: "Traced"; Layout.fillWidth: true
                 SwitchField { value: li.l.ray_traced; onToggled: on => root.writeLight(li.c, { ray_traced: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Lights fog"; Layout.fillWidth: true
+                SwitchField { value: li.l.volumetric; onToggled: on => root.writeLight(li.c, { volumetric: on }) } Item { Layout.fillWidth: true } }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: !root.is3d ? "Lights need a 3D world; in 2D this rests."
                     : li.area ? "An area light glows from a " + (li.l.kind === "Disk" ? "disc" : "rectangle") + " facing the actor's forward axis, with soft LTC highlights. It casts no shadow maps."
@@ -823,6 +835,7 @@ Rectangle {
             id: vo
             readonly property var c: parent.c
             readonly property var v: root.volumeOf(c)
+            readonly property var fog: Object.assign({ enabled: false, density: 0.2, albedo: "#FFFFFF", emissive: "#000000", emissive_strength: 0 }, v.fog || {})
             readonly property var live: root.actor && root.app.status && root.app.status.volumes
                 ? (root.app.status.volumes.find(x => x.actor === root.actor.id) || null) : null
             spacing: 6
@@ -868,6 +881,17 @@ Rectangle {
             }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Checked properties blend over the project's settings; the rest are left to what lies under this volume." }
+            Text { visible: root.is3d && vo.v.shape !== "Global"; text: "Local fog"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            InspectorRow { visible: root.is3d && vo.v.shape !== "Global"; label: "Fills it"; Layout.fillWidth: true
+                SwitchField { value: vo.fog.enabled; onToggled: on => root.writeVolume(vo.c, { fog: Object.assign({}, vo.fog, { enabled: on }) }) } Item { Layout.fillWidth: true } }
+            InspectorRow { visible: root.is3d && vo.v.shape !== "Global" && vo.fog.enabled; label: "Density /m"; Layout.fillWidth: true
+                NumberField { value: vo.fog.density; fallback: 0.2; onCommitted: n => root.writeVolume(vo.c, { fog: Object.assign({}, vo.fog, { density: Math.min(10, Math.max(0, n)) }) }) } }
+            InspectorRow { visible: root.is3d && vo.v.shape !== "Global" && vo.fog.enabled; label: "Albedo, glow"; Layout.fillWidth: true
+                ColorField { value: vo.fog.albedo; onPicked: col => root.writeVolume(vo.c, { fog: Object.assign({}, vo.fog, { albedo: col }) }) }
+                ColorField { value: vo.fog.emissive; onPicked: col => root.writeVolume(vo.c, { fog: Object.assign({}, vo.fog, { emissive: col }) }) }
+                NumberField { value: vo.fog.emissive_strength; fallback: 0; onCommitted: n => root.writeVolume(vo.c, { fog: Object.assign({}, vo.fog, { emissive_strength: Math.max(0, n) }) }) } }
+            Text { visible: root.is3d && vo.v.shape !== "Global" && vo.fog.enabled; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Adds volumetric fog inside the shape, fading out across the blend distance and scaled by the weight, wherever the camera is. Lit like the project's volumetric fog; glow nits are per unit of density." }
             Component { id: overrideNumber
                 NumberField { value: parent.o.value; onCommitted: n => root.writeOverride(vo.c, parent.key, { value: n, on: true }) } }
             Component { id: overrideColor

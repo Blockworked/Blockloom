@@ -22,6 +22,10 @@ pub enum Launch {
     /// Started on its own, from a pack. The dimension is in the pack, so
     /// nothing has to be told.
     Player { pack: Box<GamePack>, dir: PathBuf },
+    /// Running in a browser: the pack arrives as JSON inlined in the page, so
+    /// there is no folder for assets or script libraries. Asset paths resolve
+    /// against the server root, and saves live in localStorage (see `web`).
+    Web { pack: Box<GamePack> },
 }
 
 impl Launch {
@@ -72,14 +76,26 @@ impl Launch {
     pub fn mode(&self) -> Mode {
         match self {
             Self::Editor { mode } => *mode,
-            Self::Player { pack, .. } => pack.project.world.mode,
+            Self::Player { pack, .. } | Self::Web { pack } => pack.project.world.mode,
         }
     }
 
-    /// Whether this run may leave SDR: a build made SDR-only never does.
+    /// Builds the player side of a launch from an already-parsed pack: the
+    /// browser entry point's whole job. Web builds ship SDR-only, since no
+    /// browser swapchain takes the HDR takeover.
+    pub fn from_pack(mut pack: GamePack) -> Self {
+        pack.hdr = false;
+        Self::Web {
+            pack: Box::new(pack),
+        }
+    }
+
+    /// Whether this run may leave SDR: a build made SDR-only never does, and
+    /// neither does the browser.
     pub fn allows_hdr(&self) -> bool {
         match self {
             Self::Player { pack, .. } => pack.hdr,
+            Self::Web { .. } => false,
             _ => true,
         }
     }
@@ -87,7 +103,7 @@ impl Launch {
     pub fn title(&self) -> String {
         match self {
             Self::Editor { .. } => "Blockloom".to_string(),
-            Self::Player { pack, .. } => pack.title().to_string(),
+            Self::Player { pack, .. } | Self::Web { pack } => pack.title().to_string(),
         }
     }
 
@@ -103,6 +119,19 @@ impl Launch {
                 let _ = tx.send(EditorMessage::Load {
                     project: Box::new(pack.project),
                     dir: Some(dir.to_string_lossy().into_owned()),
+                });
+                let _ = tx.send(EditorMessage::Start);
+                let mut engine = Engine::new(rx, mode);
+                engine.link = Some(tx);
+                engine
+            }
+            // No folder behind it: assets resolve against the server root
+            // and saves go to localStorage, but the green flag is the same.
+            Self::Web { pack } => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let _ = tx.send(EditorMessage::Load {
+                    project: Box::new(pack.project),
+                    dir: None,
                 });
                 let _ = tx.send(EditorMessage::Start);
                 let mut engine = Engine::new(rx, mode);
@@ -141,8 +170,18 @@ fn locate_pack(path: &Path) -> Option<PathBuf> {
 }
 
 fn fatal(message: &str) -> ! {
-    eprintln!("blockloom: {message}");
-    std::process::exit(1)
+    // A built game that can't load has nothing else to do. On the web there
+    // is no process to exit, so the message lands on the page instead.
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::web::show_error(message);
+        panic!("blockloom: {message}");
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        eprintln!("blockloom: {message}");
+        std::process::exit(1)
+    }
 }
 
 /// `--name value` or `--name=value`.
@@ -182,6 +221,19 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|arg| arg.to_string()).collect()
+    }
+
+    #[test]
+    fn a_web_launch_takes_its_mode_from_the_pack_and_stays_sdr() {
+        let mut pack = GamePack::new(blockloom_core::project::Project::starter(
+            "Pond",
+            blockloom_core::scene::Mode::ThreeD,
+        ));
+        pack.hdr = true;
+        let launch = Launch::from_pack(pack);
+        assert_eq!(launch.mode(), blockloom_core::scene::Mode::ThreeD);
+        assert!(!launch.allows_hdr());
+        assert_eq!(launch.title(), "Pond");
     }
 
     #[test]

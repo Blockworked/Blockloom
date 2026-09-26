@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 22;
+pub const ABI_VERSION: u32 = 23;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -324,6 +324,14 @@ pub const ACT_SET_RAY_TRACING: u32 = 66;
 pub const ACT_SET_GI_BOUNCES: u32 = 67;
 /// `n0` = light samples per pixel when tracing. Window-global.
 pub const ACT_SET_GI_SAMPLES: u32 = 68;
+/// `n0` = height fog's extinction per metre; 0 clears it. Window-global.
+pub const ACT_SET_FOG_DENSITY: u32 = 69;
+/// `n0` = the aurora's KP index, 0-9. Window-global.
+pub const ACT_SET_AURORA: u32 = 70;
+/// `n0..n2` = where a lightning strike lands. Window-global.
+pub const ACT_STRIKE_LIGHTNING: u32 = 71;
+/// `n0` = strikes a minute the storm throws. Window-global.
+pub const ACT_SET_LIGHTNING_RATE: u32 = 72;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

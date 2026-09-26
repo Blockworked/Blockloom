@@ -2,8 +2,9 @@
 //! once per fixed tick so the VM, compiled logic and scripts all read the
 //! same air on the same tick.
 //!
-//! The sun comes from the blended `Environment`. Wind, fog and weather have no
-//! writer yet; Phase 5's systems fill `AtmosphereSources` and this picks them up.
+//! The sun comes from the blended `Environment`. The fog, the aurora and
+//! lightning fill their parts of `AtmosphereSources`; wind and weather have
+//! no writer yet.
 
 use crate::engine::Dimension;
 use crate::engine::Engine;
@@ -34,6 +35,10 @@ pub struct AtmosphereSources {
     pub snow: f32,
     pub wetness: f32,
     pub temperature: f32,
+    /// KP index, 0 for none.
+    pub aurora: f32,
+    /// The latest flash, 0-1.
+    pub lightning: f32,
 }
 
 impl Default for AtmosphereSources {
@@ -49,6 +54,8 @@ impl Default for AtmosphereSources {
             snow: calm.snow,
             wetness: calm.wetness,
             temperature: calm.temperature,
+            aurora: 0.0,
+            lightning: 0.0,
         }
     }
 }
@@ -151,6 +158,8 @@ fn sample(
         ray_tracing: false,
         ray_tracing_available: false,
         volumes: Vec::new(),
+        aurora: sources.aurora.clamp(0.0, 9.0),
+        lightning: sources.lightning.clamp(0.0, 1.0),
     }
 }
 

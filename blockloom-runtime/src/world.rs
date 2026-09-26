@@ -417,18 +417,31 @@ pub fn begin_run(engine: &mut Engine, now: f64) {
 }
 
 fn load_saved_data(engine: &mut Engine) {
-    engine.save_path = blockloom_core::save::path(&engine.project.id);
-    match blockloom_core::save::read(&engine.save_path) {
-        Ok(data) => {
-            data.apply(&engine.project, &engine.variables);
-            engine.save_data = data;
-        }
-        Err(message) => {
-            engine.save_data = Default::default();
-            bridge::send(&RuntimeMessage::Error {
-                actor: String::new(),
-                message: format!("couldn't load saved variables: {message}"),
-            });
+    // The browser has no files: saves live in localStorage under the pack's
+    // id instead (see `web`).
+    #[cfg(target_arch = "wasm32")]
+    {
+        engine.save_path = std::path::PathBuf::new();
+        let data = crate::web::load_save(&engine.project.id);
+        data.apply(&engine.project, &engine.variables);
+        engine.save_data = data;
+        return;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        engine.save_path = blockloom_core::save::path(&engine.project.id);
+        match blockloom_core::save::read(&engine.save_path) {
+            Ok(data) => {
+                data.apply(&engine.project, &engine.variables);
+                engine.save_data = data;
+            }
+            Err(message) => {
+                engine.save_data = Default::default();
+                bridge::send(&RuntimeMessage::Error {
+                    actor: String::new(),
+                    message: format!("couldn't load saved variables: {message}"),
+                });
+            }
         }
     }
 }
@@ -465,7 +478,16 @@ pub fn apply_saved_data(effects: Res<PendingEffects>, mut engine: NonSendMut<Eng
             continue;
         }
         if changed
-            && let Err(message) = blockloom_core::save::write(&engine.save_path, &engine.save_data)
+            && let Err(message) = {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    crate::web::store_save(&engine.project.id, &engine.save_data)
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    blockloom_core::save::write(&engine.save_path, &engine.save_data)
+                }
+            }
         {
             bridge::send(&RuntimeMessage::Error {
                 actor: actor.clone(),
@@ -578,6 +600,9 @@ pub fn rebuild_world(
     engine.ray_tracing = None;
     engine.gi_bounces = None;
     engine.gi_samples = None;
+    engine.fog_density = None;
+    engine.aurora_kp = None;
+    engine.lightning_rate = None;
     engine.parents = engine
         .project
         .actors
@@ -689,6 +714,15 @@ pub fn rebuild_world(
         nav.settings = project.world.navigation.clone();
     }
     open_scripts(&mut engine, &project);
+    // A built game answers to nobody, so it says what it built in its own
+    // log. The editor already shows all of this in its own panels.
+    if !bridge::attached() {
+        info!(
+            "built {} actors for '{}'",
+            engine.entities.len(),
+            engine.project.name
+        );
+    }
 }
 
 /// The saved mix, for reseeding the runtime's live gains on a rebuild.
@@ -3735,6 +3769,10 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetRayTracing { .. }
         | Effect::SetGiBounces { .. }
         | Effect::SetGiSamples { .. }
+        | Effect::SetFogDensity { .. }
+        | Effect::SetAurora { .. }
+        | Effect::StrikeLightning { .. }
+        | Effect::SetLightningRate { .. }
         | Effect::SetBusVolume { .. }
         | Effect::RumbleGamepad { .. }
         | Effect::Stopped

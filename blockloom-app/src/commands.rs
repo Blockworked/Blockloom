@@ -17,7 +17,9 @@ use blockloom_core::blocks::{
 use blockloom_core::build;
 use blockloom_core::codegen;
 use blockloom_core::components::{ActorComponent, Components};
+use blockloom_core::fog::Fog;
 use blockloom_core::library;
+use blockloom_core::lightning::Lightning;
 use blockloom_core::material::GraphEffect;
 use blockloom_core::nav::NavSettings;
 use blockloom_core::pipeline;
@@ -867,19 +869,51 @@ pub(crate) fn set_sky(state: &SharedState, app: &AppHandle, sky: Sky) -> Result<
     push_undo(&mut s);
     let mut sky = sky;
     sky.normalize();
-    for (name, color) in [
-        ("ground", &mut sky.physical.ground_albedo),
-        ("night", &mut sky.physical.night_color),
-        ("top", &mut sky.gradient.top),
-        ("middle", &mut sky.gradient.middle),
-        ("bottom", &mut sky.gradient.bottom),
-        ("warm", &mut sky.gradient.warm_color),
-        ("tint", &mut sky.hdri.tint),
-    ] {
+    for (name, color) in sky.colors_mut() {
         *color = normalize_block_color(color).ok_or(format!("Choose a valid {name} color"))?;
     }
     if let Some(project) = s.project_mut() {
         project.world.sky = sky;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Sets the air: height fog, volumetric fog and aerial perspective. What
+/// the project settings dialog's Fog section edits.
+pub(crate) fn set_fog(state: &SharedState, app: &AppHandle, fog: Fog) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut fog = fog;
+    fog.normalize();
+    for (name, color) in fog.colors_mut() {
+        *color = normalize_block_color(color).ok_or(format!("Choose a valid {name} color"))?;
+    }
+    if let Some(project) = s.project_mut() {
+        project.world.fog = fog;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Sets how lightning looks and sounds, and the storm that throws it.
+pub(crate) fn set_lightning(
+    state: &SharedState,
+    app: &AppHandle,
+    lightning: Lightning,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut lightning = lightning;
+    lightning.normalize();
+    lightning.color = normalize_block_color(&lightning.color)
+        .ok_or("Choose a valid lightning color".to_string())?;
+    if let Some(project) = s.project_mut() {
+        project.world.lightning = lightning;
     }
     auto_save(&s);
     sync_runtime(&mut s);

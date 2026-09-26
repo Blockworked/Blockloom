@@ -12,8 +12,8 @@ importers:
         specifier: ^2.0.0
         version: 2.11.1
       blockstitch:
-        specifier: github:Blockworked/blockstitch#50c3c425
-        version: https://codeload.github.com/Blockworked/blockstitch/tar.gz/50c3c425737af694ad14485f8d7bf9d57dffa53d(lucide-vue-next@0.469.0(vue@3.5.43(typescript@5.9.3)))(vue@3.5.43(typescript@5.9.3))
+        specifier: github:Blockworked/blockstitch#686f82b3
+        version: https://codeload.github.com/Blockworked/blockstitch/tar.gz/686f82b3d210882094ace78c4e0b180576f14283(@lucide/vue@1.48.0(vue@3.5.43(typescript@5.9.3)))(vue@3.5.43(typescript@5.9.3))
       lucide-vue-next:
         specifier: ^0.469.0
         version: 0.469.0(vue@3.5.43(typescript@5.9.3))
@@ -214,6 +214,11 @@ packages:
 
   '@jridgewell/sourcemap-codec@1.6.0':
     resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
+
+  '@lucide/vue@1.48.0':
+    resolution: {integrity: sha512-3/Nwx/RsqQ4ZrrSML1GNsSWCSDyLnBgoF/eEr1q9G6iZymn3+WKtzIj7Dbc/Nxrt9WOPuGrJ58S+CBiamK+36w==}
+    peerDependencies:
+      vue: '>=3.0.1'
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     resolution: {integrity: sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ==}
@@ -434,11 +439,11 @@ packages:
   balanced-match@1.0.2:
     resolution: {integrity: sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==}
 
-  blockstitch@https://codeload.github.com/Blockworked/blockstitch/tar.gz/50c3c425737af694ad14485f8d7bf9d57dffa53d:
-    resolution: {gitHosted: true, integrity: sha512-34fJL/TqrW+0V+yNF2AWD9yo5H/E/5oPzNoVcATHUsvo/THlfTkiTtRmYyNe1Q4c0OqtMppWOlam1tJfOGJPFg==, tarball: https://codeload.github.com/Blockworked/blockstitch/tar.gz/50c3c425737af694ad14485f8d7bf9d57dffa53d}
+  blockstitch@https://codeload.github.com/Blockworked/blockstitch/tar.gz/686f82b3d210882094ace78c4e0b180576f14283:
+    resolution: {gitHosted: true, integrity: sha512-+fdWft/NAY36zo3EVqFrt5eQnfTa15FtXluC7y4/r84TcWc8gv7S4Ut9l7ndj0XZBPNpGCaxgfg6hhUSneygiQ==, tarball: https://codeload.github.com/Blockworked/blockstitch/tar.gz/686f82b3d210882094ace78c4e0b180576f14283}
     version: 0.1.0
     peerDependencies:
-      lucide-vue-next: ^0.469.0
+      '@lucide/vue': ^1.48.0
       vue: ^3.5.0
 
   brace-expansion@2.1.7:
@@ -688,6 +693,10 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
 
+  '@lucide/vue@1.48.0(vue@3.5.43(typescript@5.9.3))':
+    dependencies:
+      vue: 3.5.43(typescript@5.9.3)
+
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
 
@@ -869,9 +878,9 @@ snapshots:
 
   balanced-match@1.0.2: {}
 
-  blockstitch@https://codeload.github.com/Blockworked/blockstitch/tar.gz/50c3c425737af694ad14485f8d7bf9d57dffa53d(lucide-vue-next@0.469.0(vue@3.5.43(typescript@5.9.3)))(vue@3.5.43(typescript@5.9.3)):
+  blockstitch@https://codeload.github.com/Blockworked/blockstitch/tar.gz/686f82b3d210882094ace78c4e0b180576f14283(@lucide/vue@1.48.0(vue@3.5.43(typescript@5.9.3)))(vue@3.5.43(typescript@5.9.3)):
     dependencies:
-      lucide-vue-next: 0.469.0(vue@3.5.43(typescript@5.9.3))
+      '@lucide/vue': 1.48.0(vue@3.5.43(typescript@5.9.3))
       vue: 3.5.43(typescript@5.9.3)
 
   brace-expansion@2.1.7:

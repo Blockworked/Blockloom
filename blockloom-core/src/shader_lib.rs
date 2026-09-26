@@ -19,6 +19,8 @@ pub const MODULES: &[(&str, &str)] = &[
     ("scattering", include_str!("shaders/scattering.wesl")),
     ("frame", include_str!("shaders/frame.wesl")),
     ("sky", include_str!("shaders/sky.wesl")),
+    ("fog", include_str!("shaders/fog.wesl")),
+    ("space", include_str!("shaders/space.wesl")),
 ];
 
 pub fn module(name: &str) -> Option<&'static str> {

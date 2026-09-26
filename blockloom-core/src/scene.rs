@@ -943,6 +943,12 @@ pub struct World {
     /// The 3D sky: background, ambient light and reflections.
     #[serde(default)]
     pub sky: crate::sky::Sky,
+    /// Height fog, volumetric fog and aerial perspective, 3D only.
+    #[serde(default)]
+    pub fog: crate::fog::Fog,
+    /// Strikes and the storm that throws them.
+    #[serde(default)]
+    pub lightning: crate::lightning::Lightning,
 }
 
 fn default_background() -> String {
@@ -977,6 +983,8 @@ impl Default for World {
             display: DisplayOutput::default(),
             navigation: crate::nav::NavSettings::default(),
             sky: crate::sky::Sky::default(),
+            fog: crate::fog::Fog::default(),
+            lightning: crate::lightning::Lightning::default(),
         }
     }
 }

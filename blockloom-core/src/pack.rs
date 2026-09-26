@@ -71,12 +71,17 @@ impl GamePack {
 
     pub fn read(path: &Path) -> Result<Self, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Self::from_json(&text, &path.display().to_string())
+    }
+
+    /// Parses a pack from JSON text. The web player feeds it the pack inlined
+    /// in its page rather than a file on disk.
+    pub fn from_json(text: &str, origin: &str) -> Result<Self, String> {
         let mut pack: GamePack =
-            serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+            serde_json::from_str(text).map_err(|e| format!("{origin}: {e}"))?;
         if pack.pack != PACK_VERSION {
             return Err(format!(
-                "{} is a version {} game pack, this player reads version {PACK_VERSION}",
-                path.display(),
+                "{origin} is a version {} game pack, this player reads version {PACK_VERSION}",
                 pack.pack
             ));
         }
@@ -132,6 +137,19 @@ mod tests {
         assert_eq!(read.title(), "Pond");
         assert_eq!(read.save_id(), pack.save_id());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_pack_parses_from_json_text_without_touching_disk() {
+        let pack = GamePack::new(Project::starter("Pond", Mode::TwoD));
+        let text = serde_json::to_string(&pack).unwrap();
+
+        let parsed = GamePack::from_json(&text, "inline").unwrap();
+        assert_eq!(parsed.title(), "Pond");
+        assert_eq!(parsed.save_id(), pack.save_id());
+
+        let error = GamePack::from_json("not json", "inline").unwrap_err();
+        assert!(error.contains("inline"), "{error}");
     }
 
     #[test]

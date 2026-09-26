@@ -251,6 +251,26 @@ pub enum InstructionKind {
     SetGiSamples {
         samples: Value,
     },
+    /// Height fog's extinction per metre at its base, for the rest of the
+    /// run. 0 clears the air. Window-global.
+    SetFogDensity {
+        density: Value,
+    },
+    /// The aurora's KP index, 0-9, for the rest of the run. 0 puts it out.
+    SetAurora {
+        kp: Value,
+    },
+    /// A lightning strike landing at a point: a flash, a pulse of the sky
+    /// and thunder late by the distance.
+    StrikeLightning {
+        x: Value,
+        y: Value,
+        z: Value,
+    },
+    /// Strikes a minute the storm throws, for the rest of the run. 0 calms it.
+    SetLightningRate {
+        rate: Value,
+    },
 
     // ─── Physics ────────────────────────────────────────────────────────────
     SetBody {
@@ -790,6 +810,9 @@ impl BlockKind for InstructionKind {
             | K::SetShadowDistance { distance: v }
             | K::SetGiBounces { bounces: v }
             | K::SetGiSamples { samples: v }
+            | K::SetFogDensity { density: v }
+            | K::SetAurora { kp: v }
+            | K::SetLightningRate { rate: v }
             | K::SetDensity { density: v }
             | K::SetMass { mass: v }
             | K::SetCollisionLayer { layer: v }
@@ -812,6 +835,7 @@ impl BlockKind for InstructionKind {
             | K::SetBusVolume { volume: v, .. }
             | K::Repeat { count: v, .. } => f(v, InputValueType::Any),
             K::GoTo { x, y, z }
+            | K::StrikeLightning { x, y, z }
             | K::ApplyImpulse { x, y, z }
             | K::SetVelocity { x, y, z }
             | K::SetGravity { x, y, z } => {

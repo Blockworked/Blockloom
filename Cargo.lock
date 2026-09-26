@@ -2465,12 +2465,16 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+ "wasm-bindgen",
+ "web-sys",
+ "web-time",
  "wgpu",
 ]
 
 [[package]]
 name = "blockstitch-core"
 version = "0.1.0"
+source = "git+https://github.com/Blockworked/blockstitch?rev=686f82b3#686f82b3d210882094ace78c4e0b180576f14283"
 dependencies = [
  "chrono",
  "rand 0.10.3",

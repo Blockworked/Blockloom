@@ -39,6 +39,8 @@ BwDialog {
     readonly property var tracingStatus: app.appState.ray_tracing || null
     function writeSky(next) { invoke("set_sky", { sky: Object.assign(JSON.parse(JSON.stringify(world.sky)), next) }); }
     function writeSkyPart(part, next) { const o = {}; o[part] = Object.assign(JSON.parse(JSON.stringify(world.sky[part])), next); writeSky(o); }
+    function writeFogPart(part, next) { const fog = JSON.parse(JSON.stringify(world.fog)); fog[part] = Object.assign(fog[part], next); invoke("set_fog", { fog: fog }); }
+    function writeLightning(next) { invoke("set_lightning", { lightning: Object.assign(JSON.parse(JSON.stringify(world.lightning)), next) }); }
     function writeLighting(next) { invoke("set_lighting", { lighting: Object.assign(JSON.parse(JSON.stringify(world.lighting)), next) }); }
     function writePost(next) { invoke("set_post_process", { post: Object.assign(postOf(), next) }); }
     function displayOf() { return Object.assign({ space: "Sdr", peak_nits: 1000, paper_white_nits: 200 }, world && world.display ? world.display : {}); }
@@ -148,6 +150,10 @@ BwDialog {
                 readonly property var p: sky ? sky.physical : ({})
                 readonly property var g: sky ? sky.gradient : ({})
                 readonly property var h: sky ? sky.hdri : ({})
+                readonly property var st: sky && sky.stars ? sky.stars : ({})
+                readonly property var au: sky && sky.aurora ? sky.aurora : ({})
+                readonly property bool stars: kind !== "Flat" && !!st.enabled
+                readonly property bool aurora: kind !== "Flat" && !!au.enabled
                 InspectorRow { label: "Kind"; labelWidth: 110; Layout.fillWidth: true
                     ChoiceField { options: [{ value: "Flat", label: "None (background color)" }, { value: "Physical", label: "Physical atmosphere" }, { value: "Gradient", label: "Gradient" }, { value: "Hdri", label: "HDR image" }]
                         value: skySection.kind; onChosen: v => root.writeSky({ kind: v }) } }
@@ -184,6 +190,12 @@ BwDialog {
                 InspectorRow { visible: skySection.kind === "Physical" && !!skySection.p.moon && skySection.sunMode !== "Geographic"; label: "Moon az, elev °"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: skySection.p.moon_azimuth; fallback: 300; onCommitted: n => root.writeSkyPart("physical", { moon_azimuth: n }) }
                     NumberField { value: skySection.p.moon_elevation; fallback: 30; onCommitted: n => root.writeSkyPart("physical", { moon_elevation: root.clamp(n, -90, 90) }) } }
+                InspectorRow { visible: skySection.kind === "Physical" && !!skySection.p.moon; label: "Moonlight, lux"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!skySection.p.moon_light; onToggled: on => root.writeSkyPart("physical", { moon_light: on }) }
+                    NumberField { visible: !!skySection.p.moon_light; value: skySection.p.moon_lux; fallback: 0.25; onCommitted: n => root.writeSkyPart("physical", { moon_lux: Math.max(n, 0) }) } }
+                InspectorRow { visible: skySection.kind === "Physical" && !!skySection.p.moon && !!skySection.p.moon_light; label: "Moon color, shadows"; labelWidth: 110; Layout.fillWidth: true
+                    ColorField { value: skySection.p.moon_color || "#C9D6FF"; onPicked: c => root.writeSkyPart("physical", { moon_color: c }) }
+                    SwitchField { value: !!skySection.p.moon_shadows; onToggled: on => root.writeSkyPart("physical", { moon_shadows: on }) } }
                 InspectorRow { visible: skySection.kind === "Physical"; label: "Rayleigh /Mm"; labelWidth: 110; Layout.fillWidth: true
                     Repeater { model: 3; delegate: NumberField { required property int index; value: skySection.p.rayleigh ? skySection.p.rayleigh[index] : 0; onCommitted: n => root.writeSkyPart("physical", { rayleigh: root.withIndex(skySection.p.rayleigh, index, Math.max(n, 0)) }) } } }
                 InspectorRow { visible: skySection.kind === "Physical"; label: "Mie /Mm, g"; labelWidth: 110; Layout.fillWidth: true
@@ -246,7 +258,141 @@ BwDialog {
                     NumberField { visible: !!skySection.sky && skySection.sky.lighting; value: skySection.sky ? skySection.sky.ambient_dimmer : 1; fallback: 1; onCommitted: n => root.writeSky({ ambient_dimmer: root.clamp(n, 0, 10) }) } }
                 InspectorRow { visible: skySection.kind !== "Flat"; label: "Sky exposure EV"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: skySection.sky ? skySection.sky.exposure : 0; fallback: 0; onCommitted: n => root.writeSky({ exposure: root.clamp(n, -16, 16) }) } }
+
+                // Stars and aurora
+                InspectorRow { visible: skySection.kind !== "Flat"; label: "Stars"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!skySection.st.enabled; onToggled: on => root.writeSkyPart("stars", { enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: skySection.stars; label: "Density, nits"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.st.density; fallback: 0.35; onCommitted: n => root.writeSkyPart("stars", { density: root.clamp(n, 0, 1) }) }
+                    NumberField { value: skySection.st.brightness; fallback: 60; onCommitted: n => root.writeSkyPart("stars", { brightness: Math.max(n, 0) }) } }
+                InspectorRow { visible: skySection.stars; label: "Faintness, color"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.st.magnitude_slope; fallback: 3; onCommitted: n => root.writeSkyPart("stars", { magnitude_slope: root.clamp(n, 0.5, 10) }) }
+                    NumberField { value: skySection.st.color_variation; fallback: 0.5; onCommitted: n => root.writeSkyPart("stars", { color_variation: root.clamp(n, 0, 1) }) } }
+                InspectorRow { visible: skySection.stars; label: "Twinkle, speed"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.st.twinkle; fallback: 0.3; onCommitted: n => root.writeSkyPart("stars", { twinkle: root.clamp(n, 0, 1) }) }
+                    NumberField { value: skySection.st.twinkle_speed; fallback: 1.5; onCommitted: n => root.writeSkyPart("stars", { twinkle_speed: root.clamp(n, 0, 50) }) } }
+                InspectorRow { visible: skySection.stars; label: "Horizon fade °"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.st.horizon_fade; fallback: 8; onCommitted: n => root.writeSkyPart("stars", { horizon_fade: root.clamp(n, 0, 90) }) } }
+                InspectorRow { visible: skySection.stars; label: "Sun fade °"; labelWidth: 110; Layout.fillWidth: true
+                    Repeater { model: 2; delegate: NumberField { required property int index; value: skySection.st.sun_fade ? skySection.st.sun_fade[index] : 0; onCommitted: n => root.writeSkyPart("stars", { sun_fade: root.withIndex(skySection.st.sun_fade, index, root.clamp(n, -90, 90)) }) } } }
+                InspectorRow { visible: skySection.stars; label: "Milky Way"; labelWidth: 110; Layout.fillWidth: true
+                    AssetField { app: root.app; accept: ["image", "hdr"]; value: skySection.st.milky_way || ""; placeholderText: "Drag a panorama here"; onCommitted: p => root.writeSkyPart("stars", { milky_way: p }) } }
+                InspectorRow { visible: skySection.stars && !!skySection.st.milky_way; label: "Band nits, turn, tilt"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.st.milky_way_brightness; fallback: 2; onCommitted: n => root.writeSkyPart("stars", { milky_way_brightness: Math.max(n, 0) }) }
+                    NumberField { value: skySection.st.milky_way_rotation; fallback: 0; onCommitted: n => root.writeSkyPart("stars", { milky_way_rotation: n }) }
+                    NumberField { value: skySection.st.milky_way_tilt; fallback: 60; onCommitted: n => root.writeSkyPart("stars", { milky_way_tilt: root.clamp(n, -90, 90) }) } }
+                InspectorRow { visible: skySection.kind !== "Flat"; label: "Aurora, KP"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!skySection.au.enabled; onToggled: on => root.writeSkyPart("aurora", { enabled: on }) }
+                    NumberField { visible: skySection.aurora; value: skySection.au.kp; fallback: 4; onCommitted: n => root.writeSkyPart("aurora", { kp: root.clamp(n, 0, 9) }) } }
+                InspectorRow { visible: skySection.aurora; label: "Layers, pole °"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.au.layers; fallback: 2; onCommitted: n => root.writeSkyPart("aurora", { layers: root.clamp(Math.round(n), 1, 3) }) }
+                    NumberField { value: skySection.au.pole_azimuth; fallback: 0; onCommitted: n => root.writeSkyPart("aurora", { pole_azimuth: n }) } }
+                InspectorRow { visible: skySection.aurora; label: "Foot, height km"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.au.altitude; fallback: 100; onCommitted: n => root.writeSkyPart("aurora", { altitude: root.clamp(n, 1, 1000) }) }
+                    NumberField { value: skySection.au.height; fallback: 150; onCommitted: n => root.writeSkyPart("aurora", { height: root.clamp(n, 1, 1000) }) } }
+                InspectorRow { visible: skySection.aurora; label: "Folds, rays km"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.au.width; fallback: 60; onCommitted: n => root.writeSkyPart("aurora", { width: root.clamp(n, 0.1, 10000) }) }
+                    NumberField { value: skySection.au.ray_scale; fallback: 1.5; onCommitted: n => root.writeSkyPart("aurora", { ray_scale: root.clamp(n, 0.01, 1000) }) } }
+                InspectorRow { visible: skySection.aurora; label: "Bottom, top"; labelWidth: 110; Layout.fillWidth: true
+                    ColorField { value: skySection.au.bottom_color || "#38FF8A"; onPicked: c => root.writeSkyPart("aurora", { bottom_color: c }) }
+                    ColorField { value: skySection.au.top_color || "#A64DFF"; onPicked: c => root.writeSkyPart("aurora", { top_color: c }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: skySection.aurora; label: "Nits, flow, glow"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.au.brightness; fallback: 8; onCommitted: n => root.writeSkyPart("aurora", { brightness: Math.max(n, 0) }) }
+                    NumberField { value: skySection.au.speed; fallback: 1; onCommitted: n => root.writeSkyPart("aurora", { speed: root.clamp(n, 0, 100) }) }
+                    NumberField { value: skySection.au.horizon_glow; fallback: 0.3; onCommitted: n => root.writeSkyPart("aurora", { horizon_glow: root.clamp(n, 0, 1) }) } }
+                Note { visible: skySection.kind !== "Flat"; text: "Stars fade in as the sun sinks between the two sun-fade elevations; faintness steepens how many dim stars there are for each bright one. The Milky Way is a 2:1 panorama laid over them. Aurora curtains hang between the foot and top altitudes; KP 0-9 sets how far from the pole they reach (9 is overhead), and `set aurora to KP` changes it while the game runs. The moon lights the world as a directional light of its own, dimmed by its phase and fading as it sets." }
                 Note { text: "The sky draws the background and lights the world: its ambient light (scaled by the dimmer) and its reflections come from the same place. A physical sky scatters the sun (Rayleigh for blue, Mie for haze round the sun, ozone for twilight) and reddens the sunlight near the horizon; placing the sun by latitude, longitude, day and hour moves the light too, and the moon trails a geographic sun by its phase. A gradient is three stops that warm near a low sun. An HDR image is an .hdr or .exr panorama (2:1) or a strip of six faces, at its brightness in nits; blur softens the background only. Sky exposure is added to the camera's, never instead of it." }
+            }
+            Section {
+                id: fogSection
+                heading: "Fog"; visible: !!root.world && root.is3d && !!root.world.fog
+                readonly property var hf: root.world && root.world.fog ? root.world.fog.height : ({})
+                readonly property var vf: root.world && root.world.fog ? root.world.fog.volumetric : ({})
+                readonly property var af: root.world && root.world.fog ? root.world.fog.aerial : ({})
+                InspectorRow { label: "Height fog"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!fogSection.hf.enabled; onToggled: on => root.writeFogPart("height", { enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: !!fogSection.hf.enabled; label: "See through m"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: fogSection.hf.distance; fallback: 400; onCommitted: n => root.writeFogPart("height", { distance: root.clamp(n, 0.1, 10000000) }) } }
+                InspectorRow { visible: !!fogSection.hf.enabled; label: "Base, falloff"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: fogSection.hf.base_height; fallback: 0; onCommitted: n => root.writeFogPart("height", { base_height: n }) }
+                    NumberField { value: fogSection.hf.falloff; fallback: 0.05; onCommitted: n => root.writeFogPart("height", { falloff: root.clamp(n, 0, 10) }) } }
+                InspectorRow { visible: !!fogSection.hf.enabled; label: "Starts at m"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: fogSection.hf.start; fallback: 0; onCommitted: n => root.writeFogPart("height", { start: Math.max(n, 0) }) } }
+                InspectorRow { visible: !!fogSection.hf.enabled; label: "Day, dusk, night"; labelWidth: 110; Layout.fillWidth: true
+                    ColorField { value: fogSection.hf.day_color || "#C2CAD2"; onPicked: c => root.writeFogPart("height", { day_color: c }) }
+                    ColorField { value: fogSection.hf.dusk_color || "#E8A778"; onPicked: c => root.writeFogPart("height", { dusk_color: c }) }
+                    ColorField { value: fogSection.hf.night_color || "#2A3344"; onPicked: c => root.writeFogPart("height", { night_color: c }) } }
+                InspectorRow { visible: !!fogSection.hf.enabled; label: "Sun glow, g"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: fogSection.hf.sun_boost; fallback: 0.5; onCommitted: n => root.writeFogPart("height", { sun_boost: root.clamp(n, 0, 100) }) }
+                    NumberField { value: fogSection.hf.sun_boost_g; fallback: 0.75; onCommitted: n => root.writeFogPart("height", { sun_boost_g: root.clamp(n, 0, 0.99) }) } }
+
+                InspectorRow { label: "Volumetric"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!fogSection.vf.enabled; onToggled: on => root.writeFogPart("volumetric", { enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: !!fogSection.vf.enabled; label: "Density, g"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: fogSection.vf.density; fallback: 0.02; onCommitted: n => root.writeFogPart("volumetric", { density: root.clamp(n, 0, 10) }) }
+                    NumberField { value: fogSection.vf.anisotropy; fallback: 0.6; onCommitted: n => root.writeFogPart("volumetric", { anisotropy: root.clamp(n, -0.9, 0.9) }) } }
+                InspectorRow { visible: !!fogSection.vf.enabled; label: "Base, falloff"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: fogSection.vf.base_height; fallback: 0; onCommitted: n => root.writeFogPart("volumetric", { base_height: n }) }
+                    NumberField { value: fogSection.vf.falloff; fallback: 0.1; onCommitted: n => root.writeFogPart("volumetric", { falloff: root.clamp(n, 0, 10) }) } }
+                InspectorRow { visible: !!fogSection.vf.enabled; label: "Albedo, glow"; labelWidth: 110; Layout.fillWidth: true
+                    ColorField { value: fogSection.vf.albedo || "#FFFFFF"; onPicked: c => root.writeFogPart("volumetric", { albedo: c }) }
+                    ColorField { value: fogSection.vf.emissive || "#000000"; onPicked: c => root.writeFogPart("volumetric", { emissive: c }) }
+                    NumberField { value: fogSection.vf.emissive_strength; fallback: 0; onCommitted: n => root.writeFogPart("volumetric", { emissive_strength: Math.max(n, 0) }) } }
+                InspectorRow { visible: !!fogSection.vf.enabled; label: "Noise, scale m"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: fogSection.vf.noise; fallback: 0.5; onCommitted: n => root.writeFogPart("volumetric", { noise: root.clamp(n, 0, 1) }) }
+                    NumberField { value: fogSection.vf.noise_scale; fallback: 12; onCommitted: n => root.writeFogPart("volumetric", { noise_scale: root.clamp(n, 0.1, 10000) }) } }
+                InspectorRow { visible: !!fogSection.vf.enabled; label: "Drift m/s"; labelWidth: 110; Layout.fillWidth: true
+                    Repeater { model: 3; delegate: NumberField { required property int index; value: fogSection.vf.noise_wind ? fogSection.vf.noise_wind[index] : 0; onCommitted: n => root.writeFogPart("volumetric", { noise_wind: root.withIndex(fogSection.vf.noise_wind, index, root.clamp(n, -1000, 1000)) }) } } }
+                InspectorRow { visible: !!fogSection.vf.enabled; label: "Range m"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: fogSection.vf.range; fallback: 96; onCommitted: n => root.writeFogPart("volumetric", { range: root.clamp(n, 4, 2000) }) } }
+                InspectorRow { visible: !!fogSection.vf.enabled; label: "Quality"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: [{ value: "Low", label: "Low (80x45x48)" }, { value: "Medium", label: "Medium (128x72x64)" }, { value: "High", label: "High (160x90x96)" }]
+                        value: fogSection.vf.quality || "Medium"; onChosen: v => root.writeFogPart("volumetric", { quality: v }) } }
+                InspectorRow { visible: !!fogSection.vf.enabled; label: "Sun & moon, ambient"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!fogSection.vf.sun; onToggled: on => root.writeFogPart("volumetric", { sun: on }) }
+                    NumberField { value: fogSection.vf.ambient; fallback: 1; onCommitted: n => root.writeFogPart("volumetric", { ambient: root.clamp(n, 0, 100) }) } }
+
+                InspectorRow { label: "Aerial haze"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!fogSection.af.enabled; onToggled: on => root.writeFogPart("aerial", { enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: !!fogSection.af.enabled; label: "Half gone m"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: fogSection.af.distance; fallback: 8000; onCommitted: n => root.writeFogPart("aerial", { distance: root.clamp(n, 1, 10000000) }) } }
+                InspectorRow { visible: !!fogSection.af.enabled; label: "Tint, gray"; labelWidth: 110; Layout.fillWidth: true
+                    ColorField { value: fogSection.af.tint || "#FFFFFF"; onPicked: c => root.writeFogPart("aerial", { tint: c }) }
+                    NumberField { value: fogSection.af.desaturation; fallback: 0.4; onCommitted: n => root.writeFogPart("aerial", { desaturation: root.clamp(n, 0, 1) }) } }
+                InspectorRow { visible: !!fogSection.af.enabled; label: "Height m, blue"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: fogSection.af.height_scale; fallback: 1200; onCommitted: n => root.writeFogPart("aerial", { height_scale: root.clamp(n, 1, 100000) }) }
+                    NumberField { value: fogSection.af.blue_shift; fallback: 0.7; onCommitted: n => root.writeFogPart("aerial", { blue_shift: root.clamp(n, 0, 1) }) } }
+                Note { text: "Height fog thickens towards its base and thins going up; see-through is how far you can see at the base (95% gone). Its color follows the sun from day to dusk to night, and glows towards the sun. It covers the sky too, so the horizon melts into it. Volumetric fog fills a grid over the camera's first range metres: the sun and moon light it through their shadows (light shafts), lights opt in on their own card, it can glow by itself, and noise drifts through it with the wind. Volumes can add local fog inside their box. Aerial haze fades far things into the sky's color and grays them, less so higher up. `set fog density to` changes the height fog while the game runs." }
+            }
+            Section {
+                id: lightningSection
+                heading: "Lightning"; visible: !!root.world && !!root.world.lightning
+                readonly property var l: root.world && root.world.lightning ? root.world.lightning : ({})
+                InspectorRow { label: "Storm, a minute"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!lightningSection.l.storm; onToggled: on => root.writeLightning({ storm: on }) }
+                    NumberField { value: lightningSection.l.rate; fallback: 6; onCommitted: n => root.writeLightning({ rate: root.clamp(n, 0, 600) }) } }
+                InspectorRow { label: "Region from"; labelWidth: 110; Layout.fillWidth: true
+                    Repeater { model: root.is3d ? 3 : 2; delegate: NumberField { required property int index; value: root.world && root.world.lightning ? root.world.lightning.region_min[index] : 0; onCommitted: n => root.writeLightning({ region_min: root.withIndex(root.world.lightning.region_min, index, n) }) } } }
+                InspectorRow { label: "Region to"; labelWidth: 110; Layout.fillWidth: true
+                    Repeater { model: root.is3d ? 3 : 2; delegate: NumberField { required property int index; value: root.world && root.world.lightning ? root.world.lightning.region_max[index] : 0; onCommitted: n => root.writeLightning({ region_max: root.withIndex(root.world.lightning.region_max, index, n) }) } } }
+                InspectorRow { visible: root.is3d; label: "Flash lumens"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: lightningSection.l.intensity; fallback: 20000000; onCommitted: n => root.writeLightning({ intensity: Math.max(n, 0) }) } }
+                InspectorRow { label: "Color, decay s"; labelWidth: 110; Layout.fillWidth: true
+                    ColorField { value: lightningSection.l.color || "#D8E4FF"; onPicked: c => root.writeLightning({ color: c }) }
+                    NumberField { value: lightningSection.l.decay; fallback: 0.35; onCommitted: n => root.writeLightning({ decay: root.clamp(n, 0.01, 10) }) } }
+                InspectorRow { visible: root.is3d; label: "Height, reach m"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: lightningSection.l.flash_height; fallback: 60; onCommitted: n => root.writeLightning({ flash_height: root.clamp(n, 0, 10000) }) }
+                    NumberField { value: lightningSection.l.range; fallback: 2000; onCommitted: n => root.writeLightning({ range: root.clamp(n, 1, 1000000) }) } }
+                InspectorRow { label: "Sky pulse"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: lightningSection.l.sky_pulse; fallback: 6; onCommitted: n => root.writeLightning({ sky_pulse: root.clamp(n, 0, 1000) }) } }
+                InspectorRow { label: "Thunder, volume"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!lightningSection.l.thunder; onToggled: on => root.writeLightning({ thunder: on }) }
+                    NumberField { value: lightningSection.l.thunder_volume; fallback: 80; onCommitted: n => root.writeLightning({ thunder_volume: root.clamp(n, 0, 100) }) } }
+                InspectorRow { label: "Thunder sound"; labelWidth: 110; Layout.fillWidth: true
+                    AssetField { app: root.app; accept: ["audio"]; value: root.world && root.world.lightning ? root.world.lightning.thunder_sound : ""; placeholderText: "Built-in rumble"; onCommitted: p => root.writeLightning({ thunder_sound: p }) } }
+                InspectorRow { label: "Seed"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: lightningSection.l.seed; fallback: 1; onCommitted: n => root.writeLightning({ seed: Math.max(Math.round(n), 0) }) } }
+                Note { text: "A strike flashes a light above where it lands (3D), pulses the ambient light and the sky by the sky pulse, and its thunder arrives later the further away it is, at the speed of sound. A storm strikes at random inside the region at about its rate; one seed always throws the same storm. Blocks: `strike lightning at` and `set lightning storm to`." }
             }
             Section {
                 heading: "Shadows"; visible: !!root.world && root.is3d

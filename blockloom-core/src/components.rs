@@ -171,6 +171,9 @@ pub struct LightSpec {
     /// the traced world, lighting only what the raster rig still draws.
     #[serde(default = "default_true")]
     pub ray_traced: bool,
+    /// Whether it lights volumetric fog.
+    #[serde(default = "default_true")]
+    pub volumetric: bool,
 }
 
 fn default_true() -> bool {
@@ -227,6 +230,7 @@ impl Default for LightSpec {
             shadow_depth_bias: None,
             shadow_normal_bias: None,
             ray_traced: true,
+            volumetric: true,
         }
     }
 }

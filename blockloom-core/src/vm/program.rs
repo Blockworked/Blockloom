@@ -143,6 +143,10 @@ pub enum Action {
     SetRayTracing(bool),
     SetGiBounces(Value),
     SetGiSamples(Value),
+    SetFogDensity(Value),
+    SetAurora(Value),
+    StrikeLightning([Value; 3]),
+    SetLightningRate(Value),
     SetBody(BodyKind),
     ApplyImpulse([Value; 3]),
     SetVelocity([Value; 3]),
@@ -605,6 +609,9 @@ fn action_values(action: &Action) -> Vec<&Value> {
         | Action::SetShadowDistance(value)
         | Action::SetGiBounces(value)
         | Action::SetGiSamples(value)
+        | Action::SetFogDensity(value)
+        | Action::SetAurora(value)
+        | Action::SetLightningRate(value)
         | Action::Say(value)
         | Action::SetColor(value)
         | Action::StopSound { sound: value }
@@ -616,7 +623,8 @@ fn action_values(action: &Action) -> Vec<&Value> {
         Action::GoTo(target)
         | Action::ApplyImpulse(target)
         | Action::SetVelocity(target)
-        | Action::SetGravity(target) => target.iter().collect(),
+        | Action::SetGravity(target)
+        | Action::StrikeLightning(target) => target.iter().collect(),
         Action::NavigateTo { target, speed } => {
             let mut values: Vec<&Value> = target.iter().collect();
             values.push(speed);
@@ -867,6 +875,15 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         Action::SetShadowDistance(v) => Action::SetShadowDistance(lift_one(v, ctx)),
         Action::SetGiBounces(v) => Action::SetGiBounces(lift_one(v, ctx)),
         Action::SetGiSamples(v) => Action::SetGiSamples(lift_one(v, ctx)),
+        Action::SetFogDensity(v) => Action::SetFogDensity(lift_one(v, ctx)),
+        Action::SetAurora(v) => Action::SetAurora(lift_one(v, ctx)),
+        Action::SetLightningRate(v) => Action::SetLightningRate(lift_one(v, ctx)),
+        Action::StrikeLightning(mut t) => {
+            for v in &mut t {
+                *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
+            }
+            Action::StrikeLightning(t)
+        }
         Action::EnableVolume { volume, enabled } => Action::EnableVolume {
             volume: lift_one(volume, ctx),
             enabled,
@@ -1380,6 +1397,18 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         }
         K::SetGiSamples { samples } => {
             steps.push(Step::Action(Action::SetGiSamples(samples.clone())))
+        }
+        K::SetFogDensity { density } => {
+            steps.push(Step::Action(Action::SetFogDensity(density.clone())))
+        }
+        K::SetAurora { kp } => steps.push(Step::Action(Action::SetAurora(kp.clone()))),
+        K::StrikeLightning { x, y, z } => steps.push(Step::Action(Action::StrikeLightning([
+            x.clone(),
+            y.clone(),
+            z.clone(),
+        ]))),
+        K::SetLightningRate { rate } => {
+            steps.push(Step::Action(Action::SetLightningRate(rate.clone())))
         }
         K::SetBody { body } => steps.push(Step::Action(Action::SetBody(*body))),
         K::ApplyImpulse { x, y, z } => steps.push(Step::Action(Action::ApplyImpulse([

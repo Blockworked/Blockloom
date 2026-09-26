@@ -31,10 +31,12 @@ mod edit;
 pub mod embed;
 mod engine;
 mod environment;
+mod fog;
 mod fx;
 mod gpu;
 mod hdr;
 mod light_probes;
+mod lightning;
 mod lights;
 mod logic;
 mod luminance;
@@ -54,11 +56,14 @@ mod script;
 mod shadows;
 mod sky;
 mod sound;
+mod space;
 mod streaming;
 mod ui;
 mod ui_systems;
 mod volume_heat;
 mod volumes;
+#[cfg(target_arch = "wasm32")]
+pub mod web;
 mod world;
 
 use bevy::asset::{AssetPlugin, UnapprovedPathMode};
@@ -110,7 +115,7 @@ pub fn run_process() {
 /// are handed to the asset server as absolute paths. Those are unapproved
 /// by default in Bevy 0.19 (`Forbid`), which fails the load and leaves a
 /// white sprite - so allow them here. The files are the user's own.
-fn asset_plugin() -> AssetPlugin {
+pub(crate) fn asset_plugin() -> AssetPlugin {
     AssetPlugin {
         unapproved_path_mode: UnapprovedPathMode::Allow,
         ..default()
@@ -119,7 +124,7 @@ fn asset_plugin() -> AssetPlugin {
 
 /// Everything past the platform plugins: the world's resources, physics and
 /// schedules, the same whether it has a window or an embedded view.
-fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
+pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     engine.prewarm = true;
     app.add_plugins((RenderDiagnosticsPlugin, MeshAllocatorDiagnosticPlugin));
     app.insert_resource(ClearColor(Color::srgb(0.11, 0.14, 0.19)))
@@ -152,6 +157,7 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     luminance::register(app);
     capture::register(app);
     ray_tracing::register(app, mode);
+    lightning::register(app);
     edit::configure(app);
     // Both of these only exist to talk to an editor, and a built game has
     // none: no corner status, no handshake.
@@ -347,6 +353,8 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             pbr_patch::register(app);
             app.init_resource::<lights::LightMasks>();
             sky::register(app);
+            space::register(app);
+            fog::register(app);
             use bevy::camera::visibility::VisibilitySystems;
             app.add_systems(
                 PostUpdate,

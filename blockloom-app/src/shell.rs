@@ -370,9 +370,31 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "set-sky",
         cmd: "set_sky",
         aliases: &["set_sky"],
-        summary: "Set the 3D sky: kind (Flat, Physical, Gradient, Hdri), sun placement, each kind's settings, and background/reflections/lighting.",
+        summary: "Set the 3D sky: kind (Flat, Physical, Gradient, Hdri), sun placement, each kind's settings, background/reflections/lighting, stars and aurora.",
         args: &[ArgSpec {
             name: "sky",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-fog",
+        cmd: "set_fog",
+        aliases: &["set_fog"],
+        summary: "Set the 3D air: height fog, volumetric fog (froxels lit by sun, moon and lights) and aerial perspective.",
+        args: &[ArgSpec {
+            name: "fog",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-lightning",
+        cmd: "set_lightning",
+        aliases: &["set_lightning"],
+        summary: "Set lightning: flash light, sky pulse, thunder, and the random-strike storm (rate a minute, region box).",
+        args: &[ArgSpec {
+            name: "lightning",
             ty: "object",
             required: true,
         }],

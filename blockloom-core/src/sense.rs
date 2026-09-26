@@ -208,6 +208,10 @@ pub struct AtmosphereSense {
     /// Names of the environment volumes showing at the camera, lowest
     /// priority first. What `active volumes` reports.
     pub volumes: Vec<String>,
+    /// The aurora's KP index, 0 when there is none.
+    pub aurora: f32,
+    /// How bright the latest lightning flash is right now, 0-1.
+    pub lightning: f32,
 }
 
 impl Default for AtmosphereSense {
@@ -235,6 +239,8 @@ impl Default for AtmosphereSense {
             ray_tracing: false,
             ray_tracing_available: false,
             volumes: Vec::new(),
+            aurora: 0.0,
+            lightning: 0.0,
         }
     }
 }
@@ -263,6 +269,8 @@ pub const ATMOSPHERE_FIELDS: &[&str] = &[
     "peak brightness",
     "ray tracing",
     "ray tracing available",
+    "aurora",
+    "lightning",
 ];
 
 impl AtmosphereSense {
@@ -302,6 +310,8 @@ impl AtmosphereSense {
             "peakbrightness" | "peak" => self.peak_brightness,
             "raytracing" | "rt" => f32::from(u8::from(self.ray_tracing)),
             "raytracingavailable" => f32::from(u8::from(self.ray_tracing_available)),
+            "aurora" | "kp" => self.aurora,
+            "lightning" | "flash" => self.lightning,
             _ => return None,
         };
         Some(value as f64)

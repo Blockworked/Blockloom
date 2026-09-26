@@ -2,7 +2,8 @@
 // would go: a fullscreen triangle at the far plane, depth-tested so only
 // what nothing covers is drawn. Gradients are worked out per pixel, a
 // physical sky reads its light cube and adds its sun and moon, an HDRI
-// reads its image sharp or its filtered light blurred.
+// reads its image sharp or its filtered light blurred. The main view adds
+// the stars, the Milky Way, aurora and any lightning flash on top.
 
 import bevy_render::view::View;
 import bevy_pbr::render::utils::coords_to_viewport_uv;
@@ -11,6 +12,7 @@ import blockloom::sky::{
     cube_lookup, hdri_lookup, gradient_radiance, disks,
 };
 import blockloom::hash::hash21;
+import blockloom::space::{SpaceParams, stars, aurora, milky_way_uv};
 
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var<uniform> sky: SkyParams;
@@ -18,6 +20,8 @@ import blockloom::hash::hash21;
 @group(0) @binding(3) var source: texture_cube<f32>;
 @group(0) @binding(4) var blurred: texture_cube<f32>;
 @group(0) @binding(5) var cube_sampler: sampler;
+@group(0) @binding(6) var<uniform> space: SpaceParams;
+@group(0) @binding(7) var milky_way: texture_2d<f32>;
 
 fn ray_direction(position: vec2<f32>) -> vec3<f32> {
     let clip = view.view_from_clip * vec4<f32>(
@@ -63,6 +67,17 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             }
         }
         default: {}
+    }
+    // Space belongs to the view itself, not to what probes capture.
+    if (sky.info.y & FLAG_DISKS) != 0u {
+        let pixel = length(fwidth(dir));
+        var night = stars(dir, space, pixel) + aurora(dir, space);
+        if space.milky_way.x > 0.0 {
+            let fade = space.twinkle.w * smoothstep(0.0, max(space.twinkle.z, 1e-4), dir.y);
+            let band = textureSampleLevel(milky_way, cube_sampler, milky_way_uv(dir, space), 0.0).rgb;
+            night += band * space.milky_way.x * fade;
+        }
+        color += night * sky.scale.x + space.flash.rgb * space.time.w;
     }
     color *= view.exposure;
     if (sky.info.y & FLAG_DITHER) != 0u {

@@ -303,6 +303,10 @@ impl Host for Recorder {
             | Act::SetRayTracing { .. }
             | Act::SetGiBounces { .. }
             | Act::SetGiSamples { .. }
+            | Act::SetFogDensity { .. }
+            | Act::SetAurora { .. }
+            | Act::StrikeLightning { .. }
+            | Act::SetLightningRate { .. }
             | Act::SetPaused { .. } => String::new(),
             _ => actor.to_string(),
         };
@@ -991,6 +995,10 @@ fn line_of(act: &Act) -> String {
         Act::SetRayTracing { enabled } => format!("SetRayTracing {enabled}"),
         Act::SetGiBounces { bounces } => format!("SetGiBounces {bounces:?}"),
         Act::SetGiSamples { samples } => format!("SetGiSamples {samples:?}"),
+        Act::SetFogDensity { density } => format!("SetFogDensity {density:?}"),
+        Act::SetAurora { kp } => format!("SetAurora {kp:?}"),
+        Act::StrikeLightning { at } => format!("StrikeLightning {at:?}"),
+        Act::SetLightningRate { rate } => format!("SetLightningRate {rate:?}"),
         Act::Say { text } => format!("Say {text}"),
         Act::SetColor { color } => format!("SetColor {color}"),
         Act::SetVisible { visible } => format!("SetVisible {visible}"),
@@ -1209,6 +1217,10 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetRayTracing { enabled } => format!("|SetRayTracing {enabled}"),
         Effect::SetGiBounces { bounces } => format!("|SetGiBounces {bounces:?}"),
         Effect::SetGiSamples { samples } => format!("|SetGiSamples {samples:?}"),
+        Effect::SetFogDensity { density } => format!("|SetFogDensity {density:?}"),
+        Effect::SetAurora { kp } => format!("|SetAurora {kp:?}"),
+        Effect::StrikeLightning { at } => format!("|StrikeLightning {at:?}"),
+        Effect::SetLightningRate { rate } => format!("|SetLightningRate {rate:?}"),
         Effect::Say { actor, text } => format!("{actor}|Say {text}"),
         Effect::SetColor { actor, color } => format!("{actor}|SetColor {color}"),
         Effect::SetVisible { actor, visible } => format!("{actor}|SetVisible {visible}"),
@@ -1757,6 +1769,24 @@ fn arithmetic_lands_on_the_same_numbers() {
                 samples: Value::text("lots"),
             },
             K::SetRayTracing { enabled: false },
+            K::SetFogDensity {
+                density: op("Div", vec![number(3.0), number(300.0)]),
+            },
+            K::SetAurora {
+                kp: op("Add", vec![number(4.0), number(3.0)]),
+            },
+            // A KP that isn't a number stands a zero, the same both ways.
+            K::SetAurora {
+                kp: Value::text("bright"),
+            },
+            K::StrikeLightning {
+                x: number(12.0),
+                y: op("Sub", vec![number(0.0), number(1.0)]),
+                z: op("Mul", vec![number(-4.0), number(2.5)]),
+            },
+            K::SetLightningRate {
+                rate: op("Mul", vec![number(3.0), number(4.0)]),
+            },
             K::Move {
                 steps: op("Math", vec![Value::text("Sqrt"), number(2.0)]),
             },

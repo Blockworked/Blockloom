@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 #[derive(Component)]
 pub struct Lit {
     pub spec: LightSpec,
-    child: Entity,
+    pub(crate) child: Entity,
 }
 
 /// The child entity carrying an actor's light.

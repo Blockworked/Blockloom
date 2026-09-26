@@ -85,14 +85,64 @@ stage-player target file:
     mkdir -p "target/release/players/{{target}}"
     cp "{{file}}" "target/release/players/{{target}}/{{ if target =~ 'windows' { 'blockloom-runtime.exe' } else { 'blockloom-runtime' } }}"
 
-# Web player groundwork (Phase 8): the runtime check-builds for
-# wasm32-unknown-unknown with --no-default-features - no Solari ray tracing,
-# no Basis/KTX2 C++ codecs (web v1 ships PNG/JPEG), no `dlopen` scripts or
-# native logic (blocks run on the VM there). Needs the target once:
-# `rustup target add wasm32-unknown-unknown`. The single-file `.html` build
-# and `web-serve` smoke host follow once the web entry point lands.
+# Web player (Phase 8): the runtime builds for wasm32-unknown-unknown with
+# --no-default-features - no Solari ray tracing, no Basis/KTX2 C++ codecs
+# (web v1 ships PNG/JPEG), no `dlopen` scripts or native logic (blocks run
+# on the VM there). Needs the target once: `rustup target add
+# wasm32-unknown-unknown`, plus a matching glue generator once:
+# `cargo install wasm-bindgen-cli --version <lock's wasm-bindgen> --locked`.
 web-check:
     cargo check -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown
+
+# A runnable browser folder: the wasm player, its JS glue, and a host page
+# that feeds it a pack. Pass a game folder (one holding `game.pack`) to play
+# a real game; without one the page reports the missing pack through the
+# error overlay. Assets resolve against the server root, so serve the folder
+# `web-serve` makes - the single-file `.html` with everything inlined is the
+# next packaging step, not this one.
+web-build out="web-dist" pack="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown
+    if ! command -v wasm-bindgen >/dev/null; then
+        echo "need wasm-bindgen-cli (once): cargo install wasm-bindgen-cli --version $(cargo metadata --format-version 1 --filter-platform wasm32-unknown-unknown 2>/dev/null | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "wasm-bindgen"))') --locked"
+        exit 1
+    fi
+    rm -rf "{{out}}/pkg"
+    mkdir -p "{{out}}/pkg"
+    wasm-bindgen --target web --out-dir "{{out}}/pkg" "${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/debug/blockloom_runtime.wasm"
+    if [ -n "{{pack}}" ]; then cp -r "{{pack}}"/. "{{out}}"/; fi
+    cat > "{{out}}/index.html" <<'PAGE'
+    <!DOCTYPE html>
+    <html lang="en">
+    <head><meta charset="utf-8"><title>Blockloom</title></head>
+    <body style="margin:0;background:#1b212c;display:flex;justify-content:center;align-items:center;min-height:100vh;">
+    <canvas id="blockloom-canvas" width="960" height="720"></canvas>
+    <script type="module">
+    import init, { start_game } from "./pkg/blockloom_runtime.js";
+    const packUrl = new URLSearchParams(location.search).get("pack") ?? "game.pack";
+    await init();
+    let pack;
+    try {
+        const response = await fetch(packUrl);
+        if (!response.ok) throw new Error(response.status + " " + response.statusText);
+        pack = await response.text();
+    } catch (e) {
+        document.body.insertAdjacentHTML("beforeend",
+            `<div style="position:fixed;left:16px;right:16px;bottom:16px;padding:12px 16px;background:#3a1414;color:#ffd7d7;font:14px sans-serif;border:1px solid #a33;border-radius:8px;">Blockloom: couldn't load ${packUrl}: ${e}</div>`);
+        throw e;
+    }
+    start_game(pack, "#blockloom-canvas");
+    </script>
+    </body>
+    </html>
+    PAGE
+    echo "web player in {{out}}/ - serve it with: just web-serve {{out}}"
+
+# Static host for the `web-build` folder: right MIME types for wasm/JS, so a
+# smoke test (or a browser) can load the player with no real server.
+web-serve dir="web-dist" port="8080":
+    cd "{{dir}}" && python3 -c 'import functools, http.server; http.server.SimpleHTTPRequestHandler.extensions_map.update({".wasm": "application/wasm", ".js": "text/javascript"}); http.server.test(functools.partial(http.server.ThreadingHTTPServer, ("127.0.0.1", {{port}}), http.server.SimpleHTTPRequestHandler), bind=None)'
 
 test:
     cargo test --workspace

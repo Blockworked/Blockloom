@@ -15,7 +15,9 @@ use bevy::window::PrimaryWindow;
 use blockloom_protocol::PreviewInput;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+// `std::time::Instant` panics on wasm (no OS clock there); `web_time` reads
+// the browser's clock instead and wraps std everywhere else.
+use web_time::{Duration, Instant};
 
 /// How often a frame is captured while previewing.
 const CAPTURE_INTERVAL: Duration = Duration::from_millis(66);

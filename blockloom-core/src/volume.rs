@@ -72,6 +72,16 @@ pub struct VolumeOverrides {
     pub sky_exposure: Override<f32>,
     /// Multiplies the sky's diffuse light alone.
     pub ambient_dimmer: Override<f32>,
+    /// Height fog's extinction per metre at its base; turns it on inside.
+    pub fog_density: Override<f32>,
+    /// Height fog's color, whatever the time of day.
+    pub fog_color: Override<String>,
+    pub fog_height: Override<f32>,
+    /// Volumetric fog's extinction per metre; turns it on inside.
+    pub volumetric_density: Override<f32>,
+    pub volumetric_albedo: Override<String>,
+    /// Metres at which aerial haze takes half a far object's light.
+    pub haze_distance: Override<f32>,
 }
 
 impl Default for VolumeOverrides {
@@ -97,6 +107,12 @@ impl Default for VolumeOverrides {
             indirect: Override::off(1.0),
             sky_exposure: Override::off(world.sky.exposure),
             ambient_dimmer: Override::off(world.sky.ambient_dimmer),
+            fog_density: Override::off(crate::fog::density_for_distance(world.fog.height.distance)),
+            fog_color: Override::off(world.fog.height.day_color.clone()),
+            fog_height: Override::off(world.fog.height.base_height),
+            volumetric_density: Override::off(world.fog.volumetric.density),
+            volumetric_albedo: Override::off(world.fog.volumetric.albedo.clone()),
+            haze_distance: Override::off(world.fog.aerial.distance),
         }
     }
 }
@@ -122,6 +138,12 @@ impl VolumeOverrides {
             ("indirect", self.indirect.on),
             ("sky_exposure", self.sky_exposure.on),
             ("ambient_dimmer", self.ambient_dimmer.on),
+            ("fog_density", self.fog_density.on),
+            ("fog_color", self.fog_color.on),
+            ("fog_height", self.fog_height.on),
+            ("volumetric_density", self.volumetric_density.on),
+            ("volumetric_albedo", self.volumetric_albedo.on),
+            ("haze_distance", self.haze_distance.on),
         ]
         .into_iter()
         .filter_map(|(name, on)| on.then_some(name))
@@ -154,6 +176,9 @@ pub struct VolumeSpec {
     pub enabled: bool,
     #[serde(default)]
     pub overrides: VolumeOverrides,
+    /// Fog it adds inside its shape, whoever is looking from where.
+    #[serde(default)]
+    pub fog: crate::fog::LocalFog,
 }
 
 fn default_half_extents() -> [f32; 3] {
@@ -187,6 +212,7 @@ impl Default for VolumeSpec {
             weight: default_weight(),
             enabled: true,
             overrides: VolumeOverrides::default(),
+            fog: crate::fog::LocalFog::default(),
         }
     }
 }

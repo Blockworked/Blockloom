@@ -146,6 +146,14 @@ impl Backend {
                 let sky: blockloom_core::sky::Sky = arg(&args, "sky")?;
                 to_json(commands::set_sky(state, app, sky)?)
             }
+            "set_fog" => {
+                let fog: blockloom_core::fog::Fog = arg(&args, "fog")?;
+                to_json(commands::set_fog(state, app, fog)?)
+            }
+            "set_lightning" => {
+                let lightning: blockloom_core::lightning::Lightning = arg(&args, "lightning")?;
+                to_json(commands::set_lightning(state, app, lightning)?)
+            }
             "set_post_process" => {
                 let post: PostProcess = arg(&args, "post")?;
                 to_json(commands::set_post_process(state, app, post)?)

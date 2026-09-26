@@ -779,6 +779,8 @@ impl Project {
             sky.hdri.brightness = lighting.sky_brightness;
         }
         self.world.sky.normalize();
+        self.world.fog.normalize();
+        self.world.lightning.normalize();
     }
 
     /// Pre-component projects named the followed actor on the world camera.
@@ -940,6 +942,8 @@ impl Project {
         }
         repoint(&mut self.icon);
         repoint(&mut self.world.sky.hdri.path);
+        repoint(&mut self.world.sky.stars.milky_way);
+        repoint(&mut self.world.lightning.thunder_sound);
         if let Some(font) = self.world.speech_bubble.font_asset.as_mut() {
             repoint(font);
         }

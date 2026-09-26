@@ -126,6 +126,12 @@ pub struct PhysicalSky {
     /// Sun elevations in degrees where night starts fading in and where it
     /// is complete.
     pub night_ramp: [f32; 2],
+    /// Let the moon light the world as a directional light of its own.
+    pub moon_light: bool,
+    /// Lux under a full moon overhead; a real one gives about 0.25.
+    pub moon_lux: f32,
+    pub moon_color: String,
+    pub moon_shadows: bool,
 }
 
 impl Default for PhysicalSky {
@@ -156,6 +162,10 @@ impl Default for PhysicalSky {
             night_color: "#1A2B4D".to_string(),
             night_brightness: 1.0,
             night_ramp: [2.0, -12.0],
+            moon_light: true,
+            moon_lux: 0.25,
+            moon_color: "#C9D6FF".to_string(),
+            moon_shadows: false,
         }
     }
 }
@@ -231,6 +241,106 @@ impl Default for HdriSky {
     }
 }
 
+/// A procedural star field over any sky but a flat one, fading in as the
+/// sun goes down.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Stars {
+    pub enabled: bool,
+    /// 0-1: the share of the sky's cells holding a star.
+    pub density: f32,
+    /// Nits of the brightest star.
+    pub brightness: f32,
+    /// How steeply faint stars outnumber bright ones: higher is fainter.
+    pub magnitude_slope: f32,
+    /// 0-1: how far colors spread from white towards red and blue.
+    pub color_variation: f32,
+    /// 0-1: how much a star's brightness flickers.
+    pub twinkle: f32,
+    /// Flickers a second.
+    pub twinkle_speed: f32,
+    /// Degrees above the horizon over which stars fade out.
+    pub horizon_fade: f32,
+    /// Sun elevations in degrees where stars start to show and where they
+    /// are at full strength.
+    pub sun_fade: [f32; 2],
+    /// A panorama of the Milky Way, laid over the field. Empty for none.
+    pub milky_way: String,
+    /// Nits of a texel of 1.0.
+    pub milky_way_brightness: f32,
+    /// Degrees the band is turned about the vertical, and tilted.
+    pub milky_way_rotation: f32,
+    pub milky_way_tilt: f32,
+}
+
+impl Default for Stars {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            density: 0.35,
+            brightness: 60.0,
+            magnitude_slope: 3.0,
+            color_variation: 0.5,
+            twinkle: 0.3,
+            twinkle_speed: 1.5,
+            horizon_fade: 8.0,
+            sun_fade: [-2.0, -14.0],
+            milky_way: String::new(),
+            milky_way_brightness: 2.0,
+            milky_way_rotation: 0.0,
+            milky_way_tilt: 60.0,
+        }
+    }
+}
+
+/// Curtains of aurora high over the camera, flowing slowly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Aurora {
+    pub enabled: bool,
+    /// The KP index, 0-9: 0 is none, 9 fills the sky from the pole down.
+    pub kp: f32,
+    /// 1-3 sheets, one behind the other.
+    pub layers: u32,
+    /// Km to the curtains' foot, and how tall they hang.
+    pub altitude: f32,
+    pub height: f32,
+    /// Km across one fold of a curtain.
+    pub width: f32,
+    /// Km between the fine vertical rays.
+    pub ray_scale: f32,
+    pub bottom_color: String,
+    pub top_color: String,
+    /// Nits at the brightest.
+    pub brightness: f32,
+    /// How fast the folds flow.
+    pub speed: f32,
+    /// 0-1: a diffuse glow along the poleward horizon.
+    pub horizon_glow: f32,
+    /// Degrees clockwise from north the pole lies towards.
+    pub pole_azimuth: f32,
+}
+
+impl Default for Aurora {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            kp: 4.0,
+            layers: 2,
+            altitude: 100.0,
+            height: 150.0,
+            width: 60.0,
+            ray_scale: 1.5,
+            bottom_color: "#38FF8A".to_string(),
+            top_color: "#A64DFF".to_string(),
+            brightness: 8.0,
+            speed: 1.0,
+            horizon_glow: 0.3,
+            pole_azimuth: 0.0,
+        }
+    }
+}
+
 /// The sky, and how much of the world it lights.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -251,6 +361,8 @@ pub struct Sky {
     /// EV added to the sky's own brightness, on top of the camera's
     /// exposure rather than instead of it.
     pub exposure: f32,
+    pub stars: Stars,
+    pub aurora: Aurora,
 }
 
 impl Default for Sky {
@@ -266,6 +378,8 @@ impl Default for Sky {
             lighting: true,
             ambient_dimmer: 1.0,
             exposure: 0.0,
+            stars: Stars::default(),
+            aurora: Aurora::default(),
         }
     }
 }
@@ -332,8 +446,83 @@ impl Sky {
         h.blur = finite(h.blur, 0.0).clamp(0.0, 1.0);
         h.seam_fix = finite(h.seam_fix, 0.0).clamp(0.0, 45.0);
 
+        p.moon_lux = finite(p.moon_lux, d.moon_lux).clamp(0.0, 1.0e5);
+
         self.ambient_dimmer = finite(self.ambient_dimmer, 1.0).clamp(0.0, 10.0);
         self.exposure = finite(self.exposure, 0.0).clamp(-16.0, 16.0);
+
+        let s = &mut self.stars;
+        let d = Stars::default();
+        s.density = finite(s.density, d.density).clamp(0.0, 1.0);
+        s.brightness = finite(s.brightness, d.brightness).clamp(0.0, 1.0e6);
+        s.magnitude_slope = finite(s.magnitude_slope, d.magnitude_slope).clamp(0.5, 10.0);
+        s.color_variation = finite(s.color_variation, d.color_variation).clamp(0.0, 1.0);
+        s.twinkle = finite(s.twinkle, d.twinkle).clamp(0.0, 1.0);
+        s.twinkle_speed = finite(s.twinkle_speed, d.twinkle_speed).clamp(0.0, 50.0);
+        s.horizon_fade = finite(s.horizon_fade, d.horizon_fade).clamp(0.0, 90.0);
+        s.sun_fade = [
+            finite(s.sun_fade[0], d.sun_fade[0]).clamp(-90.0, 90.0),
+            finite(s.sun_fade[1], d.sun_fade[1]).clamp(-90.0, 90.0),
+        ];
+        s.milky_way = s.milky_way.trim().replace('\\', "/");
+        s.milky_way_brightness = finite(s.milky_way_brightness, 2.0).clamp(0.0, 1.0e6);
+        s.milky_way_rotation = finite(s.milky_way_rotation, 0.0).rem_euclid(360.0);
+        s.milky_way_tilt = finite(s.milky_way_tilt, d.milky_way_tilt).clamp(-90.0, 90.0);
+
+        let a = &mut self.aurora;
+        let d = Aurora::default();
+        a.kp = finite(a.kp, d.kp).clamp(0.0, 9.0);
+        a.layers = a.layers.clamp(1, 3);
+        a.altitude = finite(a.altitude, d.altitude).clamp(1.0, 1000.0);
+        a.height = finite(a.height, d.height).clamp(1.0, 1000.0);
+        a.width = finite(a.width, d.width).clamp(0.1, 10_000.0);
+        a.ray_scale = finite(a.ray_scale, d.ray_scale).clamp(0.01, 1000.0);
+        a.brightness = finite(a.brightness, d.brightness).clamp(0.0, 1.0e6);
+        a.speed = finite(a.speed, d.speed).clamp(0.0, 100.0);
+        a.horizon_glow = finite(a.horizon_glow, d.horizon_glow).clamp(0.0, 1.0);
+        a.pole_azimuth = finite(a.pole_azimuth, 0.0).rem_euclid(360.0);
+    }
+
+    /// The colors, by name, for a caller that checks them.
+    pub fn colors_mut(&mut self) -> [(&'static str, &mut String); 10] {
+        [
+            ("ground", &mut self.physical.ground_albedo),
+            ("night", &mut self.physical.night_color),
+            ("moon", &mut self.physical.moon_color),
+            ("top", &mut self.gradient.top),
+            ("middle", &mut self.gradient.middle),
+            ("bottom", &mut self.gradient.bottom),
+            ("warm", &mut self.gradient.warm_color),
+            ("tint", &mut self.hdri.tint),
+            ("aurora bottom", &mut self.aurora.bottom_color),
+            ("aurora top", &mut self.aurora.top_color),
+        ]
+    }
+
+    /// Whether anything is drawn over the sky beyond its kind: stars or an
+    /// aurora.
+    pub fn has_space(&self) -> bool {
+        self.stars.enabled || (self.aurora.enabled && self.aurora.kp > 0.0)
+    }
+
+    /// 0 by day to 1 once the sun is low enough for stars, on `sun_fade`.
+    pub fn star_visibility(&self, towards_sun: [f32; 3]) -> f32 {
+        let [start, end] = self.stars.sun_fade;
+        ramp_on_elevation(towards_sun, start, end)
+    }
+
+    /// Lux the moon lights the world with, 0 with no moon light: its
+    /// brightness by its phase and by how high it stands.
+    pub fn moon_illuminance(&self) -> f32 {
+        let p = &self.physical;
+        if self.active_kind() != SkyKind::Physical || !p.moon || !p.moon_light {
+            return 0.0;
+        }
+        let lit = 0.5 - 0.5 * (p.moon_phase * std::f32::consts::TAU).cos();
+        let up = Vec3::from_array(self.moon_direction()).y;
+        // Fades across the horizon like the sun does.
+        let risen = smoothstep(-0.02, 0.06, up);
+        p.moon_lux * lit * risen
     }
 
     /// The kind that actually draws: an HDRI with no file is no sky.
@@ -464,18 +653,23 @@ impl PhysicalSky {
 
     /// 0 by day, 1 by night, ramped on the sun's elevation.
     pub fn night(&self, towards_sun: [f32; 3]) -> f32 {
-        let elevation = Vec3::from_array(towards_sun)
-            .normalize_or(Vec3::Y)
-            .y
-            .clamp(-1.0, 1.0)
-            .asin()
-            .to_degrees();
         let [start, end] = self.night_ramp;
-        if (start - end).abs() < 1e-3 {
-            return if elevation <= end { 1.0 } else { 0.0 };
-        }
-        smoothstep(start, end, elevation)
+        ramp_on_elevation(towards_sun, start, end)
     }
+}
+
+/// 0 with the sun above `start` degrees, 1 below `end`, eased between.
+fn ramp_on_elevation(towards_sun: [f32; 3], start: f32, end: f32) -> f32 {
+    let elevation = Vec3::from_array(towards_sun)
+        .normalize_or(Vec3::Y)
+        .y
+        .clamp(-1.0, 1.0)
+        .asin()
+        .to_degrees();
+    if (start - end).abs() < 1e-3 {
+        return if elevation <= end { 1.0 } else { 0.0 };
+    }
+    smoothstep(start, end, elevation)
 }
 
 /// Ozone sits in a layer 25 km up, 30 km thick.
@@ -680,6 +874,48 @@ mod tests {
         assert!(sky.gradient.softness > 0.0);
         assert_eq!(sky.hdri.path, "assets/sky.hdr");
         assert_eq!(sky.exposure, 0.0);
+    }
+
+    #[test]
+    fn stars_come_out_as_the_sun_goes_down() {
+        let sky = Sky::default();
+        assert_eq!(sky.star_visibility(dir(0.0, 30.0)), 0.0);
+        assert_eq!(sky.star_visibility(dir(0.0, -30.0)), 1.0);
+        let dusk = sky.star_visibility(dir(0.0, -8.0));
+        assert!(dusk > 0.0 && dusk < 1.0);
+    }
+
+    #[test]
+    fn the_moon_lights_by_its_phase_and_height() {
+        let mut sky = physical();
+        sky.physical.moon = true;
+        sky.physical.moon_elevation = 45.0;
+        sky.physical.moon_phase = 0.5;
+        assert!((sky.moon_illuminance() - 0.25).abs() < 1e-5);
+        sky.physical.moon_phase = 0.25;
+        assert!((sky.moon_illuminance() - 0.125).abs() < 1e-5);
+        sky.physical.moon_elevation = -10.0;
+        assert_eq!(sky.moon_illuminance(), 0.0);
+        sky.physical.moon_elevation = 45.0;
+        sky.physical.moon_light = false;
+        assert_eq!(sky.moon_illuminance(), 0.0);
+        // No moon on other skies.
+        let mut gradient = sky.clone();
+        gradient.kind = SkyKind::Gradient;
+        gradient.physical.moon_light = true;
+        assert_eq!(gradient.moon_illuminance(), 0.0);
+    }
+
+    #[test]
+    fn space_is_stars_or_an_aurora_with_some_kp() {
+        let mut sky = Sky::default();
+        assert!(!sky.has_space());
+        sky.aurora.enabled = true;
+        assert!(sky.has_space());
+        sky.aurora.kp = 0.0;
+        assert!(!sky.has_space());
+        sky.stars.enabled = true;
+        assert!(sky.has_space());
     }
 
     #[test]

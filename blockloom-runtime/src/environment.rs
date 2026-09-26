@@ -51,6 +51,16 @@ pub struct Environment {
     pub sky_exposure: f32,
     /// Multiplier on the sky's diffuse light alone.
     pub ambient_dimmer: f32,
+    /// Height fog's extinction per metre at its base, 0 for none.
+    pub fog_density: f32,
+    /// Height fog's color by day, at dusk and by night.
+    pub fog_colors: [Color; 3],
+    pub fog_height: f32,
+    /// Volumetric fog's extinction per metre at its base, 0 for none.
+    pub volumetric_density: f32,
+    pub volumetric_albedo: Color,
+    /// Aerial haze's extinction per metre, 0 for none.
+    pub haze: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -112,6 +122,28 @@ impl Environment {
             indirect: 1.0,
             sky_exposure: world.sky.exposure,
             ambient_dimmer: world.sky.ambient_dimmer,
+            fog_density: if world.fog.height.enabled {
+                blockloom_core::fog::density_for_distance(world.fog.height.distance)
+            } else {
+                0.0
+            },
+            fog_colors: [
+                parse_color(&world.fog.height.day_color),
+                parse_color(&world.fog.height.dusk_color),
+                parse_color(&world.fog.height.night_color),
+            ],
+            fog_height: world.fog.height.base_height,
+            volumetric_density: if world.fog.volumetric.enabled {
+                world.fog.volumetric.density
+            } else {
+                0.0
+            },
+            volumetric_albedo: parse_color(&world.fog.volumetric.albedo),
+            haze: if world.fog.aerial.enabled {
+                haze_for_distance(world.fog.aerial.distance)
+            } else {
+                0.0
+            },
         }
     }
 
@@ -184,6 +216,14 @@ impl Environment {
         number(&mut self.indirect, over.indirect);
         number(&mut self.sky_exposure, over.sky_exposure);
         number(&mut self.ambient_dimmer, over.ambient_dimmer);
+        number(&mut self.fog_density, over.fog_density);
+        for fog in &mut self.fog_colors {
+            color(fog, over.fog_color);
+        }
+        number(&mut self.fog_height, over.fog_height);
+        number(&mut self.volumetric_density, over.volumetric_density);
+        color(&mut self.volumetric_albedo, over.volumetric_albedo);
+        number(&mut self.haze, over.haze);
     }
 }
 
@@ -207,6 +247,19 @@ pub struct EnvironmentOverride {
     pub indirect: Option<f32>,
     pub sky_exposure: Option<f32>,
     pub ambient_dimmer: Option<f32>,
+    pub fog_density: Option<f32>,
+    pub fog_color: Option<Color>,
+    pub fog_height: Option<f32>,
+    pub volumetric_density: Option<f32>,
+    pub volumetric_albedo: Option<Color>,
+    /// Extinction per metre, from the volume's haze distance.
+    pub haze: Option<f32>,
+}
+
+/// Haze extinction per metre that halves a far object's light over
+/// `distance`.
+pub fn haze_for_distance(distance: f32) -> f32 {
+    std::f32::consts::LN_2 / distance.max(1.0)
 }
 
 impl EnvironmentOverride {
@@ -231,6 +284,24 @@ impl EnvironmentOverride {
             indirect: overrides.indirect.get().map(|m| m.max(0.0)),
             sky_exposure: overrides.sky_exposure.get().filter(|ev| ev.is_finite()),
             ambient_dimmer: overrides.ambient_dimmer.get().map(|m| m.max(0.0)),
+            fog_density: overrides
+                .fog_density
+                .get()
+                .filter(|d| d.is_finite())
+                .map(|d| d.max(0.0)),
+            fog_color: color(overrides.fog_color.get()),
+            fog_height: overrides.fog_height.get().filter(|h| h.is_finite()),
+            volumetric_density: overrides
+                .volumetric_density
+                .get()
+                .filter(|d| d.is_finite())
+                .map(|d| d.max(0.0)),
+            volumetric_albedo: color(overrides.volumetric_albedo.get()),
+            haze: overrides
+                .haze_distance
+                .get()
+                .filter(|d| d.is_finite())
+                .map(haze_for_distance),
         }
     }
 
@@ -258,6 +329,15 @@ impl EnvironmentOverride {
             ("indirect", self.indirect.map(show_number)),
             ("sky_exposure", self.sky_exposure.map(show_number)),
             ("ambient_dimmer", self.ambient_dimmer.map(show_number)),
+            ("fog_density", self.fog_density.map(show_number)),
+            ("fog_color", self.fog_color.map(show_color)),
+            ("fog_height", self.fog_height.map(show_number)),
+            (
+                "volumetric_density",
+                self.volumetric_density.map(show_number),
+            ),
+            ("volumetric_albedo", self.volumetric_albedo.map(show_color)),
+            ("haze_distance", self.haze.map(show_haze)),
         ]
         .into_iter()
         .filter_map(|(name, value)| Some((name, value?)))
@@ -286,7 +366,22 @@ impl Environment {
             ("indirect", show_number(self.indirect)),
             ("sky_exposure", show_number(self.sky_exposure)),
             ("ambient_dimmer", show_number(self.ambient_dimmer)),
+            ("fog_density", show_number(self.fog_density)),
+            ("fog_color", show_color(self.fog_colors[0])),
+            ("fog_height", show_number(self.fog_height)),
+            ("volumetric_density", show_number(self.volumetric_density)),
+            ("volumetric_albedo", show_color(self.volumetric_albedo)),
+            ("haze_distance", show_haze(self.haze)),
         ]
+    }
+}
+
+/// Haze as the distance a volume types, or "off".
+fn show_haze(haze: f32) -> String {
+    if haze > 0.0 {
+        show_number(std::f32::consts::LN_2 / haze)
+    } else {
+        "off".to_string()
     }
 }
 
@@ -357,6 +452,10 @@ pub fn blend_environment(
     }
     blended.through_air(&engine.project.world.sky);
     blended.exposure = claims.resolve(blended.exposure);
+    // `set fog density` outlasts every volume, like the director's exposure.
+    if let Some(density) = engine.fog_density.filter(|d| d.is_finite()) {
+        blended.fog_density = density.max(0.0);
+    }
     environment.set_if_neq(blended);
 }
 

@@ -997,6 +997,60 @@ impl Actor {
         );
     }
 
+    /// Height fog's extinction per metre at its base, for the rest of the
+    /// run. 0 clears the air.
+    pub fn set_fog_density(&self, density: f32) {
+        self.act(
+            ACT_SET_FOG_DENSITY,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            density as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// The aurora's KP index, 0-9, for the rest of the run. 0 puts it out.
+    pub fn set_aurora(&self, kp: f32) {
+        self.act(
+            ACT_SET_AURORA,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            kp as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// A lightning strike landing at `x, y, z`: a flash, a pulse of the sky
+    /// and thunder late by the distance.
+    pub fn strike_lightning(&self, x: f32, y: f32, z: f32) {
+        self.act(
+            ACT_STRIKE_LIGHTNING,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            x as f64,
+            y as f64,
+            z as f64,
+        );
+    }
+
+    /// Strikes a minute the storm throws, for the rest of the run. 0 calms it.
+    pub fn set_lightning_rate(&self, per_minute: f32) {
+        self.act(
+            ACT_SET_LIGHTNING_RATE,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            per_minute as f64,
+            0.0,
+            0.0,
+        );
+    }
+
     /// Whether the world is lit by ray tracing right now, as of this tick.
     pub fn ray_tracing_on(&self) -> bool {
         self.atmosphere("ray tracing").unwrap_or(0.0) != 0.0

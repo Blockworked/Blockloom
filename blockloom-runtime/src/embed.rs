@@ -1912,6 +1912,310 @@ mod tests {
         );
     }
 
+    /// The dark room with the floor lit by a white ambient, looked at
+    /// through air.
+    fn foggy_room(
+        fog: impl FnOnce(&mut blockloom_core::fog::Fog),
+    ) -> blockloom_core::project::Project {
+        let mut room = dark_room(false);
+        room.world.lighting.ambient_brightness = 1500.0;
+        fog(&mut room.world.fog);
+        room
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn height_fog_hides_the_floor_in_its_own_color() {
+        let room = foggy_room(|fog| {
+            fog.height.enabled = true;
+            fog.height.distance = 1.0;
+            fog.height.falloff = 0.0;
+            fog.height.day_color = "#FF0000".to_string();
+            fog.height.dusk_color = "#FF0000".to_string();
+            fog.height.night_color = "#FF0000".to_string();
+        });
+        let pixel = floor_pixel(run_world(room, |_| {}, game_camera(), 60, is_red));
+        assert!(is_red(pixel), "expected red fog, read {pixel:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn volumetric_fog_glows_with_its_emissive() {
+        let green =
+            |[r, g, b]: [u8; 3]| g > 150 && g > r.saturating_add(60) && g > b.saturating_add(60);
+        let room = foggy_room(|fog| {
+            let v = &mut fog.volumetric;
+            v.enabled = true;
+            v.density = 1.0;
+            v.falloff = 0.0;
+            v.noise = 0.0;
+            v.sun = false;
+            v.ambient = 0.0;
+            v.albedo = "#000000".to_string();
+            v.emissive = "#00FF00".to_string();
+            v.emissive_strength = 3000.0;
+            v.range = 40.0;
+        });
+        let pixel = floor_pixel(run_world(room, |_| {}, game_camera(), 60, green));
+        assert!(green(pixel), "expected green fog, read {pixel:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_volume_fills_its_box_with_local_fog() {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::volume::VolumeSpec;
+        let blue =
+            |[r, g, b]: [u8; 3]| b > 150 && b > r.saturating_add(60) && b > g.saturating_add(60);
+        let room = |inside: bool| {
+            let mut room = foggy_room(|_| {});
+            let mut zone = blockloom_core::project::Actor::new(
+                "Smog",
+                blockloom_core::scene::Visual::Sphere {
+                    color: "#FFFFFF".to_string(),
+                    radius: 1.0,
+                },
+            );
+            zone.components.remove("Look");
+            zone.components.placement_mut().position =
+                if inside { [0.0; 3] } else { [0.0, 80.0, 0.0] };
+            let mut volume = VolumeSpec {
+                half_extents: [30.0, 30.0, 30.0],
+                blend_distance: 0.0,
+                ..VolumeSpec::default()
+            };
+            volume.fog.enabled = true;
+            volume.fog.density = 2.0;
+            volume.fog.albedo = "#000000".to_string();
+            volume.fog.emissive = "#0000FF".to_string();
+            volume.fog.emissive_strength = 3000.0;
+            zone.components.insert(ActorComponent::Volume { volume });
+            room.actors.push(zone);
+            room
+        };
+        let inside = floor_pixel(run_world(room(true), |_| {}, game_camera(), 60, blue));
+        assert!(blue(inside), "expected the box's blue fog, read {inside:?}");
+        let outside = floor_pixel(run_world(room(false), |_| {}, game_camera(), 60, |_| false));
+        assert!(!blue(outside), "expected a clear floor, read {outside:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn volumetric_fog_scatters_the_suns_light_when_asked() {
+        let run = |sun: bool| {
+            let mut room = dark_room(false);
+            room.world.lighting.illuminance = 20_000.0;
+            let v = &mut room.world.fog.volumetric;
+            v.enabled = true;
+            v.density = 0.8;
+            v.falloff = 0.0;
+            v.noise = 0.0;
+            v.ambient = 0.0;
+            v.anisotropy = 0.0;
+            v.sun = sun;
+            v.range = 40.0;
+            let settle = if sun { 0 } else { 60 };
+            floor_pixel(run_world(
+                room,
+                |_| {},
+                game_camera(),
+                settle,
+                move |pixel| sun && pixel.iter().all(|c| *c > 90),
+            ))
+        };
+        let lit = run(true);
+        assert!(
+            lit.iter().all(|c| *c > 90),
+            "expected sunlit fog, read {lit:?}"
+        );
+        let dark = run(false);
+        assert!(
+            dark.iter().all(|c| *c < 40),
+            "expected unlit fog to hide the floor, read {dark:?}"
+        );
+    }
+
+    /// Light shafts come from the sun's own shadow maps: fog under a roof
+    /// stays dark while the same fog in the open glows.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_roof_shadows_the_fog_under_it() {
+        use blockloom_core::scene::Visual;
+        let run = |roofed: bool| {
+            let mut room = dark_room(false);
+            room.world.lighting.illuminance = 20_000.0;
+            room.world.lighting.light_direction = [0.1, 1.0, 0.05];
+            let v = &mut room.world.fog.volumetric;
+            v.enabled = true;
+            v.density = 0.3;
+            v.falloff = 0.0;
+            v.noise = 0.0;
+            v.ambient = 0.0;
+            v.anisotropy = 0.0;
+            v.range = 40.0;
+            if roofed {
+                let mut roof = blockloom_core::project::Actor::new(
+                    "Roof",
+                    Visual::Cuboid {
+                        color: "#000000".to_string(),
+                        size: [160.0, 1.0, 160.0],
+                    },
+                );
+                roof.components.placement_mut().position = [0.0, 20.0, 0.0];
+                room.actors.push(roof);
+            }
+            let settle = if roofed { 90 } else { 0 };
+            floor_pixel(run_world(
+                room,
+                |_| {},
+                game_camera(),
+                settle,
+                move |pixel| !roofed && pixel.iter().all(|c| *c > 90),
+            ))
+        };
+        let open = run(false);
+        assert!(
+            open.iter().all(|c| *c > 90),
+            "expected sunlit fog, read {open:?}"
+        );
+        let roofed = run(true);
+        assert!(
+            roofed.iter().all(|c| *c < 40),
+            "expected the roof's shadow in the fog, read {roofed:?}"
+        );
+    }
+
+    /// A physical night sky, looked at straight up.
+    fn night_sky(
+        space: impl FnOnce(&mut blockloom_core::sky::Sky),
+    ) -> blockloom_core::project::Project {
+        use blockloom_core::sky::{SkyKind, SunMode};
+        let mut room = dark_room(false);
+        room.world.post.exposure_ev = 0.0;
+        let sky = &mut room.world.sky;
+        sky.kind = SkyKind::Physical;
+        sky.sun.mode = SunMode::Manual;
+        sky.sun.elevation = -40.0;
+        sky.physical.night_brightness = 0.0;
+        space(sky);
+        room.world.camera.position = [0.0, 1.0, 0.0];
+        room.world.camera.look_at = [0.0, 20.0, 0.5];
+        room
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn an_aurora_hangs_green_over_the_night() {
+        let green = |[r, g, b]: [u8; 3]| g > 40 && g > r.saturating_add(20) && g > b;
+        let room = night_sky(|sky| {
+            sky.aurora.enabled = true;
+            sky.aurora.kp = 9.0;
+            sky.aurora.layers = 3;
+            sky.aurora.width = 5.0;
+            sky.aurora.brightness = 5.0;
+        });
+        let (set, index, errors) = run_world(room, |_| {}, game_camera(), 90, |_| false);
+        assert!(errors.is_empty(), "{errors:?}");
+        let set = set.unwrap_or_else(|| panic!("no frame arrived"));
+        let pixel = brightest_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        assert!(
+            green(pixel),
+            "expected aurora green somewhere, brightest {pixel:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn stars_come_out_at_night_and_hide_by_day() {
+        let bright = |[r, g, b]: [u8; 3]| r > 120 && g > 120 && b > 120;
+        let run = |elevation: f32| {
+            let room = night_sky(|sky| {
+                sky.sun.elevation = elevation;
+                sky.stars.enabled = true;
+                sky.stars.density = 1.0;
+                sky.stars.brightness = 5.0;
+                sky.stars.magnitude_slope = 0.5;
+                sky.stars.twinkle = 0.0;
+            });
+            let (set, index, errors) = run_world(room, |_| {}, game_camera(), 60, |_| false);
+            assert!(errors.is_empty(), "{errors:?}");
+            let set = set.unwrap_or_else(|| panic!("no frame arrived"));
+            brightest_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize)
+        };
+        let night = run(-40.0);
+        assert!(bright(night), "expected a star, brightest {night:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_lightning_block_flashes_the_dark_floor() {
+        use blockloom_core::blocks::{Instruction, InstructionKind as K, Strand};
+        use blockloom_core::value::Value;
+        let mut room = dark_room(false);
+        room.world.lightning.flash_height = 5.0;
+        room.world.lightning.decay = 2.0;
+        room.world.lightning.thunder = false;
+        let at = Value::number;
+        room.actors[0].graph.strands.push(Strand::with_instructions(
+            0,
+            0,
+            vec![
+                Instruction::new(K::WhenStarted),
+                Instruction::new(K::StrikeLightning {
+                    x: at(0.0),
+                    y: at(0.0),
+                    z: at(0.0),
+                }),
+            ],
+        ));
+        let pixel = floor_pixel(run_world_sending(
+            room,
+            |_| {},
+            game_camera(),
+            0,
+            |pixel| pixel.iter().all(|c| *c > 100),
+            vec![EditorMessage::Start],
+        ));
+        assert!(
+            pixel.iter().all(|c| *c > 100),
+            "expected a flash, read {pixel:?}"
+        );
+    }
+
+    /// The brightest pixel of a linear dma-buf, by the sum of its channels.
+    fn brightest_pixel(image: &SharedImage, width: usize, height: usize) -> [u8; 3] {
+        use std::os::fd::AsRawFd;
+        let length = image.offset as usize + image.stride as usize * height;
+        // SAFETY: a read-only mapping of the buffer's own length, unmapped
+        // before returning.
+        unsafe {
+            let mapped = libc::mmap(
+                std::ptr::null_mut(),
+                length,
+                libc::PROT_READ,
+                libc::MAP_SHARED,
+                image.fd.as_raw_fd(),
+                0,
+            );
+            assert_ne!(mapped, libc::MAP_FAILED, "the dma-buf can't be mapped");
+            let bytes = std::slice::from_raw_parts(mapped as *const u8, length);
+            let mut best = [0u8; 3];
+            for y in 0..height {
+                let row = image.offset as usize + image.stride as usize * y;
+                for x in 0..width {
+                    let at = row + x * 4;
+                    let pixel = [bytes[at], bytes[at + 1], bytes[at + 2]];
+                    let sum = |p: [u8; 3]| p.iter().map(|c| *c as u32).sum::<u32>();
+                    if sum(pixel) > sum(best) {
+                        best = pixel;
+                    }
+                }
+            }
+            libc::munmap(mapped, length);
+            best
+        }
+    }
+
     /// A plain volume (no overrides) at `at`, and the heat map switched on.
     fn heat_world(mode: Mode, at: [f32; 3]) -> (blockloom_core::project::Project, SceneView) {
         use blockloom_core::components::ActorComponent;

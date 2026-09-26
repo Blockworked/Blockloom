@@ -173,6 +173,19 @@ pub enum Act {
     SetGiSamples {
         samples: f32,
     },
+    /// Window-global.
+    SetFogDensity {
+        density: f32,
+    },
+    SetAurora {
+        kp: f32,
+    },
+    StrikeLightning {
+        at: [f32; 3],
+    },
+    SetLightningRate {
+        rate: f32,
+    },
     SetBody {
         body: &'static str,
     },
@@ -1036,7 +1049,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 18;
+pub const LOGIC_ABI_VERSION: u32 = 19;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1199,6 +1212,14 @@ pub const ACT_SET_RAY_TRACING: u32 = 84;
 pub const ACT_SET_GI_BOUNCES: u32 = 85;
 /// `n0` = samples per pixel. Window-global: no actor.
 pub const ACT_SET_GI_SAMPLES: u32 = 86;
+/// `n0` = extinction per metre. Window-global: no actor.
+pub const ACT_SET_FOG_DENSITY: u32 = 87;
+/// `n0` = KP index 0-9. Window-global: no actor.
+pub const ACT_SET_AURORA: u32 = 88;
+/// `n0..n2` = where it lands. Window-global: no actor.
+pub const ACT_STRIKE_LIGHTNING: u32 = 89;
+/// `n0` = strikes a minute. Window-global: no actor.
+pub const ACT_SET_LIGHTNING_RATE: u32 = 90;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1637,6 +1658,33 @@ impl Host for AbiHost {
                 "",
                 "",
                 [samples as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetFogDensity { density } => self.act_wire(
+                actor,
+                ACT_SET_FOG_DENSITY,
+                "",
+                "",
+                [density as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetAurora { kp } => {
+                self.act_wire(actor, ACT_SET_AURORA, "", "", [kp as f64, 0.0, 0.0], &zero)
+            }
+            Act::StrikeLightning { at } => self.act_wire(
+                actor,
+                ACT_STRIKE_LIGHTNING,
+                "",
+                "",
+                at.map(f64::from),
+                &zero,
+            ),
+            Act::SetLightningRate { rate } => self.act_wire(
+                actor,
+                ACT_SET_LIGHTNING_RATE,
+                "",
+                "",
+                [rate as f64, 0.0, 0.0],
                 &zero,
             ),
             Act::SetBody { body } => self.act_wire(actor, ACT_SET_BODY, body, "", [0.0; 3], &zero),
