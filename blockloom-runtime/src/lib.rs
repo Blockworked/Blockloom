@@ -58,9 +58,13 @@ mod ray_tracing;
 mod script;
 mod shadows;
 mod sky;
+#[cfg(feature = "ray_tracing")]
+mod solari_patch;
 mod sound;
 mod space;
 mod streaming;
+#[cfg(feature = "ray_tracing")]
+mod traced;
 mod ui;
 mod ui_systems;
 mod volume_heat;
