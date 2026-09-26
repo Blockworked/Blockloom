@@ -1046,15 +1046,19 @@ still the ended shorthand. `play animation` names a state first, then a clip.
 bones, slots, skins, one- and two-bone IK and keyed animations, y up in the
 actor's frame. `sample` gives a `LocalPose`, `blend` crossfades two, `solve`
 composes the hierarchy, runs IK and lists slot sprites in draw order. Only
-region/image attachments draw; bezier curves read as linear. A clip plays its
+region/image attachments draw. `Curve` eases keys: Spine's beziers (3.x
+normalized, 4.x in time and value per channel) and DragonBones' quad easings
+and chained curves. A clip plays its
 `rig_animation` (or its own name) on the rig when the rig has it, and plays
 its frames otherwise: that is the flipbook fallback.
 
 `sprite2d.rs` is the `Sprite` component: flips, `NineSlice` (Bevy's
 `TextureSlicer`), `SpriteStack` slices, a palette swap (the sprite's red
 channel picks the column, `palette_index` the row), an outline, and `order`
-plus `y_sort` inside the Render layer (`sort_offset`, order always beats
-height).
+plus `y_sort` inside the Render layer (`order_depth`, then `y_sort_depths`
+within half an order step, so order always beats height). Y-sort ranks
+actors sharing a layer z and order rather than scaling height, so any spread
+of heights fits the band.
 
 The runtime half is `blockloom-runtime/src/anim2d.rs` and `sprites.rs`.
 `apply_animation_effects` and `step_animations` run in the fixed step, so the
@@ -1064,6 +1068,8 @@ solve rigs into `RigInstance::pose`. `ensure_rigs` loads a rig through
 `RigCache` and hangs a `RigPart` sprite per slot off the actor, `draw_rigs`
 copies the pose on, and `sync_sprites` applies flips and slicing and builds
 stack slices and the `SpriteFxMaterial` quad (`shaders/sprite_fx.wesl`).
+`sync_part_palettes` gives each stack slice and rig part its own palette
+quad; an outline per piece would line the seams, so those have none.
 Anything drawn through children hides the actor's own sprite with an empty
 `RenderLayers`. Sort depth is render-only: `apply_sort_depth` adds it in
 PostUpdate and `clear_sort_depth` takes it off in `First`, so no pose, drag
@@ -1422,6 +1428,6 @@ lands.
   one passes straight through.
 - The scene view's camera starts over whenever the world does (a dimension
   switch, reopening a project).
-- 2D rigs draw region/image attachments only (no Spine meshes or weights),
-  and read bezier curves as linear. The palette/outline effect ignores 9-slice
-  and doesn't apply to stacked or rigged sprites.
+- 2D rigs draw region/image attachments only (no Spine meshes or weights).
+  The palette/outline effect ignores 9-slice, and stacked or rigged sprites
+  get the palette but no outline.

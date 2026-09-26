@@ -7,8 +7,7 @@
 //! world transforms for every slot's sprite. Everything is in the rig's own
 //! space: y up, degrees counter-clockwise, the same as a 2D actor.
 //!
-//! Only region/image attachments draw; mesh attachments and bezier curves
-//! are read as nothing and as linear respectively.
+//! Only region/image attachments draw; mesh attachments are read as nothing.
 
 use serde_json::{Map, Value as Json};
 
@@ -139,10 +138,77 @@ pub struct IkConstraint {
     pub mix: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How a key eases towards the next one.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Curve {
     Linear,
     Stepped,
+    /// One cubic per channel from (0,0) to (1,1) through `[cx1, cy1, cx2,
+    /// cy2]`; channels past the list use its last.
+    Bezier(Vec<[f32; 4]>),
+    /// DragonBones' chained cubics: the control and joint points between
+    /// (0,0) and (1,1).
+    Path(Vec<[f32; 2]>),
+    /// DragonBones' quad easings, mixed with linear by the amount.
+    QuadIn(f32),
+    QuadOut(f32),
+    QuadInOut(f32),
+}
+
+impl Curve {
+    /// The eased fraction for `channel` at linear fraction `x`.
+    pub fn ease(&self, channel: usize, x: f32) -> f32 {
+        let x = x.clamp(0.0, 1.0);
+        match self {
+            Curve::Linear => x,
+            Curve::Stepped => 0.0,
+            Curve::Bezier(channels) => match channels.get(channel).or(channels.last()) {
+                Some(&[x1, y1, x2, y2]) => cubic_at([0.0, 0.0], [x1, y1], [x2, y2], [1.0, 1.0], x),
+                None => x,
+            },
+            Curve::Path(points) => path_at(points, x),
+            Curve::QuadIn(amount) => x + (x * x - x) * amount,
+            Curve::QuadOut(amount) => x + (1.0 - (1.0 - x) * (1.0 - x) - x) * amount,
+            Curve::QuadInOut(amount) => {
+                x + (0.5 * (1.0 - (x * std::f32::consts::PI).cos()) - x) * amount
+            }
+        }
+    }
+}
+
+/// The y of a cubic at `x`, finding its parameter by bisection (x is
+/// monotonic in any curve an editor exports).
+fn cubic_at(p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], p3: [f32; 2], x: f32) -> f32 {
+    let at = |t: f32, i: usize| {
+        let u = 1.0 - t;
+        u * u * u * p0[i] + 3.0 * u * u * t * p1[i] + 3.0 * u * t * t * p2[i] + t * t * t * p3[i]
+    };
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..32 {
+        let mid = 0.5 * (lo + hi);
+        if at(mid, 0) < x {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    at(0.5 * (lo + hi), 1)
+}
+
+fn path_at(points: &[[f32; 2]], x: f32) -> f32 {
+    let mut all = Vec::with_capacity(points.len() + 2);
+    all.push([0.0, 0.0]);
+    all.extend_from_slice(points);
+    all.push([1.0, 1.0]);
+    if (all.len() - 1) % 3 != 0 {
+        return x;
+    }
+    for segment in all.windows(4).step_by(3) {
+        if x <= segment[3][0] {
+            return cubic_at(segment[0], segment[1], segment[2], segment[3], x);
+        }
+    }
+    1.0
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -273,7 +339,12 @@ fn wrap_degrees(mut degrees: f32) -> f32 {
     degrees
 }
 
-fn sample_keys<T: Copy>(keys: &[Key<T>], time: f32, lerp: impl Fn(T, T, f32) -> T) -> Option<T> {
+/// `lerp` gets each channel's eased fraction.
+fn sample_keys<T: Copy>(
+    keys: &[Key<T>],
+    time: f32,
+    lerp: impl Fn(T, T, [f32; 4]) -> T,
+) -> Option<T> {
     let first = keys.first()?;
     if time <= first.time {
         return Some(first.value);
@@ -281,10 +352,12 @@ fn sample_keys<T: Copy>(keys: &[Key<T>], time: f32, lerp: impl Fn(T, T, f32) -> 
     for pair in keys.windows(2) {
         let (a, b) = (&pair[0], &pair[1]);
         if time < b.time {
-            if a.curve == Curve::Stepped || b.time <= a.time {
+            if matches!(a.curve, Curve::Stepped) || b.time <= a.time {
                 return Some(a.value);
             }
-            return Some(lerp(a.value, b.value, (time - a.time) / (b.time - a.time)));
+            let x = (time - a.time) / (b.time - a.time);
+            let t = std::array::from_fn(|channel| a.curve.ease(channel, x));
+            return Some(lerp(a.value, b.value, t));
         }
     }
     keys.last().map(|key| key.value)
@@ -374,20 +447,20 @@ impl Rig {
                 continue;
             };
             if let Some(angle) = sample_keys(&timeline.rotate, time, |a, b, t| {
-                a + wrap_degrees(b - a) * t
+                a + wrap_degrees(b - a) * t[0]
             }) {
                 local.rotation += angle;
             }
             if !(pin_root && timeline.bone == 0)
                 && let Some(offset) = sample_keys(&timeline.translate, time, |a, b, t| {
-                    [lerp(a[0], b[0], t), lerp(a[1], b[1], t)]
+                    [lerp(a[0], b[0], t[0]), lerp(a[1], b[1], t[1])]
                 })
             {
                 local.x += offset[0];
                 local.y += offset[1];
             }
             if let Some(scale) = sample_keys(&timeline.scale, time, |a, b, t| {
-                [lerp(a[0], b[0], t), lerp(a[1], b[1], t)]
+                [lerp(a[0], b[0], t[0]), lerp(a[1], b[1], t[1])]
             }) {
                 local.scale_x *= scale[0];
                 local.scale_y *= scale[1];
@@ -407,7 +480,7 @@ impl Rig {
                 pose.attachments[timeline.slot] = name.clone();
             }
             if let Some(color) = sample_keys(&timeline.color, time, |a, b, t| {
-                std::array::from_fn(|i| lerp(a[i], b[i], t))
+                std::array::from_fn(|i| lerp(a[i], b[i], t[i]))
             }) {
                 pose.colors[timeline.slot] = color;
             }
@@ -540,7 +613,7 @@ impl RigAnimation {
             .find(|timeline| timeline.bone == 0)
             .and_then(|timeline| {
                 sample_keys(&timeline.translate, time, |a, b, t| {
-                    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+                    [a[0] + (b[0] - a[0]) * t[0], a[1] + (b[1] - a[1]) * t[1]]
                 })
             })
             .unwrap_or([0.0, 0.0])
@@ -730,11 +803,77 @@ fn hex_color(hex: &str) -> [f32; 4] {
     ]
 }
 
-fn curve_of(key: &Json) -> Curve {
-    if key.get("curve").and_then(Json::as_str) == Some("stepped") {
-        Curve::Stepped
-    } else {
-        Curve::Linear
+/// Fills in Spine curves once a timeline's keys are read: "stepped", 3.x's
+/// normalized `[cx1, cy1, cx2, cy2]` (3.8 spells it `curve`, `c2`, `c3`,
+/// `c4`), or 4.x's control points in time and value, four per channel.
+fn spine_curves<T>(
+    keys: &mut [Key<T>],
+    raw: &[Json],
+    spine4: bool,
+    channels: impl Fn(&T) -> Vec<f32>,
+) {
+    for i in 0..keys.len().min(raw.len()) {
+        keys[i].curve = match raw[i].get("curve") {
+            Some(Json::String(kind)) if kind == "stepped" => Curve::Stepped,
+            Some(Json::Number(cx1)) => Curve::Bezier(vec![[
+                cx1.as_f64().unwrap_or(0.0) as f32,
+                num(raw[i].get("c2"), 0.0),
+                num(raw[i].get("c3"), 1.0),
+                num(raw[i].get("c4"), 1.0),
+            ]]),
+            Some(Json::Array(points)) if points.len() >= 4 => {
+                let points: Vec<f32> = points.iter().map(|p| num(Some(p), 0.0)).collect();
+                if !spine4 {
+                    Curve::Bezier(vec![[points[0], points[1], points[2], points[3]]])
+                } else if let Some(next) = keys.get(i + 1) {
+                    let (t0, t1) = (keys[i].time, next.time);
+                    let (v0, v1) = (channels(&keys[i].value), channels(&next.value));
+                    let span = |a: f32, b: f32, v: f32| {
+                        if (b - a).abs() > f32::EPSILON {
+                            (v - a) / (b - a)
+                        } else {
+                            0.0
+                        }
+                    };
+                    Curve::Bezier(
+                        points
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .zip(v0.iter().zip(&v1))
+                            .map(|(c, (&a, &b))| {
+                                [
+                                    span(t0, t1, c[0]),
+                                    span(a, b, c[1]),
+                                    span(t0, t1, c[2]),
+                                    span(a, b, c[3]),
+                                ]
+                            })
+                            .collect(),
+                    )
+                } else {
+                    Curve::Linear
+                }
+            }
+            _ => Curve::Linear,
+        };
+    }
+}
+
+/// DragonBones' easing: a `curve` of control points, or `tweenEasing`,
+/// where no number at all holds the frame.
+fn dragonbones_curve(frame: &Json) -> Curve {
+    if let Some(points) = frame.get("curve").and_then(Json::as_array) {
+        let flat: Vec<f32> = points.iter().map(|p| num(Some(p), 0.0)).collect();
+        return Curve::Path(flat.as_chunks::<2>().0.to_vec());
+    }
+    match frame.get("tweenEasing").and_then(Json::as_f64) {
+        None => Curve::Stepped,
+        Some(e) if e <= -2.0 => Curve::Stepped,
+        Some(0.0) => Curve::Linear,
+        Some(e) if e < 0.0 => Curve::QuadIn(-e as f32),
+        Some(e) if e <= 1.0 => Curve::QuadOut(e as f32),
+        Some(e) => Curve::QuadInOut(e as f32 - 1.0),
     }
 }
 
@@ -745,6 +884,13 @@ fn parse_spine(json: &Json, folder: &str) -> Result<Rig, String> {
         .and_then(Json::as_str)
         .filter(|images| !images.trim().is_empty())
         .unwrap_or("images");
+    // 4.x keys its curves in time and value rather than 0..1.
+    let spine4 = json
+        .get("skeleton")
+        .and_then(|skeleton| skeleton.get("spine"))
+        .and_then(Json::as_str)
+        .and_then(|version| version.split('.').next()?.parse::<u32>().ok())
+        .is_some_and(|major| major >= 4);
     let mut rig = Rig::default();
     for bone in array(json.get("bones")) {
         let parent_name = text(bone.get("parent"));
@@ -878,27 +1024,33 @@ fn parse_spine(json: &Json, folder: &str) -> Result<Rig, String> {
                 bone,
                 ..BoneTimeline::default()
             };
-            for key in array(timelines.get("rotate")) {
+            let rotate = array(timelines.get("rotate"));
+            for key in rotate {
                 timeline.rotate.push(Key {
                     time: time_of(key),
                     value: num(key.get("angle").or(key.get("value")), 0.0),
-                    curve: curve_of(key),
+                    curve: Curve::Linear,
                 });
             }
-            for key in array(timelines.get("translate")) {
+            spine_curves(&mut timeline.rotate, rotate, spine4, |v| vec![*v]);
+            let translate = array(timelines.get("translate"));
+            for key in translate {
                 timeline.translate.push(Key {
                     time: time_of(key),
                     value: [num(key.get("x"), 0.0), num(key.get("y"), 0.0)],
-                    curve: curve_of(key),
+                    curve: Curve::Linear,
                 });
             }
-            for key in array(timelines.get("scale")) {
+            spine_curves(&mut timeline.translate, translate, spine4, |v| v.to_vec());
+            let scale = array(timelines.get("scale"));
+            for key in scale {
                 timeline.scale.push(Key {
                     time: time_of(key),
                     value: [num(key.get("x"), 1.0), num(key.get("y"), 1.0)],
-                    curve: curve_of(key),
+                    curve: Curve::Linear,
                 });
             }
+            spine_curves(&mut timeline.scale, scale, spine4, |v| v.to_vec());
             out.bones.push(timeline);
         }
         for (slot_name, timelines) in object(animation.get("slots")) {
@@ -914,13 +1066,15 @@ fn parse_spine(json: &Json, folder: &str) -> Result<Rig, String> {
                     .attachment
                     .push((time_of(key), text(key.get("name")).to_string()));
             }
-            for key in array(timelines.get("color").or(timelines.get("rgba"))) {
+            let color = array(timelines.get("color").or(timelines.get("rgba")));
+            for key in color {
                 timeline.color.push(Key {
                     time: time_of(key),
                     value: hex_color(text(key.get("color"))),
-                    curve: curve_of(key),
+                    curve: Curve::Linear,
                 });
             }
+            spine_curves(&mut timeline.color, color, spine4, |v| v.to_vec());
             out.slots.push(timeline);
         }
         for key in array(animation.get("events")) {
@@ -1076,14 +1230,10 @@ fn parse_dragonbones(json: &Json, folder: &str) -> Result<Rig, String> {
         let mut at = 0.0;
         list.iter()
             .map(|frame| {
-                let curve = match frame.get("tweenEasing") {
-                    Some(Json::Null) => Curve::Stepped,
-                    _ => Curve::Linear,
-                };
                 let key = Key {
                     time: at / rate,
                     value: value(frame),
-                    curve,
+                    curve: dragonbones_curve(frame),
                 };
                 at += num(frame.get("duration"), 1.0);
                 *end = end.max(key.time);
@@ -1329,6 +1479,69 @@ mod tests {
         assert!((held.bones[1].rotation - (-30.0 - 20.0)).abs() < 1e-4);
         let mid = rig.sample(Some(swing), 0.25, false);
         assert!((mid.bones[1].rotation - (-30.0 - 10.0)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn curves_ease_between_keys() {
+        // An ease-in cubic lags linear early on and reaches the end exactly.
+        let ease_in = Curve::Bezier(vec![[0.5, 0.0, 1.0, 1.0]]);
+        assert!(ease_in.ease(0, 0.25) < 0.1);
+        assert!((ease_in.ease(0, 1.0) - 1.0).abs() < 1e-4);
+        let straight = Curve::Bezier(vec![[0.25, 0.25, 0.75, 0.75]]);
+        assert!((straight.ease(3, 0.3) - 0.3).abs() < 1e-4);
+        // Two chained cubics through (0.5, 0.8).
+        let path = Curve::Path(vec![
+            [0.2, 0.4],
+            [0.4, 0.8],
+            [0.5, 0.8],
+            [0.6, 0.8],
+            [0.8, 0.9],
+        ]);
+        assert!((path.ease(0, 0.5) - 0.8).abs() < 1e-3);
+        assert!((Curve::QuadIn(1.0).ease(0, 0.5) - 0.25).abs() < 1e-6);
+        assert!((Curve::QuadOut(1.0).ease(0, 0.5) - 0.75).abs() < 1e-6);
+        assert!((Curve::QuadInOut(0.0).ease(0, 0.3) - 0.3).abs() < 1e-6);
+    }
+
+    fn spine_rotation_at(version: &str, key: &str, time: f32) -> f32 {
+        let text = format!(
+            r#"{{ "skeleton": {{ "spine": "{version}" }}, "bones": [ {{ "name": "root" }} ],
+            "animations": {{ "turn": {{ "bones": {{ "root": {{ "rotate": [
+                {{ "time": 0, "value": 0, {key} }}, {{ "time": 2, "value": 90 }}
+            ] }} }} }} }} }}"#
+        );
+        let rig = Rig::parse(&text, "").unwrap();
+        rig.sample(rig.animation("turn"), time, false).bones[0].rotation
+    }
+
+    #[test]
+    fn spine_curves_read_in_every_version() {
+        // An ease-in, spelled three ways, lands a quarter of the way at ~5.
+        let three = spine_rotation_at("3.7.94", r#""curve": [0.5, 0, 1, 1]"#, 0.5);
+        let eight = spine_rotation_at("3.8.99", r#""curve": 0.5, "c3": 1"#, 0.5);
+        let four = spine_rotation_at("4.1.0", r#""curve": [1, 0, 2, 90]"#, 0.5);
+        for angle in [three, eight, four] {
+            assert!(angle > 0.0 && angle < 9.0, "{angle}");
+            assert!((angle - three).abs() < 1e-3);
+        }
+        let held = spine_rotation_at("4.1.0", r#""curve": "stepped""#, 1.9);
+        assert_eq!(held, 0.0);
+        let linear = spine_rotation_at("4.1.0", r#""x": 0"#, 1.0);
+        assert!((linear - 45.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn dragonbones_easings_hold_without_a_number() {
+        let frame = |text: &str| dragonbones_curve(&serde_json::from_str(text).unwrap());
+        assert_eq!(frame(r#"{ "duration": 5 }"#), Curve::Stepped);
+        assert_eq!(frame(r#"{ "tweenEasing": 0 }"#), Curve::Linear);
+        assert_eq!(frame(r#"{ "tweenEasing": -0.5 }"#), Curve::QuadIn(0.5));
+        assert_eq!(frame(r#"{ "tweenEasing": 1 }"#), Curve::QuadOut(1.0));
+        assert_eq!(frame(r#"{ "tweenEasing": 2 }"#), Curve::QuadInOut(1.0));
+        assert_eq!(
+            frame(r#"{ "curve": [0.5, 0, 1, 1] }"#),
+            Curve::Path(vec![[0.5, 0.0], [1.0, 1.0]])
+        );
     }
 
     #[test]

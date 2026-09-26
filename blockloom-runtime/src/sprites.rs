@@ -6,6 +6,8 @@
 //! [`sync_sprites`] makes the actor's drawing match every frame. A stack or
 //! the effect draws through children and hides the actor's own sprite with
 //! an empty `RenderLayers`, the way batching hides a merged actor in 3D.
+//! [`sync_part_palettes`] does the same for each stack slice and rig part,
+//! palette only: an outline per piece would line the seams between them.
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::mesh::Mesh2d;
@@ -17,11 +19,13 @@ use bevy::sprite::{BorderRect, SliceScaleMode, SpriteImageMode, TextureSlicer};
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin, MeshMaterial2d};
 use blockloom_core::blocks::SpriteDial;
 use blockloom_core::sprite2d::{
-    NineSlice, SliceFill, SpriteSpec, SpriteStack, clamp_outline, sort_offset, stack_slice_offset,
+    NineSlice, SliceFill, SpriteSpec, SpriteStack, clamp_outline, order_depth, stack_slice_offset,
+    y_sort_depths,
 };
 
 use crate::engine::{ActorId, Engine};
-use crate::world::{WorldCamera, asset_path, parse_color};
+use crate::world::{asset_path, parse_color};
+use std::collections::HashMap;
 
 pub fn register(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/sprite_fx.wesl");
@@ -65,9 +69,16 @@ impl SpriteDials {
 #[derive(Component, Default)]
 pub struct SpriteDecor {
     stack: Vec<Entity>,
-    fx: Option<(Entity, Handle<SpriteFxMaterial>, Vec2)>,
+    fx: FxQuad,
     touched: bool,
 }
+
+/// An effect quad child: the entity, its material and the size its mesh is.
+type FxQuad = Option<(Entity, Handle<SpriteFxMaterial>, Vec2)>;
+
+/// The palette quad a stack slice or rig part draws through.
+#[derive(Component, Default)]
+pub struct PartFx(FxQuad);
 
 /// One slice of a stacked sprite.
 #[derive(Component)]
@@ -81,7 +92,7 @@ pub struct SpriteFxQuad;
 const SLICE_DEPTH: f32 = 0.00005;
 
 /// Palette swap and outline over one sprite frame.
-#[derive(Asset, TypePath, AsBindGroup, Clone)]
+#[derive(Asset, TypePath, AsBindGroup, Clone, PartialEq)]
 pub struct SpriteFxMaterial {
     #[uniform(0)]
     pub tint: Vec4,
@@ -276,44 +287,25 @@ pub fn sync_sprites(
                 let quad = size + Vec2::splat(width * 2.0);
                 let palette = (!spec.palette.is_empty())
                     .then(|| assets.load(asset_path(dir.as_deref(), &spec.palette)));
-                let flags = f32::from(spec.flip_x)
-                    + 2.0 * f32::from(spec.flip_y)
-                    + 4.0 * f32::from(palette.is_some());
-                let material = SpriteFxMaterial {
-                    tint: base.color.to_linear().to_vec4(),
+                let material = fx_material(
+                    base,
+                    size,
                     uv_rect,
-                    shape: Vec4::new(size.x, size.y, width, flags),
-                    outline_color: parse_color(&spec.outline_color).to_linear().to_vec4(),
-                    palette_params: Vec4::new(spec.palette_index as f32, 0.0, 0.0, 0.0),
-                    texture: Some(base.image.clone()),
+                    width,
+                    parse_color(&spec.outline_color).to_linear().to_vec4(),
                     palette,
-                };
-                match &mut decor.fx {
-                    Some((quad_entity, handle, drawn_quad)) => {
-                        if let Some(mut existing) = materials.get_mut(&*handle) {
-                            *existing = material;
-                        }
-                        if *drawn_quad != quad {
-                            *drawn_quad = quad;
-                            commands
-                                .entity(*quad_entity)
-                                .insert(Mesh2d(meshes.add(Rectangle::new(quad.x, quad.y))));
-                        }
-                    }
-                    None => {
-                        let handle = materials.add(material);
-                        let quad_entity = commands
-                            .spawn((
-                                Mesh2d(meshes.add(Rectangle::new(quad.x, quad.y))),
-                                MeshMaterial2d(handle.clone()),
-                                SpriteFxQuad,
-                                Transform::from_xyz(0.0, 0.0, SLICE_DEPTH),
-                            ))
-                            .id();
-                        commands.entity(entity).add_child(quad_entity);
-                        decor.fx = Some((quad_entity, handle, quad));
-                    }
-                }
+                    spec.palette_index,
+                );
+                place_quad(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    entity,
+                    &mut decor.fx,
+                    material,
+                    quad,
+                    SLICE_DEPTH,
+                );
             }
             // Still loading: keep what was drawn.
             (Some(_), Some(_), None) => {}
@@ -322,6 +314,160 @@ pub fn sync_sprites(
                     commands.entity(quad_entity).despawn();
                 }
             }
+        }
+    }
+}
+
+/// The effect material for `base`'s frame. Flips come off the sprite.
+fn fx_material(
+    base: &Sprite,
+    size: Vec2,
+    uv_rect: Vec4,
+    outline_width: f32,
+    outline_color: Vec4,
+    palette: Option<Handle<Image>>,
+    palette_row: u32,
+) -> SpriteFxMaterial {
+    let flags =
+        f32::from(base.flip_x) + 2.0 * f32::from(base.flip_y) + 4.0 * f32::from(palette.is_some());
+    SpriteFxMaterial {
+        tint: base.color.to_linear().to_vec4(),
+        uv_rect,
+        shape: Vec4::new(size.x, size.y, outline_width, flags),
+        outline_color,
+        palette_params: Vec4::new(palette_row as f32, 0.0, 0.0, 0.0),
+        texture: Some(base.image.clone()),
+        palette,
+    }
+}
+
+/// Points `slot`'s quad at `material`, making it under `parent` if there is
+/// none yet. Assets are only written when they differ.
+#[allow(clippy::too_many_arguments)]
+fn place_quad(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<SpriteFxMaterial>,
+    parent: Entity,
+    slot: &mut FxQuad,
+    material: SpriteFxMaterial,
+    quad: Vec2,
+    depth: f32,
+) {
+    match slot {
+        Some((quad_entity, handle, drawn_quad)) => {
+            if materials
+                .get(&*handle)
+                .is_some_and(|existing| *existing != material)
+                && let Some(mut existing) = materials.get_mut(&*handle)
+            {
+                *existing = material;
+            }
+            if *drawn_quad != quad {
+                *drawn_quad = quad;
+                commands
+                    .entity(*quad_entity)
+                    .insert(Mesh2d(meshes.add(Rectangle::new(quad.x, quad.y))));
+            }
+        }
+        None => {
+            let handle = materials.add(material);
+            let quad_entity = commands
+                .spawn((
+                    Mesh2d(meshes.add(Rectangle::new(quad.x, quad.y))),
+                    MeshMaterial2d(handle.clone()),
+                    SpriteFxQuad,
+                    Transform::from_xyz(0.0, 0.0, depth),
+                ))
+                .id();
+            commands.entity(parent).add_child(quad_entity);
+            *slot = Some((quad_entity, handle, quad));
+        }
+    }
+}
+
+/// Gives each stack slice and rig part of a palette-swapped actor its own
+/// palette quad, and takes it away again when the palette goes.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn sync_part_palettes(
+    mut commands: Commands,
+    engine: NonSend<Engine>,
+    assets: Res<AssetServer>,
+    images: Res<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<SpriteFxMaterial>>,
+    actors: Query<
+        (
+            &SpriteDials,
+            Option<&SpriteDecor>,
+            Option<&crate::anim2d::RigInstance>,
+        ),
+        With<ActorId>,
+    >,
+    mut parts: Query<
+        (Entity, &Sprite, Option<&mut PartFx>, Has<RenderLayers>),
+        Or<(With<StackSlice>, With<crate::anim2d::RigPart>)>,
+    >,
+) {
+    let dir = engine.project_dir.clone();
+    let mut wanted: HashMap<Entity, (Handle<Image>, u32)> = HashMap::default();
+    for (dials, decor, rig) in &actors {
+        let spec = &dials.0;
+        if spec.palette.is_empty() {
+            continue;
+        }
+        let palette: Handle<Image> = assets.load(asset_path(dir.as_deref(), &spec.palette));
+        let rig_parts = rig.filter(|rig| rig.active).map(|rig| rig.parts.as_slice());
+        let slices = decor.map(|decor| decor.stack.as_slice());
+        for part in rig_parts.into_iter().chain(slices).flatten() {
+            wanted.insert(*part, (palette.clone(), spec.palette_index));
+        }
+    }
+    for (entity, sprite, fx, hidden) in &mut parts {
+        match (wanted.remove(&entity), fx) {
+            (Some((palette, row)), fx) => {
+                let Some((size, uv_rect)) = frame_of(sprite, &images) else {
+                    continue;
+                };
+                let material =
+                    fx_material(sprite, size, uv_rect, 0.0, Vec4::ZERO, Some(palette), row);
+                match fx {
+                    Some(mut fx) => place_quad(
+                        &mut commands,
+                        &mut meshes,
+                        &mut materials,
+                        entity,
+                        &mut fx.0,
+                        material,
+                        size,
+                        0.0,
+                    ),
+                    None => {
+                        let mut slot = None;
+                        place_quad(
+                            &mut commands,
+                            &mut meshes,
+                            &mut materials,
+                            entity,
+                            &mut slot,
+                            material,
+                            size,
+                            0.0,
+                        );
+                        commands.entity(entity).insert(PartFx(slot));
+                    }
+                }
+                if !hidden {
+                    commands.entity(entity).insert(RenderLayers::none());
+                }
+            }
+            (None, Some(mut fx)) => {
+                if let Some((quad_entity, _, _)) = fx.0.take() {
+                    commands.entity(quad_entity).despawn();
+                }
+                commands.entity(entity).remove::<(PartFx, RenderLayers)>();
+            }
+            (None, None) => {}
         }
     }
 }
@@ -335,17 +481,29 @@ pub struct SortDepth(f32);
 /// next frame, so no pose, drag or physics step ever sees it.
 pub fn apply_sort_depth(
     mut commands: Commands,
-    cameras: Query<&Transform, (With<WorldCamera>, Without<ActorId>)>,
     mut actors: Query<(Entity, &mut Transform, &SpriteDials), With<ActorId>>,
 ) {
-    let camera_y = cameras
-        .iter()
-        .next()
-        .map(|camera| camera.translation.y)
-        .unwrap_or(0.0);
-    for (entity, mut transform, dials) in &mut actors {
+    // Y-sort ranks among actors sharing one layer z and one order.
+    let mut groups: HashMap<(u32, i32), Vec<(Entity, f32)>> = HashMap::default();
+    for (entity, transform, dials) in &actors {
         let spec = &dials.0;
-        let offset = sort_offset(spec.order, spec.y_sort, transform.translation.y - camera_y);
+        if spec.y_sort {
+            let z = transform.translation.z + 0.0;
+            groups
+                .entry((z.to_bits(), spec.order))
+                .or_default()
+                .push((entity, transform.translation.y));
+        }
+    }
+    let mut ranked: HashMap<Entity, f32> = HashMap::default();
+    for members in groups.values() {
+        let heights: Vec<f32> = members.iter().map(|(_, y)| *y).collect();
+        for ((entity, _), depth) in members.iter().zip(y_sort_depths(&heights)) {
+            ranked.insert(*entity, depth);
+        }
+    }
+    for (entity, mut transform, dials) in &mut actors {
+        let offset = order_depth(dials.0.order) + ranked.get(&entity).copied().unwrap_or(0.0);
         if offset != 0.0 {
             transform.translation.z += offset;
             commands.entity(entity).insert(SortDepth(offset));
@@ -488,5 +646,111 @@ struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) world
             slicer.center_scale_mode,
             SliceScaleMode::Tile { .. }
         ));
+    }
+
+    fn dialed(y_sort: bool, order: i32, palette: &str) -> SpriteDials {
+        SpriteDials(SpriteSpec {
+            y_sort,
+            order,
+            palette: palette.to_string(),
+            ..SpriteSpec::default()
+        })
+    }
+
+    #[test]
+    fn y_sort_orders_actors_far_apart_and_comes_back_off() {
+        let mut app = App::new();
+        app.add_systems(Update, apply_sort_depth);
+        app.add_systems(PostUpdate, clear_sort_depth);
+        let mut spawn = |y: f32, order: i32| {
+            app.world_mut()
+                .spawn((
+                    ActorId(format!("a{y}")),
+                    Transform::from_xyz(0.0, y, 3.0),
+                    dialed(true, order, ""),
+                ))
+                .id()
+        };
+        let [far_up, far_down, near, ranked] = [
+            spawn(90_000.0, 0),
+            spawn(-90_000.0, 0),
+            spawn(10.0, 0),
+            spawn(90_000.0, 1),
+        ];
+        app.world_mut().run_schedule(Update);
+        let z = |app: &App, entity| app.world().get::<Transform>(entity).unwrap().translation.z;
+        assert!(z(&app, far_down) > z(&app, near));
+        assert!(z(&app, near) > z(&app, far_up));
+        // A higher order beats any height.
+        assert!(z(&app, ranked) > z(&app, far_down));
+        app.world_mut().run_schedule(PostUpdate);
+        for entity in [far_up, far_down, near, ranked] {
+            assert_eq!(z(&app, entity), 3.0);
+        }
+    }
+
+    #[test]
+    fn stack_slices_take_the_palette_and_give_it_back() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut app = App::new();
+        app.add_plugins((
+            TaskPoolPlugin::default(),
+            bevy::asset::AssetPlugin::default(),
+        ));
+        app.init_asset::<Image>();
+        app.init_asset::<Mesh>();
+        app.init_asset::<SpriteFxMaterial>();
+        app.insert_non_send(Engine::new(incoming, blockloom_core::scene::Mode::TwoD));
+        app.add_systems(Update, sync_part_palettes);
+        let image = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(Image::default());
+        let slices: Vec<Entity> = (0..2)
+            .map(|_| {
+                app.world_mut()
+                    .spawn((
+                        StackSlice,
+                        Sprite::from_image(image.clone()),
+                        Transform::default(),
+                    ))
+                    .id()
+            })
+            .collect();
+        let actor = app
+            .world_mut()
+            .spawn((
+                ActorId("stack".to_string()),
+                dialed(false, 0, "assets/palette.png"),
+                SpriteDecor {
+                    stack: slices.clone(),
+                    ..SpriteDecor::default()
+                },
+            ))
+            .id();
+        app.update();
+        let mut quads = Vec::new();
+        for slice in &slices {
+            let fx = app.world().get::<PartFx>(*slice).unwrap();
+            let (quad, _, _) = fx.0.as_ref().unwrap();
+            quads.push(*quad);
+            assert!(app.world().get::<RenderLayers>(*slice).is_some());
+        }
+        // A second frame reuses the quads rather than making more.
+        app.update();
+        let again = app.world().get::<PartFx>(slices[0]).unwrap();
+        assert_eq!(again.0.as_ref().unwrap().0, quads[0]);
+        app.world_mut()
+            .get_mut::<SpriteDials>(actor)
+            .unwrap()
+            .0
+            .palette
+            .clear();
+        app.update();
+        for (slice, quad) in slices.iter().zip(quads) {
+            assert!(app.world().get::<PartFx>(*slice).is_none());
+            assert!(app.world().get::<RenderLayers>(*slice).is_none());
+            assert!(app.world().get_entity(quad).is_err());
+        }
     }
 }

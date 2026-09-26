@@ -794,6 +794,11 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [x] Sprite dials: flip X/Y, per-sprite material overrides (tint, palette swap
         index, outline width/color), sorting layer plus order-in-layer plus
         Y-sort toggle for top-down depth. Fixed-tick sampling so VM and codegen agree.
+  - [ ] Spine mesh attachments: deformed 2D meshes rebuilt per frame, weighted
+        skinning and deform keys, so rigs that use meshes draw every part.
+  - [ ] Palette/outline effect on 9-slice panels (slice in the effect shader),
+        and one outline around a whole rig or stack (draw it to a texture,
+        outline once) instead of none.
 - [ ] Tilemaps and level building (builds on the Phase 4 per-tile collision and
       animated tiles; this is authoring plus runtime):
   - [ ] Autotile and brushes: bitmask/edge autotile rules per tileset, scatter

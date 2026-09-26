@@ -115,9 +115,8 @@ impl Default for SpriteSpec {
 pub const ORDER_LIMIT: i32 = 40;
 /// Depth between two orders: forty either way stays inside one layer.
 pub const ORDER_STEP: f32 = 0.01;
-/// Depth per world unit of height for Y-sort, and the most it may add.
-/// Inside half an order step, so the order always wins over height.
-pub const Y_SORT_SCALE: f32 = 2e-6;
+/// Most depth Y-sort may add either way. Inside half an order step, so the
+/// order always wins over height.
 pub const Y_SORT_LIMIT: f32 = 0.004;
 /// Most pixels an outline may be.
 pub const OUTLINE_LIMIT: f32 = 16.0;
@@ -167,17 +166,38 @@ pub fn clamp_outline(width: f32) -> f32 {
     }
 }
 
-/// Extra depth on top of placement z plus layer: the order inside the
-/// layer, then height when Y-sorting. `height` is measured from the camera,
-/// so the sort keeps its precision anywhere in a big level.
-pub fn sort_offset(order: i32, y_sort: bool, height: f32) -> f32 {
-    let order = order.clamp(-ORDER_LIMIT, ORDER_LIMIT) as f32 * ORDER_STEP;
-    let height = if y_sort && height.is_finite() {
-        (-height * Y_SORT_SCALE).clamp(-Y_SORT_LIMIT, Y_SORT_LIMIT)
+/// Depth an order adds on top of placement z plus layer.
+pub fn order_depth(order: i32) -> f32 {
+    order.clamp(-ORDER_LIMIT, ORDER_LIMIT) as f32 * ORDER_STEP
+}
+
+/// Y-sort depth for sprites sharing one layer and order, by rank rather than
+/// raw height, so any spread of heights spans the whole band. Lower on
+/// screen is nearer; equal heights tie.
+pub fn y_sort_depths(heights: &[f32]) -> Vec<f32> {
+    // `+ 0.0` folds -0 into 0 for `total_cmp`.
+    let mut sorted: Vec<f32> = heights
+        .iter()
+        .filter(|h| h.is_finite())
+        .map(|h| h + 0.0)
+        .collect();
+    sorted.sort_by(|a, b| b.total_cmp(a));
+    sorted.dedup();
+    let step = if sorted.len() > 1 {
+        2.0 * Y_SORT_LIMIT / (sorted.len() - 1) as f32
     } else {
         0.0
     };
-    order + height
+    let base = if sorted.len() > 1 { -Y_SORT_LIMIT } else { 0.0 };
+    heights
+        .iter()
+        .map(
+            |h| match sorted.binary_search_by(|probe| (h + 0.0).total_cmp(probe)) {
+                Ok(rank) if h.is_finite() => base + rank as f32 * step,
+                _ => 0.0,
+            },
+        )
+        .collect()
 }
 
 /// Where stack slice `index` sits relative to the actor, given the actor's
@@ -197,14 +217,27 @@ mod tests {
 
     #[test]
     fn order_outranks_height_and_both_stay_in_a_layer() {
-        let front = sort_offset(1, true, 5000.0);
-        let back = sort_offset(0, true, -5000.0);
-        assert!(front > back);
-        assert!(sort_offset(ORDER_LIMIT + 10, true, -1e9) < 0.5);
-        assert!(sort_offset(-ORDER_LIMIT - 10, true, 1e9) > -0.5);
-        // Lower on screen is nearer.
-        assert!(sort_offset(0, true, -10.0) > sort_offset(0, true, 10.0));
-        assert_eq!(sort_offset(0, false, -10.0), 0.0);
+        let depths = y_sort_depths(&[5000.0, -5000.0]);
+        assert!(order_depth(1) + depths[0] > order_depth(0) + depths[1]);
+        assert!(order_depth(ORDER_LIMIT + 10) + Y_SORT_LIMIT < 0.5);
+        assert!(order_depth(-ORDER_LIMIT - 10) - Y_SORT_LIMIT > -0.5);
+    }
+
+    #[test]
+    fn y_sort_ranks_any_spread_of_heights() {
+        // Far apart and close together sort the same way.
+        let depths = y_sort_depths(&[1e6, -1e6, 1e6 + 1.0, 0.5, 0.5, f32::NAN]);
+        assert!(depths[1] > depths[3] && depths[3] > depths[0] && depths[0] > depths[2]);
+        assert_eq!(depths[3], depths[4]);
+        assert_eq!(depths[5], 0.0);
+        assert_eq!(depths[1], Y_SORT_LIMIT);
+        assert_eq!(depths[2], -Y_SORT_LIMIT);
+        assert_eq!(y_sort_depths(&[42.0]), vec![0.0]);
+        // Adjacent ranks stay apart at a distant layer's z.
+        let many: Vec<f32> = (0..1000).map(|i| i as f32).collect();
+        let depths = y_sort_depths(&many);
+        let z = 50.0f32;
+        assert!((1..1000).all(|i| z + depths[i] < z + depths[i - 1]));
     }
 
     #[test]
