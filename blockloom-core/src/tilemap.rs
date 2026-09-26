@@ -181,6 +181,18 @@ impl RegionKind {
         RegionKind::Water,
     ];
 
+    /// Which kind wins when a body touches several: a kill beats a
+    /// checkpoint beats a spawn beats water beats a ladder.
+    pub fn rank(self) -> u8 {
+        match self {
+            RegionKind::Ladder => 0,
+            RegionKind::Water => 1,
+            RegionKind::Spawn => 2,
+            RegionKind::Checkpoint => 3,
+            RegionKind::Kill => 4,
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             RegionKind::Spawn => "Spawn",
@@ -554,6 +566,22 @@ impl Tilemap {
             ((point[0] + w / 2.0) / tw.max(1e-3)).floor() as i32,
             ((h / 2.0 - point[1]) / th.max(1e-3)).floor() as i32,
         )
+    }
+
+    /// The cells a box in the actor's own frame covers, clipped to the map.
+    pub fn cells_in_local(&self, min: [f32; 2], max: [f32; 2]) -> Vec<(u32, u32)> {
+        let (x0, y0) = self.cell_at_local_unclamped([min[0], max[1]]);
+        let (x1, y1) = self.cell_at_local_unclamped([max[0], min[1]]);
+        let (w, h) = (self.width as i32, self.height as i32);
+        let (x0, x1) = (x0.max(0), x1.min(w - 1));
+        let (y0, y1) = (y0.max(0), y1.min(h - 1));
+        let mut cells = Vec::new();
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                cells.push((x as u32, y as u32));
+            }
+        }
+        cells
     }
 
     /// A cell's centre in the actor's own frame.
@@ -1029,6 +1057,31 @@ impl TilemapSense {
     pub fn answers_to(&self, wanted: &str) -> bool {
         self.id == wanted || self.name.eq_ignore_ascii_case(wanted)
     }
+
+    /// The strongest region a world box touches (see [`RegionKind::rank`]),
+    /// the cell nearest the box's centre among equals, with that cell's
+    /// centre in world units.
+    pub fn region_touching(&self, min: [f32; 2], max: [f32; 2]) -> Option<(RegionKind, [f32; 2])> {
+        let (a, b) = (self.local(min), self.local(max));
+        let lo = [a[0].min(b[0]), a[1].min(b[1])];
+        let hi = [a[0].max(b[0]), a[1].max(b[1])];
+        let mid = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+        let mut best: Option<(RegionKind, f32, [f32; 2])> = None;
+        for (x, y) in self.map.cells_in_local(lo, hi) {
+            let Some(kind) = self.map.tile_at(x, y).and_then(|t| self.map.region_of(t)) else {
+                continue;
+            };
+            let at = self.map.cell_center_local(x, y);
+            let d = (at[0] - mid[0]).powi(2) + (at[1] - mid[1]).powi(2);
+            let better = best.is_none_or(|(held, near, _)| {
+                kind.rank() > held.rank() || (kind == held && d < near)
+            });
+            if better {
+                best = Some((kind, d, at));
+            }
+        }
+        best.map(|(kind, _, at)| (kind, self.world(at)))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1043,6 +1096,8 @@ pub struct RoomSense {
 pub struct LevelSense {
     pub tilemaps: Vec<TilemapSense>,
     pub rooms: Vec<RoomSense>,
+    /// Actor id -> the room name it entered on the last fixed tick.
+    pub entered: std::collections::HashMap<String, String>,
 }
 
 impl LevelSense {
@@ -1081,10 +1136,32 @@ impl LevelSense {
         })
     }
 
+    /// [`TilemapSense::region_touching`] over every map, the strongest winning
+    /// (the first map among equals).
+    pub fn region_touching(&self, min: [f32; 2], max: [f32; 2]) -> Option<(RegionKind, [f32; 2])> {
+        region_touching(self.tilemaps.iter(), min, max)
+    }
+
     /// The smallest room holding a point (the first of equals).
     pub fn room_at(&self, point: [f32; 2]) -> Option<&RoomSense> {
         smallest_room(&self.rooms, point)
     }
+}
+
+/// The strongest region a world box touches across `maps`.
+pub fn region_touching<'a>(
+    maps: impl Iterator<Item = &'a TilemapSense>,
+    min: [f32; 2],
+    max: [f32; 2],
+) -> Option<(RegionKind, [f32; 2])> {
+    maps.filter_map(|sense| sense.region_touching(min, max))
+        .fold(
+            None,
+            |best: Option<(RegionKind, [f32; 2])>, found| match best {
+                Some(best) if best.0.rank() >= found.0.rank() => Some(best),
+                _ => Some(found),
+            },
+        )
 }
 
 /// The smallest room holding `point`, so a nested room wins over its hall.
@@ -1244,6 +1321,43 @@ mod tests {
     }
 
     #[test]
+    fn a_body_box_touches_the_strongest_region() {
+        let mut m = map(4, 2);
+        m.tile_size = [10.0, 10.0];
+        m.regions.push(TileRegion {
+            tile: 7,
+            kind: RegionKind::Kill,
+        });
+        m.regions.push(TileRegion {
+            tile: 5,
+            kind: RegionKind::Water,
+        });
+        m.set_tile(3, 1, 7);
+        m.set_tile(2, 1, 5);
+        let sense = TilemapSense {
+            id: "m".into(),
+            name: "Map".into(),
+            center: [100.0, 0.0],
+            scale: [1.0, 1.0],
+            map: Arc::new(m),
+        };
+        // Centre over the water cell, edge over the kill cell: the kill wins.
+        assert_eq!(
+            sense.region_touching([103.0, -8.0], [111.0, -2.0]),
+            Some((RegionKind::Kill, [115.0, -5.0]))
+        );
+        // Wholly over water.
+        assert_eq!(
+            sense.region_touching([101.0, -8.0], [109.0, -2.0]),
+            Some((RegionKind::Water, [105.0, -5.0]))
+        );
+        // Above both.
+        assert_eq!(sense.region_touching([101.0, 2.0], [119.0, 8.0]), None);
+        // Off the map altogether.
+        assert_eq!(sense.region_touching([200.0, 0.0], [210.0, 5.0]), None);
+    }
+
+    #[test]
     fn stats_count_tiles_and_rects() {
         let mut m = map(4, 2);
         m.solid = true;
@@ -1368,7 +1482,7 @@ mod tests {
                 scale: [1.0, 1.0],
                 map: Arc::new(m),
             }],
-            rooms: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(level.tile_at([105.0, 5.0], ""), Ok(4));
         assert_eq!(level.tile_at([95.0, 5.0], "ground"), Ok(-1));

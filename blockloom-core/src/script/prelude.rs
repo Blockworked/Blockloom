@@ -1225,6 +1225,12 @@ impl Actor {
         self.text(TEXT_ROOM, Str::borrow(actor), Str::EMPTY)
     }
 
+    /// The room this actor walked into on the last tick, or `None`: the
+    /// script's `when I enter room`. Starting a run inside one isn't entering.
+    pub fn entered_room(&self) -> Option<String> {
+        self.text(TEXT_ENTERED_ROOM, Str::EMPTY, Str::EMPTY)
+    }
+
     /// The water surface over (x, z) as of this fixed tick (z means nothing
     /// in 2D), or `None` over dry land. The highest where bodies overlap.
     pub fn water_at(&self, x: f32, z: f32) -> Option<WaterSample> {

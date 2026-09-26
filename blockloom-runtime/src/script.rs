@@ -529,6 +529,7 @@ fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
         abi::TEXT_NEW_ACTOR => me(actor)
             .map(|me| me.last_created)
             .filter(|id| !id.is_empty()),
+        abi::TEXT_ENTERED_ROOM => sense::read(|sensors| sensors.level.entered.get(actor).cloned()),
         abi::TEXT_ROOM => {
             let position = if a.trim().is_empty() {
                 me(actor)?.position

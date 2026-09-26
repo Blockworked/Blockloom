@@ -490,6 +490,35 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .chain()
                     .after(bevy::transform::TransformSystems::Propagate),
             );
+            // The level's tilemaps: painted tiles and regions on the fixed
+            // tick, the Tiles tool and overlays per frame. Rooms and parallax
+            // are 2D ideas and stay there.
+            app.init_resource::<tiles::Level>()
+                .add_systems(
+                    FixedUpdate,
+                    (
+                        tiles::apply_level_effects,
+                        tiles::redraw_maps_3d,
+                        tiles::apply_regions_3d,
+                    )
+                        .chain()
+                        .in_set(world::SimulationSet)
+                        .after(dim3::apply_effects)
+                        .before(world::clear_effects),
+                )
+                .add_systems(
+                    Update,
+                    (
+                        tiles::paint_tiles
+                            .after(edit::interact)
+                            .before(edit::report),
+                        tiles::redraw_maps_3d
+                            .after(tiles::paint_tiles)
+                            .after(world::rebuild_world),
+                        tiles::publish_level.after(world::publish_sensors),
+                        tiles::draw_overlays.after(edit::draw),
+                    ),
+                );
             app.insert_resource(bevy_rapier3d::prelude::TimestepMode::Fixed {
                 dt: 1.0 / 60.0,
                 substeps: 1,

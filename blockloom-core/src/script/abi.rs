@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 29;
+pub const ABI_VERSION: u32 = 30;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -188,6 +188,9 @@ pub const TEXT_ACTIVE_VOLUMES: u32 = 12;
 /// `a` = actor name, empty for this actor. The smallest room it stands in,
 /// by name, or [`MISSING`] for none.
 pub const TEXT_ROOM: u32 = 13;
+/// The room this actor entered on the last fixed tick, by name, or
+/// [`MISSING`]. What `when I enter room` would have started on.
+pub const TEXT_ENTERED_ROOM: u32 = 14;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a

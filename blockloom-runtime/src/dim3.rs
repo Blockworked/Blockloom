@@ -15,7 +15,7 @@ use std::path::Path;
 
 /// How thick a `plane` actor is made, since a real half-space can't be moved
 /// or clicked the way every other actor can.
-const PLANE_THICKNESS: f32 = 0.2;
+pub(crate) const PLANE_THICKNESS: f32 = 0.2;
 
 fn collider_for(visual: &Visual) -> Option<rp::Collider> {
     match visual {
@@ -41,22 +41,26 @@ fn collider_for(visual: &Visual) -> Option<rp::Collider> {
         )),
         // A solid tilemap collides tile by tile, one slab-thick box per
         // merged run; a decorative one lets bodies pass through.
-        Visual::Tilemap { tilemap } => {
-            let parts: Vec<_> = tilemap
-                .solid_rects()
-                .into_iter()
-                .map(|rect| {
-                    (
-                        Vec3::new(rect.center[0], rect.center[1], 0.0),
-                        Quat::IDENTITY,
-                        rp::Collider::cuboid(rect.half[0], rect.half[1], PLANE_THICKNESS / 2.0),
-                    )
-                })
-                .collect();
-            (!parts.is_empty()).then(|| rp::Collider::compound(parts))
-        }
+        Visual::Tilemap { tilemap } => tilemap_collider(tilemap),
         _ => None,
     }
+}
+
+pub(crate) fn tilemap_collider(
+    tilemap: &blockloom_core::material::Tilemap,
+) -> Option<rp::Collider> {
+    let parts: Vec<_> = tilemap
+        .solid_rects()
+        .into_iter()
+        .map(|rect| {
+            (
+                Vec3::new(rect.center[0], rect.center[1], 0.0),
+                Quat::IDENTITY,
+                rp::Collider::cuboid(rect.half[0], rect.half[1], PLANE_THICKNESS / 2.0),
+            )
+        })
+        .collect();
+    (!parts.is_empty()).then(|| rp::Collider::compound(parts))
 }
 
 pub(super) fn mesh_for(visual: &Visual) -> Option<Mesh> {
@@ -208,6 +212,7 @@ fn insert_look_extras(
             crate::model::attach(commands, id, &actor.id, visual, dir, assets);
         }
         Visual::Tilemap { tilemap } => {
+            commands.entity(id).insert(crate::materials::TilemapLook);
             if let Some(animated) = crate::materials::AnimatedTiles::of(tilemap, mesh) {
                 commands.entity(id).insert(animated);
             }
@@ -346,8 +351,17 @@ fn remove_surface(commands: &mut Commands, id: Entity) {
 /// Gives an actor the rigid body its `Body` component asks for, with the
 /// collider its look implies. Nothing happens without both.
 fn insert_body(entity: &mut EntityCommands, actor: &Actor) {
+    insert_body_with(entity, actor, actor.visual().and_then(collider_for));
+}
+
+/// [`insert_body`] with the collider given: a painted map's live one.
+pub(crate) fn insert_body_with(
+    entity: &mut EntityCommands,
+    actor: &Actor,
+    collider: Option<rp::Collider>,
+) {
     let physics = actor.physics();
-    let Some(collider) = actor.visual().and_then(collider_for) else {
+    let Some(collider) = collider else {
         return;
     };
     let Some(body) = body_for(physics.body) else {

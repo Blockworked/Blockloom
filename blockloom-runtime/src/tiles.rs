@@ -1,7 +1,7 @@
-//! The 2D level at run time, 2D only: the live tilemaps `paint tile`
-//! writes, tile regions (spawn, checkpoint, kill, ladder, water), rooms with
-//! camera handoff and streaming, parallax layers, and the scene view's
-//! Tiles tool and overlays.
+//! The level at run time: the live tilemaps `paint tile` writes, tile
+//! regions (spawn, checkpoint, kill, ladder, water) and the scene view's
+//! Tiles tool and overlays in both dimensions, plus rooms with camera
+//! handoff and streaming and parallax layers in 2D.
 //!
 //! [`Level`] is seeded from the document on every rebuild. A painted map is
 //! marked dirty and [`redraw_maps`] rebuilds its mesh and compound collider.
@@ -21,10 +21,11 @@ use bevy::sprite_render::{ColorMaterial, MeshMaterial2d};
 use bevy_rapier2d::prelude as rp;
 use blockloom_core::material::{TileMesh, Tilemap};
 use blockloom_core::project::Project;
+use blockloom_core::scene::Mode;
 use blockloom_core::scene::Visual;
 use blockloom_core::tilemap::{
     BrushTool, LevelSense, ParallaxSpec, RegionKind, RoomBounds, RoomSense, RoomSpec, TilemapSense,
-    smallest_room,
+    region_touching, smallest_room,
 };
 use blockloom_core::vm::{Effect, Event};
 use blockloom_protocol::{RuntimeMessage, SceneTool};
@@ -38,6 +39,8 @@ pub struct Level {
     pub maps: HashMap<String, Arc<Tilemap>>,
     /// Maps whose mesh and collider need redoing.
     dirty: HashSet<String>,
+    /// Bumped on every change to a map, so cached query shapes know.
+    revisions: HashMap<String, u64>,
     /// Each parallax layer's live spec, by actor id.
     pub parallax: HashMap<String, ParallaxSpec>,
     /// Each room's spec, by actor id.
@@ -49,6 +52,11 @@ pub struct Level {
     tasks: CellTasks<String, TileMesh>,
     /// Which room each actor stood in last tick.
     in_room: HashMap<String, String>,
+    /// Actors whose room is known, so one first seen inside a room doesn't
+    /// count as entering it.
+    seen: HashSet<String>,
+    /// Who entered which room (by name) on the last tick, for scripts.
+    entered: HashMap<String, String>,
     /// Where each body goes back to when it touches a kill tile.
     respawn: HashMap<String, Vec2>,
     handoff: Option<Handoff>,
@@ -134,6 +142,12 @@ impl Level {
         level
     }
 
+    /// Marks a map changed: redrawn next tick, its query shape redone.
+    fn touch(&mut self, id: String) {
+        *self.revisions.entry(id.clone()).or_default() += 1;
+        self.dirty.insert(id);
+    }
+
     /// The maps a streaming room builds, which the rebuild spawns bare.
     pub fn streamed_maps(&self) -> HashSet<String> {
         self.streamed.keys().cloned().collect()
@@ -204,6 +218,36 @@ impl Level {
             .collect();
         maps.sort_by(|a, b| a.id.cmp(&b.id));
         maps
+    }
+}
+
+/// A solid map's query shape: one box per merged solid run, scaled.
+pub(crate) fn tile_shape(
+    map: &Tilemap,
+    scale: Vec3,
+    mode: blockloom_core::scene::Mode,
+) -> blockloom_core::sense::ColliderShape {
+    use blockloom_core::sense::{ColliderShape, ShapePart};
+    if !map.solid {
+        return ColliderShape::None;
+    }
+    let scale = scale.abs();
+    let depth = match mode {
+        blockloom_core::scene::Mode::TwoD => 0.0,
+        blockloom_core::scene::Mode::ThreeD => crate::dim3::PLANE_THICKNESS / 2.0 * scale.z,
+    };
+    let parts: Vec<ShapePart> = map
+        .solid_rects()
+        .into_iter()
+        .map(|rect| ShapePart {
+            offset: [rect.center[0] * scale.x, rect.center[1] * scale.y, 0.0],
+            half: [rect.half[0] * scale.x, rect.half[1] * scale.y, depth],
+        })
+        .collect();
+    if parts.is_empty() {
+        ColliderShape::None
+    } else {
+        ColliderShape::Parts(parts.into())
     }
 }
 
@@ -311,7 +355,7 @@ pub fn apply_level_effects(
                 }
                 live.set_tile(cx, cy, *tile);
                 live.retile(&[(cx as i32, cy as i32)]);
-                level.dirty.insert(id);
+                level.touch(id);
             }
             Effect::SetParallax {
                 actor,
@@ -411,13 +455,107 @@ pub fn redraw_maps(
     }
 }
 
+/// [`redraw_maps`] in 3D, where a map draws on its own entity.
+#[allow(clippy::too_many_arguments)]
+pub fn redraw_maps_3d(
+    mut commands: Commands,
+    engine: NonSend<Engine>,
+    mut level: ResMut<Level>,
+    bodies: Query<(), With<rp3::RigidBody>>,
+    surfaces: Query<(), With<MeshMaterial3d<StandardMaterial>>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    assets: Res<AssetServer>,
+) {
+    if level.dirty.is_empty() {
+        return;
+    }
+    let dirty: Vec<String> = level.dirty.drain().collect();
+    for id in dirty {
+        let (Some(entity), Some(map)) = (engine.entities.get(&id).copied(), level.maps.get(&id))
+        else {
+            continue;
+        };
+        let map = Arc::clone(map);
+        let collider = crate::dim3::tilemap_collider(&map);
+        let mut target = commands.entity(entity);
+        if bodies.get(entity).is_ok() {
+            match collider {
+                Some(collider) => target.insert(collider),
+                None => target.remove::<rp3::Collider>(),
+            };
+        } else if collider.is_some()
+            && let Some(actor) = engine.actor(&id)
+        {
+            crate::dim3::insert_body_with(&mut target, actor, collider);
+        }
+        let built = map.build_mesh();
+        if built.is_empty() {
+            target.remove::<(Mesh3d, AnimatedTiles)>();
+            continue;
+        }
+        // A fresh handle: the render cache may share the authored mesh.
+        let mesh = meshes.add(crate::materials::tilemesh_to_bevy(&built));
+        target.insert((Mesh3d(mesh.clone()), crate::materials::TilemapLook));
+        match AnimatedTiles::of(&map, &mesh) {
+            Some(animated) => target.insert(animated),
+            None => target.remove::<AnimatedTiles>(),
+        };
+        if surfaces.get(entity).is_err() {
+            // A map that started empty spawned with nothing to draw with.
+            let texture = (!map.tileset.trim().is_empty()).then(|| {
+                assets.load(crate::world::asset_path(
+                    engine.project_dir.as_deref(),
+                    map.tileset.trim(),
+                ))
+            });
+            target.insert(MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                base_color_texture: texture,
+                alpha_mode: AlphaMode::Blend,
+                cull_mode: None,
+                ..default()
+            })));
+        }
+    }
+}
+
 /// Publishes the live maps and room bounds for `tile at` and `room
 /// containing`, after the rest of the frame's snapshot.
 pub fn publish_level(
     engine: NonSend<Engine>,
     level: Res<Level>,
+    dimension: Res<crate::engine::Dimension>,
     placed: Query<(&ActorId, &Transform)>,
+    mut shapes: Local<HashMap<String, ((Vec3, u64), blockloom_core::sense::ColliderShape)>>,
 ) {
+    // Solid maps are queried cell by cell, the live map where there is one.
+    if level.is_added() {
+        shapes.clear();
+    }
+    for (id, t) in &placed {
+        if !engine.has_component(&id.0, "Body") {
+            continue;
+        }
+        let live = level.maps.get(&id.0).map(Arc::as_ref);
+        let authored = || match engine.actor(&id.0)?.visual()? {
+            Visual::Tilemap { tilemap } => Some(tilemap),
+            _ => None,
+        };
+        let Some(map) = live.or_else(authored) else {
+            continue;
+        };
+        let key = (t.scale, level.revisions.get(&id.0).copied().unwrap_or(0));
+        let shape = match shapes.get(&id.0) {
+            Some((held, shape)) if *held == key => shape.clone(),
+            _ => {
+                let shape = tile_shape(map, t.scale, dimension.0);
+                shapes.insert(id.0.clone(), (key, shape.clone()));
+                shape
+            }
+        };
+        blockloom_core::sense::publish_shape(&id.0, shape);
+    }
     let placed: HashMap<String, Transform> = placed
         .iter()
         .filter(|(id, _)| level.maps.contains_key(&id.0) || level.rooms.contains_key(&id.0))
@@ -430,20 +568,29 @@ pub fn publish_level(
             .into_iter()
             .map(|(room, _)| room)
             .collect(),
+        entered: level.entered.clone(),
     });
 }
 
 // ─── Rooms and regions ─────────────────────────────────────────────────────
 
 /// Fires `when actor enters room` for every actor whose smallest room
-/// changed this tick. An actor that starts the run inside a room enters it
-/// on the first tick.
+/// changed this tick. An actor first seen inside a room (at the start of a
+/// run, or a clone made there) is already in it, so nothing fires.
 pub fn track_rooms(
     mut engine: NonSendMut<Engine>,
     mut level: ResMut<Level>,
     placed: Query<(&ActorId, &Transform)>,
 ) {
-    if !engine.running || engine.paused || level.rooms.is_empty() {
+    if !engine.running || engine.paused {
+        return;
+    }
+    let had = !level.entered.is_empty();
+    level.entered.clear();
+    if level.rooms.is_empty() {
+        if had {
+            blockloom_core::sense::publish_entered(HashMap::new());
+        }
         return;
     }
     let all: HashMap<String, Transform> = placed.iter().map(|(id, t)| (id.0.clone(), *t)).collect();
@@ -461,6 +608,7 @@ pub fn track_rooms(
     for id in ids {
         let at = all[id].translation;
         let now = smallest_room(&rooms, [at.x, at.y]);
+        let fresh = level.seen.insert(id.clone());
         let was = level.in_room.get(id);
         if now.map(|room| &room.id) == was {
             continue;
@@ -468,137 +616,195 @@ pub fn track_rooms(
         match now {
             Some(room) => {
                 level.in_room.insert(id.clone(), room.id.clone());
-                entered.push((id.clone(), room.name.clone()));
+                if !fresh {
+                    entered.push((id.clone(), room.name.clone()));
+                }
             }
             None => {
                 level.in_room.remove(id);
             }
         }
     }
+    level.entered = entered.iter().cloned().collect();
+    if had || !entered.is_empty() {
+        blockloom_core::sense::publish_entered(level.entered.clone());
+    }
     for (actor, room) in entered {
         engine.fire(Event::EnteredRoom { actor, room });
     }
 }
 
-/// What a moving body does in the region under its centre: checkpoints and
-/// spawns move its respawn point, a kill tile sends it back there, a ladder
-/// takes its gravity away and water weakens it and drags.
-#[allow(clippy::type_complexity)]
-pub fn apply_regions(
-    mut commands: Commands,
-    engine: NonSend<Engine>,
-    mut level: ResMut<Level>,
-    time: Res<Time>,
-    mut bodies: Query<(
-        Entity,
-        &ActorId,
-        &mut Transform,
-        Option<&mut PhysicsPose>,
-        Option<&mut PrevPose>,
-        Option<&rp::RigidBody>,
-        Option<&mut rp::Velocity>,
-        Option<&mut rp::GravityScale>,
-        Option<&RegionHold>,
-    )>,
-) {
-    if !engine.running || engine.paused || level.maps.is_empty() {
-        return;
-    }
-    let dt = time.delta_secs();
-    let placed: HashMap<String, Transform> = bodies
-        .iter()
-        .filter(|(_, id, ..)| level.maps.contains_key(&id.0))
-        .map(|(_, id, t, ..)| (id.0.clone(), *t))
-        .collect();
-    let maps = level.map_senses(&engine, &placed);
-    if maps.iter().all(|sense| sense.map.regions.is_empty()) {
-        return;
-    }
-    let spawn = maps.iter().find_map(|sense| {
-        let (x, y) = sense.map.first_region_cell(RegionKind::Spawn)?;
-        Some(Vec2::from(sense.world(sense.map.cell_center_local(x, y))))
-    });
-    let sense = LevelSense {
-        tilemaps: maps,
-        rooms: Vec::new(),
+/// The world box a body tests regions with: its look's extents, scaled,
+/// pulled in a little so a body merely resting against a cell doesn't count.
+fn body_box(engine: &Engine, id: &str, t: &Transform, mode: Mode) -> ([f32; 2], [f32; 2], f32) {
+    let visual = engine.actor(id).and_then(|a| a.visual());
+    let (half, depth) = match (visual, mode) {
+        (Some(visual), Mode::TwoD) => (crate::world::half_extents(visual), 0.0),
+        (Some(visual), Mode::ThreeD) => {
+            let half = crate::world::half_extents3(visual);
+            (half.truncate(), half.z * t.scale.z.abs())
+        }
+        (None, _) => (Vec2::ZERO, 0.0),
     };
-    for (entity, id, mut transform, pose, prev, body, velocity, gravity, hold) in &mut bodies {
-        let moving = matches!(
-            body,
-            Some(rp::RigidBody::Dynamic | rp::RigidBody::KinematicPositionBased)
-        );
-        if !moving {
-            continue;
-        }
-        let at = transform.translation.truncate();
-        let region = sense.region_at(at.into()).map(|(kind, map)| {
-            let (x, y) = map.cell_at(at.into()).unwrap_or_default();
-            (kind, Vec2::from(map.world(map.map.cell_center_local(x, y))))
-        });
-        let mut want_gravity = None;
-        match region {
-            Some((RegionKind::Spawn | RegionKind::Checkpoint, center)) => {
-                level.respawn.insert(id.0.clone(), center);
-            }
-            Some((RegionKind::Kill, _)) => {
-                let back = level
-                    .respawn
-                    .get(&id.0)
-                    .copied()
-                    .or(spawn)
-                    .unwrap_or_else(|| {
-                        let authored = engine
-                            .actor(&id.0)
-                            .map(|a| a.components.placement().position)
-                            .unwrap_or_default();
-                        Vec2::new(authored[0], authored[1])
-                    });
-                transform.translation.x = back.x;
-                transform.translation.y = back.y;
-                if let Some(mut pose) = pose {
-                    pose.0.translation = transform.translation;
-                }
-                if let Some(mut prev) = prev {
-                    prev.0.translation = transform.translation;
-                }
-                if let Some(mut velocity) = velocity {
-                    *velocity = rp::Velocity::zero();
-                }
-                continue;
-            }
-            Some((RegionKind::Ladder, _)) => {
-                want_gravity = Some(0.0);
-                if let Some(mut velocity) = velocity {
-                    velocity.linear.y *= (1.0 - 6.0 * dt).clamp(0.0, 1.0);
-                }
-            }
-            Some((RegionKind::Water, _)) => {
-                want_gravity = Some(0.3);
-                if let Some(mut velocity) = velocity {
-                    velocity.linear *= (1.0 - 2.0 * dt).clamp(0.0, 1.0);
-                }
-            }
-            None => {}
-        }
-        let Some(mut gravity) = gravity else {
-            continue;
-        };
-        match (want_gravity, hold) {
-            (Some(factor), Some(hold)) => gravity.0 = hold.gravity * factor,
-            (Some(factor), None) => {
-                commands
-                    .entity(entity)
-                    .insert(RegionHold { gravity: gravity.0 });
-                gravity.0 *= factor;
-            }
-            (None, Some(hold)) => {
-                gravity.0 = hold.gravity;
-                commands.entity(entity).remove::<RegionHold>();
-            }
-            (None, None) => {}
-        }
-    }
+    let half = half * t.scale.truncate().abs() * 0.98;
+    let at = t.translation.truncate();
+    ((at - half).into(), (at + half).into(), depth)
 }
+
+/// The maps a body at depth `z` (3D) stands in front of: those whose plane
+/// lies within its depth plus half a tile.
+fn maps_near(
+    maps: &[(TilemapSense, f32)],
+    mode: Mode,
+    z: f32,
+    depth: f32,
+) -> impl Iterator<Item = &TilemapSense> {
+    maps.iter()
+        .filter(move |(sense, map_z)| {
+            mode == Mode::TwoD || {
+                let tile = sense.map.tile_size[0].max(sense.map.tile_size[1]) / 2.0;
+                (map_z - z).abs() <= depth + tile * sense.scale[0].abs().max(sense.scale[1].abs())
+            }
+        })
+        .map(|(sense, _)| sense)
+}
+
+/// What a moving body does in the region its box touches, the strongest
+/// winning: checkpoints and spawns move its respawn point, a kill tile sends
+/// it back there, a ladder takes its gravity away and water weakens it and
+/// drags. One system per dimension, over that dimension's rapier types.
+macro_rules! region_system {
+    ($name:ident, $rp:ident) => {
+        #[allow(clippy::type_complexity)]
+        pub fn $name(
+            mut commands: Commands,
+            engine: NonSend<Engine>,
+            mut level: ResMut<Level>,
+            time: Res<Time>,
+            dimension: Res<crate::engine::Dimension>,
+            mut bodies: Query<(
+                Entity,
+                &ActorId,
+                &mut Transform,
+                Option<&mut PhysicsPose>,
+                Option<&mut PrevPose>,
+                Option<&$rp::RigidBody>,
+                Option<&mut $rp::Velocity>,
+                Option<&mut $rp::GravityScale>,
+                Option<&RegionHold>,
+            )>,
+        ) {
+            if !engine.running || engine.paused || level.maps.is_empty() {
+                return;
+            }
+            let mode = dimension.0;
+            let dt = time.delta_secs();
+            let placed: HashMap<String, Transform> = bodies
+                .iter()
+                .filter(|(_, id, ..)| level.maps.contains_key(&id.0))
+                .map(|(_, id, t, ..)| (id.0.clone(), *t))
+                .collect();
+            let maps: Vec<(TilemapSense, f32)> = level
+                .map_senses(&engine, &placed)
+                .into_iter()
+                .filter(|sense| !sense.map.regions.is_empty())
+                .map(|sense| {
+                    let z = placed[&sense.id].translation.z;
+                    (sense, z)
+                })
+                .collect();
+            if maps.is_empty() {
+                return;
+            }
+            let spawn = maps.iter().find_map(|(sense, _)| {
+                let (x, y) = sense.map.first_region_cell(RegionKind::Spawn)?;
+                Some(Vec2::from(sense.world(sense.map.cell_center_local(x, y))))
+            });
+            for (entity, id, mut transform, pose, prev, body, velocity, gravity, hold) in
+                &mut bodies
+            {
+                let moving = matches!(
+                    body,
+                    Some($rp::RigidBody::Dynamic | $rp::RigidBody::KinematicPositionBased)
+                );
+                if !moving {
+                    continue;
+                }
+                let (min, max, depth) = body_box(&engine, &id.0, &transform, mode);
+                let near = maps_near(&maps, mode, transform.translation.z, depth);
+                let region = region_touching(near, min, max)
+                    .map(|(kind, center)| (kind, Vec2::from(center)));
+                let mut want_gravity = None;
+                match region {
+                    Some((RegionKind::Spawn | RegionKind::Checkpoint, center)) => {
+                        level.respawn.insert(id.0.clone(), center);
+                    }
+                    Some((RegionKind::Kill, _)) => {
+                        let back =
+                            level
+                                .respawn
+                                .get(&id.0)
+                                .copied()
+                                .or(spawn)
+                                .unwrap_or_else(|| {
+                                    let authored = engine
+                                        .actor(&id.0)
+                                        .map(|a| a.components.placement().position)
+                                        .unwrap_or_default();
+                                    Vec2::new(authored[0], authored[1])
+                                });
+                        transform.translation.x = back.x;
+                        transform.translation.y = back.y;
+                        if let Some(mut pose) = pose {
+                            pose.0.translation = transform.translation;
+                        }
+                        if let Some(mut prev) = prev {
+                            prev.0.translation = transform.translation;
+                        }
+                        if let Some(mut velocity) = velocity {
+                            *velocity = $rp::Velocity::zero();
+                        }
+                        continue;
+                    }
+                    Some((RegionKind::Ladder, _)) => {
+                        want_gravity = Some(0.0);
+                        if let Some(mut velocity) = velocity {
+                            velocity.linear.y *= (1.0 - 6.0 * dt).clamp(0.0, 1.0);
+                        }
+                    }
+                    Some((RegionKind::Water, _)) => {
+                        want_gravity = Some(0.3);
+                        if let Some(mut velocity) = velocity {
+                            velocity.linear *= (1.0 - 2.0 * dt).clamp(0.0, 1.0);
+                        }
+                    }
+                    None => {}
+                }
+                let Some(mut gravity) = gravity else {
+                    continue;
+                };
+                match (want_gravity, hold) {
+                    (Some(factor), Some(hold)) => gravity.0 = hold.gravity * factor,
+                    (Some(factor), None) => {
+                        commands
+                            .entity(entity)
+                            .insert(RegionHold { gravity: gravity.0 });
+                        gravity.0 *= factor;
+                    }
+                    (None, Some(hold)) => {
+                        gravity.0 = hold.gravity;
+                        commands.entity(entity).remove::<RegionHold>();
+                    }
+                    (None, None) => {}
+                }
+            }
+        }
+    };
+}
+
+use bevy_rapier3d::prelude as rp3;
+region_system!(apply_regions, rp);
+region_system!(apply_regions_3d, rp3);
 
 /// Keeps the camera inside the room its target stands in, sliding into a
 /// newly entered one over the room's blend time.
@@ -784,7 +990,7 @@ fn parallax_shown(engine: &Engine, editor: Option<&SceneEditor>) -> bool {
 pub fn apply_parallax(
     mut commands: Commands,
     engine: NonSend<Engine>,
-    editor: Option<Res<SceneEditor>>,
+    mut editor: Option<ResMut<SceneEditor>>,
     level: Res<Level>,
     environment: Res<crate::environment::Environment>,
     cameras: Query<&Transform, With<WorldCamera>>,
@@ -796,6 +1002,11 @@ pub fn apply_parallax(
     tile_materials: Query<&MeshMaterial2d<ColorMaterial>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
+    if let Some(editor) = editor.as_mut()
+        && !editor.parallax.is_empty()
+    {
+        editor.parallax.clear();
+    }
     if level.parallax.is_empty() || !parallax_shown(&engine, editor.as_deref()) {
         return;
     }
@@ -820,6 +1031,9 @@ pub fn apply_parallax(
         if offset != Vec2::ZERO {
             transform.translation += offset.extend(0.0);
             commands.entity(entity).insert(ParallaxOffset(offset));
+            if let Some(editor) = editor.as_mut() {
+                editor.parallax.insert(id.0.clone(), offset.extend(0.0));
+            }
         }
         let dim = spec.dimming();
         if let Some(mut sprite) = sprite
@@ -972,7 +1186,6 @@ pub struct LiveTiles {
 pub fn paint_tiles(
     mut editor: ResMut<SceneEditor>,
     engine: NonSend<Engine>,
-    dimension: Res<crate::engine::Dimension>,
     mut level: ResMut<Level>,
     placed: Query<&Transform, With<ActorId>>,
     mut live: Local<Option<LiveTiles>>,
@@ -981,11 +1194,7 @@ pub fn paint_tiles(
     let target = editor
         .selected
         .clone()
-        .filter(|_| {
-            dimension.0 == blockloom_core::scene::Mode::TwoD
-                && editing(&engine, &editor)
-                && editor.view.tool == SceneTool::Tiles
-        })
+        .filter(|_| editing(&engine, &editor) && editor.view.tool == SceneTool::Tiles)
         .and_then(|id| Some((*engine.entities.get(&id)?, id)))
         .filter(|(_, id)| level.maps.contains_key(id));
     let Some((entity, actor)) = target else {
@@ -998,26 +1207,38 @@ pub fn paint_tiles(
     let Ok(transform) = placed.get(entity) else {
         return;
     };
-    let Some(pointer) = editor.pointer_ray.map(|ray| ray.origin.truncate()) else {
+    // Where the pointer meets the map's own plane, in the map's frame.
+    let Some(ray) = editor.pointer_ray else {
         return;
     };
-    let scale = transform.scale.truncate().abs().max(Vec2::splat(1e-6));
-    let center = transform.translation.truncate();
+    let normal = transform.rotation * Vec3::Z;
+    let Some(t) = ray.intersect_plane(transform.translation, InfinitePlane3d::new(normal)) else {
+        return;
+    };
+    let affine = transform.compute_affine();
+    let local = affine
+        .inverse()
+        .transform_point3(ray.get_point(t))
+        .truncate();
     let map = Arc::clone(&level.maps[&actor]);
-    let cell = map.cell_at_local_unclamped(((pointer - center) / scale).into());
+    let cell = map.cell_at_local_unclamped(local.into());
     let brush = editor.view.tile_brush.clone();
 
     // The footprint under the pointer, or the line/rect being dragged.
-    let cell_world = |cell: (i32, i32)| {
+    let cell_local = |cell: (i32, i32)| {
         let [w, h] = map.size();
         let [tw, th] = map.tile_size;
-        let local = Vec2::new(
+        Vec2::new(
             cell.0 as f32 * tw + tw / 2.0 - w / 2.0,
             h / 2.0 - cell.1 as f32 * th - th / 2.0,
-        );
-        center + local * scale
+        )
     };
-    let tile = Vec2::from(map.tile_size) * scale;
+    let scale = transform.scale.truncate().abs();
+    let outline = |gizmos: &mut Gizmos, center: Vec2, size: Vec2, color: Color| {
+        let at = affine.transform_point3(center.extend(0.0));
+        gizmos.rect(Isometry3d::new(at, transform.rotation), size * scale, color);
+    };
+    let tile = Vec2::from(map.tile_size);
     let color = if editor.brushing {
         Color::srgb(1.0, 0.75, 0.2)
     } else {
@@ -1041,21 +1262,13 @@ pub fn paint_tiles(
     };
     if brush.tool == BrushTool::Line && live.is_some() {
         for (x, y) in blockloom_core::tilemap::line_cells(from, to) {
-            gizmos.rect_2d(
-                Isometry2d::from_translation(cell_world((x, y))),
-                tile,
-                color,
-            );
+            outline(&mut gizmos, cell_local((x, y)), tile, color);
         }
     } else {
-        let (a, b) = (cell_world(from), cell_world(to));
+        let (a, b) = (cell_local(from), cell_local(to));
         let min = a.min(b) - tile / 2.0;
         let max = a.max(b) + tile / 2.0;
-        gizmos.rect_2d(
-            Isometry2d::from_translation((min + max) / 2.0),
-            max - min,
-            color,
-        );
+        outline(&mut gizmos, (min + max) / 2.0, max - min, color);
     }
 
     if !editor.brushing {
@@ -1107,7 +1320,7 @@ pub fn paint_tiles(
         );
         state.segments.push(segment);
         if !changed.is_empty() {
-            level.dirty.insert(actor.clone());
+            level.touch(actor.clone());
         }
     }
 }
@@ -1164,9 +1377,14 @@ pub fn draw_overlays(
                 center: [f32; 2],
                 half: [f32; 2],
                 color: Color| {
-        let at = Vec2::from(sense.world(center));
-        let size = Vec2::from(half) * 2.0 * Vec2::from(sense.scale).abs();
-        gizmos.rect_2d(Isometry2d::from_translation(at), size, color);
+        let Some(t) = placed.get(&sense.id) else {
+            return;
+        };
+        let at = t
+            .compute_affine()
+            .transform_point3(Vec2::from(center).extend(0.0));
+        let size = Vec2::from(half) * 2.0 * t.scale.truncate().abs();
+        gizmos.rect(Isometry3d::new(at, t.rotation), size, color);
     };
     for sense in level.map_senses(&engine, &placed) {
         if flags.collision {
@@ -1264,5 +1482,64 @@ mod tests {
         assert_eq!(level.streamed_maps(), HashSet::from(["near".to_string()]));
         assert!(!level.drawn("near"));
         assert!(level.drawn("far"));
+    }
+
+    #[test]
+    fn starting_inside_a_room_is_not_entering_it() {
+        let mut project = Project::starter("Rooms", Mode::TwoD);
+        project.actors.clear();
+        let rect = Visual::Rect {
+            color: "#000000".into(),
+            size: [10.0, 10.0],
+        };
+        let mut room = actor("room", rect.clone(), 0.0);
+        room.name = "Cave".into();
+        room.components.insert(ActorComponent::Room {
+            room: RoomSpec::default(),
+        });
+        project.actors.push(room);
+        project.actors.push(actor("inside", rect.clone(), 0.0));
+        project.actors.push(actor("outside", rect, 5000.0));
+        let level = Level::seed(&project);
+
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.project = project;
+        engine.running = true;
+        let mut app = App::new();
+        for (id, x) in [("room", 0.0), ("inside", 0.0), ("outside", 5000.0)] {
+            let entity = app
+                .world_mut()
+                .spawn((ActorId(id.into()), Transform::from_xyz(x, 0.0, 0.0)))
+                .id();
+            engine.entities.insert(id.into(), entity);
+        }
+        app.insert_non_send(engine);
+        app.insert_resource(level);
+        app.add_systems(Update, track_rooms);
+
+        app.update();
+        assert!(app.world().resource::<Level>().entered.is_empty());
+
+        // Walking in from outside is entering.
+        let outside = app.world().non_send::<Engine>().entities["outside"];
+        app.world_mut()
+            .entity_mut(outside)
+            .get_mut::<Transform>()
+            .unwrap()
+            .translation
+            .x = 100.0;
+        app.update();
+        let entered = &app.world().resource::<Level>().entered;
+        assert_eq!(entered.len(), 1);
+        assert_eq!(entered.get("outside").map(String::as_str), Some("Cave"));
+        assert_eq!(
+            blockloom_core::sense::read(|s| s.level.entered.get("outside").cloned()),
+            Some("Cave".to_string())
+        );
+
+        // It lasts one tick.
+        app.update();
+        assert!(app.world().resource::<Level>().entered.is_empty());
     }
 }

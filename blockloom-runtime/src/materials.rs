@@ -871,6 +871,11 @@ pub fn animate_tiles(
 #[derive(Component)]
 pub struct TilemapMesh(pub Entity);
 
+/// A 3D tilemap drawing on its own entity. Kept out of mesh batching, since
+/// `paint tile` swaps its mesh mid-run.
+#[derive(Component)]
+pub struct TilemapLook;
+
 /// Spawn a tilemap's mesh as a child of `entity`, or `None` when the map is
 /// empty. 2D gets a `Mesh2d` with a tinted tileset; 3D a lit `Mesh` with the
 /// same texture, double-sided so the wall reads from both sides.

@@ -391,7 +391,7 @@ Rectangle {
                         ToolToggle { visible: scene.enabled; icon: "rotate-cw"; tip: "Rotate (E)"; checked: scene.tool === "rotate"; onClicked: root.setTool("rotate") }
                         ToolToggle { visible: scene.enabled; icon: "scale"; tip: "Scale (R)"; checked: scene.tool === "scale"; onClicked: root.setTool("scale") }
                         ToolToggle { visible: scene.enabled && root.is3d; icon: "pencil"; tip: "Terrain brush (B): sculpt, paint, cut holes and place grass or trees on the selected terrain"; checked: scene.tool === "brush"; onClicked: root.setTool("brush") }
-                        ToolToggle { visible: scene.enabled && !root.is3d; icon: "palette"; tip: "Tiles (T): paint, erase, fill, draw lines and rects, scatter or pick on the selected tilemap"; checked: scene.tool === "tiles"; onClicked: root.setTool("tiles") }
+                        ToolToggle { visible: scene.enabled; icon: "palette"; tip: "Tiles (T): paint, erase, fill, draw lines and rects, scatter or pick on the selected tilemap"; checked: scene.tool === "tiles"; onClicked: root.setTool("tiles") }
                         ToolToggle { visible: scene.enabled && root.is3d; icon: "move-3d"; tip: scene.local ? "Local axes: the actor's own" : "World axes"; checked: scene.local; onClicked: scene.local = !scene.local }
                         Rectangle { width: 1; height: 20; color: Theme.border; anchors.verticalCenter: parent.verticalCenter; visible: scene.enabled }
                         ToolToggle { visible: scene.enabled; icon: "layout-grid"; tip: "Snap to the grid (hold Ctrl to flip)"; checked: scene.snap; onClicked: scene.snap = !scene.snap }
@@ -460,7 +460,7 @@ Rectangle {
                 }
                 // The Tiles tool's brush, overlays and the tileset to pick from.
                 Rectangle {
-                    visible: root.editing && scene.tool === "tiles" && !root.is3d
+                    visible: root.editing && scene.tool === "tiles"
                     anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 8; anchors.topMargin: 48
                     width: tileRows.implicitWidth + 16; height: tileRows.implicitHeight + 16; radius: 6
                     color: "#d0202124"; border.color: Theme.borderSoft
@@ -502,8 +502,8 @@ Rectangle {
                             spacing: 2
                             BwCheckBox { text: "Collision"; checked: scene.tileCollision; onToggled: scene.tileCollision = checked }
                             BwCheckBox { text: "Regions"; checked: scene.tileRegions; onToggled: scene.tileRegions = checked }
-                            BwCheckBox { text: "Rooms"; checked: scene.tileRooms; onToggled: scene.tileRooms = checked }
-                            BwCheckBox { text: "Parallax"; checked: scene.tileParallax; onToggled: scene.tileParallax = checked
+                            BwCheckBox { text: "Rooms"; visible: !root.is3d; checked: scene.tileRooms; onToggled: scene.tileRooms = checked }
+                            BwCheckBox { text: "Parallax"; visible: !root.is3d; checked: scene.tileParallax; onToggled: scene.tileParallax = checked
                                 ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: "Scroll parallax layers against this camera, as the game's will" }
                         }
                         // The tileset sliced into its sheet: click a tile to paint with it, Shift-click to add a variant.
@@ -644,7 +644,7 @@ Rectangle {
                     // The scene view's own keys, by where they sit; flying uses the same ones.
                     if (root.editing && !root.looking && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier)) && !event.isAutoRepeat) {
                         const tools = { KeyW: "move", KeyE: "rotate", KeyR: "scale", KeyB: "brush", KeyT: "tiles" };
-                        if (tools[code] && (code !== "KeyB" || root.is3d) && (code !== "KeyT" || !root.is3d)) root.setTool(tools[code]);
+                        if (tools[code] && (code !== "KeyB" || root.is3d)) root.setTool(tools[code]);
                         else if (code === "KeyF") root.report("frame_selected");
                         else if (code === "KeyG") scene.showGrid = !scene.showGrid;
                     }

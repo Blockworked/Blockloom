@@ -1143,6 +1143,7 @@ mod tests {
                 name: "Cave".into(),
                 bounds: RoomSpec::default().bounds([0.0, 0.0], [1.0, 1.0]),
             }],
+            ..Default::default()
         };
         sense::publish(sensors);
         let tile = |x: f64, y: f64, map: &str| {

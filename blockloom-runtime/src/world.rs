@@ -1764,15 +1764,8 @@ fn collider_shape(
             ];
             (half[0] > 0.0 && half[1] > 0.0 && half[2] > 0.0).then_some(ColliderShape::Box { half })
         }
-        (Visual::Tilemap { tilemap }, Mode::TwoD) if tilemap.solid => {
-            let size = tilemap.size();
-            let half = [
-                size[0] / 2.0 * scale.x.max(0.0),
-                size[1] / 2.0 * scale.y.max(0.0),
-                0.0,
-            ];
-            (half[0] > 0.0 && half[1] > 0.0).then_some(ColliderShape::Box { half })
-        }
+        // `tiles::publish_level` gives a solid map its cells.
+        (Visual::Tilemap { .. }, _) => None,
         _ => None,
     }
     .unwrap_or(ColliderShape::None)
