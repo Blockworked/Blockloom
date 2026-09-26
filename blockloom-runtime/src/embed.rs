@@ -2081,6 +2081,47 @@ mod tests {
         );
     }
 
+    /// A box-projected floor draws its texture, not the background.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_box_projected_floor_draws_its_texture() {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::material::SurfaceMaterial;
+        let dir =
+            std::env::temp_dir().join(format!("blockloom-embed-boxed-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        image::RgbImage::from_pixel(8, 8, image::Rgb([255, 40, 40]))
+            .save(dir.join("assets").join("red.png"))
+            .unwrap();
+        let mut project = dark_room(true);
+        project.actors[0]
+            .components
+            .insert(ActorComponent::Material {
+                material: SurfaceMaterial {
+                    albedo_texture: "assets/red.png".to_string(),
+                    box_projection: true,
+                    ..SurfaceMaterial::default()
+                },
+            });
+        let load = EditorMessage::Load {
+            project: Box::new(project.clone()),
+            dir: Some(dir.to_string_lossy().into_owned()),
+        };
+        let pixel = floor_pixel(run_world_sending(
+            project,
+            |_| {},
+            game_camera(),
+            0,
+            |pixel| pixel[0] > 120,
+            vec![load],
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(
+            pixel[0] > 120 && pixel[1] < pixel[0] / 2,
+            "expected the red texture, read {pixel:?}"
+        );
+    }
+
     #[test]
     #[ignore = "needs a GPU"]
     fn a_baked_irradiance_probe_lights_the_floor_with_the_sky() {

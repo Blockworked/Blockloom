@@ -983,6 +983,47 @@ fn main_pass_post_lighting_processing(p: PbrInput, c: vec4<f32>) -> vec4<f32> { 
         out.replace("constants::MATERIAL_BIND_GROUP", "2") + stub
     }
 
+    // The stubbed tests drop Bevy imports, so check their first segment names
+    // one of bevy_pbr's shader modules; a wrong path skips the whole material.
+    #[test]
+    fn bevy_pbr_imports_name_real_modules() {
+        const MODULES: &[&str] = &[
+            "atmosphere",
+            "cluster",
+            "decal",
+            "deferred",
+            "light_probe",
+            "lightmap",
+            "meshlet",
+            "prepass",
+            "render",
+            "ssao",
+            "ssr",
+            "transmission",
+            "volumetric_fog",
+        ];
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shaders");
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let source = std::fs::read_to_string(&path).unwrap();
+            for (at, _) in source.match_indices("bevy_pbr::") {
+                let rest = &source[at + "bevy_pbr::".len()..];
+                if rest.starts_with('{') {
+                    continue;
+                }
+                let module: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                assert!(
+                    MODULES.contains(&module.as_str()),
+                    "{} imports bevy_pbr::{module}, which isn't a module",
+                    path.display()
+                );
+            }
+        }
+    }
+
     #[test]
     fn the_box_shader_compiles() {
         for uvs in [false, true] {
