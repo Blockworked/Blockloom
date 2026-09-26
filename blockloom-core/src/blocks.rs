@@ -14,6 +14,37 @@ use crate::ui::{UiAnchor, UiKind, UiProp, UiTheme};
 use crate::value::Value;
 use serde::{Deserialize, Serialize};
 
+/// The 2D sprite dials `set sprite [dial] to` can change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SpriteDial {
+    FlipX,
+    FlipY,
+    Order,
+    YSort,
+    Palette,
+    OutlineWidth,
+}
+
+impl SpriteDial {
+    /// A dial by the name a script or compiled logic sends.
+    pub fn parse(name: &str) -> Option<SpriteDial> {
+        match name
+            .trim()
+            .to_lowercase()
+            .replace(['_', '-', ' '], "")
+            .as_str()
+        {
+            "flipx" => Some(SpriteDial::FlipX),
+            "flipy" => Some(SpriteDial::FlipY),
+            "order" => Some(SpriteDial::Order),
+            "ysort" => Some(SpriteDial::YSort),
+            "palette" => Some(SpriteDial::Palette),
+            "outlinewidth" | "outline" => Some(SpriteDial::OutlineWidth),
+            _ => None,
+        }
+    }
+}
+
 /// Runtime emitter settings available to blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EmitterDial {
@@ -89,6 +120,11 @@ pub enum InstructionKind {
     WhenParticles {
         #[serde(default)]
         event: crate::vfx::ParticleEvent,
+    },
+    /// Runs each time the playing clip reaches the named frame marker (or a
+    /// rig animation's event). Empty matches any marker.
+    WhenAnimationMarker {
+        marker: String,
     },
     /// Runs when the interface element named `element` is clicked.
     ///
@@ -182,6 +218,32 @@ pub enum InstructionKind {
     /// Retunes the playing clip's speed. 1 is as authored, 0 freezes.
     SetAnimationSpeed {
         speed: Value,
+    },
+    /// Fires a named trigger into the animation state machine this tick.
+    FireAnimationTrigger {
+        name: Value,
+    },
+    /// Shows a different attachment in one of the rig's slots. Empty hides
+    /// the slot; the animation's own swaps win again on its next key.
+    SetRigSlot {
+        slot: Value,
+        attachment: Value,
+    },
+    /// Tints one rig slot, over its authored color.
+    SetSlotTint {
+        slot: Value,
+        color: Value,
+    },
+    /// Points a rig IK constraint at a spot, relative to the actor.
+    SetIkTarget {
+        constraint: Value,
+        x: Value,
+        y: Value,
+    },
+    /// Changes one 2D sprite dial for the rest of the run.
+    SetSpriteDial {
+        dial: SpriteDial,
+        value: Value,
     },
     Turn {
         axis: Axis,
@@ -867,6 +929,8 @@ impl BlockKind for InstructionKind {
             | K::SetColor { color: v }
             | K::BurstParticles { count: v }
             | K::SetEmitterDial { value: v, .. }
+            | K::SetSpriteDial { value: v, .. }
+            | K::FireAnimationTrigger { name: v }
             | K::Wait { duration: v }
             | K::SetVariable { value: v, .. }
             | K::SetCameraPitch { degrees: v, .. }
@@ -925,6 +989,19 @@ impl BlockKind for InstructionKind {
                 f(speed, InputValueType::Any);
             }
             K::SetAnimationSpeed { speed } => f(speed, InputValueType::Any),
+            K::SetRigSlot { slot, attachment } => {
+                f(slot, InputValueType::Any);
+                f(attachment, InputValueType::Any);
+            }
+            K::SetSlotTint { slot, color } => {
+                f(slot, InputValueType::Any);
+                f(color, InputValueType::Any);
+            }
+            K::SetIkTarget { constraint, x, y } => {
+                f(constraint, InputValueType::Any);
+                f(x, InputValueType::Any);
+                f(y, InputValueType::Any);
+            }
             K::EnableVolume { volume, .. } => f(volume, InputValueType::Any),
             K::SetVolumeWeight { volume, weight } => {
                 f(volume, InputValueType::Any);
@@ -1150,6 +1227,7 @@ impl BlockKind for InstructionKind {
             | K::WhenCloned
             | K::WhenAnimationEnds { .. }
             | K::WhenParticles { .. }
+            | K::WhenAnimationMarker { .. }
             | K::BlockHeader { .. }
             | K::CreateClone { .. }
             | K::PointTowards { .. }
@@ -1202,6 +1280,7 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenCloned
                 | InstructionKind::WhenAnimationEnds { .. }
                 | InstructionKind::WhenParticles { .. }
+                | InstructionKind::WhenAnimationMarker { .. }
                 | InstructionKind::WhenUiEvent { .. }
                 | InstructionKind::WhenUiClicked { .. }
                 | InstructionKind::WhenUiChanged { .. }

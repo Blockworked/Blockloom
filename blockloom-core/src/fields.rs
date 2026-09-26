@@ -29,6 +29,14 @@ pub enum FieldId {
     TweenColor,
     AnimClip,
     AnimSpeed,
+    AnimTrigger,
+    RigSlot,
+    RigAttachment,
+    SlotColor,
+    IkConstraint,
+    IkX,
+    IkY,
+    SpriteValue,
     TurnDegrees,
     RotationDegrees,
     CameraPitchDegrees,
@@ -158,6 +166,11 @@ impl FieldId {
                 | FieldId::UiContent
                 | FieldId::UiParent
                 | FieldId::UiTarget
+                | FieldId::AnimTrigger
+                | FieldId::RigSlot
+                | FieldId::RigAttachment
+                | FieldId::SlotColor
+                | FieldId::IkConstraint
         )
     }
 
@@ -191,6 +204,14 @@ impl std::fmt::Display for FieldId {
             FieldId::TweenColor => write!(f, "TweenColor"),
             FieldId::AnimClip => write!(f, "AnimClip"),
             FieldId::AnimSpeed => write!(f, "AnimSpeed"),
+            FieldId::AnimTrigger => write!(f, "AnimTrigger"),
+            FieldId::RigSlot => write!(f, "RigSlot"),
+            FieldId::RigAttachment => write!(f, "RigAttachment"),
+            FieldId::SlotColor => write!(f, "SlotColor"),
+            FieldId::IkConstraint => write!(f, "IkConstraint"),
+            FieldId::IkX => write!(f, "IkX"),
+            FieldId::IkY => write!(f, "IkY"),
+            FieldId::SpriteValue => write!(f, "SpriteValue"),
             FieldId::TurnDegrees => write!(f, "TurnDegrees"),
             FieldId::RotationDegrees => write!(f, "RotationDegrees"),
             FieldId::CameraPitchDegrees => write!(f, "CameraPitchDegrees"),
@@ -314,6 +335,14 @@ impl FromStr for FieldId {
             "TweenColor" => FieldId::TweenColor,
             "AnimClip" => FieldId::AnimClip,
             "AnimSpeed" => FieldId::AnimSpeed,
+            "AnimTrigger" => FieldId::AnimTrigger,
+            "RigSlot" => FieldId::RigSlot,
+            "RigAttachment" => FieldId::RigAttachment,
+            "SlotColor" => FieldId::SlotColor,
+            "IkConstraint" => FieldId::IkConstraint,
+            "IkX" => FieldId::IkX,
+            "IkY" => FieldId::IkY,
+            "SpriteValue" => FieldId::SpriteValue,
             "TurnDegrees" => FieldId::TurnDegrees,
             "RotationDegrees" => FieldId::RotationDegrees,
             "CameraPitchDegrees" => FieldId::CameraPitchDegrees,
@@ -437,6 +466,15 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::PlayAnimation { clip, .. }, F::AnimClip) => Some(clip),
         (K::PlayAnimation { speed, .. }, F::AnimSpeed) => Some(speed),
         (K::SetAnimationSpeed { speed }, F::AnimSpeed) => Some(speed),
+        (K::FireAnimationTrigger { name }, F::AnimTrigger) => Some(name),
+        (K::SetRigSlot { slot, .. }, F::RigSlot) => Some(slot),
+        (K::SetRigSlot { attachment, .. }, F::RigAttachment) => Some(attachment),
+        (K::SetSlotTint { slot, .. }, F::RigSlot) => Some(slot),
+        (K::SetSlotTint { color, .. }, F::SlotColor) => Some(color),
+        (K::SetIkTarget { constraint, .. }, F::IkConstraint) => Some(constraint),
+        (K::SetIkTarget { x, .. }, F::IkX) => Some(x),
+        (K::SetIkTarget { y, .. }, F::IkY) => Some(y),
+        (K::SetSpriteDial { value, .. }, F::SpriteValue) => Some(value),
         (K::Turn { degrees, .. }, F::TurnDegrees) => Some(degrees),
         (K::SetRotation { degrees, .. }, F::RotationDegrees) => Some(degrees),
         (K::SetCameraPitch { degrees }, F::CameraPitchDegrees) => Some(degrees),
@@ -678,6 +716,10 @@ mod tests {
             FieldId::VolumeWeight,
             FieldId::Condition,
             FieldId::CallArg(3),
+            FieldId::AnimTrigger,
+            FieldId::RigSlot,
+            FieldId::IkY,
+            FieldId::SpriteValue,
         ] {
             assert_eq!(field.to_string().parse::<FieldId>(), Ok(field));
         }

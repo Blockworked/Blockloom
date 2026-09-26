@@ -56,7 +56,52 @@ Rectangle {
     function buoyancyOf(c) { return Object.assign({ density: 0.5, drag: 1, angular_drag: 1, points: 4, splash: true }, c.buoyancy || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
-    function animationOf(c) { return Object.assign({ clips: [], states: [] }, c.animation || {}); }
+    function animationOf(c) { return Object.assign({ clips: [], states: [], initial: "", crossfade: 0, rig: "", skin: "", slot_tints: [] }, c.animation || {}); }
+    function spriteOf(c) { return Object.assign({ flip_x: false, flip_y: false, order: 0, y_sort: false, slice: null, stack: null, palette: "", palette_index: 0, outline_width: 0, outline_color: "#000000" }, c.sprite || {}); }
+    // Transitions read and write as one line each: "run if speed > 2 blend 0.2",
+    // "idle on end", "land on marker land", "jump on trigger jump".
+    readonly property var compareSigns: ({ Less: "<", LessOrEqual: "<=", Equal: "=", NotEqual: "!=", Greater: ">", GreaterOrEqual: ">=" })
+    function formatTransitions(list) {
+        return (list || []).map(t => {
+            const w = t.when || {};
+            let line = t.to + " ";
+            if (w.kind === "Marker") line += "on marker " + w.name;
+            else if (w.kind === "Trigger") line += "on trigger " + w.name;
+            else if (w.kind === "Variable") line += "if " + w.name + " " + compareSigns[w.compare || "Equal"] + " " + w.value;
+            else line += "on end";
+            if (t.blend !== undefined && t.blend >= 0) line += " blend " + t.blend;
+            return line;
+        }).join("; ");
+    }
+    function parseTransitions(text) {
+        const ops = { "<": "Less", "<=": "LessOrEqual", "=": "Equal", "==": "Equal", "!=": "NotEqual", ">": "Greater", ">=": "GreaterOrEqual" };
+        return text.split(/[;\n]+/).map(x => x.trim()).filter(x => x !== "").map(line => {
+            let blend = -1;
+            const b = line.match(/\s+blend\s+([0-9.]+)\s*$/i);
+            if (b) { blend = parseFloat(b[1]); line = line.slice(0, b.index); }
+            let m = line.match(/^(.+?)\s+on\s+end$/i);
+            if (m) return { to: m[1].trim(), when: { kind: "Ended" }, blend: blend };
+            m = line.match(/^(.+?)\s+on\s+(marker|trigger)\s+(.+)$/i);
+            if (m) return { to: m[1].trim(), when: { kind: m[2].toLowerCase() === "marker" ? "Marker" : "Trigger", name: m[3].trim() }, blend: blend };
+            m = line.match(/^(.+?)\s+if\s+(\S+?)\s*(<=|>=|!=|==|=|<|>)\s*(.+)$/i);
+            if (m) return { to: m[1].trim(), when: { kind: "Variable", name: m[2], compare: ops[m[3]], value: m[4].trim() }, blend: blend };
+            return null;
+        }).filter(t => t !== null);
+    }
+    // "2:step, 5:land" <-> [{ frame: 2, name: "step" }, ...], frames from 0.
+    function formatMarkers(list) { return (list || []).map(m => m.frame + ":" + m.name).join(", "); }
+    function parseMarkers(text) {
+        return text.split(/[,\n]+/).map(x => x.trim()).filter(x => x.indexOf(":") > 0)
+            .map(x => ({ frame: Math.max(0, parseInt(x.slice(0, x.indexOf(":"))) || 0), name: x.slice(x.indexOf(":") + 1).trim() }))
+            .filter(m => m.name !== "");
+    }
+    function parseNumbers(text) { return text.split(/[,\s]+/).filter(x => x !== "").map(x => Math.max(0, parseFloat(x) || 0)); }
+    // "cape=#FF0000, hand=#00FF00" <-> [{ slot, color }].
+    function formatTints(list) { return (list || []).map(t => t.slot + "=" + t.color).join(", "); }
+    function parseTints(text) {
+        return text.split(/[,\n]+/).map(x => x.trim()).filter(x => x.indexOf("=") > 0)
+            .map(x => ({ slot: x.slice(0, x.indexOf("=")).trim(), color: x.slice(x.indexOf("=") + 1).trim() }));
+    }
     function volumeOf(c) {
         const size = is3d ? 5 : 200;
         return Object.assign({ shape: "Box", half_extents: [size, size, size], radius: size, priority: 0, blend_distance: is3d ? 1 : 50, weight: 1, enabled: true, overrides: {} }, c.volume || {});
@@ -133,6 +178,9 @@ Rectangle {
     function writeTrail(c, next) { write("Trail", { component: "Trail", trail: merged(trailOf(c), next) }); }
     function writeJoint(c, next) { write("Joint", { component: "Joint", joint: merged(jointOf(c), next) }); }
     function writeAnimation(c, next) { write("Animation", { component: "Animation", animation: merged(animationOf(c), next) }); }
+    function writeSprite(c, next) { write("Sprite", { component: "Sprite", sprite: merged(spriteOf(c), next) }); }
+    function writeClip(an, index, next) { const l = copy(an.a.clips); l[index] = merged(l[index], next); writeAnimation(an.c, { clips: l }); }
+    function writeState(an, index, next) { const l = copy(an.a.states); l[index] = merged(l[index], next); writeAnimation(an.c, { states: l }); }
     function writeProbe(c, next) { write("Probe", { component: "Probe", probe: merged(probeOf(c), next) }); }
     function writeTerrain(c, next) { write("Terrain", { component: "Terrain", terrain: merged(terrainOf(c), next) }); }
     function writeTerrainItem(c, list, index, next) {
@@ -215,7 +263,8 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Volume","Probe","Terrain","Water","Buoyancy","Custom"]
+        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Water","Buoyancy","Custom"]
+            .filter(n => n !== "Sprite" || !is3d)
             .filter(n => n === "Custom" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }));
     }
     function blank(name) {
@@ -232,12 +281,13 @@ Rectangle {
         case "Trail": return { component: "Trail", trail: trailOf({}) };
         case "Light": return { component: "Light", light: lightOf({}) };
         case "Animation": return { component: "Animation", animation: { clips: [], states: [] } };
+        case "Sprite": return { component: "Sprite", sprite: spriteOf({}) };
         case "Volume": return { component: "Volume", volume: volumeOf({}) };
         case "Probe": return { component: "Probe", probe: probeOf({}) };
         case "Terrain": return { component: "Terrain", terrain: terrainOf({}) };
         case "Water": return { component: "Water", water: is3d ? {} : { size: [800, 300], depth: 300,
             waves: { amplitude: 6, wavelength: 220, direction: 90, spread: 20 }, detail: { scale: 60 }, look: { absorption: 220 },
-            foam: { shore: 12, scale: 40 }, underwater: { distance: 600, caustics_scale: 60 }, splash: { min_speed: 60 } } };
+            foam: { shore: 12, scale: 40 }, underwater: { distance: 600, caustics_scale: 60 }, splash: { min_speed: 60 }, ripples: { speed: 120, extent: 1600 } } };
         case "Buoyancy": return { component: "Buoyancy", buoyancy: buoyancyOf({}) };
         case "Custom": return { component: "Custom", name: "Component", fields: [{ name: "value", value: { kind: "Number", value: 0 } }] };
         default: return null;
@@ -292,7 +342,7 @@ Rectangle {
                             Layout.fillWidth: true
                             readonly property var c: card.c
                             sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Water: waterCard, Buoyancy: buoyancyCard })[card.c.component] || null
+                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Water: waterCard, Buoyancy: buoyancyCard })[card.c.component] || null
                         }
                     }
                 }
@@ -1107,6 +1157,7 @@ Rectangle {
             readonly property var refl: w.reflections || {}
             readonly property var under: w.underwater || {}
             readonly property var splash: w.splash || {}
+            readonly property var rip: w.ripples || {}
             readonly property bool ocean: w.kind === "Ocean"
             function part(name, next) { root.writeWaterPart(wa.c, name, next); }
             function clamp(n, lo, hi) { return Math.min(hi, Math.max(lo, n)); }
@@ -1137,6 +1188,8 @@ Rectangle {
                 SwitchField { value: wa.waves.follow_wind; onToggled: on => wa.part("waves", { follow_wind: on }) } Item { Layout.fillWidth: true } }
             InspectorRow { visible: !wa.waves.follow_wind; label: "Heading"; Layout.fillWidth: true
                 NumberField { value: wa.waves.direction; fallback: 45; onCommitted: n => wa.part("waves", { direction: ((n % 360) + 360) % 360 }) } }
+            InspectorRow { visible: wa.waves.follow_wind; label: "Turn seconds"; Layout.fillWidth: true
+                NumberField { value: wa.waves.turn; fallback: 6; onCommitted: n => wa.part("waves", { turn: wa.clamp(n, 0, 120) }) } }
             InspectorRow { label: "Spread"; Layout.fillWidth: true
                 NumberField { value: wa.waves.spread; fallback: 40; onCommitted: n => wa.part("waves", { spread: wa.clamp(n, 0, 180) }) } }
             InspectorRow { label: "Wind, fetch km"; Layout.fillWidth: true
@@ -1175,8 +1228,10 @@ Rectangle {
 
             Text { visible: root.is3d; text: "Reflections"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
             InspectorRow { visible: root.is3d; label: "Source"; Layout.fillWidth: true
-                ChoiceField { options: [{ value: "Auto", label: "Screen, then probe" }, { value: "Probe", label: "Probe only" }, { value: "ScreenSpace", label: "Screen, then sky" }, { value: "Sky", label: "Sky color" }]
+                ChoiceField { options: [{ value: "Auto", label: "Screen, then probe" }, { value: "Probe", label: "Probe only" }, { value: "ScreenSpace", label: "Screen, then sky" }, { value: "Planar", label: "Mirror camera" }, { value: "Sky", label: "Sky color" }]
                     value: wa.refl.mode || "Auto"; onChosen: m => wa.part("reflections", { mode: m }) } }
+            InspectorRow { visible: root.is3d && wa.refl.mode === "Planar"; label: "Mirror scale"; Layout.fillWidth: true
+                SliderField { from: 0.25; to: 1; value: wa.refl.planar_scale === undefined ? 0.5 : wa.refl.planar_scale; onMoved: wa.part("reflections", { planar_scale: value }) } }
             InspectorRow { visible: root.is3d && (wa.refl.mode === "Auto" || wa.refl.mode === "Probe"); label: "Probe px, frames"; Layout.fillWidth: true
                 ChoiceField { options: [64, 128, 256, 512].map(n => ({ value: String(n), label: n + " px" })); value: String(wa.refl.probe_resolution || 128); onChosen: v => wa.part("reflections", { probe_resolution: Number(v) }) }
                 NumberField { value: wa.refl.probe_refresh; fallback: 30; onCommitted: n => wa.part("reflections", { probe_refresh: wa.clamp(Math.round(n), 1, 600) }) } }
@@ -1197,10 +1252,20 @@ Rectangle {
             InspectorRow { label: "Min speed, drops"; Layout.fillWidth: true
                 NumberField { value: wa.splash.min_speed; fallback: 1.5; onCommitted: n => wa.part("splash", { min_speed: Math.max(0, n) }) }
                 NumberField { value: wa.splash.particles; fallback: 16; onCommitted: n => wa.part("splash", { particles: wa.clamp(Math.round(n), 0, 128) }) } }
-            InspectorRow { label: "Ripples"; Layout.fillWidth: true
+            InspectorRow { label: "Splash ripples"; Layout.fillWidth: true
                 SwitchField { value: wa.splash.ripples !== false; onToggled: on => wa.part("splash", { ripples: on }) } Item { Layout.fillWidth: true } }
             InspectorRow { label: "Sound"; Layout.fillWidth: true
                 AssetField { app: root.app; accept: ["audio"]; value: wa.splash.sound || ""; placeholderText: "Drag a sound here"; onCommitted: p => wa.part("splash", { sound: p }) } }
+
+            Text { text: "Ripples"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            InspectorRow { label: "Simulate"; Layout.fillWidth: true
+                SwitchField { value: wa.rip.enabled !== false; onToggled: on => wa.part("ripples", { enabled: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { visible: wa.rip.enabled !== false; label: "Speed, fade s"; Layout.fillWidth: true
+                NumberField { value: wa.rip.speed; fallback: root.is3d ? 2 : 120; onCommitted: n => wa.part("ripples", { speed: Math.max(0.01, n) }) }
+                NumberField { value: wa.rip.fade; fallback: 3; onCommitted: n => wa.part("ripples", { fade: wa.clamp(n, 0.1, 60) }) } }
+            InspectorRow { visible: wa.rip.enabled !== false; label: "Wake, extent"; Layout.fillWidth: true
+                NumberField { value: wa.rip.wake; fallback: 1; onCommitted: n => wa.part("ripples", { wake: wa.clamp(n, 0, 2) }) }
+                NumberField { value: wa.rip.extent; fallback: root.is3d ? 48 : 1600; onCommitted: n => wa.part("ripples", { extent: Math.max(0.1, n) }) } }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: wa.ocean ? "Reaches the horizon from wherever the camera is. The actor's height is the sea level."
                     : "The actor's position is the middle of the surface at rest; turning it turns the water and its current." }
@@ -1364,7 +1429,20 @@ Rectangle {
             readonly property var a: root.animationOf(c)
             spacing: 6
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
-                text: "Flipbooks over image files. play animation changes state; when animation ends fires the transition for a Once clip." }
+                text: "Flipbooks over image files or a sheet, or a Spine/DragonBones rig. play animation changes state; transitions fire on the clip ending, a marker, a trigger or a variable." }
+            InspectorRow { label: "Rig"; Layout.fillWidth: true
+                AssetField { app: root.app; accept: ["text"]; value: an.a.rig || ""; placeholderText: "Spine or DragonBones .json (optional)"; onCommitted: p => root.writeAnimation(an.c, { rig: p }) } }
+            InspectorRow { visible: (an.a.rig || "") !== ""; label: "Skin"; Layout.fillWidth: true
+                BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "default"; text: an.a.skin || ""
+                    onEditingFinished: if (text.trim() !== (an.a.skin || "")) root.writeAnimation(an.c, { skin: text.trim() }) } }
+            InspectorRow { visible: (an.a.rig || "") !== ""; label: "Slot tints"; Layout.fillWidth: true
+                BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "cape=#FF4C4C, hand=#FFFFFF"; text: root.formatTints(an.a.slot_tints)
+                    onEditingFinished: root.writeAnimation(an.c, { slot_tints: root.parseTints(text) }) } }
+            InspectorRow { label: "Starts in"; Layout.fillWidth: true
+                ChoiceField { Layout.fillWidth: true; options: [{ value: "", label: "nothing" }].concat(an.a.states.map(x => ({ value: x.name, label: x.name }))); value: an.a.initial || ""
+                    onChosen: v => root.writeAnimation(an.c, { initial: v }) } }
+            InspectorRow { label: "Crossfade s"; Layout.fillWidth: true
+                NumberField { value: an.a.crossfade || 0; fallback: 0; onCommitted: n => root.writeAnimation(an.c, { crossfade: Math.min(10, Math.max(0, n)) }) } }
             Text { text: "Clips"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
             Repeater {
                 model: an.a.clips
@@ -1382,9 +1460,37 @@ Rectangle {
                         IconButton { iconName: "x"; tip: "Remove this clip"; implicitWidth: 24; implicitHeight: 24
                             onClicked: { const l = root.copy(an.a.clips); l.splice(index, 1); root.writeAnimation(an.c, { clips: l }); } }
                     }
-                    BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Frames, one asset path per line or comma";
+                    BwTextField { visible: !modelData.sheet; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Frames, one asset path per line or comma";
                         text: (modelData.frames || []).join(", ")
                         onEditingFinished: { const l = root.copy(an.a.clips); l[index].frames = text.split(/[\n,]+/).map(s => s.trim()).filter(s => s !== ""); root.writeAnimation(an.c, { clips: l }); } }
+                    AssetField { Layout.fillWidth: true; app: root.app; accept: ["image"]; value: modelData.sheet ? modelData.sheet.image : ""; placeholderText: "Or drag a sprite sheet here"
+                        onCommitted: p => root.writeClip(an, index, { sheet: p === "" ? null : Object.assign({ columns: 4, rows: 1, first: 0, count: 4 }, modelData.sheet || {}, { image: p }) }) }
+                    RowLayout {
+                        visible: !!modelData.sheet
+                        Layout.fillWidth: true; spacing: 4
+                        Text { text: "cols"; color: Theme.textDim; font.pixelSize: 11 }
+                        NumberField { Layout.preferredWidth: 44; value: modelData.sheet ? modelData.sheet.columns : 1; fallback: 1; onCommitted: n => root.writeClip(an, index, { sheet: Object.assign({}, modelData.sheet, { columns: Math.max(1, Math.round(n)) }) }) }
+                        Text { text: "rows"; color: Theme.textDim; font.pixelSize: 11 }
+                        NumberField { Layout.preferredWidth: 44; value: modelData.sheet ? modelData.sheet.rows : 1; fallback: 1; onCommitted: n => root.writeClip(an, index, { sheet: Object.assign({}, modelData.sheet, { rows: Math.max(1, Math.round(n)) }) }) }
+                        Text { text: "from"; color: Theme.textDim; font.pixelSize: 11 }
+                        NumberField { Layout.preferredWidth: 44; value: modelData.sheet ? modelData.sheet.first : 0; fallback: 0; onCommitted: n => root.writeClip(an, index, { sheet: Object.assign({}, modelData.sheet, { first: Math.max(0, Math.round(n)) }) }) }
+                        Text { text: "count"; color: Theme.textDim; font.pixelSize: 11 }
+                        NumberField { Layout.preferredWidth: 44; value: modelData.sheet ? modelData.sheet.count : 1; fallback: 1; onCommitted: n => root.writeClip(an, index, { sheet: Object.assign({}, modelData.sheet, { count: Math.max(1, Math.round(n)) }) }) }
+                    }
+                    BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Seconds per frame, e.g. 0.1, 0.3 (blank uses fps)"
+                        text: (modelData.durations || []).join(", ")
+                        onEditingFinished: root.writeClip(an, index, { durations: root.parseNumbers(text) }) }
+                    BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Markers, frame:name, e.g. 2:step, 5:step"
+                        text: root.formatMarkers(modelData.markers)
+                        onEditingFinished: root.writeClip(an, index, { markers: root.parseMarkers(text) }) }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 4
+                        Text { text: "moves"; color: Theme.textDim; font.pixelSize: 11 }
+                        NumberField { Layout.preferredWidth: 52; value: (modelData.motion || [0, 0])[0]; fallback: 0; onCommitted: n => root.writeClip(an, index, { motion: [n, (modelData.motion || [0, 0])[1]] }) }
+                        NumberField { Layout.preferredWidth: 52; value: (modelData.motion || [0, 0])[1]; fallback: 0; onCommitted: n => root.writeClip(an, index, { motion: [(modelData.motion || [0, 0])[0], n] }) }
+                        BwTextField { visible: (an.a.rig || "") !== ""; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Rig animation (clip name)"; text: modelData.rig_animation || ""
+                            onEditingFinished: root.writeClip(an, index, { rig_animation: text.trim() }) }
+                    }
                 }
             }
             BwButton {
@@ -1401,9 +1507,11 @@ Rectangle {
             Text { text: "States"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
             Repeater {
                 model: an.a.states
-                delegate: RowLayout {
+                delegate: ColumnLayout {
                     required property int index
                     required property var modelData
+                    Layout.fillWidth: true; spacing: 4
+                  RowLayout {
                     Layout.fillWidth: true; spacing: 4
                     BwTextField { Layout.preferredWidth: 80; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "State"
                         onEditingFinished: { const l = root.copy(an.a.states); l[index].name = text.trim(); root.writeAnimation(an.c, { states: l }); } }
@@ -1414,6 +1522,16 @@ Rectangle {
                         onEditingFinished: { const l = root.copy(an.a.states); l[index].next = text.trim(); root.writeAnimation(an.c, { states: l }); } }
                     IconButton { iconName: "x"; tip: "Remove this state"; implicitWidth: 24; implicitHeight: 24
                         onClicked: { const l = root.copy(an.a.states); l.splice(index, 1); root.writeAnimation(an.c, { states: l }); } }
+                  }
+                    BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Transitions: run if speed > 2 blend 0.2; jump on trigger jump"
+                        text: root.formatTransitions(modelData.transitions)
+                        onEditingFinished: root.writeState(an, index, { transitions: root.parseTransitions(text) }) }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 6
+                        SwitchField { value: !!modelData.root_motion; onToggled: on => root.writeState(an, index, { root_motion: on }) }
+                        Text { text: "Root motion moves the actor"; color: Theme.textDim; font.pixelSize: 11 }
+                        Item { Layout.fillWidth: true }
+                    }
                 }
             }
             BwButton {
@@ -1427,6 +1545,65 @@ Rectangle {
                     root.writeAnimation(an.c, { states: l });
                 }
             }
+        }
+    }
+
+    Component {
+        id: spriteCard
+        ColumnLayout {
+            id: sp
+            readonly property var c: parent.c
+            readonly property var s: root.spriteOf(c)
+            spacing: 6
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "2D dials over the look. Order sorts inside the Render layer; Y-sort draws lower actors in front. The palette's rows are palettes: the sprite's red channel picks the column." }
+            InspectorRow { label: "Flip X"; Layout.fillWidth: true
+                SwitchField { value: sp.s.flip_x; onToggled: on => root.writeSprite(sp.c, { flip_x: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Flip Y"; Layout.fillWidth: true
+                SwitchField { value: sp.s.flip_y; onToggled: on => root.writeSprite(sp.c, { flip_y: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Order"; Layout.fillWidth: true
+                NumberField { value: sp.s.order; fallback: 0; onCommitted: n => root.writeSprite(sp.c, { order: Math.max(-40, Math.min(40, Math.round(n))) }) } }
+            InspectorRow { label: "Y-sort"; Layout.fillWidth: true
+                SwitchField { value: sp.s.y_sort; onToggled: on => root.writeSprite(sp.c, { y_sort: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "9-slice"; Layout.fillWidth: true
+                SwitchField { value: !!sp.s.slice; onToggled: on => root.writeSprite(sp.c, { slice: on ? { border: [8, 8, 8, 8], center: "Stretch", sides: "Stretch", max_corner_scale: 1 } : null }) } Item { Layout.fillWidth: true } }
+            RowLayout {
+                visible: !!sp.s.slice
+                Layout.fillWidth: true; spacing: 4
+                Repeater {
+                    model: ["left", "right", "top", "bottom"]
+                    delegate: NumberField {
+                        required property int index
+                        Layout.preferredWidth: 48; value: sp.s.slice ? sp.s.slice.border[index] : 0; fallback: 0
+                        onCommitted: n => { const b = sp.s.slice.border.slice(); b[index] = Math.max(0, n); root.writeSprite(sp.c, { slice: Object.assign({}, sp.s.slice, { border: b }) }); }
+                    }
+                }
+            }
+            InspectorRow { visible: !!sp.s.slice; label: "Centre, sides"; Layout.fillWidth: true
+                ChoiceField { Layout.fillWidth: true; options: Blocks.opts(["Stretch","Tile"]); value: sp.s.slice ? sp.s.slice.center : "Stretch"
+                    onChosen: v => root.writeSprite(sp.c, { slice: Object.assign({}, sp.s.slice, { center: v }) }) }
+                ChoiceField { Layout.fillWidth: true; options: Blocks.opts(["Stretch","Tile"]); value: sp.s.slice ? sp.s.slice.sides : "Stretch"
+                    onChosen: v => root.writeSprite(sp.c, { slice: Object.assign({}, sp.s.slice, { sides: v }) }) } }
+            InspectorRow { label: "Stack"; Layout.fillWidth: true
+                SwitchField { value: !!sp.s.stack; onToggled: on => root.writeSprite(sp.c, { stack: on ? { image: "", layers: 8, offset: [0, 1] } : null }) } Item { Layout.fillWidth: true } }
+            InspectorRow { visible: !!sp.s.stack; label: "Slices"; Layout.fillWidth: true
+                AssetField { app: root.app; accept: ["image"]; value: sp.s.stack ? sp.s.stack.image : ""; placeholderText: "The look's image"
+                    onCommitted: p => root.writeSprite(sp.c, { stack: Object.assign({}, sp.s.stack, { image: p }) }) } }
+            InspectorRow { visible: !!sp.s.stack; label: "Layers, step"; Layout.fillWidth: true
+                NumberField { Layout.preferredWidth: 48; value: sp.s.stack ? sp.s.stack.layers : 8; fallback: 8
+                    onCommitted: n => root.writeSprite(sp.c, { stack: Object.assign({}, sp.s.stack, { layers: Math.max(1, Math.min(128, Math.round(n))) }) }) }
+                NumberField { Layout.preferredWidth: 48; value: sp.s.stack ? sp.s.stack.offset[0] : 0; fallback: 0
+                    onCommitted: n => root.writeSprite(sp.c, { stack: Object.assign({}, sp.s.stack, { offset: [n, sp.s.stack.offset[1]] }) }) }
+                NumberField { Layout.preferredWidth: 48; value: sp.s.stack ? sp.s.stack.offset[1] : 1; fallback: 1
+                    onCommitted: n => root.writeSprite(sp.c, { stack: Object.assign({}, sp.s.stack, { offset: [sp.s.stack.offset[0], n] }) }) } }
+            InspectorRow { label: "Palette"; Layout.fillWidth: true
+                AssetField { app: root.app; accept: ["image"]; value: sp.s.palette || ""; placeholderText: "None"; onCommitted: p => root.writeSprite(sp.c, { palette: p }) } }
+            InspectorRow { visible: (sp.s.palette || "") !== ""; label: "Palette row"; Layout.fillWidth: true
+                NumberField { value: sp.s.palette_index; fallback: 0; onCommitted: n => root.writeSprite(sp.c, { palette_index: Math.max(0, Math.round(n)) }) } }
+            InspectorRow { label: "Outline px"; Layout.fillWidth: true
+                NumberField { value: sp.s.outline_width; fallback: 0; onCommitted: n => root.writeSprite(sp.c, { outline_width: Math.max(0, Math.min(16, n)) }) } }
+            InspectorRow { visible: sp.s.outline_width > 0; label: "Outline color"; Layout.fillWidth: true
+                ColorField { value: sp.s.outline_color; onPicked: col => root.writeSprite(sp.c, { outline_color: col }) } Item { Layout.fillWidth: true } }
         }
     }
 

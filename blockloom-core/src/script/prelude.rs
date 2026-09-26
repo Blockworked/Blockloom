@@ -91,6 +91,14 @@ impl Actor {
     /// them; the borrow lasts no longer than the call.
     #[doc(hidden)]
     pub unsafe fn from_raw(ctx: *mut std::ffi::c_void, api: *const HostApi) -> Actor {
+        // A browser host hands no table: its calls are this module's imports.
+        #[cfg(target_arch = "wasm32")]
+        let api = if api.is_null() {
+            web::enter(ctx);
+            &raw const web::HOST
+        } else {
+            api
+        };
         Actor { ctx, api }
     }
 
@@ -868,6 +876,72 @@ impl Actor {
             Str::EMPTY,
             Str::EMPTY,
             speed as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Fires a named trigger into the animation state machine.
+    pub fn fire_animation_trigger(&self, name: &str) {
+        self.act(
+            ACT_FIRE_ANIMATION_TRIGGER,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Shows `attachment` in one of the rig's slots; empty hides it.
+    pub fn set_rig_slot(&self, slot: &str, attachment: &str) {
+        self.act(
+            ACT_SET_RIG_SLOT,
+            Str::borrow(slot),
+            Str::borrow(attachment),
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Tints one rig slot, `#RRGGBB`, over its authored color.
+    pub fn set_slot_tint(&self, slot: &str, color: &str) {
+        self.act(
+            ACT_SET_SLOT_TINT,
+            Str::borrow(slot),
+            Str::borrow(color),
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Points a rig IK constraint at `(x, y)`, relative to this actor.
+    pub fn set_ik_target(&self, constraint: &str, x: f32, y: f32) {
+        self.act(
+            ACT_SET_IK_TARGET,
+            Str::borrow(constraint),
+            Str::EMPTY,
+            Str::EMPTY,
+            x as f64,
+            y as f64,
+            0.0,
+        );
+    }
+
+    /// Changes a 2D sprite dial: `FlipX`, `FlipY`, `Order`, `YSort`,
+    /// `Palette` or `OutlineWidth`. Switches read nonzero as on.
+    pub fn set_sprite_dial(&self, dial: &str, value: f32) {
+        self.act(
+            ACT_SET_SPRITE_DIAL,
+            Str::borrow(dial),
+            Str::EMPTY,
+            Str::EMPTY,
+            value as f64,
             0.0,
             0.0,
         );
@@ -1935,6 +2009,121 @@ fn parse_names(json: &str) -> Vec<String> {
         names.push(name);
     }
     names
+}
+
+/// The host calls of a script built for the browser, where the host is
+/// another wasm module: each one packs its arguments into a [`WasmCall`] and
+/// goes through an import (see the end of the ABI).
+#[cfg(target_arch = "wasm32")]
+mod web {
+    use super::*;
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // The module name is `WASM_MODULE`, spelled out because `link` takes a
+    // literal.
+    #[link(wasm_import_module = "blockloom")]
+    unsafe extern "C" {
+        #[link_name = "read_number"]
+        fn import_read_number(ctx: *mut c_void, what: u32, call: *mut WasmCall) -> u32;
+        #[link_name = "read_text"]
+        fn import_read_text(ctx: *mut c_void, what: u32, call: *mut WasmCall) -> u32;
+        #[link_name = "act"]
+        fn import_act(ctx: *mut c_void, what: u32, call: *mut WasmCall) -> u32;
+    }
+
+    fn call(a: Str, b: Str, c: Str) -> WasmCall {
+        WasmCall {
+            a_ptr: a.ptr as usize as u32,
+            a_len: a.len as u32,
+            b_ptr: b.ptr as usize as u32,
+            b_len: b.len as u32,
+            c_ptr: c.ptr as usize as u32,
+            c_len: c.len as u32,
+            ..WasmCall::default()
+        }
+    }
+
+    extern "C" fn read_number(
+        ctx: *mut c_void,
+        what: u32,
+        a: Str,
+        b: Str,
+        arg: f64,
+        out: *mut f64,
+    ) -> u32 {
+        let mut call = call(a, b, Str::EMPTY);
+        call.arg = arg;
+        call.out = out as usize as u32;
+        unsafe { import_read_number(ctx, what, &mut call) }
+    }
+
+    extern "C" fn read_text(
+        ctx: *mut c_void,
+        what: u32,
+        a: Str,
+        b: Str,
+        out: *mut u8,
+        capacity: usize,
+        length: *mut usize,
+    ) -> u32 {
+        let mut needed: u32 = 0;
+        let mut call = call(a, b, Str::EMPTY);
+        call.out = out as usize as u32;
+        call.out_cap = capacity as u32;
+        call.out_len = (&raw mut needed) as usize as u32;
+        let code = unsafe { import_read_text(ctx, what, &mut call) };
+        unsafe { *length = needed as usize };
+        code
+    }
+
+    extern "C" fn act(
+        ctx: *mut c_void,
+        what: u32,
+        a: Str,
+        b: Str,
+        c: Str,
+        numbers: *const f64,
+        count: usize,
+    ) {
+        let mut call = call(a, b, c);
+        call.numbers = numbers as usize as u32;
+        call.count = count as u32;
+        unsafe { import_act(ctx, what, &mut call) };
+    }
+
+    pub static HOST: HostApi = HostApi {
+        abi: ABI_VERSION,
+        read_number,
+        read_text,
+        act,
+    };
+
+    /// The context of the call in progress, for the panic hook.
+    static CURRENT: AtomicUsize = AtomicUsize::new(0);
+
+    /// Notes the call now running and, once, hooks panics: a browser build
+    /// aborts on panic rather than unwinding into `guard`, so the message is
+    /// logged here before the host sees the trap and stops the script.
+    pub fn enter(ctx: *mut c_void) {
+        CURRENT.store(ctx as usize, Ordering::Relaxed);
+        static HOOK: std::sync::Once = std::sync::Once::new();
+        HOOK.call_once(|| {
+            std::panic::set_hook(Box::new(|info| {
+                let ctx = CURRENT.load(Ordering::Relaxed) as *mut c_void;
+                let text = format!("the script panicked: {info}");
+                act(
+                    ctx,
+                    ACT_LOG,
+                    Str::borrow(&text),
+                    Str::EMPTY,
+                    Str::EMPTY,
+                    std::ptr::null(),
+                    0,
+                );
+            }));
+        });
+    }
 }
 
 /// Runs `f`, turning a panic into a log line instead of letting it cross the

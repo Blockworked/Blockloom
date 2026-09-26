@@ -22,9 +22,9 @@ pub enum Launch {
     /// Started on its own, from a pack. The dimension is in the pack, so
     /// nothing has to be told.
     Player { pack: Box<GamePack>, dir: PathBuf },
-    /// Running in a browser: the pack arrives as JSON inlined in the page, so
-    /// there is no folder for assets or script libraries. Asset paths resolve
-    /// against the server root, and saves live in localStorage (see `web`).
+    /// Running in a browser: the pack arrives as JSON inlined in the page, and
+    /// the game folder is the empty path, which names the files the page
+    /// mounted (see `blockloom_core::vfs`). Saves live in localStorage.
     Web { pack: Box<GamePack> },
 }
 
@@ -125,13 +125,13 @@ impl Launch {
                 engine.link = Some(tx);
                 engine
             }
-            // No folder behind it: assets resolve against the server root
-            // and saves go to localStorage, but the green flag is the same.
+            // The game folder is the page's mounted files, reached through
+            // relative paths; the green flag is the same.
             Self::Web { pack } => {
                 let (tx, rx) = std::sync::mpsc::channel();
                 let _ = tx.send(EditorMessage::Load {
                     project: Box::new(pack.project),
-                    dir: None,
+                    dir: Some(String::new()),
                 });
                 let _ = tx.send(EditorMessage::Start);
                 let mut engine = Engine::new(rx, mode);

@@ -11,25 +11,16 @@
 //! script and a canvas can drive one actor between them, and neither has to
 //! know about the other.
 
-// Everything below `Effect` and `Path` serves the native `dlopen` path;
-// web builds keep the surface (see the `wasm32` impl) but run on the VM
-// until scripts link statically.
-#[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::components::CameraView;
-#[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::scene::Axis;
+use blockloom_core::script::abi;
 #[cfg(not(target_arch = "wasm32"))]
-use blockloom_core::script::abi::{self, HostApi, Str};
-#[cfg(not(target_arch = "wasm32"))]
+use blockloom_core::script::abi::{HostApi, Str};
 use blockloom_core::sense;
-#[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::sound::{SoundBus, clamp_pitch, user_to_gain};
-#[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp, UiTheme};
-#[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::value::Evaluated;
 use blockloom_core::vm::Effect;
-#[cfg(not(target_arch = "wasm32"))]
 use blockloom_protocol::RuntimeMessage;
 #[cfg(not(target_arch = "wasm32"))]
 use std::ffi::c_void;
@@ -45,9 +36,11 @@ type AbiFn = unsafe extern "C" fn() -> u32;
 /// One actor's script, open and ready to call. The library is kept alive
 /// alongside the pointers into it, and closing it is what dropping this does.
 ///
-/// Web builds have no `dlopen`, so scripts stay unloaded there and the actor's
-/// blocks run on the VM; static linking follows the same entry points later.
+/// In a browser the script is a wasm module of its own instead, which the
+/// page compiled and the player instantiates (see [`browser`]).
 pub struct LoadedScript {
+    #[cfg(target_arch = "wasm32")]
+    instance: std::rc::Rc<browser::Instance>,
     /// Dropped last, after the pointers that live inside it.
     #[cfg(not(target_arch = "wasm32"))]
     library: libloading::Library,
@@ -129,23 +122,27 @@ impl LoadedScript {
     }
 }
 
-/// Web builds have no `dlopen`, so nothing is ever built to open: the
-/// actor's blocks run on the VM instead.
+/// A browser has no `dlopen`: the page hands the player each script's
+/// compiled wasm module, keyed by its path, and loading one instantiates it.
 #[cfg(target_arch = "wasm32")]
 impl LoadedScript {
-    pub fn is_built(_project_dir: &Path, _relative: &str) -> bool {
-        false
+    pub fn is_built(_project_dir: &Path, relative: &str) -> bool {
+        crate::web::script_module(relative).is_some()
     }
 
     pub fn load(_project_dir: &Path, relative: &str) -> Result<LoadedScript, String> {
-        Err(format!(
-            "{relative} has no web build yet, so its blocks run on the VM"
-        ))
+        Ok(LoadedScript {
+            instance: browser::open(relative)?,
+        })
     }
 
-    pub fn start(&self, _actor: &str, _asked: &mut Asked) {}
+    pub fn start(&self, actor: &str, asked: &mut Asked) {
+        self.instance.call(actor, asked, None);
+    }
 
-    pub fn tick(&self, _actor: &str, _asked: &mut Asked, _dt: f32) {}
+    pub fn tick(&self, actor: &str, asked: &mut Asked, dt: f32) {
+        self.instance.call(actor, asked, Some(dt));
+    }
 }
 
 /// What one run of a script asked the world for. Effects are applied by the
@@ -166,7 +163,6 @@ pub struct Asked {
     pub deleted: Vec<(String, String)>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn missing_export(relative: &str) -> String {
     format!(
         "{relative} doesn't name its entry points - end the file with \
@@ -176,7 +172,6 @@ fn missing_export(relative: &str) -> String {
 
 /// What a callback is handed: who is running, and somewhere to put what it
 /// asks for.
-#[cfg(not(target_arch = "wasm32"))]
 struct Ctx<'a> {
     actor: &'a str,
     asked: &'a mut Asked,
@@ -200,7 +195,6 @@ static HOST_API: HostApi = HostApi {
     act,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
 fn axis_of(value: f64) -> Axis {
     match value as i32 {
         1 => Axis::Y,
@@ -209,7 +203,6 @@ fn axis_of(value: f64) -> Axis {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn view_of(value: f64) -> CameraView {
     match value as i32 {
         1 => CameraView::FirstPerson,
@@ -220,7 +213,6 @@ fn view_of(value: f64) -> CameraView {
 
 /// What a fresh element a script asked for starts at. A slider reads its
 /// own number off the call; everything else takes the blank its kind means.
-#[cfg(not(target_arch = "wasm32"))]
 fn ui_start(kind: UiKind, flag: bool, value: f64) -> Evaluated {
     match kind {
         UiKind::Slider | UiKind::Progress | UiKind::RadialProgress | UiKind::Scrollbar => {
@@ -231,7 +223,6 @@ fn ui_start(kind: UiKind, flag: bool, value: f64) -> Evaluated {
 }
 
 /// This actor as the frame's snapshot sees it.
-#[cfg(not(target_arch = "wasm32"))]
 fn me(actor: &str) -> Option<sense::ActorSense> {
     sense::read(|sensors| sensors.actors.get(actor).cloned())
 }
@@ -255,7 +246,6 @@ extern "C" fn read_number(
     abi::OK
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64> {
     let bool_as = |value: bool| Some(if value { 1.0 } else { 0.0 });
     match what {
@@ -479,7 +469,6 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
 }
 
 /// Whether `target` is a trigger: empty names the running actor itself.
-#[cfg(not(target_arch = "wasm32"))]
 fn trigger_target(running: &str, target: &str) -> Option<bool> {
     if target.trim().is_empty() {
         return Some(me(running)?.trigger);
@@ -488,7 +477,6 @@ fn trigger_target(running: &str, target: &str) -> Option<bool> {
 }
 
 /// Three space-separated numbers, as the prelude sends a point across.
-#[cfg(not(target_arch = "wasm32"))]
 fn parse_triple(text: &str) -> Option<[f32; 3]> {
     let mut numbers = text.split_whitespace().map(|part| part.parse::<f32>());
     let x = numbers.next()?.ok()?;
@@ -510,18 +498,30 @@ extern "C" fn read_text(
     let ctx = unsafe { ctx(pointer) };
     let a = unsafe { a.as_str() };
     let b = unsafe { b.as_str() };
-    let answer = match what {
-        abi::TEXT_ACTOR_NAME => me(ctx.actor).map(|me| me.name),
-        abi::TEXT_FIELD => me(ctx.actor)
+    let Some(answer) = text_for(ctx.actor, what, a, b) else {
+        return abi::MISSING;
+    };
+    // Always report the length, so a caller told the buffer was too small
+    // knows exactly how big to make the next one.
+    unsafe { *length = answer.len() };
+    if answer.len() > capacity {
+        return abi::TOO_LONG;
+    }
+    unsafe { std::ptr::copy_nonoverlapping(answer.as_ptr(), out, answer.len()) };
+    abi::OK
+}
+
+fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
+    match what {
+        abi::TEXT_ACTOR_NAME => me(actor).map(|me| me.name),
+        abi::TEXT_FIELD => me(actor)
             .and_then(|me| me.components.get(a.trim())?.get(b.trim()).cloned())
             .map(|value| value.as_text()),
-        abi::TEXT_ACTOR_ID => Some(ctx.actor.to_string()),
+        abi::TEXT_ACTOR_ID => Some(actor.to_string()),
         // An actor with no parent and one that made nothing both answer
         // `MISSING`, which the prelude turns into `None`.
-        abi::TEXT_PARENT => me(ctx.actor)
-            .map(|me| me.parent)
-            .filter(|id| !id.is_empty()),
-        abi::TEXT_NEW_ACTOR => me(ctx.actor)
+        abi::TEXT_PARENT => me(actor).map(|me| me.parent).filter(|id| !id.is_empty()),
+        abi::TEXT_NEW_ACTOR => me(actor)
             .map(|me| me.last_created)
             .filter(|id| !id.is_empty()),
         abi::TEXT_UI_VALUE => sense::read(|sensors| {
@@ -542,8 +542,8 @@ extern "C" fn read_text(
             let from = parse_triple(a)?;
             let to = parse_triple(b)?;
             sense::read(|sensors| {
-                let mask = blockloom_core::physics_query::query_mask(sensors, Some(ctx.actor));
-                blockloom_core::physics_query::ray_hit(sensors, from, to, Some(ctx.actor), mask)
+                let mask = blockloom_core::physics_query::query_mask(sensors, Some(actor));
+                blockloom_core::physics_query::ray_hit(sensors, from, to, Some(actor), mask)
                     .and_then(|(id, _)| sensors.actors.get(&id))
                     .map(|actor| actor.name.clone())
                     .filter(|name| !name.is_empty())
@@ -553,12 +553,12 @@ extern "C" fn read_text(
             let at = parse_triple(a)?;
             let radius = b.trim().parse::<f32>().ok()?;
             sense::read(|sensors| {
-                let mask = blockloom_core::physics_query::query_mask(sensors, Some(ctx.actor));
+                let mask = blockloom_core::physics_query::query_mask(sensors, Some(actor));
                 blockloom_core::physics_query::overlap_circle(
                     sensors,
                     at,
                     radius,
-                    Some(ctx.actor),
+                    Some(actor),
                     mask,
                 )
                 .into_iter()
@@ -568,25 +568,14 @@ extern "C" fn read_text(
                 .filter(|name| !name.is_empty())
             })
         })(),
-        abi::TEXT_CURRENT_CLIP => me(ctx.actor)
+        abi::TEXT_CURRENT_CLIP => me(actor)
             .map(|me| me.anim_clip)
             .filter(|clip| !clip.is_empty()),
         abi::TEXT_ACTIVE_VOLUMES => {
             serde_json::to_string(&sense::read(|s| s.atmosphere.volumes.clone())).ok()
         }
         _ => None,
-    };
-    let Some(answer) = answer else {
-        return abi::MISSING;
-    };
-    // Always report the length, so a caller told the buffer was too small
-    // knows exactly how big to make the next one.
-    unsafe { *length = answer.len() };
-    if answer.len() > capacity {
-        return abi::TOO_LONG;
     }
-    unsafe { std::ptr::copy_nonoverlapping(answer.as_ptr(), out, answer.len()) };
-    abi::OK
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -603,7 +592,6 @@ extern "C" fn act(
     let a = unsafe { a.as_str() };
     let b = unsafe { b.as_str() };
     let c = unsafe { c.as_str() };
-    let actor = ctx.actor.to_string();
     // A run of numbers rather than a fixed three, because one interface
     // element names ten at once. A short run reads as zeros from there on.
     let numbers: &[f64] = if numbers.is_null() || count == 0 {
@@ -611,6 +599,11 @@ extern "C" fn act(
     } else {
         unsafe { std::slice::from_raw_parts(numbers, count) }
     };
+    act_for(ctx, what, a, b, c, numbers);
+}
+
+fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64]) {
+    let actor = ctx.actor.to_string();
     let at = |index: usize| numbers.get(index).copied().unwrap_or(0.0);
     let (n0, n1, n2) = (at(0), at(1), at(2));
     let vector = [n0 as f32, n1 as f32, n2 as f32];
@@ -899,6 +892,34 @@ extern "C" fn act(
             actor,
             speed: n0 as f32,
         },
+        abi::ACT_FIRE_ANIMATION_TRIGGER => Effect::FireAnimationTrigger {
+            actor,
+            name: a.trim().to_string(),
+        },
+        abi::ACT_SET_RIG_SLOT => Effect::SetRigSlot {
+            actor,
+            slot: a.trim().to_string(),
+            attachment: b.trim().to_string(),
+        },
+        abi::ACT_SET_SLOT_TINT => Effect::SetSlotTint {
+            actor,
+            slot: a.trim().to_string(),
+            color: b.to_string(),
+        },
+        abi::ACT_SET_IK_TARGET => Effect::SetIkTarget {
+            actor,
+            constraint: a.trim().to_string(),
+            x: n0 as f32,
+            y: n1 as f32,
+        },
+        abi::ACT_SET_SPRITE_DIAL => match blockloom_core::blocks::SpriteDial::parse(a) {
+            Some(dial) => Effect::SetSpriteDial {
+                actor,
+                dial,
+                value: n0 as f32,
+            },
+            None => return,
+        },
         abi::ACT_SET_EMISSIVE_STRENGTH => Effect::SetEmissiveStrength {
             actor,
             strength: n0 as f32,
@@ -1016,6 +1037,249 @@ extern "C" fn act(
         _ => return,
     };
     ctx.asked.effects.push(effect);
+}
+
+/// Scripts in a browser. Each one is its own wasm module with its own memory,
+/// so a string it passes is an offset into that memory, not a pointer the
+/// player can follow: the imports here copy arguments out of it and answers
+/// back in, around the same host calls a native script reaches through
+/// [`HostApi`]. One instance per file, shared by every actor running it, the
+/// way one library is natively.
+#[cfg(target_arch = "wasm32")]
+mod browser {
+    use super::*;
+    use js_sys::{Function, Object, Reflect, Uint8Array, WebAssembly};
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
+    use std::rc::{Rc, Weak};
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::prelude::*;
+
+    type Import = Closure<dyn FnMut(u32, u32, u32) -> u32>;
+
+    pub struct Instance {
+        relative: String,
+        start: Function,
+        tick: Function,
+        /// Set once the script traps: a wasm trap leaves its stack and heap
+        /// wherever they were, so calling back in isn't safe.
+        stopped: Cell<bool>,
+        /// The last line it logged, which is where its panic hook put the
+        /// panic's message before the trap.
+        last_log: Rc<RefCell<String>>,
+        /// The imports, alive for as long as the instance can call them.
+        _imports: [Import; 3],
+    }
+
+    thread_local! {
+        static OPEN: RefCell<HashMap<String, Weak<Instance>>> = RefCell::default();
+    }
+
+    /// The instance for `relative`, made on first use. Once every actor
+    /// running it has gone, the next run gets a fresh one, as a library
+    /// closed and reopened natively does.
+    pub fn open(relative: &str) -> Result<Rc<Instance>, String> {
+        if let Some(open) = OPEN.with_borrow(|open| open.get(relative).and_then(Weak::upgrade)) {
+            return Ok(open);
+        }
+        let instance = Rc::new(instantiate(relative)?);
+        OPEN.with_borrow_mut(|open| {
+            open.insert(relative.to_string(), Rc::downgrade(&instance));
+        });
+        Ok(instance)
+    }
+
+    fn js_error(error: JsValue) -> String {
+        error
+            .dyn_ref::<js_sys::Error>()
+            .map(|error| String::from(error.message()))
+            .or_else(|| error.as_string())
+            .unwrap_or_else(|| format!("{error:?}"))
+    }
+
+    fn instantiate(relative: &str) -> Result<Instance, String> {
+        let module = crate::web::script_module(relative)
+            .ok_or_else(|| format!("{relative} wasn't built for the web"))?;
+        let memory: Rc<RefCell<Option<WebAssembly::Memory>>> = Rc::default();
+        let last_log: Rc<RefCell<String>> = Rc::default();
+
+        let imports = [
+            import(&memory, |memory, ctx, what, call| {
+                let a = text(memory, call.a_ptr, call.a_len);
+                let b = text(memory, call.b_ptr, call.b_len);
+                match number_for(ctx.actor, what, &a, &b, call.arg) {
+                    Some(value) => {
+                        write(memory, call.out, &value.to_le_bytes());
+                        abi::OK
+                    }
+                    None => abi::MISSING,
+                }
+            }),
+            import(&memory, |memory, ctx, what, call| {
+                let a = text(memory, call.a_ptr, call.a_len);
+                let b = text(memory, call.b_ptr, call.b_len);
+                let Some(answer) = text_for(ctx.actor, what, &a, &b) else {
+                    return abi::MISSING;
+                };
+                write(memory, call.out_len, &(answer.len() as u32).to_le_bytes());
+                if answer.len() > call.out_cap as usize {
+                    return abi::TOO_LONG;
+                }
+                write(memory, call.out, answer.as_bytes());
+                abi::OK
+            }),
+            {
+                let last_log = last_log.clone();
+                import(&memory, move |memory, ctx, what, call| {
+                    let a = text(memory, call.a_ptr, call.a_len);
+                    let b = text(memory, call.b_ptr, call.b_len);
+                    let c = text(memory, call.c_ptr, call.c_len);
+                    let raw = bytes(memory, call.numbers, call.count.saturating_mul(8));
+                    let numbers: Vec<f64> = raw
+                        .as_chunks::<8>()
+                        .0
+                        .iter()
+                        .map(|chunk| f64::from_le_bytes(*chunk))
+                        .collect();
+                    if what == abi::ACT_LOG {
+                        last_log.replace(a.clone());
+                    }
+                    act_for(ctx, what, &a, &b, &c, &numbers);
+                    abi::OK
+                })
+            },
+        ];
+
+        let calls = Object::new();
+        for (name, import) in [abi::WASM_READ_NUMBER, abi::WASM_READ_TEXT, abi::WASM_ACT]
+            .iter()
+            .zip(&imports)
+        {
+            Reflect::set(&calls, &JsValue::from_str(name), import.as_ref()).map_err(js_error)?;
+        }
+        let wanted = Object::new();
+        Reflect::set(&wanted, &JsValue::from_str(abi::WASM_MODULE), &calls).map_err(js_error)?;
+        let instance = WebAssembly::Instance::new(&module, &wanted)
+            .map_err(|error| format!("{relative} couldn't start: {}", js_error(error)))?;
+        let exports = instance.exports();
+        let export = |name: &[u8]| -> Result<Function, String> {
+            let name = String::from_utf8_lossy(name);
+            Reflect::get(&exports, &JsValue::from_str(&name))
+                .ok()
+                .and_then(|value| value.dyn_into::<Function>().ok())
+                .ok_or_else(|| missing_export(relative))
+        };
+        let version = export(abi::SYM_ABI)
+            .map_err(|_| format!("{relative} isn't a Blockloom script"))?
+            .call0(&JsValue::NULL)
+            .map_err(js_error)?
+            .as_f64()
+            .unwrap_or(0.0) as u32;
+        if version != abi::ABI_VERSION {
+            return Err(format!(
+                "{relative} was built against script ABI {version}, this player speaks {}. \
+                 Build the game again.",
+                abi::ABI_VERSION
+            ));
+        }
+        let start = export(abi::SYM_START)?;
+        let tick = export(abi::SYM_TICK)?;
+        let own_memory = Reflect::get(&exports, &JsValue::from_str("memory"))
+            .ok()
+            .and_then(|value| value.dyn_into::<WebAssembly::Memory>().ok())
+            .ok_or_else(|| format!("{relative} exports no memory"))?;
+        memory.replace(Some(own_memory));
+        Ok(Instance {
+            relative: relative.to_string(),
+            start,
+            tick,
+            stopped: Cell::new(false),
+            last_log,
+            _imports: imports,
+        })
+    }
+
+    /// One import: `(ctx, what, call)`, where `ctx` is the player's own
+    /// pointer handed through untouched and `call` a [`abi::WasmCall`] in
+    /// the script's memory.
+    fn import(
+        memory: &Rc<RefCell<Option<WebAssembly::Memory>>>,
+        answer: impl Fn(&WebAssembly::Memory, &mut Ctx, u32, abi::WasmCall) -> u32 + 'static,
+    ) -> Import {
+        let memory = memory.clone();
+        Closure::new(move |ctx: u32, what: u32, call: u32| -> u32 {
+            let memory = memory.borrow();
+            let Some(memory) = memory.as_ref() else {
+                return abi::MISSING;
+            };
+            let record = bytes(memory, call, std::mem::size_of::<abi::WasmCall>() as u32);
+            if record.len() < std::mem::size_of::<abi::WasmCall>() {
+                return abi::MISSING;
+            }
+            // Safety: every field is a plain number, so any bytes are one.
+            let call = unsafe { std::ptr::read_unaligned(record.as_ptr().cast::<abi::WasmCall>()) };
+            // Safety: `ctx` is the pointer `call` below handed the script
+            // for the duration of this one call, coming back unchanged.
+            let ctx = unsafe { &mut *(ctx as usize as *mut Ctx) };
+            answer(memory, ctx, what, call)
+        })
+    }
+
+    fn bytes(memory: &WebAssembly::Memory, at: u32, len: u32) -> Vec<u8> {
+        if len == 0 {
+            return Vec::new();
+        }
+        let view = Uint8Array::new(&memory.buffer());
+        let end = at.saturating_add(len).min(view.length());
+        view.subarray(at.min(end), end).to_vec()
+    }
+
+    fn text(memory: &WebAssembly::Memory, at: u32, len: u32) -> String {
+        String::from_utf8(bytes(memory, at, len)).unwrap_or_default()
+    }
+
+    fn write(memory: &WebAssembly::Memory, at: u32, data: &[u8]) {
+        let view = Uint8Array::new(&memory.buffer());
+        let end = at as u64 + data.len() as u64;
+        if at == 0 || end > view.length() as u64 {
+            return;
+        }
+        view.subarray(at, end as u32).copy_from(data);
+    }
+
+    impl Instance {
+        /// Runs `start` (no `dt`) or `tick`, inside the actor's sensing
+        /// scope as natively. A trap stops the script for the rest of the
+        /// game, with the panic's own message where it left one.
+        pub fn call(&self, actor: &str, asked: &mut Asked, dt: Option<f32>) {
+            if self.stopped.get() {
+                return;
+            }
+            let mut ctx = Ctx { actor, asked };
+            let pointer = JsValue::from((&raw mut ctx) as usize as u32);
+            // The script sees a null `HostApi` and uses its imports instead.
+            let host = JsValue::from(0u32);
+            let result = sense::with_actor(actor, || match dt {
+                None => self.start.call2(&JsValue::NULL, &pointer, &host),
+                Some(dt) => self
+                    .tick
+                    .call3(&JsValue::NULL, &pointer, &host, &JsValue::from(dt)),
+            });
+            if let Err(error) = result {
+                self.stopped.set(true);
+                let logged = self.last_log.borrow();
+                let why = if logged.starts_with("the script panicked") {
+                    logged.clone()
+                } else {
+                    format!("the script trapped: {}", js_error(error))
+                };
+                ctx.asked.effects.push(Effect::Error {
+                    actor: actor.to_string(),
+                    message: format!("{}: {why}. It won't run again this game.", self.relative),
+                });
+            }
+        }
+    }
 }
 
 /// One named reading of a water sample, as `READ_WATER` spells them.

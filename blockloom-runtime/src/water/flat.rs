@@ -57,6 +57,8 @@ pub struct FlatWater {
     pub waves: WavesUniform,
     #[uniform(1)]
     pub look: FlatLook,
+    #[texture(2, filterable = false)]
+    pub ripples: Option<Handle<Image>>,
 }
 
 impl Material2d for FlatWater {
@@ -81,6 +83,7 @@ struct Strip {
     entity: Entity,
     material: Handle<FlatWater>,
     shape: [u32; 3],
+    ripples: Option<(u64, Handle<Image>)>,
 }
 
 /// A strip `2 half` wide and `depth` deep, its top row at y 0 (uv y 0).
@@ -128,6 +131,7 @@ fn sync_strips(
     mut transforms: Query<&mut Transform, With<super::WaterSurface>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<FlatWater>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let now = render_time(&engine, &state, &fixed, &time);
     strips.0.retain(|id, strip| {
@@ -147,6 +151,7 @@ fn sync_strips(
             let material = materials.add(FlatWater {
                 waves: WavesUniform::default(),
                 look: FlatLook::default(),
+                ripples: None,
             });
             let entity = commands
                 .spawn((
@@ -163,6 +168,7 @@ fn sync_strips(
                 entity,
                 material,
                 shape,
+                ripples: None,
             }
         });
         if strip.shape != shape {
@@ -174,9 +180,13 @@ fn sync_strips(
         if let Ok(mut transform) = transforms.get_mut(strip.entity) {
             *transform = Transform::from_xyz(body.center[0], body.center[1], body.center[2]);
         }
+        let ripples = super::sync_ripple_image(&mut strip.ripples, live, state.tick, &mut images);
         if let Some(mut material) = materials.get_mut(&strip.material) {
-            material.waves = WavesUniform::of(live, &state.ripples, now);
+            material.waves = WavesUniform::of(live, now, super::between_ticks(&engine, &fixed));
             material.look = FlatLook::of(live);
+            if material.ripples != ripples {
+                material.ripples = ripples;
+            }
         }
     }
 }

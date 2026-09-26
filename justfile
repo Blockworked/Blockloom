@@ -85,66 +85,51 @@ stage-player target file:
     mkdir -p "target/release/players/{{target}}"
     cp "{{file}}" "target/release/players/{{target}}/{{ if target =~ 'windows' { 'blockloom-runtime.exe' } else { 'blockloom-runtime' } }}"
 
-# Web player (Phase 8): the runtime builds for wasm32-unknown-unknown with
-# --no-default-features - no Solari ray tracing, no Basis/KTX2 C++ codecs
-# (web v1 ships PNG/JPEG), no `dlopen` scripts or native logic (blocks run
-# on the VM there). Needs the target once: `rustup target add
-# wasm32-unknown-unknown`, plus a matching glue generator once:
-# `cargo install wasm-bindgen-cli --version <lock's wasm-bindgen> --locked`.
+# Web player (Phase 8): the runtime for wasm32-unknown-unknown, drawing
+# through WebGPU, with --no-default-features - no Solari ray tracing and no
+# Basis/KTX2 C++ codecs (web builds ship PNG/JPEG). Blocks run on the VM;
+# scripts compile to wasm modules of their own. Needs, once:
+# `rustup target add wasm32-unknown-unknown` and `just web-tools`.
 web-check:
     cargo check -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown
 
-# A runnable browser folder: the wasm player, its JS glue, and a host page
-# that feeds it a pack. Pass a game folder (one holding `game.pack`) to play
-# a real game; without one the page reports the missing pack through the
-# error overlay. `profile=release` for a small file that boots fast;
-# `dev` (the default) iterates faster but boots slowly. Assets resolve
-# against the server root, so serve the folder `web-serve` makes - the
-# single-file `.html` with everything inlined is the next packaging step,
-# not this one.
-web-build out="web-dist" pack="" profile="dev":
+# The wasm-bindgen CLI matching Cargo.lock's wasm-bindgen, which the glue
+# generator has to match exactly.
+web-tools:
+    cargo install wasm-bindgen-cli --locked --version "$(cargo metadata --format-version 1 --filter-platform wasm32-unknown-unknown | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "wasm-bindgen"))')"
+
+# The web player, staged beside the editor where the Build dialog looks for
+# it (players/wasm32-unknown-unknown/: the wasm and its JS glue). `dist` is
+# what games ship; `release` links much faster for trying things out.
+web-player profile="dist":
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown --profile {{profile}}
-    if ! command -v wasm-bindgen >/dev/null; then
-        echo "need wasm-bindgen-cli (once): cargo install wasm-bindgen-cli --version $(cargo metadata --format-version 1 --filter-platform wasm32-unknown-unknown 2>/dev/null | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "wasm-bindgen"))') --locked"
-        exit 1
-    fi
-    rm -rf "{{out}}/pkg"
-    mkdir -p "{{out}}/pkg"
-    wasm-bindgen --target web --out-dir "{{out}}/pkg" "${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/{{ if profile == "dev" { "debug" } else { profile } }}/blockloom_runtime.wasm"
-    if [ -n "{{pack}}" ]; then cp -r "{{pack}}"/. "{{out}}"/; fi
-    cat > "{{out}}/index.html" <<'PAGE'
-    <!DOCTYPE html>
-    <html lang="en">
-    <head><meta charset="utf-8"><title>Blockloom</title></head>
-    <body style="margin:0;background:#1b212c;display:flex;justify-content:center;align-items:center;min-height:100vh;">
-    <canvas id="blockloom-canvas" width="960" height="720"></canvas>
-    <script type="module">
-    import init, { start_game } from "./pkg/blockloom_runtime.js";
-    const packUrl = new URLSearchParams(location.search).get("pack") ?? "game.pack";
-    await init();
-    let pack;
-    try {
-        const response = await fetch(packUrl);
-        if (!response.ok) throw new Error(response.status + " " + response.statusText);
-        pack = await response.text();
-    } catch (e) {
-        document.body.insertAdjacentHTML("beforeend",
-            `<div style="position:fixed;left:16px;right:16px;bottom:16px;padding:12px 16px;background:#3a1414;color:#ffd7d7;font:14px sans-serif;border:1px solid #a33;border-radius:8px;">Blockloom: couldn't load ${packUrl}: ${e}</div>`);
-        throw e;
-    }
-    start_game(pack, "#blockloom-canvas");
-    </script>
-    </body>
-    </html>
-    PAGE
-    echo "web player in {{out}}/ - serve it with: just web-serve {{out}}"
+    command -v wasm-bindgen >/dev/null || { echo "need wasm-bindgen-cli: just web-tools"; exit 1; }
+    out="${CARGO_TARGET_DIR:-target}/release/players/wasm32-unknown-unknown"
+    mkdir -p "$out"
+    wasm-bindgen --target web --no-typescript --remove-name-section --remove-producers-section \
+        --out-dir "$out" "${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/{{ if profile == "dev" { "debug" } else { profile } }}/blockloom_runtime.wasm"
+    ls -l "$out"
 
-# Static host for the `web-build` folder: right MIME types for wasm/JS, so a
-# smoke test (or a browser) can load the player with no real server.
+# Builds a project folder for the browser: one self-contained .html under
+# out/, exactly what the Build dialog's Web target makes. Open it from disk
+# or host it anywhere static (`just web-serve`).
+web-build project out="web-dist" profile="dist":
+    just web-player {{profile}}
+    cargo build --release -p blockloom-app --bin blockloom-shell
+    printf 'open-project path=%s\nbuild-game path=%s target=wasm32-unknown-unknown\n' "$(realpath '{{project}}')" "$(realpath -m '{{out}}')" \
+        | BLOCKLOOM_PLAYERS="${CARGO_TARGET_DIR:-target}/release/players" "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --no-state
+
+# Static host for a web build, for browsers that won't run a page from disk.
 web-serve dir="web-dist" port="8080":
-    cd "{{dir}}" && python3 -c 'import functools, http.server; http.server.SimpleHTTPRequestHandler.extensions_map.update({".wasm": "application/wasm", ".js": "text/javascript"}); http.server.test(functools.partial(http.server.ThreadingHTTPServer, ("127.0.0.1", {{port}}), http.server.SimpleHTTPRequestHandler), bind=None)'
+    cd "{{dir}}" && python3 -m http.server {{port}} --bind 127.0.0.1
+
+# Headless check of a built page: it unpacks, the world builds, scripts open
+# and actors move. Needs Playwright (`npm i -g playwright`) and WebGPU in its
+# Chromium; software Vulkan (lavapipe) is enough.
+web-smoke page *args:
+    NODE_PATH="$(npm root -g)" node scripts/web-smoke.cjs "{{page}}" {{args}}
 
 test:
     cargo test --workspace

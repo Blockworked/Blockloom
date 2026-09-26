@@ -25,7 +25,7 @@ ApplicationWindow {
     }
 
     property var appState: ({
-        library: [], default_project_location: "", project_path: null, project: null, selected_actor: null,
+        library: [], default_project_location: "", default_export_location: "", default_build_location: "", project_path: null, project: null, selected_actor: null,
         can_undo: false, can_redo: false, invalid_field_buffers: [], running: false, paused: false, status: null,
         log: [], log_total: 0, runtime_available: true, runtime_open: false, preview_enabled: false, preview_headless: false,
         preview_port: null, game_size: [960, 720], runtime_embedded: false, pointer_locked: false

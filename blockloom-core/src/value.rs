@@ -1103,6 +1103,8 @@ mod tests {
                 flow: [0.0, 0.0],
                 waves: Vec::new(),
                 flat: false,
+                calm: [0.0; 3],
+                ripples: None,
             }],
             time: 0.0,
         };

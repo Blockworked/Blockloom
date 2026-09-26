@@ -30,7 +30,7 @@ Rectangle {
         }
         IconButton { iconName: "save"; tip: "Save now"; onClicked: root.app.invoke("save_project") }
         IconButton { iconName: "upload"; tip: "Import a project"; onClicked: importFile.open() }
-        IconButton { iconName: "download"; tip: "Export this project"; onClicked: root.app.invoke("export_file_name", {}, name => { exportFile.currentFile = root.app.toFileUrl(root.appState.default_project_location + "/" + name); exportFile.open(); }) }
+        IconButton { iconName: "download"; tip: "Export this project"; onClicked: root.app.invoke("export_file_name", {}, name => { const base = root.appState.default_export_location || root.appState.default_project_location; exportFile.currentFile = root.app.toFileUrl(base + "/" + name); exportFile.open(); }) }
         IconButton { iconName: "package"; tip: "Build a standalone game"; onClicked: buildDialog.open() }
         IconButton { iconName: "settings"; tip: "Project settings"; onClicked: settingsDialog.open() }
         Item { Layout.fillWidth: true }

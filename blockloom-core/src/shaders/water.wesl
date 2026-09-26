@@ -1,11 +1,10 @@
-// Gerstner waves, Phillips detail and splash ripples: the GPU half of
+// Gerstner waves, Phillips detail and simulated ripples: the GPU half of
 // `blockloom_core::water`. `displace` and `frame` sum exactly what
 // `WaterBody::displace` and `WaterBody::sample` sum, so a floating body sits
 // on the surface that is drawn. Change the two together.
 
 const MAX_WAVES: u32 = 12u;
 const DETAIL_WAVES: u32 = 16u;
-const MAX_RIPPLES: u32 = 16u;
 const TAU: f32 = 6.28318530718;
 
 struct WaterWaves {
@@ -17,12 +16,13 @@ struct WaterWaves {
     detail_shape: array<vec4<f32>, 16>,
     // Per detail wave: phase, slope, 0, 0.
     detail_size: array<vec4<f32>, 16>,
-    // Per ripple: centre xz, seconds since it started, strength.
-    ripples: array<vec4<f32>, 16>,
-    // Wave count, ripple count, water time, 1 in 2D.
+    // Wave count, 1 with a ripple field, water time, 1 in 2D.
     counts: vec4<f32>,
-    // Current xz, surface level at rest, ripple speed.
+    // Current xz, surface level at rest, 0.
     flow: vec4<f32>,
+    // The ripple field: world xz of its first cell, world units a cell,
+    // how far between its last two ticks to draw.
+    field: vec4<f32>,
 }
 
 fn is_flat(w: WaterWaves) -> bool {
@@ -111,30 +111,46 @@ fn detail_slope(w: WaterWaves, q_in: vec2<f32>) -> vec2<f32> {
     return slope;
 }
 
-// Rings spreading from splashes, as a slope and a small height.
-fn ripple(w: WaterWaves, q_in: vec2<f32>) -> vec3<f32> {
-    let q = planar(w, q_in);
-    let count = min(u32(w.counts.y + 0.5), MAX_RIPPLES);
-    let speed = max(w.flow.w, 1e-3);
-    var slope = vec2<f32>(0.0);
-    var height = 0.0;
-    for (var i = 0u; i < count; i++) {
-        let r = w.ripples[i];
-        let away = q - planar(w, r.xy);
-        let dist = length(away);
-        // A ring a few wavelengths wide travelling out at `speed`, fading as
-        // it spreads and ages.
-        let front = r.z * speed;
-        let band = dist - front;
-        let wavelength = speed * 0.25;
-        let envelope = exp(-band * band / (wavelength * wavelength * 2.0))
-            * r.w / (1.0 + dist / wavelength) * exp(-r.z * 1.2);
-        let k = TAU / wavelength;
-        height += envelope * sin(band * k);
-        let dir = select(vec2<f32>(0.0), away / dist, dist > 1e-4);
-        slope += dir * envelope * k * cos(band * k);
+// One cell of the ripple field, lerped between its last two ticks. Outside
+// the field the water is still.
+fn ripple_cell(field: texture_2d<f32>, w: WaterWaves, i: i32, j: i32) -> f32 {
+    let size = vec2<i32>(textureDimensions(field));
+    if (i < 0 || j < 0 || i >= size.x || j >= size.y) {
+        return 0.0;
     }
-    return vec3<f32>(slope.x, height, slope.y);
+    let h = textureLoad(field, vec2<i32>(i, j), 0).rg;
+    return mix(h.g, h.r, w.field.w);
+}
+
+fn ripple_height(field: texture_2d<f32>, w: WaterWaves, c: vec2<f32>) -> f32 {
+    let base = floor(c);
+    let f = c - base;
+    let i = i32(base.x);
+    let j = i32(base.y);
+    let a = mix(ripple_cell(field, w, i, j), ripple_cell(field, w, i + 1, j), f.x);
+    let b = mix(ripple_cell(field, w, i, j + 1), ripple_cell(field, w, i + 1, j + 1), f.x);
+    return mix(a, b, f.y);
+}
+
+// The simulated ripples over world `p`, as (dh/dx, height, dh/dz). The same
+// bilinear lookup `RippleField::sample` makes.
+fn ripple(field: texture_2d<f32>, w: WaterWaves, p_in: vec2<f32>) -> vec3<f32> {
+    if (w.counts.y < 0.5) {
+        return vec3<f32>(0.0);
+    }
+    let p = planar(w, p_in);
+    let cell = max(w.field.z, 1e-4);
+    var c = (p - w.field.xy) / cell;
+    if (is_flat(w)) {
+        c.y = 0.0;
+    }
+    let h = ripple_height(field, w, c);
+    let dx = (ripple_height(field, w, c + vec2<f32>(0.5, 0.0)) - ripple_height(field, w, c - vec2<f32>(0.5, 0.0))) / cell;
+    var dz = 0.0;
+    if (!is_flat(w)) {
+        dz = (ripple_height(field, w, c + vec2<f32>(0.0, 0.5)) - ripple_height(field, w, c - vec2<f32>(0.0, 0.5))) / cell;
+    }
+    return vec3<f32>(dx, h, dz);
 }
 
 // Schlick's Fresnel for water (F0 0.02).

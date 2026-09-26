@@ -690,14 +690,19 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         `water_at` (height, normal, velocity, foam), `is_underwater` and
         `set_water`. 2D water is a strip with the same waves, depth color,
         caustics and a foam line.
-        Not covered: the probe is a cube at the surface rather than a true
-        planar mirror camera, and it doesn't blur with roughness; ripples
-        are drawn, not simulated, and nothing floats on them; far ocean waves
-        flatten beyond about 16 wavelengths from the camera, so buoyancy out
-        there floats on slightly taller water than is drawn; wave headings
-        are fixed for the run (the authored wind direction); the surface has
-        no fog of its own (the fog pass sees the floor under it). The ignored
-        embed test only checks a lake tints what is under it.
+        Also done: a `Planar` reflection mode (a mirror camera with an
+        oblique near plane at the surface, blurred by roughness), simulated
+        ripples (a wave-equation height field per body that splashes and
+        floating bodies' wakes disturb, and that buoyancy rides), far ocean
+        waves calming on the CPU the way the drawn ones do, a swell that
+        turns with the live wind by fading between headings over
+        `waves.turn` seconds, and fog measured to the water surface.
+        Not covered: the mirror is a flat plane per body, so tall waves
+        bend its image rather than re-reflect it; a body bigger than its
+        ripple extent simulates only a patch round the camera, and ripples
+        it leaves behind are dropped; a wake is a push per sample point,
+        not a Kelvin wave pattern; 2D water has no reflections. The GPU
+        tests cover a lake's tint and the mirror, not ripples or fog.
   - [x] VFX graph (Niagara/VFX-Graph lite): GPU sim with spawn modules (rate, burst,
         shape sphere/box/cone/mesh-surface), update modules (velocity, drag, curl noise,
         turbulence, attractor, depth-buffer collide with bounce/friction, kill planes),
@@ -835,21 +840,26 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           Build dialog lists which target keeps volumetrics and why.
 
 ### Phase 6 - 2D games, parity look and feel (2D-first, uses Phase 2 and Phase 4 footing)
-- [ ] 2D animation stack (builds on the open Phase 2 tweens/sprite-animation item; this is the 2D-specific half):
-  - [ ] Flipbooks: image-strip or atlas-page ranges per clip, fps plus per-frame
+- [x] 2D animation stack (builds on the open Phase 2 tweens/sprite-animation item; this is the 2D-specific half):
+  - [x] Flipbooks: image-strip or atlas-page ranges per clip, fps plus per-frame
         durations, loop/ping-pong/once modes, events on frame marker. API: `play
         clip _`, `set animation speed to`, reporters `current clip`, `current frame`.
-  - [ ] Skeletal/bone 2D rigs: import from common 2D rig formats, bone transform
+  - [x] Skeletal/bone 2D rigs: import from common 2D rig formats, bone transform
         hierarchy with IK-lite (two-bone), slot attachments that swap sprites,
         skin tint per slot. Falls back to flipbook when no rig is present.
-  - [ ] 9-slice/stretchable panels and sprite stacking: borders that do not stretch,
+  - [x] 9-slice/stretchable panels and sprite stacking: borders that do not stretch,
         center tiling modes, per-layer offset for stacked 2.5D sprites.
-  - [ ] Animation player/state machine for 2D: states with transitions on variable
+  - [x] Animation player/state machine for 2D: states with transitions on variable
         or event, blend/crossfade time, root-motion toggle that moves the actor.
         Shared with the Phase 2 player, not a second implementation.
-  - [ ] Sprite dials: flip X/Y, per-sprite material overrides (tint, palette swap
+  - [x] Sprite dials: flip X/Y, per-sprite material overrides (tint, palette swap
         index, outline width/color), sorting layer plus order-in-layer plus
         Y-sort toggle for top-down depth. Fixed-tick sampling so VM and codegen agree.
+  - [x] Spine mesh attachments: deformed 2D meshes rebuilt per frame, weighted
+        skinning and deform keys, so rigs that use meshes draw every part.
+  - [x] Palette/outline effect on 9-slice panels (slice in the effect shader),
+        and one outline around a whole rig or stack (silhouettes behind every
+        piece rather than a texture, so only the outer edge shows).
 - [ ] Tilemaps and level building (builds on the Phase 4 per-tile collision and
       animated tiles; this is authoring plus runtime):
   - [ ] Autotile and brushes: bitmask/edge autotile rules per tileset, scatter
@@ -946,7 +956,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 
 ### Phase 8 - Web player via WebGPU (single-file build, do before Phase 9)
 
-- [ ] Goal: a built game ships as one self-contained file (single `.html`:
+- [x] Goal: a built game ships as one self-contained file (single `.html`:
       inlined wasm plus the pack plus assets) that runs in a browser over
       WebGPU with no server beyond static hosting. Player only; the editor
       stays native (see Phase 9).
@@ -970,54 +980,55 @@ Phased by dependency and value per cost. Each phase unblocks the next.
       Done, plus two things the headless runs shook out: player-side errors
       go to the devtools console (printing panics on wasm), and a panic hook
       forwards Rust panics there with their message.
-- [ ] Rust scripts work on web by static linking, not `dlopen` (wasm has no
-      `libloading`): at build time each `assets/scripts/*.rs` is compiled for
-      `wasm32-unknown-unknown` and linked into the one player wasm, against
-      the same `HostApi`/ABI and `export!` entry points, so script behavior
-      matches native. The build machine needs the wasm target `std`; a
-      project whose scripts cannot build for wasm fails the web build with
-      the rustc error, rather than shipping actors that quietly do nothing.
-      Blocks run on the VM on web v1 (native codegen logic is VM-fallback
-      there; static-linking it follows the same recipe later).
-- [ ] Single-file packaging in `build.rs`: new wasm target beside the native
-      triples, laying out one `.html` with the wasm, `game.pack` and assets
-      inlined (base64/data URLs) and loaded from memory instead of disk, so
-      the asset server never fetches. Pre-bake probe captures, atlases and
-      sky cubes at build time; ship SDR-safe textures (no BC6H on most
-      browsers: PNG/JPEG or Basis/KTX2 from the existing Bevy features).
-      Note the cost in the Build dialog: base64 overhead plus no streaming,
-      with a size line and gzip guidance.
-- [ ] Runtime compat: `Launch::Player` path with the pack from memory and
-      synthetic `Load`/`Start` (never stdin); saves keyed by
-      `GamePack::save_id()` go to `localStorage`; audio starts behind a
-      click-to-play overlay (browser gesture rule); canvas resize handling;
-      pointer lock through the browser API on click; touch/gamepad through
-      Bevy web inputs. GPU timestamps often missing on WebGPU: use the
-      existing "no timestamps" profiler path.
-      Done: `Launch::Web` (`player.rs::from_pack`, SDR forced) with the pack
-      from JSON and `dir: None` so assets resolve against the server root;
-      `localStorage` saves (`web.rs`, read-as-default when missing); the
-      luminance compute meter skips itself where the device has no compute
-      (`max_compute_workgroup_size_x == 0`, Bevy's own canary) instead of
-      tripping validation and quitting the run, and GPU timestamps bisected
-      as safe. A player-side startup line logs the actor count.
-      Not covered: click-to-play audio, resize, pointer lock, touch/gamepad
-      verification; `scene luminance` reads 0 where the meter stands down;
-      3D web still needs the same compute gate in `sky.rs`/`fog.rs`.
-- [ ] Tooling and tests: `just web-build` (emit the single file) and
-      `just web-serve` (static host for smoke tests); trunk or wasm-pack
-      plus an xtask, documented beside `just player`. Tests: wasm
-      check-build in CI, plus a headless-browser smoke run (load, green
-      flag, first status) before calling the phase done. Single-threaded
-      wasm first (task pools run inline, smaller streaming budgets); shared
-      memory threads plus COOP/COEP headers are a later opt-in, not v1.
-      Done: `just web-build [out] [pack] [profile]` emits a runnable folder
-      (wasm + glue + host page; `release` boots fast, `dev` iterates) and
-      `just web-serve` hosts it with right MIME types; headless Chromium
-      runs verified load, green flag, world build and a rendered actor, plus
-      the missing-pack overlay path.
-      Not covered: the single-file emit (a folder ships today), CI
-      check-build, a repeatable smoke script, the trunk/wasm-pack decision.
+- [x] Rust scripts work on web: at build time each `assets/scripts/*.rs` is
+      compiled for `wasm32-unknown-unknown` against the same `HostApi`/ABI
+      and `export!` entry points, so script behavior matches native. The
+      build machine needs the wasm target `std`; a project whose scripts
+      cannot build for wasm fails the web build with the rustc error.
+      Blocks run on the VM on web v1 (native codegen logic stays native).
+      Done differently from the plan: not linked into the player wasm, which
+      would mean rebuilding Bevy per game, but one small wasm module per
+      script (debug info stripped, ~50 KB) that the player instantiates.
+      Modules can't call each other through function pointers, so on wasm
+      the prelude reaches the three host calls as imports (`abi::WasmCall`
+      in the script's memory; ABI 28) and the runtime's `browser` module
+      answers them with the native host code. A panic logs its message
+      through the prelude's hook, then the trap stops that script for the
+      game. Verified headless: a script moving an actor, reading its
+      position and name, and a panicking script stopped with its message.
+- [x] Single-file packaging in `build.rs`: the Web target
+      (`wasm32-unknown-unknown`) beside the native triples lays out one
+      `.html` with the
+      wasm player, its glue, `game.pack`, assets, the atlas, the baked sky,
+      probe bakes and script modules in one gzip'd, base64'd archive,
+      unpacked with `DecompressionStream` and mounted in memory
+      (`blockloom_core::vfs` plus a Bevy asset reader), so nothing is
+      fetched and the page opens from disk. BC6H sky and probe bakes ship as
+      they are, since the runtime already decodes them where the GPU can't
+      sample BC. The Build dialog says what it costs (whole file before
+      start, a third over gzip) and shows the page's size.
+- [x] Runtime compat: `Launch::Web` with the pack from memory and synthetic
+      `Load`/`Start` (never stdin); saves keyed by `GamePack::save_id()` go
+      to `localStorage`; audio starts behind a click-to-play cover; the
+      canvas follows its parent (`fit_canvas_to_parent`); pointer lock is
+      asked for on a click on the canvas; touch and gamepads are Bevy's own
+      web input. Renders through WebGPU (Bevy's `webgpu` feature; the old
+      build was WebGL2-only), so the sky, fog, cloud and luminance compute
+      passes run, and a browser without WebGPU gets a plain message. Bevy's
+      material shaders are patched on wasm where Chrome's WGSL compiler is
+      stricter than naga (`let` of textures and samplers).
+      Not covered: touch and gamepad on real devices, and the headless
+      runs use a software adapter.
+- [x] Tooling and tests: `just web-player` (stage the player), `just
+      web-build <project>` (the single file, through the same build as the
+      dialog), `just web-serve`, `just web-smoke <page>` (Playwright:
+      unpack, click to play, world built, scripts open, actors move, no
+      errors - read through the player's `game_actors()`, since headless
+      Chromium can't screenshot a WebGPU canvas). wasm-bindgen CLI rather
+      than trunk or wasm-pack, since the build dialog, not a bundler, makes
+      the page. CI clippy-builds the runtime for wasm and compiles a script
+      to wasm. Single-threaded wasm; shared-memory threads plus COOP/COEP
+      stay a later opt-in.
 
 ### Phase 9 - Editor on web (separate phase, do after Phase 8)
 
