@@ -956,8 +956,19 @@ mod dmabuf {
     const LINEAR_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
     /// Tiled slots are drawn into directly, so they take the target's format.
     const TILED_FORMAT: vk::Format = vk::Format::R8G8B8A8_SRGB;
-    const HANDLE: vk::ExternalMemoryHandleTypeFlags =
+    const DMA_BUF: vk::ExternalMemoryHandleTypeFlags =
         vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT;
+
+    /// How slots are shared. A test on a software driver with no dma-bufs
+    /// (lavapipe without udmabuf) asks for an opaque fd, which it backs with
+    /// a memfd the test can map all the same.
+    fn handle() -> vk::ExternalMemoryHandleTypeFlags {
+        #[cfg(test)]
+        if std::env::var_os("BLOCKLOOM_TEST_OPAQUE_FD").is_some() {
+            return vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD;
+        }
+        DMA_BUF
+    }
 
     /// One slot of the ring: the wgpu texture the world writes, and what
     /// the viewer imports it by.
@@ -1012,7 +1023,7 @@ mod dmabuf {
             if !features.contains(vk::FormatFeatureFlags::TRANSFER_DST) {
                 return Err("this GPU can't copy into a linear RGBA image".to_string());
             }
-            let mut external = vk::ExternalMemoryImageCreateInfo::default().handle_types(HANDLE);
+            let mut external = vk::ExternalMemoryImageCreateInfo::default().handle_types(handle());
             let info = image_info(size, LINEAR_FORMAT, vk::ImageUsageFlags::TRANSFER_DST)
                 .tiling(vk::ImageTiling::LINEAR)
                 .push_next(&mut external);
@@ -1099,7 +1110,7 @@ mod dmabuf {
                         .drm_format_modifier(modifier)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
                     let mut external =
-                        vk::PhysicalDeviceExternalImageFormatInfo::default().handle_type(HANDLE);
+                        vk::PhysicalDeviceExternalImageFormatInfo::default().handle_type(handle());
                     let info = vk::PhysicalDeviceImageFormatInfo2::default()
                         .format(TILED_FORMAT)
                         .ty(vk::ImageType::TYPE_2D)
@@ -1175,7 +1186,7 @@ mod dmabuf {
             let hal = device
                 .as_hal::<Vulkan>()
                 .ok_or("the renderer isn't using Vulkan")?;
-            let mut external = vk::ExternalMemoryImageCreateInfo::default().handle_types(HANDLE);
+            let mut external = vk::ExternalMemoryImageCreateInfo::default().handle_types(handle());
             let mut list = vk::ImageDrmFormatModifierListCreateInfoEXT::default()
                 .drm_format_modifiers(modifiers);
             let info = image_info(size, TILED_FORMAT, vk::ImageUsageFlags::COLOR_ATTACHMENT)
@@ -1276,7 +1287,7 @@ mod dmabuf {
                 raw.destroy_image(image, None);
                 return Err("no memory can back a shared image".to_string());
             };
-            let mut export = vk::ExportMemoryAllocateInfo::default().handle_types(HANDLE);
+            let mut export = vk::ExportMemoryAllocateInfo::default().handle_types(handle());
             let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
             let allocation = vk::MemoryAllocateInfo::default()
                 .allocation_size(needs.size)
@@ -1294,7 +1305,7 @@ mod dmabuf {
                 khr::external_memory_fd::Device::new(instance, raw).get_memory_fd(
                     &vk::MemoryGetFdInfoKHR::default()
                         .memory(memory)
-                        .handle_type(HANDLE),
+                        .handle_type(handle()),
                 )
             });
             match exported {
@@ -1699,8 +1710,213 @@ mod tests {
         );
     }
 
+    /// The dark room with ray tracing on in `mode`.
+    fn traced_room(
+        mode: blockloom_core::scene::TracingMode,
+        lamp: bool,
+    ) -> blockloom_core::project::Project {
+        let mut room = dark_room(lamp);
+        let tracing = &mut room.world.lighting.ray_tracing;
+        tracing.enabled = true;
+        tracing.mode = mode;
+        room
+    }
+
+    const TRACING_MODES: [blockloom_core::scene::TracingMode; 2] = [
+        blockloom_core::scene::TracingMode::Hybrid,
+        blockloom_core::scene::TracingMode::PathTraced,
+    ];
+
+    /// A traced ray that escapes sees the sky: with no lamp, no sun and no
+    /// ambient, a white gradient sky is all that lights the floor.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn traced_light_sees_the_sky() {
+        use blockloom_core::sky::SkyKind;
+        let reference = SceneView {
+            path_tracer: blockloom_protocol::PathTracerView {
+                enabled: true,
+                ..Default::default()
+            },
+            ..game_camera()
+        };
+        // Each tracing mode, then the reference path tracer.
+        let runs = TRACING_MODES
+            .map(|mode| (format!("{mode:?}"), mode, game_camera()))
+            .into_iter()
+            .chain([("Reference".to_string(), TRACING_MODES[0], reference)]);
+        for (name, mode, view) in runs {
+            let mut room = traced_room(mode, false);
+            let sky = &mut room.world.sky;
+            sky.kind = SkyKind::Gradient;
+            sky.reflections = false;
+            for stop in [
+                &mut sky.gradient.top,
+                &mut sky.gradient.middle,
+                &mut sky.gradient.bottom,
+            ] {
+                *stop = "#FFFFFF".to_string();
+            }
+            let lit = floor_pixel(run_world(room, |_| {}, view, 0, lit_floor));
+            assert!(
+                lit_floor(lit),
+                "{name}: expected the sky's light, read {lit:?}"
+            );
+        }
+    }
+
+    /// Under a flat sky the ambient is what a traced ray escapes to.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_flat_ambient_lights_a_traced_floor() {
+        for mode in TRACING_MODES {
+            let mut room = traced_room(mode, false);
+            room.world.lighting.ambient_brightness = 1500.0;
+            let lit = floor_pixel(run_world(room, |_| {}, game_camera(), 0, lit_floor));
+            assert!(
+                lit_floor(lit),
+                "{mode:?}: expected the ambient, read {lit:?}"
+            );
+        }
+    }
+
+    /// Realtime path tracing lights the floor from the traced lamp alone.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn realtime_path_tracing_lights_the_floor_from_a_traced_lamp() {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::scene::TracingMode;
+        let traced = |lamp_traced: bool| {
+            let mut room = traced_room(TracingMode::PathTraced, true);
+            for actor in &mut room.actors {
+                if let Some(ActorComponent::Light { light }) = actor.components.get_mut("Light") {
+                    light.ray_traced = lamp_traced;
+                }
+            }
+            let settle = if lamp_traced { 0 } else { 120 };
+            let done = move |pixel| lamp_traced && lit_floor(pixel);
+            floor_pixel(run_world(room, |_| {}, game_camera(), settle, done))
+        };
+        let (lit, dark) = (traced(true), traced(false));
+        assert!(lit_floor(lit), "expected a traced, lit floor, read {lit:?}");
+        assert!(
+            dark.iter().all(|c| *c < 20),
+            "expected the untraced lamp to leave the floor dark, read {dark:?}"
+        );
+    }
+
+    /// One path a pixel is speckled; the filter smooths it into the same
+    /// light rather than a darker or brighter one.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn the_denoiser_smooths_path_traced_light() {
+        use blockloom_core::scene::{Denoiser, TracingMode};
+        let patch = |denoiser: Denoiser| {
+            let mut room = traced_room(TracingMode::PathTraced, true);
+            // One path a pixel off a small lamp and a dim ambient is noisy.
+            room.world.lighting.ambient_brightness = 300.0;
+            room.world.lighting.ray_tracing.denoiser = denoiser;
+            room.world.lighting.ray_tracing.paths = 1;
+            // Once lit, a while longer for the history to fill.
+            let lit = std::cell::Cell::new(0);
+            let done = |pixel| {
+                if lit_floor(pixel) {
+                    lit.set(lit.get() + 1);
+                }
+                lit.get() > 60
+            };
+            let (set, index, errors) = run_world(room, |_| {}, game_camera(), 0, done);
+            assert!(errors.is_empty(), "{errors:?}");
+            let set = set.unwrap_or_else(|| panic!("no frame arrived"));
+            let frame = frame_pixels(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+            dump(&format!("denoise-{denoiser:?}"), &frame);
+            patch_stats(&frame, 24)
+        };
+        let (raw_mean, raw_spread) = patch(Denoiser::None);
+        let (mean, spread) = patch(Denoiser::Filter);
+        assert!(raw_mean > 20.0, "expected a lit floor, mean {raw_mean}");
+        assert!(
+            spread < raw_spread * 0.5,
+            "expected the filter to smooth the grain: raw {raw_spread}, filtered {spread}"
+        );
+        assert!(
+            (mean - raw_mean).abs() < raw_mean * 0.25,
+            "expected the same light: raw {raw_mean}, filtered {mean}"
+        );
+    }
+
+    /// A traced spot lights its cone and leaves the floor outside it dark,
+    /// where a bare glowing disk would light all of it.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_traced_spot_stays_in_its_cone() {
+        use blockloom_core::components::{LightKind, LightSpec};
+        let mut room = room_with(LightSpec {
+            kind: LightKind::Spot,
+            intensity: 1_000_000.0,
+            outer_angle: 30.0,
+            inner_angle: 20.0,
+            radius: 0.1,
+            ..LightSpec::default()
+        });
+        room.world.lighting.ray_tracing.enabled = true;
+        let (set, index, errors) = run_world(room, |_| {}, game_camera(), 120, |_| false);
+        assert!(errors.is_empty(), "{errors:?}");
+        let set = set.unwrap_or_else(|| panic!("no frame arrived"));
+        let (width, height) = (SIZE.x as usize, SIZE.y as usize);
+        let frame = frame_pixels(&set.images[index], width, height);
+        dump("traced-spot", &frame);
+        let brightest = frame
+            .iter()
+            .copied()
+            .max_by_key(|p| p.iter().map(|c| *c as u32).sum::<u32>());
+        let brightest = brightest.unwrap_or_default();
+        let lit = frame.iter().filter(|p| p.iter().any(|c| *c > 20)).count();
+        assert!(
+            lit_floor(brightest),
+            "expected the cone lit, read {brightest:?}"
+        );
+        assert!(
+            lit < frame.len() / 20,
+            "expected the floor outside the cone dark, {lit} of {} pixels lit",
+            frame.len()
+        );
+    }
+
     fn lit_floor(pixel: [u8; 3]) -> bool {
         pixel.iter().all(|c| *c > 60)
+    }
+
+    /// The mean luminance of the square `radius` around the middle of a
+    /// frame, and its grain: the mean step between neighbouring pixels, which
+    /// noise raises and a smooth gradient barely does.
+    fn patch_stats(frame: &[[u8; 3]], radius: usize) -> (f32, f32) {
+        let (width, height) = (SIZE.x as usize, SIZE.y as usize);
+        let luminance = |x: usize, y: usize| {
+            let [r, g, b] = frame[y * width + x];
+            0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32
+        };
+        let (mut sum, mut grain, mut count) = (0.0, 0.0, 0.0);
+        for y in height / 2 - radius..height / 2 + radius {
+            for x in width / 2 - radius..width / 2 + radius {
+                sum += luminance(x, y);
+                grain += (luminance(x + 1, y) - luminance(x, y)).abs();
+                count += 1.0;
+            }
+        }
+        (sum / count, grain / count)
+    }
+
+    /// Writes a frame to `BLOCKLOOM_TEST_DUMP/<name>.png` when that is set,
+    /// for looking at what a test saw.
+    fn dump(name: &str, frame: &[[u8; 3]]) {
+        let Some(dir) = std::env::var_os("BLOCKLOOM_TEST_DUMP") else {
+            return;
+        };
+        let bytes: Vec<u8> = frame.iter().flatten().copied().collect();
+        if let Some(image) = image::RgbImage::from_raw(SIZE.x, SIZE.y, bytes) {
+            let _ = image.save(std::path::Path::new(&dir).join(format!("{name}.png")));
+        }
     }
 
     fn floor_pixel(result: (Option<Arc<SlotSet>>, usize, Vec<RuntimeMessage>)) -> [u8; 3] {
@@ -3018,6 +3234,35 @@ mod tests {
         assert!(exchange.slots().is_none());
         let (set, index) = seen.map_or((None, 0), |(set, index)| (Some(set), index));
         (set, index, errors)
+    }
+
+    /// Reads a whole frame out of a linear dma-buf, row by row.
+    fn frame_pixels(image: &SharedImage, width: usize, height: usize) -> Vec<[u8; 3]> {
+        use std::os::fd::AsRawFd;
+        assert!(image.stride as usize >= width * 4);
+        let length = image.offset as usize + image.stride as usize * height;
+        // SAFETY: as `middle_pixel`.
+        unsafe {
+            let mapped = libc::mmap(
+                std::ptr::null_mut(),
+                length,
+                libc::PROT_READ,
+                libc::MAP_SHARED,
+                image.fd.as_raw_fd(),
+                0,
+            );
+            assert_ne!(mapped, libc::MAP_FAILED, "the dma-buf can't be mapped");
+            let bytes = std::slice::from_raw_parts(mapped as *const u8, length);
+            let frame = (0..height)
+                .flat_map(|y| (0..width).map(move |x| (x, y)))
+                .map(|(x, y)| {
+                    let at = image.offset as usize + image.stride as usize * y + x * 4;
+                    [bytes[at], bytes[at + 1], bytes[at + 2]]
+                })
+                .collect();
+            libc::munmap(mapped, length);
+            frame
+        }
     }
 
     /// Reads a pixel straight out of a linear dma-buf.

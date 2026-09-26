@@ -143,7 +143,7 @@ pub fn patch_shaders(
 }
 
 /// `source` with `from` replaced by `to`, exactly once.
-fn replace_once(
+pub(crate) fn replace_once(
     source: &str,
     from: &str,
     to: &str,

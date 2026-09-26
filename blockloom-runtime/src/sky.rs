@@ -475,6 +475,7 @@ fn apply_sky(
     state: Res<SkyState>,
     render: Option<Res<SkyRender>>,
     environment: Res<Environment>,
+    traced_ambient: Option<Res<crate::ray_tracing::TracedAmbient>>,
     probes: Query<(&SkyProbe, &EnvironmentMapLight)>,
     cameras: Query<
         (Entity, Option<&SkyView>, Option<&EnvironmentMapLight>),
@@ -493,6 +494,9 @@ fn apply_sky(
             .find(|(probe, _)| **probe == which)
             .map(|(_, light)| light)
     };
+    let tracing = traced_ambient
+        .as_ref()
+        .is_some_and(|ambient| ambient.light.is_some());
     let wanted_light = match (filtered(SkyProbe::Light), filtered(SkyProbe::Diffuse)) {
         (Some(light), Some(diffuse)) if active && (sky.lighting || sky.reflections) => {
             Some(EnvironmentMapLight {
@@ -501,8 +505,12 @@ fn apply_sky(
                 } else {
                     cubes.black.clone()
                 },
+                // Traced rays read only this one; a sky that lights but
+                // doesn't reflect shows them its blurred light.
                 specular_map: if sky.reflections {
                     light.specular_map.clone()
+                } else if tracing && sky.lighting {
+                    diffuse.diffuse_map.clone()
                 } else {
                     cubes.black.clone()
                 },
@@ -512,6 +520,8 @@ fn apply_sky(
         }
         _ => None,
     };
+    // Traced rays that escape a skyless world see its flat ambient.
+    let wanted_light = wanted_light.or_else(|| traced_ambient.and_then(|a| a.light.clone()));
     for (camera, view, light) in &cameras {
         let mut camera = commands.entity(camera);
         match wanted_view {
@@ -631,7 +641,7 @@ fn source_cube(dir: &Path, path: &str, bias: f32, seam: f32) -> Result<Image, St
 }
 
 /// A cube from data laid out face by face, each face's mips in turn.
-fn cube_image(size: u32, mips: u32, data: Vec<u8>, format: TextureFormat) -> Image {
+pub(crate) fn cube_image(size: u32, mips: u32, data: Vec<u8>, format: TextureFormat) -> Image {
     let mut image = Image::new_uninit(
         Extent3d {
             width: size,
