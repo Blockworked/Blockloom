@@ -390,6 +390,22 @@ fn cloud_layers_normalize_paint_and_undo() {
             )
             .is_err()
     );
+    // A second stroke erases, and undo brings the first one's pixels back.
+    backend
+        .dispatch(
+            "paint_cloud_layer",
+            json!({"layer": 1, "brush": {"tool": "Eraser", "radius": 0.2, "strength": 1.0},
+                   "points": [[0.5, 0.2]]}),
+        )
+        .unwrap();
+    let pixel =
+        || blockloom_core::cloud_layers::load_coverage(Some(&dir), &file).unwrap()[102 * 512 + 256];
+    assert_eq!(pixel(), 0);
+    backend.dispatch("undo", json!({})).unwrap();
+    assert_eq!(pixel(), 255);
+    backend.dispatch("redo", json!({})).unwrap();
+    assert_eq!(pixel(), 0);
+    backend.dispatch("undo", json!({})).unwrap();
     backend.dispatch("undo", json!({})).unwrap();
     let state = backend.dispatch("get_state", json!({})).unwrap();
     assert_eq!(

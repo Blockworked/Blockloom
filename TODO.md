@@ -621,11 +621,17 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         reading. Project Settings paints strokes into
         `assets/clouds/layer-N.png` (`paint-cloud-layer`: cloud, eraser, blur,
         advect, wrapping at the tile's edges), started from what the layer drew,
-        so an imported image is never overwritten.
-        Not covered: layers cast no ground shadows and are absent from the
-        sky's light cubes and reflections; no blocks drive them yet; painting a
-        file is outside undo (undo restores the layer's old coverage path);
-        the altitude planes in the viewport are the editor item below.
+        so an imported image is never overwritten; every stroke keeps a
+        snapshot under `.blockloom/cloud-paint`, so undo and redo take strokes
+        back. Layers shadow the ground towards the sun with their own
+        strength. `set cloud layer _ [coverage/opacity/contrast/altitude/
+        spin] to` (and a script's `set_cloud_layer`) lays run-time dials over
+        a layer. The scene view draws each layer's altitude plane and spin
+        pivot.
+        Not covered: layers stay out of the sky's light cubes, so reflections
+        and sky ambient don't see them (the cubes are rewritten only when the
+        sky changes, and moving layers would refilter them every frame, the
+        same reason stars and aurora stay out).
   - [ ] Terrain and vegetation: heightmap terrain (1k to 4k, import PNG/RAW, sculpt
         raise/lower/smooth/flatten/noise/terrace with radius/falloff/strength, paint
         albedo/normal/roughness layers with slope/height/curvature rules, holes for

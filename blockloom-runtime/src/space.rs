@@ -159,7 +159,8 @@ pub fn aurora_kp(engine: &Engine) -> f32 {
         .clamp(0.0, 9.0)
 }
 
-/// `set aurora`, `set fog density` and `set clouds` for the rest of the run.
+/// `set aurora`, `set fog density`, `set clouds` and `set cloud layer` for
+/// the rest of the run.
 fn apply_space_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engine>) {
     if !engine.running {
         return;
@@ -173,6 +174,21 @@ fn apply_space_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engi
                 engine.fog_density = Some(density.clamp(0.0, 10.0));
             }
             Effect::SetClouds { property, value } => engine.clouds.set(*property, *value),
+            Effect::SetCloudLayer {
+                layer,
+                property,
+                value,
+            } => {
+                let known = engine.project.world.cloud_layers.len();
+                let named =
+                    blockloom_core::cloud_layers::layer_index(*layer).is_some_and(|i| i < known);
+                if !named || !engine.cloud_layers.set(*layer, *property, *value) {
+                    crate::bridge::send(&blockloom_protocol::RuntimeMessage::Error {
+                        actor: "Blockloom".into(),
+                        message: format!("there's no cloud layer {layer}"),
+                    });
+                }
+            }
             _ => {}
         }
     }

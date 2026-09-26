@@ -62,6 +62,8 @@ pub struct CloudLayer {
     pub pivot: [f32; 2],
     /// How much aerial haze tints the layer with distance, 0-1.
     pub aerial: f32,
+    /// How dark the layer's shadow on the ground is under full cover, 0-1.
+    pub shadow: f32,
     /// Bumped by painting, so the runtime rereads a file whose path stayed.
     pub revision: u32,
 }
@@ -96,6 +98,7 @@ impl Default for CloudLayer {
             spin: 0.0,
             pivot: [0.0; 2],
             aerial: 1.0,
+            shadow: 0.5,
             revision: 0,
         }
     }
@@ -130,6 +133,7 @@ impl CloudLayer {
             clamp(v, 0.0, -1.0e7, 1.0e7);
         }
         clamp(&mut self.aerial, d.aerial, 0.0, 1.0);
+        clamp(&mut self.shadow, d.shadow, 0.0, 1.0);
     }
 
     /// How much of the sky this layer covers, 0-1: its remapped coverage
@@ -162,6 +166,89 @@ impl CloudLayer {
     pub fn paint_path(index: usize) -> String {
         format!("assets/clouds/layer-{}.png", index + 1)
     }
+}
+
+/// Which dial `set cloud layer _ _ to` writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CloudLayerProperty {
+    Coverage,
+    Opacity,
+    Contrast,
+    Altitude,
+    Spin,
+}
+
+impl CloudLayerProperty {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Coverage => "Coverage",
+            Self::Opacity => "Opacity",
+            Self::Contrast => "Contrast",
+            Self::Altitude => "Altitude",
+            Self::Spin => "Spin",
+        }
+    }
+
+    /// Case-insensitive, so a script's `"coverage"` works too.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "coverage" | "cover" => Some(Self::Coverage),
+            "opacity" => Some(Self::Opacity),
+            "contrast" => Some(Self::Contrast),
+            "altitude" | "height" => Some(Self::Altitude),
+            "spin" => Some(Self::Spin),
+            _ => None,
+        }
+    }
+}
+
+/// What `set cloud layer` set this run, per layer, laid over the project's.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CloudLayerOverrides {
+    layers: [[Option<f32>; 5]; MAX_LAYERS],
+}
+
+impl CloudLayerOverrides {
+    /// `layer` counts from 1, as the block does. Returns false for a layer
+    /// out of range; a value that isn't finite is ignored.
+    pub fn set(&mut self, layer: f32, property: CloudLayerProperty, value: f32) -> bool {
+        let Some(slot) = layer_index(layer).and_then(|i| self.layers.get_mut(i)) else {
+            return false;
+        };
+        if value.is_finite() {
+            slot[property as usize] = Some(value);
+        }
+        true
+    }
+
+    /// Lays the overrides over `layers`, clamped as the project's own are.
+    pub fn apply(&self, layers: &mut [CloudLayer]) {
+        for (layer, over) in layers.iter_mut().zip(&self.layers) {
+            let get = |p: CloudLayerProperty| over[p as usize];
+            if let Some(v) = get(CloudLayerProperty::Coverage) {
+                layer.coverage = v;
+            }
+            if let Some(v) = get(CloudLayerProperty::Opacity) {
+                layer.opacity = v;
+            }
+            if let Some(v) = get(CloudLayerProperty::Contrast) {
+                layer.contrast = v;
+            }
+            if let Some(v) = get(CloudLayerProperty::Altitude) {
+                layer.altitude = v;
+            }
+            if let Some(v) = get(CloudLayerProperty::Spin) {
+                layer.spin = v;
+            }
+            layer.normalize();
+        }
+    }
+}
+
+/// A 1-based layer number as an index, if it names one.
+pub fn layer_index(layer: f32) -> Option<usize> {
+    let n = layer.round();
+    (n.is_finite() && (1.0..=MAX_LAYERS as f32).contains(&n)).then(|| n as usize - 1)
 }
 
 /// Keeps at most `MAX_LAYERS`, each normalized.
@@ -403,15 +490,62 @@ pub fn paint_file(
         let image = image::open(&source).map_err(|e| format!("{}: {e}", source.display()))?;
         coverage_from_image(&image, COVERAGE_SIZE)
     };
+    // What undo returns to, if the layer already drew from this file.
+    let before = snapshot_path(dir, index, layer.revision);
+    if layer.coverage_texture == path && !before.exists() {
+        save_gray(&before, coverage.clone())?;
+    }
     paint(&mut coverage, COVERAGE_SIZE, brush, points);
-    if let Some(parent) = full.parent() {
+    let revision = layer.revision.wrapping_add(1);
+    save_gray(&full, coverage.clone())?;
+    save_gray(&snapshot_path(dir, index, revision), coverage)?;
+    prune_snapshots(dir, index, revision);
+    Ok(path)
+}
+
+/// How many strokes back a layer's painting can be undone.
+pub const PAINT_HISTORY: u32 = 64;
+
+/// Where the coverage layer `index` held at `revision` is kept for undo.
+fn snapshot_path(dir: &std::path::Path, index: usize, revision: u32) -> std::path::PathBuf {
+    dir.join(".blockloom")
+        .join("cloud-paint")
+        .join(format!("layer-{}-r{revision}.png", index + 1))
+}
+
+fn save_gray(path: &std::path::Path, coverage: Vec<u8>) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
     image::GrayImage::from_raw(COVERAGE_SIZE, COVERAGE_SIZE, coverage)
         .ok_or("The painted coverage came out the wrong size")?
-        .save(&full)
-        .map_err(|e| format!("{}: {e}", full.display()))?;
-    Ok(path)
+        .save(path)
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn prune_snapshots(dir: &std::path::Path, index: usize, revision: u32) {
+    if let Some(old) = revision.checked_sub(PAINT_HISTORY) {
+        let _ = std::fs::remove_file(snapshot_path(dir, index, old));
+    }
+}
+
+/// After an undo or redo: puts back the painted file each layer's revision
+/// had, so painting undoes like any other edit. Layers drawing from anything
+/// else, or whose revision has no snapshot, are left alone.
+pub fn restore_painted(dir: &std::path::Path, layers: &[CloudLayer]) {
+    for (index, layer) in layers.iter().enumerate() {
+        let path = CloudLayer::paint_path(index);
+        if layer.coverage_texture != path {
+            continue;
+        }
+        let snapshot = snapshot_path(dir, index, layer.revision);
+        if let Some(full) = crate::assets::resolve(dir, &path)
+            && snapshot.exists()
+            && std::fs::read(&snapshot).ok() != std::fs::read(&full).ok()
+        {
+            let _ = std::fs::copy(&snapshot, &full);
+        }
+    }
 }
 
 /// A layer's coverage at `COVERAGE_SIZE`: its image under `dir`, or its
@@ -482,6 +616,22 @@ mod tests {
         assert_eq!(l.contrast, 1.0);
         assert_eq!(l.horizon_fade, [5.0, 5.0]);
         assert_eq!(l.octaves, 1);
+    }
+
+    #[test]
+    fn run_overrides_name_a_layer_and_clamp() {
+        let mut over = CloudLayerOverrides::default();
+        assert!(over.set(2.0, CloudLayerProperty::parse("Coverage").unwrap(), 3.0));
+        assert!(over.set(1.2, CloudLayerProperty::Altitude, 500.0));
+        assert!(over.set(1.0, CloudLayerProperty::Spin, f32::NAN));
+        assert!(!over.set(5.0, CloudLayerProperty::Opacity, 0.5));
+        assert!(!over.set(0.0, CloudLayerProperty::Opacity, 0.5));
+        let mut layers = vec![CloudLayer::default(); 2];
+        over.apply(&mut layers);
+        assert_eq!(layers[1].coverage, 1.0);
+        assert_eq!(layers[0].altitude, 500.0);
+        assert_eq!(layers[0].spin, 0.0);
+        assert_eq!(CloudLayerProperty::parse("rain"), None);
     }
 
     #[test]

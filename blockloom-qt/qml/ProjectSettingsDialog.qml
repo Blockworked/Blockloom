@@ -45,7 +45,7 @@ BwDialog {
     function cloudLayerDefaults() {
         return { enabled: true, name: "", coverage_texture: "", seed: 1, scale: 4, octaves: 5, coverage: 0.5, contrast: 2, tiling_km: 20, opacity: 1, altitude: 8000, parallax: 200,
             tint: "#FFFFFF", sun_tint: "#FFF4E6", edge_tint: "#FFE0C0", horizon_fade: [12, 1], day_tint: "#FFFFFF", sunset_tint: "#FFB08A", night_tint: "#8090B0",
-            scroll: [0, 0], wind: 1, flow_map: "", flow_strength: 0, flow_period: 60, spin: 0, pivot: [0, 0], aerial: 1, revision: 0 };
+            scroll: [0, 0], wind: 1, flow_map: "", flow_strength: 0, flow_period: 60, spin: 0, pivot: [0, 0], aerial: 1, shadow: 0.5, revision: 0 };
     }
     function cloudLayersOf() { return world && world.cloud_layers ? JSON.parse(JSON.stringify(world.cloud_layers)) : []; }
     function writeCloudLayers(layers) { invoke("set_cloud_layers", { layers: layers }); }
@@ -444,8 +444,9 @@ BwDialog {
                         InspectorRow { label: "Spin °/s, pivot"; labelWidth: 110; Layout.fillWidth: true
                             NumberField { value: layerCard.l.spin; fallback: 0; onCommitted: n => layerCard.write({ spin: root.clamp(n, -360, 360) }) }
                             Repeater { model: 2; delegate: NumberField { required property int index; value: (layerCard.l.pivot || [0, 0])[index]; onCommitted: n => layerCard.write({ pivot: root.withIndex(layerCard.l.pivot || [0, 0], index, n) }) } } }
-                        InspectorRow { label: "Aerial haze"; labelWidth: 110; Layout.fillWidth: true
-                            NumberField { value: layerCard.l.aerial; fallback: 1; onCommitted: n => layerCard.write({ aerial: root.clamp(n, 0, 1) }) } }
+                        InspectorRow { label: "Haze, shadow"; labelWidth: 110; Layout.fillWidth: true
+                            NumberField { value: layerCard.l.aerial; fallback: 1; onCommitted: n => layerCard.write({ aerial: root.clamp(n, 0, 1) }) }
+                            NumberField { value: layerCard.l.shadow; fallback: 0.5; onCommitted: n => layerCard.write({ shadow: root.clamp(n, 0, 1) }) } }
                         // Paint canvas: one tile of coverage; a drag is one stroke.
                         Rectangle {
                             Layout.preferredWidth: 256; Layout.preferredHeight: 256; Layout.alignment: Qt.AlignHCenter
@@ -495,7 +496,7 @@ BwDialog {
                     BwButton { text: "Add layer"; iconName: "plus"; implicitHeight: 30; enabled: layerSection.layers.length < 4
                         onClicked: { const layers = root.cloudLayersOf(); const l = root.cloudLayerDefaults(); l.seed = layers.length + 1; l.altitude = 8000 - 2000 * layers.length; layers.push(l); root.writeCloudLayers(layers); } }
                     Item { Layout.fillWidth: true } }
-                Note { text: "Up to four flat layers of cloud, drawn in front of or behind the volumetric clouds by altitude, and the whole sky's clouds when volumetrics are off. Coverage is an image (its brightness) or noise from the seed; cover 0 is clear, 1 overcast, and contrast sharpens the edges. Parallax is the layer's apparent thickness in metres, which also shades it from the sun. The tint is multiplied by the day, sunset and night tints as the sun sinks. Layers scroll by their own speed plus the Wind section's layer scroll times wind, and turn round the pivot for storm spin; a flow map's red and green push coverage around (0.5 is still). Paint on a layer's tile to draw coverage into assets/clouds/layer-N.png: Cloud adds, Eraser removes, Blur softens, Advect smears along the stroke." }
+                Note { text: "Up to four flat layers of cloud, drawn in front of or behind the volumetric clouds by altitude, and the whole sky's clouds when volumetrics are off. Coverage is an image (its brightness) or noise from the seed; cover 0 is clear, 1 overcast, and contrast sharpens the edges. Parallax is the layer's apparent thickness in metres, which also shades it from the sun. The tint is multiplied by the day, sunset and night tints as the sun sinks. Layers scroll by their own speed plus the Wind section's layer scroll times wind, and turn round the pivot for storm spin; a flow map's red and green push coverage around (0.5 is still). Shadow darkens the ground under full cover towards the sun. Paint on a layer's tile to draw coverage into assets/clouds/layer-N.png: Cloud adds, Eraser removes, Blur softens, Advect smears along the stroke, and undo takes strokes back. The `set cloud layer` block changes a layer's coverage, opacity, contrast, altitude or spin while the game runs." }
             }
             Section {
                 id: fogSection

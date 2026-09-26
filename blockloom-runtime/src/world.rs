@@ -605,6 +605,7 @@ pub fn rebuild_world(
     engine.lightning_rate = None;
     engine.wind = Default::default();
     engine.clouds = Default::default();
+    engine.cloud_layers = Default::default();
     engine.parents = engine
         .project
         .actors
@@ -3790,6 +3791,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetWind { .. }
         | Effect::SetCloudDrift { .. }
         | Effect::SetClouds { .. }
+        | Effect::SetCloudLayer { .. }
         | Effect::SetBusVolume { .. }
         | Effect::RumbleGamepad { .. }
         | Effect::Stopped

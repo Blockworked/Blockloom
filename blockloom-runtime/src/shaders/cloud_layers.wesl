@@ -112,3 +112,23 @@ fn light(l: Layer, hit: vec3<f32>, ray: vec3<f32>, dir: vec4<f32>, color: vec3<f
     }
     return acc;
 }
+
+// Ground shadow: each surface pixel multiplied by the light the layers above
+// it let through towards the sun.
+@fragment fn shadow(@builtin(position) pixel: vec4<f32>) -> @location(0) vec4<f32> {
+    let d = textureLoad(depth_tex, vec2<i32>(pixel.xy), 0);
+    let to = normalize(u.sun.xyz);
+    if d <= 0.0 || to.y <= 0.0 { return vec4<f32>(1.0); }
+    let p = world(pixel.xy / u.screen.xy, d);
+    // Low sun: long, faint shadows that fade out at the horizon.
+    let low = smoothstep(0.0, 0.15, to.y);
+    var through = 1.0;
+    for (var i = u.range.x; i < u.range.y; i++) {
+        let l = u.layers[i];
+        let above = l.shape.x - p.y;
+        if above <= 0.0 { continue; }
+        let cover = cloud(l, p.xz + to.xz / to.y * above) * l.shape.y;
+        through *= 1.0 - cover * l.edge_tint.w * low;
+    }
+    return vec4<f32>(vec3<f32>(through), 1.0);
+}

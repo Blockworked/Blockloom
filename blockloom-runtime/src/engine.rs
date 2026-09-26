@@ -222,6 +222,8 @@ pub struct Engine {
     pub wind: blockloom_core::wind::WindOverrides,
     /// `set clouds` this run, over the blended volumetric clouds.
     pub clouds: blockloom_core::clouds::CloudOverrides,
+    /// `set cloud layer` this run, over the project's layers.
+    pub cloud_layers: blockloom_core::cloud_layers::CloudLayerOverrides,
     /// Dynamic actors a walk verb (`move`, `change position`) drove this
     /// tick. A walk sets an absolute velocity, so when a driven actor goes
     /// quiet the dimension pass brakes it - otherwise the last written
@@ -303,6 +305,7 @@ impl Engine {
             lightning_rate: None,
             wind: Default::default(),
             clouds: Default::default(),
+            cloud_layers: Default::default(),
             last_created: HashMap::new(),
             driven: HashSet::new(),
             physics_filter: HashMap::new(),

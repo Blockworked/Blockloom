@@ -927,6 +927,19 @@ extern "C" fn act(
             },
         },
         abi::ACT_SET_CLOUD_DRIFT => Effect::SetCloudDrift { drift: vector },
+        abi::ACT_SET_CLOUD_LAYER => {
+            match blockloom_core::cloud_layers::CloudLayerProperty::parse(a) {
+                Some(property) => Effect::SetCloudLayer {
+                    layer: n0 as f32,
+                    property,
+                    value: n1 as f32,
+                },
+                None => Effect::Error {
+                    actor,
+                    message: format!("there's no cloud layer dial called \"{a}\""),
+                },
+            }
+        }
         abi::ACT_SET_CLOUDS => match blockloom_core::clouds::CloudProperty::parse(a) {
             Some(property) => Effect::SetClouds {
                 property,

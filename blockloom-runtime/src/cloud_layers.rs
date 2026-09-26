@@ -36,6 +36,7 @@ struct LayerGpu {
     tint: Vec4,
     /// w the texture slice.
     sun_tint: Vec4,
+    /// w the ground shadow's strength.
     edge_tint: Vec4,
 }
 
@@ -243,7 +244,7 @@ fn layer_gpu(
         ),
         tint: (linear(&layer.tint) * ramp).extend(if has_flow { 1.0 } else { 0.0 }),
         sun_tint: linear(&layer.sun_tint).extend(slice as f32),
-        edge_tint: linear(&layer.edge_tint).extend(0.0),
+        edge_tint: linear(&layer.edge_tint).extend(layer.shadow),
     }
 }
 
@@ -259,6 +260,7 @@ fn resolve(
 ) {
     let mut layers = engine.project.world.cloud_layers.clone();
     blockloom_core::cloud_layers::normalize(&mut layers);
+    engine.cloud_layers.apply(&mut layers);
     let ramp = blockloom_core::fog::color_weights(env.sun.direction.y);
     render.layers = layers
         .iter()
@@ -322,14 +324,29 @@ struct LayerPipeline {
 }
 
 impl SpecializedRenderPipeline for LayerPipeline {
-    type Key = (bool, TextureFormat);
-    fn specialize(&self, (multi, format): Self::Key) -> RenderPipelineDescriptor {
+    /// Multisampled depth, the target's format, and whether this is the
+    /// ground shadow (which multiplies) rather than the layers (which blend over).
+    type Key = (bool, TextureFormat, bool);
+    fn specialize(&self, (multi, format, shadow): Self::Key) -> RenderPipelineDescriptor {
+        let multiply = BlendComponent {
+            src_factor: BlendFactor::Dst,
+            dst_factor: BlendFactor::Zero,
+            operation: BlendOperation::Add,
+        };
         RenderPipelineDescriptor {
-            label: Some("cloud_layers".into()),
+            label: Some(
+                if shadow {
+                    "cloud_layer_shadow"
+                } else {
+                    "cloud_layers"
+                }
+                .into(),
+            ),
             layout: vec![self.layouts[multi as usize].clone()],
             vertex: self.fullscreen.to_vertex_state(),
             fragment: Some(FragmentState {
                 shader: self.shader.clone(),
+                entry_point: Some(if shadow { "shadow" } else { "fragment" }.into()),
                 shader_defs: if multi {
                     vec!["MULTISAMPLED".into()]
                 } else {
@@ -337,7 +354,14 @@ impl SpecializedRenderPipeline for LayerPipeline {
                 },
                 targets: vec![Some(ColorTargetState {
                     format,
-                    blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    blend: Some(if shadow {
+                        BlendState {
+                            color: multiply,
+                            alpha: multiply,
+                        }
+                    } else {
+                        BlendState::PREMULTIPLIED_ALPHA_BLENDING
+                    }),
                     write_mask: ColorWrites::ALL,
                 })],
                 ..default()
@@ -443,11 +467,12 @@ fn array_texture(
 
 #[derive(Component)]
 struct ViewLayers {
-    pipeline: CachedRenderPipelineId,
+    /// The layers' pipeline and the ground shadow's.
+    pipelines: [CachedRenderPipelineId; 2],
     multi: bool,
-    /// Uniform offsets for the draw behind the volumetrics and the one in
-    /// front, `None` when it has no layers.
-    offsets: [Option<u32>; 2],
+    /// Uniform offsets for the draw behind the volumetrics, the one in
+    /// front and the ground shadow, `None` when one has nothing to draw.
+    offsets: [Option<u32>; 3],
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -510,19 +535,20 @@ fn prepare(
         for (slot, layer) in u.layers.iter_mut().zip(&sorted) {
             *slot = *layer;
         }
-        let mut offsets = [None; 2];
-        for (i, range) in [(0, behind), (behind, sorted.len())]
-            .into_iter()
-            .enumerate()
-        {
-            if range.1 > range.0 {
+        let mut offsets = [None; 3];
+        let shadows = u.sun.y > 0.0 && sorted.iter().any(|l| l.edge_tint.w > 0.0);
+        let ranges = [(0, behind), (behind, sorted.len()), (0, sorted.len())];
+        for (i, range) in ranges.into_iter().enumerate() {
+            if range.1 > range.0 && (i < 2 || shadows) {
                 u.range = UVec4::new(range.0 as u32, range.1 as u32, 0, 0);
                 offsets[i] = Some(buffer.0.push(&u));
             }
         }
         let multi = msaa.is_some_and(|m| m.samples() > 1);
         commands.entity(entity).insert(ViewLayers {
-            pipeline: pipelines.specialize(&cache, &pipeline, (multi, view.target_format)),
+            pipelines: [false, true].map(|shadow| {
+                pipelines.specialize(&cache, &pipeline, (multi, view.target_format, shadow))
+            }),
             multi,
             offsets,
         });
@@ -530,6 +556,8 @@ fn prepare(
     buffer.0.write_buffer(&device, &queue);
 }
 
+/// Draws this view's layers on one side of the volumetrics; behind them,
+/// the ground shadow first.
 #[allow(clippy::too_many_arguments)]
 fn draw_layers(
     side: usize,
@@ -543,12 +571,10 @@ fn draw_layers(
     ctx: &mut RenderContext,
 ) {
     let (target, v, prepass) = view.into_inner();
-    let (Some(pipeline), Some(textures), Some(offset)) = (pipeline, textures, v.offsets[side])
-    else {
+    let (Some(pipeline), Some(textures)) = (pipeline, textures) else {
         return;
     };
-    let (Some(draw), Some(uniform), Some(depth), Some(sky)) = (
-        cache.get_render_pipeline(v.pipeline),
+    let (Some(uniform), Some(depth), Some(sky)) = (
         buffer.0.binding(),
         prepass.depth_only_view(),
         images.get(&sky.diffuse),
@@ -568,24 +594,37 @@ fn draw_layers(
             &pipeline.linear,
         )),
     );
-    let mut pass = ctx
-        .command_encoder()
-        .begin_render_pass(&RenderPassDescriptor {
-            label: Some("cloud_layers"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: target.main_texture_view(),
-                depth_slice: None,
-                resolve_target: None,
-                ops: Operations::default(),
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-    pass.set_pipeline(draw);
-    pass.set_bind_group(0, &group, &[offset]);
-    pass.draw(0..3, 0..1);
+    let draws = if side == 0 {
+        vec![
+            (v.pipelines[1], v.offsets[2]),
+            (v.pipelines[0], v.offsets[0]),
+        ]
+    } else {
+        vec![(v.pipelines[0], v.offsets[1])]
+    };
+    for (id, offset) in draws {
+        let (Some(draw), Some(offset)) = (cache.get_render_pipeline(id), offset) else {
+            continue;
+        };
+        let mut pass = ctx
+            .command_encoder()
+            .begin_render_pass(&RenderPassDescriptor {
+                label: Some("cloud_layers"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: target.main_texture_view(),
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: Operations::default(),
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        pass.set_pipeline(draw);
+        pass.set_bind_group(0, &group, &[offset]);
+        pass.draw(0..3, 0..1);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

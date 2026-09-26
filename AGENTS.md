@@ -782,11 +782,16 @@ turns it into cloud by coverage and contrast; `cloud_layers.wesl` mirrors
 `remap`, so change the two together. `paint-cloud-layer` paints strokes
 (`paint`, wrapping at the tile's edges) into `assets/clouds/layer-N.png` and
 bumps the layer's `revision`, which is how the runtime knows to reread a file
-whose path didn't change. `blockloom-runtime/src/cloud_layers.rs` loads or
+whose path didn't change. Each stroke keeps a snapshot per revision under
+`.blockloom/cloud-paint`, and undo/redo call `restore_painted` to put the
+file back. `set cloud layer` lands in `engine.cloud_layers`
+(`CloudLayerOverrides`), laid over the project's layers each frame. `blockloom-runtime/src/cloud_layers.rs` loads or
 bakes every layer into one texture array when their keys change, and draws
 them in `CloudPass`: layers beyond the volumetric slab before `CloudMarch`,
 layers between the camera and it after, so the fog pass lays height fog over
-all of them. Scroll, flow and spin run on `CloudOffsets::time`, cloud time.
+all of them. The same shader's `shadow` entry point multiplies the ground by
+what the layers let through towards the sun, drawn first. Scroll, flow and
+spin run on `CloudOffsets::time`, cloud time.
 
 ### Shader library and pass plumbing
 

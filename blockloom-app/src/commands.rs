@@ -3838,6 +3838,7 @@ fn step_history(
     if let Some(previous) = step(&mut s.history, current) {
         let open = s.open.as_mut().ok_or("No project is open")?;
         open.project = previous;
+        blockloom_core::cloud_layers::restore_painted(&open.dir, &open.project.world.cloud_layers);
         s.invalid_field_buffers.clear();
         auto_save(&s);
         sync_runtime(&mut s);

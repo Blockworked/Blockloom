@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 25;
+pub const ABI_VERSION: u32 = 26;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -340,6 +340,9 @@ pub const ACT_SET_CLOUD_DRIFT: u32 = 74;
 /// `a` = cloud dial (`coverage`, `density` or `type`), `n0` = value.
 /// Window-global.
 pub const ACT_SET_CLOUDS: u32 = 75;
+/// `a` = cloud layer dial (`coverage`, `opacity`, `contrast`, `altitude` or
+/// `spin`), `n0` = layer from 1, `n1` = value. Window-global.
+pub const ACT_SET_CLOUD_LAYER: u32 = 76;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per
