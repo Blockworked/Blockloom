@@ -946,6 +946,8 @@ impl Project {
         repoint(&mut self.world.sky.hdri.path);
         repoint(&mut self.world.sky.stars.milky_way);
         repoint(&mut self.world.lightning.thunder_sound);
+        repoint(&mut self.world.clouds.shape_volume);
+        repoint(&mut self.world.clouds.detail_volume);
         if let Some(font) = self.world.speech_bubble.font_asset.as_mut() {
             repoint(font);
         }

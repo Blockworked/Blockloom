@@ -919,6 +919,49 @@ pub(crate) fn set_clouds(
     Ok(())
 }
 
+/// Bakes the clouds' shape and erosion noise from the cloud seed into volume
+/// assets and points the clouds at them, so they can be edited or replaced.
+pub(crate) fn bake_cloud_noise(
+    state: &SharedState,
+    app: &AppHandle,
+) -> Result<Vec<String>, String> {
+    use blockloom_core::clouds::{CloudNoise, noise_strip};
+    let mut s = lock(state)?;
+    let dir = project_dir(&s)?;
+    let seed = s
+        .project()
+        .ok_or("No project is open")?
+        .world
+        .wind
+        .clouds
+        .seed;
+    let mut written = Vec::new();
+    for kind in [CloudNoise::Shape, CloudNoise::Detail] {
+        let path = kind.asset_path().to_string();
+        let full = assets::resolve(&dir, &path)
+            .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))?;
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        noise_strip(kind, kind.size(), seed)
+            .save(&full)
+            .map_err(|e| format!("{}: {e}", full.display()))?;
+        // A PNG reads as a texture by its extension; this one is a volume.
+        let _ = pipeline::set_role(&dir, &path, Some(pipeline::ImportRole::Volume));
+        let _ = pipeline::note_imported(&dir, &path, "cloud noise");
+        written.push(path);
+    }
+    push_undo(&mut s);
+    if let Some(project) = s.project_mut() {
+        project.world.clouds.shape_volume = written[0].clone();
+        project.world.clouds.detail_volume = written[1].clone();
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(written)
+}
+
 /// Sets how lightning looks and sounds, and the storm that throws it.
 pub(crate) fn set_lightning(
     state: &SharedState,

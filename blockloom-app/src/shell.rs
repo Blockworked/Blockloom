@@ -400,6 +400,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "bake-cloud-noise",
+        cmd: "bake_cloud_noise",
+        aliases: &["bake_cloud_noise"],
+        summary: "Bake the clouds' shape and erosion noise from the cloud seed into assets/clouds/*.png volume strips and point the clouds at them.",
+        args: &[],
+    },
+    CommandSpec {
         name: "set-lightning",
         cmd: "set_lightning",
         aliases: &["set_lightning"],

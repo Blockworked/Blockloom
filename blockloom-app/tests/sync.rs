@@ -319,3 +319,30 @@ fn cloud_settings_normalize_undo_and_reload() {
     assert_eq!(clouds(&backend), edited);
     backend.dispatch("close_project", json!({})).unwrap();
 }
+
+#[test]
+fn cloud_noise_bakes_to_volume_assets() {
+    let (_lock, _data, projects) = isolated("cloud-noise");
+    let backend = backend();
+    let dir = create_project(&backend, projects.path(), "Noise");
+    backend
+        .dispatch("open_project", json!({"path": dir}))
+        .unwrap();
+    let written = backend.dispatch("bake_cloud_noise", json!({})).unwrap();
+    assert_eq!(
+        written,
+        json!(["assets/clouds/shape.png", "assets/clouds/detail.png"])
+    );
+    let state = backend.dispatch("get_state", json!({})).unwrap();
+    let clouds = &state["project"]["world"]["clouds"];
+    assert_eq!(clouds["shape_volume"], "assets/clouds/shape.png");
+    assert_eq!(clouds["detail_volume"], "assets/clouds/detail.png");
+    let shape = blockloom_core::pipeline::load_volume(&dir, "assets/clouds/shape.png").unwrap();
+    assert_eq!(shape.info.size, [128, 128, 128]);
+    let detail = blockloom_core::pipeline::load_volume(&dir, "assets/clouds/detail.png").unwrap();
+    assert_eq!(detail.info.size, [32, 32, 32]);
+    backend.dispatch("undo", json!({})).unwrap();
+    let state = backend.dispatch("get_state", json!({})).unwrap();
+    assert_eq!(state["project"]["world"]["clouds"]["shape_volume"], "");
+    backend.dispatch("close_project", json!({})).unwrap();
+}
