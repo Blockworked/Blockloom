@@ -1059,15 +1059,7 @@ pub fn publish_sensors(
         let has_body = engine.has_component(&id.0, "Body");
         let shape = collider_shape(&engine, &id.0, dimension.0, transform);
         let (anim_clip, anim_frame, anim_playing) = match player {
-            Some(player) => {
-                let frame = engine
-                    .actor(&id.0)
-                    .and_then(|actor| actor.components.animation())
-                    .and_then(|spec| spec.find_clip(&player.clip))
-                    .map(|clip| clip.frame_index(player.elapsed).0 + 1)
-                    .unwrap_or(0);
-                (player.clip.clone(), frame, player.playing)
-            }
+            Some(player) => (player.clip.clone(), player.frame, player.playing),
             None => (String::new(), 0, false),
         };
         senses.insert(
@@ -1858,7 +1850,6 @@ pub fn apply_common(
     mut controllers_3d: Query<&mut bevy_rapier3d::prelude::KinematicCharacterController>,
     mut velocities_2d: Query<&mut bevy_rapier2d::prelude::Velocity>,
     mut velocities_3d: Query<&mut bevy_rapier3d::prelude::Velocity>,
-    mut animation_players: Query<&mut AnimationPlayer>,
 ) {
     if !engine.running || engine.paused {
         return;
@@ -2166,51 +2157,6 @@ pub fn apply_common(
                 commands.entity(entity).remove::<TweeningRotation>();
                 commands.entity(entity).remove::<TweeningColor>();
             }
-            Effect::PlayAnimation { clip, speed, .. } => {
-                let wanted = clip.trim();
-                let Some(spec) = engine.actor(actor).and_then(|a| a.components.animation()) else {
-                    bridge::send(&RuntimeMessage::Error {
-                        actor: actor.clone(),
-                        message: "this actor has no Animation component to play".to_string(),
-                    });
-                    continue;
-                };
-                let Some(found) = spec.find_clip(wanted) else {
-                    bridge::send(&RuntimeMessage::Error {
-                        actor: actor.clone(),
-                        message: format!("there's no animation clip called \"{wanted}\""),
-                    });
-                    continue;
-                };
-                if found.is_empty() {
-                    bridge::send(&RuntimeMessage::Error {
-                        actor: actor.clone(),
-                        message: format!("animation clip \"{wanted}\" has no frames"),
-                    });
-                    continue;
-                }
-                commands.entity(entity).insert(AnimationPlayer {
-                    clip: found.name.clone(),
-                    elapsed: 0.0,
-                    speed: (*speed).clamp(0.0, 8.0),
-                    playing: true,
-                    ended_fired: false,
-                });
-            }
-            Effect::StopAnimation { .. } => {
-                if let Ok(mut player) = animation_players.get_mut(entity) {
-                    player.playing = false;
-                }
-            }
-            Effect::SetAnimationSpeed { speed, .. } => {
-                if let Ok(mut player) = animation_players.get_mut(entity) {
-                    player.speed = (*speed).clamp(0.0, 8.0);
-                    if player.speed > 0.0 {
-                        player.playing = true;
-                        player.ended_fired = false;
-                    }
-                }
-            }
             // Physics, colors and speech are somebody else's job.
             _ => {}
         }
@@ -2333,89 +2279,6 @@ fn mix_color(from: Color, to: Color, t: f32) -> Color {
         from.blue + (to.blue - from.blue) * t,
         from.alpha + (to.alpha - from.alpha) * t,
     )
-}
-
-/// Advances every animation player, swaps the displayed flipbook frame, and
-/// fires `when animation ends` once when a `Once` clip runs out. Frozen
-/// while paused or stopped, like the VM. A `next` state on the authored
-/// state of the same name chains automatically; anything else is blocks.
-pub fn step_animations(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut engine: NonSendMut<Engine>,
-    assets: Res<AssetServer>,
-    mut players: Query<(Entity, &mut AnimationPlayer, Option<&mut Sprite>)>,
-) {
-    if !engine.running || engine.paused {
-        return;
-    }
-    let dt = time.delta_secs();
-    let dir = engine.project_dir.clone();
-    let mut ended: Vec<(String, String)> = Vec::new();
-    for (entity, mut player, sprite) in &mut players {
-        let Some(id) = engine.actor_id_of(entity).map(str::to_string) else {
-            continue;
-        };
-        let Some(spec) = engine
-            .actor(&id)
-            .and_then(|a| a.components.animation())
-            .cloned()
-        else {
-            commands.entity(entity).remove::<AnimationPlayer>();
-            continue;
-        };
-        let Some(clip) = spec.find_clip(&player.clip).cloned() else {
-            commands.entity(entity).remove::<AnimationPlayer>();
-            continue;
-        };
-        if player.playing && player.speed > 0.0 {
-            player.elapsed += dt * player.speed;
-        }
-        let (index, done) = clip.frame_index(player.elapsed);
-        if let Some(path) = clip.frames.get(index)
-            && let Some(mut sprite) = sprite
-        {
-            let handle: Handle<Image> = assets.load(asset_path(dir.as_deref(), path));
-            if sprite.image != handle {
-                sprite.image = handle;
-            }
-        }
-        if done && !player.ended_fired {
-            player.ended_fired = true;
-            player.playing = false;
-            ended.push((id.clone(), clip.name.clone()));
-            // A named state chains to its `next` without blocks.
-            if let Some(state) = spec
-                .states
-                .iter()
-                .find(|state| state.clip.eq_ignore_ascii_case(&clip.name))
-                .cloned()
-            {
-                let next = state.next.trim();
-                if !next.is_empty()
-                    && let Some(follow) = spec
-                        .find_state(next)
-                        .and_then(|state| spec.find_clip(&state.clip))
-                        .or_else(|| spec.find_clip(next))
-                        .cloned()
-                    && !follow.is_empty()
-                {
-                    player.clip = follow.name.clone();
-                    player.elapsed = 0.0;
-                    player.speed = spec
-                        .find_state(next)
-                        .map(|state| state.speed)
-                        .unwrap_or(1.0)
-                        .clamp(0.0, 8.0);
-                    player.playing = player.speed > 0.0;
-                    player.ended_fired = false;
-                }
-            }
-        }
-    }
-    for (actor, clip) in ended {
-        engine.fire(Event::AnimationEnded { actor, clip });
-    }
 }
 
 /// Drives the world camera from the actor carrying a camera component.
@@ -2760,6 +2623,17 @@ fn attach(
         "Animation" => {
             commands.entity(entity).remove::<AnimationPlayer>();
         }
+        // The dials come back as authored, or at their defaults.
+        "Sprite" => {
+            let spec = engine
+                .actor(actor)
+                .and_then(|actor| actor.components.sprite())
+                .cloned()
+                .unwrap_or_default();
+            commands
+                .entity(entity)
+                .insert(crate::sprites::SpriteDials(spec));
+        }
         // Anything else is a custom component: it comes back with the fields
         // the editor gave it, or empty if the project never had one.
         name => {
@@ -2834,6 +2708,11 @@ fn detach(
         // Taking the clips away stops the player with them.
         "Animation" => {
             commands.entity(entity).remove::<AnimationPlayer>();
+        }
+        "Sprite" => {
+            commands
+                .entity(entity)
+                .remove::<crate::sprites::SpriteDials>();
         }
         name => {
             if let Ok(mut custom) = customs.get_mut(entity) {
@@ -3775,6 +3654,11 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::PlayAnimation { actor, .. }
         | Effect::StopAnimation { actor, .. }
         | Effect::SetAnimationSpeed { actor, .. }
+        | Effect::FireAnimationTrigger { actor, .. }
+        | Effect::SetRigSlot { actor, .. }
+        | Effect::SetSlotTint { actor, .. }
+        | Effect::SetIkTarget { actor, .. }
+        | Effect::SetSpriteDial { actor, .. }
         | Effect::Turn { actor, .. }
         | Effect::SetRotation { actor, .. }
         | Effect::PointTowards { actor, .. }

@@ -77,16 +77,39 @@ pub struct TweeningColor {
     pub easing: blockloom_core::animation::TweenEasing,
 }
 
-/// The animation player: which flipbook clip is showing, and how far in.
-/// Clips are authored on the `Animation` component; this is the live cursor
-/// over them. A `Once` clip at its end fires `when animation ends` once.
-#[derive(Component, Debug, Clone)]
+/// The animation player: which clip is showing, in which state, and how far
+/// in. Clips are authored on the `Animation` component; this is the live
+/// cursor over them, stepped on the fixed tick (`anim2d::step_animations`).
+/// A `Once` clip at its end fires `when animation ends` once.
+#[derive(Component, Debug, Clone, Default)]
 pub struct AnimationPlayer {
     pub clip: String,
+    /// The state playing the clip, or empty for a bare clip.
+    pub state: String,
     pub elapsed: f32,
     pub speed: f32,
     pub playing: bool,
     pub ended_fired: bool,
+    /// The last step markers were counted to; `None` right after a start.
+    pub last_step: Option<u64>,
+    /// The 1-based frame showing, which `current frame` reads.
+    pub frame: usize,
+    /// The state hands the clip's motion to the actor.
+    pub root_motion: bool,
+    /// The clip being crossfaded out of, if any.
+    pub fade: Option<AnimationFade>,
+    /// Triggers fired this tick, for the state machine.
+    pub triggers: Vec<String>,
+}
+
+/// The previous clip, still advancing while it fades out.
+#[derive(Debug, Clone)]
+pub struct AnimationFade {
+    pub clip: String,
+    pub elapsed: f32,
+    pub speed: f32,
+    pub left: f32,
+    pub total: f32,
 }
 
 /// The pose an actor settled at the end of a fixed step - physically, or from

@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 27;
+pub const ABI_VERSION: u32 = 28;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -353,6 +353,17 @@ pub const ACT_SET_CLOUD_LAYER: u32 = 76;
 /// `a` = water dial (`level`, `chop` or `foam`), `n0` = value. This actor's
 /// own water when it has some, every body's otherwise.
 pub const ACT_SET_WATER: u32 = 77;
+/// `a` = trigger name for the animation state machine, this tick only.
+pub const ACT_FIRE_ANIMATION_TRIGGER: u32 = 78;
+/// `a` = rig slot, `b` = attachment; empty hides the slot.
+pub const ACT_SET_RIG_SLOT: u32 = 79;
+/// `a` = rig slot, `b` = `#RRGGBB`.
+pub const ACT_SET_SLOT_TINT: u32 = 80;
+/// `a` = IK constraint; `n0`, `n1` = where, relative to the actor.
+pub const ACT_SET_IK_TARGET: u32 = 81;
+/// `a` = sprite dial (`FlipX`, `FlipY`, `Order`, `YSort`, `Palette`,
+/// `OutlineWidth`); `n0` = value.
+pub const ACT_SET_SPRITE_DIAL: u32 = 82;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

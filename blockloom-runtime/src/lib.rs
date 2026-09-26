@@ -20,6 +20,7 @@
 #![allow(clippy::type_complexity)]
 
 mod ai;
+mod anim2d;
 mod atmosphere;
 mod batching;
 mod beams;
@@ -65,6 +66,7 @@ mod sky;
 mod solari_patch;
 mod sound;
 mod space;
+mod sprites;
 mod streaming;
 mod terrain;
 #[cfg(feature = "ray_tracing")]
@@ -170,6 +172,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // registers all three, so systems can take their asset stores
     // unconditionally; an unused plugin costs nothing at runtime.
     materials::register(app);
+    sprites::register(app);
+    app.init_resource::<anim2d::RigCache>();
     passes::register(app);
     hdr::register(app);
     luminance::register(app);
@@ -256,7 +260,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     (
                         world::step_glides,
                         world::step_tweens,
-                        world::step_animations,
+                        anim2d::apply_animation_effects,
+                        anim2d::step_animations,
                     )
                         .chain(),
                     world::apply_input_effects,
@@ -325,6 +330,25 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             .configure_sets(
                 FixedUpdate,
                 world::SimulationSet.before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend),
+            )
+            // Rigs and sprite dials draw after the camera settles, so Y-sort
+            // measures from where it ended up.
+            .add_systems(
+                Update,
+                (
+                    anim2d::ensure_rigs,
+                    anim2d::draw_rigs,
+                    sprites::sync_sprites,
+                    sprites::sync_part_palettes,
+                )
+                    .chain()
+                    .after(world::drive_camera)
+                    .before(overlay::update_speech_bubbles),
+            )
+            .add_systems(First, sprites::clear_sort_depth)
+            .add_systems(
+                PostUpdate,
+                sprites::apply_sort_depth.before(bevy::transform::TransformSystems::Propagate),
             )
             .add_systems(
                 FixedUpdate,
@@ -455,7 +479,13 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         dim3::sync_joints,
                         fx::apply_fx_effects,
                         sound::apply_sound_effects,
-                        (world::step_glides, world::step_tweens, world::step_animations).chain(),
+                        (
+                            world::step_glides,
+                            world::step_tweens,
+                            anim2d::apply_animation_effects,
+                            anim2d::step_animations,
+                        )
+                            .chain(),
                         world::apply_input_effects,
                         world::apply_rumble,
                         world::apply_cursor_lock,

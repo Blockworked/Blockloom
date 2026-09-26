@@ -764,6 +764,14 @@ impl Project {
             if let Some(ActorComponent::Terrain { terrain }) = actor.components.get_mut("Terrain") {
                 terrain.normalize();
             }
+            if let Some(ActorComponent::Animation { animation }) =
+                actor.components.get_mut("Animation")
+            {
+                animation.normalize();
+            }
+            if let Some(ActorComponent::Sprite { sprite }) = actor.components.get_mut("Sprite") {
+                sprite.normalize();
+            }
             if let Some(ActorComponent::Water { water }) = actor.components.get_mut("Water") {
                 water.normalize();
             }

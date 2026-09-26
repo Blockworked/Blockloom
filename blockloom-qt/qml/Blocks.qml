@@ -131,8 +131,8 @@ QtObject {
 
     readonly property var icons: ({
         WhenStarted:"flag", WhenKeyPressed:"keyboard", WhenActionPressed:"gamepad-2", WhenTouched:"pointer", WhenClicked:"mouse-pointer-click",
-        WhenCollision:"crosshair", WhenMessage:"radio", WhenCloned:"copy", WhenUiEvent:"square-mouse-pointer", WhenUiClicked:"square-mouse-pointer", WhenUiChanged:"sliders-horizontal",
-        BlockHeader:"blocks", Move:"arrow-right", GoTo:"move", NavigateTo:"navigation", ChangePosition:"move-3d", Glide:"wind", TweenScale:"maximize", TweenRotation:"rotate-cw", TweenColor:"palette", StopTweens:"square", PlayAnimation:"play", StopAnimation:"square", SetAnimationSpeed:"gauge", Turn:"rotate-cw",
+        WhenCollision:"crosshair", WhenMessage:"radio", WhenCloned:"copy", WhenAnimationMarker:"flag", WhenUiEvent:"square-mouse-pointer", WhenUiClicked:"square-mouse-pointer", WhenUiChanged:"sliders-horizontal",
+        BlockHeader:"blocks", Move:"arrow-right", GoTo:"move", NavigateTo:"navigation", ChangePosition:"move-3d", Glide:"wind", TweenScale:"maximize", TweenRotation:"rotate-cw", TweenColor:"palette", StopTweens:"square", PlayAnimation:"play", StopAnimation:"square", SetAnimationSpeed:"gauge", FireAnimationTrigger:"zap", SetRigSlot:"git-branch", SetSlotTint:"palette", SetIkTarget:"crosshair", SetSpriteDial:"sliders-horizontal", Turn:"rotate-cw",
         SetRotation:"rotate-cw", PointTowards:"target", SetScale:"maximize", SetBody:"boxes", SetTrigger:"ghost", SetCollisionLayer:"layers",
         SetCollisionMask:"filter", ApplyImpulse:"zap", SetVelocity:"trending-up", SetGravity:"cloud", SetDensity:"weight", SetMass:"weight",
         Say:"message-square", SetVisible:"eye", SetColor:"palette", SetExposure:"sun", SetLightIntensity:"zap", SetEmissiveStrength:"sparkles", SetHdrOutput:"monitor", SetPeakBrightness:"sun", EnableVolume:"box", SetVolumeWeight:"weight", CaptureProbes:"aperture", SetShadowDistance:"sun-dim", SetLightShadows:"lamp", SetRayTracing:"sparkles", SetGiBounces:"repeat", SetGiSamples:"layers", SetFogDensity:"cloud", SetAurora:"moon", StrikeLightning:"zap", SetLightningRate:"wind", SetWind:"wind", SetCloudDrift:"cloud", SetClouds:"cloud", SetCloudLayer:"layers", SetWater:"wind", BurstParticles:"sparkles", SetEmitterDial:"sliders-horizontal", SetTrailEnabled:"wind", PlaySound:"volume-2", PlaySoundAt:"map-pin", StopSound:"square",
@@ -168,6 +168,7 @@ QtObject {
             WhenUiClicked: header([lb("when"), field("element", "element id"), lb("clicked")]),
             WhenUiChanged: header([lb("when"), field("element", "element id"), lb("changed")]),
             WhenAnimationEnds: header([lb("when animation"), field("clip", "clip name (empty for any)"), lb("ends")]),
+            WhenAnimationMarker: header([lb("when animation reaches marker"), field("marker", "marker (empty for any)")]),
             Broadcast: row([lb("broadcast"), field("name", "message")]),
             // Motion
             Move: row([lb("move"), slot("MoveSteps", "steps"), lb("steps")]),
@@ -225,6 +226,11 @@ QtObject {
             PlayAnimation: row([lb("play animation"), slot("AnimClip", "clip"), lb("at speed"), slot("AnimSpeed", "speed")]),
             StopAnimation: row([lb("stop my animation")]),
             SetAnimationSpeed: row([lb("set animation speed to"), slot("AnimSpeed", "speed")]),
+            FireAnimationTrigger: row([lb("fire animation trigger"), slot("AnimTrigger", "name")]),
+            SetRigSlot: row([lb("set rig slot"), slot("RigSlot", "slot"), lb("to attachment"), slot("RigAttachment", "attachment")]),
+            SetSlotTint: row([lb("tint rig slot"), slot("RigSlot", "slot"), lb("with"), slot("SlotColor", "color")]),
+            SetIkTarget: row([lb("point IK"), slot("IkConstraint", "constraint"), lb("at x"), slot("IkX", "x"), lb("y"), slot("IkY", "y")]),
+            SetSpriteDial: row([lb("set sprite"), dd("dial", () => opts(["FlipX","FlipY","Order","YSort","Palette","OutlineWidth"])), lb("to"), slot("SpriteValue", "value")]),
             // Sound
             PlaySound: row([lb("play sound"), slot("SoundAsset", "sound"), lb("volume"), slot("SoundVolume", "volume"), lb("pitch"), slot("SoundPitch", "pitch"), flag("loop", soundLoopOptions), lb("on"), dd("bus", soundBusOptions)]),
             PlaySoundAt: row([lb("play sound"), slot("SoundAsset", "sound"), lb("volume"), slot("SoundVolume", "volume"), lb("pitch"), slot("SoundPitch", "pitch"), flag("loop", soundLoopOptions), lb("on"), dd("bus", soundBusOptions), lb("at"), slot("SoundTarget", "target")]),
@@ -330,6 +336,12 @@ QtObject {
         case "PlayAnimation": return { clip: txt("walk"), speed: num(1) };
         case "SetAnimationSpeed": return { speed: num(1) };
         case "WhenAnimationEnds": return { clip: "" };
+        case "WhenAnimationMarker": return { marker: "" };
+        case "FireAnimationTrigger": return { name: txt("jump") };
+        case "SetRigSlot": return { slot: txt("hand"), attachment: txt("fist") };
+        case "SetSlotTint": return { slot: txt("cape"), color: txt("#FF4C4C") };
+        case "SetIkTarget": return { constraint: txt("reach"), x: num(40), y: num(0) };
+        case "SetSpriteDial": return { dial: "FlipX", value: num(1) };
         case "Turn": return { axis: "Z", degrees: num(15) };
         case "SetRotation": return { axis: "Z", degrees: num(0) };
         case "PointTowards": return { target: "mouse" };
@@ -532,10 +544,10 @@ QtObject {
     readonly property var listOperatorKinds: ["ListItem","ListItemNumber","ListAmount","ListLength","ListContains","ListItemExists","ListIsEmpty","ListAsJson"]
     readonly property var dictOperatorKinds: ["DictValue","DictHasKey","DictSize","DictKeys","DictAsJson","DictIsEmpty"]
     readonly property var blockGroups: [
-        { label: "Events", types: ["WhenStarted","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenAnimationEnds","WhenUiEvent","WhenUiClicked","WhenUiChanged","Broadcast"] },
+        { label: "Events", types: ["WhenStarted","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenAnimationEnds","WhenAnimationMarker","WhenUiEvent","WhenUiClicked","WhenUiChanged","Broadcast"] },
         { label: "Motion", types: ["Move","GoTo","NavigateTo","ChangePosition","Glide","TweenScale","TweenRotation","TweenColor","StopTweens","Turn","SetRotation","PointTowards","SetScale"] },
         { label: "Physics", types: ["SetBody","ApplyImpulse","SetVelocity","SetGravity","SetDensity","SetMass","SetTrigger","SetCollisionLayer","SetCollisionMask"] },
-        { label: "Looks", types: ["Say","SetVisible","SetColor","SetExposure","SetLightIntensity","SetEmissiveStrength","SetHdrOutput","SetPeakBrightness","EnableVolume","SetVolumeWeight","CaptureProbes","SetShadowDistance","SetLightShadows","SetRayTracing","SetGiBounces","SetGiSamples","SetFogDensity","SetAurora","StrikeLightning","SetLightningRate","SetWind","SetCloudDrift","SetClouds","SetCloudLayer","SetWater","BurstParticles","SetEmitterDial","SetTrailEnabled","PlayAnimation","StopAnimation","SetAnimationSpeed"] },
+        { label: "Looks", types: ["Say","SetVisible","SetColor","SetExposure","SetLightIntensity","SetEmissiveStrength","SetHdrOutput","SetPeakBrightness","EnableVolume","SetVolumeWeight","CaptureProbes","SetShadowDistance","SetLightShadows","SetRayTracing","SetGiBounces","SetGiSamples","SetFogDensity","SetAurora","StrikeLightning","SetLightningRate","SetWind","SetCloudDrift","SetClouds","SetCloudLayer","SetWater","BurstParticles","SetEmitterDial","SetTrailEnabled","PlayAnimation","StopAnimation","SetAnimationSpeed","FireAnimationTrigger","SetRigSlot","SetSlotTint","SetIkTarget","SetSpriteDial"] },
         { label: "Sound", types: ["PlaySound","PlaySoundAt","StopSound","SetSoundVolume","SetSoundPitch","SetBusVolume"] },
         { label: "Components", types: ["SetComponentField","SetCameraView","SetCameraPitch","SetCameraFov","AttachComponent","DetachComponent","SetParent"] },
         { label: "Actors", types: ["CreateClone","CreateActor","DeleteActor"] },
@@ -580,10 +592,10 @@ QtObject {
     // What the Details dialog says about a block.
     readonly property var labels: ({
         WhenStarted:"when the project starts", WhenKeyPressed:"when a key is pressed", WhenActionPressed:"when an input action is pressed",
-        WhenTouched:"when the screen is touched", WhenClicked:"when I am clicked", WhenCollision:"when I touch", WhenMessage:"when I get a message", WhenAnimationEnds:"when an animation ends",
+        WhenTouched:"when the screen is touched", WhenClicked:"when I am clicked", WhenCollision:"when I touch", WhenMessage:"when I get a message", WhenAnimationEnds:"when an animation ends", WhenAnimationMarker:"when an animation reaches a marker",
         WhenUiEvent:"when an interface event occurs", WhenCloned:"when I start as a clone", WhenUiClicked:"when an element is clicked", WhenUiChanged:"when an input is changed",
         BlockHeader:"block definition", Move:"move forward", GoTo:"go to", NavigateTo:"navigate to", ChangePosition:"change position",
-        Glide:"glide to", TweenScale:"tween size", TweenRotation:"tween rotation", TweenColor:"tween color", StopTweens:"stop my tweens", PlayAnimation:"play animation", StopAnimation:"stop my animation", SetAnimationSpeed:"set animation speed", Turn:"turn", SetRotation:"point in direction", PointTowards:"point towards", SetScale:"set size", SetBody:"set body",
+        Glide:"glide to", TweenScale:"tween size", TweenRotation:"tween rotation", TweenColor:"tween color", StopTweens:"stop my tweens", PlayAnimation:"play animation", StopAnimation:"stop my animation", SetAnimationSpeed:"set animation speed", FireAnimationTrigger:"fire an animation trigger", SetRigSlot:"swap a rig slot", SetSlotTint:"tint a rig slot", SetIkTarget:"point a rig IK chain", SetSpriteDial:"set a sprite dial", Turn:"turn", SetRotation:"point in direction", PointTowards:"point towards", SetScale:"set size", SetBody:"set body",
         SetTrigger:"make me solid or a trigger", SetCollisionLayer:"set my collision layer", SetCollisionMask:"set my collision mask",
         ApplyImpulse:"push", SetVelocity:"set velocity", SetGravity:"set gravity", SetDensity:"set density", SetMass:"set mass", Say:"say",
         SetVisible:"show or hide", SetColor:"set color", SetExposure:"set exposure", SetLightIntensity:"set my light brightness", SetEmissiveStrength:"set my glow", SetHdrOutput:"turn HDR output on or off", SetPeakBrightness:"set peak brightness", EnableVolume:"enable or disable a volume", SetVolumeWeight:"set a volume's weight", CaptureProbes:"capture light probes", SetShadowDistance:"set shadow distance", SetLightShadows:"turn my light's shadows on or off", SetRayTracing:"turn ray tracing on or off", SetGiBounces:"set GI bounces", SetGiSamples:"set GI samples", SetFogDensity:"set fog density", SetAurora:"set aurora", StrikeLightning:"strike lightning", SetLightningRate:"set lightning storm", SetWind:"set the wind", SetCloudDrift:"set cloud drift", SetClouds:"set clouds", SetCloudLayer:"set a cloud layer", SetWater:"set water level, chop or foam", BurstParticles:"burst particles", SetEmitterDial:"set an emitter dial", SetTrailEnabled:"start or stop my trail", PlaySound:"play sound", PlaySoundAt:"play sound at an actor", StopSound:"stop sound",
