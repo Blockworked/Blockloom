@@ -369,7 +369,15 @@ BwDialog {
                 InspectorRow { label: "Sun / moon shadows"; labelWidth: 110; Layout.fillWidth: true
                     SwitchField { value: !!cloudSection.c.sun_shadows; onToggled: on => root.writeVolumetricClouds({ sun_shadows: on }) }
                     SwitchField { value: !!cloudSection.c.moon_shadows; onToggled: on => root.writeVolumetricClouds({ moon_shadows: on }) } }
-                Note { text: "Thickness is top minus bottom, in metres. Clouds ride the Wind section's cloud drift and seed. Quality controls view and light march steps: Low 16/3, Medium 32/5, High 48/6, Ultra 64/8." }
+                InspectorRow { label: "Shape noise"; labelWidth: 110; Layout.fillWidth: true
+                    AssetField { app: root.app; accept: ["image", "volume"]; value: cloudSection.c.shape_volume || ""; placeholderText: "Baked from the seed"; onCommitted: p => root.writeVolumetricClouds({ shape_volume: p }) }
+                    IconButton { iconName: "x"; tip: "Bake from the seed"; enabled: !!cloudSection.c.shape_volume; onClicked: root.writeVolumetricClouds({ shape_volume: "" }) } }
+                InspectorRow { label: "Erosion noise"; labelWidth: 110; Layout.fillWidth: true
+                    AssetField { app: root.app; accept: ["image", "volume"]; value: cloudSection.c.detail_volume || ""; placeholderText: "Baked from the seed"; onCommitted: p => root.writeVolumetricClouds({ detail_volume: p }) }
+                    IconButton { iconName: "x"; tip: "Bake from the seed"; enabled: !!cloudSection.c.detail_volume; onClicked: root.writeVolumetricClouds({ detail_volume: "" }) } }
+                InspectorRow { label: ""; labelWidth: 110; Layout.fillWidth: true
+                    BwButton { text: "Bake noise to assets"; iconName: "download"; implicitHeight: 30; onClicked: root.invoke("bake_cloud_noise", {}) } Item { Layout.fillWidth: true } }
+                Note { text: "Thickness is top minus bottom, in metres. Clouds ride the Wind section's cloud drift and seed. Quality controls view and light march steps: Low 16/3, Medium 32/5, High 48/6, Ultra 64/8. Noise volumes are image strips of square slices (e.g. 16384x128) or .cube files: shape reads red as its Perlin-Worley base, erosion reads red, green and blue as Worley octaves. Bake noise to assets writes the seed's own noise into assets/clouds to edit or swap." }
             }
             Section {
                 id: fogSection

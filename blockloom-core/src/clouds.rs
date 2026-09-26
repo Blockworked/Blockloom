@@ -52,6 +52,11 @@ pub struct Clouds {
     pub shadow_strength: f32,
     pub shadow_range: f32,
     pub threshold: f32,
+    /// Authored shape noise (a volume asset, red = Perlin-Worley), or empty
+    /// to bake it from the cloud seed.
+    pub shape_volume: String,
+    /// Authored erosion noise (RGB = Worley octaves), or empty to bake it.
+    pub detail_volume: String,
 }
 impl Default for Clouds {
     fn default() -> Self {
@@ -86,6 +91,8 @@ impl Default for Clouds {
             shadow_strength: 0.7,
             shadow_range: 20000.0,
             threshold: 0.01,
+            shape_volume: String::new(),
+            detail_volume: String::new(),
         }
     }
 }
@@ -133,6 +140,144 @@ impl Clouds {
         }
     }
 }
+/// The two noise volumes the clouds sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudNoise {
+    /// Perlin-Worley in red, three Worley octaves in green, blue and alpha.
+    Shape,
+    /// Three Worley octaves in red, green and blue, for erosion.
+    Detail,
+}
+impl CloudNoise {
+    /// The side the runtime bakes this volume at.
+    pub fn size(self) -> u32 {
+        match self {
+            Self::Shape => 128,
+            Self::Detail => 32,
+        }
+    }
+    /// Where `bake-cloud-noise` writes this volume.
+    pub fn asset_path(self) -> &'static str {
+        match self {
+            Self::Shape => "assets/clouds/shape.png",
+            Self::Detail => "assets/clouds/detail.png",
+        }
+    }
+}
+
+// CPU twin of `cloud_bake.wesl` and `blockloom::hash`, so a baked asset
+// matches what the GPU would have made from the same seed.
+fn pcg3(v: [u32; 3]) -> [u32; 3] {
+    let mut h = v.map(|x| x.wrapping_mul(1664525).wrapping_add(1013904223));
+    let mix = |h: &mut [u32; 3]| {
+        h[0] = h[0].wrapping_add(h[1].wrapping_mul(h[2]));
+        h[1] = h[1].wrapping_add(h[2].wrapping_mul(h[0]));
+        h[2] = h[2].wrapping_add(h[0].wrapping_mul(h[1]));
+    };
+    mix(&mut h);
+    h = h.map(|x| x ^ (x >> 16));
+    mix(&mut h);
+    h
+}
+fn unit(x: u32) -> f32 {
+    (x >> 8) as f32 * (1.0 / 16777216.0)
+}
+fn cell_hash(cell: [i32; 3], period: i32, seed: u32) -> [f32; 3] {
+    let offset = (seed & 65535) as i32;
+    let wrapped = cell.map(|c| ((c % period) + period) % period + offset);
+    pcg3(wrapped.map(|c| c as u32)).map(unit)
+}
+fn worley(p: [f32; 3], period: i32, seed: u32) -> f32 {
+    let cell = p.map(|v| v.floor() as i32);
+    let f = [0, 1, 2].map(|i| p[i] - p[i].floor());
+    let mut d = 3.0f32;
+    for z in -1..=1 {
+        for y in -1..=1 {
+            for x in -1..=1 {
+                let o = [x, y, z];
+                let h = cell_hash([0, 1, 2].map(|i| cell[i] + o[i]), period, seed);
+                let delta = [0, 1, 2].map(|i| o[i] as f32 + h[i] - f[i]);
+                d = d.min(delta.iter().map(|v| v * v).sum());
+            }
+        }
+    }
+    1.0 - d.sqrt().clamp(0.0, 1.0)
+}
+fn perlin(p: [f32; 3], period: i32, seed: u32) -> f32 {
+    let cell = p.map(|v| v.floor() as i32);
+    let f = [0, 1, 2].map(|i| p[i] - p[i].floor());
+    let s = f.map(|f| f * f * f * (f * (f * 6.0 - 15.0) + 10.0));
+    let mut n = 0.0;
+    for z in 0..2 {
+        for y in 0..2 {
+            for x in 0..2 {
+                let o = [x, y, z];
+                let h = cell_hash([0, 1, 2].map(|i| cell[i] + o[i]), period, seed);
+                let g = h.map(|v| v * 2.0 - 1.0 + 0.0001);
+                let len = g.iter().map(|v| v * v).sum::<f32>().sqrt();
+                let mut w = 1.0;
+                let mut dot = 0.0;
+                for i in 0..3 {
+                    let v = o[i] as f32;
+                    w *= if o[i] == 0 { 1.0 - s[i] } else { s[i] };
+                    dot += g[i] / len * (f[i] - v);
+                }
+                n += dot * w;
+            }
+        }
+    }
+    n * 0.5 + 0.5
+}
+fn noise_texel(kind: CloudNoise, uv: [f32; 3], seed: u32) -> [f32; 4] {
+    let at = |scale: f32| uv.map(|v| v * scale);
+    let w = [
+        worley(at(4.0), 4, seed),
+        worley(at(8.0), 8, seed),
+        worley(at(16.0), 16, seed),
+    ];
+    match kind {
+        CloudNoise::Detail => [w[0], w[1], w[2], 1.0],
+        CloudNoise::Shape => {
+            let p = perlin(at(4.0), 4, seed) * 0.625
+                + perlin(at(8.0), 8, seed) * 0.25
+                + perlin(at(16.0), 16, seed) * 0.125;
+            let fbm = w[0] * 0.625 + w[1] * 0.25 + w[2] * 0.125;
+            [(p + (1.0 - p) * fbm).clamp(0.0, 1.0), w[0], w[1], w[2]]
+        }
+    }
+}
+/// Bakes a tileable noise volume, x fastest, then y, then z.
+pub fn bake_noise(kind: CloudNoise, size: u32, seed: u32) -> Vec<[u8; 4]> {
+    let side = size.max(1) as usize;
+    let mut texels = vec![[0u8; 4]; side * side * side];
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let per = side.div_ceil(threads).max(1) * side * side;
+    std::thread::scope(|scope| {
+        for (chunk, out) in texels.chunks_mut(per).enumerate() {
+            scope.spawn(move || {
+                for (i, texel) in out.iter_mut().enumerate() {
+                    let index = chunk * per + i;
+                    let id = [index % side, index / side % side, index / (side * side)];
+                    let uv = id.map(|v| (v as f32 + 0.5) / side as f32);
+                    *texel = noise_texel(kind, uv, seed)
+                        .map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+                }
+            });
+        }
+    });
+    texels
+}
+/// A baked volume as an image strip (`size` slices side by side), the layout
+/// the volume import role reads back.
+pub fn noise_strip(kind: CloudNoise, size: u32, seed: u32) -> image::RgbaImage {
+    let side = size.max(2);
+    let texels = bake_noise(kind, side, seed);
+    image::RgbaImage::from_fn(side * side, side, |px, y| {
+        let (z, x) = (px / side, px % side);
+        image::Rgba(texels[(x + y * side + z * side * side) as usize])
+    })
+}
+
 /// Which dial `set clouds _ to` writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CloudProperty {
@@ -243,5 +388,26 @@ mod tests {
         assert_eq!(c.density, Clouds::default().density);
         assert_eq!(c.cloud_type, 0.25);
         assert_eq!(CloudProperty::parse("rain"), None);
+    }
+    #[test]
+    fn baked_noise_tiles_and_round_trips_through_a_strip() {
+        let seed = 7;
+        // Worley and Perlin wrap at their period, so the faces meet.
+        let a = noise_texel(CloudNoise::Shape, [0.0, 0.3, 0.6], seed);
+        let b = noise_texel(CloudNoise::Shape, [1.0, 0.3, 0.6], seed);
+        for i in 0..4 {
+            assert!((a[i] - b[i]).abs() < 1e-4, "{a:?} vs {b:?}");
+        }
+        let texels = bake_noise(CloudNoise::Detail, 8, seed);
+        assert!(texels.iter().any(|t| t[0] != texels[0][0]));
+        assert!(texels.iter().all(|t| t[3] == 255));
+        assert_ne!(bake_noise(CloudNoise::Detail, 8, seed + 1), texels);
+        let strip = noise_strip(CloudNoise::Detail, 8, seed);
+        let volume = crate::pipeline::volume::volume_from_strip("detail.png", &strip).unwrap();
+        assert_eq!(volume.info.size, [8, 8, 8]);
+        assert_eq!(
+            volume.at(3, 5, 6),
+            texels[3 + 5 * 8 + 6 * 64].map(|c| c as f32 / 255.0)
+        );
     }
 }

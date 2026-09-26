@@ -585,7 +585,10 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         emissives, rather than only the direct-light term inside PBR.
         Profiler: average primary steps and contributing samples per pixel
         (`clouds/steps`, `clouds/overdraw`) plus GPU `cloud_march` timing.
-        Noise is generated on demand, not imported from authored volume assets.
+        Shape and erosion noise are baked from the cloud seed on the GPU, or
+        read from authored volume assets (image strips or `.cube`); Project
+        Settings' Bake noise to assets (`bake-cloud-noise`) writes the seed's
+        own noise to `assets/clouds/*.png` through a CPU twin of the bake.
         Blocks, compiled logic and scripts share `set clouds [coverage/density/
         type] to`, laid over the project's clouds and any volume for the run.
   - [ ] Cloud layers (planar 2D cover above and below volumetrics, also the full

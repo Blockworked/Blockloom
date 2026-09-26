@@ -1915,6 +1915,49 @@ mod tests {
 
     #[test]
     #[ignore = "needs a GPU"]
+    fn volumetric_clouds_read_an_authored_shape_volume() {
+        // An empty shape volume leaves a full-coverage sky clear.
+        let dir =
+            std::env::temp_dir().join(format!("blockloom-cloud-noise-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        image::RgbaImage::from_pixel(4, 2, image::Rgba([0, 0, 0, 255]))
+            .save(dir.join("assets/empty.png"))
+            .unwrap();
+        let render = |enabled, authored: bool| {
+            let mut room = dark_room(false);
+            room.world.camera.position = [0.0, 1.0, 0.0];
+            room.world.camera.look_at = [0.0, 6.0, 10.0];
+            room.world.background = "#002080".into();
+            room.world.lighting.illuminance = 10000.0;
+            room.world.clouds.enabled = enabled;
+            room.world.clouds.coverage = 1.0;
+            room.world.clouds.erosion = 0.0;
+            room.world.clouds.density = 2.0;
+            room.world.clouds.quality = blockloom_core::clouds::CloudQuality::Low;
+            if authored {
+                room.world.clouds.shape_volume = "assets/empty.png".into();
+            }
+            let reload = vec![EditorMessage::Load {
+                project: Box::new(room.clone()),
+                dir: Some(dir.to_string_lossy().into_owned()),
+            }];
+            let (set, index, errors) =
+                run_world_sending(room, |_| {}, game_camera(), 70, |_| false, reload);
+            assert!(errors.is_empty(), "{errors:?}");
+            let set = set.expect("cloud frame");
+            middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize)
+        };
+        let clear = render(false, false);
+        let empty = render(true, true);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            clear[2].abs_diff(empty[2]) < 12,
+            "the empty volume still drew clouds: clear {clear:?}, authored {empty:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
     fn a_physical_sky_paints_a_blue_day_behind_the_world() {
         use blockloom_core::sky::{SkyKind, SunMode};
         let mut room = dark_room(false);

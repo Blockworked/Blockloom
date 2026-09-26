@@ -3421,18 +3421,18 @@ pub fn report_status(
             })
         })
         .collect();
-    if engine.project.world.clouds.enabled {
-        if let Some(clouds) = clouds {
-            for (name, value) in [
-                ("clouds/steps", clouds.steps),
-                ("clouds/overdraw", clouds.overdraw),
-            ] {
-                render_metrics.push(RenderMetric {
-                    name: name.into(),
-                    value: value as f64,
-                    unit: "samples/pixel".into(),
-                });
-            }
+    if engine.project.world.clouds.enabled
+        && let Some(clouds) = clouds
+    {
+        for (name, value) in [
+            ("clouds/steps", clouds.steps),
+            ("clouds/overdraw", clouds.overdraw),
+        ] {
+            render_metrics.push(RenderMetric {
+                name: name.into(),
+                value: value as f64,
+                unit: "samples/pixel".into(),
+            });
         }
     }
     if let Some(ms) = crate::hdr::tonemap_ms(&render_metrics) {

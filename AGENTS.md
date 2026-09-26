@@ -758,6 +758,10 @@ lighting and quality, edited by `set_clouds` and Project Settings. The blended
 `blockloom-runtime/src/clouds.rs` bakes seeded, repeating 128³ shape and 32³
 erosion volumes on the GPU, raymarches at half resolution before fog, and
 uses the shared bilateral upsampler over the scene. WindField supplies drift.
+`shape_volume`/`detail_volume` swap either bake for an authored volume asset,
+read through `pipeline::load_volume`; `clouds::bake_noise` is the CPU twin of
+`cloud_bake.wesl` (hash included), which `bake_cloud_noise` writes out as
+strips. Change the two together.
 Each view keeps two color/depth histories, invalidated on edits, resize,
 skipped frames and fast motion. Sun and moon have separate shadow switches.
 The 2048² ground transmittance map is a screen-space approximation over the

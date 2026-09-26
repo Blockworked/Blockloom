@@ -48,9 +48,68 @@ struct CloudUniforms {
     shadow: Vec4,
     previous_drift: Vec4,
 }
+/// An authored noise volume, as RGBA8 texels ready to upload.
+struct NoiseVolume {
+    size: UVec3,
+    bytes: Vec<u8>,
+}
 #[derive(Resource, Clone, Default)]
 struct CloudRender {
     uniforms: Option<CloudUniforms>,
+    /// Authored shape and detail volumes; `None` bakes from the seed.
+    volumes: [Option<std::sync::Arc<NoiseVolume>>; 2],
+    /// Bumped whenever `volumes` changes, so views re-upload.
+    generation: u32,
+}
+/// Which volume files are loaded, so they are read once per change.
+#[derive(Resource, Default)]
+struct LoadedVolumes {
+    key: Option<(Option<std::path::PathBuf>, String, String)>,
+}
+fn load_noise(dir: &std::path::Path, relative: &str) -> Result<NoiseVolume, String> {
+    let volume = blockloom_core::pipeline::load_volume(dir, relative)?;
+    let [x, y, z] = volume.info.size;
+    let bytes = volume
+        .texels
+        .iter()
+        .flat_map(|t| t.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8))
+        .collect();
+    Ok(NoiseVolume {
+        size: UVec3::new(x, y, z),
+        bytes,
+    })
+}
+/// Reads the clouds' authored volumes when their paths change.
+fn load_volumes(
+    engine: NonSend<Engine>,
+    mut loaded: ResMut<LoadedVolumes>,
+    mut render: ResMut<CloudRender>,
+) {
+    let clouds = &engine.project.world.clouds;
+    let key = (
+        engine.project_dir.clone(),
+        clouds.shape_volume.clone(),
+        clouds.detail_volume.clone(),
+    );
+    if loaded.key.as_ref() == Some(&key) {
+        return;
+    }
+    let load = |path: &str| {
+        // A world with no folder (a bare test world) has no assets to read.
+        let dir = key.0.as_ref().filter(|_| !path.trim().is_empty())?;
+        load_noise(dir, path)
+            .map_err(|error| {
+                crate::bridge::send(&blockloom_protocol::RuntimeMessage::Error {
+                    actor: "Blockloom".into(),
+                    message: format!("The cloud noise didn't load, baking it instead: {error}"),
+                })
+            })
+            .ok()
+            .map(std::sync::Arc::new)
+    };
+    render.volumes = [load(&key.1), load(&key.2)];
+    render.generation = render.generation.wrapping_add(1);
+    loaded.key = Some(key);
 }
 impl ExtractResource<RenderApp> for CloudRender {
     type Source = Self;
@@ -70,7 +129,13 @@ pub(crate) struct CloudPass;
 pub fn register(app: &mut App) {
     app.init_resource::<CloudStats>()
         .init_resource::<CloudRender>()
-        .add_systems(Update, resolve.after(crate::environment::apply_environment));
+        .init_resource::<LoadedVolumes>()
+        .add_systems(
+            Update,
+            (load_volumes, resolve)
+                .chain()
+                .after(crate::environment::apply_environment),
+        );
     if app.get_sub_app(RenderApp).is_none() {
         return;
     }
@@ -384,6 +449,34 @@ fn texture(
     let v = t.create_view(&default());
     (t, v)
 }
+/// A noise volume: the authored one uploaded, or an empty one to bake into.
+fn noise_texture(
+    device: &RenderDevice,
+    queue: &RenderQueue,
+    authored: &Option<std::sync::Arc<NoiseVolume>>,
+    baked: u32,
+    label: &'static str,
+) -> (Texture, TextureView) {
+    let Some(volume) = authored else {
+        return texture(device, UVec3::splat(baked), true, label);
+    };
+    let (t, v) = texture(device, volume.size, true, label);
+    queue.write_texture(
+        t.as_image_copy(),
+        &volume.bytes,
+        TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(volume.size.x * 4),
+            rows_per_image: Some(volume.size.y),
+        },
+        Extent3d {
+            width: volume.size.x,
+            height: volume.size.y,
+            depth_or_array_layers: volume.size.z,
+        },
+    );
+    (t, v)
+}
 fn compatible_history(mut old: CloudUniforms, next: CloudUniforms) -> bool {
     let limit = next.layer.z * 0.1;
     if old.drift.truncate().distance(next.drift.truncate()) > limit
@@ -408,6 +501,9 @@ struct History {
     depth: [(Texture, TextureView); 2],
     shape: (Texture, TextureView),
     detail: (Texture, TextureView),
+    /// Which of shape and detail still need the GPU bake.
+    bake: [bool; 2],
+    generation: u32,
     baked: AtomicBool,
     drawn: AtomicBool,
     current: usize,
@@ -461,7 +557,11 @@ fn prepare(
         u.camera = camera.extend((frame.0 % 65536) as f32);
         u.screen = Vec4::new(size.x as f32, size.y as f32, 0.0, 0.0);
         match history {
-            Some(mut h) if h.size == half && h.base.steps.w == base.steps.w => {
+            Some(mut h)
+                if h.size == half
+                    && h.base.steps.w == base.steps.w
+                    && h.generation == render.generation =>
+            {
                 u.previous_clip = h.clip;
                 u.previous_camera = h.camera.extend(0.0);
                 u.previous_drift = h.base.drift;
@@ -493,8 +593,22 @@ fn prepare(
                     depth: std::array::from_fn(|_| {
                         texture(&device, half.extend(1), false, "working_cloud_depth")
                     }),
-                    shape: texture(&device, UVec3::splat(128), true, "working_cloud_shape"),
-                    detail: texture(&device, UVec3::splat(32), true, "working_cloud_detail"),
+                    shape: noise_texture(
+                        &device,
+                        &queue,
+                        &render.volumes[0],
+                        128,
+                        "working_cloud_shape",
+                    ),
+                    detail: noise_texture(
+                        &device,
+                        &queue,
+                        &render.volumes[1],
+                        32,
+                        "working_cloud_detail",
+                    ),
+                    bake: render.volumes.each_ref().map(Option::is_none),
+                    generation: render.generation,
                     baked: AtomicBool::new(false),
                     drawn: AtomicBool::new(false),
                     current: 0,
@@ -560,7 +674,13 @@ fn draw(
     }
     let device = ctx.render_device().clone();
     if !h.baked.load(Ordering::Relaxed) {
-        for (tex, size) in [(&h.shape.1, 128u32), (&h.detail.1, 32u32)] {
+        for (tex, size, wanted) in [
+            (&h.shape.1, 128u32, h.bake[0]),
+            (&h.detail.1, 32u32, h.bake[1]),
+        ] {
+            if !wanted {
+                continue;
+            }
             let group = device.create_bind_group(
                 "cloud_bake",
                 &cache.get_bind_group_layout(&pipeline.bake_layout),
