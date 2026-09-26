@@ -97,20 +97,22 @@ web-check:
 # A runnable browser folder: the wasm player, its JS glue, and a host page
 # that feeds it a pack. Pass a game folder (one holding `game.pack`) to play
 # a real game; without one the page reports the missing pack through the
-# error overlay. Assets resolve against the server root, so serve the folder
-# `web-serve` makes - the single-file `.html` with everything inlined is the
-# next packaging step, not this one.
-web-build out="web-dist" pack="":
+# error overlay. `profile=release` for a small file that boots fast;
+# `dev` (the default) iterates faster but boots slowly. Assets resolve
+# against the server root, so serve the folder `web-serve` makes - the
+# single-file `.html` with everything inlined is the next packaging step,
+# not this one.
+web-build out="web-dist" pack="" profile="dev":
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown
+    cargo build -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown --profile {{profile}}
     if ! command -v wasm-bindgen >/dev/null; then
         echo "need wasm-bindgen-cli (once): cargo install wasm-bindgen-cli --version $(cargo metadata --format-version 1 --filter-platform wasm32-unknown-unknown 2>/dev/null | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "wasm-bindgen"))') --locked"
         exit 1
     fi
     rm -rf "{{out}}/pkg"
     mkdir -p "{{out}}/pkg"
-    wasm-bindgen --target web --out-dir "{{out}}/pkg" "${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/debug/blockloom_runtime.wasm"
+    wasm-bindgen --target web --out-dir "{{out}}/pkg" "${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/{{ if profile == "dev" { "debug" } else { profile } }}/blockloom_runtime.wasm"
     if [ -n "{{pack}}" ]; then cp -r "{{pack}}"/. "{{out}}"/; fi
     cat > "{{out}}/index.html" <<'PAGE'
     <!DOCTYPE html>

@@ -440,7 +440,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         when the sky changes rather than baked at import; the seam fix blends
         a panorama's wrap seam, not its horizon; no blocks drive the sun or
         time of day yet; 2D worlds have no sky.
-  - [ ] Atmosphere, fog and space:
+  - [x] Atmosphere, fog and space:
         - Height fog: base height, falloff, extinction distance, inscatter color
           keyed to sun elevation (warm at dusk, gray at noon), sun disk inscatter
           boost for god-ray-ish horizon.
@@ -460,6 +460,48 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         - Lightning: `strike lightning at x y` block spawns flash light (intensity,
           color, decay) plus sky ambient pulse plus thunder sound with delay by
           distance. Random-strike director with rate and region box for storms.
+        Done: `World::fog` (`blockloom-core/src/fog.rs`) and one pass after
+        the main passes (`blockloom-runtime/src/fog.rs`). Height fog is
+        integrated exactly along each ray from base, falloff, see-through
+        distance and start, colored day/dusk/night by the sun's elevation
+        with a sun glow lobe, and covers the sky so the horizon blends into
+        it with the sky's own horizon light. Volumetric fog is a froxel grid
+        (Low/Medium/High, 128x72x64 by default, squared depth slices over a
+        range): density with height falloff, anisotropy, albedo, emissive,
+        FBM noise drifting with the wind, lit by the sun and moon through
+        Bevy's own cascade shadow maps (light shafts), by point and spot
+        lights with a per-light `Lights fog` switch, and by the ambient;
+        blended with last frame's grid reprojected, then integrated per
+        column. A `Volume` adds local fog inside its shape, fading over its
+        blend distance. Aerial haze blue-shifts, desaturates and fades far
+        surfaces into the sky's horizon color, thinning with height. Fog
+        density, color, base, volumetric density and albedo and haze distance
+        are volume properties. Stars (hashed field with density, magnitude
+        slope, temperature spread, twinkle, horizon and sun fades, an
+        optional Milky Way panorama) and aurora (1-3 flowing curtain layers
+        with ray structure, bottom/top color ramp, KP coverage from the pole,
+        horizon glow) draw in the sky pass (`blockloom::space`), and the moon
+        is a real directional light by phase. Lightning (`World::lightning`,
+        both dimensions): a decaying flash light, an ambient and sky pulse,
+        and thunder late by distance (a built-in rumble made in code, or a
+        sound asset); a seeded storm director strikes at a rate inside a
+        region on the fixed tick. Blocks, compiled logic and scripts share
+        `set fog density to`, `set aurora to KP`, `strike lightning at` and
+        `set lightning storm to`; `aurora` and `lightning` join the
+        atmosphere readings and `fog density` is filled. Project Settings has
+        Fog and Lightning sections and star, aurora and moonlight rows.
+        Not covered: point and spot lights light the froxels unshadowed, and
+        at most 16 of them and 16 local fog volumes are read; the composite
+        reads opaque depth, so transparent surfaces are fogged as if they
+        were what is behind them; froxel history has no neighbourhood clamp,
+        so very fast motion can ghost; haze uses a Rayleigh-like spread over
+        a height falloff rather than the physical sky's own scattering, and
+        skips sky pixels; stars and aurora need a sky other than flat, show
+        only in the main view (not in reflections or probes) and light
+        nothing; aurora assumes flat ground; the flash light casts no
+        shadows, there is no bolt to see, and thunder is not positional; no
+        fog in 2D; `set fog density` moves height fog only. GPU-checked on
+        Intel Arc through Mesa only.
   - [ ] Volumetric light volumes: per spot/point cone inscatter (density, anisotropy,
         falloff curve, near/far fade) for visible beams, dust motes (billboard points
         drifting in beam, size/alpha/twinkle), fake shaft cones (additive fresnel-faded

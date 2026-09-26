@@ -603,6 +603,55 @@ or blurred from the filtered mips. Probe faces and EXR captures copy
 cube with its mip chain (`build::bake_sky`, seam fix applied) and drops the
 source. `sky_exposure` and `ambient_dimmer` are volume properties too.
 
+### Fog, space and lightning
+
+`World::fog` (`blockloom-core/src/fog.rs`) is three media, 3D only: an
+analytic exponential height fog, a froxel volumetric fog and aerial haze.
+`blockloom-runtime/src/fog.rs` resolves them from the blended `Environment`
+into `FogRender` each frame (so volumes, `set fog density to` and the time
+of day reach them the way they reach the sun) and draws them in one pass
+after the main passes and before any post. `shaders/fog_froxels.wesl`
+injects each froxel's medium (height-falling density, FBM noise drifting
+with `noise_wind`, and up to `MAX_LOCAL_FOG` local fog volumes) and its
+in-scattered light: Bevy's directional lights read straight from its own
+`GpuLights` and cascade shadow maps (the sun and moon carry
+`VolumetricLight` while volumetric fog asks for them, which is what makes
+light shafts), plus up to `MAX_FOG_LIGHTS` unshadowed point and spot
+`Light`s whose `volumetric` switch is on. It blends with last frame's grid
+reprojected, and a second entry point integrates each column front to back.
+`shaders/fog_composite.wesl` then reads each pixel's distance from the depth
+prepass: haze on surfaces, height fog along every ray (the sky's too, so
+the horizon melts into it, glowing with the sky's horizon light from the
+diffuse cube), then one froxel fetch. The shared WESL is the
+`blockloom::fog` library module; `fog::FogUniforms` matches it field for
+field. Fog properties on `Environment` (`fog_density`, `fog_colors`,
+`fog_height`, `volumetric_density`, `volumetric_albedo`, `haze`) are volume
+properties too, and a `Volume` can also add local fog in its own shape
+(`VolumeSpec::fog`).
+
+Stars, the Milky Way and aurora (`Sky::stars`, `Sky::aurora`) are drawn by
+the sky's background pass in the main view only, never in probe faces or
+the light cubes, from `space::SpaceRender` (`blockloom::space`). They sit in
+their own uniform rather than `SkyParams` because they move every frame,
+and a `SkyParams` change rewrites and refilters the cubes. So there are no
+stars over a flat sky. `space.rs` also hangs the moon's own
+`DirectionalLight` (`MoonLight`) where the physical sky puts it, dimmed by
+its phase, and applies `set aurora to KP`.
+
+`World::lightning` (`blockloom-core/src/lightning.rs`) is both dimensions.
+`StormDirector` is plain arithmetic on the fixed tick from a seed, so one
+storm replays the same. `blockloom-runtime/src/lightning.rs` turns strikes
+(the director's and `strike lightning at`'s) into a decaying `PointLight`
+above the ground (3D), a `LightningFlash` that pulses the environment's
+ambient and background and the sky pass, and thunder late by distance at
+the speed of sound: the project's sound, or `thunder_wav`, a rumble made in
+code so no asset is needed. The fog, the aurora and the flash fill their
+`AtmosphereSources` readings (`fog density`, `aurora`, `lightning`).
+
+The GPU half is the ignored `embed` tests: height fog, volumetric glow,
+sunlit fog and a roof's shadow in it, a volume's local fog, aurora, stars
+and a lightning block.
+
 ### Lighting rig
 
 `Light` (`LightSpec`) is a point, spot, rect or disk light. Rect and disk are

@@ -2126,7 +2126,7 @@ mod tests {
 
     #[test]
     #[ignore = "needs a GPU"]
-    fn stars_come_out_at_night_and_hide_by_day() {
+    fn stars_come_out_at_night() {
         let bright = |[r, g, b]: [u8; 3]| r > 120 && g > 120 && b > 120;
         let run = |elevation: f32| {
             let room = night_sky(|sky| {

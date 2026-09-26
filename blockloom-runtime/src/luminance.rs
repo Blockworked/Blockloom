@@ -17,7 +17,7 @@ use bevy::render::gpu_readback::{Readback, ReadbackComplete};
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::binding_types::{storage_buffer_sized, texture_2d};
 use bevy::render::render_resource::*;
-use bevy::render::renderer::{RenderContext, ViewQuery};
+use bevy::render::renderer::{RenderContext, RenderDevice, ViewQuery};
 use bevy::render::storage::{GpuShaderBuffer, ShaderBuffer};
 use bevy::render::view::ViewTarget;
 use bevy::render::{RenderApp, RenderStartup};
@@ -150,7 +150,15 @@ fn init_pipeline(
     mut commands: Commands,
     assets: Res<AssetServer>,
     pipeline_cache: Res<PipelineCache>,
+    render_device: Res<RenderDevice>,
 ) {
+    // No compute shaders on this device (WebGL, and the downlevel limits
+    // Bevy simulates it with): queueing or dispatching the meter trips
+    // validation and quits the run, so the reading stays unmeasured and the
+    // atmosphere reports zero instead (see `SceneLuminance::nits`).
+    if render_device.limits().max_compute_workgroup_size_x == 0 {
+        return;
+    }
     let layout = BindGroupLayoutDescriptor::new(
         "luminance_meter_layout",
         &BindGroupLayoutEntries::sequential(
