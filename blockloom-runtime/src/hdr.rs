@@ -11,12 +11,15 @@
 //! reporters share.
 
 use crate::engine::{Engine, PendingEffects};
-use bevy::core_pipeline::fullscreen_material::{FullscreenMaterial, FullscreenMaterialPlugin};
+use bevy::core_pipeline::fullscreen_material::{
+    FullscreenMaterial, FullscreenMaterialPlugin, fullscreen_material_system,
+};
 use bevy::core_pipeline::tonemapping::tonemapping;
 use bevy::core_pipeline::upscaling::upscaling;
 use bevy::core_pipeline::{Core2d, Core2dSystems, Core3dSystems};
 use bevy::ecs::schedule::{ScheduleConfigs, ScheduleLabel};
 use bevy::ecs::system::BoxedSystem;
+use bevy::post_process::bloom::bloom;
 use bevy::prelude::*;
 use bevy::render::RenderApp;
 use bevy::render::extract_component::ExtractComponent;
@@ -207,7 +210,11 @@ impl HdrFrame {
         };
         let tone = self.pass(10, 1.0);
         let encode = self.pass(encode, self.paper_white_nits);
-        if is_3d {
+        if is_3d && std::env::var("BL_NOTONE").is_ok() {
+            camera.insert(HdrEncode3d::from(encode));
+        } else if is_3d && std::env::var("BL_NOENC").is_ok() {
+            camera.insert(HdrTone3d::from(tone));
+        } else if is_3d {
             camera.insert((HdrTone3d::from(tone), HdrEncode3d::from(encode)));
         } else {
             camera.insert((HdrTone2d::from(tone), HdrEncode2d::from(encode)));
@@ -406,17 +413,34 @@ impl HdrDebugView2d {
     }
 }
 
-// Debug views and the tone curve read the exposed scene, before the
-// tonemapper; the encode goes after the UI so the HUD is encoded too.
+// Debug views and the tone curve read the exposed scene, bloom included,
+// before the tonemapper; the encode goes after the UI so the HUD is encoded
+// too. Bloom and these share a set, so without the order they swap from
+// frame to frame and the picture flickers.
 impl FullscreenMaterial for HdrDebugView3d {
     fn fragment_shader() -> ShaderRef {
         shader()
+    }
+
+    fn schedule_configs(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {
+        system
+            .in_set(Core3dSystems::PostProcess)
+            .after(bloom)
+            .before(tonemapping)
     }
 }
 
 impl FullscreenMaterial for HdrTone3d {
     fn fragment_shader() -> ShaderRef {
         shader()
+    }
+
+    fn schedule_configs(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {
+        system
+            .in_set(Core3dSystems::PostProcess)
+            .after(bloom)
+            .after(fullscreen_material_system::<HdrDebugView3d>)
+            .before(tonemapping)
     }
 }
 
@@ -445,6 +469,7 @@ impl FullscreenMaterial for HdrDebugView2d {
     fn schedule_configs(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {
         system
             .in_set(Core2dSystems::PostProcess)
+            .after(bloom)
             .before(tonemapping)
     }
 }
@@ -461,6 +486,8 @@ impl FullscreenMaterial for HdrTone2d {
     fn schedule_configs(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {
         system
             .in_set(Core2dSystems::PostProcess)
+            .after(bloom)
+            .after(fullscreen_material_system::<HdrDebugView2d>)
             .before(tonemapping)
     }
 }

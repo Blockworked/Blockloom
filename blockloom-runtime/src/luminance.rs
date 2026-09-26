@@ -9,6 +9,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::core_pipeline::fullscreen_material::fullscreen_material_system;
 use bevy::core_pipeline::tonemapping::tonemapping;
 use bevy::core_pipeline::{Core2d, Core2dSystems, Core3d, Core3dSystems};
+use bevy::post_process::bloom::bloom;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RecordDiagnostics;
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
@@ -60,6 +61,7 @@ pub fn register(app: &mut App) {
             Core3d,
             meter
                 .in_set(Core3dSystems::PostProcess)
+                .after(bloom)
                 .before(fullscreen_material_system::<HdrDebugView3d>)
                 .before(fullscreen_material_system::<HdrTone3d>)
                 .before(tonemapping),
@@ -68,6 +70,7 @@ pub fn register(app: &mut App) {
             Core2d,
             meter
                 .in_set(Core2dSystems::PostProcess)
+                .after(bloom)
                 .before(fullscreen_material_system::<HdrDebugView2d>)
                 .before(fullscreen_material_system::<HdrTone2d>)
                 .before(tonemapping),

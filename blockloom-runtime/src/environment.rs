@@ -525,6 +525,7 @@ pub fn apply_environment(
     mut suns: Query<(Ref<WorldLight>, &mut DirectionalLight, &mut Transform)>,
 ) {
     let changed = environment.is_changed();
+    if changed && std::env::var("BL_FLICKER").is_ok() { eprintln!("FLICK env {:?}", *environment); }
     let env = &*environment;
     if changed {
         clear_color.0 = env.background;

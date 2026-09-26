@@ -428,6 +428,7 @@ fn resolve_sky(
     };
     let changed = render.params != params || render.source != source;
     if changed {
+        if std::env::var("BL_FLICKER").is_ok() { eprintln!("FLICK sky changed {:?} -> {:?}", render.params, params); }
         state.generation += 1;
         render.params = params;
         render.source = source;
