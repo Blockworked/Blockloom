@@ -6,136 +6,24 @@
 //! costs one iteration per frame instead of hanging the host.
 
 use super::effect::Effect;
+use super::lower::{Expr, Loaded, lower};
 use super::ops;
-use super::program::{Action, LoopKind, Program, Step, Trigger, compile, temp_index};
+use super::program::{Action, LoopKind, Step, Trigger, compile};
+use super::stores;
+use super::variables::{ScopeId, VarId, VariableSnapshot, Variables};
 use crate::project::Project;
 use crate::sense;
 use crate::sound::{clamp_pitch, normalize_sound, user_to_gain};
 use crate::ui::{UiElement, UiKind};
 use crate::value::{Evaluated, Op, Value};
 use blockstitch_core::graph::{
-    DictEntry, DictItem, ListItem, dict_remove, dict_set, is_dict_reporter, is_list_reporter,
-    list_index, parse_json_array, parse_json_object, resolve_dict_reporter, resolve_list_reporter,
+    DictEntry, DictItem, ListItem, dict_remove, dict_set, list_index, parse_json_array,
+    parse_json_object, resolve_dict_reporter, resolve_list_reporter,
 };
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-
-/// One scope's variables, by name.
-pub type VariableValues = HashMap<String, Evaluated>;
-/// Every actor's own variables, by actor id.
-pub type ActorVariables = HashMap<String, VariableValues>;
-
-/// A snapshot of every variable in play.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct VariableSnapshot {
-    /// The project's shared variables.
-    pub globals: VariableValues,
-    /// Each actor's own, by actor id.
-    pub actors: ActorVariables,
-}
-
-/// A scope as the VM keeps it: hashed with Fx, since every variable read
-/// hashes an actor id and a name and SipHash dominated both.
-type Scope<T> = FxHashMap<String, T>;
-
-#[derive(Debug, Default)]
-struct VariableState {
-    globals: Scope<Evaluated>,
-    actors: Scope<Scope<Evaluated>>,
-}
-
-/// The live variables of one run. The VM and compiled logic hold clones of
-/// this handle, so either scheduler reads and writes the same slots.
-#[derive(Debug, Clone, Default)]
-pub struct Variables(Rc<RefCell<VariableState>>);
-
-impl Variables {
-    pub fn load(&self, project: &Project) {
-        let mut state = self.0.borrow_mut();
-        state.globals = project
-            .globals
-            .iter()
-            .map(|variable| (variable.name.clone(), variable.value.clone()))
-            .collect();
-        state.actors = project
-            .actors
-            .iter()
-            .map(|actor| {
-                let values = actor.graph.variable_values().into_iter().collect();
-                (actor.id.clone(), values)
-            })
-            .collect();
-    }
-
-    pub fn read(&self, actor: &str, name: &str) -> Evaluated {
-        let state = self.0.borrow();
-        state
-            .actors
-            .get(actor)
-            .and_then(|variables| variables.get(name))
-            .or_else(|| state.globals.get(name))
-            .cloned()
-            .unwrap_or(Evaluated::Number(0.0))
-    }
-
-    /// Writes an actor slot first, then a global, and otherwise declares an
-    /// actor slot. This is the variable rule blocks have always used.
-    pub fn write(&self, actor: &str, name: &str, value: Evaluated) {
-        let mut state = self.0.borrow_mut();
-        if let Some(slot) = state
-            .actors
-            .get_mut(actor)
-            .and_then(|variables| variables.get_mut(name))
-        {
-            *slot = value;
-            return;
-        }
-        if let Some(slot) = state.globals.get_mut(name) {
-            *slot = value;
-            return;
-        }
-        state
-            .actors
-            .entry(actor.to_string())
-            .or_default()
-            .insert(name.to_string(), value);
-    }
-
-    /// Gives `to` its own copy of `from`'s variables, as they stand. A clone
-    /// starts life with whatever its template had counted up to, and changes
-    /// either way after that.
-    pub fn copy_actor(&self, from: &str, to: &str) {
-        let mut state = self.0.borrow_mut();
-        let copied = state.actors.get(from).cloned().unwrap_or_default();
-        state.actors.insert(to.to_string(), copied);
-    }
-
-    /// Forgets an actor's own variables. A deleted actor is gone for the rest
-    /// of the run, and so is what it was remembering.
-    pub fn forget_actor(&self, actor: &str) {
-        self.0.borrow_mut().actors.remove(actor);
-    }
-
-    pub fn snapshot(&self) -> VariableSnapshot {
-        let state = self.0.borrow();
-        let scope = |values: &Scope<Evaluated>| {
-            values
-                .iter()
-                .map(|(name, value)| (name.clone(), value.clone()))
-                .collect()
-        };
-        VariableSnapshot {
-            globals: scope(&state.globals),
-            actors: state
-                .actors
-                .iter()
-                .map(|(actor, values)| (actor.clone(), scope(values)))
-                .collect(),
-        }
-    }
-}
 
 /// One scope's lists, by name.
 pub type ListValues = HashMap<String, Vec<ListItem>>;
@@ -463,11 +351,9 @@ impl Script {
 /// The block virtual machine: compiled programs, live scripts and variables
 /// for one loaded project.
 pub struct Vm {
-    programs: FxHashMap<String, Rc<Program>>,
+    programs: FxHashMap<String, Rc<Loaded>>,
     /// Actor id -> name, for matching a collision against `when I touch`.
     names: FxHashMap<String, String>,
-    /// Actor id -> custom block id -> input names, in declaration order.
-    block_inputs: FxHashMap<String, FxHashMap<String, Rc<[String]>>>,
     /// Clone id -> the authored actor it is a copy of. Only runtime clones
     /// are in here, which is what makes "am I a clone?" answerable.
     clones: FxHashMap<String, String>,
@@ -475,6 +361,10 @@ pub struct Vm {
     /// of it, and the one that ran the block stops where it stands.
     deleted: Vec<String>,
     variables: Variables,
+    /// The program being stepped, whose slots `eval` lowers and caches.
+    current: Option<Rc<Loaded>>,
+    /// The running actor's variable scope, as last resolved.
+    scope: Option<ScopeId>,
     lists: Lists,
     dicts: Dicts,
     scripts: Vec<Script>,
@@ -513,10 +403,11 @@ impl Vm {
         Self {
             programs: FxHashMap::default(),
             names: FxHashMap::default(),
-            block_inputs: FxHashMap::default(),
             clones: FxHashMap::default(),
             deleted: Vec::new(),
             variables,
+            current: None,
+            scope: None,
             lists,
             dicts,
             scripts: Vec::new(),
@@ -535,7 +426,6 @@ impl Vm {
     pub fn load(&mut self, project: &Project) {
         self.programs.clear();
         self.names.clear();
-        self.block_inputs.clear();
         self.clones.clear();
         self.deleted.clear();
         self.scripts.clear();
@@ -547,8 +437,6 @@ impl Vm {
         self.lists.load(project);
         self.dicts.load(project);
         for actor in &project.actors {
-            self.programs
-                .insert(actor.id.clone(), Rc::new(compile(&actor.graph)));
             self.names.insert(actor.id.clone(), actor.name.clone());
             let inputs = actor
                 .graph
@@ -563,7 +451,8 @@ impl Vm {
                     )
                 })
                 .collect();
-            self.block_inputs.insert(actor.id.clone(), inputs);
+            let program = Loaded::new(compile(&actor.graph), inputs);
+            self.programs.insert(actor.id.clone(), Rc::new(program));
         }
     }
 
@@ -588,8 +477,7 @@ impl Vm {
     /// Registers a brand-new actor with no blocks and answers its id.
     pub fn create_actor(&mut self, name: &str) -> String {
         let id = self.new_actor_id();
-        self.programs
-            .insert(id.clone(), Rc::new(Program::default()));
+        self.programs.insert(id.clone(), Rc::new(Loaded::default()));
         self.names.insert(id.clone(), name.to_string());
         id
     }
@@ -793,7 +681,25 @@ impl Vm {
     fn run(
         &mut self,
         script: &mut Script,
-        program: &Rc<Program>,
+        program: &Rc<Loaded>,
+        immediate: bool,
+        out: &mut Vec<Effect>,
+    ) -> Option<Evaluated> {
+        // A reporter body runs for the actor that asked, so it keeps that
+        // actor's scope as it stands, declarations included.
+        if !immediate {
+            self.scope = self.variables.scope(&script.actor);
+        }
+        let caller = self.current.replace(Rc::clone(program));
+        let result = self.step(script, program, immediate, out);
+        self.current = caller;
+        result
+    }
+
+    fn step(
+        &mut self,
+        script: &mut Script,
+        program: &Loaded,
         immediate: bool,
         out: &mut Vec<Effect>,
     ) -> Option<Evaluated> {
@@ -1083,13 +989,13 @@ impl Vm {
                     }
                 }
                 Step::Call { block_id, args } => {
-                    let Some(&start) = program.blocks.get(block_id) else {
+                    let Some((start, names)) = program.block(block_id) else {
                         script.pc = pc + 1;
                         continue;
                     };
                     let params = current_params(&script.frames);
                     let temps = &script.temps;
-                    let bound = self.bind_params(&script.actor, block_id, args, params, temps, out);
+                    let bound = self.bind_params(&script.actor, names, args, params, temps, out);
                     let saved = std::mem::take(&mut script.temps);
                     script.frames.push(Frame::Call {
                         return_pc: pc + 1,
@@ -1105,14 +1011,14 @@ impl Vm {
                     temp,
                 } => {
                     let temp = *temp;
-                    let Some(&start) = program.blocks.get(block_id) else {
+                    let Some((start, names)) = program.block(block_id) else {
                         store_temp(&mut script.temps, temp, Evaluated::Number(0.0));
                         script.pc = pc + 1;
                         continue;
                     };
                     let params = current_params(&script.frames);
                     let temps = &script.temps;
-                    let bound = self.bind_params(&script.actor, block_id, args, params, temps, out);
+                    let bound = self.bind_params(&script.actor, names, args, params, temps, out);
                     let saved = std::mem::take(&mut script.temps);
                     script.frames.push(Frame::Call {
                         return_pc: pc + 1,
@@ -1856,7 +1762,7 @@ impl Vm {
                     .as_number()
                     .unwrap_or(0.0);
                 // A non-numeric variable counts as zero, as in Scratch.
-                let current = self.read_var(actor, name).as_number().unwrap_or(0.0);
+                let current = self.read_var(name).as_number().unwrap_or(0.0);
                 self.write_var(actor, name, Evaluated::Number(current + delta));
             }
             Action::AddToList { value, name } => {
@@ -2025,9 +1931,6 @@ impl Vm {
         if let Some(name) = self.names.get(template).cloned() {
             self.names.insert(id.clone(), name);
         }
-        if let Some(inputs) = self.block_inputs.get(template).cloned() {
-            self.block_inputs.insert(id.clone(), inputs);
-        }
         self.variables.copy_actor(template, &id);
         self.lists.copy_actor(template, &id);
         self.dicts.copy_actor(template, &id);
@@ -2046,7 +1949,6 @@ impl Vm {
     fn forget_actor(&mut self, actor: &str) {
         self.programs.remove(actor);
         self.names.remove(actor);
-        self.block_inputs.remove(actor);
         self.clones.remove(actor);
         self.variables.forget_actor(actor);
         self.lists.forget_actor(actor);
@@ -2072,14 +1974,24 @@ impl Vm {
 
     // ─── Variables ──────────────────────────────────────────────────────────
 
-    fn read_var(&self, actor: &str, name: &str) -> Evaluated {
-        self.variables.read(actor, name)
+    fn read_var(&self, name: &String) -> Evaluated {
+        let var = self.var_id(name);
+        self.variables.read_slot(self.scope, var)
     }
 
     /// Writes to the actor's own variable when it has one by that name, the
     /// project global when it doesn't, and otherwise declares it on the actor.
-    fn write_var(&mut self, actor: &str, name: &str, value: Evaluated) {
-        self.variables.write(actor, name, value);
+    fn write_var(&mut self, actor: &str, name: &String, value: Evaluated) {
+        let var = self.var_id(name);
+        self.scope = self.variables.write_slot(actor, self.scope, var, value);
+    }
+
+    /// A variable name from the running program, interned.
+    fn var_id(&self, name: &String) -> VarId {
+        match &self.current {
+            Some(program) => program.var(name, &self.variables),
+            None => self.variables.intern(name),
+        }
     }
 
     // ─── Evaluation ─────────────────────────────────────────────────────────
@@ -2106,11 +2018,11 @@ impl Vm {
         }
     }
 
-    /// What `Value::eval` would make of `value` once [`Vm::resolve`] had
-    /// replaced its variables, parameters and reporter calls, without
-    /// building that tree. Every argument is evaluated, left to right, before
-    /// its operator runs, so a reporter the operator never reads (the far
-    /// side of an `and`) still runs, exactly as resolving first made it.
+    /// What `Value::eval` would make of `value` with its variables, parameters
+    /// and reporter calls filled in. The slot is lowered once and evaluated
+    /// from there. Every argument runs, left to right, before its operator
+    /// does, so a reporter the operator never reads (the far side of an
+    /// `and`) still runs and still does whatever it does.
     fn evaluate(
         &mut self,
         value: &Value,
@@ -2119,45 +2031,95 @@ impl Vm {
         temps: &[Evaluated],
         out: &mut Vec<Effect>,
     ) -> Result<Evaluated, String> {
-        match value {
-            Value::Number { value } => Ok(Evaluated::Number(*value)),
-            Value::Text { value } => Ok(Evaluated::Text(value.clone())),
-            Value::Bool => Ok(Evaluated::Bool(false)),
-            Value::Var { name } => {
-                Ok(read_temp(temps, name).unwrap_or_else(|| self.read_var(actor, name)))
+        let expr = match &self.current {
+            Some(program) => program.expr(value, &self.variables),
+            None => Rc::new(lower(value, &self.variables)),
+        };
+        self.eval_expr(&expr, actor, params, temps, out)
+    }
+
+    /// Evaluates a lowered slot, reporting an error the way [`Vm::eval`] does.
+    fn eval_reported(
+        &mut self,
+        expr: &Expr,
+        actor: &str,
+        params: Option<&Params>,
+        temps: &[Evaluated],
+        out: &mut Vec<Effect>,
+    ) -> Evaluated {
+        match self.eval_expr(expr, actor, params, temps, out) {
+            Ok(evaluated) => evaluated,
+            Err(message) => {
+                out.push(Effect::Error {
+                    actor: actor.to_string(),
+                    message,
+                });
+                Evaluated::Number(0.0)
             }
-            Value::Param { name } => Ok(params
+        }
+    }
+
+    fn eval_expr(
+        &mut self,
+        expr: &Expr,
+        actor: &str,
+        params: Option<&Params>,
+        temps: &[Evaluated],
+        out: &mut Vec<Effect>,
+    ) -> Result<Evaluated, String> {
+        match expr {
+            Expr::Const(value) => value.clone(),
+            Expr::Var(var) => Ok(self.variables.read_slot(self.scope, *var)),
+            Expr::Temp(index, var) => Ok(temps
+                .get(*index)
+                .cloned()
+                .unwrap_or_else(|| self.variables.read_slot(self.scope, *var))),
+            Expr::Param(name) => Ok(params
                 .and_then(|bound| bound.get(name))
                 .cloned()
                 .unwrap_or(Evaluated::Number(0.0))),
-            Value::Call { block_id, args, .. } => {
+            Expr::Call { block_id, args } => {
                 Ok(self.run_reporter(actor, block_id, args, params, temps, out))
             }
-            Value::Op { op, .. } if is_list_reporter(op) || is_dict_reporter(op) => {
-                self.resolve(value, actor, params, temps, out).eval()
+            Expr::Store { op, list, args } => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.eval_expr(arg, actor, params, temps, out))
+                    .collect();
+                // A store reporter's own error is reported here and reads as
+                // zero, rather than failing the slot around it.
+                match self.read_store(actor, op, *list, args) {
+                    Ok(value) => Ok(value),
+                    Err(message) => {
+                        out.push(Effect::Error {
+                            actor: actor.to_string(),
+                            message,
+                        });
+                        Ok(Evaluated::Number(0.0))
+                    }
+                }
             }
-            Value::Op {
+            Expr::Op {
                 op: op @ (Op::Join | Op::Ext(_)),
                 args,
-                ..
             } => {
                 let args = args
                     .iter()
-                    .map(|arg| self.evaluate(arg, actor, params, temps, out))
+                    .map(|arg| self.eval_expr(arg, actor, params, temps, out))
                     .collect::<Vec<_>>();
                 ops::apply_many(op, args)
             }
-            Value::Op { op, args, .. } => {
+            Expr::Op { op, args } => {
                 let mut args = args.iter();
                 let a = args
                     .next()
-                    .map(|arg| self.evaluate(arg, actor, params, temps, out));
+                    .map(|arg| self.eval_expr(arg, actor, params, temps, out));
                 let b = args
                     .next()
-                    .map(|arg| self.evaluate(arg, actor, params, temps, out));
-                // No operator past these reads a third, but resolving ran it.
+                    .map(|arg| self.eval_expr(arg, actor, params, temps, out));
+                // No operator past these reads a third, but it still runs.
                 for extra in args {
-                    let _ = self.evaluate(extra, actor, params, temps, out);
+                    let _ = self.eval_expr(extra, actor, params, temps, out);
                 }
                 ops::apply(op, a, b)
             }
@@ -2192,92 +2154,23 @@ impl Vm {
         ]
     }
 
-    /// Replaces every variable read, bound parameter and reporter-block call
-    /// in `value` with a literal. Only list and dict reporters still come
-    /// this way, since blockstitch resolves those over `Value` arguments.
-    fn resolve(
-        &mut self,
-        value: &Value,
+    /// A list or dict reporter over evaluated arguments, reading only the one
+    /// store its name picks.
+    fn read_store(
+        &self,
         actor: &str,
-        params: Option<&Params>,
-        temps: &[Evaluated],
-        out: &mut Vec<Effect>,
-    ) -> Value {
-        match value {
-            Value::Number { .. } | Value::Text { .. } | Value::Bool => value.clone(),
-            Value::Var { name } => read_temp(temps, name)
-                .unwrap_or_else(|| self.read_var(actor, name))
-                .into_value(),
-            Value::Param { name } => params
-                .and_then(|bound| bound.get(name))
-                .cloned()
-                .unwrap_or(Evaluated::Number(0.0))
-                .into_value(),
-            Value::Op { op, args, saved } if is_list_reporter(op) => {
-                let args = args
-                    .iter()
-                    .map(|arg| self.resolve(arg, actor, params, temps, out))
-                    .collect::<Vec<_>>();
-                let name: Box<str> = match op {
-                    Op::Ext(name) => name.clone(),
-                    _ => unreachable!("validated by is_list_reporter"),
-                };
-                let index = match &*name {
-                    "ListItem" | "ListItemNumber" | "ListAmount" | "ListItemExists" => 1,
-                    _ => 0,
-                };
-                let lists = match args.get(index).and_then(literal_text) {
-                    Some(list) => self.lists.scope_of(actor, &list),
-                    None => self.lists.snapshot_for(actor),
-                };
-                match resolve_list_reporter(&name, args, &lists) {
-                    Ok(value) => value,
-                    Err(message) => {
-                        out.push(Effect::Error {
-                            actor: actor.to_string(),
-                            message,
-                        });
-                        Value::number(0.0)
-                    }
-                }
-            }
-            Value::Op { op, args, saved } if is_dict_reporter(op) => {
-                let args = args
-                    .iter()
-                    .map(|arg| self.resolve(arg, actor, params, temps, out))
-                    .collect::<Vec<_>>();
-                let name: Box<str> = match op {
-                    Op::Ext(name) => name.clone(),
-                    _ => unreachable!("validated by is_dict_reporter"),
-                };
-                let index = if &*name == "DictValue" { 1 } else { 0 };
-                let dicts = match args.get(index).and_then(literal_text) {
-                    Some(dict) => self.dicts.scope_of(actor, &dict),
-                    None => self.dicts.snapshot_for(actor),
-                };
-                match resolve_dict_reporter(&name, args, &dicts) {
-                    Ok(value) => value,
-                    Err(message) => {
-                        out.push(Effect::Error {
-                            actor: actor.to_string(),
-                            message,
-                        });
-                        Value::number(0.0)
-                    }
-                }
-            }
-            Value::Op { op, args, saved } => Value::Op {
-                op: op.clone(),
-                args: args
-                    .iter()
-                    .map(|arg| self.resolve(arg, actor, params, temps, out))
-                    .collect(),
-                saved: saved.clone(),
-            },
-            Value::Call { block_id, args, .. } => self
-                .run_reporter(actor, block_id, args, params, temps, out)
-                .into_value(),
-        }
+        op: &str,
+        list: bool,
+        args: Vec<Result<Evaluated, String>>,
+    ) -> Result<Evaluated, String> {
+        let (name, args) = stores::literal_args(op, args)?;
+        let name = name.unwrap_or_default();
+        let value = if list {
+            resolve_list_reporter(op, args, &self.lists.scope_of(actor, &name))?
+        } else {
+            resolve_dict_reporter(op, args, &self.dicts.scope_of(actor, &name))?
+        };
+        value.eval()
     }
 
     /// Runs a reporter-shaped custom block's body to completion, right here,
@@ -2288,7 +2181,7 @@ impl Vm {
         &mut self,
         actor: &str,
         block_id: &str,
-        args: &[Value],
+        args: &[Expr],
         params: Option<&Params>,
         temps: &[Evaluated],
         out: &mut Vec<Effect>,
@@ -2303,10 +2196,15 @@ impl Vm {
         let Some(program) = self.programs.get(actor).map(Rc::clone) else {
             return Evaluated::Number(0.0);
         };
-        let Some(&start) = program.blocks.get(block_id) else {
+        let Some((start, names)) = program.block(block_id) else {
             return Evaluated::Number(0.0);
         };
-        let bound = self.bind_params(actor, block_id, args, params, temps, out);
+        let values = args
+            .iter()
+            .take(names.len())
+            .map(|arg| self.eval_reported(arg, actor, params, temps, out))
+            .collect();
+        let bound = Params { names, values };
         let mut script = Script {
             actor: actor.to_string(),
             key: None,
@@ -2333,18 +2231,12 @@ impl Vm {
     fn bind_params(
         &mut self,
         actor: &str,
-        block_id: &str,
+        names: Rc<[String]>,
         args: &[Value],
         params: Option<&Params>,
         temps: &[Evaluated],
         out: &mut Vec<Effect>,
     ) -> Params {
-        let names = self
-            .block_inputs
-            .get(actor)
-            .and_then(|blocks| blocks.get(block_id))
-            .map(Rc::clone)
-            .unwrap_or_else(|| Rc::from([]));
         let values = args
             .iter()
             .take(names.len())
@@ -2362,26 +2254,11 @@ fn current_params(frames: &[Frame]) -> Option<&Params> {
     })
 }
 
-/// A leaf's text, if evaluating it could do nothing else. A list or dict
-/// reporter's name is almost always one.
-fn literal_text(value: &Value) -> Option<String> {
-    match value {
-        Value::Text { value } => Some(value.clone()),
-        Value::Number { value } => Some(value.to_string()),
-        _ => None,
-    }
-}
-
 fn store_temp(temps: &mut Vec<Evaluated>, temp: usize, value: Evaluated) {
     if temps.len() <= temp {
         temps.resize(temp + 1, Evaluated::Number(0.0));
     }
     temps[temp] = value;
-}
-
-fn read_temp(temps: &[Evaluated], name: &str) -> Option<Evaluated> {
-    let index = temp_index(name)?;
-    temps.get(index).cloned()
 }
 
 /// `(frame index, begin, end)` of the nearest enclosing loop. Only the

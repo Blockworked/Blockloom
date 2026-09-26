@@ -908,6 +908,9 @@ a project's other files aren't modules, so `package::`/`super::` are refused.
 2. `vm::compile` flattens each actor's canvas into a `Vec<Step>` with jumps -
    a nested tree can't be suspended mid-body, but a program counter can. Header
    strands become entry points keyed by their trigger.
+   Each value slot is lowered the first time it runs (`vm/lower.rs`): variable
+   names become interned slots in `Variables`, and pure operators over
+   constants fold away, so evaluating one hashes nothing.
 3. Simulation runs on Bevy's `FixedUpdate`: a constant-rate step (`FixedMain`
    catches up whatever the display does) that pulls the project's `world.fixed_rate`
    - set in Project Settings and applied by `pump_editor`/`dim2|dim3::sync_timestep` -
@@ -1075,10 +1078,10 @@ Three things shape the emitted code. Every slot is read into a `let` before the
 act that uses it, because reading a slot borrows the host and so does handing
 it something to do. `and`/`or` take their second operand as a closure, because
 the VM's short circuit is observable: `false and <a bad slot>` reports nothing.
-And everything `Vm::resolve` replaces - a variable, a parameter, a reporter
-call - is hoisted into a `let` ahead of the expression, because the VM resolves
-a whole tree before one operator runs: a reporter on the side `and` never reads
-still runs, and still does whatever it does to the world.
+And every variable, parameter and reporter call is hoisted into a `let` ahead
+of the expression, because the VM runs each of them before the operator over
+it: a reporter on the side `and` never reads still runs, and still does
+whatever it does to the world.
 
 The actor is a value rather than a constant, which is what lets one emitted
 function cover an authored actor and every clone of it: a `State` carries the
