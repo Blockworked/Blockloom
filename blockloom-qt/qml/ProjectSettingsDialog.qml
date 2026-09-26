@@ -37,6 +37,8 @@ BwDialog {
     function writeTracing(next) { writeLighting({ ray_tracing: Object.assign(tracingOf(), next) }); }
     // What the open world's GPU can do, once a 3D world has come up.
     readonly property var tracingStatus: app.appState.ray_tracing || null
+    function writeSky(next) { invoke("set_sky", { sky: Object.assign(JSON.parse(JSON.stringify(world.sky)), next) }); }
+    function writeSkyPart(part, next) { const o = {}; o[part] = Object.assign(JSON.parse(JSON.stringify(world.sky[part])), next); writeSky(o); }
     function writeLighting(next) { invoke("set_lighting", { lighting: Object.assign(JSON.parse(JSON.stringify(world.lighting)), next) }); }
     function writePost(next) { invoke("set_post_process", { post: Object.assign(postOf(), next) }); }
     function displayOf() { return Object.assign({ space: "Sdr", peak_nits: 1000, paper_white_nits: 200 }, world && world.display ? world.display : {}); }
@@ -135,11 +137,116 @@ BwDialog {
                     NumberField { value: root.world && root.world.lighting.shadow_map_size !== undefined ? root.world.lighting.shadow_map_size : 2048; fallback: 2048; onCommitted: n => root.writeLighting({ shadow_map_size: root.clamp(Math.round(n), 512, 8192) }) } }
                 InspectorRow { label: "Shadow bias"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: root.world && root.world.lighting.shadow_bias !== undefined ? root.world.lighting.shadow_bias : 0.02; fallback: 0.02; onCommitted: n => root.writeLighting({ shadow_bias: root.clamp(n, 0, 0.5) }) } }
-                InspectorRow { label: "Sky"; labelWidth: 110; Layout.fillWidth: true
-                    AssetField { app: root.app; accept: ["hdr"]; value: root.world && root.world.lighting.sky ? root.world.lighting.sky : ""; placeholderText: "Drag an HDR panorama here"; onCommitted: p => root.writeLighting({ sky: p }) } }
-                InspectorRow { visible: !!root.world && !!root.world.lighting.sky; label: "Sky brightness"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: root.world && root.world.lighting.sky_brightness !== undefined ? root.world.lighting.sky_brightness : 1000; fallback: 1000; onCommitted: n => root.writeLighting({ sky_brightness: root.clamp(n, 0, 100000) }) } }
-                Note { text: "Where the 3D sun shines from (aimed at the origin), and how the scene's ambient light looks. A sky is an .hdr or .exr panorama (2:1) or a strip of six faces; it lights the scene too, at its brightness in nits. Occlusion darkens creases where objects meet but costs GPU time. Shadow detail snaps to a power of two; raise the bias if striped acne appears on lit faces. Applies on the next run of the game." }
+                Note { text: "Where the 3D sun shines from (aimed at the origin, unless the sky places it), and how the scene's ambient light looks. Occlusion darkens creases where objects meet but costs GPU time. Shadow detail snaps to a power of two; raise the bias if striped acne appears on lit faces. Applies on the next run of the game." }
+            }
+            Section {
+                id: skySection
+                heading: "Sky"; visible: !!root.world && root.is3d && !!root.world.sky
+                readonly property var sky: root.world && root.world.sky ? root.world.sky : null
+                readonly property string kind: sky ? sky.kind : "Flat"
+                readonly property string sunMode: sky ? sky.sun.mode : "Light"
+                readonly property var p: sky ? sky.physical : ({})
+                readonly property var g: sky ? sky.gradient : ({})
+                readonly property var h: sky ? sky.hdri : ({})
+                InspectorRow { label: "Kind"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: [{ value: "Flat", label: "None (background color)" }, { value: "Physical", label: "Physical atmosphere" }, { value: "Gradient", label: "Gradient" }, { value: "Hdri", label: "HDR image" }]
+                        value: skySection.kind; onChosen: v => root.writeSky({ kind: v }) } }
+                InspectorRow { label: "Sun from"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: [{ value: "Light", label: "Light direction" }, { value: "Manual", label: "Azimuth and elevation" }, { value: "Geographic", label: "Place and time" }]
+                        value: skySection.sunMode; onChosen: v => root.writeSkyPart("sun", { mode: v }) } }
+                InspectorRow { visible: skySection.sunMode === "Manual"; label: "Azimuth, elev °"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.sky ? skySection.sky.sun.azimuth : 135; fallback: 135; onCommitted: n => root.writeSkyPart("sun", { azimuth: n }) }
+                    NumberField { value: skySection.sky ? skySection.sky.sun.elevation : 54.7; fallback: 54.7; onCommitted: n => root.writeSkyPart("sun", { elevation: root.clamp(n, -90, 90) }) } }
+                InspectorRow { visible: skySection.sunMode === "Geographic"; label: "Lat, long °"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.sky ? skySection.sky.sun.latitude : 40; fallback: 40; onCommitted: n => root.writeSkyPart("sun", { latitude: root.clamp(n, -90, 90) }) }
+                    NumberField { value: skySection.sky ? skySection.sky.sun.longitude : 0; fallback: 0; onCommitted: n => root.writeSkyPart("sun", { longitude: root.clamp(n, -180, 180) }) } }
+                InspectorRow { visible: skySection.sunMode === "Geographic"; label: "Day, hour, UTC±"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.sky ? skySection.sky.sun.day_of_year : 172; fallback: 172; onCommitted: n => root.writeSkyPart("sun", { day_of_year: root.clamp(Math.round(n), 1, 365) }) }
+                    NumberField { value: skySection.sky ? skySection.sky.sun.time_of_day : 12; fallback: 12; onCommitted: n => root.writeSkyPart("sun", { time_of_day: root.clamp(n, 0, 24) }) }
+                    NumberField { value: skySection.sky ? skySection.sky.sun.utc_offset : 0; fallback: 0; onCommitted: n => root.writeSkyPart("sun", { utc_offset: root.clamp(n, -14, 14) }) } }
+
+                // Physical
+                InspectorRow { visible: skySection.kind === "Physical"; label: "Sun °, limb, ×"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.p.sun_size; fallback: 0.53; onCommitted: n => root.writeSkyPart("physical", { sun_size: root.clamp(n, 0.05, 20) }) }
+                    NumberField { value: skySection.p.limb_darkening; fallback: 0.6; onCommitted: n => root.writeSkyPart("physical", { limb_darkening: root.clamp(n, 0, 1) }) }
+                    NumberField { value: skySection.p.sun_intensity; fallback: 1; onCommitted: n => root.writeSkyPart("physical", { sun_intensity: root.clamp(n, 0, 100) }) } }
+                InspectorRow { visible: skySection.kind === "Physical"; label: "Tint sunlight"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!skySection.p.tint_sun; onToggled: on => root.writeSkyPart("physical", { tint_sun: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: skySection.kind === "Physical"; label: "Moon"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!skySection.p.moon; onToggled: on => root.writeSkyPart("physical", { moon: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: skySection.kind === "Physical" && !!skySection.p.moon; label: "Moon °, phase, nits"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.p.moon_size; fallback: 0.52; onCommitted: n => root.writeSkyPart("physical", { moon_size: root.clamp(n, 0.05, 20) }) }
+                    NumberField { value: skySection.p.moon_phase; fallback: 0.5; onCommitted: n => root.writeSkyPart("physical", { moon_phase: root.clamp(n, 0, 1) }) }
+                    NumberField { value: skySection.p.moon_brightness; fallback: 2500; onCommitted: n => root.writeSkyPart("physical", { moon_brightness: Math.max(n, 0) }) } }
+                InspectorRow { visible: skySection.kind === "Physical" && !!skySection.p.moon; label: "Moon halo, power"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.p.moon_halo; fallback: 0.03; onCommitted: n => root.writeSkyPart("physical", { moon_halo: root.clamp(n, 0, 1) }) }
+                    NumberField { value: skySection.p.moon_halo_power; fallback: 1000; onCommitted: n => root.writeSkyPart("physical", { moon_halo_power: root.clamp(n, 1, 100000) }) } }
+                InspectorRow { visible: skySection.kind === "Physical" && !!skySection.p.moon && skySection.sunMode !== "Geographic"; label: "Moon az, elev °"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.p.moon_azimuth; fallback: 300; onCommitted: n => root.writeSkyPart("physical", { moon_azimuth: n }) }
+                    NumberField { value: skySection.p.moon_elevation; fallback: 30; onCommitted: n => root.writeSkyPart("physical", { moon_elevation: root.clamp(n, -90, 90) }) } }
+                InspectorRow { visible: skySection.kind === "Physical"; label: "Rayleigh /Mm"; labelWidth: 110; Layout.fillWidth: true
+                    Repeater { model: 3; delegate: NumberField { required property int index; value: skySection.p.rayleigh ? skySection.p.rayleigh[index] : 0; onCommitted: n => root.writeSkyPart("physical", { rayleigh: root.withIndex(skySection.p.rayleigh, index, Math.max(n, 0)) }) } } }
+                InspectorRow { visible: skySection.kind === "Physical"; label: "Mie /Mm, g"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.p.mie; fallback: 3.996; onCommitted: n => root.writeSkyPart("physical", { mie: Math.max(n, 0) }) }
+                    NumberField { value: skySection.p.mie_g; fallback: 0.8; onCommitted: n => root.writeSkyPart("physical", { mie_g: root.clamp(n, -0.99, 0.99) }) } }
+                InspectorRow { visible: skySection.kind === "Physical"; label: "Ozone /Mm"; labelWidth: 110; Layout.fillWidth: true
+                    Repeater { model: 3; delegate: NumberField { required property int index; value: skySection.p.ozone ? skySection.p.ozone[index] : 0; onCommitted: n => root.writeSkyPart("physical", { ozone: root.withIndex(skySection.p.ozone, index, Math.max(n, 0)) }) } } }
+                InspectorRow { visible: skySection.kind === "Physical"; label: "Heights km"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.p.rayleigh_height; fallback: 8; onCommitted: n => root.writeSkyPart("physical", { rayleigh_height: root.clamp(n, 0.1, 100) }) }
+                    NumberField { value: skySection.p.mie_height; fallback: 1.2; onCommitted: n => root.writeSkyPart("physical", { mie_height: root.clamp(n, 0.1, 100) }) } }
+                InspectorRow { visible: skySection.kind === "Physical"; label: "Planet, air km"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.p.planet_radius; fallback: 6360; onCommitted: n => root.writeSkyPart("physical", { planet_radius: root.clamp(n, 1, 100000) }) }
+                    NumberField { value: skySection.p.atmosphere_height; fallback: 100; onCommitted: n => root.writeSkyPart("physical", { atmosphere_height: root.clamp(n, 1, 1000) }) } }
+                InspectorRow { visible: skySection.kind === "Physical"; label: "Ground"; labelWidth: 110; Layout.fillWidth: true
+                    ColorField { value: skySection.p.ground_albedo || "#5A5A5A"; onPicked: c => root.writeSkyPart("physical", { ground_albedo: c }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: skySection.kind === "Physical"; label: "Horizon curve"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.p.horizon_curve; fallback: 1; onCommitted: n => root.writeSkyPart("physical", { horizon_curve: root.clamp(n, 0.1, 10) }) } }
+                InspectorRow { visible: skySection.kind === "Physical"; label: "Night, nits"; labelWidth: 110; Layout.fillWidth: true
+                    ColorField { value: skySection.p.night_color || "#1A2B4D"; onPicked: c => root.writeSkyPart("physical", { night_color: c }) }
+                    NumberField { value: skySection.p.night_brightness; fallback: 1; onCommitted: n => root.writeSkyPart("physical", { night_brightness: Math.max(n, 0) }) } }
+                InspectorRow { visible: skySection.kind === "Physical"; label: "Night from, to °"; labelWidth: 110; Layout.fillWidth: true
+                    Repeater { model: 2; delegate: NumberField { required property int index; value: skySection.p.night_ramp ? skySection.p.night_ramp[index] : 0; onCommitted: n => root.writeSkyPart("physical", { night_ramp: root.withIndex(skySection.p.night_ramp, index, root.clamp(n, -90, 90)) }) } } }
+
+                // Gradient
+                InspectorRow { visible: skySection.kind === "Gradient"; label: "Top, middle"; labelWidth: 110; Layout.fillWidth: true
+                    ColorField { value: skySection.g.top || "#2F6BC4"; onPicked: c => root.writeSkyPart("gradient", { top: c }) }
+                    ColorField { value: skySection.g.middle || "#A9CBE8"; onPicked: c => root.writeSkyPart("gradient", { middle: c }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: skySection.kind === "Gradient"; label: "Bottom"; labelWidth: 110; Layout.fillWidth: true
+                    ColorField { value: skySection.g.bottom || "#3A3F47"; onPicked: c => root.writeSkyPart("gradient", { bottom: c }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: skySection.kind === "Gradient"; label: "Horizon, soft"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.g.horizon_offset; fallback: 0; onCommitted: n => root.writeSkyPart("gradient", { horizon_offset: root.clamp(n, -1, 1) }) }
+                    NumberField { value: skySection.g.softness; fallback: 0.4; onCommitted: n => root.writeSkyPart("gradient", { softness: root.clamp(n, 0.001, 1) }) } }
+                InspectorRow { visible: skySection.kind === "Gradient"; label: "Warmth"; labelWidth: 110; Layout.fillWidth: true
+                    ColorField { value: skySection.g.warm_color || "#FF9A50"; onPicked: c => root.writeSkyPart("gradient", { warm_color: c }) }
+                    NumberField { value: skySection.g.warmth; fallback: 0.5; onCommitted: n => root.writeSkyPart("gradient", { warmth: root.clamp(n, 0, 1) }) } }
+                InspectorRow { visible: skySection.kind === "Gradient"; label: "Nits, dither"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.g.brightness; fallback: 1000; onCommitted: n => root.writeSkyPart("gradient", { brightness: Math.max(n, 0) }) }
+                    SwitchField { value: !!skySection.g.dither; onToggled: on => root.writeSkyPart("gradient", { dither: on }) } }
+
+                // HDRI
+                InspectorRow { visible: skySection.kind === "Hdri"; label: "Image"; labelWidth: 110; Layout.fillWidth: true
+                    AssetField { app: root.app; accept: ["hdr"]; value: skySection.h.path || ""; placeholderText: "Drag an HDR panorama here"; onCommitted: p => root.writeSkyPart("hdri", { path: p }) } }
+                InspectorRow { visible: skySection.kind === "Hdri"; label: "Nits, tint"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.h.brightness; fallback: 1000; onCommitted: n => root.writeSkyPart("hdri", { brightness: Math.max(n, 0) }) }
+                    ColorField { value: skySection.h.tint || "#FFFFFF"; onPicked: c => root.writeSkyPart("hdri", { tint: c }) } }
+                InspectorRow { visible: skySection.kind === "Hdri"; label: "Turn, tilt °"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.h.rotation; fallback: 0; onCommitted: n => root.writeSkyPart("hdri", { rotation: n }) }
+                    NumberField { value: skySection.h.tilt; fallback: 0; onCommitted: n => root.writeSkyPart("hdri", { tilt: root.clamp(n, -90, 90) }) } }
+                InspectorRow { visible: skySection.kind === "Hdri"; label: "Blur, seam °"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.h.blur; fallback: 0; onCommitted: n => root.writeSkyPart("hdri", { blur: root.clamp(n, 0, 1) }) }
+                    NumberField { value: skySection.h.seam_fix; fallback: 0; onCommitted: n => root.writeSkyPart("hdri", { seam_fix: root.clamp(n, 0, 45) }) } }
+
+                // Shared
+                InspectorRow { visible: skySection.kind !== "Flat"; label: "Background"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!skySection.sky && skySection.sky.background; onToggled: on => root.writeSky({ background: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: skySection.kind !== "Flat"; label: "Reflections"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!skySection.sky && skySection.sky.reflections; onToggled: on => root.writeSky({ reflections: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: skySection.kind !== "Flat"; label: "Ambient light"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!skySection.sky && skySection.sky.lighting; onToggled: on => root.writeSky({ lighting: on }) }
+                    NumberField { visible: !!skySection.sky && skySection.sky.lighting; value: skySection.sky ? skySection.sky.ambient_dimmer : 1; fallback: 1; onCommitted: n => root.writeSky({ ambient_dimmer: root.clamp(n, 0, 10) }) } }
+                InspectorRow { visible: skySection.kind !== "Flat"; label: "Sky exposure EV"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: skySection.sky ? skySection.sky.exposure : 0; fallback: 0; onCommitted: n => root.writeSky({ exposure: root.clamp(n, -16, 16) }) } }
+                Note { text: "The sky draws the background and lights the world: its ambient light (scaled by the dimmer) and its reflections come from the same place. A physical sky scatters the sun (Rayleigh for blue, Mie for haze round the sun, ozone for twilight) and reddens the sunlight near the horizon; placing the sun by latitude, longitude, day and hour moves the light too, and the moon trails a geographic sun by its phase. A gradient is three stops that warm near a low sun. An HDR image is an .hdr or .exr panorama (2:1) or a strip of six faces, at its brightness in nits; blur softens the background only. Sky exposure is added to the camera's, never instead of it." }
             }
             Section {
                 heading: "Shadows"; visible: !!root.world && root.is3d

@@ -13,7 +13,6 @@ use bevy::camera::visibility::VisibleEntities;
 use bevy::camera::{Hdr, RenderTarget};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::Image;
-use bevy::light::Skybox;
 use bevy::prelude::*;
 use bevy::render::gpu_readback::{ReadbackComplete, ReadbackOnce};
 use bevy::render::render_resource::{
@@ -266,11 +265,15 @@ pub fn run_captures(
     mut images: ResMut<Assets<Image>>,
     mut cameras: Query<&mut Camera>,
     environment: Res<Environment>,
-    sky: Query<&Skybox, With<crate::world::WorldCamera>>,
+    sky: Query<&crate::sky::SkyView, With<crate::world::WorldCamera>>,
     mut captured: MessageWriter<ProbeCaptured>,
 ) {
-    // Faces see the same sky the world camera draws.
-    let skybox = sky.iter().next().cloned();
+    // Faces see the same sky the world camera draws, without the sun's disk:
+    // the sun lights what they capture already.
+    let sky = sky
+        .iter()
+        .next()
+        .map(|_| crate::sky::SkyView { disks: false });
     let service = &mut *service;
     for id in std::mem::take(&mut service.cancelled) {
         if let Some(capture) = service.live.remove(&id) {
@@ -309,8 +312,8 @@ pub fn run_captures(
                 ),
                 Name::new(format!("probe {} face {face}", id.0)),
             ));
-            if let Some(skybox) = &skybox {
-                camera.insert(skybox.clone());
+            if let Some(sky) = sky {
+                camera.insert(sky);
             }
             if let Some(hide) = request.hide {
                 camera.insert(CaptureHides(hide));

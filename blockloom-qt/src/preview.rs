@@ -52,7 +52,12 @@ fn follow(port: u16, stop: &AtomicBool, on_frame: &impl Fn(String)) -> std::io::
         match reader.read_line(&mut line) {
             Ok(0) => return Ok(()),
             Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock || error.kind() == std::io::ErrorKind::TimedOut => continue,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    || error.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                continue;
+            }
             Err(error) => return Err(error),
         }
         if !line.trim_end().starts_with("--") {

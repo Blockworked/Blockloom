@@ -26,6 +26,7 @@ use blockloom_core::scene::{
     Camera, DisplayOutput, Lighting, Mode, Physics, Placement, PostProcess, Visual,
 };
 use blockloom_core::script;
+use blockloom_core::sky::{Sky, SkyKind};
 use blockloom_core::sound::SoundMixer;
 use blockloom_core::sync;
 use blockloom_core::sync::LockInfo;
@@ -826,6 +827,14 @@ pub(crate) fn set_lighting(
     let ambient_color =
         normalize_block_color(&lighting.ambient_color).ok_or("Choose a valid ambient color")?;
     if let Some(project) = s.project_mut() {
+        // A sky path here is the old spelling of an HDRI sky.
+        if !lighting.sky.trim().is_empty() {
+            let sky = &mut project.world.sky;
+            sky.kind = SkyKind::Hdri;
+            sky.hdri.path = lighting.sky.clone();
+            sky.hdri.brightness = lighting.sky_brightness;
+            sky.normalize();
+        }
         project.world.lighting = Lighting {
             light_color,
             ambient_color,
@@ -833,12 +842,7 @@ pub(crate) fn set_lighting(
             ambient_brightness: lighting.ambient_brightness.clamp(0.0, 1000.0),
             shadow_map_size: lighting.shadow_map_size.clamp(512, 8192),
             shadow_bias: lighting.shadow_bias.clamp(0.0, 0.5),
-            sky: lighting.sky.trim().replace('\\', "/"),
-            sky_brightness: if lighting.sky_brightness.is_finite() {
-                lighting.sky_brightness.clamp(0.0, 100_000.0)
-            } else {
-                1000.0
-            },
+            sky: String::new(),
             shadows: lighting.shadows.clone().sanitized(),
             ray_tracing: lighting.ray_tracing.clone().sanitized(),
             sun_cookie: lighting.sun_cookie.trim().replace('\\', "/"),
@@ -849,6 +853,33 @@ pub(crate) fn set_lighting(
             },
             ..lighting
         };
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Sets the 3D sky: its kind, the sun's position, each kind's settings and
+/// what it lights. What the project settings dialog's Sky section edits.
+pub(crate) fn set_sky(state: &SharedState, app: &AppHandle, sky: Sky) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut sky = sky;
+    sky.normalize();
+    for (name, color) in [
+        ("ground", &mut sky.physical.ground_albedo),
+        ("night", &mut sky.physical.night_color),
+        ("top", &mut sky.gradient.top),
+        ("middle", &mut sky.gradient.middle),
+        ("bottom", &mut sky.gradient.bottom),
+        ("warm", &mut sky.gradient.warm_color),
+        ("tint", &mut sky.hdri.tint),
+    ] {
+        *color = normalize_block_color(color).ok_or(format!("Choose a valid {name} color"))?;
+    }
+    if let Some(project) = s.project_mut() {
+        project.world.sky = sky;
     }
     auto_save(&s);
     sync_runtime(&mut s);

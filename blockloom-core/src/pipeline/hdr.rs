@@ -185,6 +185,33 @@ impl HdrImage {
         self.pixels[(y.min(self.height - 1) * self.width + x.min(self.width - 1)) as usize]
     }
 
+    /// Cross-fades a panorama's left and right edges over `degrees` either
+    /// side of its wrap seam, so a pano whose ends don't quite meet shows no
+    /// line. Each side is pulled towards the average of the two edges, fully
+    /// at the seam and not at all `degrees` away. Strips are left alone.
+    pub fn fix_seam(&mut self, degrees: f32) {
+        if !(degrees > 0.0) || SkyLayout::of(self.width, self.height) != SkyLayout::Equirect {
+            return;
+        }
+        let band = ((degrees / 360.0 * self.width as f32).round() as u32).clamp(1, self.width / 2);
+        let last = self.width - 1;
+        for y in 0..self.height {
+            let row = (y * self.width) as usize;
+            let left = self.pixels[row];
+            let right = self.pixels[row + last as usize];
+            let mean: [f32; 3] = std::array::from_fn(|c| (left[c] + right[c]) * 0.5);
+            for i in 0..band {
+                let weight = 1.0 - i as f32 / band as f32;
+                for (x, edge) in [(i, left), (last - i, right)] {
+                    let texel = &mut self.pixels[row + x as usize];
+                    for c in 0..3 {
+                        texel[c] = (texel[c] + (mean[c] - edge[c]) * weight).max(0.0);
+                    }
+                }
+            }
+        }
+    }
+
     /// Scales every texel by 2^`ev`: the per-texture exposure bias.
     pub fn bias(&mut self, ev: f32) {
         if ev == 0.0 || !ev.is_finite() {
@@ -299,6 +326,42 @@ impl HdrCube {
             texels
         });
         HdrCube { size, faces }
+    }
+
+    /// This cube and every level below it, each half the last, down to
+    /// `min` texels a side. Box-filtered, so a small bright sun spreads into
+    /// its neighbours rather than flickering in and out of a coarse level.
+    pub fn mip_chain(self, min: u32) -> Vec<HdrCube> {
+        let min = min.max(1);
+        let mut levels = vec![self];
+        loop {
+            let last = levels.last().unwrap();
+            if last.size / 2 < min || last.size % 2 != 0 {
+                break;
+            }
+            let size = last.size / 2;
+            let faces = std::array::from_fn(|face| {
+                let source = &last.faces[face];
+                let at = |x: u32, y: u32| source[(y * last.size + x) as usize];
+                let mut texels = Vec::with_capacity((size * size) as usize);
+                for y in 0..size {
+                    for x in 0..size {
+                        let quad = [
+                            at(2 * x, 2 * y),
+                            at(2 * x + 1, 2 * y),
+                            at(2 * x, 2 * y + 1),
+                            at(2 * x + 1, 2 * y + 1),
+                        ];
+                        texels.push(std::array::from_fn(|c| {
+                            quad.iter().map(|t| t[c]).sum::<f32>() * 0.25
+                        }));
+                    }
+                }
+                texels
+            });
+            levels.push(HdrCube { size, faces });
+        }
+        levels
     }
 
     /// The world direction a face texel looks along, undoing Bevy's z flip.
@@ -512,6 +575,39 @@ mod tests {
         assert_eq!((info.width, info.height), (256, 128));
         assert_eq!(info.channels, ["B", "G", "R"]);
         assert_eq!(info.bits, 16);
+    }
+
+    #[test]
+    fn a_seam_fix_meets_both_edges_in_the_middle() {
+        // Left edge 1, right edge 3: a visible line where the pano wraps.
+        let mut image = flat(72, 36, |x, _| if x < 36 { [1.0; 3] } else { [3.0; 3] });
+        image.fix_seam(10.0);
+        assert_eq!(image.at(0, 5), [2.0; 3]);
+        assert_eq!(image.at(71, 5), [2.0; 3]);
+        // Fading back to the original two degrees in from a 10 degree band.
+        assert!(image.at(1, 5)[0] > 1.0 && image.at(1, 5)[0] < 2.0);
+        assert_eq!(image.at(20, 5), [1.0; 3]);
+        assert_eq!(image.at(50, 5), [3.0; 3]);
+        // Off, or a strip, changes nothing.
+        let mut strip = flat(24, 4, |x, _| [x as f32; 3]);
+        let before = strip.clone();
+        strip.fix_seam(10.0);
+        assert_eq!(strip, before);
+    }
+
+    #[test]
+    fn a_mip_chain_halves_by_averaging() {
+        let image = flat(64, 32, |x, _| [x as f32; 3]);
+        let levels = HdrCube::from_image(&image, 16).mip_chain(1);
+        assert_eq!(
+            levels.iter().map(|l| l.size).collect::<Vec<_>>(),
+            [16, 8, 4, 2, 1]
+        );
+        let mean = |cube: &HdrCube| {
+            cube.faces.iter().flatten().map(|t| t[0]).sum::<f32>()
+                / (cube.size * cube.size * 6) as f32
+        };
+        assert!((mean(&levels[0]) - mean(&levels[4])).abs() < 1e-3);
     }
 
     #[test]

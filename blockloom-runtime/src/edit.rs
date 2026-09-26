@@ -2029,8 +2029,10 @@ mod tests {
         let mut editor = app.world_mut().resource_mut::<SceneEditor>();
         editor.selected = Some(parent.clone());
         editor.view.tool = SceneTool::Scale;
-        app.world_mut().non_send_mut::<Engine>().preview_inputs =
-            vec![button(0, true, from.0, from.1), button(0, false, to.0, to.1)];
+        app.world_mut().non_send_mut::<Engine>().preview_inputs = vec![
+            button(0, true, from.0, from.1),
+            button(0, false, to.0, to.1),
+        ];
         app.update();
         let editor = app.world().resource::<SceneEditor>();
         let Some(RuntimeMessage::Placed { placement, .. }) = editor.outbox.last() else {

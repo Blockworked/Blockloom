@@ -55,7 +55,8 @@ Rectangle {
         return ({ background: w.background || "#1B2431", sun_direction: l.light_direction, sun_color: l.light_color, illuminance: l.illuminance,
                   ambient_color: l.ambient_color, ambient_brightness: l.ambient_brightness, ao: l.ao_enabled, exposure: p.exposure_ev,
                   tonemapping: p.tonemapping, bloom: p.bloom_enabled, bloom_threshold: p.bloom_threshold, bloom_intensity: p.bloom_intensity,
-                  vignette: p.vignette_strength, reflections: 1, indirect: 1 })[key];
+                  vignette: p.vignette_strength, reflections: 1, indirect: 1,
+                  sky_exposure: w.sky ? w.sky.exposure : 0, ambient_dimmer: w.sky ? w.sky.ambient_dimmer : 1 })[key];
     }
     function overrideOf(v, key) { return Object.assign({ on: false, value: projectValue(key) }, (v.overrides || {})[key] || {}); }
     readonly property var volumeProperties: [
@@ -73,7 +74,9 @@ Rectangle {
         { key: "bloom_intensity", label: "Bloom ×", kind: "number" },
         { key: "vignette", label: "Vignette", kind: "number" },
         { key: "reflections", label: "Reflections ×", kind: "number", only3d: true },
-        { key: "indirect", label: "Indirect ×", kind: "number", only3d: true }
+        { key: "indirect", label: "Indirect ×", kind: "number", only3d: true },
+        { key: "sky_exposure", label: "Sky EV", kind: "number", only3d: true },
+        { key: "ambient_dimmer", label: "Sky ambient ×", kind: "number", only3d: true }
     ]
     function brainOf(c) { return Object.assign({ target: "", speed: 4, sight: 12, fov: 120, separation: 1, tree: { node: "Selector", children: [{ node: "Sequence", children: [{ node: "CanSeeTarget" }, { node: "NavigateToTarget" }] }, { node: "Idle" }] } }, c.brain || {}); }
     function tilemapOf(v) {

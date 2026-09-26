@@ -238,18 +238,30 @@ const HEADER_LEN: usize = 4 + 124 + 20;
 
 /// A cube as a DDS file: six BC6H faces, one mip each.
 pub fn write_dds_cube(cube: &HdrCube) -> Vec<u8> {
+    write_dds_cube_levels(std::slice::from_ref(cube))
+}
+
+/// A cube and its mip chain as one DDS file, each face followed by its
+/// smaller levels, the order a cube texture is uploaded in. Every level's
+/// side must be a multiple of 4, halving from the first.
+pub fn write_dds_cube_levels(levels: &[HdrCube]) -> Vec<u8> {
+    let cube = &levels[0];
     let face_bytes = (cube.size / 4) * (cube.size / 4) * 16;
-    let mut out = Vec::with_capacity(HEADER_LEN + face_bytes as usize * 6);
+    let mut out = Vec::with_capacity(HEADER_LEN + face_bytes as usize * 8);
     let u32s = |values: &[u32], out: &mut Vec<u8>| {
         for value in values {
             out.extend_from_slice(&value.to_le_bytes());
         }
     };
+    let mips = levels.len() as u32;
+    let mipped = mips > 1;
     out.extend_from_slice(DDS_MAGIC);
-    // size, flags (caps|height|width|pixelformat|linearsize), height, width,
-    // linear size, depth, mip count, 11 reserved.
+    // size, flags (caps|height|width|pixelformat|linearsize, plus mip count
+    // when there are several), height, width, linear size, depth, mip count,
+    // 11 reserved.
+    let flags = 0x0008_1007 | if mipped { 0x0002_0000 } else { 0 };
     u32s(
-        &[124, 0x0008_1007, cube.size, cube.size, face_bytes, 0, 1],
+        &[124, flags, cube.size, cube.size, face_bytes, 0, mips],
         &mut out,
     );
     u32s(&[0; 11], &mut out);
@@ -257,19 +269,43 @@ pub fn write_dds_cube(cube: &HdrCube) -> Vec<u8> {
     u32s(&[32, 0x4], &mut out);
     out.extend_from_slice(b"DX10");
     u32s(&[0; 5], &mut out);
-    // Caps: texture|complex, then cubemap with all six faces.
-    u32s(&[0x1008, 0xFE00, 0, 0, 0], &mut out);
+    // Caps: texture|complex (|mipmap), then cubemap with all six faces.
+    let caps = 0x1008 | if mipped { 0x40_0000 } else { 0 };
+    u32s(&[caps, 0xFE00, 0, 0, 0], &mut out);
     // DX10: format, 2D, cube flag, one cube, no alpha info.
     u32s(&[DXGI_BC6H_UF16, 3, 0x4, 1, 0], &mut out);
-    for face in &cube.faces {
-        out.extend_from_slice(&encode_face(face, cube.size));
+    for face in 0..6 {
+        for level in levels {
+            out.extend_from_slice(&encode_face(&level.faces[face], level.size));
+        }
     }
     out
 }
 
-/// Reads back what [`write_dds_cube`] wrote: the face side and the six faces'
-/// blocks, face after face.
-pub fn read_dds_cube(bytes: &[u8]) -> Result<(u32, &[u8]), String> {
+/// A BC6H cube read out of a DDS file.
+pub struct DdsCube<'a> {
+    /// The first level's face side.
+    pub size: u32,
+    pub mips: u32,
+    /// Every face's levels, face after face.
+    pub blocks: &'a [u8],
+}
+
+impl DdsCube<'_> {
+    /// A level's face side.
+    pub fn level_size(&self, mip: u32) -> u32 {
+        (self.size >> mip).max(4)
+    }
+
+    /// Bytes of one face at one level.
+    pub fn level_bytes(&self, mip: u32) -> usize {
+        let blocks = self.level_size(mip) / 4;
+        (blocks * blocks * 16) as usize
+    }
+}
+
+/// Reads back what [`write_dds_cube_levels`] wrote.
+pub fn read_dds_cube_levels(bytes: &[u8]) -> Result<DdsCube<'_>, String> {
     let word = |at: usize| -> Result<u32, String> {
         bytes
             .get(at..at + 4)
@@ -286,11 +322,30 @@ pub fn read_dds_cube(bytes: &[u8]) -> Result<(u32, &[u8]), String> {
     if size == 0 || size % 4 != 0 {
         return Err(format!("a {size} texel face doesn't fit 4x4 blocks"));
     }
-    let face = (size / 4) * (size / 4) * 16;
-    let data = bytes
-        .get(HEADER_LEN..HEADER_LEN + face as usize * 6)
+    let mips = word(28)?.max(1);
+    if mips > 1 && (!size.is_power_of_two() || size >> (mips - 1) < 4) {
+        return Err(format!("{mips} levels don't fit a {size} texel face"));
+    }
+    let mut cube = DdsCube {
+        size,
+        mips,
+        blocks: &[],
+    };
+    let total: usize = (0..mips).map(|mip| cube.level_bytes(mip)).sum::<usize>() * 6;
+    cube.blocks = bytes
+        .get(HEADER_LEN..HEADER_LEN + total)
         .ok_or_else(|| "DDS cube is truncated".to_string())?;
-    Ok((size, data))
+    Ok(cube)
+}
+
+/// Reads back what [`write_dds_cube`] wrote: the face side and the six faces'
+/// blocks, face after face. A file with mips is refused.
+pub fn read_dds_cube(bytes: &[u8]) -> Result<(u32, &[u8]), String> {
+    let cube = read_dds_cube_levels(bytes)?;
+    if cube.mips != 1 {
+        return Err("expected a DDS cube without mips".to_string());
+    }
+    Ok((cube.size, cube.blocks))
 }
 
 #[cfg(test)]
@@ -347,5 +402,24 @@ mod tests {
         let red = f16::from_le_bytes([third[0], third[1]]).to_f32();
         assert!(relative_error(red, 3.5) < 0.02, "{red}");
         assert!(read_dds_cube(&file[..100]).is_err());
+    }
+
+    #[test]
+    fn a_mip_chain_survives_the_dds_file_face_by_face() {
+        let faces = std::array::from_fn(|face| vec![[face as f32 + 0.5; 3]; 256]);
+        let levels = HdrCube { size: 16, faces }.mip_chain(4);
+        assert_eq!(levels.len(), 3);
+        let file = write_dds_cube_levels(&levels);
+        let cube = read_dds_cube_levels(&file).unwrap();
+        assert_eq!((cube.size, cube.mips), (16, 3));
+        // Face 2's smallest level: past two whole faces and face 2's first
+        // two levels.
+        let per_face: usize = (0..3).map(|mip| cube.level_bytes(mip)).sum();
+        let at = per_face * 2 + cube.level_bytes(0) + cube.level_bytes(1);
+        let texels = decode_face(&cube.blocks[at..at + cube.level_bytes(2)], 4).unwrap();
+        let red = f16::from_le_bytes([texels[0], texels[1]]).to_f32();
+        assert!(relative_error(red, 2.5) < 0.02, "{red}");
+        // The single-level reader refuses it rather than misreading it.
+        assert!(read_dds_cube(&file).is_err());
     }
 }

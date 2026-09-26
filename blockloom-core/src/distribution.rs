@@ -447,7 +447,11 @@ mod tests {
         for (name, contents, mode) in [
             ("Pond Game (Linux x64)/Pond Game", "player", 0o100755),
             ("Pond Game (Linux x64)/game/game.pack", "pack", 0o100644),
-            ("Pond Game (Linux x64)/game/assets/pond.txt", "ripples", 0o100644),
+            (
+                "Pond Game (Linux x64)/game/assets/pond.txt",
+                "ripples",
+                0o100644,
+            ),
         ] {
             let mut entry = zip.by_name(name).unwrap();
             assert_eq!(entry.unix_mode(), Some(mode), "{name}");

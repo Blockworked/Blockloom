@@ -68,6 +68,10 @@ pub struct VolumeOverrides {
     pub reflections: Override<f32>,
     /// Multiplies irradiance volumes.
     pub indirect: Override<f32>,
+    /// EV added to the sky's brightness, background and light alike.
+    pub sky_exposure: Override<f32>,
+    /// Multiplies the sky's diffuse light alone.
+    pub ambient_dimmer: Override<f32>,
 }
 
 impl Default for VolumeOverrides {
@@ -91,6 +95,8 @@ impl Default for VolumeOverrides {
             vignette: Override::off(post.vignette_strength),
             reflections: Override::off(1.0),
             indirect: Override::off(1.0),
+            sky_exposure: Override::off(world.sky.exposure),
+            ambient_dimmer: Override::off(world.sky.ambient_dimmer),
         }
     }
 }
@@ -114,6 +120,8 @@ impl VolumeOverrides {
             ("vignette", self.vignette.on),
             ("reflections", self.reflections.on),
             ("indirect", self.indirect.on),
+            ("sky_exposure", self.sky_exposure.on),
+            ("ambient_dimmer", self.ambient_dimmer.on),
         ]
         .into_iter()
         .filter_map(|(name, on)| on.then_some(name))

@@ -548,12 +548,9 @@ and `peak brightness`. `capture.rs` answers `EditorMessage::CaptureExr`: a
 second camera renders the same view untonemapped into FP16, read back and
 written as OpenEXR (`capture_exr`, the Game view's camera button).
 
-`sky.rs` (3D) turns `lighting.sky`, a Radiance/EXR panorama or strip, into a
-cube on a background task and puts it on the world camera as a `Skybox` and
-a `GeneratedEnvironmentMapLight` at `sky_brightness` nits. A build bakes the
-cube to BC6H (`pipeline::bc6h`, `build::bake_sky`) and drops the source; the
-runtime loads that compressed where the GPU has BC, decoded otherwise. An HDR
-asset's exposure bias (`set_exposure_bias`) is applied wherever it is loaded.
+The sky (below) is drawn and lights the world in the same FP16 frame. An
+HDR asset's exposure bias (`set_exposure_bias`) is applied wherever it is
+loaded.
 `set my glow to` gives an actor its own material with the emissive scaled
 (`dim3::set_glow`).
 
@@ -567,6 +564,42 @@ The GPU half is checked by the ignored tests in `embed.rs` (`cargo test -p
 blockloom-runtime -- --ignored embed`), which read pixels back from a real
 world: false color in both dimensions, a lamp that still lights the floor
 after batching, and an EXR capture that stays linear.
+
+### Sky
+
+`World::sky` (`blockloom-core/src/sky.rs`) is one of four kinds: `Flat` (the
+background color and flat ambient, the default), `Physical` (Rayleigh, Mie
+and ozone single scattering, a limb-darkened sun and a phased moon, a night
+tint ramped on the sun), `Gradient` (three stops that warm near a low sun)
+and `Hdri` (a panorama or strip, turned and tilted, tinted, optionally
+blurred). `SunPlacement` decides where the sun stands for every kind - the
+lighting's own direction, azimuth and elevation, or NOAA's solar position
+from latitude, longitude, day and hour - and `Environment::from_world`
+takes it from there, so volumes still override it. A physical sky's air
+then reddens and dims the light (`Environment::through_air`, the CPU half of
+the same model, kept as `Sun::above_air` for the sky to scatter). Old
+documents' `lighting.sky` path becomes an HDRI sky in `Project::normalize`.
+
+`blockloom-runtime/src/sky.rs` renders it, 3D only. `SkyParams` (the WESL
+struct in core's `shaders/sky.wesl`, the `blockloom::sky` library module,
+field for field) is resolved each frame from the sky and the blended
+`Environment`. When it changes, `shaders/sky_cube.wesl` writes the sky's
+light, disks left out, into a 256 cube and a 32 cube scaled by the ambient
+dimmer; Bevy's `GeneratedEnvironmentMapLight` filters them on two helper
+entities (`SkyProbe`), and the world camera's `EnvironmentMapLight` takes
+reflections from one and diffuse from the other, or a black cube for
+whichever the sky's toggles leave out. The filter stops a few frames after
+the render world reports the cubes written (`SkyRender::written`) and the
+pipeline backlog is empty, so a still sky is filtered once. Cubes store
+nits over `SKY_UNIT` to stay inside FP16. The background is
+`shaders/sky_background.wesl`, drawn per pixel in Bevy's opaque pass
+through the skybox slot (`SkyView` supplies `SkyboxPipelineId`/
+`SkyboxBindGroup`, never a `Skybox`): gradients per pixel with dither, the
+physical sky from its cube plus analytic disks, an HDRI sharp from its image
+or blurred from the filtered mips. Probe faces and EXR captures copy
+`SkyView` (probe faces without the disks). A build bakes an HDRI to a BC6H
+cube with its mip chain (`build::bake_sky`, seam fix applied) and drops the
+source. `sky_exposure` and `ambient_dimmer` are volume properties too.
 
 ### Lighting rig
 

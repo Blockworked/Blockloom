@@ -628,16 +628,19 @@ fn bake_sprite_atlas(project: &Project, project_dir: &Path, game: &Path) -> Resu
     Ok(0)
 }
 
-/// Bakes a 3D sky's HDR file into a BC6H cube the player loads as is, with
-/// its exposure bias applied, and drops the source from the build. A file
-/// that won't decode ships as it is and fails the way it does in Play.
+/// Bakes a 3D HDRI sky's file into a BC6H cube with its mip chain, which
+/// the player loads as is, with its exposure bias and seam fix applied, and
+/// drops the source from the build. A file that won't decode ships as it is
+/// and fails the way it does in Play.
 fn bake_sky(project: &Project, project_dir: &Path, game: &Path) -> Result<bool, String> {
     use crate::pipeline::{self, bc6h, hdr};
-    let sky = &project.world.lighting.sky;
-    if project.world.mode != crate::scene::Mode::ThreeD || sky.is_empty() {
+    let sky = &project.world.sky;
+    if project.world.mode != crate::scene::Mode::ThreeD
+        || sky.active_kind() != crate::sky::SkyKind::Hdri
+    {
         return Ok(false);
     }
-    let Some(relative) = crate::assets::normalize(sky) else {
+    let Some(relative) = crate::assets::normalize(&sky.hdri.path) else {
         return Ok(false);
     };
     let Ok(mut image) = hdr::load_hdr(project_dir, &relative) else {
@@ -645,12 +648,13 @@ fn bake_sky(project: &Project, project_dir: &Path, game: &Path) -> Result<bool, 
     };
     let manifest = pipeline::load_manifest(project_dir);
     image.bias(manifest.bias_of(&relative));
+    image.fix_seam(sky.hdri.seam_fix);
     let cube = hdr::HdrCube::from_image(&image, (manifest.settings.hdr_max / 2).max(64));
     let out = game.join(pipeline::baked_sky_path(&relative));
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
-    std::fs::write(&out, bc6h::write_dds_cube(&cube))
+    std::fs::write(&out, bc6h::write_dds_cube_levels(&cube.mip_chain(4)))
         .map_err(|e| format!("{}: {e}", out.display()))?;
     if let Some(copied) = crate::assets::resolve(game, &relative) {
         let _ = std::fs::remove_file(copied);
@@ -956,7 +960,8 @@ mod tests {
         let root = temp("sky");
         let (mut project, project_dir, player) = a_project(&root);
         project.world.mode = Mode::ThreeD;
-        project.world.lighting.sky = "assets/sky.hdr".to_string();
+        project.world.sky.kind = crate::sky::SkyKind::Hdri;
+        project.world.sky.hdri.path = "assets/sky.hdr".to_string();
         let mut bytes = Vec::new();
         image::codecs::hdr::HdrEncoder::new(&mut bytes)
             .encode(&vec![image::Rgb([4.0f32, 2.0, 1.0]); 64 * 32], 64, 32)
@@ -981,8 +986,9 @@ mod tests {
         let game = pack::game_dir(&built.dir);
         let baked =
             std::fs::read(game.join(crate::pipeline::baked_sky_path("assets/sky.hdr"))).unwrap();
-        let (size, _) = crate::pipeline::bc6h::read_dds_cube(&baked).unwrap();
-        assert_eq!(size, 16);
+        let cube = crate::pipeline::bc6h::read_dds_cube_levels(&baked).unwrap();
+        // 16 down to one 4x4 block.
+        assert_eq!((cube.size, cube.mips), (16, 3));
         assert!(!game.join("assets/sky.hdr").exists());
         assert!(!GamePack::read(&pack::pack_path(&game)).unwrap().hdr);
         let _ = std::fs::remove_dir_all(root);

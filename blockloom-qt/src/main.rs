@@ -48,7 +48,9 @@ fn main() {
                 eprintln!("failed to create QML root object from {url}");
             })
             .release();
-        engine.load(&QUrl::from("qrc:/qt/qml/com/blockworked/Blockloom/qml/Main.qml"));
+        engine.load(&QUrl::from(
+            "qrc:/qt/qml/com/blockworked/Blockloom/qml/Main.qml",
+        ));
         app_icon::apply_to_windows();
     }
     if let Some(engine) = engine.as_mut() {

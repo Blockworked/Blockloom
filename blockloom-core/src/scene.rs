@@ -452,13 +452,11 @@ pub struct Lighting {
     /// bias stays at Bevy's own default.
     #[serde(default = "default_shadow_bias")]
     pub shadow_bias: f32,
-    /// An HDR image (`.hdr`/`.exr`) the 3D sky is drawn and lit from: an
-    /// equirectangular panorama, or a 6:1 / 1:6 strip of cube faces. Empty
-    /// keeps the flat background.
-    #[serde(default)]
+    /// Where an HDR sky lived before `World::sky`: read from old documents,
+    /// moved there by `Project::normalize`, never written.
+    #[serde(default, skip_serializing)]
     pub sky: String,
-    /// Luminance of a sky texel of 1.0, in nits. Bevy's own skybox default.
-    #[serde(default = "default_sky_brightness")]
+    #[serde(default = "default_sky_brightness", skip_serializing)]
     pub sky_brightness: f32,
     #[serde(default)]
     pub shadows: ShadowSettings,
@@ -942,6 +940,9 @@ pub struct World {
     /// Cost regions and explicit links in the navigation plane.
     #[serde(default)]
     pub navigation: crate::nav::NavSettings,
+    /// The 3D sky: background, ambient light and reflections.
+    #[serde(default)]
+    pub sky: crate::sky::Sky,
 }
 
 fn default_background() -> String {
@@ -975,6 +976,7 @@ impl Default for World {
             post: PostProcess::default(),
             display: DisplayOutput::default(),
             navigation: crate::nav::NavSettings::default(),
+            sky: crate::sky::Sky::default(),
         }
     }
 }

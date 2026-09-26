@@ -742,6 +742,7 @@ impl Project {
     /// Repairs and canonicalizes a just-loaded document, once.
     pub fn normalize(&mut self) {
         self.migrate_camera_follow();
+        self.migrate_sky();
         self.prune_parents();
         let known: std::collections::HashSet<String> =
             self.actors.iter().map(|a| a.id.clone()).collect();
@@ -764,6 +765,20 @@ impl Project {
             actor.graph.normalize_block_colors();
             actor.graph.prune_orphaned_comments();
         }
+    }
+
+    /// An HDR sky used to be a path on the lighting. It is an HDRI sky now,
+    /// at the same brightness.
+    fn migrate_sky(&mut self) {
+        let lighting = &mut self.world.lighting;
+        let path = std::mem::take(&mut lighting.sky);
+        if !path.is_empty() {
+            let sky = &mut self.world.sky;
+            sky.kind = crate::sky::SkyKind::Hdri;
+            sky.hdri.path = path;
+            sky.hdri.brightness = lighting.sky_brightness;
+        }
+        self.world.sky.normalize();
     }
 
     /// Pre-component projects named the followed actor on the world camera.
@@ -886,8 +901,16 @@ impl Project {
             }
         };
         for style in self.world.interface.styles.values_mut() {
-            for paint in [&mut style.normal, &mut style.hover, &mut style.pressed, &mut style.disabled, &mut style.focused] {
-                for font in &mut paint.fonts { repoint(font); }
+            for paint in [
+                &mut style.normal,
+                &mut style.hover,
+                &mut style.pressed,
+                &mut style.disabled,
+                &mut style.focused,
+            ] {
+                for font in &mut paint.fonts {
+                    repoint(font);
+                }
             }
         }
         for path in &mut self.world.interface.stylesheets {
@@ -916,7 +939,7 @@ impl Project {
             }
         }
         repoint(&mut self.icon);
-        repoint(&mut self.world.lighting.sky);
+        repoint(&mut self.world.sky.hdri.path);
         if let Some(font) = self.world.speech_bubble.font_asset.as_mut() {
             repoint(font);
         }
@@ -1574,6 +1597,25 @@ mod tests {
         assert_eq!(material.albedo_texture, "art/hero.png");
         assert_eq!(material.normal_texture, "art/normal.png");
         assert_eq!(material.roughness_texture, "art/rough.png");
+    }
+
+    #[test]
+    fn an_old_lighting_sky_becomes_an_hdri_sky() {
+        let mut project = Project::starter("Sky", Mode::ThreeD);
+        let mut json = serde_json::to_value(&project).unwrap();
+        json["world"]["lighting"]["sky"] = "assets/sky.hdr".into();
+        json["world"]["lighting"]["sky_brightness"] = 2500.0.into();
+        project = serde_json::from_value(json).unwrap();
+        project.normalize();
+        let sky = &project.world.sky;
+        assert_eq!(sky.kind, crate::sky::SkyKind::Hdri);
+        assert_eq!(sky.hdri.path, "assets/sky.hdr");
+        assert_eq!(sky.hdri.brightness, 2500.0);
+        assert!(project.world.lighting.sky.is_empty());
+        // Written back, only the new place remains.
+        let json = serde_json::to_value(&project).unwrap();
+        assert!(json["world"]["lighting"].get("sky").is_none());
+        assert_eq!(json["world"]["sky"]["hdri"]["path"], "assets/sky.hdr");
     }
 
     #[test]

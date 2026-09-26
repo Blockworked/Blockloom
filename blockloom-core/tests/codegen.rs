@@ -1465,7 +1465,10 @@ fn by_vm(project: &Project) -> Vec<String> {
     vm.fire(Event::UiClicked {
         id: "resume".to_string(),
     });
-    vm.fire(Event::UiEvent { id: "resume".into(), event: "hover".into() });
+    vm.fire(Event::UiEvent {
+        id: "resume".into(),
+        event: "hover".into(),
+    });
     // A Walk clip ending on the harness player, beside the green flag: a
     // case with a `when animation ends` strand gets one, like above.
     vm.fire(Event::AnimationEnded {
@@ -4074,10 +4077,30 @@ fn framework_widgets_and_property_blocks_match_native_logic() {
 
 #[test]
 fn bubbled_ui_event_strands_run_while_the_world_is_paused() {
-    assert_same_headed("interface-hover", vec![
-        (K::WhenStarted, vec![K::PauseGame]),
-        (K::WhenUiEvent { element: "resume".into(), event: "hover".into() },
-            vec![say("hover"), K::Wait { duration: number(0.05) }, say("still alive")]),
-        (K::WhenUiEvent { element: "other".into(), event: "hover".into() }, vec![say("wrong widget")]),
-    ]);
+    assert_same_headed(
+        "interface-hover",
+        vec![
+            (K::WhenStarted, vec![K::PauseGame]),
+            (
+                K::WhenUiEvent {
+                    element: "resume".into(),
+                    event: "hover".into(),
+                },
+                vec![
+                    say("hover"),
+                    K::Wait {
+                        duration: number(0.05),
+                    },
+                    say("still alive"),
+                ],
+            ),
+            (
+                K::WhenUiEvent {
+                    element: "other".into(),
+                    event: "hover".into(),
+                },
+                vec![say("wrong widget")],
+            ),
+        ],
+    );
 }

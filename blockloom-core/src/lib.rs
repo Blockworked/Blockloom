@@ -25,6 +25,8 @@
 //!   a host to apply. `blockloom-runtime` is that host.
 //! - [`sense`] is the world state reporter blocks read, published by the host
 //!   once a frame.
+//! - [`sky`] is the 3D sky: its kind, where the sun and moon stand, and how
+//!   much sunlight the atmosphere lets through.
 //! - [`ui`] is the screen-space overlay a game builds out of blocks: what
 //!   kinds of element there are, where one sits, and what a block can change.
 //! - [`pipeline`] is the asset pipeline: model rigs, atlases, texture and
@@ -55,6 +57,7 @@ pub mod scene;
 pub mod script;
 pub mod sense;
 pub mod shader_lib;
+pub mod sky;
 pub mod sound;
 pub mod sync;
 pub mod ui;

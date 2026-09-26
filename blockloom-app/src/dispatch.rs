@@ -142,6 +142,10 @@ impl Backend {
                 let display: DisplayOutput = arg(&args, "display")?;
                 to_json(commands::set_display_output(state, app, display)?)
             }
+            "set_sky" => {
+                let sky: blockloom_core::sky::Sky = arg(&args, "sky")?;
+                to_json(commands::set_sky(state, app, sky)?)
+            }
             "set_post_process" => {
                 let post: PostProcess = arg(&args, "post")?;
                 to_json(commands::set_post_process(state, app, post)?)

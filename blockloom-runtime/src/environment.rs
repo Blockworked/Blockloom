@@ -47,6 +47,10 @@ pub struct Environment {
     pub reflections: f32,
     /// Multiplier on irradiance volumes. Only volumes move it off 1.
     pub indirect: f32,
+    /// EV added to the sky, after `exposure`.
+    pub sky_exposure: f32,
+    /// Multiplier on the sky's diffuse light alone.
+    pub ambient_dimmer: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -57,6 +61,10 @@ pub struct Sun {
     pub illuminance: f32,
     pub shadow_bias: f32,
     pub shadow_map_size: usize,
+    /// Sunlight before the air: `color` times `illuminance`, lux per
+    /// channel. The physical sky scatters this; the light itself carries
+    /// what gets through.
+    pub above_air: Vec3,
 }
 
 impl Default for Environment {
@@ -78,10 +86,9 @@ impl Environment {
     pub fn from_world(world: &scene::World) -> Self {
         let lighting = &world.lighting;
         let post = &world.post;
-        // A zero direction has nowhere to point, so fall back to straight down.
-        let direction = Vec3::from_array(lighting.light_direction)
-            .try_normalize()
-            .unwrap_or(Vec3::Y);
+        // The sky decides where the sun stands, from the light direction by
+        // default.
+        let direction = Vec3::from_array(world.sky.sun_direction(lighting.light_direction));
         Self {
             background: parse_color(&world.background),
             sun: Sun {
@@ -90,6 +97,7 @@ impl Environment {
                 illuminance: lighting.illuminance.max(0.0),
                 shadow_bias: lighting.shadow_bias,
                 shadow_map_size: shadow_map_size(lighting.shadow_map_size),
+                above_air: Vec3::ZERO,
             },
             ambient_color: parse_color(&lighting.ambient_color),
             ambient_brightness: lighting.ambient_brightness.max(0.0),
@@ -102,7 +110,33 @@ impl Environment {
             vignette: post.vignette_strength.clamp(0.0, 1.0),
             reflections: 1.0,
             indirect: 1.0,
+            sky_exposure: world.sky.exposure,
+            ambient_dimmer: world.sky.ambient_dimmer,
         }
+    }
+
+    /// Lets the physical sky's air redden and dim the sun, once the volumes
+    /// have had their say on where it stands.
+    pub fn through_air(&mut self, sky: &blockloom_core::sky::Sky) {
+        let color = self.sun.color.to_linear();
+        self.sun.above_air = Vec3::new(color.red, color.green, color.blue) * self.sun.illuminance;
+        let [r, g, b] = sky.sun_transmittance(self.sun.direction.to_array());
+        let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        if luminance >= 1.0 {
+            return;
+        }
+        // The hue goes on the color and the dimming on the lux, so the light
+        // keeps a color a picker can show.
+        let peak = r.max(g).max(b);
+        if peak > 0.0 {
+            self.sun.color = LinearRgba::rgb(
+                color.red * r / peak,
+                color.green * g / peak,
+                color.blue * b / peak,
+            )
+            .into();
+        }
+        self.sun.illuminance *= peak;
     }
 
     /// Lays one volume over this at `weight` (0 to 1). Numbers and colors
@@ -148,6 +182,8 @@ impl Environment {
         number(&mut self.vignette, over.vignette);
         number(&mut self.reflections, over.reflections);
         number(&mut self.indirect, over.indirect);
+        number(&mut self.sky_exposure, over.sky_exposure);
+        number(&mut self.ambient_dimmer, over.ambient_dimmer);
     }
 }
 
@@ -169,6 +205,8 @@ pub struct EnvironmentOverride {
     pub vignette: Option<f32>,
     pub reflections: Option<f32>,
     pub indirect: Option<f32>,
+    pub sky_exposure: Option<f32>,
+    pub ambient_dimmer: Option<f32>,
 }
 
 impl EnvironmentOverride {
@@ -191,6 +229,8 @@ impl EnvironmentOverride {
             vignette: overrides.vignette.get().map(|v| v.clamp(0.0, 1.0)),
             reflections: overrides.reflections.get().map(|m| m.max(0.0)),
             indirect: overrides.indirect.get().map(|m| m.max(0.0)),
+            sky_exposure: overrides.sky_exposure.get().filter(|ev| ev.is_finite()),
+            ambient_dimmer: overrides.ambient_dimmer.get().map(|m| m.max(0.0)),
         }
     }
 
@@ -216,6 +256,8 @@ impl EnvironmentOverride {
             ("vignette", self.vignette.map(show_number)),
             ("reflections", self.reflections.map(show_number)),
             ("indirect", self.indirect.map(show_number)),
+            ("sky_exposure", self.sky_exposure.map(show_number)),
+            ("ambient_dimmer", self.ambient_dimmer.map(show_number)),
         ]
         .into_iter()
         .filter_map(|(name, value)| Some((name, value?)))
@@ -242,6 +284,8 @@ impl Environment {
             ("vignette", show_number(self.vignette)),
             ("reflections", show_number(self.reflections)),
             ("indirect", show_number(self.indirect)),
+            ("sky_exposure", show_number(self.sky_exposure)),
+            ("ambient_dimmer", show_number(self.ambient_dimmer)),
         ]
     }
 }
@@ -311,6 +355,7 @@ pub fn blend_environment(
     for (weight, over) in &volumes.0 {
         blended.blend(over, *weight);
     }
+    blended.through_air(&engine.project.world.sky);
     blended.exposure = claims.resolve(blended.exposure);
     environment.set_if_neq(blended);
 }

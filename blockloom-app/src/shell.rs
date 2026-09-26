@@ -315,7 +315,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "set-lighting",
         cmd: "set_lighting",
         aliases: &["set_lighting"],
-        summary: "Set the 3D world's light direction, colors, brightness and AO.",
+        summary: "Set the 3D world's light direction, colors, brightness, AO, shadows and ray tracing.",
         args: &[ArgSpec {
             name: "lighting",
             ty: "object",
@@ -362,6 +362,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         summary: "Set the saved mix: master, music and effects gains, linear 0-2.",
         args: &[ArgSpec {
             name: "mixer",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-sky",
+        cmd: "set_sky",
+        aliases: &["set_sky"],
+        summary: "Set the 3D sky: kind (Flat, Physical, Gradient, Hdri), sun placement, each kind's settings, and background/reflections/lighting.",
+        args: &[ArgSpec {
+            name: "sky",
             ty: "object",
             required: true,
         }],

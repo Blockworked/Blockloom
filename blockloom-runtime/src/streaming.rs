@@ -596,7 +596,9 @@ pub fn warm_up(
     let began = *warmup.began.get_or_insert(now);
     warmup.frames += 1;
     for entity in &culled {
-        commands.entity(entity).try_insert((NoFrustumCulling, Warming));
+        commands
+            .entity(entity)
+            .try_insert((NoFrustumCulling, Warming));
     }
     let pending = loads.pending + cells.loading() + backlog.map_or(0, |b| b.get());
     warmup.quiet = if pending == 0 { warmup.quiet + 1 } else { 0 };

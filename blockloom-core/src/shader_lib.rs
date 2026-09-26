@@ -1,5 +1,5 @@
-//! Blockloom's own WESL modules: hashes, noise, FBM, scattering and the
-//! standard per-view uniform. The runtime registers each as
+//! Blockloom's own WESL modules: hashes, noise, FBM, scattering, the
+//! standard per-view uniform and the sky. The runtime registers each as
 //! `blockloom::<name>`, so the built-in passes and a project's surface files
 //! import them the way they import Bevy's (`import blockloom::fbm::fbm3;`).
 //! Kept here rather than in the runtime so the editor's shader check
@@ -18,6 +18,7 @@ pub const MODULES: &[(&str, &str)] = &[
     ("fbm", include_str!("shaders/fbm.wesl")),
     ("scattering", include_str!("shaders/scattering.wesl")),
     ("frame", include_str!("shaders/frame.wesl")),
+    ("sky", include_str!("shaders/sky.wesl")),
 ];
 
 pub fn module(name: &str) -> Option<&'static str> {

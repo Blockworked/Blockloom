@@ -402,7 +402,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         with raster lights; skinned meshes trace in their bind pose; the path
         tracer shows a flat background as black (a sky shows); only run here
         on Intel Arc through Mesa, not yet on RTX or DX12.
-  - [ ] Sky types (all feed background, ambient probe and reflections together):
+  - [x] Sky types (all feed background, ambient probe and reflections together):
         - Procedural physical sky: sun disk (size, limb darkening, intensity) plus
           moon disk (size, phase 0-1, halo power), Rayleigh RGB scattering, Mie
           anisotropy g plus directional intensity, ozone absorption, Rayleigh and Mie
@@ -420,6 +420,26 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           Import bakes diffuse/roughness mip chain once, reused by probes.
         - Shared: background vs reflection vs lighting contribution toggles, ambient
           probe dimmer, sky-to-fog blend at horizon so fog never hard-edges.
+        Done: `World::sky` (`blockloom-core/src/sky.rs`) is flat, physical,
+        gradient or HDRI, with a shared sun placement (the light direction,
+        azimuth/elevation, or NOAA's solar position from lat/long, day and
+        hour) that moves the sun light too; a physical sky's air reddens and
+        dims it by the same model. `blockloom-runtime/src/sky.rs` writes the
+        sky's light into a cube and a small dimmed one on change
+        (`shaders/sky_cube.wesl`), Bevy filters them once per change, and
+        the camera takes reflections from one and diffuse from the other, or
+        black where a toggle says no. The background is drawn per pixel in
+        the skybox slot: dithered gradients, the physical sky with sharp
+        limb-darkened sun and phased, haloed moon, HDRIs sharp or blurred from
+        the filtered mips, turned, tilted and tinted. Builds bake an HDRI to
+        BC6H with its mip chain, seam fix applied. Sky exposure (EV on top of
+        the camera's) and the ambient dimmer are volume properties.
+        Not covered: sky-to-fog blend, since there is no fog yet (the fog
+        item reads the sky); the physical sky is single scattering only, so
+        twilight zeniths run dark; the roughness chain is filtered on the GPU
+        when the sky changes rather than baked at import; the seam fix blends
+        a panorama's wrap seam, not its horizon; no blocks drive the sun or
+        time of day yet; 2D worlds have no sky.
   - [ ] Atmosphere, fog and space:
         - Height fog: base height, falloff, extinction distance, inscatter color
           keyed to sun elevation (warm at dusk, gray at noon), sun disk inscatter

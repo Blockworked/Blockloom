@@ -6,7 +6,6 @@ use crate::bridge;
 use crate::environment::Environment;
 use crate::world::WorldCamera;
 use bevy::camera::{Hdr, RenderTarget};
-use bevy::core_pipeline::Skybox;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
@@ -66,7 +65,8 @@ type CapturedView = (
     &'static Projection,
     &'static GlobalTransform,
     Has<Camera3d>,
-    Option<&'static Skybox>,
+    Option<&'static crate::sky::SkyView>,
+    Option<&'static bevy::light::EnvironmentMapLight>,
     Option<&'static Bloom>,
 );
 
@@ -89,7 +89,8 @@ fn run_exr_captures(
                 let size = found.1.physical_target_size()?;
                 (size.min_element() > 0).then_some((found, size))
             });
-        let Some(((source, camera, projection, transform, is_3d, skybox, bloom), size)) = ready
+        let Some(((source, camera, projection, transform, is_3d, sky, sky_light, bloom), size)) =
+            ready
         else {
             captures.waited += 1;
             if captures.waited > CAMERA_WAIT_FRAMES {
@@ -128,8 +129,11 @@ fn run_exr_captures(
         ));
         if is_3d {
             entity.insert(Camera3d::default());
-            if let Some(skybox) = skybox {
-                entity.insert(skybox.clone());
+            if let Some(sky) = sky {
+                entity.insert(*sky);
+            }
+            if let Some(light) = sky_light {
+                entity.insert(light.clone());
             }
         } else {
             entity.insert(Camera2d);

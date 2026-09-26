@@ -1844,6 +1844,64 @@ mod tests {
         assert!(is_red(pixel), "expected the volume's red, read {pixel:?}");
     }
 
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_physical_sky_paints_a_blue_day_behind_the_world() {
+        use blockloom_core::sky::{SkyKind, SunMode};
+        let mut room = dark_room(false);
+        room.world.lighting.illuminance = 10_000.0;
+        room.world.sky.kind = SkyKind::Physical;
+        room.world.sky.sun.mode = SunMode::Manual;
+        room.world.sky.sun.elevation = 50.0;
+        // Up above the floor, looking at the sky away from the sun.
+        room.world.camera.position = [0.0, 1.0, 0.0];
+        room.world.camera.look_at = [0.0, 6.0, 10.0];
+        let blue = |[r, _, b]: [u8; 3]| b > r.saturating_add(20);
+        let (set, index, errors) = run_world(room, |_| {}, game_camera(), 5, blue);
+        assert!(errors.is_empty(), "{errors:?}");
+        let set = set.unwrap_or_else(|| panic!("no frame arrived"));
+        let pixel = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        assert!(blue(pixel), "expected a blue sky, read {pixel:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_gradient_sky_lights_the_floor_unless_told_not_to() {
+        use blockloom_core::sky::SkyKind;
+        let room = |lighting: bool| {
+            // No sun and no ambient: only the sky can light the floor.
+            let mut room = dark_room(false);
+            let sky = &mut room.world.sky;
+            sky.kind = SkyKind::Gradient;
+            sky.lighting = lighting;
+            sky.reflections = false;
+            for stop in [
+                &mut sky.gradient.top,
+                &mut sky.gradient.middle,
+                &mut sky.gradient.bottom,
+            ] {
+                *stop = "#FFFFFF".to_string();
+            }
+            room
+        };
+        let lit = floor_pixel(run_world(
+            room(true),
+            |_| {},
+            game_camera(),
+            0,
+            |pixel| pixel.iter().all(|c| *c > 60),
+        ));
+        assert!(
+            lit.iter().all(|c| *c > 60),
+            "expected the sky's light, read {lit:?}"
+        );
+        let dark = floor_pixel(run_world(room(false), |_| {}, game_camera(), 30, |_| false));
+        assert!(
+            dark.iter().all(|c| *c < 30),
+            "expected a dark floor, read {dark:?}"
+        );
+    }
+
     /// A plain volume (no overrides) at `at`, and the heat map switched on.
     fn heat_world(mode: Mode, at: [f32; 3]) -> (blockloom_core::project::Project, SceneView) {
         use blockloom_core::components::ActorComponent;
