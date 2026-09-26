@@ -690,14 +690,19 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         `water_at` (height, normal, velocity, foam), `is_underwater` and
         `set_water`. 2D water is a strip with the same waves, depth color,
         caustics and a foam line.
-        Not covered: the probe is a cube at the surface rather than a true
-        planar mirror camera, and it doesn't blur with roughness; ripples
-        are drawn, not simulated, and nothing floats on them; far ocean waves
-        flatten beyond about 16 wavelengths from the camera, so buoyancy out
-        there floats on slightly taller water than is drawn; wave headings
-        are fixed for the run (the authored wind direction); the surface has
-        no fog of its own (the fog pass sees the floor under it). The ignored
-        embed test only checks a lake tints what is under it.
+        Also done: a `Planar` reflection mode (a mirror camera with an
+        oblique near plane at the surface, blurred by roughness), simulated
+        ripples (a wave-equation height field per body that splashes and
+        floating bodies' wakes disturb, and that buoyancy rides), far ocean
+        waves calming on the CPU the way the drawn ones do, a swell that
+        turns with the live wind by fading between headings over
+        `waves.turn` seconds, and fog measured to the water surface.
+        Not covered: the mirror is a flat plane per body, so tall waves
+        bend its image rather than re-reflect it; a body bigger than its
+        ripple extent simulates only a patch round the camera, and ripples
+        it leaves behind are dropped; a wake is a push per sample point,
+        not a Kelvin wave pattern; 2D water has no reflections. The GPU
+        tests cover a lake's tint and the mirror, not ripples or fog.
   - [ ] VFX graph (Niagara/VFX-Graph lite): GPU sim with spawn modules (rate, burst,
         shape sphere/box/cone/mesh-surface), update modules (velocity, drag, curl noise,
         turbulence, attractor, depth-buffer collide with bounce/friction, kill planes),
