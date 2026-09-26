@@ -256,11 +256,12 @@ impl UiDocument {
             }) {
                 return Err(format!("Unsupported binding property on {id}"));
             }
-            if let Some(layout) = &widget.layout {
-                if layout.columns == 0 || !layout.row_height.is_finite() || layout.row_height <= 0.
-                {
-                    return Err(format!("Invalid layout on {id}"));
-                }
+            if let Some(layout) = &widget.layout
+                && (layout.columns == 0
+                    || !layout.row_height.is_finite()
+                    || layout.row_height <= 0.)
+            {
+                return Err(format!("Invalid layout on {id}"));
             }
             if !widget
                 .element
@@ -476,15 +477,14 @@ pub fn rich_text(text: &str) -> Vec<UiTextRun> {
             rest = &rest[8..];
             continue;
         }
-        if rest.starts_with("[color=#") {
-            if let Some(end) = rest.find(']') {
-                let color = &rest[7..end];
-                if matches!(color.len(), 7 | 9) && color[1..].chars().all(|c| c.is_ascii_hexdigit())
-                {
-                    colors.push(color.to_string());
-                    rest = &rest[end + 1..];
-                    continue;
-                }
+        if rest.starts_with("[color=#")
+            && let Some(end) = rest.find(']')
+        {
+            let color = &rest[7..end];
+            if matches!(color.len(), 7 | 9) && color[1..].chars().all(|c| c.is_ascii_hexdigit()) {
+                colors.push(color.to_string());
+                rest = &rest[end + 1..];
+                continue;
             }
         }
         let len = rest

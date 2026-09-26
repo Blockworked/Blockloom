@@ -7,7 +7,7 @@
 //! A display with no HDR space is left to Bevy entirely.
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::hdr::{DisplayOffers, HdrFrame};
+use crate::hdr::{DisplayOffers, HdrFrame, HdrMetadata};
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::ecs::schedule::ApplyDeferred;
 use bevy::prelude::*;
@@ -65,6 +65,8 @@ struct OwnSurface {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     formats: Formats,
+    /// What the swapchain was last told it carries, cleared by a reconfigure.
+    metadata: Option<HdrMetadata>,
     // Keeps the native window alive as long as its surface.
     _handle: RawHandleWrapper,
 }
@@ -77,7 +79,7 @@ struct SurfaceDeclined;
 /// The format for each space the surface was found to take.
 #[derive(Clone, Copy, Debug)]
 #[cfg(not(target_arch = "wasm32"))]
-struct Formats {
+pub(crate) struct Formats {
     sdr: TextureFormat,
     scrgb: bool,
     hdr10: bool,
@@ -85,7 +87,7 @@ struct Formats {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Formats {
-    fn of(caps: &wgpu::SurfaceCapabilities) -> Option<Formats> {
+    pub(crate) fn of(caps: &wgpu::SurfaceCapabilities) -> Option<Formats> {
         let sdr = caps
             .formats
             .iter()
@@ -108,7 +110,7 @@ impl Formats {
         })
     }
 
-    fn offers(&self) -> Vec<OutputSpace> {
+    pub(crate) fn offers(&self) -> Vec<OutputSpace> {
         let mut offers = vec![OutputSpace::Sdr];
         if self.scrgb {
             offers.push(OutputSpace::Scrgb);
@@ -121,7 +123,7 @@ impl Formats {
 
     /// The format and color space a space is configured with, SDR when the
     /// surface can't do it.
-    fn configure(&self, space: OutputSpace) -> (TextureFormat, SurfaceColorSpace) {
+    pub(crate) fn configure(&self, space: OutputSpace) -> (TextureFormat, SurfaceColorSpace) {
         match space {
             OutputSpace::Scrgb if self.scrgb => (
                 TextureFormat::Rgba16Float,
@@ -230,6 +232,10 @@ fn adopt_window(
             "Owning the window's surface for HDR: {:?}",
             formats.offers()
         );
+        let metadata = frame.metadata();
+        if let Some(metadata) = &metadata {
+            send_metadata(&surface, device.wgpu_device(), metadata);
+        }
         commands
             .entity(entity)
             .remove::<RawHandleWrapper>()
@@ -237,6 +243,7 @@ fn adopt_window(
                 surface,
                 config,
                 formats,
+                metadata,
                 _handle: handle.clone(),
             });
     }
@@ -272,6 +279,7 @@ fn acquire_frame(
             config.present_mode = present_mode(window.present_mode, &caps);
             config.view_formats = if view != format { vec![view] } else { vec![] };
             device.configure_surface(&owned.surface, &owned.config);
+            owned.metadata = None;
         }
         // Unpresented from last frame: keep drawing into it.
         if window.swap_chain_texture.is_some() && window.swap_chain_texture_view.is_some() {
@@ -283,7 +291,16 @@ fn acquire_frame(
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost
         ) {
             device.configure_surface(&owned.surface, &owned.config);
+            owned.metadata = None;
             texture = owned.surface.get_current_texture();
+        }
+        // Metadata belongs to the swapchain, so a new one is told again.
+        let metadata = frame.metadata();
+        if metadata != owned.metadata {
+            if let Some(metadata) = &metadata {
+                send_metadata(&owned.surface, device.wgpu_device(), metadata);
+            }
+            owned.metadata = metadata;
         }
         let texture = match texture {
             wgpu::CurrentSurfaceTexture::Success(texture)
@@ -301,6 +318,125 @@ fn acquire_frame(
         window.swap_chain_texture_format = Some(owned.config.format);
         window.swap_chain_texture_view_format = Some(view);
     }
+}
+
+/// Turns on `VK_EXT_hdr_metadata` where the GPU has it, which wgpu leaves
+/// off, so an HDR swapchain can say what it was mastered for.
+#[cfg(target_os = "linux")]
+pub fn add_vulkan_extensions(
+    settings: &mut bevy::render::renderer::raw_vulkan_init::RawVulkanInitSettings,
+) {
+    use ash::ext;
+    // SAFETY: only adds an extension the adapter reports supporting.
+    unsafe {
+        settings.add_create_device_callback(|args, adapter, _| {
+            let name = ext::hdr_metadata::NAME;
+            if adapter
+                .physical_device_capabilities()
+                .supports_extension(name)
+                && !args.extensions.contains(&name)
+            {
+                args.extensions.push(name);
+            }
+        });
+    }
+}
+
+/// Sends HDR10 static metadata for the surface's current swapchain. Vulkan
+/// and DX12 take it; Metal's EDR has nothing to send.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn send_metadata(
+    surface: &wgpu::Surface,
+    device: &wgpu::Device,
+    metadata: &HdrMetadata,
+) {
+    #[cfg(target_os = "linux")]
+    {
+        use ash::{ext, vk};
+        use wgpu::hal::api::Vulkan;
+        // SAFETY: the swapchain and device are wgpu's own, alive for the
+        // call, and the extension is checked before its function is loaded.
+        unsafe {
+            let (Some(hal_surface), Some(hal_device)) =
+                (surface.as_hal::<Vulkan>(), device.as_hal::<Vulkan>())
+            else {
+                return;
+            };
+            let Some(swapchain) = hal_surface.raw_native_swapchain() else {
+                return;
+            };
+            if !hal_device
+                .enabled_device_extensions()
+                .contains(&ext::hdr_metadata::NAME)
+            {
+                debug!("HDR metadata: VK_EXT_hdr_metadata isn't on");
+                return;
+            }
+            let loader = ext::hdr_metadata::Device::new(
+                hal_device.shared_instance().raw_instance(),
+                hal_device.raw_device(),
+            );
+            let xy = |[x, y]: [f32; 2]| vk::XYColorEXT { x, y };
+            let [red, green, blue, white] = metadata.primaries;
+            let data = vk::HdrMetadataEXT::default()
+                .display_primary_red(xy(red))
+                .display_primary_green(xy(green))
+                .display_primary_blue(xy(blue))
+                .white_point(xy(white))
+                .max_luminance(metadata.max_mastering_nits)
+                .min_luminance(metadata.min_mastering_nits)
+                .max_content_light_level(metadata.max_cll)
+                .max_frame_average_light_level(metadata.max_fall);
+            loader.set_hdr_metadata(&[swapchain], &[data]);
+            info!(
+                "HDR metadata sent: MaxCLL {} nits, MaxFALL {} nits",
+                metadata.max_cll, metadata.max_fall
+            );
+        }
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Graphics::Dxgi::{
+            DXGI_HDR_METADATA_HDR10, DXGI_HDR_METADATA_TYPE_HDR10, IDXGISwapChain4,
+        };
+        use windows::core::Interface;
+        let _ = device;
+        // SAFETY: the swap chain is wgpu's own and alive for the call; the
+        // metadata struct outlives it.
+        unsafe {
+            let Some(hal_surface) = surface.as_hal::<wgpu::hal::api::Dx12>() else {
+                return;
+            };
+            let Some(swapchain) = hal_surface
+                .swap_chain()
+                .and_then(|chain| chain.cast::<IDXGISwapChain4>().ok())
+            else {
+                return;
+            };
+            // Chromaticities in 0.00002 steps, the floor in 0.0001 nits.
+            let xy = |[x, y]: [f32; 2]| [(x * 50_000.0) as u16, (y * 50_000.0) as u16];
+            let [red, green, blue, white] = metadata.primaries;
+            let data = DXGI_HDR_METADATA_HDR10 {
+                RedPrimary: xy(red),
+                GreenPrimary: xy(green),
+                BluePrimary: xy(blue),
+                WhitePoint: xy(white),
+                MaxMasteringLuminance: metadata.max_mastering_nits as u32,
+                MinMasteringLuminance: (metadata.min_mastering_nits * 10_000.0) as u32,
+                MaxContentLightLevel: metadata.max_cll as u16,
+                MaxFrameAverageLightLevel: metadata.max_fall as u16,
+            };
+            if let Err(error) = swapchain.SetHDRMetaData(
+                DXGI_HDR_METADATA_TYPE_HDR10,
+                std::mem::size_of_val(&data) as u32,
+                Some(std::ptr::from_ref(&data).cast()),
+            ) {
+                warn!("HDR metadata: {error}");
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    let _ = (surface, device, metadata);
 }
 
 #[cfg(test)]

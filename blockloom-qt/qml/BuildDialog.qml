@@ -17,9 +17,12 @@ BwDialog {
     property bool fast: false
     property bool hdr: true
     readonly property var chosen: targets.find(t => t.triple === triple) || null
-    onChosenChanged: fast = !!chosen && chosen.fast_ready
+    onChosenChanged: { fast = !!chosen && chosen.fast_ready; hdr = !chosen || chosen.hdr !== false; }
     title: "Build a game"
     standardButtons: Dialog.NoButton
+    // Fixed width so long notes and target labels wrap instead of stretching
+    // the dialog: the content column is 480 wide plus this dialog's padding.
+    width: 524
 
     onOpened: {
         error = ""; built = null; busy = false;
@@ -39,7 +42,7 @@ BwDialog {
     }
 
     ColumnLayout {
-        width: 480; spacing: 8
+        width: parent.width; spacing: 8
         Text { visible: root.error.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; text: root.error; color: Theme.danger }
         Text { text: "Platform"; color: Theme.textDim; font.pixelSize: 12 }
         ChoiceField {
@@ -51,7 +54,7 @@ BwDialog {
         Text { visible: !!root.chosen; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: root.chosen ? root.chosen.fast_note : "" }
         BwCheckBox { text: "HDR rendering and output"; checked: root.hdr; onToggled: root.hdr = checked }
         Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
-            text: "Off makes an SDR-only build: 8-bit frames and no HDR window, for weak GPUs and old displays." }
+            text: (root.chosen ? root.chosen.hdr_note + " " : "") + "Off makes an SDR-only build: 8-bit frames and no HDR window, for weak GPUs and old displays." }
         Text { text: "Where to put it"; color: Theme.textDim; font.pixelSize: 12 }
         RowLayout {
             Layout.fillWidth: true

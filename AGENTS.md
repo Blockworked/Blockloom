@@ -17,6 +17,7 @@ just build              # cargo build --release --workspace (the normal build)
 just run                # build, then launch target/release/blockloom
 cargo build --workspace && target/debug/blockloom   # debug build/run - faster iteration
 just test               # cargo test --workspace (blockloom-core has the bulk of them)
+cargo bench -p blockloom-core --bench vm   # block VM ns/tick over a few canvases
 just player             # stage the hard-optimized player a built game ships
 just web-check          # runtime check-build for wasm32-unknown-unknown (Phase 8)
 just web-build [out] [pack=game-dir]  # wasm player folder; serve with just web-serve
@@ -28,7 +29,8 @@ sitting next to it, and a stale or missing runtime is exactly what `cargo run -p
 blockloom` would leave you with. The editor says so in a banner rather than
 letting Play do nothing.
 
-There's no clippy.toml/rustfmt.toml - just `cargo clippy`/`cargo fmt` with
+`rust-toolchain.toml` pins the Rust version (rustup installs it on first
+build). There's no clippy.toml/rustfmt.toml - just `cargo clippy`/`cargo fmt` with
 defaults.
 
 ## Style
@@ -40,7 +42,7 @@ defaults.
 
 The QML is compiled into the binary by `blockloom-qt/build.rs` (cxx-qt's
 `CxxQtBuilder` + qmlcachegen), so a plain `cargo build` picks up every edit.
-It needs Qt 6 with Quick, QuickControls2, QuickDialogs2 and Multimedia; use
+It needs Qt 6.10 or newer with Quick, QuickControls2, QuickDialogs2 and Multimedia; use
 Qt 6's `qml`/`qmlls` (`/usr/lib/qt6/bin` on Arch), not Qt 5's. A new `.qml`
 file must also be listed in `build.rs`'s `QmlModule`.
 
@@ -50,12 +52,13 @@ file must also be listed in `build.rs`'s `QmlModule`.
 the same block editor. Two halves of it are used here:
 
 - `crates/blockstitch-core`, the Rust backend (value system, document model,
-  editor operations), a git dependency in the root `Cargo.toml`;
-- the QML block canvas and controls (`blockstitch-qml`, module
-  `com.blockworked.Blockstitch`), a path dependency on `../blockstitch` in
-  `blockloom-qt/Cargo.toml`, so that checkout has to exist beside this one.
+  editor operations);
+- the QML block canvas and controls (`blockstitch-qml` at the repo root,
+  module `com.blockworked.Blockstitch`), which lives on blockstitch's `qml`
+  branch.
 
-To build against a local checkout of the Rust half too:
+Both are git dependencies in the root `Cargo.toml`, pinned to the same
+commit. To build against a local checkout instead:
 
 ```bash
 just blockstitch-local [path]        # default path: ../../blockstitch, relative to ui/
@@ -370,7 +373,9 @@ Linux too. Windows and macOS have no GPU sharing yet.
 
 While nothing runs, the Game view is a scene view over the same world:
 loaded, never started, and seen through an editor camera instead of the
-game's. `commands::open_world` brings a world up for it when the tab is shown
+game's. A run ends the same way whether the Stop button or a `stop all`
+ended it (`world::end_run`): the world is rebuilt from the document, so the
+scene view never keeps where the run left things. `commands::open_world` brings a world up for it when the tab is shown
 (embedded, or with the preview on), so editing never waits for Play.
 `blockloom-runtime/src/edit.rs` is all of it: `SceneEditor` holds the camera
 (a flying one in 3D, pan and zoom in 2D), the selection and any drag.
@@ -629,6 +634,20 @@ field. Fog properties on `Environment` (`fog_density`, `fog_colors`,
 properties too, and a `Volume` can also add local fog in its own shape
 (`VolumeSpec::fog`).
 
+A light's `beam` (`fog::Beam`) is extra medium only that light scatters:
+density, its own g, a falloff curve over the range and near/far fades,
+mirrored by `beam_fade` in `blockloom::fog`. In the froxels it rides
+`FogLight.beam`, and a beam alone runs the pass. `fog::pick_fog_lights` keeps
+beams first, then the nearest, up to `MAX_FOG_LIGHTS`. `Environment.beams`
+multiplies every beam (a volume property too), and `set fog density`
+(`Environment::set_fog_density`) scales it and `volumetric_density` by the
+asked density over the project's own, so a clear day has no beams.
+`blockloom-runtime/src/beams.rs` is the geometry: a `BeamMode::Auto` beam
+becomes an additive fresnel-faded shaft cone (`shaders/beam_shaft.wesl`,
+spots only) while volumetric fog is off or Low, and `Motes` are GPU-placed
+billboards (`shaders/beam_motes.wesl`) in a beam or, as
+`VolumetricFog::dust`, in a box wrapped round the camera.
+
 Stars, the Milky Way and aurora (`Sky::stars`, `Sky::aurora`) are drawn by
 the sky's background pass in the main view only, never in probe faces or
 the light cubes, from `space::SpaceRender` (`blockloom::space`). They sit in
@@ -651,6 +670,30 @@ code so no asset is needed. The fog, the aurora and the flash fill their
 The GPU half is the ignored `embed` tests: height fog, volumetric glow,
 sunlit fog and a roof's shadow in it, a volume's local fog, aurora, stars
 and a lightning block.
+
+### Wind
+
+`World::wind` (`blockloom-core/src/wind.rs`) is the one wind, both
+dimensions: a direction (degrees clockwise from north, -Z in 3D and up the
+screen in 2D), a speed at the reference height, gusts on seeded 1D gradient
+noise that also veer the direction, a log-law profile towards the ground (3D
+only), and a storm dial that scales the rest (`StormScale`). A `Volume` can
+carry a `LocalWind` zone (override, add or swirl round the actor's up axis,
+plus turbulence), blended in `blend_order` like the rest of a volume.
+`CloudDrift` is how the clouds ride it: the wind at their altitude times
+`follow`, their own drift, an erosion drift and a time-lapse; `CloudOffsets`
+integrates it. The public API speaks arrays because core's glam isn't
+Bevy's.
+
+`blockloom-runtime/src/wind.rs` steps it on the fixed tick's own clock
+(`step_wind`, before `sample_atmosphere`), so a replay gusts the same and
+the atmosphere slot's `wind speed`, `wind direction` and `storm` are the
+wind at the camera that tick. Everything that moves with the air reads the
+resulting `WindField`: particles ease into `field.at(position)` scaled by
+their emitter's `wind`, the fog's noise scrolls by `field.drift`, and the
+cloud passes are meant to take `field.clouds`. `set wind [dial] to` and
+`set cloud drift to` (and a script's `set_wind`/`set_cloud_drift`) land in
+`engine.wind` for the run.
 
 ### Lighting rig
 
@@ -867,6 +910,9 @@ a project's other files aren't modules, so `package::`/`super::` are refused.
 2. `vm::compile` flattens each actor's canvas into a `Vec<Step>` with jumps -
    a nested tree can't be suspended mid-body, but a program counter can. Header
    strands become entry points keyed by their trigger.
+   Each value slot is lowered the first time it runs (`vm/lower.rs`): variable
+   names become interned slots in `Variables`, and pure operators over
+   constants fold away, so evaluating one hashes nothing.
 3. Simulation runs on Bevy's `FixedUpdate`: a constant-rate step (`FixedMain`
    catches up whatever the display does) that pulls the project's `world.fixed_rate`
    - set in Project Settings and applied by `pump_editor`/`dim2|dim3::sync_timestep` -
@@ -1034,10 +1080,10 @@ Three things shape the emitted code. Every slot is read into a `let` before the
 act that uses it, because reading a slot borrows the host and so does handing
 it something to do. `and`/`or` take their second operand as a closure, because
 the VM's short circuit is observable: `false and <a bad slot>` reports nothing.
-And everything `Vm::resolve` replaces - a variable, a parameter, a reporter
-call - is hoisted into a `let` ahead of the expression, because the VM resolves
-a whole tree before one operator runs: a reporter on the side `and` never reads
-still runs, and still does whatever it does to the world.
+And every variable, parameter and reporter call is hoisted into a `let` ahead
+of the expression, because the VM runs each of them before the operator over
+it: a reporter on the side `and` never reads still runs, and still does
+whatever it does to the world.
 
 The actor is a value rather than a constant, which is what lets one emitted
 function cover an authored actor and every clone of it: a `State` carries the

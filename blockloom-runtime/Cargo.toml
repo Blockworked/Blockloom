@@ -74,6 +74,10 @@ web-sys = { version = "0.3", features = [
 bevy = { workspace = true, features = ["raw_vulkan_init"] }
 ash = "0.38"
 
+# HDR10 metadata on the DX12 swap chain wgpu makes. Version matches wgpu-hal's.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", default-features = false, features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
+
 [features]
 default = ["ray_tracing", "compressed_textures"]
 # Solari's ray-traced lighting and reference path tracer. Experimental

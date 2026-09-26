@@ -20,11 +20,10 @@ version = "0.0.1"
 edition = "2024"
 
 [workspace.dependencies]
-blockstitch-core = {
-    git = "https://github.com/Blockworked/blockstitch",
-    rev = "686f82b3"
-    #path = "../blockstitch/crates/blockstitch-core"
-}
+# Both halves come from one blockstitch commit; `just blockstitch-published`
+# moves them together and `just blockstitch-local` overrides both.
+blockstitch-core = { git = "https://github.com/Blockworked/blockstitch", rev = "686f82b3" }
+blockstitch-qml = { git = "https://github.com/Blockworked/blockstitch", rev = "686f82b3" }
 bevy = "0.20.0-rc.1"
 # No 0.20 release yet: the bindings moved into the rapier monorepo, which
 # tracks Bevy's main. Patched onto the RC below until a release lands.

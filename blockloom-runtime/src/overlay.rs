@@ -10,7 +10,6 @@ use crate::engine::{ActorId, Dimension, Engine, PendingEffects};
 use crate::ui::{UiElementText, UiManager, UiRoot, UiSliderFill, UiToggleLamp};
 use crate::world::{self, WorldCamera};
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 use blockloom_core::ui::UiKind;
 use blockloom_core::vm::Effect;
 use blockloom_protocol::RuntimeMessage;
@@ -51,7 +50,7 @@ pub fn spawn(mut commands: Commands) {
     ));
 }
 
-pub fn update_status(engine: NonSend<Engine>, mut overlay: Query<&mut Text, With<OverlayText>>) {
+pub fn update_status(_engine: NonSend<Engine>, mut overlay: Query<&mut Text, With<OverlayText>>) {
     let Ok(mut text) = overlay.single_mut() else {
         return;
     };
@@ -77,7 +76,6 @@ pub fn update_speech_bubbles(
     actors: Query<(&ActorId, &Transform, &Visibility)>,
     mut bubbles: Query<(Entity, &SpeechBubble, &mut Node)>,
     mut labels: Query<(&SpeechBubbleText, &mut Text)>,
-    windows: Query<&Window, With<PrimaryWindow>>,
     ui_scale: Res<UiScale>,
 ) {
     let camera = cameras.iter().next();
@@ -128,18 +126,15 @@ pub fn update_speech_bubbles(
         let offset = engine.project.world.speech_bubble.offset;
         // Whole pixels keep the glyphs put instead of re-blitting them at a
         // new sub-pixel offset every frame while the bubble follows the actor.
-        // The viewport reads logical while node pixels resolve physical, so
-        // the position is de-scaled or bubbles drift off on scaled displays.
-        // `UiScale` counts too: the embedded view's density lives there.
-        let scale = windows
-            .iter()
-            .next()
-            .map(|window| window.scale_factor())
-            .unwrap_or(1.0)
-            * ui_scale.0;
+        // `world_to_viewport` reads in the camera's logical pixels while a
+        // `Val::Px` is in UI logical pixels: the two differ by `UiScale`
+        // alone, since the window scale feeds both equally. The offset is UI
+        // logical, so it is scaled up into camera pixels before rounding -
+        // otherwise a HiDPI bubble sits half as far off as it should.
+        let ui = ui_scale.0.max(0.01);
         node.display = Display::Flex;
-        node.left = Val::Px((viewport.x + offset[0]).round() / scale);
-        node.top = Val::Px((viewport.y + offset[1]).round() / scale);
+        node.left = Val::Px((viewport.x + offset[0] * ui).round() / ui);
+        node.top = Val::Px((viewport.y + offset[1] * ui).round() / ui);
     }
 
     for (actor, text) in &engine.speech {

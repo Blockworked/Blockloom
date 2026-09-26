@@ -607,7 +607,7 @@ mod tests {
             layers: 2,
         };
         assert_eq!(
-            segment_cost([0.0, 0.0], [10.0, 0.0], &[area.clone()], 1),
+            segment_cost([0.0, 0.0], [10.0, 0.0], std::slice::from_ref(&area), 1),
             10.0
         );
         assert_eq!(segment_cost([0.0, 0.0], [10.0, 0.0], &[area], 2), 18.0);
