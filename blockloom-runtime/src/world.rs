@@ -3318,6 +3318,9 @@ pub fn report_status(
     time: Res<Time>,
     diagnostics: Option<Res<bevy::diagnostic::DiagnosticsStore>>,
     target_bytes: Option<Res<crate::performance::GameViewTargetBytes>>,
+    pace: Option<Res<crate::performance::LoopPace>>,
+    sim: Option<Res<crate::performance::SimSplit>>,
+    update: Option<Res<crate::performance::UpdateSplit>>,
     batches: Option<Res<crate::batching::Batches>>,
     culling: Option<Res<crate::culling::Culling>>,
     streaming: crate::streaming::StreamingReport,
@@ -3362,10 +3365,17 @@ pub fn report_status(
             if !measured && name != "mesh_allocator_slabs_size" {
                 return None;
             }
+            // Group mesh memory with the other `memory/*` rows so the
+            // profiler can list it under Memory instead of by Bevy's raw name.
+            let name = if name == "mesh_allocator_slabs_size" {
+                "memory/mesh_slabs"
+            } else {
+                name
+            };
             Some(RenderMetric {
                 name: name.to_string(),
                 value: diagnostic.smoothed()?,
-                unit: if name == "mesh_allocator_slabs_size" {
+                unit: if name == "memory/mesh_slabs" {
                     "bytes"
                 } else {
                     "ms"
@@ -3374,7 +3384,6 @@ pub fn report_status(
             })
         })
         .collect();
-    render_metrics.sort_by(|a, b| a.name.cmp(&b.name));
     if let Some(ms) = crate::hdr::tonemap_ms(&render_metrics) {
         render_metrics.push(RenderMetric {
             name: "hdr/tonemap".into(),
@@ -3384,7 +3393,7 @@ pub fn report_status(
     }
     if let Some(bytes) = target_bytes.filter(|bytes| bytes.0 > 0) {
         render_metrics.push(RenderMetric {
-            name: "game_view_target_minimum".into(),
+            name: "memory/targets/game_view_minimum".into(),
             value: bytes.0 as f64,
             unit: "bytes".into(),
         });
@@ -3437,6 +3446,42 @@ pub fn report_status(
             unit: unit.into(),
         });
     }
+    if let Some(pace) = pace {
+        for (name, value) in [
+            ("loop/update", pace.update_ms),
+            ("loop/present_wait", pace.wait_ms),
+            ("loop/main", pace.main_ms),
+            ("loop/render", pace.render_ms),
+        ] {
+            render_metrics.push(RenderMetric {
+                name: name.into(),
+                value,
+                unit: "ms".into(),
+            });
+        }
+    }
+    if let Some(sim) = sim {
+        render_metrics.push(RenderMetric {
+            name: "loop/fixed".into(),
+            value: sim.fixed_ms,
+            unit: "ms".into(),
+        });
+        render_metrics.push(RenderMetric {
+            name: "loop/fixed_steps".into(),
+            value: sim.last_steps as f64,
+            unit: "count".into(),
+        });
+    }
+    if let Some(update) = update {
+        for (label, ms) in &update.segments {
+            render_metrics.push(RenderMetric {
+                name: format!("update/{label}"),
+                value: *ms,
+                unit: "ms".into(),
+            });
+        }
+    }
+    render_metrics.sort_by(|a, b| a.name.cmp(&b.name));
     bridge::send(&RuntimeMessage::Status(Status {
         running: engine.running || engine.starting,
         paused: engine.paused,

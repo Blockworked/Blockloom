@@ -117,11 +117,21 @@ fn paced(mut app: App, frames: &FrameExchange) -> AppExit {
     app.cleanup();
     let mut seen = frames.presented_count();
     loop {
+        let update_start = std::time::Instant::now();
         app.update();
+        let update_ms = update_start.elapsed().as_secs_f64() * 1000.0;
         if let Some(exit) = app.should_exit() {
             return exit;
         }
+        let wait_start = std::time::Instant::now();
         seen = frames.wait_presented(seen, PACE_TIMEOUT);
+        let wait_ms = wait_start.elapsed().as_secs_f64() * 1000.0;
+        if let Some(mut pace) = app
+            .world_mut()
+            .get_resource_mut::<crate::performance::LoopPace>()
+        {
+            pace.push(update_ms, wait_ms);
+        }
     }
 }
 

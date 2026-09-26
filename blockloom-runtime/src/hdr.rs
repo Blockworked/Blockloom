@@ -49,6 +49,10 @@ pub fn register(app: &mut App) {
     let offers = app.world().resource::<DisplayOffers>().clone();
     if let Some(render) = app.get_sub_app_mut(RenderApp) {
         render.insert_resource(offers);
+        // The extractor only carries this over once the first frame runs,
+        // while the windowed surface takeover reads it in that same frame:
+        // seed the default so frame one never finds it missing.
+        render.init_resource::<HdrFrame>();
     }
 }
 

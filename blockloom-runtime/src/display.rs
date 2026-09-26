@@ -25,8 +25,12 @@ pub fn register(app: &mut App) {
     render.add_systems(
         Render,
         (
+            // In `PrepareViews` so the frame's extraction has landed before
+            // this reads it (`HdrFrame` only arrives with the first frame),
+            // still ahead of Bevy's own surface creation.
             (adopt_window, ApplyDeferred)
                 .chain()
+                .in_set(RenderSystems::PrepareViews)
                 .before(create_surfaces),
             acquire_frame
                 .in_set(RenderSystems::PrepareViews)
@@ -328,5 +332,27 @@ mod tests {
             view_format(TextureFormat::Rgba16Float),
             TextureFormat::Rgba16Float
         );
+    }
+
+    #[test]
+    fn register_leaves_the_render_world_with_what_adopt_window_reads() {
+        use crate::hdr::{DisplayOffers, HdrFrame};
+
+        let mut app = App::new();
+        // What the plugins would set up in a running game.
+        bevy::tasks::IoTaskPool::get_or_init(bevy::tasks::TaskPool::new);
+        app.add_plugins((
+            bevy::asset::AssetPlugin::default(),
+            bevy::render::RenderPlugin::default(),
+        ));
+        crate::hdr::register(&mut app);
+        super::register(&mut app);
+
+        let render = app.get_sub_app(RenderApp).expect("a render app");
+        // `HdrFrame` only arrives through extraction on the first frame,
+        // while `adopt_window` already reads it there: without the seed its
+        // very first run fails validation and the window is never adopted.
+        assert!(render.world().contains_resource::<DisplayOffers>());
+        assert!(render.world().contains_resource::<HdrFrame>());
     }
 }

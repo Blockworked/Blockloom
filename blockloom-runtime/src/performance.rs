@@ -9,6 +9,158 @@ use std::collections::HashMap;
 #[derive(Resource, Default)]
 pub struct GameViewTargetBytes(pub u64);
 
+/// One paced-loop cycle split in three, smoothed: real update work versus
+/// waiting for the Game view to put a frame on screen. The `fps` the status
+/// reports covers all of it, so this is what says which part a slow frame is.
+/// `main_ms` times the main schedule only (`First` to `Last`); whatever is
+/// left of `update_ms` is the render world's extract, encode and submit.
+#[derive(Resource, Default, Debug)]
+pub struct LoopPace {
+    pub update_ms: f64,
+    pub wait_ms: f64,
+    pub main_ms: f64,
+    pub render_ms: f64,
+    /// This frame's main window before smoothing, for the `other` bucket.
+    pub frame_main_ms: f64,
+    main_start: Option<std::time::Instant>,
+}
+
+impl LoopPace {
+    pub fn push(&mut self, update_ms: f64, wait_ms: f64) {
+        const BLEND: f64 = 0.1;
+        self.update_ms += BLEND * (update_ms - self.update_ms);
+        self.wait_ms += BLEND * (wait_ms - self.wait_ms);
+        let render_ms = update_ms - self.main_ms;
+        self.render_ms += BLEND * (render_ms.max(0.0) - self.render_ms);
+    }
+
+    pub fn begin_main(&mut self) {
+        self.main_start = Some(std::time::Instant::now());
+    }
+
+    pub fn end_main(&mut self) {
+        if let Some(t0) = self.main_start.take() {
+            const BLEND: f64 = 0.1;
+            let ms = t0.elapsed().as_secs_f64() * 1000.0;
+            self.frame_main_ms = ms;
+            self.main_ms += BLEND * (ms - self.main_ms);
+        }
+    }
+}
+
+pub fn mark_main_start(mut pace: ResMut<LoopPace>) {
+    pace.begin_main();
+}
+
+pub fn mark_main_end(mut pace: ResMut<LoopPace>) {
+    pace.end_main();
+}
+
+/// Fixed-step cost, summed across every step the last frame ran. Times the
+/// whole step - rapier, the VM, scripts, parenting - from `FixedFirst` to
+/// `FixedLast`, so one number says whether the sim is the slow half.
+#[derive(Resource, Default, Debug)]
+pub struct SimSplit {
+    step_start: Option<std::time::Instant>,
+    accum_ms: f64,
+    steps: u32,
+    pub fixed_ms: f64,
+    pub last_steps: u32,
+    /// This frame's steps before smoothing, for the `other` bucket.
+    pub frame_fixed_ms: f64,
+}
+
+impl SimSplit {
+    fn end_step(&mut self) {
+        if let Some(t0) = self.step_start.take() {
+            self.accum_ms += t0.elapsed().as_secs_f64() * 1000.0;
+            self.steps += 1;
+        }
+    }
+
+    fn publish(&mut self) {
+        const BLEND: f64 = 0.1;
+        self.frame_fixed_ms = self.accum_ms;
+        self.fixed_ms += BLEND * (self.accum_ms - self.fixed_ms);
+        self.last_steps = self.steps;
+        self.accum_ms = 0.0;
+        self.steps = 0;
+    }
+}
+
+pub fn mark_step_start(mut split: ResMut<SimSplit>) {
+    split.step_start = Some(std::time::Instant::now());
+}
+
+pub fn mark_step_end(mut split: ResMut<SimSplit>) {
+    split.end_step();
+}
+
+/// Folds this frame's steps into the smoothed total. Runs in `Last`, after
+/// every fixed step of the frame has landed.
+pub fn publish_sim_split(mut split: ResMut<SimSplit>) {
+    split.publish();
+}
+
+/// Per-frame `Update` segments, for the profiler. One plain marker system
+/// brackets each group in the chained `Update` tuple (closures don't satisfy
+/// this Bevy's `.chain()` bounds); `publish` folds each span into a smoothed
+/// per-label millisecond count, labeled by position. Whatever the marks don't
+/// cover - the second `Update` tuple, `PostUpdate` batching and culling -
+/// lands in `other`, worked out from the main-schedule window minus fixed
+/// sim minus the measured spans.
+#[derive(Resource, Default, Debug)]
+pub struct UpdateSplit {
+    marks: Vec<std::time::Instant>,
+    pub segments: Vec<(String, f64)>,
+}
+
+/// Labels for the spans between consecutive marks, in chain order.
+const SEGMENT_LABELS: [&str; 6] = ["editor", "environment", "ui", "sensors", "camera", "tail"];
+
+impl UpdateSplit {
+    fn publish(&mut self, main_ms: f64, fixed_ms: f64) {
+        const BLEND: f64 = 0.1;
+        // Every frame runs every mark; a short vec means a partial frame,
+        // which has no honest labels.
+        if self.marks.len() == SEGMENT_LABELS.len() + 1 {
+            let mut spans: Vec<(String, f64)> = self
+                .marks
+                .windows(2)
+                .enumerate()
+                .map(|(index, pair)| {
+                    let ms = pair[1].duration_since(pair[0]).as_secs_f64() * 1000.0;
+                    (SEGMENT_LABELS[index].to_string(), ms)
+                })
+                .collect();
+            let measured: f64 = spans.iter().map(|(_, ms)| ms).sum();
+            spans.push((
+                "other".to_string(),
+                (main_ms - fixed_ms - measured).max(0.0),
+            ));
+            for (label, ms) in spans {
+                match self.segments.iter_mut().find(|(name, _)| *name == label) {
+                    Some(slot) => slot.1 += BLEND * (ms - slot.1),
+                    None => self.segments.push((label, ms)),
+                }
+            }
+        }
+        self.marks.clear();
+    }
+}
+
+pub fn mark_update_segment(mut split: ResMut<UpdateSplit>) {
+    split.marks.push(std::time::Instant::now());
+}
+
+pub fn publish_update_split(
+    mut split: ResMut<UpdateSplit>,
+    sim: Res<SimSplit>,
+    pace: Res<LoopPace>,
+) {
+    split.publish(pace.frame_main_ms, sim.frame_fixed_ms);
+}
+
 #[derive(SystemParam)]
 pub struct PerformanceStores<'w> {
     pub cache: ResMut<'w, RenderCache>,
@@ -205,5 +357,28 @@ mod tests {
         let second = cache.material("stone".into(), StandardMaterial::default, &mut materials);
         assert_eq!(first, second);
         assert_eq!(materials.len(), 1);
+    }
+
+    #[test]
+    fn loop_pace_blends_toward_latest_samples() {
+        let mut pace = LoopPace::default();
+        for _ in 0..1000 {
+            pace.push(4.0, 20.0);
+        }
+        assert!((pace.update_ms - 4.0).abs() < 0.01);
+        assert!((pace.wait_ms - 20.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn sim_split_reports_steps_and_blends() {
+        let mut split = SimSplit::default();
+        split.accum_ms = 10.0;
+        split.steps = 2;
+        split.publish();
+        assert_eq!(split.last_steps, 2);
+        assert_eq!(split.steps, 0);
+        assert_eq!(split.accum_ms, 0.0);
+        assert_eq!(split.frame_fixed_ms, 10.0);
+        assert!((split.fixed_ms - 1.0).abs() < 1e-9);
     }
 }

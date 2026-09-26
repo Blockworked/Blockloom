@@ -743,8 +743,153 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 
 ### Phase 7 - Scale and ecosystem, do last
 - [ ] Multiplayer: headless server, replication, lobbies, rollback.
-- [ ] Deploy: Web/WASM, Android/iOS signing, console path, auto-updater/DLC/addressables.
+- [ ] Deploy: Web/WASM (see Phase 8 player and Phase 9 editor), Android/iOS signing, console path, auto-updater/DLC/addressables.
 - [ ] Ecosystem: analytics/crash, achievements/IAP hooks, plugin API, asset store, collab/VCS, docs/LTS.
+
+### Phase 8 - Web player via WebGPU (single-file build, do before Phase 9)
+
+- [ ] Goal: a built game ships as one self-contained file (single `.html`:
+      inlined wasm plus the pack plus assets) that runs in a browser over
+      WebGPU with no server beyond static hosting. Player only; the editor
+      stays native (see Phase 9).
+- [ ] Web toolchain: `wasm32-unknown-unknown` target for `blockloom-runtime`
+      with `--no-default-features` (no `ray_tracing`/Solari on web; `is ray
+      tracing on?` and `ray tracing available?` report false). Check-build the
+      pinned rapier git rev for wasm early; Bevy 0.20 WebGPU backend plus the
+      WESL surface shaders must compile to it (the `shader_lib` naga check
+      covers the offline half).
+- [ ] `cfg(target_arch = "wasm32")` gating (one pass, no behavior changes):
+      no stdin/stdout bridge thread (`bridge::listen`), no `fatal` process
+      exit (canvas error overlay instead), Linux-only embed/`ash`/dma-buf
+      stays out, no HDR swapchain takeover in `display.rs` (web builds force
+      `GamePack.hdr = false`, SDR only), no EXR capture file writes, probe
+      bakes ship pre-baked from the build and are never written at runtime.
+- [ ] Rust scripts work on web by static linking, not `dlopen` (wasm has no
+      `libloading`): at build time each `assets/scripts/*.rs` is compiled for
+      `wasm32-unknown-unknown` and linked into the one player wasm, against
+      the same `HostApi`/ABI and `export!` entry points, so script behavior
+      matches native. The build machine needs the wasm target `std`; a
+      project whose scripts cannot build for wasm fails the web build with
+      the rustc error, rather than shipping actors that quietly do nothing.
+      Blocks run on the VM on web v1 (native codegen logic is VM-fallback
+      there; static-linking it follows the same recipe later).
+- [ ] Single-file packaging in `build.rs`: new wasm target beside the native
+      triples, laying out one `.html` with the wasm, `game.pack` and assets
+      inlined (base64/data URLs) and loaded from memory instead of disk, so
+      the asset server never fetches. Pre-bake probe captures, atlases and
+      sky cubes at build time; ship SDR-safe textures (no BC6H on most
+      browsers: PNG/JPEG or Basis/KTX2 from the existing Bevy features).
+      Note the cost in the Build dialog: base64 overhead plus no streaming,
+      with a size line and gzip guidance.
+- [ ] Runtime compat: `Launch::Player` path with the pack from memory and
+      synthetic `Load`/`Start` (never stdin); saves keyed by
+      `GamePack::save_id()` go to `localStorage`; audio starts behind a
+      click-to-play overlay (browser gesture rule); canvas resize handling;
+      pointer lock through the browser API on click; touch/gamepad through
+      Bevy web inputs. GPU timestamps often missing on WebGPU: use the
+      existing "no timestamps" profiler path.
+- [ ] Tooling and tests: `just web-build` (emit the single file) and
+      `just web-serve` (static host for smoke tests); trunk or wasm-pack
+      plus an xtask, documented beside `just player`. Tests: wasm
+      check-build in CI, plus a headless-browser smoke run (load, green
+      flag, first status) before calling the phase done. Single-threaded
+      wasm first (task pools run inline, smaller streaming budgets); shared
+      memory threads plus COOP/COEP headers are a later opt-in, not v1.
+
+### Phase 9 - Editor on web (separate phase, do after Phase 8)
+
+- [ ] Goal: edit block projects in a browser. Qt cannot go to web, so the
+      path is the existing browser frontend (`ui/` Vue plus the `dev-bridge`
+      backend), with the Phase 8 web player as its preview canvas. No new
+      editor stack: reuse `Backend::dispatch` commands and the shell/MCP
+      command surface.
+- [ ] Scope: block canvas and inspectors in Vue, web-player preview with
+      input forwarding, project storage (File System Access API locally or
+      server-side folders when hosted). Native-only pieces stay native:
+      Qt Game-view GPU sharing, `rustc` script builds (scripts compile on a
+      server or at export, not in the browser), staged native players.
+- [ ] Rule: start only once the single-player loop plus Phase 8 are solid;
+      Phase 9 never blocks web-player shipping.
+
+### Phase 10 - Virtual Reality via OpenXR (3D only, do after Phase 7 deploy footing)
+
+- [ ] Goal: a 3D project can run on a connected headset, and pressing Play
+      with a headset attached shows the game on the headset while the
+      editor's Game view keeps a flat mirror. One OpenXR path covers every
+      headset; no per-vendor SDK in the runtime.
+- [ ] Platform truth table (OpenXR runtimes decide this, not Blockloom):
+      Windows and Linux desktop through the active OpenXR runtime (SteamVR,
+      Monado on Linux, Quest Link / Windows Mixed Reality on Windows);
+      Android standalone headsets through the Khronos Android loader
+      (Quest first, Pico / HTC Focus-class devices follow the same loader
+      path where their runtime supports it). macOS has no consumer OpenXR
+      runtime and iOS has none either, so both stay flat with a logged
+      reason. visionOS is not targeted. WebXR is a later opt-in on top of
+      the Phase 8 web player, not v1.
+- [ ] Runtime foundation (gated, falls back to flat):
+      cargo feature `xr` on `blockloom-runtime` wrapping a community
+      OpenXR backend in the `bevy_mod_openxr` / `bevy_oxr` lineage, pinned
+      to the workspace Bevy; when the backend lags a Bevy bump the feature
+      compiles out and XR reports unavailable instead of breaking the
+      build. Desktop binds Vulkan (D3D12 option on Windows only), Android
+      binds Vulkan through the Khronos loader (pin >= 1.0.34, the first
+      version Quest OS v62+ accepts). Owns session lifecycle
+      (create/begin/end, playspace vs seated, eye height), the stereo
+      swapchain, and per-eye views fed by the existing world camera and
+      blended `Environment`. No XR session means the flat renderer carries
+      on and the editor hears why once. 2D worlds stay flat; XR is 3D only.
+- [ ] Editor live preview (headset mirror, not a second Game view):
+      a "Preview on headset" toggle beside Play opens the XR session on
+      the editor machine and mirrors one eye (or side-by-side) into the
+      Game view ring on Linux or the MJPEG preview on the child-process
+      path, at mirror resolution rather than headset resolution so the
+      editor stays interactive. Status reports session state
+      (idle/searching/running) plus headset presence; a missing runtime or
+      headset logs once and plays flat. Pause/step, run log and status
+      keep working; keyboard/mouse still drive flat input while controllers
+      drive XR input. Document the Linux SteamVR setup (active runtime
+      json or `XR_RUNTIME_JSON`) next to `just player`.
+- [ ] Camera rig and input (builds on the Phase 2 input actions, not a
+      second input stack): the `Camera` component gains a VR mode
+      (head-tracked, seated/standing/room-scale with configurable eye
+      height); the HMD pose drives the rig each render frame while blocks
+      and physics keep reading the fixed-tick snapshot with the existing
+      pose-interpolation rule. Controllers appear as tracked poses with
+      buttons, triggers, sticks and grips routed through input actions
+      (remappable like gamepad), plus haptics through the Phase 2 rumble
+      path. v1 is controllers only; hand tracking, eye tracking and
+      passthrough/mixed-reality are later items, not v1.
+- [ ] Blocks and scripts (sampled on the fixed tick so VM and codegen
+      agree, same rule as other reporters): `is headset connected?`,
+      `headset x/y/z`, `controller _ pressed?`, `controller _ position`,
+      `rumble controller _ by _`, `move VR rig to`, `snap-turn _ by _`;
+      event `when controller _ pressed`. Teleport locomotion is a block
+      recipe (raycast from Phase 1 physics queries plus rig move), not a
+      built-in locomotion system. Comfort defaults ship in the template:
+      snap turn on, smooth turn opt-in, optional vignette while moving.
+- [ ] Performance and comfort (numbers on existing machinery, no new
+      pipeline): the XR runtime owns frame pacing (72/90/120 Hz by
+      headset), sim stays on the fixed tick and renders interpolate as
+      they do today. Stereo MSAA, fixed-foveated rendering where the
+      extension exists, and dynamic resolution plug into the Phase 5
+      scaling policy and quality presets; over budget loses density or
+      pixel rate before it loses tracking. Profiler lines for per-eye ms,
+      dropped vs reprojected frames, and session state.
+- [ ] Build and packaging (extends the Phase 7 deploy path, not a second
+      one): desktop players keep the system-loader lookup (nothing
+      vendored) with a troubleshooting note in the Build dialog; Android
+      XR is a build target beside the flat Android target (arm64 APK with
+      OpenXR manifest entries, loader version pin, Quest signing through
+      the same signing flow as flat Android). `build::targets` lists which
+      targets can do XR and why a missing one cannot (no runtime, no
+      loader, scripts need the target `std`). Quest Link stays the desktop
+      dev loop; standalone APKs are the shareable artifact.
+- [ ] Tooling and tests: `just xr-check` (extension + runtime probe without
+      a headset where possible, e.g. Monado null/emulated runtime) plus a
+      headset-less CI smoke (world builds with `xr`, session absent means
+      flat start, mirror path emits frames). `embed.rs`-style ignored GPU
+      tests gain a stereo-mirror case when hardware is present, run one at
+      a time like the existing ones.
 
 ### Qt6 rewrite - in-process Game view
 - [x] Goal: docked Game view with no sidecar video and no extra OS window.

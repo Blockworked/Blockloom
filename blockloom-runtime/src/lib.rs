@@ -159,6 +159,22 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         Startup,
         (overlay::spawn, announce_ready).run_if(bridge::editor_attached),
     );
+    // Split each frame into fixed-step sim versus the rest, for the profiler.
+    app.init_resource::<performance::SimSplit>()
+        .add_systems(FixedFirst, performance::mark_step_start)
+        .add_systems(FixedLast, performance::mark_step_end);
+    app.init_resource::<performance::LoopPace>()
+        .init_resource::<performance::UpdateSplit>()
+        .add_systems(First, performance::mark_main_start)
+        .add_systems(
+            Last,
+            (
+                performance::publish_sim_split,
+                performance::mark_main_end,
+                performance::publish_update_split,
+            )
+                .chain(),
+        );
 
     // Only the dimension in use gets a physics pipeline: two would simulate
     // the same actors twice. Simulation runs on Bevy's `FixedUpdate` - a
@@ -279,6 +295,31 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             .configure_sets(
                 FixedUpdate,
                 world::SimulationSet.before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend),
+            )
+            // Profiler segment marks, as explicit edges: the chained tuple
+            // above is already at Bevy's 20-system cap, and restructuring it
+            // would move its ApplyDeferred points.
+            .add_systems(
+                Update,
+                (
+                    performance::mark_update_segment.before(world::pump_editor),
+                    performance::mark_update_segment
+                        .after(fx::despawn_fx)
+                        .before(volumes::gather_volumes),
+                    performance::mark_update_segment
+                        .after(environment::apply_environment)
+                        .before(dim2::relay_collisions),
+                    performance::mark_update_segment
+                        .after(world::detect_clicks)
+                        .before(world::publish_sensors),
+                    performance::mark_update_segment
+                        .after(world::interpolate_poses)
+                        .before(world::drive_camera),
+                    performance::mark_update_segment
+                        .after(volume_heat::collect_heat)
+                        .before(overlay::update_speech_bubbles),
+                    performance::mark_update_segment.after(overlay::update_status),
+                ),
             )
             .add_systems(
                 Update,
@@ -431,6 +472,33 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     FixedUpdate,
                     world::SimulationSet
                         .before(bevy_rapier3d::prelude::PhysicsSet::SyncBackend),
+                )
+                // Profiler segment marks, as explicit edges: the chained tuple
+                // above is already at Bevy's 20-system cap, and restructuring
+                // it would move its ApplyDeferred points.
+                .add_systems(
+                    Update,
+                    (
+                        performance::mark_update_segment.before(world::pump_editor),
+                        performance::mark_update_segment
+                            .after(fx::despawn_fx)
+                            .before(volumes::gather_volumes),
+                        performance::mark_update_segment
+                            .after(light_probes::sync_probes)
+                            .before(dim3::relay_collisions),
+                        performance::mark_update_segment
+                            .after(world::detect_clicks)
+                            .before(world::publish_sensors),
+                        performance::mark_update_segment
+                            .after(world::interpolate_poses)
+                            .before(world::drive_camera),
+                        performance::mark_update_segment
+                            .after(streaming::update_streaming_cells)
+                            .before(overlay::update_speech_bubbles),
+                        performance::mark_update_segment
+                            .after(overlay::update_status)
+                            .after(ray_tracing::report_ray_tracing),
+                    ),
                 )
                 .add_systems(
                     Update,
