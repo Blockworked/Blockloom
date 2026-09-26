@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 26;
+pub const ABI_VERSION: u32 = 27;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -368,3 +368,42 @@ pub struct HostApi {
 pub const SYM_ABI: &[u8] = b"blockloom_script_abi";
 pub const SYM_START: &[u8] = b"blockloom_script_start";
 pub const SYM_TICK: &[u8] = b"blockloom_script_tick";
+
+// ─── The same three calls in a browser ─────────────────────────────────────
+// A web build loads each script as its own wasm module, and one module can't
+// call another through a function pointer. So there the script imports the
+// three calls from the [`WASM_MODULE`] module instead, each taking the
+// context, the verb and a pointer to a [`WasmCall`] in the script's own
+// memory, which the host reads and answers into. The entry points are
+// called with a null `HostApi`.
+
+/// The import module a web script's three calls come from.
+pub const WASM_MODULE: &str = "blockloom";
+pub const WASM_READ_NUMBER: &str = "read_number";
+pub const WASM_READ_TEXT: &str = "read_text";
+pub const WASM_ACT: &str = "act";
+
+/// One call's arguments, as a web script lays them out in its own memory.
+/// Every pointer is an offset into that memory, and every field is a plain
+/// 32-bit word or a double, so both sides agree on the layout.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct WasmCall {
+    pub a_ptr: u32,
+    pub a_len: u32,
+    pub b_ptr: u32,
+    pub b_len: u32,
+    pub c_ptr: u32,
+    pub c_len: u32,
+    /// A run of `f64`s for `act`.
+    pub numbers: u32,
+    pub count: u32,
+    /// `read_number`'s plain number.
+    pub arg: f64,
+    /// Where the answer goes: one `f64`, or `out_cap` bytes of text.
+    pub out: u32,
+    pub out_cap: u32,
+    /// Where `read_text` writes the length its answer needs, as a `u32`.
+    pub out_len: u32,
+    pub _pad: u32,
+}

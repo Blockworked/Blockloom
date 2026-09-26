@@ -135,6 +135,12 @@ pub fn run_process() {
 pub(crate) fn asset_plugin() -> AssetPlugin {
     AssetPlugin {
         unapproved_path_mode: UnapprovedPathMode::Allow,
+        // A browser reads game files by their path in the game folder (see
+        // `web`), and a build ships no `.meta` files to ask for.
+        #[cfg(target_arch = "wasm32")]
+        file_path: String::new(),
+        #[cfg(target_arch = "wasm32")]
+        meta_check: bevy::asset::AssetMetaCheck::Never,
         ..default()
     }
 }

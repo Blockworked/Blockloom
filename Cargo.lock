@@ -2460,6 +2460,7 @@ dependencies = [
  "half",
  "image",
  "indexmap",
+ "js-sys",
  "libc",
  "libloading 0.9.0",
  "naga",

@@ -291,7 +291,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 pub fn read_manifest(project: &Path, name: &str) -> Result<Manifest, String> {
     let path = file(project, name, "json")?;
-    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let bytes = crate::vfs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))
 }
 
@@ -310,7 +310,7 @@ pub fn load(project: &Path, name: &str) -> Result<Grid, String> {
         for tx in 0..per_side {
             let tile = &manifest.tiles[(tz * per_side + tx) as usize];
             let path = file(project, tile, "tile")?;
-            let packed = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let packed = crate::vfs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             grid.put_tile(tx, tz, &decode(manifest.kind, &packed)?)?;
         }
     }

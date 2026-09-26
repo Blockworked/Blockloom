@@ -296,7 +296,7 @@ impl UiDocument {
         for path in &self.stylesheets {
             let full = crate::assets::resolve(dir, path)
                 .ok_or_else(|| format!("Invalid stylesheet path: {path}"))?;
-            let text = std::fs::read_to_string(full).map_err(|e| format!("{path}: {e}"))?;
+            let text = crate::vfs::read_to_string(&full).map_err(|e| format!("{path}: {e}"))?;
             let sheet: BTreeMap<String, UiStyles> =
                 serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
             styles.extend(sheet);

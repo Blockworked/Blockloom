@@ -162,7 +162,7 @@ fn file_stem(actor: &str) -> String {
 }
 
 pub fn read_info(dir: &Path, actor: &str) -> Option<BakeInfo> {
-    let text = std::fs::read_to_string(info_path(dir, actor)).ok()?;
+    let text = crate::vfs::read_to_string(&info_path(dir, actor)).ok()?;
     serde_json::from_str(&text).ok()
 }
 
@@ -351,7 +351,7 @@ impl IrradianceGrid {
 
     pub fn read(dir: &Path, actor: &str) -> Result<IrradianceGrid, String> {
         let path = grid_path(dir, actor);
-        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let bytes = crate::vfs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         IrradianceGrid::from_bytes(&bytes)
     }
 }

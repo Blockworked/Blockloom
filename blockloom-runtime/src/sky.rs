@@ -581,7 +581,7 @@ fn black_cube() -> Image {
 /// The baked BC6H cube where a build left one, else the source file.
 fn load(key: &HdriKey, compressed: bool) -> Result<Image, String> {
     let baked = key.dir.join(pipeline::baked_sky_path(&key.path));
-    if let Ok(bytes) = std::fs::read(&baked) {
+    if let Ok(bytes) = blockloom_core::vfs::read(&baked) {
         let cube = bc6h::read_dds_cube_levels(&bytes)?;
         if compressed {
             return Ok(cube_image(

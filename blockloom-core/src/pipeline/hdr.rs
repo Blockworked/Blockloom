@@ -261,7 +261,7 @@ pub fn decode_hdr(name: &str, bytes: &[u8]) -> Result<HdrImage, String> {
 pub fn load_hdr(project_dir: &std::path::Path, relative: &str) -> Result<HdrImage, String> {
     let path = crate::assets::resolve(project_dir, relative)
         .ok_or_else(|| format!("\"{relative}\" isn't a path in this project"))?;
-    let bytes = std::fs::read(&path).map_err(|e| format!("{relative}: {e}"))?;
+    let bytes = crate::vfs::read(&path).map_err(|e| format!("{relative}: {e}"))?;
     decode_hdr(relative, &bytes)
 }
 

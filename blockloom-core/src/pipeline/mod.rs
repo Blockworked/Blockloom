@@ -805,7 +805,7 @@ pub fn bake_atlas(
             .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))?;
         let full = crate::assets::resolve(project_dir, &relative)
             .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))?;
-        let bytes = std::fs::read(&full).map_err(|e| format!("{}: {e}", full.display()))?;
+        let bytes = crate::vfs::read(&full).map_err(|e| format!("{}: {e}", full.display()))?;
         let sprite = image::load_from_memory(&bytes)
             .map_err(|e| format!("{relative} doesn't decode as an image: {e}"))?
             .to_rgba8();
@@ -859,7 +859,7 @@ pub fn write_atlas(
 
 /// The layout a build baked into `game_dir`, if it baked one.
 pub fn read_baked_layout(game_dir: &Path) -> Option<AtlasLayout> {
-    let text = std::fs::read_to_string(game_dir.join(BAKED_ATLAS_LAYOUT)).ok()?;
+    let text = crate::vfs::read_to_string(&game_dir.join(BAKED_ATLAS_LAYOUT)).ok()?;
     serde_json::from_str(&text).ok()
 }
 
@@ -1080,7 +1080,7 @@ fn read_asset(project_dir: &Path, relative: &str) -> Result<(String, Vec<u8>), S
         .ok_or_else(|| format!("\"{relative}\" isn't a path in this project"))?;
     let full = crate::assets::resolve(project_dir, &relative)
         .ok_or_else(|| format!("\"{relative}\" isn't a path in this project"))?;
-    let bytes = std::fs::read(&full).map_err(|e| format!("{relative}: {e}"))?;
+    let bytes = crate::vfs::read(&full).map_err(|e| format!("{relative}: {e}"))?;
     Ok((relative, bytes))
 }
 
@@ -1243,7 +1243,7 @@ fn manifest_path(project_dir: &Path) -> PathBuf {
 /// through the pipeline.
 pub fn load_manifest(project_dir: &Path) -> PipelineManifest {
     let path = manifest_path(project_dir);
-    let Ok(text) = std::fs::read_to_string(&path) else {
+    let Ok(text) = crate::vfs::read_to_string(&path) else {
         return PipelineManifest::default();
     };
     serde_json::from_str(&text).unwrap_or_default()
