@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 29;
+pub const ABI_VERSION: u32 = 30;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -186,6 +186,10 @@ pub const TEXT_CURRENT_CLIP: u32 = 11;
 /// The environment volumes showing at the camera, as a JSON list of names
 /// in blend order. What `active volumes` reports.
 pub const TEXT_ACTIVE_VOLUMES: u32 = 12;
+/// Only answers inside the event entry point. `a` empty = the event's
+/// subject (a message, key, actor, clip, element ...), `a` = `detail` = its
+/// second word where it has one (the other actor's id, a changed value).
+pub const TEXT_EVENT: u32 = 13;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -400,6 +404,38 @@ pub struct HostApi {
 pub const SYM_ABI: &[u8] = b"blockloom_script_abi";
 pub const SYM_START: &[u8] = b"blockloom_script_start";
 pub const SYM_TICK: &[u8] = b"blockloom_script_tick";
+/// `(ctx, api, kind, n0, n1, n2, n3)`: one [`EVENT_MESSAGE`]-style kind, its
+/// numbers, and its words through [`TEXT_EVENT`].
+pub const SYM_EVENT: &[u8] = b"blockloom_script_event";
+
+// ─── What the event entry point is called with ─────────────────────────────
+// Global events reach every script; the rest only the actor they name.
+
+/// A broadcast. Subject: the message.
+pub const EVENT_MESSAGE: u32 = 1;
+/// A key went down. Subject: the key, as `key down?` spells it.
+pub const EVENT_KEY: u32 = 2;
+/// An input action went down. Subject: the action.
+pub const EVENT_ACTION: u32 = 3;
+/// This actor was clicked.
+pub const EVENT_CLICKED: u32 = 4;
+/// A finger touched the screen.
+pub const EVENT_TOUCHED: u32 = 5;
+/// This actor started touching another. Subject: its name; detail: its id.
+pub const EVENT_COLLISION: u32 = 6;
+/// This actor's particles spawned, died or collided this frame. Subject:
+/// `spawn`, `die` or `collide`; `n0` = how many, `n1..n3` = where the last was.
+pub const EVENT_PARTICLES: u32 = 7;
+/// A `Once` clip ended on this actor. Subject: the clip.
+pub const EVENT_ANIMATION_ENDED: u32 = 8;
+/// This actor's clip reached a marker. Subject: the marker.
+pub const EVENT_ANIMATION_MARKER: u32 = 9;
+/// An interface element was clicked. Subject: its id.
+pub const EVENT_UI_CLICKED: u32 = 10;
+/// An input element changed. Subject: its id; detail: its value as text.
+pub const EVENT_UI_CHANGED: u32 = 11;
+/// Any other interface event. Subject: the element's id; detail: the event.
+pub const EVENT_UI: u32 = 12;
 
 // ─── The same three calls in a browser ─────────────────────────────────────
 // A web build loads each script as its own wasm module, and one module can't

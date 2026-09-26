@@ -2214,45 +2214,140 @@ pub fn guard(actor: &Actor, what: &str, f: impl FnOnce() + std::panic::UnwindSaf
     }
 }
 
+/// Something that happened to this actor, or to the whole game, which the
+/// runtime hands the `event` entry point the frame it happens: the same
+/// events a canvas's hat blocks start on.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Event {
+    /// A broadcast.
+    Message(String),
+    /// A key went down, as `key_down` spells it.
+    Key(String),
+    /// An input action went down.
+    Action(String),
+    /// This actor was clicked.
+    Clicked,
+    /// A finger touched the screen.
+    Touched,
+    /// This actor started touching another: its name and its id.
+    Collision { with: String, id: String },
+    /// This actor's particles spawned, died or collided this frame: how many,
+    /// and where the last one did.
+    Particles {
+        kind: ParticleKind,
+        count: u32,
+        at: (f32, f32, f32),
+    },
+    /// A `Once` clip ended.
+    AnimationEnded(String),
+    /// The clip reached a marker.
+    AnimationMarker(String),
+    /// An interface element was clicked.
+    UiClicked(String),
+    /// An input element changed, and its value as text.
+    UiChanged { element: String, value: String },
+    /// Any other interface event: the element and the event.
+    Ui { element: String, event: String },
+}
+
+/// Which particle event an [`Event::Particles`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParticleKind {
+    Spawn,
+    Die,
+    Collide,
+}
+
+impl Event {
+    /// What the host called the entry point with, or `None` for a kind this
+    /// build doesn't know.
+    #[doc(hidden)]
+    pub fn from_raw(me: &Actor, kind: u32, n: [f64; 4]) -> Option<Event> {
+        let word = |what: &str| {
+            me.text(TEXT_EVENT, Str::borrow(what), Str::EMPTY)
+                .unwrap_or_default()
+        };
+        let subject = word("");
+        Some(match kind {
+            EVENT_MESSAGE => Event::Message(subject),
+            EVENT_KEY => Event::Key(subject),
+            EVENT_ACTION => Event::Action(subject),
+            EVENT_CLICKED => Event::Clicked,
+            EVENT_TOUCHED => Event::Touched,
+            EVENT_COLLISION => Event::Collision {
+                with: subject,
+                id: word("detail"),
+            },
+            EVENT_PARTICLES => Event::Particles {
+                kind: match subject.as_str() {
+                    "spawn" => ParticleKind::Spawn,
+                    "die" => ParticleKind::Die,
+                    "collide" => ParticleKind::Collide,
+                    _ => return None,
+                },
+                count: n[0] as u32,
+                at: (n[1] as f32, n[2] as f32, n[3] as f32),
+            },
+            EVENT_ANIMATION_ENDED => Event::AnimationEnded(subject),
+            EVENT_ANIMATION_MARKER => Event::AnimationMarker(subject),
+            EVENT_UI_CLICKED => Event::UiClicked(subject),
+            EVENT_UI_CHANGED => Event::UiChanged {
+                element: subject,
+                value: word("detail"),
+            },
+            EVENT_UI => Event::Ui {
+                element: subject,
+                event: word("detail"),
+            },
+            _ => return None,
+        })
+    }
+}
+
+/// The entry points a script leaves out.
+#[doc(hidden)]
+pub fn no_start(_: &Actor) {}
+#[doc(hidden)]
+pub fn no_tick(_: &Actor, _: f32) {}
+#[doc(hidden)]
+pub fn no_event(_: &Actor, _: &Event) {}
+
 /// Names the functions the runtime should call, and writes the entry points
-/// that call them.
+/// that call them. Any of the three may be left out, in any order.
 ///
 /// ```ignore
 /// use blockloom::*;
 ///
 /// fn start(me: &Actor) { me.say("hello"); }
 /// fn tick(me: &Actor, dt: f32) { me.move_forward(60.0 * dt); }
+/// fn event(me: &Actor, event: &Event) {
+///     if let Event::Particles { kind: ParticleKind::Collide, at, .. } = event {
+///         me.log(&format!("a spark hit at {at:?}"));
+///     }
+/// }
 ///
-/// blockloom::export!(start = start, tick = tick);
+/// blockloom::export!(start = start, tick = tick, event = event);
 /// ```
 #[macro_export]
 macro_rules! export {
-    (start = $start:path, tick = $tick:path) => {
-        $crate::export!(@abi);
-        $crate::export!(@start $start);
-        $crate::export!(@tick $tick);
+    (@take [$start:path, $tick:path, $event:path]) => {
+        $crate::export!(@emit $start, $tick, $event);
     };
-    (tick = $tick:path, start = $start:path) => {
-        $crate::export!(start = $start, tick = $tick);
+    (@take [$start:path, $tick:path, $event:path] start = $value:path $(, $($rest:tt)*)?) => {
+        $crate::export!(@take [$value, $tick, $event] $($($rest)*)?);
     };
-    (start = $start:path) => {
-        $crate::export!(@abi);
-        $crate::export!(@start $start);
-        $crate::export!(@tick_empty);
+    (@take [$start:path, $tick:path, $event:path] tick = $value:path $(, $($rest:tt)*)?) => {
+        $crate::export!(@take [$start, $value, $event] $($($rest)*)?);
     };
-    (tick = $tick:path) => {
-        $crate::export!(@abi);
-        $crate::export!(@start_empty);
-        $crate::export!(@tick $tick);
+    (@take [$start:path, $tick:path, $event:path] event = $value:path $(, $($rest:tt)*)?) => {
+        $crate::export!(@take [$start, $tick, $value] $($($rest)*)?);
     };
-
-    (@abi) => {
+    (@emit $start:path, $tick:path, $event:path) => {
         #[unsafe(no_mangle)]
         pub extern "C" fn blockloom_script_abi() -> u32 {
             $crate::ABI_VERSION
         }
-    };
-    (@start $start:path) => {
+
         #[unsafe(no_mangle)]
         pub extern "C" fn blockloom_script_start(
             ctx: *mut ::std::ffi::c_void,
@@ -2261,16 +2356,7 @@ macro_rules! export {
             let me = unsafe { $crate::Actor::from_raw(ctx, api) };
             $crate::guard(&me, "start", || $start(&me));
         }
-    };
-    (@start_empty) => {
-        #[unsafe(no_mangle)]
-        pub extern "C" fn blockloom_script_start(
-            _ctx: *mut ::std::ffi::c_void,
-            _api: *const $crate::HostApi,
-        ) {
-        }
-    };
-    (@tick $tick:path) => {
+
         #[unsafe(no_mangle)]
         pub extern "C" fn blockloom_script_tick(
             ctx: *mut ::std::ffi::c_void,
@@ -2280,14 +2366,24 @@ macro_rules! export {
             let me = unsafe { $crate::Actor::from_raw(ctx, api) };
             $crate::guard(&me, "tick", || $tick(&me, dt));
         }
-    };
-    (@tick_empty) => {
+
         #[unsafe(no_mangle)]
-        pub extern "C" fn blockloom_script_tick(
-            _ctx: *mut ::std::ffi::c_void,
-            _api: *const $crate::HostApi,
-            _dt: f32,
+        pub extern "C" fn blockloom_script_event(
+            ctx: *mut ::std::ffi::c_void,
+            api: *const $crate::HostApi,
+            kind: u32,
+            n0: f64,
+            n1: f64,
+            n2: f64,
+            n3: f64,
         ) {
+            let me = unsafe { $crate::Actor::from_raw(ctx, api) };
+            if let Some(event) = $crate::Event::from_raw(&me, kind, [n0, n1, n2, n3]) {
+                $crate::guard(&me, "event", || $event(&me, &event));
+            }
         }
+    };
+    ($($rest:tt)*) => {
+        $crate::export!(@take [$crate::no_start, $crate::no_tick, $crate::no_event] $($rest)*);
     };
 }

@@ -749,8 +749,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         Not covered: the emitter stays a module stack laid out like VFX
         Graph's contexts, with no node editor or operator nodes; GPU
         collisions see bodies as boxes and balls only (no capsules, meshes
-        or terrain unless on screen); a script polls particle events, since
-        scripts have no event entry point.
+        or terrain unless on screen). Scripts hear particle events (and every
+        other hat block's event) through their `event` entry point.
   - [ ] Decals (transient marks only; lasting stains live in the destruction map
         below): deferred projected (albedo/normal/roughness/emissive, atlas pages,
         angle fade, depth reject to avoid floating edges), pool with LRU steal plus

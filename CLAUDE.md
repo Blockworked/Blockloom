@@ -313,7 +313,18 @@ A script reads the world through the same frame snapshot the reporter blocks
 read (`sense`) and everything it does comes back as a `vm::Effect`, applied by
 the same systems. So a script and a canvas can drive one actor between them,
 and reading straight back after a write gives the old value, exactly as it
-does in the block editor. A panic inside a script is caught by `export!` and
+does in the block editor.
+
+A script has three entry points, any of which `export!` fills in empty:
+`start`, `tick` and `event`. `event` hears what the hat blocks start on:
+`Engine::fire` queues each event while scripts run (`script_events`), and
+`step_scripts` hands them over before `tick` as a `ScriptEvent`, a kind
+(`abi::EVENT_*`), four numbers, and words read back through `TEXT_EVENT`,
+since a web host can't hand a string into the script's memory. Messages,
+keys, actions, touches and interface events reach every script; clicks,
+collisions, particles and animation events only the actor they name.
+
+A panic inside a script is caught by `export!` and
 logged rather than being allowed to cross the C boundary, which would abort
 the whole game window.
 
