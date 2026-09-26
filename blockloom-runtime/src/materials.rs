@@ -883,8 +883,32 @@ pub fn spawn_tilemap_2d(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
 ) -> Option<Entity> {
+    spawn_tilemap_mesh_2d(
+        commands,
+        entity,
+        tilemap,
+        &tilemap.build_mesh(),
+        dir,
+        assets,
+        meshes,
+        materials,
+    )
+}
+
+/// [`spawn_tilemap_2d`] with the mesh already built, which is what a room
+/// streaming in builds off the main thread.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_tilemap_mesh_2d(
+    commands: &mut Commands,
+    entity: Entity,
+    tilemap: &blockloom_core::material::Tilemap,
+    built: &TileMesh,
+    dir: Option<&Path>,
+    assets: &AssetServer,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<ColorMaterial>,
+) -> Option<Entity> {
     use bevy::sprite_render::ColorMaterial;
-    let built = tilemap.build_mesh();
     if built.is_empty() {
         return None;
     }
@@ -893,7 +917,7 @@ pub fn spawn_tilemap_2d(
     } else {
         Some(assets.load(crate::world::asset_path(dir, tilemap.tileset.trim())))
     };
-    let mesh = meshes.add(tilemesh_to_bevy(&built));
+    let mesh = meshes.add(tilemesh_to_bevy(built));
     let material = materials.add(ColorMaterial {
         color: Color::WHITE,
         alpha_mode: AlphaMode2d::Blend,

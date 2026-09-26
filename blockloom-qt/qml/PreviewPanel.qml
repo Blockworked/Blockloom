@@ -54,6 +54,17 @@ Rectangle {
         property real brushFalloff: 0.6
         property real brushStep: 4
         property real brushScale: 12
+        property string tileTool: "paint"
+        property string tileTiles: "0"
+        property string tileAutotile: ""
+        property int tileSize: 1
+        property real tileDensity: 0.3
+        property real tileJitter: 0
+        property int tileSeed: 1
+        property bool tileCollision: false
+        property bool tileRegions: true
+        property bool tileRooms: true
+        property bool tileParallax: true
     }
     // The reference path tracer is heavy, so it is never remembered on.
     property bool pathTracing: false
@@ -70,8 +81,24 @@ Rectangle {
         volumes: { bounds: scene.volumeBounds, heatmap: scene.volumeHeatmap, freeze: root.volumeFreeze },
         path_tracer: { enabled: root.pathTracing && is3d, samples: scene.pathSamples, seconds: scene.pathSeconds },
         brush: { op: scene.brushOp, target: brushTarget(scene.brushTarget), radius: scene.brushRadius, strength: scene.brushStrength,
-                 falloff: scene.brushFalloff, level: null, step: scene.brushStep, scale: scene.brushScale, seed: 1 }
+                 falloff: scene.brushFalloff, level: null, step: scene.brushStep, scale: scene.brushScale, seed: 1 },
+        tile_brush: { tool: scene.tileTool, tiles: tileList(scene.tileTiles), autotile: scene.tileAutotile, size: scene.tileSize,
+                      density: scene.tileDensity, jitter: scene.tileJitter, seed: scene.tileSeed },
+        tiles: { collision: scene.tileCollision, regions: scene.tileRegions, rooms: scene.tileRooms, parallax: scene.tileParallax }
     })
+    // "3, 7 12" -> [3, 7, 12]: the tiles a brush paints with, variants after the first.
+    function tileList(text) { const l = String(text).split(/[\s,]+/).filter(t => t !== "").map(Number).filter(n => Number.isInteger(n) && n >= 0); return l.length ? l : [0]; }
+    // The selected actor's tilemap, which the Tiles tool paints on.
+    readonly property var tileMap: {
+        const p = appState.project;
+        if (!p || !appState.selected_actor) return null;
+        const a = p.actors.find(x => x.id === appState.selected_actor);
+        const c = a ? a.components.find(x => x.component === "Look") : null;
+        return c && c.visual && c.visual.shape === "Tilemap" ? c.visual.tilemap : null;
+    }
+    // A pick in the view hands its tile to the brush.
+    readonly property int pickSerial: appState.picked_tile ? appState.picked_tile.serial : 0
+    onPickSerialChanged: if (appState.picked_tile && appState.picked_tile.tile >= 0) { scene.tileTiles = String(appState.picked_tile.tile); scene.tileTool = "paint"; }
     // "Layer:1" stands for { kind: "Layer", layer: 1 }.
     function brushTarget(name) {
         const parts = name.split(":");
@@ -364,6 +391,7 @@ Rectangle {
                         ToolToggle { visible: scene.enabled; icon: "rotate-cw"; tip: "Rotate (E)"; checked: scene.tool === "rotate"; onClicked: root.setTool("rotate") }
                         ToolToggle { visible: scene.enabled; icon: "scale"; tip: "Scale (R)"; checked: scene.tool === "scale"; onClicked: root.setTool("scale") }
                         ToolToggle { visible: scene.enabled && root.is3d; icon: "pencil"; tip: "Terrain brush (B): sculpt, paint, cut holes and place grass or trees on the selected terrain"; checked: scene.tool === "brush"; onClicked: root.setTool("brush") }
+                        ToolToggle { visible: scene.enabled && !root.is3d; icon: "palette"; tip: "Tiles (T): paint, erase, fill, draw lines and rects, scatter or pick on the selected tilemap"; checked: scene.tool === "tiles"; onClicked: root.setTool("tiles") }
                         ToolToggle { visible: scene.enabled && root.is3d; icon: "move-3d"; tip: scene.local ? "Local axes: the actor's own" : "World axes"; checked: scene.local; onClicked: scene.local = !scene.local }
                         Rectangle { width: 1; height: 20; color: Theme.border; anchors.verticalCenter: parent.verticalCenter; visible: scene.enabled }
                         ToolToggle { visible: scene.enabled; icon: "layout-grid"; tip: "Snap to the grid (hold Ctrl to flip)"; checked: scene.snap; onClicked: scene.snap = !scene.snap }
@@ -427,6 +455,97 @@ Rectangle {
                             NumberField { Layout.preferredWidth: 48
                                 value: scene.brushOp === "Terrace" ? scene.brushStep : scene.brushScale; fallback: scene.brushOp === "Terrace" ? 4 : 12
                                 onCommitted: n => { const v = Math.max(0.05, Number(n)); if (scene.brushOp === "Terrace") scene.brushStep = v; else scene.brushScale = v; } }
+                        }
+                    }
+                }
+                // The Tiles tool's brush, overlays and the tileset to pick from.
+                Rectangle {
+                    visible: root.editing && scene.tool === "tiles" && !root.is3d
+                    anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 8; anchors.topMargin: 48
+                    width: tileRows.implicitWidth + 16; height: tileRows.implicitHeight + 16; radius: 6
+                    color: "#d0202124"; border.color: Theme.borderSoft
+                    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }
+                    ColumnLayout {
+                        id: tileRows
+                        anchors.centerIn: parent; spacing: 4
+                        Text { visible: !root.tileMap; text: "Select a tilemap to paint on."; color: Theme.textDim; font.pixelSize: 11 }
+                        Row {
+                            spacing: 2
+                            Repeater {
+                                model: [["paint", "pencil", "Paint"], ["erase", "eraser", "Erase"], ["fill", "palette", "Fill the connected area"], ["line", "trending-up", "Line"],
+                                        ["rect", "square", "Rectangle"], ["scatter", "sparkles", "Scatter by density"], ["pick", "pipette", "Pick the tile under the pointer"]]
+                                delegate: ToolToggle { required property var modelData; icon: modelData[1]; tip: modelData[2]; checked: scene.tileTool === modelData[0]; onClicked: scene.tileTool = modelData[0] }
+                            }
+                        }
+                        RowLayout {
+                            spacing: 4
+                            Text { text: "Tiles"; color: Theme.textDim; font.pixelSize: 11 }
+                            BwTextField { Layout.preferredWidth: 90; implicitHeight: 26; font.pixelSize: 11; text: scene.tileTiles
+                                ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: "Sheet tiles to paint with; more than one are variants"
+                                onEditingFinished: scene.tileTiles = root.tileList(text).join(", ") }
+                            Text { text: "Size"; color: Theme.textDim; font.pixelSize: 11 }
+                            NumberField { Layout.preferredWidth: 40; value: scene.tileSize; fallback: 1; onCommitted: n => scene.tileSize = Math.min(16, Math.max(1, Math.round(n))) }
+                            ChoiceField { Layout.preferredWidth: 110
+                                options: [{ value: "", label: "No autotile" }].concat((root.tileMap && root.tileMap.autotiles ? root.tileMap.autotiles : []).map(s => ({ value: s.name, label: s.name })))
+                                value: scene.tileAutotile; onChosen: v => scene.tileAutotile = v }
+                        }
+                        RowLayout {
+                            spacing: 4
+                            Text { text: "Density"; color: Theme.textDim; font.pixelSize: 11 }
+                            NumberField { Layout.preferredWidth: 44; value: scene.tileDensity; fallback: 0.3; onCommitted: n => scene.tileDensity = Math.min(1, Math.max(0, n)) }
+                            Text { text: "Jitter"; color: Theme.textDim; font.pixelSize: 11 }
+                            NumberField { Layout.preferredWidth: 44; value: scene.tileJitter; fallback: 0; onCommitted: n => scene.tileJitter = Math.min(1, Math.max(0, n)) }
+                            Text { text: "Seed"; color: Theme.textDim; font.pixelSize: 11 }
+                            NumberField { Layout.preferredWidth: 44; value: scene.tileSeed; fallback: 1; onCommitted: n => scene.tileSeed = Math.max(0, Math.round(n)) }
+                        }
+                        RowLayout {
+                            spacing: 2
+                            BwCheckBox { text: "Collision"; checked: scene.tileCollision; onToggled: scene.tileCollision = checked }
+                            BwCheckBox { text: "Regions"; checked: scene.tileRegions; onToggled: scene.tileRegions = checked }
+                            BwCheckBox { text: "Rooms"; checked: scene.tileRooms; onToggled: scene.tileRooms = checked }
+                            BwCheckBox { text: "Parallax"; checked: scene.tileParallax; onToggled: scene.tileParallax = checked
+                                ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: "Scroll parallax layers against this camera, as the game's will" }
+                        }
+                        // The tileset sliced into its sheet: click a tile to paint with it, Shift-click to add a variant.
+                        Item {
+                            id: sheet
+                            visible: !!root.tileMap && root.tileMap.tileset !== "" && sheetImage.status === Image.Ready
+                            readonly property int cols: root.tileMap ? Math.max(1, root.tileMap.sheet_columns) : 1
+                            readonly property int rows: root.tileMap ? Math.max(1, root.tileMap.sheet_rows) : 1
+                            readonly property real scaleBy: sheetImage.implicitWidth > 0 ? Math.min(1, 280 / sheetImage.implicitWidth, 220 / sheetImage.implicitHeight) : 1
+                            Layout.preferredWidth: sheetImage.implicitWidth * scaleBy
+                            Layout.preferredHeight: sheetImage.implicitHeight * scaleBy
+                            readonly property var chosen: root.tileList(scene.tileTiles)
+                            Image {
+                                id: sheetImage
+                                anchors.fill: parent; smooth: false; cache: false; asynchronous: true
+                                source: root.tileMap && root.tileMap.tileset !== "" ? root.app.assetUrl(root.tileMap.tileset) : ""
+                            }
+                            Repeater {
+                                model: sheet.cols * sheet.rows
+                                delegate: Rectangle {
+                                    required property int index
+                                    x: (index % sheet.cols) * sheet.width / sheet.cols
+                                    y: Math.floor(index / sheet.cols) * sheet.height / sheet.rows
+                                    width: sheet.width / sheet.cols; height: sheet.height / sheet.rows
+                                    color: "transparent"
+                                    border.width: sheet.chosen.indexOf(index) >= 0 ? 2 : 0.5
+                                    border.color: sheet.chosen.indexOf(index) >= 0 ? Theme.accent : "#60ffffff"
+                                    MouseArea {
+                                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                        ToolTip.visible: containsMouse; ToolTip.delay: 400; ToolTip.text: "Tile " + index
+                                        hoverEnabled: true
+                                        onClicked: mouse => {
+                                            if (mouse.modifiers & Qt.ShiftModifier) {
+                                                const l = sheet.chosen.filter(t => t !== index);
+                                                if (l.length === sheet.chosen.length) l.push(index);
+                                                scene.tileTiles = (l.length ? l : [index]).join(", ");
+                                            } else scene.tileTiles = String(index);
+                                            if (scene.tileTool === "erase" || scene.tileTool === "pick") scene.tileTool = "paint";
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -524,8 +643,8 @@ Rectangle {
                     const code = root.keyCode(event);
                     // The scene view's own keys, by where they sit; flying uses the same ones.
                     if (root.editing && !root.looking && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier)) && !event.isAutoRepeat) {
-                        const tools = { KeyW: "move", KeyE: "rotate", KeyR: "scale", KeyB: "brush" };
-                        if (tools[code]) root.setTool(tools[code]);
+                        const tools = { KeyW: "move", KeyE: "rotate", KeyR: "scale", KeyB: "brush", KeyT: "tiles" };
+                        if (tools[code] && (code !== "KeyB" || root.is3d) && (code !== "KeyT" || !root.is3d)) root.setTool(tools[code]);
                         else if (code === "KeyF") root.report("frame_selected");
                         else if (code === "KeyG") scene.showGrid = !scene.showGrid;
                     }

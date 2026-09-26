@@ -52,6 +52,7 @@ QtObject {
     readonly property var enableOptions: [{value:"true",label:"enable"},{value:"false",label:"disable"}]
     readonly property var uiThemeOptions: [{value:"Dark",label:"dark"},{value:"Light",label:"light"},{value:"HighContrast",label:"high contrast"}]
     readonly property var waterOptions: [{value:"Level",label:"level"},{value:"Chop",label:"chop"},{value:"Foam",label:"foam"}]
+    readonly property var parallaxAxisOptions: [{value:"Both",label:"both axes"},{value:"X",label:"x"},{value:"Y",label:"y"}]
     readonly property var windOptions: [{value:"Direction",label:"direction"},{value:"Speed",label:"speed"},{value:"Gust",label:"gust"},{value:"Storm",label:"storm"}]
     readonly property var cloudLayerOptions: [{value:"Coverage",label:"coverage"},{value:"Opacity",label:"opacity"},{value:"Contrast",label:"contrast"},{value:"Altitude",label:"altitude"},{value:"Spin",label:"spin"}]
     readonly property var cloudOptions: [{value:"Coverage",label:"coverage"},{value:"Density",label:"density"},{value:"Type",label:"type"}]
@@ -131,11 +132,11 @@ QtObject {
 
     readonly property var icons: ({
         WhenStarted:"flag", WhenKeyPressed:"keyboard", WhenActionPressed:"gamepad-2", WhenTouched:"pointer", WhenClicked:"mouse-pointer-click",
-        WhenCollision:"crosshair", WhenMessage:"radio", WhenCloned:"copy", WhenAnimationMarker:"flag", WhenUiEvent:"square-mouse-pointer", WhenUiClicked:"square-mouse-pointer", WhenUiChanged:"sliders-horizontal",
+        WhenCollision:"crosshair", WhenMessage:"radio", WhenCloned:"copy", WhenAnimationMarker:"flag", WhenEnterRoom:"square-dashed", WhenUiEvent:"square-mouse-pointer", WhenUiClicked:"square-mouse-pointer", WhenUiChanged:"sliders-horizontal",
         BlockHeader:"blocks", Move:"arrow-right", GoTo:"move", NavigateTo:"navigation", ChangePosition:"move-3d", Glide:"wind", TweenScale:"maximize", TweenRotation:"rotate-cw", TweenColor:"palette", StopTweens:"square", PlayAnimation:"play", StopAnimation:"square", SetAnimationSpeed:"gauge", FireAnimationTrigger:"zap", SetRigSlot:"git-branch", SetSlotTint:"palette", SetIkTarget:"crosshair", SetSpriteDial:"sliders-horizontal", Turn:"rotate-cw",
         SetRotation:"rotate-cw", PointTowards:"target", SetScale:"maximize", SetBody:"boxes", SetTrigger:"ghost", SetCollisionLayer:"layers",
         SetCollisionMask:"filter", ApplyImpulse:"zap", SetVelocity:"trending-up", SetGravity:"cloud", SetDensity:"weight", SetMass:"weight",
-        Say:"message-square", SetVisible:"eye", SetColor:"palette", SetExposure:"sun", SetLightIntensity:"zap", SetEmissiveStrength:"sparkles", SetHdrOutput:"monitor", SetPeakBrightness:"sun", EnableVolume:"box", SetVolumeWeight:"weight", CaptureProbes:"aperture", SetShadowDistance:"sun-dim", SetLightShadows:"lamp", SetRayTracing:"sparkles", SetGiBounces:"repeat", SetGiSamples:"layers", SetFogDensity:"cloud", SetAurora:"moon", StrikeLightning:"zap", SetLightningRate:"wind", SetWind:"wind", SetCloudDrift:"cloud", SetClouds:"cloud", SetCloudLayer:"layers", SetWater:"wind", BurstParticles:"sparkles", SetEmitterDial:"sliders-horizontal", SetTrailEnabled:"wind", PlaySound:"volume-2", PlaySoundAt:"map-pin", StopSound:"square",
+        Say:"message-square", SetVisible:"eye", SetColor:"palette", SetExposure:"sun", SetLightIntensity:"zap", SetEmissiveStrength:"sparkles", SetHdrOutput:"monitor", SetPeakBrightness:"sun", EnableVolume:"box", SetVolumeWeight:"weight", CaptureProbes:"aperture", SetShadowDistance:"sun-dim", SetLightShadows:"lamp", SetRayTracing:"sparkles", SetGiBounces:"repeat", SetGiSamples:"layers", SetFogDensity:"cloud", SetAurora:"moon", StrikeLightning:"zap", SetLightningRate:"wind", SetWind:"wind", SetCloudDrift:"cloud", SetClouds:"cloud", SetCloudLayer:"layers", SetWater:"wind", PaintTile:"palette", SetParallax:"layers", BurstParticles:"sparkles", SetEmitterDial:"sliders-horizontal", SetTrailEnabled:"wind", PlaySound:"volume-2", PlaySoundAt:"map-pin", StopSound:"square",
         SetSoundVolume:"volume-1", SetSoundPitch:"music", SetBusVolume:"sliders-horizontal", SetComponentField:"panels-top-left",
         SetCameraView:"camera", SetCameraPitch:"video", SetCameraFov:"video", AttachComponent:"plus", DetachComponent:"x", SetParent:"link",
         CreateClone:"copy", CreateActor:"sparkles", DeleteActor:"trash-2", Wait:"clock", WaitUntil:"hand", If:"git-branch", IfElse:"git-fork",
@@ -169,6 +170,7 @@ QtObject {
             WhenUiChanged: header([lb("when"), field("element", "element id"), lb("changed")]),
             WhenAnimationEnds: header([lb("when animation"), field("clip", "clip name (empty for any)"), lb("ends")]),
             WhenAnimationMarker: header([lb("when animation reaches marker"), field("marker", "marker (empty for any)")]),
+            WhenEnterRoom: header([lb("when I enter room"), field("room", "room (empty for any)")]),
             Broadcast: row([lb("broadcast"), field("name", "message")]),
             // Motion
             Move: row([lb("move"), slot("MoveSteps", "steps"), lb("steps")]),
@@ -218,6 +220,8 @@ QtObject {
             SetWind: row([lb("set wind"), dd("property", windOptions), lb("to"), slot("WindValue", "value")]),
             SetClouds: row([lb("set clouds"), dd("property", cloudOptions), lb("to"), slot("CloudValue", "value")]),
             SetWater: row([lb("set water"), dd("property", waterOptions), lb("to"), slot("WaterValue", "value")]),
+            PaintTile: row([lb("paint tile"), slot("TileIndex", "tile"), lb("at x"), slot("TileX", "x"), lb("y"), slot("TileY", "y"), lb("of map"), slot("TileMap", "map")]),
+            SetParallax: row([lb("set parallax of layer"), slot("ParallaxLayer", "layer"), dd("axis", parallaxAxisOptions), lb("to"), slot("ParallaxValue", "value")]),
             SetCloudLayer: row([lb("set cloud layer"), slot("CloudLayer", "layer"), dd("property", cloudLayerOptions), lb("to"), slot("CloudLayerValue", "value")]),
             SetCloudDrift: row(vector("set cloud drift to", ["CloudDriftX","CloudDriftY","CloudDriftZ"], ["x","y","z"])),
             BurstParticles: row([lb("burst"), slot("ParticleCount", "count"), lb("particles")]),
@@ -337,6 +341,7 @@ QtObject {
         case "SetAnimationSpeed": return { speed: num(1) };
         case "WhenAnimationEnds": return { clip: "" };
         case "WhenAnimationMarker": return { marker: "" };
+        case "WhenEnterRoom": return { room: "" };
         case "FireAnimationTrigger": return { name: txt("jump") };
         case "SetRigSlot": return { slot: txt("hand"), attachment: txt("fist") };
         case "SetSlotTint": return { slot: txt("cape"), color: txt("#FF4C4C") };
@@ -378,6 +383,8 @@ QtObject {
         case "SetWind": return { property: "Speed", value: num(5) };
         case "SetClouds": return { property: "Coverage", value: num(0.5) };
         case "SetWater": return { property: "Level", value: num(0) };
+        case "PaintTile": return { map: txt(""), tile: num(0), x: num(0), y: num(0) };
+        case "SetParallax": return { layer: txt("Background"), axis: "Both", value: num(0.5) };
         case "SetCloudLayer": return { layer: num(1), property: "Coverage", value: num(0.5) };
         case "SetCloudDrift": return { x: num(0), y: num(0), z: num(0) };
         case "BurstParticles": return { count: num(24) };
@@ -521,7 +528,9 @@ QtObject {
         IsRayTracing: { prefix: "ray tracing on?", result: "bool", arity: 0 },
         RayTracingAvailable: { prefix: "ray tracing available?", result: "bool", arity: 0 },
         WaterHeight: { prefix: "water height at", result: "number", arity: 2, args: ["number","number"] },
-        Underwater: { prefix: "is", suffix: "underwater?", result: "bool", arity: 1, args: ["text"] }
+        Underwater: { prefix: "is", suffix: "underwater?", result: "bool", arity: 1, args: ["text"] },
+        TileAt: { prefix: "tile at", suffix: "of map", result: "number", arity: 3, args: ["number","number","text"] },
+        RoomContaining: { prefix: "room containing", result: "text", arity: 1, args: ["text"] }
     })
     // Arity and slot types of blockstitch's own operators, for fresh palette values.
     readonly property var builtinShapes: ({
@@ -534,7 +543,7 @@ QtObject {
     })
     // Palette groups, the way the sidebar shows them.
     readonly property var operatorGroups: [
-        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","ActorPosition","ActorLocalPosition","ComponentField","SoundPlaying","BusVolume","IsTweening","CurrentClip","CurrentFrame","AnimationPlaying","Atmosphere","SceneLuminance","IsHdrDisplay","PeakBrightness","ActiveVolumes","CastsShadows","IsRayTracing","RayTracingAvailable","WaterHeight","Underwater"] },
+        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","ActorPosition","ActorLocalPosition","ComponentField","SoundPlaying","BusVolume","IsTweening","CurrentClip","CurrentFrame","AnimationPlaying","Atmosphere","SceneLuminance","IsHdrDisplay","PeakBrightness","ActiveVolumes","CastsShadows","IsRayTracing","RayTracingAvailable","WaterHeight","Underwater","TileAt","RoomContaining"] },
         { label: "Interface", kinds: ["UiSelectedIndex","UiValue","UiText","UiShown","UiExists","UiFocus","GamePaused"] },
         { label: "Actors", kinds: ["IsClone","MyParent","NewActor","ActorCount"] },
         { label: "Maths", kinds: ["Add","Sub","Mul","Div","Mod","Round","Math","Random"] },
@@ -544,10 +553,10 @@ QtObject {
     readonly property var listOperatorKinds: ["ListItem","ListItemNumber","ListAmount","ListLength","ListContains","ListItemExists","ListIsEmpty","ListAsJson"]
     readonly property var dictOperatorKinds: ["DictValue","DictHasKey","DictSize","DictKeys","DictAsJson","DictIsEmpty"]
     readonly property var blockGroups: [
-        { label: "Events", types: ["WhenStarted","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenAnimationEnds","WhenAnimationMarker","WhenUiEvent","WhenUiClicked","WhenUiChanged","Broadcast"] },
+        { label: "Events", types: ["WhenStarted","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenAnimationEnds","WhenAnimationMarker","WhenEnterRoom","WhenUiEvent","WhenUiClicked","WhenUiChanged","Broadcast"] },
         { label: "Motion", types: ["Move","GoTo","NavigateTo","ChangePosition","Glide","TweenScale","TweenRotation","TweenColor","StopTweens","Turn","SetRotation","PointTowards","SetScale"] },
         { label: "Physics", types: ["SetBody","ApplyImpulse","SetVelocity","SetGravity","SetDensity","SetMass","SetTrigger","SetCollisionLayer","SetCollisionMask"] },
-        { label: "Looks", types: ["Say","SetVisible","SetColor","SetExposure","SetLightIntensity","SetEmissiveStrength","SetHdrOutput","SetPeakBrightness","EnableVolume","SetVolumeWeight","CaptureProbes","SetShadowDistance","SetLightShadows","SetRayTracing","SetGiBounces","SetGiSamples","SetFogDensity","SetAurora","StrikeLightning","SetLightningRate","SetWind","SetCloudDrift","SetClouds","SetCloudLayer","SetWater","BurstParticles","SetEmitterDial","SetTrailEnabled","PlayAnimation","StopAnimation","SetAnimationSpeed","FireAnimationTrigger","SetRigSlot","SetSlotTint","SetIkTarget","SetSpriteDial"] },
+        { label: "Looks", types: ["Say","SetVisible","SetColor","SetExposure","SetLightIntensity","SetEmissiveStrength","SetHdrOutput","SetPeakBrightness","EnableVolume","SetVolumeWeight","CaptureProbes","SetShadowDistance","SetLightShadows","SetRayTracing","SetGiBounces","SetGiSamples","SetFogDensity","SetAurora","StrikeLightning","SetLightningRate","SetWind","SetCloudDrift","SetClouds","SetCloudLayer","SetWater","PaintTile","SetParallax","BurstParticles","SetEmitterDial","SetTrailEnabled","PlayAnimation","StopAnimation","SetAnimationSpeed","FireAnimationTrigger","SetRigSlot","SetSlotTint","SetIkTarget","SetSpriteDial"] },
         { label: "Sound", types: ["PlaySound","PlaySoundAt","StopSound","SetSoundVolume","SetSoundPitch","SetBusVolume"] },
         { label: "Components", types: ["SetComponentField","SetCameraView","SetCameraPitch","SetCameraFov","AttachComponent","DetachComponent","SetParent"] },
         { label: "Actors", types: ["CreateClone","CreateActor","DeleteActor"] },
@@ -592,13 +601,13 @@ QtObject {
     // What the Details dialog says about a block.
     readonly property var labels: ({
         WhenStarted:"when the project starts", WhenKeyPressed:"when a key is pressed", WhenActionPressed:"when an input action is pressed",
-        WhenTouched:"when the screen is touched", WhenClicked:"when I am clicked", WhenCollision:"when I touch", WhenMessage:"when I get a message", WhenAnimationEnds:"when an animation ends", WhenAnimationMarker:"when an animation reaches a marker",
+        WhenTouched:"when the screen is touched", WhenClicked:"when I am clicked", WhenCollision:"when I touch", WhenMessage:"when I get a message", WhenAnimationEnds:"when an animation ends", WhenAnimationMarker:"when an animation reaches a marker", WhenEnterRoom:"when I enter a room",
         WhenUiEvent:"when an interface event occurs", WhenCloned:"when I start as a clone", WhenUiClicked:"when an element is clicked", WhenUiChanged:"when an input is changed",
         BlockHeader:"block definition", Move:"move forward", GoTo:"go to", NavigateTo:"navigate to", ChangePosition:"change position",
         Glide:"glide to", TweenScale:"tween size", TweenRotation:"tween rotation", TweenColor:"tween color", StopTweens:"stop my tweens", PlayAnimation:"play animation", StopAnimation:"stop my animation", SetAnimationSpeed:"set animation speed", FireAnimationTrigger:"fire an animation trigger", SetRigSlot:"swap a rig slot", SetSlotTint:"tint a rig slot", SetIkTarget:"point a rig IK chain", SetSpriteDial:"set a sprite dial", Turn:"turn", SetRotation:"point in direction", PointTowards:"point towards", SetScale:"set size", SetBody:"set body",
         SetTrigger:"make me solid or a trigger", SetCollisionLayer:"set my collision layer", SetCollisionMask:"set my collision mask",
         ApplyImpulse:"push", SetVelocity:"set velocity", SetGravity:"set gravity", SetDensity:"set density", SetMass:"set mass", Say:"say",
-        SetVisible:"show or hide", SetColor:"set color", SetExposure:"set exposure", SetLightIntensity:"set my light brightness", SetEmissiveStrength:"set my glow", SetHdrOutput:"turn HDR output on or off", SetPeakBrightness:"set peak brightness", EnableVolume:"enable or disable a volume", SetVolumeWeight:"set a volume's weight", CaptureProbes:"capture light probes", SetShadowDistance:"set shadow distance", SetLightShadows:"turn my light's shadows on or off", SetRayTracing:"turn ray tracing on or off", SetGiBounces:"set GI bounces", SetGiSamples:"set GI samples", SetFogDensity:"set fog density", SetAurora:"set aurora", StrikeLightning:"strike lightning", SetLightningRate:"set lightning storm", SetWind:"set the wind", SetCloudDrift:"set cloud drift", SetClouds:"set clouds", SetCloudLayer:"set a cloud layer", SetWater:"set water level, chop or foam", BurstParticles:"burst particles", SetEmitterDial:"set an emitter dial", SetTrailEnabled:"start or stop my trail", PlaySound:"play sound", PlaySoundAt:"play sound at an actor", StopSound:"stop sound",
+        SetVisible:"show or hide", SetColor:"set color", SetExposure:"set exposure", SetLightIntensity:"set my light brightness", SetEmissiveStrength:"set my glow", SetHdrOutput:"turn HDR output on or off", SetPeakBrightness:"set peak brightness", EnableVolume:"enable or disable a volume", SetVolumeWeight:"set a volume's weight", CaptureProbes:"capture light probes", SetShadowDistance:"set shadow distance", SetLightShadows:"turn my light's shadows on or off", SetRayTracing:"turn ray tracing on or off", SetGiBounces:"set GI bounces", SetGiSamples:"set GI samples", SetFogDensity:"set fog density", SetAurora:"set aurora", StrikeLightning:"strike lightning", SetLightningRate:"set lightning storm", SetWind:"set the wind", SetCloudDrift:"set cloud drift", SetClouds:"set clouds", SetCloudLayer:"set a cloud layer", SetWater:"set water level, chop or foam", PaintTile:"paint a tile", SetParallax:"set a layer's parallax", BurstParticles:"burst particles", SetEmitterDial:"set an emitter dial", SetTrailEnabled:"start or stop my trail", PlaySound:"play sound", PlaySoundAt:"play sound at an actor", StopSound:"stop sound",
         SetSoundVolume:"set sound volume", SetSoundPitch:"set sound pitch", SetBusVolume:"set bus volume", SetComponentField:"set a component field",
         SetCameraView:"set my camera view", SetCameraPitch:"set camera pitch", SetCameraFov:"set camera fov", AttachComponent:"attach a component",
         DetachComponent:"detach a component", SetParent:"attach me to an actor", CreateClone:"create a clone", CreateActor:"create an actor",

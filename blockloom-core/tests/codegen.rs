@@ -30,6 +30,7 @@ use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::{Axis, Mode, Visual};
 use blockloom_core::sense::{ActorSense, Sensors, TouchSense, UiSense};
 use blockloom_core::sound::SoundBus;
+use blockloom_core::tilemap::ParallaxAxis;
 use blockloom_core::ui::{UiAnchor, UiProp, UiTheme};
 use blockloom_core::value::{Evaluated, Op, Value};
 use blockloom_core::vm::{Effect, Event, Vm};
@@ -1016,6 +1017,10 @@ fn line_of(act: &Act) -> String {
         Act::SetCloudDrift { drift } => format!("SetCloudDrift {drift:?}"),
         Act::SetClouds { property, value } => format!("SetClouds {property} {value:?}"),
         Act::SetWater { property, value } => format!("SetWater {property} {value:?}"),
+        Act::PaintTile { map, tile, x, y } => {
+            format!("PaintTile {map} {} {x:?} {y:?}", (tile.floor() as i32).max(-1))
+        }
+        Act::SetParallax { layer, axis, value } => format!("SetParallax {layer} {axis} {value:?}"),
         Act::SetCloudLayer {
             layer,
             property,
@@ -1127,6 +1132,7 @@ fn main() {
     // sees it.
     runner.fire(ENTRIES, "AnimationEnded", "a1", "Walk", "");
     runner.fire(ENTRIES, "AnimationMarker", "a1", "Step", "");
+    runner.fire(ENTRIES, "EnteredRoom", "a1", "Cave", "");
 
     for tick in 0..TICKS {
         recorder.tick = tick;
@@ -1276,6 +1282,19 @@ fn line_of(effect: &Effect) -> Option<String> {
             property,
             value,
         } => format!("{actor}|SetWater {} {value:?}", property.name()),
+        Effect::PaintTile {
+            actor,
+            map,
+            tile,
+            x,
+            y,
+        } => format!("{actor}|PaintTile {map} {tile} {x:?} {y:?}"),
+        Effect::SetParallax {
+            actor,
+            layer,
+            axis,
+            value,
+        } => format!("{actor}|SetParallax {layer} {} {value:?}", axis.name()),
         Effect::SetCloudLayer {
             layer,
             property,
@@ -1550,6 +1569,10 @@ fn by_vm(project: &Project) -> Vec<String> {
     vm.fire(Event::AnimationMarker {
         actor: ACTOR.to_string(),
         marker: "Step".to_string(),
+    });
+    vm.fire(Event::EnteredRoom {
+        actor: ACTOR.to_string(),
+        room: "Cave".to_string(),
     });
     let mut lines = Vec::new();
     for tick in 0..TICKS {
@@ -3049,6 +3072,71 @@ fn when_animation_marker_starts_only_for_its_marker() {
                 }],
             ),
         ],
+    );
+}
+
+#[test]
+fn when_enter_room_starts_only_for_its_room() {
+    assert_same_headed(
+        "enter-room",
+        vec![
+            (
+                K::WhenEnterRoom {
+                    room: "cave".to_string(),
+                },
+                vec![K::Say {
+                    text: Value::text("dark in here"),
+                }],
+            ),
+            (
+                K::WhenEnterRoom {
+                    room: "Hall".to_string(),
+                },
+                vec![K::Say {
+                    text: Value::text("never"),
+                }],
+            ),
+            (
+                K::WhenEnterRoom {
+                    room: "".to_string(),
+                },
+                vec![K::Say {
+                    text: Value::text("any room"),
+                }],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn level_blocks_ask_the_same_things_in_order() {
+    assert_same(
+        "level",
+        vec![
+            K::PaintTile {
+                map: Value::text(" Ground "),
+                tile: op("Add", vec![number(2.0), number(1.5)]),
+                x: op("Mul", vec![number(16.0), number(3.0)]),
+                y: number(-8.0),
+            },
+            K::PaintTile {
+                map: Value::text(""),
+                tile: number(-7.0),
+                x: Value::text("left"),
+                y: number(0.5),
+            },
+            K::SetParallax {
+                layer: Value::text("Hills"),
+                axis: ParallaxAxis::X,
+                value: op("Div", vec![number(1.0), number(4.0)]),
+            },
+            K::SetParallax {
+                layer: op("Join", vec![Value::text("Sk"), Value::text("y")]),
+                axis: ParallaxAxis::Both,
+                value: number(0.0),
+            },
+        ],
+        &[],
     );
 }
 

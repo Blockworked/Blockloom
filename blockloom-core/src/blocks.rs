@@ -120,6 +120,11 @@ pub enum InstructionKind {
     WhenAnimationMarker {
         marker: String,
     },
+    /// Runs in an actor each time it walks into a room (an actor with a
+    /// Room component), named by the room's name. Empty matches any room.
+    WhenEnterRoom {
+        room: String,
+    },
     /// Runs when the interface element named `element` is clicked.
     ///
     /// Spelled `element` rather than `id` because a flattened instruction
@@ -349,6 +354,21 @@ pub enum InstructionKind {
     /// when it has some, every body's otherwise.
     SetWater {
         property: crate::water::WaterProperty,
+        value: Value,
+    },
+    /// Paints one cell of a tilemap for the rest of the run, at a world
+    /// point. `map` names the tilemap; empty means this actor if it is one,
+    /// else whichever map covers the point. Tile -1 erases.
+    PaintTile {
+        map: Value,
+        tile: Value,
+        x: Value,
+        y: Value,
+    },
+    /// A parallax layer's scroll factor (0-2) for the rest of the run.
+    SetParallax {
+        layer: Value,
+        axis: crate::tilemap::ParallaxAxis,
         value: Value,
     },
     /// One cloud layer's dial (layer counted from 1) for the rest of the run.
@@ -1000,6 +1020,16 @@ impl BlockKind for InstructionKind {
                 f(layer, InputValueType::Any);
                 f(value, InputValueType::Any);
             }
+            K::PaintTile { map, tile, x, y } => {
+                f(map, InputValueType::Any);
+                f(tile, InputValueType::Any);
+                f(x, InputValueType::Any);
+                f(y, InputValueType::Any);
+            }
+            K::SetParallax { layer, value, .. } => {
+                f(layer, InputValueType::Any);
+                f(value, InputValueType::Any);
+            }
             K::CreateActor { name, x, y, z } => {
                 f(name, InputValueType::Any);
                 f(x, InputValueType::Any);
@@ -1216,6 +1246,7 @@ impl BlockKind for InstructionKind {
             | K::WhenCloned
             | K::WhenAnimationEnds { .. }
             | K::WhenAnimationMarker { .. }
+            | K::WhenEnterRoom { .. }
             | K::BlockHeader { .. }
             | K::CreateClone { .. }
             | K::PointTowards { .. }
@@ -1267,6 +1298,7 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenCloned
                 | InstructionKind::WhenAnimationEnds { .. }
                 | InstructionKind::WhenAnimationMarker { .. }
+                | InstructionKind::WhenEnterRoom { .. }
                 | InstructionKind::WhenUiEvent { .. }
                 | InstructionKind::WhenUiClicked { .. }
                 | InstructionKind::WhenUiChanged { .. }

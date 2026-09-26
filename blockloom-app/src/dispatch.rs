@@ -375,6 +375,28 @@ impl Backend {
                 arg(&args, "actors").unwrap_or_default(),
             )?),
             "probe_status" => to_json(commands::probe_status(state)?),
+            "paint_tiles" => to_json(commands::paint_tiles(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "brush")?,
+                arg(&args, "segments")?,
+            )?),
+            "import_tileset" => to_json(commands::import_tileset(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "path")?,
+            )?),
+            "tilemap_stats" => to_json(commands::tilemap_stats(state, arg(&args, "actorId")?)?),
+            "add_autotile" => to_json(commands::add_autotile(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "name")?,
+                arg(&args, "mode")?,
+                arg(&args, "first")?,
+            )?),
             "paint_terrain" => to_json(commands::paint_terrain(
                 state,
                 app,

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 17;
+pub const PROTOCOL_VERSION: u32 = 18;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -202,6 +202,16 @@ pub enum RuntimeMessage {
         actor: String,
         stroke: blockloom_core::terrain::sculpt::Stroke,
     },
+    /// A tile stroke ended in the scene view, which has already drawn it:
+    /// the brush and each cell-to-cell segment it ran, in order. The editor
+    /// runs the same segments on the saved map.
+    TileStroke {
+        actor: String,
+        brush: blockloom_core::tilemap::TileBrush,
+        segments: Vec<[i32; 4]>,
+    },
+    /// The Tiles tool's pick read a cell: which sheet tile it shows.
+    TilePicked { actor: String, tile: i32 },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -241,6 +251,9 @@ pub enum SceneTool {
     Scale,
     /// Sculpt, paint or scatter on the selected terrain with `SceneView::brush`.
     Brush,
+    /// Paint, erase, fill or pick on the selected tilemap with
+    /// `SceneView::tile_brush`.
+    Tiles,
 }
 
 /// What the Game view shows in place of the lit image, for judging exposure.
@@ -290,6 +303,35 @@ pub struct SceneView {
     pub path_tracer: PathTracerView,
     /// The terrain brush the Brush tool paints with.
     pub brush: blockloom_core::terrain::sculpt::Brush,
+    /// The tile brush the Tiles tool paints with.
+    pub tile_brush: blockloom_core::tilemap::TileBrush,
+    pub tiles: TileDebug,
+}
+
+/// The 2D level overlays in the scene view.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TileDebug {
+    /// Every solid tilemap's colliding rectangles.
+    pub collision: bool,
+    /// Spawn, checkpoint, kill, ladder and water tiles, tinted by kind.
+    pub regions: bool,
+    /// Every room's bounds.
+    pub rooms: bool,
+    /// Parallax layers scroll against the scene view's camera, as they
+    /// will against the game's.
+    pub parallax: bool,
+}
+
+impl Default for TileDebug {
+    fn default() -> Self {
+        Self {
+            collision: false,
+            regions: true,
+            rooms: true,
+            parallax: true,
+        }
+    }
 }
 
 /// The reference path tracer in place of the lit image, for checking a
@@ -354,6 +396,8 @@ impl Default for SceneView {
             volumes: VolumeDebug::default(),
             path_tracer: PathTracerView::default(),
             brush: Default::default(),
+            tile_brush: Default::default(),
+            tiles: TileDebug::default(),
         }
     }
 }

@@ -22,6 +22,7 @@ use crate::probe::ProbeSpec;
 use crate::scene::{Physics, Placement, Visual};
 use crate::sprite2d::SpriteSpec;
 use crate::terrain::TerrainSpec;
+use crate::tilemap::{ParallaxSpec, RoomSpec};
 use crate::value::Evaluated;
 use crate::volume::VolumeSpec;
 use crate::water::{BuoyancySpec, WaterSpec};
@@ -50,6 +51,8 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Sprite",
     "Water",
     "Buoyancy",
+    "Parallax",
+    "Room",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -367,6 +370,11 @@ pub enum ActorComponent {
     Water { water: WaterSpec },
     /// Floats a body on whatever water it is in.
     Buoyancy { buoyancy: BuoyancySpec },
+    /// A 2D layer that scrolls at its own rate against the camera.
+    Parallax { parallax: ParallaxSpec },
+    /// A 2D room: bounds the camera keeps inside, and `when actor enters
+    /// room` fires across.
+    Room { room: RoomSpec },
 }
 
 impl ActorComponent {
@@ -393,6 +401,8 @@ impl ActorComponent {
             ActorComponent::Sprite { .. } => "Sprite",
             ActorComponent::Water { .. } => "Water",
             ActorComponent::Buoyancy { .. } => "Buoyancy",
+            ActorComponent::Parallax { .. } => "Parallax",
+            ActorComponent::Room { .. } => "Room",
             ActorComponent::Custom { name, .. } => name,
         }
     }
@@ -710,6 +720,22 @@ impl Components {
     pub fn buoyancy(&self) -> Option<&BuoyancySpec> {
         match self.get("Buoyancy") {
             Some(ActorComponent::Buoyancy { buoyancy }) => Some(buoyancy),
+            _ => None,
+        }
+    }
+
+    /// The parallax layer, if the actor is one.
+    pub fn parallax(&self) -> Option<&ParallaxSpec> {
+        match self.get("Parallax") {
+            Some(ActorComponent::Parallax { parallax }) => Some(parallax),
+            _ => None,
+        }
+    }
+
+    /// The room, if the actor is one.
+    pub fn room(&self) -> Option<&RoomSpec> {
+        match self.get("Room") {
+            Some(ActorComponent::Room { room }) => Some(room),
             _ => None,
         }
     }

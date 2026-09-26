@@ -65,6 +65,7 @@ pub mod sound;
 pub mod sprite2d;
 pub mod sync;
 pub mod terrain;
+pub mod tilemap;
 pub mod ui;
 pub mod value;
 pub mod vfs;

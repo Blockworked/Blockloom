@@ -823,24 +823,38 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [x] Palette/outline effect on 9-slice panels (slice in the effect shader),
         and one outline around a whole rig or stack (silhouettes behind every
         piece rather than a texture, so only the outer edge shows).
-- [ ] Tilemaps and level building (builds on the Phase 4 per-tile collision and
+- [x] Tilemaps and level building (builds on the Phase 4 per-tile collision and
       animated tiles; this is authoring plus runtime):
-  - [ ] Autotile and brushes: bitmask/edge autotile rules per tileset, scatter
+  - [x] Autotile and brushes: bitmask/edge autotile rules per tileset, scatter
         brush with density and jitter, fill/line/rect tools, animated-tile paint
         with frame sync. Tileset import keeps collision, passable and animated
         flags from Phase 4.
-  - [ ] Parallax layers: ordered background/foreground layers with scroll factor
+        Done as `blockloom-core/src/tilemap.rs`: 16-case edge and 47-case blob
+        sets (Tiled edge/mixed wang sets import as them), a seeded brush, and
+        painting an animation's frame paints its base tile. Import is Tiled
+        JSON (`.tsj`); TSX and corner wang sets aren't read.
+  - [x] Parallax layers: ordered background/foreground layers with scroll factor
         0-2 per axis, wrap/repeat toggle, camera-distance dimming. Layers render
         behind or in front of actors by sorting layer.
-  - [ ] Level structure: multi-tilemap scenes, room/zone bounds with camera handoff,
+        The Parallax component; render-only offsets, and a wrapped layer draws
+        its neighbour copies.
+  - [x] Level structure: multi-tilemap scenes, room/zone bounds with camera handoff,
         spawn points plus checkpoints, kill zones and ladders/water volumes as
         tile regions. Rooms stream through the Phase 4 cell system as payloads,
         not a second streamer.
-  - [ ] Editor: tile paint/erase/pick, collision overlay view, parallax preview
+        The Room component and `TileRegion`s; 2D runs `StreamingCells` over XY.
+        Regions act on a moving body's centre.
+  - [x] Editor: tile paint/erase/pick, collision overlay view, parallax preview
         while the camera moves, tileset slice viewer. Stats line: tiles, draw
         batches, colliding rects.
-  - [ ] Blocks and scripts: `paint tile _ at`, `tile at x y`, `set parallax of
+        The Game view's Tiles tool (T) with the sheet under it, region and
+        room overlays too; the stats line and autotile/region rows are in the
+        Look card.
+  - [x] Blocks and scripts: `paint tile _ at`, `tile at x y`, `set parallax of
         layer _ to`, `room containing _`, event `when actor enters room _`.
+        Parity cases in `tests/codegen.rs`. ABI_VERSION 29, LOGIC_ABI_VERSION
+        25. The hat fires in the actor that entered; scripts read and write
+        but don't get the event.
 - [ ] 2D lighting and look (the 2D half of the Phase 5 HDR chain; reads the same
       blended `Environment` exposure, never a second EV):
   - [ ] 2D lights: point/spot/ambient per sorting layer, color times intensity,

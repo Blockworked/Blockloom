@@ -510,6 +510,21 @@ fn press(
         {
             editor.brushing = true;
         }
+        // The Tiles tool on a tilemap paints rather than picks.
+        0 if editor.view.tool == SceneTool::Tiles
+            && editor
+                .selected
+                .as_deref()
+                .and_then(|id| engine.actor(id))
+                .is_some_and(|actor| {
+                    matches!(
+                        actor.visual(),
+                        Some(blockloom_core::scene::Visual::Tilemap { .. })
+                    )
+                }) =>
+        {
+            editor.brushing = true;
+        }
         0 => {
             if let Some(handle) = hovered(engine, editor, lens, at, px_scale, posed) {
                 start_drag(engine, editor, lens, handle, at, posed);
@@ -903,7 +918,7 @@ fn gizmo_hovered(
                 }
             }
         }
-        SceneTool::Brush => return None,
+        SceneTool::Brush | SceneTool::Tiles => return None,
         SceneTool::Rotate => {
             for &axis in offered(lens, false) {
                 let points: Option<Vec<Vec2>> = ring_points(&frame, axis)
@@ -1633,7 +1648,7 @@ pub fn draw(
                 tint(Handle::Free, Color::WHITE),
             );
         }
-        SceneTool::Brush => {}
+        SceneTool::Brush | SceneTool::Tiles => {}
         SceneTool::Rotate => {
             for &axis in offered(&lens, false) {
                 handles.linestrip(

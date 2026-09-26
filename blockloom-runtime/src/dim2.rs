@@ -81,22 +81,27 @@ fn collider_for(visual: &Visual) -> Option<rp::Collider> {
         Visual::Circle { radius, .. } => Some(rp::Collider::ball(*radius)),
         // A solid tilemap collides tile by tile, as the merged runs its
         // filled cells make; a decorative one lets bodies pass through.
-        Visual::Tilemap { tilemap } => {
-            let parts: Vec<_> = tilemap
-                .solid_rects()
-                .into_iter()
-                .map(|rect| {
-                    (
-                        Vec2::from(rect.center),
-                        0.0,
-                        rp::Collider::cuboid(rect.half[0], rect.half[1]),
-                    )
-                })
-                .collect();
-            (!parts.is_empty()).then(|| rp::Collider::compound(parts))
-        }
+        Visual::Tilemap { tilemap } => tilemap_collider(tilemap),
         _ => None,
     }
+}
+
+/// A solid map's compound collider, or `None` when nothing in it collides.
+pub(crate) fn tilemap_collider(
+    tilemap: &blockloom_core::material::Tilemap,
+) -> Option<rp::Collider> {
+    let parts: Vec<_> = tilemap
+        .solid_rects()
+        .into_iter()
+        .map(|rect| {
+            (
+                Vec2::from(rect.center),
+                0.0,
+                rp::Collider::cuboid(rect.half[0], rect.half[1]),
+            )
+        })
+        .collect();
+    (!parts.is_empty()).then(|| rp::Collider::compound(parts))
 }
 
 /// A build's baked sprite sheet: the sheet's path and each Image look's
@@ -224,10 +229,13 @@ pub fn spawn_actor(
     meshes: &mut Assets<Mesh>,
     graph_materials: &mut Assets<GraphMaterial2d>,
     tile_materials: &mut Assets<ColorMaterial>,
+    streamed: bool,
 ) -> Option<Entity> {
     let visual = actor.visual()?.clone();
     match &visual {
-        Visual::Tilemap { tilemap } if tilemap.build_mesh().is_empty() => return None,
+        // An empty map still stands there to be painted on, and a map a
+        // room streams in is built when its room comes near.
+        Visual::Tilemap { .. } => {}
         _ if shader_of(actor).is_some() && custom_quad_size(&visual).is_none() => return None,
         _ if shader_of(actor).is_none() && sprite_for(&visual, dir, assets, textures).is_none() => {
             return None;
@@ -243,6 +251,7 @@ pub fn spawn_actor(
         entity.id()
     };
     match &visual {
+        Visual::Tilemap { .. } if streamed => {}
         Visual::Tilemap { tilemap } => {
             crate::materials::spawn_tilemap_2d(
                 commands,
@@ -365,11 +374,17 @@ fn remove_drawn(
 }
 
 fn insert_body(entity: &mut EntityCommands, actor: &Actor) {
+    insert_body_with(entity, actor, actor.visual().and_then(collider_for));
+}
+
+/// [`insert_body`] with the collider given, for a map painted solid mid-run.
+pub(crate) fn insert_body_with(
+    entity: &mut EntityCommands,
+    actor: &Actor,
+    collider: Option<rp::Collider>,
+) {
     let physics = actor.physics();
-    if let (Some(body), Some(collider)) = (
-        body_for(physics.body),
-        actor.visual().and_then(collider_for),
-    ) {
+    if let (Some(body), Some(collider)) = (body_for(physics.body), collider) {
         entity.insert((
             body,
             collider,

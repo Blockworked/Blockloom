@@ -218,6 +218,17 @@ pub enum Act {
         property: &'static str,
         value: f32,
     },
+    PaintTile {
+        map: String,
+        tile: f32,
+        x: f32,
+        y: f32,
+    },
+    SetParallax {
+        layer: String,
+        axis: &'static str,
+        value: f32,
+    },
     SetCloudLayer {
         layer: f32,
         property: &'static str,
@@ -732,7 +743,9 @@ impl Runner {
                             || entry.detail == detail
                             || entry.detail.eq_ignore_ascii_case(other_name))
                 }
-                ("AnimationEnded", "AnimationEnded") | ("AnimationMarker", "AnimationMarker") => {
+                ("AnimationEnded", "AnimationEnded")
+                | ("AnimationMarker", "AnimationMarker")
+                | ("EnteredRoom", "EnteredRoom") => {
                     entry.actor == &*template
                         && (entry.detail.is_empty() || entry.detail.eq_ignore_ascii_case(detail))
                 }
@@ -745,7 +758,7 @@ impl Runner {
             // strand; a broadcast, or an interface element nobody owns,
             // starts every copy's.
             let running = match kind {
-                "Clicked" | "Collision" | "AnimationEnded" | "AnimationMarker" => {
+                "Clicked" | "Collision" | "AnimationEnded" | "AnimationMarker" | "EnteredRoom" => {
                     vec![Rc::from(actor)]
                 }
                 _ => self.actors.copies_of(entry.actor),
@@ -1091,7 +1104,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 24;
+pub const LOGIC_ABI_VERSION: u32 = 25;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1286,6 +1299,11 @@ pub const ACT_SET_CLOUD_LAYER: u32 = 94;
 /// `a` = water dial (`Level`, `Chop`, `Foam`); `n0` = value. The actor's own
 /// water when it has some, every body's otherwise.
 pub const ACT_SET_WATER: u32 = 95;
+/// `a` = tilemap actor (empty for this actor, or whichever map covers the
+/// point); `n0` = tile, `n1`/`n2` = world x/y.
+pub const ACT_PAINT_TILE: u32 = 101;
+/// `a` = layer actor, `b` = axis (`Both`, `X`, `Y`); `n0` = scroll factor.
+pub const ACT_SET_PARALLAX: u32 = 102;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1804,6 +1822,22 @@ impl Host for AbiHost {
                 ACT_SET_WATER,
                 property,
                 "",
+                [value as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::PaintTile { map, tile, x, y } => self.act_wire(
+                actor,
+                ACT_PAINT_TILE,
+                &map,
+                "",
+                [tile as f64, x as f64, y as f64],
+                &zero,
+            ),
+            Act::SetParallax { layer, axis, value } => self.act_wire(
+                actor,
+                ACT_SET_PARALLAX,
+                &layer,
+                axis,
                 [value as f64, 0.0, 0.0],
                 &zero,
             ),

@@ -720,6 +720,44 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "TileAt",
+        op: "TileAt",
+        arity: 3,
+        default_args: || vec![number(0.0), number(0.0), text("")],
+        // The sheet index at a world point in the live tilemaps, -1 for an
+        // empty cell or no map there. An empty map name reads any map.
+        eval: |args| {
+            let point = [num(args.first()) as f32, num(args.get(1)) as f32];
+            let map = args.get(2).map(|arg| arg.as_text()).unwrap_or_default();
+            sense::read(|sensors| sensors.level.tile_at(point, &map))
+                .map(|tile| Evaluated::Number(tile as f64))
+        },
+    },
+    ExtOperator {
+        kind: "RoomContaining",
+        op: "RoomContaining",
+        arity: 1,
+        default_args: || vec![text("")],
+        // The name of the smallest room an actor stands in, or empty for
+        // none. Empty names the running actor.
+        eval: |args| {
+            let target = args[0].as_text();
+            let position = if target.trim().is_empty() {
+                me()?.position
+            } else {
+                sense::read(|sensors| sensors.find(&target).map(|actor| actor.position))
+                    .ok_or_else(|| format!("there's no actor named \"{target}\""))?
+            };
+            Ok(Evaluated::Text(sense::read(|sensors| {
+                sensors
+                    .level
+                    .room_at([position[0], position[1]])
+                    .map(|room| room.name.clone())
+                    .unwrap_or_default()
+            })))
+        },
+    },
+    ExtOperator {
         kind: "IsTrigger",
         op: "IsTrigger",
         arity: 1,
@@ -1075,6 +1113,54 @@ mod tests {
             ],
         );
         assert_eq!(circle.eval(), Ok(Evaluated::Text("Wall".to_string())));
+    }
+
+    #[test]
+    fn level_reporters_read_live_tiles_and_rooms() {
+        use crate::tilemap::{LevelSense, RoomSense, RoomSpec, TilemapSense};
+        register_blockloom_operators();
+        let mut sensors = Sensors::default();
+        sensors.actors.insert(
+            "p".to_string(),
+            ActorSense {
+                name: "Player".to_string(),
+                position: [10.0, 10.0, 0.0],
+                ..Default::default()
+            },
+        );
+        let mut map = crate::material::Tilemap::default();
+        map.set_tile(4, 3, 2);
+        sensors.level = LevelSense {
+            tilemaps: vec![TilemapSense {
+                id: "m".into(),
+                name: "Ground".into(),
+                center: [0.0, 0.0],
+                scale: [1.0, 1.0],
+                map: std::sync::Arc::new(map),
+            }],
+            rooms: vec![RoomSense {
+                id: "r".into(),
+                name: "Cave".into(),
+                bounds: RoomSpec::default().bounds([0.0, 0.0], [1.0, 1.0]),
+            }],
+        };
+        sense::publish(sensors);
+        let tile = |x: f64, y: f64, map: &str| {
+            Value::op(
+                Op::from_name("TileAt"),
+                vec![Value::number(x), Value::number(y), Value::text(map)],
+            )
+            .eval()
+        };
+        // Cell (4, 3) of an 8x8 map of 32s spans x 0..32, y 0..32.
+        assert_eq!(tile(10.0, 10.0, ""), Ok(Evaluated::Number(2.0)));
+        assert_eq!(tile(-10.0, -10.0, "Ground"), Ok(Evaluated::Number(-1.0)));
+        assert!(tile(0.0, 0.0, "Sky").is_err());
+        let room = |who: &str| Value::op(Op::from_name("RoomContaining"), vec![Value::text(who)]);
+        assert_eq!(room("Player").eval(), Ok(Evaluated::Text("Cave".into())));
+        sense::with_actor("p", || {
+            assert_eq!(room("").eval(), Ok(Evaluated::Text("Cave".into())));
+        });
     }
 
     #[test]

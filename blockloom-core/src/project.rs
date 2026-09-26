@@ -780,6 +780,20 @@ impl Project {
             {
                 buoyancy.normalize();
             }
+            if let Some(ActorComponent::Parallax { parallax }) =
+                actor.components.get_mut("Parallax")
+            {
+                parallax.normalize();
+            }
+            if let Some(ActorComponent::Room { room }) = actor.components.get_mut("Room") {
+                room.normalize();
+            }
+            if let Some(ActorComponent::Look {
+                visual: crate::scene::Visual::Tilemap { tilemap },
+            }) = actor.components.get_mut("Look")
+            {
+                tilemap.normalize();
+            }
             actor.graph.migrate_bool_slots();
             actor.graph.normalize_block_colors();
             actor.graph.prune_orphaned_comments();

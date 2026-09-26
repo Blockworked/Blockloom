@@ -156,6 +156,9 @@ pub struct Sensors {
     pub atmosphere: AtmosphereSense,
     /// Every water body, sampled with the atmosphere on the fixed tick.
     pub water: crate::water::WaterSense,
+    /// Live tilemaps and room bounds, which `tile at` and `room containing`
+    /// read.
+    pub level: crate::tilemap::LevelSense,
 }
 
 /// The shape of [`AtmosphereSense`]. Bumped when a field changes meaning or
@@ -441,6 +444,11 @@ pub fn publish_atmosphere(atmosphere: AtmosphereSense) {
 /// Samples the water at the head of each fixed tick, beside the atmosphere.
 pub fn publish_water(water: crate::water::WaterSense) {
     SENSORS.with(|slot| slot.borrow_mut().water = water);
+}
+
+/// The live tilemaps and rooms, published each frame after the rest.
+pub fn publish_level(level: crate::tilemap::LevelSense) {
+    SENSORS.with(|slot| slot.borrow_mut().level = level);
 }
 
 /// Reads the published snapshot. `f` sees a default-empty one before the

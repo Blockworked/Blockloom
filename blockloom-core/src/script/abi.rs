@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 28;
+pub const ABI_VERSION: u32 = 29;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -153,6 +153,9 @@ pub const READ_WATER: u32 = 45;
 /// `a` = actor name, empty for this actor. Whether it is below a water
 /// surface and above that body's bottom.
 pub const READ_UNDERWATER: u32 = 46;
+/// `a` = "x y" (world), `b` = tilemap name, empty for any. The sheet index
+/// there, -1 for an empty cell or no map; [`MISSING`] for an unknown map.
+pub const READ_TILE_AT: u32 = 47;
 
 // ─── What a script can read as text ────────────────────────────────────────
 
@@ -182,6 +185,9 @@ pub const TEXT_CURRENT_CLIP: u32 = 11;
 /// The environment volumes showing at the camera, as a JSON list of names
 /// in blend order. What `active volumes` reports.
 pub const TEXT_ACTIVE_VOLUMES: u32 = 12;
+/// `a` = actor name, empty for this actor. The smallest room it stands in,
+/// by name, or [`MISSING`] for none.
+pub const TEXT_ROOM: u32 = 13;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -364,6 +370,12 @@ pub const ACT_SET_IK_TARGET: u32 = 81;
 /// `a` = sprite dial (`FlipX`, `FlipY`, `Order`, `YSort`, `Palette`,
 /// `OutlineWidth`); `n0` = value.
 pub const ACT_SET_SPRITE_DIAL: u32 = 82;
+/// `a` = tilemap actor (empty for this actor, or whichever map covers the
+/// point); `n0` = tile (-1 erases), `n1`, `n2` = world x, y.
+pub const ACT_PAINT_TILE: u32 = 83;
+/// `a` = parallax layer actor, `b` = axis (`both`, `x` or `y`); `n0` = scroll
+/// factor 0-2.
+pub const ACT_SET_PARALLAX: u32 = 84;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

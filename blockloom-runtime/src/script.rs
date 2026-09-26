@@ -414,6 +414,11 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
             };
             bool_as(sense::read(|sensors| sensors.water.underwater(position)))
         }
+        abi::READ_TILE_AT => {
+            let mut at = a.split_whitespace().map(|n| n.parse::<f32>().ok());
+            let (x, y) = (at.next()??, at.next()??);
+            sense::read(|sensors| sensors.level.tile_at([x, y], b).ok()).map(f64::from)
+        }
         abi::READ_IS_TWEENING => bool_as(me(actor)?.tweening),
         abi::READ_ANIM_FRAME => Some(me(actor)?.anim_frame as f64),
         abi::READ_ANIM_PLAYING => bool_as(me(actor)?.anim_playing),
@@ -524,6 +529,19 @@ fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
         abi::TEXT_NEW_ACTOR => me(actor)
             .map(|me| me.last_created)
             .filter(|id| !id.is_empty()),
+        abi::TEXT_ROOM => {
+            let position = if a.trim().is_empty() {
+                me(actor)?.position
+            } else {
+                sense::read(|sensors| sensors.find(a.trim()).map(|found| found.position))?
+            };
+            sense::read(|sensors| {
+                sensors
+                    .level
+                    .room_at([position[0], position[1]])
+                    .map(|room| room.name.clone())
+            })
+        }
         abi::TEXT_UI_VALUE => sense::read(|sensors| {
             sensors
                 .ui
@@ -983,6 +1001,25 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
             None => Effect::Error {
                 actor,
                 message: format!("there's no cloud dial called \"{a}\""),
+            },
+        },
+        abi::ACT_PAINT_TILE => Effect::PaintTile {
+            actor,
+            map: a.trim().to_string(),
+            tile: (n0.floor() as i32).max(-1),
+            x: n1 as f32,
+            y: n2 as f32,
+        },
+        abi::ACT_SET_PARALLAX => match blockloom_core::tilemap::ParallaxAxis::parse(b) {
+            Some(axis) => Effect::SetParallax {
+                actor,
+                layer: a.trim().to_string(),
+                axis,
+                value: n0 as f32,
+            },
+            None => Effect::Error {
+                actor,
+                message: format!("there's no parallax axis called \"{b}\""),
             },
         },
         abi::ACT_SET_WATER => match blockloom_core::water::WaterProperty::parse(a) {

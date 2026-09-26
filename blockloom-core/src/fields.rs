@@ -58,6 +58,12 @@ pub enum FieldId {
     WindValue,
     CloudValue,
     WaterValue,
+    TileMap,
+    TileIndex,
+    TileX,
+    TileY,
+    ParallaxLayer,
+    ParallaxValue,
     CloudLayer,
     CloudLayerValue,
     CloudDriftX,
@@ -171,6 +177,8 @@ impl FieldId {
                 | FieldId::RigAttachment
                 | FieldId::SlotColor
                 | FieldId::IkConstraint
+                | FieldId::TileMap
+                | FieldId::ParallaxLayer
         )
     }
 
@@ -233,6 +241,12 @@ impl std::fmt::Display for FieldId {
             FieldId::WindValue => write!(f, "WindValue"),
             FieldId::CloudValue => write!(f, "CloudValue"),
             FieldId::WaterValue => write!(f, "WaterValue"),
+            FieldId::TileMap => write!(f, "TileMap"),
+            FieldId::TileIndex => write!(f, "TileIndex"),
+            FieldId::TileX => write!(f, "TileX"),
+            FieldId::TileY => write!(f, "TileY"),
+            FieldId::ParallaxLayer => write!(f, "ParallaxLayer"),
+            FieldId::ParallaxValue => write!(f, "ParallaxValue"),
             FieldId::CloudLayer => write!(f, "CloudLayer"),
             FieldId::CloudLayerValue => write!(f, "CloudLayerValue"),
             FieldId::CloudDriftX => write!(f, "CloudDriftX"),
@@ -364,6 +378,12 @@ impl FromStr for FieldId {
             "WindValue" => FieldId::WindValue,
             "CloudValue" => FieldId::CloudValue,
             "WaterValue" => FieldId::WaterValue,
+            "TileMap" => FieldId::TileMap,
+            "TileIndex" => FieldId::TileIndex,
+            "TileX" => FieldId::TileX,
+            "TileY" => FieldId::TileY,
+            "ParallaxLayer" => FieldId::ParallaxLayer,
+            "ParallaxValue" => FieldId::ParallaxValue,
             "CloudLayer" => FieldId::CloudLayer,
             "CloudLayerValue" => FieldId::CloudLayerValue,
             "CloudDriftX" => FieldId::CloudDriftX,
@@ -496,6 +516,12 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::SetWind { value, .. }, F::WindValue) => Some(value),
         (K::SetClouds { value, .. }, F::CloudValue) => Some(value),
         (K::SetWater { value, .. }, F::WaterValue) => Some(value),
+        (K::PaintTile { map, .. }, F::TileMap) => Some(map),
+        (K::PaintTile { tile, .. }, F::TileIndex) => Some(tile),
+        (K::PaintTile { x, .. }, F::TileX) => Some(x),
+        (K::PaintTile { y, .. }, F::TileY) => Some(y),
+        (K::SetParallax { layer, .. }, F::ParallaxLayer) => Some(layer),
+        (K::SetParallax { value, .. }, F::ParallaxValue) => Some(value),
         (K::SetCloudLayer { layer, .. }, F::CloudLayer) => Some(layer),
         (K::SetCloudLayer { value, .. }, F::CloudLayerValue) => Some(value),
         (K::SetCloudDrift { x, .. }, F::CloudDriftX) => Some(x),
@@ -709,6 +735,12 @@ mod tests {
             FieldId::WindValue,
             FieldId::CloudValue,
             FieldId::WaterValue,
+            FieldId::TileMap,
+            FieldId::TileIndex,
+            FieldId::TileX,
+            FieldId::TileY,
+            FieldId::ParallaxLayer,
+            FieldId::ParallaxValue,
             FieldId::CloudLayer,
             FieldId::CloudLayerValue,
             FieldId::CloudDriftZ,
