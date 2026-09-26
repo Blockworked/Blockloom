@@ -226,15 +226,29 @@ fn stamp_heights(field: &mut Heightfield, shape: &Shape, brush: &Brush, at: [f32
             let dirty = reach(shape, brush, at)?;
             let spacing = shape.spacing()[0].min(shape.spacing()[1]);
             let kernel = ((brush.radius * 0.15 / spacing).round() as i64).clamp(1, 4);
-            // Blur from a copy, so samples don't smear into each other.
-            let before = field.clone();
+            // Blur from a copy of just the stamp's reach, so samples don't
+            // smear into each other.
+            let last = field.side as i64 - 1;
+            let (i0, j0) = ((dirty.min[0] as i64 - kernel).max(0), (dirty.min[1] as i64 - kernel).max(0));
+            let (i1, j1) = ((dirty.max[0] as i64 + kernel).min(last), (dirty.max[1] as i64 + kernel).min(last));
+            let width = i1 - i0 + 1;
+            let mut before = Vec::with_capacity((width * (j1 - j0 + 1)) as usize);
+            for j in j0..=j1 {
+                for i in i0..=i1 {
+                    before.push(field.at(i as u32, j as u32));
+                }
+            }
+            let copied = |i: i64, j: i64| {
+                let (i, j) = (i.clamp(0, last), j.clamp(0, last));
+                before[((j - j0) * width + (i - i0)) as usize]
+            };
             under(shape, brush, at, |i, j, w| {
                 let (ii, jj) = (i as i64, j as i64);
                 let mut sum = 0.0;
                 let mut count = 0.0;
                 for dj in -kernel..=kernel {
                     for di in -kernel..=kernel {
-                        sum += before.clamped(ii + di, jj + dj);
+                        sum += copied(ii + di, jj + dj);
                         count += 1.0;
                     }
                 }
@@ -312,6 +326,104 @@ pub fn fresh_density(side: u32, op: BrushOp) -> Grid {
     grid
 }
 
+// ─── Strokes on a terrain ──────────────────────────────────────────────────
+
+/// Every grid a stroke can edit, loaded (or flat) at the terrain's
+/// resolution. The scene view keeps one while a stroke is live; the editor
+/// loads one per stroke.
+#[derive(Debug, Clone)]
+pub struct Editable {
+    pub heights: Heightfield,
+    pub splat: Option<Grid>,
+    pub holes: Option<Grid>,
+    pub grass: Vec<Option<Grid>>,
+    pub scatter: Vec<Option<Grid>>,
+}
+
+impl Editable {
+    pub fn load(project: Option<&std::path::Path>, spec: &super::TerrainSpec) -> Editable {
+        use super::store::{grid_for, heights_for};
+        let side = spec.resolution;
+        Editable {
+            heights: heights_for(project, spec),
+            splat: grid_for(project, &spec.splat, side),
+            holes: grid_for(project, &spec.holes, side),
+            grass: spec.grass.iter().map(|g| grid_for(project, &g.density_map, side)).collect(),
+            scatter: spec.scatter.iter().map(|s| grid_for(project, &s.density_map, side)).collect(),
+        }
+    }
+
+    /// Applies a stroke to the grid it targets, making that grid first if
+    /// the terrain has none yet. Answers what changed.
+    pub fn apply(&mut self, shape: &Shape, stroke: &Stroke) -> Option<Dirty> {
+        let side = shape.side;
+        let op = stroke.brush.op;
+        match stroke.brush.target {
+            BrushTarget::Heights => apply_heights(&mut self.heights, shape, stroke),
+            BrushTarget::Layer { .. } => apply_paint(
+                self.splat.get_or_insert_with(|| Grid::new(GridKind::Rgba8, side)),
+                shape,
+                stroke,
+            ),
+            BrushTarget::Holes => apply_mask(
+                self.holes.get_or_insert_with(|| Grid::new(GridKind::Mask8, side)),
+                shape,
+                stroke,
+            ),
+            BrushTarget::Grass { layer } => {
+                let slot = self.grass.get_mut(layer as usize)?;
+                apply_mask(slot.get_or_insert_with(|| fresh_density(side, op)), shape, stroke)
+            }
+            BrushTarget::Scatter { layer } => {
+                let slot = self.scatter.get_mut(layer as usize)?;
+                apply_mask(slot.get_or_insert_with(|| fresh_density(side, op)), shape, stroke)
+            }
+        }
+    }
+
+    /// The grid a target now holds, as it will be stored.
+    pub fn grid(&self, target: BrushTarget) -> Option<Grid> {
+        match target {
+            BrushTarget::Heights => Some(Grid::from_heights(&self.heights)),
+            BrushTarget::Layer { .. } => self.splat.clone(),
+            BrushTarget::Holes => self.holes.clone(),
+            BrushTarget::Grass { layer } => self.grass.get(layer as usize)?.clone(),
+            BrushTarget::Scatter { layer } => self.scatter.get(layer as usize)?.clone(),
+        }
+    }
+}
+
+/// Points a terrain at a target's newly stored grid.
+pub fn set_target(spec: &mut super::TerrainSpec, target: BrushTarget, name: String) {
+    match target {
+        BrushTarget::Heights => spec.heights = name,
+        BrushTarget::Layer { .. } => spec.splat = name,
+        BrushTarget::Holes => spec.holes = name,
+        BrushTarget::Grass { layer } => {
+            if let Some(grass) = spec.grass.get_mut(layer as usize) {
+                grass.density_map = name;
+            }
+        }
+        BrushTarget::Scatter { layer } => {
+            if let Some(scatter) = spec.scatter.get_mut(layer as usize) {
+                scatter.density_map = name;
+            }
+        }
+    }
+}
+
+/// Fixes a flatten stroke's level from where it starts, so applying its
+/// stamps one at a time lands where applying them together does.
+pub fn settle_level(stroke: &mut Stroke, field: &Heightfield, shape: &Shape) {
+    if stroke.brush.op == BrushOp::Flatten
+        && stroke.brush.level.is_none()
+        && let Some(first) = stroke.stamps.first()
+    {
+        let [i, j] = shape.sample(first[0], first[1]);
+        stroke.brush.level = Some(field.bilinear(i, j));
+    }
+}
+
 // ─── Erosion ───────────────────────────────────────────────────────────────
 
 /// Thermal erosion: material slides off anything steeper than `talus`
@@ -354,6 +466,23 @@ pub fn thermal(field: &mut Heightfield, shape: &Shape, iterations: u32, talus: f
                     }
                 }
             }
+        }
+    }
+}
+
+/// An erosion filter, as the editor previews and applies it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Erosion {
+    Thermal { iterations: u32, talus: f32 },
+    Hydraulic(Hydraulic),
+}
+
+impl Erosion {
+    pub fn apply(&self, field: &mut Heightfield, shape: &Shape) {
+        match self {
+            Erosion::Thermal { iterations, talus } => thermal(field, shape, *iterations, *talus),
+            Erosion::Hydraulic(params) => hydraulic(field, shape, params),
         }
     }
 }

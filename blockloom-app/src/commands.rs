@@ -316,6 +316,17 @@ pub(crate) fn open_project(
     s.library = library::list();
     if let Some(dir) = s.project_dir().map(Path::to_path_buf) {
         sync_ide(&dir);
+        // Undo is empty on open, so grids nothing names can go. Another
+        // owner's history might still name some.
+        if owns_lock
+            && !attached
+            && let Some(project) = s.project()
+        {
+            let keep = blockloom_core::terrain::store::project_names(project);
+            if let Err(e) = blockloom_core::terrain::store::prune(&dir, &keep) {
+                tracing::warn!("Couldn't tidy the terrain store: {e}");
+            }
+        }
     }
     emit(app, &s);
     Ok(OpenReport {
@@ -1360,6 +1371,9 @@ pub(crate) fn set_actor_component(
     check_parent(s.project(), &actor_id, &component)?;
     if let ActorComponent::Material { material } = &mut component {
         material.normalize();
+    }
+    if let ActorComponent::Terrain { terrain } = &mut component {
+        terrain.normalize();
     }
     push_undo_for(
         &mut s,
@@ -3861,4 +3875,135 @@ pub(crate) fn load_interface_asset(
         serde_json::from_str(&text).map_err(|e| format!("Invalid interface: {e}"))?
     };
     set_interface(state, app, document)
+}
+
+// ─── Terrain ───────────────────────────────────────────────────────────────
+
+fn terrain_of(s: &AppState, actor_id: &str) -> Result<blockloom_core::terrain::TerrainSpec, String> {
+    s.project()
+        .ok_or("No project is open")?
+        .actor(actor_id)
+        .ok_or("Actor not found")?
+        .components
+        .terrain()
+        .cloned()
+        .ok_or_else(|| "That actor has no Terrain component".to_string())
+}
+
+fn store_terrain(s: &mut AppState, actor_id: &str, terrain: blockloom_core::terrain::TerrainSpec) {
+    push_undo(s);
+    if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(actor_id)) {
+        actor.components.insert(ActorComponent::Terrain { terrain });
+    }
+    auto_save(s);
+    sync_runtime(s);
+}
+
+/// Applies a brush stroke to a terrain's saved grids, as one undo step. The
+/// scene view has already drawn it, from the same functions.
+pub(crate) fn terrain_stroke(
+    s: &mut AppState,
+    actor_id: &str,
+    mut stroke: blockloom_core::terrain::sculpt::Stroke,
+) -> Result<(), String> {
+    use blockloom_core::terrain::{sculpt, store};
+    if s.running {
+        return Err("Stop the game to edit terrain".to_string());
+    }
+    let dir = s.project_dir().ok_or("No project is open")?.to_path_buf();
+    let mut spec = terrain_of(s, actor_id)?;
+    let shape = spec.shape();
+    let mut grids = sculpt::Editable::load(Some(&dir), &spec);
+    sculpt::settle_level(&mut stroke, &grids.heights, &shape);
+    if grids.apply(&shape, &stroke).is_none() {
+        return Ok(());
+    }
+    let target = stroke.brush.target;
+    let grid = grids.grid(target).ok_or("That brush has nothing to paint")?;
+    let name = store::save(&dir, &grid)?;
+    sculpt::set_target(&mut spec, target, name);
+    store_terrain(s, actor_id, spec);
+    Ok(())
+}
+
+/// [`terrain_stroke`] for the shell and the frontend.
+pub(crate) fn paint_terrain(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    stroke: blockloom_core::terrain::sculpt::Stroke,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    terrain_stroke(&mut s, &actor_id, stroke)?;
+    emit(app, &s);
+    Ok(())
+}
+
+/// Replaces a terrain's heights with a heightmap asset (16-bit PNG, RAW
+/// `.r16`/`.r32`, or any image marked as a heightmap), stretched to the
+/// terrain's resolution.
+pub(crate) fn import_terrain_heightmap(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    path: String,
+) -> Result<(), String> {
+    use blockloom_core::terrain::{Heightfield, store};
+    let mut s = lock(state)?;
+    let dir = s.project_dir().ok_or("No project is open")?.to_path_buf();
+    let mut spec = terrain_of(&s, &actor_id)?;
+    let map = pipeline::load_heightmap(&dir, &path)?;
+    let field = Heightfield::from_heightmap(&map, spec.resolution);
+    spec.heights = store::save(&dir, &store::Grid::from_heights(&field))?;
+    store_terrain(&mut s, &actor_id, spec);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Runs an erosion filter over a terrain's heights, as one undo step.
+pub(crate) fn erode_terrain(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    erosion: blockloom_core::terrain::sculpt::Erosion,
+) -> Result<(), String> {
+    use blockloom_core::terrain::store;
+    let mut s = lock(state)?;
+    let dir = s.project_dir().ok_or("No project is open")?.to_path_buf();
+    let mut spec = terrain_of(&s, &actor_id)?;
+    let mut field = store::heights_for(Some(&dir), &spec);
+    erosion.apply(&mut field, &spec.shape());
+    spec.heights = store::save(&dir, &store::Grid::from_heights(&field))?;
+    store_terrain(&mut s, &actor_id, spec);
+    // The preview, if any, is now the document.
+    if let Some(runtime) = s.runtime.as_mut() {
+        runtime.send(&blockloom_protocol::EditorMessage::PreviewErosion {
+            actor: actor_id,
+            erosion: None,
+        });
+    }
+    emit(app, &s);
+    Ok(())
+}
+
+/// Shows an erosion filter on a terrain in the Game view without saving
+/// it; no filter puts the saved ground back.
+pub(crate) fn preview_terrain_erosion(
+    state: &SharedState,
+    actor_id: String,
+    erosion: Option<blockloom_core::terrain::sculpt::Erosion>,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    terrain_of(&s, &actor_id)?;
+    let Some(runtime) = s.runtime.as_mut() else {
+        return Err("Open the Game view to preview erosion".to_string());
+    };
+    if !runtime.send(&blockloom_protocol::EditorMessage::PreviewErosion {
+        actor: actor_id,
+        erosion,
+    }) {
+        s.runtime = None;
+        return Err("The game world has stopped".to_string());
+    }
+    Ok(())
 }

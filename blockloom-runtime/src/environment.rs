@@ -64,6 +64,10 @@ pub struct Environment {
     /// Aerial haze's extinction per metre, 0 for none.
     pub haze: f32,
     pub clouds: blockloom_core::clouds::Clouds,
+    /// Snow cover 0-1, which surface snow masks settle by.
+    pub snow: f32,
+    /// Wetness 0-1, which surface wetness masks darken by.
+    pub wetness: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -103,6 +107,8 @@ impl Environment {
         // default.
         let direction = Vec3::from_array(world.sky.sun_direction(lighting.light_direction));
         Self {
+            snow: world.surface.snow,
+            wetness: world.surface.wetness,
             clouds: world.clouds.clone(),
             background: parse_color(&world.background),
             sun: Sun {
@@ -242,6 +248,8 @@ impl Environment {
         color(&mut self.volumetric_albedo, over.volumetric_albedo);
         number(&mut self.beams, over.beams);
         number(&mut self.haze, over.haze);
+        number(&mut self.snow, over.snow);
+        number(&mut self.wetness, over.wetness);
     }
 }
 
@@ -276,6 +284,8 @@ pub struct EnvironmentOverride {
     pub beams: Option<f32>,
     /// Extinction per metre, from the volume's haze distance.
     pub haze: Option<f32>,
+    pub snow: Option<f32>,
+    pub wetness: Option<f32>,
 }
 
 /// Haze extinction per metre that halves a far object's light over
@@ -344,6 +354,16 @@ impl EnvironmentOverride {
                 .get()
                 .filter(|d| d.is_finite())
                 .map(haze_for_distance),
+            snow: overrides
+                .snow
+                .get()
+                .filter(|v| v.is_finite())
+                .map(|v| v.clamp(0.0, 1.0)),
+            wetness: overrides
+                .wetness
+                .get()
+                .filter(|v| v.is_finite())
+                .map(|v| v.clamp(0.0, 1.0)),
         }
     }
 
@@ -384,6 +404,8 @@ impl EnvironmentOverride {
             ("volumetric_albedo", self.volumetric_albedo.map(show_color)),
             ("beams", self.beams.map(show_number)),
             ("haze_distance", self.haze.map(show_haze)),
+            ("snow", self.snow.map(show_number)),
+            ("wetness", self.wetness.map(show_number)),
         ]
         .into_iter()
         .filter_map(|(name, value)| Some((name, value?)))
@@ -422,6 +444,8 @@ impl Environment {
             ("volumetric_albedo", show_color(self.volumetric_albedo)),
             ("beams", show_number(self.beams)),
             ("haze_distance", show_haze(self.haze)),
+            ("snow", show_number(self.snow)),
+            ("wetness", show_number(self.wetness)),
         ]
     }
 }
@@ -508,6 +532,13 @@ pub fn blend_environment(
         blended.set_fog_density(&engine.project.world.fog, density);
     }
     engine.clouds.apply(&mut blended.clouds);
+    // `set snow cover` and `set surface wetness` outlast every volume too.
+    if let Some(snow) = engine.surface.snow {
+        blended.snow = snow;
+    }
+    if let Some(wetness) = engine.surface.wetness {
+        blended.wetness = wetness;
+    }
     environment.set_if_neq(blended);
 }
 

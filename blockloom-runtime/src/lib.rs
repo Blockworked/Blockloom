@@ -61,6 +61,7 @@ mod sky;
 mod sound;
 mod space;
 mod streaming;
+mod terrain;
 mod ui;
 mod ui_systems;
 mod volume_heat;
@@ -361,6 +362,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             fog::register(app);
             clouds::register(app);
             beams::register(app);
+            terrain::register(app);
             use bevy::camera::visibility::VisibilitySystems;
             app.add_systems(
                 PostUpdate,

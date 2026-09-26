@@ -42,7 +42,11 @@ use bevy::sprite_render::{
     AlphaMode2d, ColorMaterial, Material2d, Material2dKey, Material2dPipeline, Material2dPlugin,
     MeshMaterial2d,
 };
-use blockloom_core::material::{GraphEffect, SurfaceMaterial, TextureSampler, TileMesh, Tilemap};
+use bevy::render::render_resource::ShaderType;
+use bevy::render::storage::ShaderBuffer;
+use blockloom_core::material::{
+    GraphEffect, MaskStack, SurfaceDetail, SurfaceMaterial, TextureSampler, TileMesh, Tilemap,
+};
 use blockloom_protocol::RuntimeMessage;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -56,11 +60,14 @@ pub fn register(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/graph_2d.wesl");
     bevy::asset::embedded_asset!(app, "shaders/graph_3d.wesl");
     bevy::asset::embedded_asset!(app, "shaders/box_pbr.wesl");
+    bevy::asset::embedded_asset!(app, "shaders/terrain.wesl");
+    bevy::asset::embedded_asset!(app, "shaders/grass.wesl");
     app.add_plugins(Material2dPlugin::<GraphMaterial2d>::default());
     app.add_plugins(MaterialPlugin::<GraphMaterial3d>::default());
     app.add_plugins(MaterialPlugin::<BoxMaterial>::default());
     app.init_resource::<TextureVariants>();
-    app.add_systems(Update, sync_texture_variants);
+    app.init_resource::<SurfaceGlobals>();
+    app.add_systems(Update, (sync_texture_variants, update_surface_globals));
 }
 
 #[derive(Resource, Default)]
@@ -130,6 +137,18 @@ pub struct BoxProjection {
     #[texture(106)]
     #[sampler(107)]
     pub roughness: Option<Handle<Image>>,
+    #[uniform(108)]
+    pub masks: MaskUniforms,
+    #[uniform(109)]
+    pub detail: DetailUniforms,
+    #[texture(110)]
+    #[sampler(111)]
+    pub macro_map: Option<Handle<Image>>,
+    #[texture(112)]
+    #[sampler(113)]
+    pub detail_map: Option<Handle<Image>>,
+    #[storage(114, read_only)]
+    pub globals: Handle<ShaderBuffer>,
 }
 
 impl MaterialExtension for BoxProjection {
@@ -143,6 +162,131 @@ impl MaterialExtension for BoxProjection {
     }
 }
 
+pub fn terrain_shader() -> ShaderRef {
+    ShaderRef::Path(
+        bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!(
+            "shaders/terrain.wesl"
+        ))
+        .with_source("embedded"),
+    )
+}
+
+pub fn grass_shader() -> ShaderRef {
+    ShaderRef::Path(
+        bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!("shaders/grass.wesl"))
+            .with_source("embedded"),
+    )
+}
+
+/// `MaskUniforms` in `blockloom::texturing`, lane for lane.
+#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
+pub struct MaskUniforms {
+    pub slope: Vec4,
+    pub slope_color: Vec4,
+    pub height: Vec4,
+    pub height_color: Vec4,
+    pub cavity: Vec4,
+    pub cavity_color: Vec4,
+    pub snow: Vec4,
+    pub snow_color: Vec4,
+    pub wetness: Vec4,
+}
+
+impl MaskUniforms {
+    pub fn of(masks: &MaskStack) -> Self {
+        let l = masks.pack().map(Vec4::from_array);
+        Self {
+            slope: l[0],
+            slope_color: l[1],
+            height: l[2],
+            height_color: l[3],
+            cavity: l[4],
+            cavity_color: l[5],
+            snow: l[6],
+            snow_color: l[7],
+            wetness: l[8],
+        }
+    }
+}
+
+/// `DetailUniforms` in `blockloom::texturing`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
+pub struct DetailUniforms {
+    pub tiling: Vec4,
+    pub detail: Vec4,
+}
+
+impl DetailUniforms {
+    pub fn of(detail: &SurfaceDetail, macro_map: bool) -> Self {
+        let [tiling, lanes] = detail.pack(macro_map).map(Vec4::from_array);
+        Self {
+            tiling,
+            detail: lanes,
+        }
+    }
+}
+
+/// `SurfaceGlobals` in `blockloom::texturing`: what every projected surface,
+/// the terrain and the grass read each frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub struct SurfaceGlobalsData {
+    /// Snow cover, wetness, debug view (1 blends), unused.
+    pub weather: Vec4,
+    /// Wind velocity x/z at the camera, its speed, gusts per second.
+    pub wind: Vec4,
+}
+
+/// The one buffer [`SurfaceGlobalsData`] lives in, shared by every material
+/// that reads it.
+#[derive(Resource, Clone)]
+pub struct SurfaceGlobals {
+    pub buffer: Handle<ShaderBuffer>,
+    pub data: SurfaceGlobalsData,
+}
+
+impl FromWorld for SurfaceGlobals {
+    fn from_world(world: &mut World) -> Self {
+        let data = SurfaceGlobalsData::default();
+        let buffer = world
+            .resource_mut::<Assets<ShaderBuffer>>()
+            .add(ShaderBuffer::from(vec![data]));
+        Self { buffer, data }
+    }
+}
+
+/// Copy snow, wetness, the blend debug view and the camera's wind into the
+/// shared buffer, only when something moved enough to see.
+pub fn update_surface_globals(
+    environment: Option<Res<crate::environment::Environment>>,
+    debug: Option<Res<crate::hdr::HdrDebug>>,
+    wind: Option<Res<crate::wind::WindField>>,
+    mut globals: ResMut<SurfaceGlobals>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
+) {
+    let (snow, wetness) = environment
+        .map(|env| (env.snow, env.wetness))
+        .unwrap_or_default();
+    let blend =
+        debug.is_some_and(|debug| debug.0 == blockloom_protocol::DebugView::SurfaceBlend);
+    let (air, gusts) = wind
+        .map(|field| (field.at_camera, field.wind.gust_frequency))
+        .unwrap_or_default();
+    let data = SurfaceGlobalsData {
+        weather: Vec4::new(snow, wetness, f32::from(blend), 0.0),
+        wind: Vec4::new(air.x, air.z, air.length(), gusts),
+    };
+    if (data.weather - globals.data.weather).abs().max_element() < 1e-3
+        && (data.wind - globals.data.wind).abs().max_element() < 0.05
+    {
+        return;
+    }
+    globals.data = data;
+    if let Some(mut buffer) = buffers.get_mut(&globals.buffer) {
+        *buffer = ShaderBuffer::from(vec![data]);
+    }
+}
+
 pub fn box_material(
     commands: &mut Commands,
     material: &SurfaceMaterial,
@@ -152,7 +296,9 @@ pub fn box_material(
 ) -> BoxMaterial {
     let mut base = surface_standard(commands, material, tint, dir, assets);
     base.opaque_render_method = bevy::material::OpaqueRendererMethod::Forward;
-    let albedo = if material.box_projection {
+    let detail = &material.detail;
+    // Stochastic tiling samples albedo itself, projected or not.
+    let albedo = if material.box_projection || detail.stochastic {
         base.base_color_texture.take()
     } else {
         None
@@ -163,6 +309,14 @@ pub fn box_material(
         None
     };
     let roughness = base.metallic_roughness_texture.take();
+    // Macro and detail maps always repeat, whatever the surface's sampler.
+    let tiled = SurfaceMaterial {
+        sampler: TextureSampler::Repeat,
+        ..material.clone()
+    };
+    let macro_map = load_surface_image(commands, &detail.macro_texture, &tiled, dir, assets, false);
+    let detail_map =
+        load_surface_image(commands, &detail.detail_texture, &tiled, dir, assets, false);
     BoxMaterial {
         base,
         extension: BoxProjection {
@@ -180,6 +334,12 @@ pub fn box_material(
             albedo,
             normal,
             roughness,
+            masks: MaskUniforms::of(&detail.masks),
+            detail: DetailUniforms::of(detail, macro_map.is_some()),
+            macro_map,
+            detail_map,
+            // Filled in from `SurfaceGlobals` where the material is stored.
+            globals: Handle::default(),
         },
     }
 }
@@ -764,4 +924,86 @@ pub fn spawn_tilemap_3d(
     commands.entity(entity).add_child(child);
     commands.entity(entity).insert(TilemapMesh(child));
     Some(child)
+}
+
+#[cfg(test)]
+mod tests {
+    use blockloom_core::shader_lib;
+
+    // Just enough of Bevy's PBR modules for naga to type-check a fragment.
+    pub(crate) const PBR_STUB: &str = "struct View { world_position: vec3<f32> }\n\
+@group(0) @binding(0) var<uniform> view: View;\n\
+struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) world_position: vec4<f32>, \
+@location(1) world_normal: vec3<f32>, @location(2) uv: vec2<f32> }\n\
+struct FragmentOutput { @location(0) color: vec4<f32> }\n\
+struct StandardMaterial { base_color: vec4<f32>, perceptual_roughness: f32 }\n\
+struct PbrInput { material: StandardMaterial, world_normal: vec3<f32>, N: vec3<f32> }\n\
+fn pbr_input_from_standard_material(in: VertexOutput, is_front: bool) -> PbrInput { var p: PbrInput; p.world_normal = in.world_normal; return p; }\n\
+fn apply_pbr_lighting(p: PbrInput) -> vec4<f32> { return p.material.base_color; }\n\
+fn main_pass_post_lighting_processing(p: PbrInput, c: vec4<f32>) -> vec4<f32> { return c; }\n";
+
+    /// Drops every `import bevy_*` statement and binds the material group.
+    pub(crate) fn stubbed(source: &str, stub: &str) -> String {
+        let mut out = String::new();
+        let mut skipping = false;
+        for line in source.lines() {
+            if line.starts_with("import bevy_") {
+                skipping = !line.trim_end().ends_with(';');
+                continue;
+            }
+            if skipping {
+                skipping = !line.trim_end().ends_with(';');
+                continue;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.replace("constants::MATERIAL_BIND_GROUP", "2") + stub
+    }
+
+    #[test]
+    fn the_box_shader_compiles() {
+        for uvs in [false, true] {
+            shader_lib::validate(
+                &stubbed(include_str!("shaders/box_pbr.wesl"), PBR_STUB),
+                &[("VERTEX_UVS_A", uvs)],
+            )
+            .unwrap_or_else(|error| panic!("{error}"));
+        }
+    }
+
+    #[test]
+    fn the_terrain_shader_compiles() {
+        shader_lib::validate(
+            &stubbed(include_str!("shaders/terrain.wesl"), PBR_STUB),
+            &[("VERTEX_UVS_A", true)],
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    const VERTEX_STUB: &str = "struct View { world_position: vec3<f32> }\n\
+struct Globals { time: f32 }\n\
+@group(0) @binding(0) var<uniform> view: View;\n\
+@group(0) @binding(11) var<uniform> globals: Globals;\n\
+struct Vertex { @builtin(instance_index) instance_index: u32, @location(0) position: vec3<f32>, \
+@location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>, @location(5) color: vec4<f32> }\n\
+struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) world_position: vec4<f32>, \
+@location(1) world_normal: vec3<f32>, @location(2) uv: vec2<f32>, @location(5) color: vec4<f32>, \
+@location(6) @interpolate(flat) instance_index: u32 }\n\
+fn decompress_vertex(v: Vertex, i: u32) -> Vertex { return v; }\n\
+fn get_world_from_local(i: u32) -> mat4x4<f32> { return mat4x4<f32>(); }\n\
+fn mesh_normal_local_to_world(n: vec3<f32>, i: u32) -> vec3<f32> { return n; }\n\
+fn position_world_to_clip(p: vec3<f32>) -> vec4<f32> { return vec4<f32>(p, 1.0); }\n";
+
+    #[test]
+    fn the_grass_shader_compiles() {
+        let defs = [
+            ("VERTEX_UVS_A", true),
+            ("VERTEX_COLORS", true),
+            ("VERTEX_NORMALS", true),
+            ("VERTEX_OUTPUT_INSTANCE_INDEX", true),
+        ];
+        shader_lib::validate(&stubbed(include_str!("shaders/grass.wesl"), VERTEX_STUB), &defs)
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
 }

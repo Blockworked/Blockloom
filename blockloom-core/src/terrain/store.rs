@@ -225,13 +225,11 @@ fn decode(kind: GridKind, packed: &[u8]) -> Result<Vec<u8>, String> {
     Ok(data)
 }
 
-/// Writes a grid into the project's store, skipping tiles already there,
-/// and answers the manifest's name.
-pub fn save(project: &Path, grid: &Grid) -> Result<String, String> {
-    let folder = dir(project);
-    std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+/// Each tile's name and raw bytes, and the manifest naming them.
+fn manifest_of(grid: &Grid) -> (Manifest, Vec<Vec<u8>>) {
     let per_side = grid.tiles_per_side();
     let mut tiles = Vec::with_capacity((per_side * per_side) as usize);
+    let mut raws = Vec::with_capacity(tiles.capacity());
     for tz in 0..per_side {
         for tx in 0..per_side {
             let raw = grid.tile_bytes(tx, tz);
@@ -239,12 +237,8 @@ pub fn save(project: &Path, grid: &Grid) -> Result<String, String> {
             // encode differently.
             let mut keyed = vec![grid.kind.stride() as u8];
             keyed.extend_from_slice(&raw);
-            let name = hash_name(&keyed);
-            let path = file(project, &name, "tile")?;
-            if !path.exists() {
-                write_atomic(&path, &encode(grid.kind, &raw))?;
-            }
-            tiles.push(name);
+            tiles.push(hash_name(&keyed));
+            raws.push(raw);
         }
     }
     let manifest = Manifest {
@@ -253,8 +247,35 @@ pub fn save(project: &Path, grid: &Grid) -> Result<String, String> {
         tile: TILE,
         tiles,
     };
-    let json = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
-    let name = hash_name(&json);
+    (manifest, raws)
+}
+
+fn manifest_name(manifest: &Manifest) -> Result<(String, Vec<u8>), String> {
+    let json = serde_json::to_vec(manifest).map_err(|e| e.to_string())?;
+    Ok((hash_name(&json), json))
+}
+
+/// The name [`save`] would give a grid, without writing anything. The
+/// runtime uses it to recognise a document edit it has already drawn.
+pub fn name_of(grid: &Grid) -> String {
+    manifest_name(&manifest_of(grid).0)
+        .map(|(name, _)| name)
+        .unwrap_or_default()
+}
+
+/// Writes a grid into the project's store, skipping tiles already there,
+/// and answers the manifest's name.
+pub fn save(project: &Path, grid: &Grid) -> Result<String, String> {
+    let folder = dir(project);
+    std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+    let (manifest, raws) = manifest_of(grid);
+    for (name, raw) in manifest.tiles.iter().zip(&raws) {
+        let path = file(project, name, "tile")?;
+        if !path.exists() {
+            write_atomic(&path, &encode(grid.kind, raw))?;
+        }
+    }
+    let (name, json) = manifest_name(&manifest)?;
     let path = file(project, &name, "json")?;
     if !path.exists() {
         write_atomic(&path, &json)?;
@@ -394,8 +415,10 @@ mod tests {
         assert_eq!(back, grid);
         let heights = back.to_heights().unwrap();
         assert!((heights.at(5, 0) - field.at(5, 0)).abs() < 1e-4);
-        // Saving the same grid again writes nothing new.
+        // Saving the same grid again writes nothing new, and the name is
+        // known without saving.
         assert_eq!(save(&project, &grid).unwrap(), name);
+        assert_eq!(name_of(&grid), name);
         std::fs::remove_dir_all(project).ok();
     }
 
