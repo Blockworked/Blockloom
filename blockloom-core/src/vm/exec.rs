@@ -1423,6 +1423,14 @@ impl Vm {
                     value,
                 });
             }
+            Action::SetWater { property, value } => {
+                let value = self.eval_f32(value, actor, params, temps, out);
+                out.push(Effect::SetWater {
+                    actor: actor.to_string(),
+                    property: *property,
+                    value,
+                });
+            }
             Action::SetCloudDrift(vector) => {
                 let drift = self.eval_vec3(vector, actor, params, temps, out);
                 out.push(Effect::SetCloudDrift { drift });

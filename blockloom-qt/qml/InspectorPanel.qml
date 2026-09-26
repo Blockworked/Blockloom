@@ -51,6 +51,9 @@ Rectangle {
         return { name: looks[0], color: looks[1], albedo_texture: "", normal_texture: "", roughness_texture: "", roughness: 0.85, texel_density: 0.25,
                  rules: { enabled: n > 0, slope: n === 1 ? [30, 90] : [0, 90], height: [-100000, 100000], curvature: 0, softness: 0.3 } };
     }
+    // A 2D pool is in pixels; the backend fills in whatever a spec leaves out.
+    function waterOf(c) { return c.water || {}; }
+    function buoyancyOf(c) { return Object.assign({ density: 0.5, drag: 1, angular_drag: 1, points: 4, splash: true }, c.buoyancy || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
     function animationOf(c) { return Object.assign({ clips: [], states: [], initial: "", crossfade: 0, rig: "", skin: "", slot_tints: [] }, c.animation || {}); }
@@ -186,6 +189,9 @@ Rectangle {
         const change = {}; change[list] = l;
         writeTerrain(c, change);
     }
+    function writeWater(c, next) { write("Water", { component: "Water", water: merged(waterOf(c), next) }); }
+    function writeWaterPart(c, part, next) { const change = {}; change[part] = merged(waterOf(c)[part] || {}, next); writeWater(c, change); }
+    function writeBuoyancy(c, next) { write("Buoyancy", { component: "Buoyancy", buoyancy: merged(buoyancyOf(c), next) }); }
     function writeVolume(c, next) { write("Volume", { component: "Volume", volume: merged(volumeOf(c), next) }); }
     function writeOverride(c, key, next) {
         const v = volumeOf(c);
@@ -257,7 +263,7 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Custom"]
+        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Water","Buoyancy","Custom"]
             .filter(n => n !== "Sprite" || !is3d)
             .filter(n => n === "Custom" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }));
     }
@@ -279,6 +285,10 @@ Rectangle {
         case "Volume": return { component: "Volume", volume: volumeOf({}) };
         case "Probe": return { component: "Probe", probe: probeOf({}) };
         case "Terrain": return { component: "Terrain", terrain: terrainOf({}) };
+        case "Water": return { component: "Water", water: is3d ? {} : { size: [800, 300], depth: 300,
+            waves: { amplitude: 6, wavelength: 220, direction: 90, spread: 20 }, detail: { scale: 60 }, look: { absorption: 220 },
+            foam: { shore: 12, scale: 40 }, underwater: { distance: 600, caustics_scale: 60 }, splash: { min_speed: 60 } } };
+        case "Buoyancy": return { component: "Buoyancy", buoyancy: buoyancyOf({}) };
         case "Custom": return { component: "Custom", name: "Component", fields: [{ name: "value", value: { kind: "Number", value: 0 } }] };
         default: return null;
         }
@@ -332,7 +342,7 @@ Rectangle {
                             Layout.fillWidth: true
                             readonly property var c: card.c
                             sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard })[card.c.component] || null
+                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Water: waterCard, Buoyancy: buoyancyCard })[card.c.component] || null
                         }
                     }
                 }
@@ -1131,6 +1141,137 @@ Rectangle {
                     : pr.p.kind === "Reflection"
                     ? "Captures a cubemap from the actor's position that surfaces inside the box reflect. The box turns with the actor but isn't scaled by it. Give the probe actor no Look, or it sees itself."
                     : "Captures a grid of ambient cubes that light whatever moves through the box with bounced light." }
+        }
+    }
+    Component {
+        id: waterCard
+        ColumnLayout {
+            id: wa
+            readonly property var c: parent.c
+            readonly property var w: root.waterOf(c)
+            readonly property var waves: w.waves || {}
+            readonly property var look: w.look || {}
+            readonly property var foam: w.foam || {}
+            readonly property var refl: w.reflections || {}
+            readonly property var under: w.underwater || {}
+            readonly property var splash: w.splash || {}
+            readonly property bool ocean: w.kind === "Ocean"
+            function part(name, next) { root.writeWaterPart(wa.c, name, next); }
+            function clamp(n, lo, hi) { return Math.min(hi, Math.max(lo, n)); }
+            spacing: 6
+            InspectorRow { label: "Kind"; Layout.fillWidth: true
+                ChoiceField { options: [{ value: "Lake", label: "Lake" }, { value: "River", label: "River" }, { value: "Ocean", label: "Ocean" }]; value: wa.w.kind || "Lake"; onChosen: k => root.writeWater(wa.c, { kind: k }) } }
+            InspectorRow { visible: !wa.ocean; label: root.is3d ? "Size x, z" : "Width"; Layout.fillWidth: true
+                NumberField { value: (wa.w.size || [40, 40])[0]; fallback: 40; onCommitted: n => root.writeWater(wa.c, { size: root.withIndex(wa.w.size || [40, 40], 0, Math.max(0.01, n)) }) }
+                NumberField { visible: root.is3d; value: (wa.w.size || [40, 40])[1]; fallback: 40; onCommitted: n => root.writeWater(wa.c, { size: root.withIndex(wa.w.size || [40, 40], 1, Math.max(0.01, n)) }) } }
+            InspectorRow { label: "Depth"; Layout.fillWidth: true
+                NumberField { value: wa.w.depth; fallback: 8; onCommitted: n => root.writeWater(wa.c, { depth: Math.max(0, n) }) } }
+            InspectorRow { visible: wa.w.kind === "River"; label: "Flow x, z"; Layout.fillWidth: true
+                NumberField { value: (wa.w.flow || [0, 0])[0]; fallback: 0; onCommitted: n => root.writeWater(wa.c, { flow: root.withIndex(wa.w.flow || [0, 0], 0, n) }) }
+                NumberField { visible: root.is3d; value: (wa.w.flow || [0, 0])[1]; fallback: 0; onCommitted: n => root.writeWater(wa.c, { flow: root.withIndex(wa.w.flow || [0, 0], 1, n) }) } }
+
+            Text { text: "Waves"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            InspectorRow { label: "Height, length"; Layout.fillWidth: true
+                NumberField { value: wa.waves.amplitude; fallback: 0.25; onCommitted: n => wa.part("waves", { amplitude: Math.max(0, n) }) }
+                NumberField { value: wa.waves.wavelength; fallback: 12; onCommitted: n => wa.part("waves", { wavelength: Math.max(0.01, n) }) } }
+            InspectorRow { label: "Steepness"; Layout.fillWidth: true
+                SliderField { from: 0; to: 1; value: wa.waves.steepness; onMoved: wa.part("waves", { steepness: value }) } }
+            InspectorRow { label: "Chop"; Layout.fillWidth: true
+                SliderField { from: 0; to: 1; value: wa.waves.chop; onMoved: wa.part("waves", { chop: value }) } }
+            InspectorRow { label: "Waves, speed"; Layout.fillWidth: true
+                NumberField { value: wa.waves.count; fallback: 10; onCommitted: n => wa.part("waves", { count: wa.clamp(Math.round(n), 1, 12) }) }
+                NumberField { value: wa.waves.speed; fallback: 1; onCommitted: n => wa.part("waves", { speed: wa.clamp(n, 0, 10) }) } }
+            InspectorRow { label: "Follow wind"; Layout.fillWidth: true
+                SwitchField { value: wa.waves.follow_wind; onToggled: on => wa.part("waves", { follow_wind: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { visible: !wa.waves.follow_wind; label: "Heading"; Layout.fillWidth: true
+                NumberField { value: wa.waves.direction; fallback: 45; onCommitted: n => wa.part("waves", { direction: ((n % 360) + 360) % 360 }) } }
+            InspectorRow { label: "Spread"; Layout.fillWidth: true
+                NumberField { value: wa.waves.spread; fallback: 40; onCommitted: n => wa.part("waves", { spread: wa.clamp(n, 0, 180) }) } }
+            InspectorRow { label: "Wind, fetch km"; Layout.fillWidth: true
+                NumberField { value: wa.waves.wind; fallback: 0.5; onCommitted: n => wa.part("waves", { wind: wa.clamp(n, 0, 1) }) }
+                NumberField { value: wa.waves.fetch; fallback: 2; onCommitted: n => wa.part("waves", { fetch: wa.clamp(n, 0.01, 5000) }) } }
+            InspectorRow { label: "Detail, scale"; Layout.fillWidth: true
+                NumberField { value: (wa.w.detail || {}).strength; fallback: 1; onCommitted: n => wa.part("detail", { strength: wa.clamp(n, 0, 2) }) }
+                NumberField { value: (wa.w.detail || {}).scale; fallback: 3; onCommitted: n => wa.part("detail", { scale: Math.max(0.01, n) }) } }
+            InspectorRow { label: "Seed"; Layout.fillWidth: true
+                NumberField { value: wa.waves.seed; fallback: 1; onCommitted: n => wa.part("waves", { seed: Math.max(0, Math.round(n)) }) } }
+
+            Text { text: "Color"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            InspectorRow { label: "Shallow, deep"; Layout.fillWidth: true
+                ColorField { value: wa.look.shallow || "#3AB3A6"; onPicked: col => wa.part("look", { shallow: col }) }
+                ColorField { value: wa.look.deep || "#0B2E4A"; onPicked: col => wa.part("look", { deep: col }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Absorption"; Layout.fillWidth: true
+                NumberField { value: wa.look.absorption; fallback: 6; onCommitted: n => wa.part("look", { absorption: Math.max(0.01, n) }) } }
+            InspectorRow { label: "Clarity"; Layout.fillWidth: true
+                SliderField { from: 0; to: 1; value: wa.look.clarity; onMoved: wa.part("look", { clarity: value }) } }
+            InspectorRow { visible: root.is3d; label: "Refraction"; Layout.fillWidth: true
+                SliderField { from: 0; to: 1; value: wa.look.refraction; onMoved: wa.part("look", { refraction: value }) } }
+            InspectorRow { visible: root.is3d; label: "Roughness, glint"; Layout.fillWidth: true
+                NumberField { value: wa.look.roughness; fallback: 0.06; onCommitted: n => wa.part("look", { roughness: wa.clamp(n, 0.02, 1) }) }
+                NumberField { value: wa.look.glint; fallback: 1; onCommitted: n => wa.part("look", { glint: wa.clamp(n, 0, 4) }) } }
+
+            Text { text: "Foam"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            InspectorRow { label: "Amount"; Layout.fillWidth: true
+                NumberField { value: wa.foam.amount; fallback: 1; onCommitted: n => wa.part("foam", { amount: wa.clamp(n, 0, 2) }) }
+                ColorField { value: wa.foam.color || "#F2F6F8"; onPicked: col => wa.part("foam", { color: col }) } }
+            InspectorRow { label: root.is3d ? "Shore, crest" : "Line, crest"; Layout.fillWidth: true
+                NumberField { value: wa.foam.shore; fallback: 0.6; onCommitted: n => wa.part("foam", { shore: Math.max(0, n) }) }
+                NumberField { value: wa.foam.crest; fallback: 0.45; onCommitted: n => wa.part("foam", { crest: wa.clamp(n, 0, 1) }) } }
+            InspectorRow { label: "Scale, drift"; Layout.fillWidth: true
+                NumberField { value: wa.foam.scale; fallback: 2.5; onCommitted: n => wa.part("foam", { scale: Math.max(0.01, n) }) }
+                NumberField { value: wa.foam.drift; fallback: 0.2; onCommitted: n => wa.part("foam", { drift: n }) } }
+
+            Text { visible: root.is3d; text: "Reflections"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            InspectorRow { visible: root.is3d; label: "Source"; Layout.fillWidth: true
+                ChoiceField { options: [{ value: "Auto", label: "Screen, then probe" }, { value: "Probe", label: "Probe only" }, { value: "ScreenSpace", label: "Screen, then sky" }, { value: "Sky", label: "Sky color" }]
+                    value: wa.refl.mode || "Auto"; onChosen: m => wa.part("reflections", { mode: m }) } }
+            InspectorRow { visible: root.is3d && (wa.refl.mode === "Auto" || wa.refl.mode === "Probe"); label: "Probe px, frames"; Layout.fillWidth: true
+                ChoiceField { options: [64, 128, 256, 512].map(n => ({ value: String(n), label: n + " px" })); value: String(wa.refl.probe_resolution || 128); onChosen: v => wa.part("reflections", { probe_resolution: Number(v) }) }
+                NumberField { value: wa.refl.probe_refresh; fallback: 30; onCommitted: n => wa.part("reflections", { probe_refresh: wa.clamp(Math.round(n), 1, 600) }) } }
+            InspectorRow { visible: root.is3d; label: "Strength"; Layout.fillWidth: true
+                SliderField { from: 0; to: 1; value: wa.refl.strength; onMoved: wa.part("reflections", { strength: value }) } }
+
+            Text { text: "Underwater"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            InspectorRow { visible: root.is3d; label: "Fog, distance"; Layout.fillWidth: true
+                ColorField { value: wa.under.fog || "#0F4C5C"; onPicked: col => wa.part("underwater", { fog: col }) }
+                NumberField { value: wa.under.distance; fallback: 18; onCommitted: n => wa.part("underwater", { distance: Math.max(0.01, n) }) } }
+            InspectorRow { label: "Caustics, scale"; Layout.fillWidth: true
+                NumberField { value: wa.under.caustics; fallback: 1; onCommitted: n => wa.part("underwater", { caustics: wa.clamp(n, 0, 4) }) }
+                NumberField { value: wa.under.caustics_scale; fallback: 3; onCommitted: n => wa.part("underwater", { caustics_scale: Math.max(0.01, n) }) } }
+            InspectorRow { visible: root.is3d; label: "Caustics image"; Layout.fillWidth: true
+                AssetField { app: root.app; accept: ["image"]; value: wa.under.caustics_texture || ""; placeholderText: "Built-in pattern"; onCommitted: p => wa.part("underwater", { caustics_texture: p }) } }
+
+            Text { text: "Splashes"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            InspectorRow { label: "Min speed, drops"; Layout.fillWidth: true
+                NumberField { value: wa.splash.min_speed; fallback: 1.5; onCommitted: n => wa.part("splash", { min_speed: Math.max(0, n) }) }
+                NumberField { value: wa.splash.particles; fallback: 16; onCommitted: n => wa.part("splash", { particles: wa.clamp(Math.round(n), 0, 128) }) } }
+            InspectorRow { label: "Ripples"; Layout.fillWidth: true
+                SwitchField { value: wa.splash.ripples !== false; onToggled: on => wa.part("splash", { ripples: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Sound"; Layout.fillWidth: true
+                AssetField { app: root.app; accept: ["audio"]; value: wa.splash.sound || ""; placeholderText: "Drag a sound here"; onCommitted: p => wa.part("splash", { sound: p }) } }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: wa.ocean ? "Reaches the horizon from wherever the camera is. The actor's height is the sea level."
+                    : "The actor's position is the middle of the surface at rest; turning it turns the water and its current." }
+        }
+    }
+    Component {
+        id: buoyancyCard
+        ColumnLayout {
+            id: bu
+            readonly property var c: parent.c
+            readonly property var b: root.buoyancyOf(c)
+            spacing: 6
+            InspectorRow { label: "Density"; Layout.fillWidth: true
+                NumberField { value: bu.b.density; fallback: 0.5; onCommitted: n => root.writeBuoyancy(bu.c, { density: Math.min(10, Math.max(0.01, n)) }) } }
+            InspectorRow { label: "Drag, spin drag"; Layout.fillWidth: true
+                NumberField { value: bu.b.drag; fallback: 1; onCommitted: n => root.writeBuoyancy(bu.c, { drag: Math.min(50, Math.max(0, n)) }) }
+                NumberField { value: bu.b.angular_drag; fallback: 1; onCommitted: n => root.writeBuoyancy(bu.c, { angular_drag: Math.min(50, Math.max(0, n)) }) } }
+            InspectorRow { label: "Sample points"; Layout.fillWidth: true
+                ChoiceField { options: [{ value: "1", label: "Centre" }, { value: "4", label: "Four corners" }, { value: "8", label: "Eight corners" }]; value: String(bu.b.points); onChosen: v => root.writeBuoyancy(bu.c, { points: Number(v) }) } }
+            InspectorRow { label: "Splashes"; Layout.fillWidth: true
+                SwitchField { value: bu.b.splash; onToggled: on => root.writeBuoyancy(bu.c, { splash: on }) } Item { Layout.fillWidth: true } }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Needs a dynamic Body. Density 0.5 floats half under, 1 hangs in the water, above 1 sinks." }
         }
     }
     Component {

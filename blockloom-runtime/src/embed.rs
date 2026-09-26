@@ -2081,6 +2081,47 @@ mod tests {
         );
     }
 
+    /// A box-projected floor draws its texture, not the background.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_box_projected_floor_draws_its_texture() {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::material::SurfaceMaterial;
+        let dir =
+            std::env::temp_dir().join(format!("blockloom-embed-boxed-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        image::RgbImage::from_pixel(8, 8, image::Rgb([255, 40, 40]))
+            .save(dir.join("assets").join("red.png"))
+            .unwrap();
+        let mut project = dark_room(true);
+        project.actors[0]
+            .components
+            .insert(ActorComponent::Material {
+                material: SurfaceMaterial {
+                    albedo_texture: "assets/red.png".to_string(),
+                    box_projection: true,
+                    ..SurfaceMaterial::default()
+                },
+            });
+        let load = EditorMessage::Load {
+            project: Box::new(project.clone()),
+            dir: Some(dir.to_string_lossy().into_owned()),
+        };
+        let pixel = floor_pixel(run_world_sending(
+            project,
+            |_| {},
+            game_camera(),
+            0,
+            |pixel| pixel[0] > 120,
+            vec![load],
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(
+            pixel[0] > 120 && pixel[1] < pixel[0] / 2,
+            "expected the red texture, read {pixel:?}"
+        );
+    }
+
     #[test]
     #[ignore = "needs a GPU"]
     fn a_baked_irradiance_probe_lights_the_floor_with_the_sky() {
@@ -2583,6 +2624,47 @@ mod tests {
         });
         let pixel = floor_pixel(run_world(room, |_| {}, game_camera(), 60, is_red));
         assert!(is_red(pixel), "expected red fog, read {pixel:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_lake_tints_the_floor_under_it() {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::water::{ReflectionMode, WaterSpec};
+        let blue = |[r, _, b]: [u8; 3]| b > 60 && b > r.saturating_add(40);
+        let mut room = dark_room(true);
+        let mut spec = WaterSpec {
+            depth: 3.0,
+            ..WaterSpec::default()
+        };
+        spec.look.shallow = "#0040FF".to_string();
+        spec.look.deep = "#0020C0".to_string();
+        spec.look.absorption = 0.5;
+        spec.foam.amount = 0.0;
+        spec.underwater.caustics = 0.0;
+        spec.reflections.mode = ReflectionMode::Sky;
+        spec.waves.amplitude = 0.02;
+        let mut lake = blockloom_core::project::Actor::new(
+            "Lake",
+            blockloom_core::scene::Visual::Sphere {
+                color: "#FFFFFF".to_string(),
+                radius: 0.05,
+            },
+        );
+        lake.components.remove("Look");
+        lake.components.placement_mut().position = [0.0, 1.0, 0.0];
+        lake.components
+            .insert(ActorComponent::Water { water: spec });
+        room.actors.push(lake);
+        let (set, index, errors) = run_world(room, |_| {}, game_camera(), 600, blue);
+        assert!(errors.is_empty(), "{errors:?}");
+        let set = set.expect("no frame arrived");
+        dump(
+            "lake",
+            &frame_pixels(&set.images[index], SIZE.x as usize, SIZE.y as usize),
+        );
+        let pixel = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        assert!(blue(pixel), "expected blue water, read {pixel:?}");
     }
 
     #[test]

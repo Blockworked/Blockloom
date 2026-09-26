@@ -172,6 +172,16 @@ impl ProbeService {
         self.live.get(&id).map(|capture| &capture.faces)
     }
 
+    /// Moves a refreshing capture: its cameras follow on the next refresh.
+    pub fn relocate(&mut self, id: ProbeId, position: Vec3) {
+        if let Some(capture) = self.live.get_mut(&id) {
+            capture.request.position = position;
+        } else if let Some((_, request)) = self.queued.iter_mut().find(|(queued, _)| *queued == id)
+        {
+            request.position = position;
+        }
+    }
+
     pub fn in_flight(&self) -> usize {
         self.queued.len() + self.live.len()
     }
@@ -263,7 +273,7 @@ pub fn run_captures(
     mut commands: Commands,
     mut service: ResMut<ProbeService>,
     mut images: ResMut<Assets<Image>>,
-    mut cameras: Query<&mut Camera>,
+    mut cameras: Query<(&mut Camera, &mut Transform, &mut bevy::camera::Exposure)>,
     environment: Res<Environment>,
     sky: Query<&crate::sky::SkyView, With<crate::world::WorldCamera>>,
     mut captured: MessageWriter<ProbeCaptured>,
@@ -389,8 +399,14 @@ pub fn run_captures(
                 // Render on refresh frames only; the faces hold in between.
                 let due = capture.frames % every.max(1) == 0;
                 for camera in capture.cameras {
-                    if let Ok(mut camera) = cameras.get_mut(camera) {
+                    if let Ok((mut camera, mut transform, mut exposure)) = cameras.get_mut(camera) {
                         camera.is_active = due;
+                        // A refresh sees the world as it is now: where the
+                        // probe was moved to, at today's exposure.
+                        if due {
+                            transform.translation = capture.request.position;
+                            exposure.ev100 = environment.exposure;
+                        }
                     }
                 }
             }

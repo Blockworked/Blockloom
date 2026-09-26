@@ -24,6 +24,7 @@ use crate::sprite2d::SpriteSpec;
 use crate::terrain::TerrainSpec;
 use crate::value::Evaluated;
 use crate::volume::VolumeSpec;
+use crate::water::{BuoyancySpec, WaterSpec};
 use serde::{Deserialize, Serialize};
 
 /// The components every project knows about by name. A custom component
@@ -47,6 +48,8 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Probe",
     "Terrain",
     "Sprite",
+    "Water",
+    "Buoyancy",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -360,6 +363,10 @@ pub enum ActorComponent {
     /// 2D dials over the look: flips, 9-slice, stacking, palette swap,
     /// outline, and the order and Y-sort inside the Render layer.
     Sprite { sprite: SpriteSpec },
+    /// An ocean, a lake or a river whose surface rests at the actor.
+    Water { water: WaterSpec },
+    /// Floats a body on whatever water it is in.
+    Buoyancy { buoyancy: BuoyancySpec },
 }
 
 impl ActorComponent {
@@ -384,6 +391,8 @@ impl ActorComponent {
             ActorComponent::Probe { .. } => "Probe",
             ActorComponent::Terrain { .. } => "Terrain",
             ActorComponent::Sprite { .. } => "Sprite",
+            ActorComponent::Water { .. } => "Water",
+            ActorComponent::Buoyancy { .. } => "Buoyancy",
             ActorComponent::Custom { name, .. } => name,
         }
     }
@@ -681,7 +690,7 @@ impl Components {
         }
     }
 
-    /// The light, if the actor carries one.
+    /// The terrain, if the actor carries one.
     pub fn terrain(&self) -> Option<&TerrainSpec> {
         match self.get("Terrain") {
             Some(ActorComponent::Terrain { terrain }) => Some(terrain),
@@ -689,6 +698,23 @@ impl Components {
         }
     }
 
+    /// The water, if the actor carries some.
+    pub fn water(&self) -> Option<&WaterSpec> {
+        match self.get("Water") {
+            Some(ActorComponent::Water { water }) => Some(water),
+            _ => None,
+        }
+    }
+
+    /// How the actor floats, if it does.
+    pub fn buoyancy(&self) -> Option<&BuoyancySpec> {
+        match self.get("Buoyancy") {
+            Some(ActorComponent::Buoyancy { buoyancy }) => Some(buoyancy),
+            _ => None,
+        }
+    }
+
+    /// The light, if the actor carries one.
     pub fn light(&self) -> Option<&LightSpec> {
         match self.get("Light") {
             Some(ActorComponent::Light { light }) => Some(light),

@@ -91,6 +91,7 @@ const TWEEN_EASINGS: &[&str] = &[
 const SOUND_BUSES: &[&str] = &["Master", "Music", "Sfx"];
 const WIND_PROPERTIES: &[&str] = &["Direction", "Speed", "Gust", "Storm"];
 const CLOUD_PROPERTIES: &[&str] = &["Coverage", "Density", "Type"];
+const WATER_PROPERTIES: &[&str] = &["Level", "Chop", "Foam"];
 const CLOUD_LAYER_PROPERTIES: &[&str] = &["Coverage", "Opacity", "Contrast", "Altitude", "Spin"];
 const UI_ANCHORS: &[&str] = &[
     "TopLeft",
@@ -1311,6 +1312,25 @@ pub const BLOCKS: &[BlockSpec] = &[
         dropdowns: &[Dropdown {
             field: "property",
             options: CLOUD_PROPERTIES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetWater",
+        category: "Looks",
+        purpose: "Sets a water dial for the rest of the run: Level (the surface's height at rest, world units), Chop 0-1 (how much the short waves carry, glassy to whipped) or Foam 0-2. Run by an actor with a Water component it moves that body; run by anyone else it moves every body. `water height at` and floating bodies follow it on the next tick.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "value",
+            id: "WaterValue",
+            value: "Any",
+        }],
+        dropdowns: &[Dropdown {
+            field: "property",
+            options: WATER_PROPERTIES,
         }],
         strings: NO_STRINGS,
         bools: NO_BOOLS,

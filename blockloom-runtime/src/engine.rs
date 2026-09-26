@@ -251,6 +251,8 @@ pub struct Engine {
     pub terrain_previews: Vec<(String, Option<blockloom_core::terrain::sculpt::Erosion>)>,
     /// `set cloud layer` this run, over the project's layers.
     pub cloud_layers: blockloom_core::cloud_layers::CloudLayerOverrides,
+    /// `set water level/chop/foam` this run, over each body's authored spec.
+    pub water: blockloom_core::water::WaterOverrides,
     /// Dynamic actors a walk verb (`move`, `change position`) drove this
     /// tick. A walk sets an absolute velocity, so when a driven actor goes
     /// quiet the dimension pass brakes it - otherwise the last written
@@ -335,6 +337,7 @@ impl Engine {
             surface: Default::default(),
             terrain_previews: Vec::new(),
             cloud_layers: Default::default(),
+            water: Default::default(),
             last_created: HashMap::new(),
             driven: HashSet::new(),
             physics_filter: HashMap::new(),

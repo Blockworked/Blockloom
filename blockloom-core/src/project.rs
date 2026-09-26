@@ -772,6 +772,14 @@ impl Project {
             if let Some(ActorComponent::Sprite { sprite }) = actor.components.get_mut("Sprite") {
                 sprite.normalize();
             }
+            if let Some(ActorComponent::Water { water }) = actor.components.get_mut("Water") {
+                water.normalize();
+            }
+            if let Some(ActorComponent::Buoyancy { buoyancy }) =
+                actor.components.get_mut("Buoyancy")
+            {
+                buoyancy.normalize();
+            }
             actor.graph.migrate_bool_slots();
             actor.graph.normalize_block_colors();
             actor.graph.prune_orphaned_comments();

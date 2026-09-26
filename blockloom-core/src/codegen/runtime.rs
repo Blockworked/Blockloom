@@ -214,6 +214,10 @@ pub enum Act {
         property: &'static str,
         value: f32,
     },
+    SetWater {
+        property: &'static str,
+        value: f32,
+    },
     SetCloudLayer {
         layer: f32,
         property: &'static str,
@@ -1087,7 +1091,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 23;
+pub const LOGIC_ABI_VERSION: u32 = 24;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1229,15 +1233,15 @@ pub const ACT_STOP_ANIMATION: u32 = 74;
 /// `n0` = speed. 1 is as authored, 0 freezes.
 pub const ACT_SET_ANIMATION_SPEED: u32 = 75;
 /// `a` = trigger name, for the animation state machine this tick.
-pub const ACT_FIRE_ANIMATION_TRIGGER: u32 = 95;
+pub const ACT_FIRE_ANIMATION_TRIGGER: u32 = 96;
 /// `a` = rig slot, `b` = attachment; empty hides the slot.
-pub const ACT_SET_RIG_SLOT: u32 = 96;
+pub const ACT_SET_RIG_SLOT: u32 = 97;
 /// `a` = rig slot, `b` = `#RRGGBB`.
-pub const ACT_SET_SLOT_TINT: u32 = 97;
+pub const ACT_SET_SLOT_TINT: u32 = 98;
 /// `a` = IK constraint; `n0`, `n1` = where, relative to the actor.
-pub const ACT_SET_IK_TARGET: u32 = 98;
+pub const ACT_SET_IK_TARGET: u32 = 99;
 /// `a` = sprite dial name, `n0` = value.
-pub const ACT_SET_SPRITE_DIAL: u32 = 99;
+pub const ACT_SET_SPRITE_DIAL: u32 = 100;
 /// `n0` = multiple of the emissive tint.
 pub const ACT_SET_EMISSIVE_STRENGTH: u32 = 76;
 /// `n0` != 0 turns HDR output on. Window-global: no actor.
@@ -1279,6 +1283,9 @@ pub const ACT_SET_CLOUDS: u32 = 93;
 /// `a` = cloud layer dial (`Coverage`, `Opacity`, ...); `n0` = layer from 1,
 /// `n1` = value. Window-global: no actor.
 pub const ACT_SET_CLOUD_LAYER: u32 = 94;
+/// `a` = water dial (`Level`, `Chop`, `Foam`); `n0` = value. The actor's own
+/// water when it has some, every body's otherwise.
+pub const ACT_SET_WATER: u32 = 95;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1787,6 +1794,14 @@ impl Host for AbiHost {
             Act::SetClouds { property, value } => self.act_wire(
                 actor,
                 ACT_SET_CLOUDS,
+                property,
+                "",
+                [value as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetWater { property, value } => self.act_wire(
+                actor,
+                ACT_SET_WATER,
                 property,
                 "",
                 [value as f64, 0.0, 0.0],

@@ -70,6 +70,7 @@ pub mod value;
 pub mod vm;
 pub mod vocabulary;
 pub mod volume;
+pub mod water;
 pub mod wind;
 pub mod wire;
 
