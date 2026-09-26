@@ -1191,6 +1191,11 @@ field id if it has value slots, and a `Step`/`Effect` if it does something
 new** - not a new QML file. `BlockHeader` and `CallBlock` take their row from
 a `BlockDef` rather than their type, which blockstitch draws itself.
 
+Keep the canvas's inputs identity-stable, since any change rebuilds what is
+bound to it. `Main.qml`'s `reuse` swaps every unchanged part of a new
+snapshot for the old object, and `Blocks.qml` bumps `BlockRegistry.revision`
+only when `optionSource` (the names its dropdowns list) changes.
+
 The asset tray along the bottom (`AssetTray.qml`) is a file manager
 over the project folder: it lists, makes, imports, renames, moves and deletes
 files, and an asset dragged out of it lands on any
