@@ -305,13 +305,25 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         time, per-asset exposure bias, the build dialog's HDR switch
         (`GamePack.hdr`), and `memory/targets/hdr` plus `hdr/tonemap` in the
         profiler.
-        Not covered: the HDR swapchain path has only run against SDR
-        displays here, so it needs a check on real HDR10/scRGB hardware; no
-        HDR10 static metadata (MaxCLL) is sent; the Game view stays SDR (its
-        ring is 8-bit through Qt EGL), so HDR preview stands in; the BC6H
-        encoder is single-region mode only, and only the sky uses it; no HDR
-        color picker for emissive yet; the HDR/SDR flag is a build option
-        rather than set per target automatically.
+        Then: the swapchain path run on real HDR hardware (KDE Wayland,
+        NVIDIA, HDR10 and scRGB both adopted, clean under the validation
+        layer); HDR10 static metadata (primaries, mastering peak, MaxCLL at
+        the peak, MaxFALL at paper white) sent per swapchain through
+        `VK_EXT_hdr_metadata` or DXGI `SetHDRMetaData`
+        (`display::send_metadata`); an HDR Game view on Wayland, where the
+        world presents to its own swapchain on a subsurface under the editor
+        window and the view shows through to it (`embed::HdrPlane`,
+        `game_view.cpp`'s plane); a BC6H codec over all 14 modes, the
+        encoder searching one-region modes and the two-region ones over the
+        best-fitting shapes, checked bit for bit against bcdec, with
+        reflection probe bakes now sampled as BC6H on the GPU like the sky;
+        `HdrColorField` for emissive and volume fog glow (exposure-invariant
+        swatch, intensity in stops); and a per-target HDR default in the
+        Build dialog (ARM64 Linux SDR, the web player always SDR).
+        Not covered: the DX12 metadata path is uncompiled here (no Windows
+        toolchain) and Metal EDR takes no metadata; the HDR Game view is
+        Wayland only, so X11 keeps HDR preview; MaxFALL is a fixed paper
+        white rather than measured.
   - [x] Volume framework (the backbone everything below plugs into): global default
         plus box/sphere volumes with priority, blend distance and weight. Every
         property has an override checkbox HDRP-style, so a cave volume can take fog

@@ -284,6 +284,7 @@ impl LightSpec {
 /// reads as `{"component": "Body", "physics": {...}}`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "component")]
+#[allow(clippy::large_enum_variant)]
 pub enum ActorComponent {
     /// Where the actor stands - its Bevy `Transform`. Every actor has one:
     /// there is nowhere for an entity without a transform to be drawn.

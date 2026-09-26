@@ -37,6 +37,11 @@ mod ffi {
         fn game_view_refuse(generation: u64);
         /// The world should draw at this many physical pixels, `scale` per logical one.
         fn game_view_resize(width: u32, height: u32, scale: f32);
+        /// A Wayland surface under the window that HDR frames can go to,
+        /// alive for the rest of the process.
+        fn game_view_offer_hdr(display: usize, surface: usize);
+        /// Whether frames are going to that surface rather than the ring.
+        fn game_view_hdr_live() -> bool;
     }
 
     unsafe extern "C++" {
@@ -227,4 +232,18 @@ fn game_view_resize(width: u32, height: u32, scale: f32) {
     embedded::FRAMES.resize(width, height, scale);
     #[cfg(not(target_os = "linux"))]
     let _ = (width, height, scale);
+}
+
+fn game_view_offer_hdr(display: usize, surface: usize) {
+    #[cfg(target_os = "linux")]
+    embedded::FRAMES.offer_hdr_surface(display, surface);
+    #[cfg(not(target_os = "linux"))]
+    let _ = (display, surface);
+}
+
+fn game_view_hdr_live() -> bool {
+    #[cfg(target_os = "linux")]
+    return embedded::FRAMES.hdr_live();
+    #[cfg(not(target_os = "linux"))]
+    false
 }

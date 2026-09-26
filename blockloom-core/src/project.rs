@@ -381,10 +381,10 @@ impl Project {
             {
                 actor.components.remove("Joint");
             }
-            if let Some(ActorComponent::Brain { brain }) = actor.components.get_mut("Brain") {
-                if brain.target == id || brain.target.eq_ignore_ascii_case(&removed.name) {
-                    brain.target.clear();
-                }
+            if let Some(ActorComponent::Brain { brain }) = actor.components.get_mut("Brain")
+                && (brain.target == id || brain.target.eq_ignore_ascii_case(&removed.name))
+            {
+                brain.target.clear();
             }
         }
         true
@@ -492,10 +492,10 @@ impl Project {
             return Err(format!("An actor named \"{trimmed}\" already exists"));
         }
         for actor in &mut self.actors {
-            if let Some(ActorComponent::Brain { brain }) = actor.components.get_mut("Brain") {
-                if brain.target.eq_ignore_ascii_case(&old) {
-                    brain.target.clone_from(&trimmed);
-                }
+            if let Some(ActorComponent::Brain { brain }) = actor.components.get_mut("Brain")
+                && brain.target.eq_ignore_ascii_case(&old)
+            {
+                brain.target.clone_from(&trimmed);
             }
             actor
                 .graph

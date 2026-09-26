@@ -29,6 +29,7 @@ fn main() {
                 "qml/SurfaceDetailRows.qml",
                 "qml/NumberField.qml",
                 "qml/ColorField.qml",
+                "qml/HdrColorField.qml",
                 "qml/AssetField.qml",
                 "qml/ChoiceField.qml",
                 "qml/SwitchField.qml",
@@ -85,6 +86,7 @@ fn main() {
                 if linux {
                     cc.file("src/wayland/pointer-constraints-unstable-v1-protocol.cpp");
                     cc.file("src/wayland/relative-pointer-unstable-v1-protocol.cpp");
+                    cc.file("src/wayland/viewporter-protocol.cpp");
                 }
             })
             .build();

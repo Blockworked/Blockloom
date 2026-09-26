@@ -16,6 +16,8 @@
 // A Bevy system declares every query and resource it touches as an argument, so
 // the usual argument-count limit doesn't apply here.
 #![allow(clippy::too_many_arguments)]
+// Bevy system queries and params are long by nature.
+#![allow(clippy::type_complexity)]
 
 mod ai;
 mod atmosphere;
@@ -93,6 +95,12 @@ pub fn run_process() {
     };
 
     let mut app = App::new();
+    #[cfg(target_os = "linux")]
+    {
+        let mut vulkan = bevy::render::renderer::raw_vulkan_init::RawVulkanInitSettings::default();
+        display::add_vulkan_extensions(&mut vulkan);
+        app.insert_resource(vulkan);
+    }
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {

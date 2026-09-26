@@ -7,7 +7,7 @@ use crate::engine::{Dimension, Engine};
 use crate::hdr::{HdrDebug, HdrFrame};
 use crate::world::{WorldCamera, WorldLight, parse_color};
 use bevy::camera::Hdr;
-use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::light::DirectionalLightShadowMap;
 use bevy::pbr::ScreenSpaceAmbientOcclusion;
 use bevy::post_process::bloom::{Bloom, BloomPrefilter};
@@ -571,11 +571,18 @@ pub fn apply_environment(
         } else {
             tonemapping_of(env.tonemapping)
         };
+        // Bevy's dither rides its tonemapper, so it goes where that does.
+        let deband = if tonemapping == Tonemapping::None {
+            DebandDither::Disabled
+        } else {
+            DebandDither::Enabled
+        };
         camera.insert((
             bevy::camera::Exposure {
                 ev100: env.exposure,
             },
             tonemapping,
+            deband,
         ));
         // Linear FP16 all the way to the tonemapper, bloom or not, so lights,
         // sky and emissives can pass 1.0 without clipping. An SDR-only build

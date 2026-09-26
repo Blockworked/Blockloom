@@ -123,9 +123,7 @@ fn direct_storm(
         .lightning_rate
         .unwrap_or(if lightning.storm { lightning.rate } else { 0.0 });
     let strikes = state.director.step(lightning, rate, time.delta_secs());
-    state
-        .queued
-        .extend(strikes.into_iter().map(Vec3::from));
+    state.queued.extend(strikes.into_iter().map(Vec3::from));
 }
 
 /// Carries strikes out: lights their flash, plays their thunder once the

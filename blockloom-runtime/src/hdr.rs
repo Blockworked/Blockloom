@@ -177,6 +177,25 @@ impl HdrFrame {
         }
     }
 
+    /// HDR10 static metadata for this frame, none when it goes out SDR. The
+    /// tone curve never passes the peak, so that is MaxCLL too; a frame
+    /// mostly sits at or under paper white, which stands in for MaxFALL.
+    pub fn metadata(&self) -> Option<HdrMetadata> {
+        let primaries = match self.space {
+            OutputSpace::Sdr => return None,
+            OutputSpace::Hdr10 => BT2020,
+            OutputSpace::Scrgb => BT709,
+        };
+        let peak = self.peak_nits.max(1.0);
+        Some(HdrMetadata {
+            primaries,
+            max_mastering_nits: peak,
+            min_mastering_nits: 0.0001,
+            max_cll: peak,
+            max_fall: self.paper_white_nits.clamp(1.0, peak),
+        })
+    }
+
     /// Puts the tone curve and the encode on a world camera when the frame
     /// goes out HDR, and takes them off when it doesn't.
     pub fn apply(&self, camera: &mut EntityCommands, is_3d: bool) {
@@ -194,6 +213,33 @@ impl HdrFrame {
             camera.insert((HdrTone2d::from(tone), HdrEncode2d::from(encode)));
         }
     }
+}
+
+/// CIE 1931 xy of red, green, blue and the D65 white point.
+const BT2020: [[f32; 2]; 4] = [
+    [0.708, 0.292],
+    [0.170, 0.797],
+    [0.131, 0.046],
+    [0.3127, 0.3290],
+];
+const BT709: [[f32; 2]; 4] = [
+    [0.640, 0.330],
+    [0.300, 0.600],
+    [0.150, 0.060],
+    [0.3127, 0.3290],
+];
+
+/// What an HDR signal was mastered for, sent beside the swapchain so a
+/// display with less range tone maps it rather than clipping.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HdrMetadata {
+    /// Red, green, blue and white, as CIE 1931 xy.
+    pub primaries: [[f32; 2]; 4],
+    pub max_mastering_nits: f32,
+    pub min_mastering_nits: f32,
+    /// Brightest pixel (MaxCLL) and brightest frame average (MaxFALL).
+    pub max_cll: f32,
+    pub max_fall: f32,
 }
 
 /// The project's display settings with this run's `set HDR output` and
@@ -570,6 +616,30 @@ mod tests {
         app.world_mut().flush();
         assert!(app.world().get::<HdrEncode3d>(camera).is_none());
         assert!(app.world().get::<HdrTone3d>(camera).is_none());
+    }
+
+    #[test]
+    fn hdr_metadata_follows_the_space_and_the_peak() {
+        let both = [OutputSpace::Sdr, OutputSpace::Scrgb, OutputSpace::Hdr10];
+        let policy = HdrPolicy::default();
+        assert_eq!(HdrFrame::default().metadata(), None);
+        let meta = HdrFrame::resolve(hdr10(), Some(&both), policy)
+            .metadata()
+            .unwrap();
+        assert_eq!(meta.primaries, BT2020);
+        assert_eq!((meta.max_cll, meta.max_fall), (1000.0, 200.0));
+        assert_eq!(meta.max_mastering_nits, 1000.0);
+        let scrgb = DisplayOutput {
+            space: OutputSpace::Scrgb,
+            peak_nits: 150.0,
+            paper_white_nits: 200.0,
+        };
+        let meta = HdrFrame::resolve(scrgb, Some(&both), policy)
+            .metadata()
+            .unwrap();
+        assert_eq!(meta.primaries, BT709);
+        // A frame's average can't pass its brightest pixel.
+        assert_eq!((meta.max_cll, meta.max_fall), (150.0, 150.0));
     }
 
     #[test]

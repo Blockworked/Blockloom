@@ -190,7 +190,10 @@ impl HdrImage {
     /// line. Each side is pulled towards the average of the two edges, fully
     /// at the seam and not at all `degrees` away. Strips are left alone.
     pub fn fix_seam(&mut self, degrees: f32) {
-        if !(degrees > 0.0) || SkyLayout::of(self.width, self.height) != SkyLayout::Equirect {
+        if degrees.is_nan()
+            || degrees <= 0.0
+            || SkyLayout::of(self.width, self.height) != SkyLayout::Equirect
+        {
             return;
         }
         let band = ((degrees / 360.0 * self.width as f32).round() as u32).clamp(1, self.width / 2);

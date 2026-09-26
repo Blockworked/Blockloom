@@ -674,8 +674,7 @@ Rectangle {
             InspectorRow { label: "Metallic"; Layout.fillWidth: true; NumberField { value: mat.m.metallic; onCommitted: n => root.writeMaterial(mat.c, { metallic: n }) } }
             InspectorRow { label: "Rough"; Layout.fillWidth: true; NumberField { value: mat.m.roughness; fallback: 0.6; onCommitted: n => root.writeMaterial(mat.c, { roughness: n }) } }
             InspectorRow { label: "Glow"; Layout.fillWidth: true
-                ColorField { value: mat.m.emissive; onPicked: col => root.writeMaterial(mat.c, { emissive: col }) }
-                NumberField { value: mat.m.emissive_energy; onCommitted: n => root.writeMaterial(mat.c, { emissive_energy: n }) } }
+                HdrColorField { color: mat.m.emissive; intensity: mat.m.emissive_energy; onPicked: (col, n) => root.writeMaterial(mat.c, { emissive: col, emissive_energy: n }) } }
             InspectorRow { label: "Texture"; Layout.fillWidth: true
                 AssetField { app: root.app; accept: ["image"]; value: mat.m.albedo_texture; placeholderText: "Optional albedo"; onCommitted: p => root.writeMaterial(mat.c, { albedo_texture: p }) } }
             InspectorRow { label: "Normal map"; Layout.fillWidth: true; visible: root.is3d && mat.m.shader === null
@@ -1145,8 +1144,9 @@ Rectangle {
                 NumberField { value: vo.fog.density; fallback: 0.2; onCommitted: n => root.writeVolume(vo.c, { fog: Object.assign({}, vo.fog, { density: Math.min(10, Math.max(0, n)) }) }) } }
             InspectorRow { visible: root.is3d && vo.v.shape !== "Global" && vo.fog.enabled; label: "Albedo, glow"; Layout.fillWidth: true
                 ColorField { value: vo.fog.albedo; onPicked: col => root.writeVolume(vo.c, { fog: Object.assign({}, vo.fog, { albedo: col }) }) }
-                ColorField { value: vo.fog.emissive; onPicked: col => root.writeVolume(vo.c, { fog: Object.assign({}, vo.fog, { emissive: col }) }) }
-                NumberField { value: vo.fog.emissive_strength; fallback: 0; onCommitted: n => root.writeVolume(vo.c, { fog: Object.assign({}, vo.fog, { emissive_strength: Math.max(0, n) }) }) } }
+                HdrColorField { color: vo.fog.emissive; intensity: vo.fog.emissive_strength
+                    hint: "The swatch keeps the color itself. Intensity is the glow in nits per unit of density, and every stop doubles it."
+                    onPicked: (col, n) => root.writeVolume(vo.c, { fog: Object.assign({}, vo.fog, { emissive: col, emissive_strength: n }) }) } }
             Text { visible: root.is3d && vo.v.shape !== "Global" && vo.fog.enabled; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Adds volumetric fog inside the shape, fading out across the blend distance and scaled by the weight, wherever the camera is. Lit like the project's volumetric fog; glow nits are per unit of density." }
             Text { text: "Local wind"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }

@@ -292,11 +292,12 @@ pub fn activate(manager: &mut UiManager, engine: &mut Engine, id: &str) {
                 value,
             });
         }
-    } else if node.kind == UiKind::Select && !node.items.is_empty() {
-        if let Some(n) = manager.get_mut(id) {
-            n.expanded = !n.expanded;
-            n.collection_dirty = true;
-        }
+    } else if node.kind == UiKind::Select
+        && !node.items.is_empty()
+        && let Some(n) = manager.get_mut(id)
+    {
+        n.expanded = !n.expanded;
+        n.collection_dirty = true;
     }
     manager.focus_on((node.kind == UiKind::Input).then_some(id));
     for target in manager.bubble(id) {
@@ -382,13 +383,12 @@ pub fn navigation(
             emit_event(&manager, &mut engine, &id, "focus");
         }
     }
-    if keys.just_pressed(KeyCode::Enter)
+    if (keys.just_pressed(KeyCode::Enter)
         || keys.just_pressed(KeyCode::Space)
-        || pads.iter().any(|p| p.just_pressed(GamepadButton::South))
+        || pads.iter().any(|p| p.just_pressed(GamepadButton::South)))
+        && let Some(id) = manager.navigation.clone()
     {
-        if let Some(id) = manager.navigation.clone() {
-            activate(&mut manager, &mut engine, &id);
-        }
+        activate(&mut manager, &mut engine, &id);
     }
 }
 
@@ -437,39 +437,37 @@ pub fn hover(
             );
         }
     }
-    if buttons.just_pressed(MouseButton::Left) {
-        if let (Some(id), Some(point)) = (hit.clone(), point) {
-            emit_event(&manager, &mut engine, &id, "press");
-            *captured = Some((id, point));
-        }
+    if buttons.just_pressed(MouseButton::Left)
+        && let (Some(id), Some(point)) = (hit.clone(), point)
+    {
+        emit_event(&manager, &mut engine, &id, "press");
+        *captured = Some((id, point));
     }
-    if buttons.just_released(MouseButton::Left) {
-        if let Some((id, _)) = captured.take() {
-            emit_event(&manager, &mut engine, &id, "release");
-        }
+    if buttons.just_released(MouseButton::Left)
+        && let Some((id, _)) = captured.take()
+    {
+        emit_event(&manager, &mut engine, &id, "release");
     }
-    if buttons.pressed(MouseButton::Left) {
-        if let (Some((id, previous)), Some(point)) = (captured.as_mut(), point) {
-            if *previous != point {
-                emit_event(&manager, &mut engine, id, "drag");
-                if let Some(n) = manager.get(id).cloned() {
-                    if matches!(n.kind, UiKind::Slider | UiKind::Scrollbar) {
-                        if let Some(rect) = crate::world::screen_rect(&boxes, n.entity) {
-                            let physical = point * window.map_or(1., Window::scale_factor);
-                            let fraction = (physical.x - rect.min.x) / rect.width().max(1.);
-                            let value = crate::ui::slider_at(n.range, n.step(), fraction);
-                            if let Some(value) = manager.changed(id, Evaluated::Number(value)) {
-                                engine.fire(Event::UiChanged {
-                                    id: id.clone(),
-                                    value,
-                                });
-                            }
-                        }
-                    }
-                }
-                *previous = point;
+    if buttons.pressed(MouseButton::Left)
+        && let (Some((id, previous)), Some(point)) = (captured.as_mut(), point)
+        && *previous != point
+    {
+        emit_event(&manager, &mut engine, id, "drag");
+        if let Some(n) = manager.get(id).cloned()
+            && matches!(n.kind, UiKind::Slider | UiKind::Scrollbar)
+            && let Some(rect) = crate::world::screen_rect(&boxes, n.entity)
+        {
+            let physical = point * window.map_or(1., Window::scale_factor);
+            let fraction = (physical.x - rect.min.x) / rect.width().max(1.);
+            let value = crate::ui::slider_at(n.range, n.step(), fraction);
+            if let Some(value) = manager.changed(id, Evaluated::Number(value)) {
+                engine.fire(Event::UiChanged {
+                    id: id.clone(),
+                    value,
+                });
             }
         }
+        *previous = point;
     }
     let tooltip = hit
         .as_ref()
@@ -717,7 +715,6 @@ mod tests {
             tab_index: Some(2),
             ..default()
         });
-        drop(m);
         app.update();
         let m = app.world().resource::<UiManager>();
         assert!(!m.shown(m.get("page").unwrap()));
@@ -759,7 +756,6 @@ mod tests {
             scroll_target: "list".into(),
             ..default()
         });
-        drop(m);
         app.update();
         app.world_mut()
             .resource_mut::<UiManager>()
@@ -800,7 +796,6 @@ mod tests {
             ..Default::default()
         });
         m.get_mut("inventory").unwrap().items = (0..100000).map(|i| format!("item {i}")).collect();
-        drop(m);
         app.update();
         let m = app.world().resource::<UiManager>();
         assert!(m.ids().len() < 15);
@@ -846,7 +841,6 @@ mod tests {
             }],
             ..Default::default()
         });
-        drop(m);
         app.update();
         assert_eq!(
             app.world()
