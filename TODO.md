@@ -800,18 +800,26 @@ Phased by dependency and value per cost. Each phase unblocks the next.
       inlined wasm plus the pack plus assets) that runs in a browser over
       WebGPU with no server beyond static hosting. Player only; the editor
       stays native (see Phase 9).
-- [ ] Web toolchain: `wasm32-unknown-unknown` target for `blockloom-runtime`
+- [x] Web toolchain: `wasm32-unknown-unknown` target for `blockloom-runtime`
       with `--no-default-features` (no `ray_tracing`/Solari on web; `is ray
       tracing on?` and `ray tracing available?` report false). Check-build the
       pinned rapier git rev for wasm early; Bevy 0.20 WebGPU backend plus the
       WESL surface shaders must compile to it (the `shader_lib` naga check
       covers the offline half).
-- [ ] `cfg(target_arch = "wasm32")` gating (one pass, no behavior changes):
+      Done: `just web-check` is green with the same 3 warnings as native,
+      the pinned rapier rev compiles for wasm, and `web-time` stands in
+      where `std::time::Instant` panics without an OS clock (`preview.rs`,
+      `performance.rs`). WebGL2 (not full WebGPU) is what headless browsers
+      here offer, and the game boots on it.
+- [x] `cfg(target_arch = "wasm32")` gating (one pass, no behavior changes):
       no stdin/stdout bridge thread (`bridge::listen`), no `fatal` process
       exit (canvas error overlay instead), Linux-only embed/`ash`/dma-buf
       stays out, no HDR swapchain takeover in `display.rs` (web builds force
       `GamePack.hdr = false`, SDR only), no EXR capture file writes, probe
       bakes ship pre-baked from the build and are never written at runtime.
+      Done, plus two things the headless runs shook out: player-side errors
+      go to the devtools console (printing panics on wasm), and a panic hook
+      forwards Rust panics there with their message.
 - [ ] Rust scripts work on web by static linking, not `dlopen` (wasm has no
       `libloading`): at build time each `assets/scripts/*.rs` is compiled for
       `wasm32-unknown-unknown` and linked into the one player wasm, against
@@ -836,6 +844,16 @@ Phased by dependency and value per cost. Each phase unblocks the next.
       pointer lock through the browser API on click; touch/gamepad through
       Bevy web inputs. GPU timestamps often missing on WebGPU: use the
       existing "no timestamps" profiler path.
+      Done: `Launch::Web` (`player.rs::from_pack`, SDR forced) with the pack
+      from JSON and `dir: None` so assets resolve against the server root;
+      `localStorage` saves (`web.rs`, read-as-default when missing); the
+      luminance compute meter skips itself where the device has no compute
+      (`max_compute_workgroup_size_x == 0`, Bevy's own canary) instead of
+      tripping validation and quitting the run, and GPU timestamps bisected
+      as safe. A player-side startup line logs the actor count.
+      Not covered: click-to-play audio, resize, pointer lock, touch/gamepad
+      verification; `scene luminance` reads 0 where the meter stands down;
+      3D web still needs the same compute gate in `sky.rs`/`fog.rs`.
 - [ ] Tooling and tests: `just web-build` (emit the single file) and
       `just web-serve` (static host for smoke tests); trunk or wasm-pack
       plus an xtask, documented beside `just player`. Tests: wasm
@@ -843,6 +861,13 @@ Phased by dependency and value per cost. Each phase unblocks the next.
       flag, first status) before calling the phase done. Single-threaded
       wasm first (task pools run inline, smaller streaming budgets); shared
       memory threads plus COOP/COEP headers are a later opt-in, not v1.
+      Done: `just web-build [out] [pack] [profile]` emits a runnable folder
+      (wasm + glue + host page; `release` boots fast, `dev` iterates) and
+      `just web-serve` hosts it with right MIME types; headless Chromium
+      runs verified load, green flag, world build and a rendered actor, plus
+      the missing-pack overlay path.
+      Not covered: the single-file emit (a folder ships today), CI
+      check-build, a repeatable smoke script, the trunk/wasm-pack decision.
 
 ### Phase 9 - Editor on web (separate phase, do after Phase 8)
 
