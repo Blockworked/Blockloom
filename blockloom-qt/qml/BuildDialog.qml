@@ -20,6 +20,9 @@ BwDialog {
     onChosenChanged: fast = !!chosen && chosen.fast_ready
     title: "Build a game"
     standardButtons: Dialog.NoButton
+    // Fixed width so long notes and target labels wrap instead of stretching
+    // the dialog: the content column is 480 wide plus this dialog's padding.
+    width: 524
 
     onOpened: {
         error = ""; built = null; busy = false;
@@ -39,7 +42,7 @@ BwDialog {
     }
 
     ColumnLayout {
-        width: 480; spacing: 8
+        width: parent.width; spacing: 8
         Text { visible: root.error.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; text: root.error; color: Theme.danger }
         Text { text: "Platform"; color: Theme.textDim; font.pixelSize: 12 }
         ChoiceField {
