@@ -21,7 +21,9 @@ use bevy::light::{
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
+    WgpuFeatures,
 };
+use bevy::render::renderer::RenderDevice;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::tasks::AsyncComputeTaskPool;
 use blockloom_core::pipeline::{bc6h, hdr::HdrCube};
@@ -130,11 +132,17 @@ pub fn load_baked(
     mut baker: ResMut<ProbeBaker>,
     mut service: ResMut<ProbeService>,
     mut images: ResMut<Assets<Image>>,
+    device: Option<Res<RenderDevice>>,
     fresh: Query<(), Added<WorldCamera>>,
 ) {
     if fresh.is_empty() {
         return;
     }
+    let compressed = device.is_some_and(|device| {
+        device
+            .features()
+            .contains(WgpuFeatures::TEXTURE_COMPRESSION_BC)
+    });
     // A rebuild moves things: whatever was mid-bake is capturing a world
     // that is gone.
     for job in baker.jobs.drain(..) {
@@ -158,7 +166,7 @@ pub fn load_baked(
         if let Some(info) = &info
             && !current
         {
-            match load_bake(&dir, actor, spec.kind) {
+            match load_bake(&dir, actor, spec.kind, compressed) {
                 Ok(image) => {
                     loaded.0.insert(
                         actor.clone(),
@@ -185,7 +193,14 @@ pub fn load_baked(
     }
 }
 
-fn load_bake(dir: &std::path::Path, actor: &str, kind: ProbeKind) -> Result<Image, String> {
+/// A bake as the GPU takes it. A reflection cube stays BC6H where the
+/// device samples BC, and is decoded to FP16 where it doesn't.
+fn load_bake(
+    dir: &std::path::Path,
+    actor: &str,
+    kind: ProbeKind,
+    compressed: bool,
+) -> Result<Image, String> {
     match kind {
         ProbeKind::Reflection => {
             let path = probe::cube_path(dir, actor);
@@ -194,12 +209,19 @@ fn load_bake(dir: &std::path::Path, actor: &str, kind: ProbeKind) -> Result<Imag
             if !size.is_power_of_two() {
                 return Err(format!("a {size} texel face isn't a power of two"));
             }
+            if compressed {
+                return Ok(cube_image(
+                    size,
+                    blocks.to_vec(),
+                    TextureFormat::Bc6hRgbUfloat,
+                ));
+            }
             let face = blocks.len() / 6;
             let mut texels = Vec::with_capacity((size * size * 8 * 6) as usize);
             for blocks in blocks.chunks_exact(face) {
                 texels.extend(bc6h::decode_face(blocks, size)?);
             }
-            Ok(cube_image(size, texels))
+            Ok(cube_image(size, texels, TextureFormat::Rgba16Float))
         }
         ProbeKind::Irradiance => Ok(grid_image(&IrradianceGrid::read(dir, actor)?)),
     }
@@ -542,7 +564,7 @@ fn finish(
     let stamp = job.persist.then_some(job.stamp).flatten();
     let (image, kind) = match &done {
         Finished::Cube(cube) => (
-            cube_image(cube.size, half_texels(cube)),
+            cube_image(cube.size, half_texels(cube), TextureFormat::Rgba16Float),
             ProbeKind::Reflection,
         ),
         Finished::Grid(cubes) => {
@@ -634,7 +656,7 @@ fn half_texels(cube: &HdrCube) -> Vec<u8> {
     texels
 }
 
-fn cube_image(size: u32, data: Vec<u8>) -> Image {
+fn cube_image(size: u32, data: Vec<u8>, format: TextureFormat) -> Image {
     let mut image = Image::new(
         Extent3d {
             width: size,
@@ -643,7 +665,7 @@ fn cube_image(size: u32, data: Vec<u8>) -> Image {
         },
         TextureDimension::D2,
         data,
-        TextureFormat::Rgba16Float,
+        format,
         RenderAssetUsages::RENDER_WORLD,
     );
     image.texture_descriptor.label = Some("probe_cube");
@@ -682,6 +704,30 @@ fn grid_image(grid: &IrradianceGrid) -> Image {
 mod tests {
     use super::*;
     use crate::probes;
+
+    #[test]
+    fn a_reflection_bake_loads_compressed_or_decoded() {
+        let dir = std::env::temp_dir().join(format!("blockloom-bake-load-{}", std::process::id()));
+        let cube = HdrCube {
+            size: 8,
+            faces: std::array::from_fn(|_| vec![[2.0; 3]; 64]),
+        };
+        probe::write_cube(&dir, "lamp", &cube, 1).unwrap();
+        let compressed = load_bake(&dir, "lamp", ProbeKind::Reflection, true).unwrap();
+        let decoded = load_bake(&dir, "lamp", ProbeKind::Reflection, false).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(
+            compressed.texture_descriptor.format,
+            TextureFormat::Bc6hRgbUfloat
+        );
+        // A byte a texel, against eight decoded.
+        assert_eq!(compressed.data.as_ref().unwrap().len(), 64 * 6);
+        assert_eq!(
+            decoded.texture_descriptor.format,
+            TextureFormat::Rgba16Float
+        );
+        assert_eq!(decoded.data.as_ref().unwrap().len(), 64 * 6 * 8);
+    }
     use blockloom_core::components::ActorComponent;
     use blockloom_core::scene::Mode;
 

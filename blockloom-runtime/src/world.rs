@@ -313,14 +313,7 @@ pub fn pump_editor(
                 }
             }
             EditorMessage::Stop => {
-                engine.stop_program();
-                engine.speech.clear();
-                manager.clear();
-                engine.running = false;
-                engine.starting = false;
-                engine.paused = false;
-                engine.pause_began = None;
-                engine.rebuild = true;
+                end_run(&mut engine, &mut manager);
                 bridge::send(&RuntimeMessage::Stopped);
             }
             EditorMessage::Pause { paused } => set_paused(&mut engine, paused, now),
@@ -406,6 +399,19 @@ pub fn pump_editor(
             }
         }
     }
+}
+
+/// Ends the run and puts the world back as the document authored it, so
+/// the editor's Game view never keeps what the run did to it.
+pub fn end_run(engine: &mut Engine, manager: &mut crate::ui::UiManager) {
+    engine.stop_program();
+    engine.speech.clear();
+    manager.clear();
+    engine.running = false;
+    engine.starting = false;
+    engine.paused = false;
+    engine.pause_began = None;
+    engine.rebuild = true;
 }
 
 /// Presses the green flag: the run's clock starts now.
@@ -1837,6 +1843,7 @@ pub fn apply_common(
     dimension: Res<Dimension>,
     navmesh: Option<Res<NavMesh>>,
     mut exit: MessageWriter<AppExit>,
+    mut manager: ResMut<crate::ui::UiManager>,
     mut transforms: Query<(&mut Transform, &mut Visibility)>,
     mut controllers_2d: Query<&mut bevy_rapier2d::prelude::KinematicCharacterController>,
     mut controllers_3d: Query<&mut bevy_rapier3d::prelude::KinematicCharacterController>,
@@ -1861,14 +1868,18 @@ pub fn apply_common(
     for effect in &effects.0 {
         let Some(actor) = effect_actor(effect) else {
             if let Effect::Stopped = effect {
+                bridge::send(&RuntimeMessage::Stopped);
+                if bridge::attached() {
+                    // The editor's Stop button does the same: the Game view
+                    // goes back to the document, not where the run ended.
+                    end_run(&mut engine, &mut manager);
+                    break;
+                }
                 engine.running = false;
                 engine.speech.clear();
-                bridge::send(&RuntimeMessage::Stopped);
                 // Nothing can press Play again in a built game, so a stopped
                 // world is a finished one: `stop all` is how a game quits.
-                if !bridge::attached() {
-                    exit.write(AppExit::Success);
-                }
+                exit.write(AppExit::Success);
             }
             continue;
         };
@@ -4353,6 +4364,27 @@ mod tests {
     }
 
     #[test]
+    fn ending_a_run_rebuilds_the_world_from_the_document() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.running = true;
+        engine.paused = true;
+        engine.rebuild = false;
+        engine.note_say("player", "Game over");
+        let mut manager = crate::ui::UiManager::default();
+        manager.show(element("score", blockloom_core::ui::UiKind::Label));
+
+        end_run(&mut engine, &mut manager);
+
+        // `stop all` lands here as well as the Stop button, so the Game view
+        // goes back to the authored scene either way.
+        assert!(engine.rebuild);
+        assert!(!engine.running && !engine.paused && !engine.starting);
+        assert!(engine.speech.is_empty());
+        assert!(manager.get("score").is_none());
+    }
+
+    #[test]
     fn stopping_the_run_releases_the_pointer() {
         let (_sender, incoming) = std::sync::mpsc::channel();
         let mut engine = Engine::new(incoming, Mode::ThreeD);
@@ -4766,6 +4798,7 @@ mod tests {
         engine.project.actors = vec![actor];
         let mut app = App::new();
         app.add_message::<AppExit>();
+        app.init_resource::<crate::ui::UiManager>();
         app.insert_resource(Dimension(Mode::ThreeD));
         app.insert_resource(PendingEffects(vec![Effect::NavigateTo {
             actor: "walker".into(),
@@ -4973,6 +5006,7 @@ mod tests {
             },
         ]));
         app.add_message::<AppExit>();
+        app.init_resource::<crate::ui::UiManager>();
         let entity = app
             .world_mut()
             .spawn((
@@ -5069,6 +5103,7 @@ mod tests {
             sideways(-90.0),
         ]));
         app.add_message::<AppExit>();
+        app.init_resource::<crate::ui::UiManager>();
         let entity = app
             .world_mut()
             .spawn((
@@ -5169,6 +5204,7 @@ mod tests {
             sideways(-90.0),
         ]));
         app.add_message::<AppExit>();
+        app.init_resource::<crate::ui::UiManager>();
         let entity = app
             .world_mut()
             .spawn((
@@ -5246,6 +5282,7 @@ mod tests {
             },
         ]));
         app.add_message::<AppExit>();
+        app.init_resource::<crate::ui::UiManager>();
         let entity = app
             .world_mut()
             .spawn((
@@ -5335,6 +5372,7 @@ mod tests {
             },
         ]));
         app.add_message::<AppExit>();
+        app.init_resource::<crate::ui::UiManager>();
         let player = app
             .world_mut()
             .spawn((

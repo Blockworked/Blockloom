@@ -13,13 +13,18 @@
 
 mod effect;
 mod exec;
+mod lower;
+mod ops;
 mod program;
+mod stores;
+mod variables;
 
 pub use effect::Effect;
 pub use exec::{
-    ActorDicts, ActorLists, ActorVariables, DictValues, Dicts, Event, ListValues, Lists,
-    MAX_REPORTER_DEPTH, STEP_BUDGET, VariableSnapshot, VariableValues, Variables, Vm,
+    ActorDicts, ActorLists, DictValues, Dicts, Event, ListValues, Lists, MAX_REPORTER_DEPTH,
+    STEP_BUDGET, Vm,
 };
 pub use program::{
     Action, Entry, LoopKind, Program, ShowElement, Step, Trigger, compile, temp_index, temp_var,
 };
+pub use variables::{ActorVariables, VariableSnapshot, VariableValues, Variables};

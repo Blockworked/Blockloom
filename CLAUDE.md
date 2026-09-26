@@ -17,6 +17,7 @@ just build              # cargo build --release --workspace (the normal build)
 just run                # build, then launch target/release/blockloom
 cargo build --workspace && target/debug/blockloom   # debug build/run - faster iteration
 just test               # cargo test --workspace (blockloom-core has the bulk of them)
+cargo bench -p blockloom-core --bench vm   # block VM ns/tick over a few canvases
 just player             # stage the hard-optimized player a built game ships
 just web-check          # runtime check-build for wasm32-unknown-unknown (Phase 8)
 just web-build [out] [pack=game-dir]  # wasm player folder; serve with just web-serve
@@ -365,6 +366,18 @@ relative pointer (the generated glue is vendored in `blockloom-qt/src/wayland/`)
 cursor warping on X11 - and forwards raw motion. Escape always releases it and
 a click takes it back.
 
+HDR frames can't go through the 8-bit ring or Qt's 8-bit window. On Wayland
+the view makes a subsurface *under* its window (`makePlane` in
+`game_view.cpp`, input passing straight through, sized by `wp_viewporter`)
+and offers it through `FrameExchange::offer_hdr_surface`; the world makes a
+swapchain on it (`embed::HdrPlane`), which is what `DisplayOffers` then
+reports. While the frame resolves HDR, the cameras' view takes the
+swapchain's format and `aim_plane` points them at its texture instead of a
+ring slot, and `hdr_live` tells the view to draw a zero-alpha texture Qt
+thinks is opaque, which shows through to the plane while overlays still
+draw on top. That is why the window has an alpha buffer on Wayland.
+`BLOCKLOOM_HDR_VIEW=0` turns the plane off.
+
 `BLOCKLOOM_RUNTIME=process` forces the child process and MJPEG preview on
 Linux too. Windows and macOS have no GPU sharing yet.
 
@@ -372,7 +385,9 @@ Linux too. Windows and macOS have no GPU sharing yet.
 
 While nothing runs, the Game view is a scene view over the same world:
 loaded, never started, and seen through an editor camera instead of the
-game's. `commands::open_world` brings a world up for it when the tab is shown
+game's. A run ends the same way whether the Stop button or a `stop all`
+ended it (`world::end_run`): the world is rebuilt from the document, so the
+scene view never keeps where the run left things. `commands::open_world` brings a world up for it when the tab is shown
 (embedded, or with the preview on), so editing never waits for Play.
 `blockloom-runtime/src/edit.rs` is all of it: `SceneEditor` holds the camera
 (a flying one in 3D, pan and zoom in 2D), the selection and any drag.
@@ -538,7 +553,11 @@ when the display offers an HDR color space, and hands Bevy's views its
 texture each frame; otherwise Bevy keeps the window. On an HDR frame the
 tonemapper stands aside for `HdrTone*` (a curve to the display's headroom)
 and `HdrEncode*` (scRGB or PQ, after the UI so the HUD sits at paper white).
-The editor's Game view is always SDR, since its ring is 8-bit.
+An HDR swapchain also gets HDR10 static metadata
+(`display::send_metadata`: `VK_EXT_hdr_metadata`, turned on by
+`add_vulkan_extensions`, or DXGI), resent whenever the swapchain is remade.
+The Game view's ring is 8-bit, so on Wayland an HDR frame bypasses it (see
+Game view).
 
 `hdr.rs` also holds the Game view's debug views, a `FullscreenMaterial` per
 dimension over the exposed image before tonemapping (`shaders/hdr.wesl`): false
@@ -743,7 +762,9 @@ batched. Volumes scale probe light through `reflections` (reflection probes
 and the sky's light) and `indirect` (irradiance volumes); probes blend with
 each other by their own falloff. `capture
 probes` does the same capture mid-run and keeps it in memory. Builds copy the
-bakes. The GPU half is the ignored `embed` tests (rect and disk lights, area
+bakes. A reflection bake loads as BC6H where the GPU samples BC, and is
+decoded to FP16 elsewhere, as the sky is. `pipeline::bc6h` encodes all 14
+modes, and its decoder matches bcdec bit for bit. The GPU half is the ignored `embed` tests (rect and disk lights, area
 light shadows, cookie, both probe kinds, a bake leaving out its own actor).
 Those tests start their worlds one at a time: concurrent Vulkan instance
 creation crashes in the loader.
@@ -762,11 +783,32 @@ raster rig carries on and the editor hears why once. The atmosphere sample
 copies `active`/`available` on the fixed tick, so `is ray tracing on?` and
 `ray tracing available?` agree between the VM and compiled logic.
 
-Realtime tracing puts `SolariLighting` on the world camera (plus `Msaa::Off`,
-`Hdr` and a storage-capable main texture) and turns sun shadow maps off.
-Solari lights the G-buffer, so while it is on `DefaultOpaqueRendererMethod`
-is deferred and every standard and instanced material is touched to
-re-prepare; off, both go back to forward. `instanced_pbr.wesl` is therefore
+`RayTracingSettings::mode` picks the realtime tracer. `Hybrid` puts
+`SolariLighting` on the world camera (ReSTIR direct light plus a world cache
+for GI). `PathTraced` puts `traced::TracedPaths` there instead: fresh paths
+from every G-buffer pixel each frame (`shaders/traced_paths.wesl`, `paths`
+per pixel, light sampling MIS'd against the BRDF), with Bevy's deferred
+lighting skipped. Either way the camera also gets `Msaa::Off`, `Hdr` and a
+storage-capable main texture, and sun shadow maps turn off. Tracing lights
+the G-buffer, so while it is on `DefaultOpaqueRendererMethod` is deferred and
+every standard and instanced material is touched to re-prepare; off, both go
+back to forward.
+
+`Denoiser` picks the cleanup: ReSTIR's reuse (`reuses`, Hybrid only) and
+`traced::TracedDenoiser` (`filters`), an SVGF-style filter
+(`shaders/denoise.wesl`) that runs after the opaque pass: demodulate by the
+G-buffer albedo, reproject along motion vectors, five a-trous passes steered
+by the variance, remodulate. Glossy surfaces keep a shorter history and a
+tighter blur. It only touches pixels with a G-buffer (forward surfaces and
+the background are left alone) and drops NaNs and clips fireflies first,
+since its moments are half floats.
+
+Solari ignores the environment map, so `solari_patch.rs` edits its shaders
+as they load (the `pbr_patch` rules): a realtime bounce, a world cache GI ray
+past its reach and a reference path tracer bounce that escape all see the
+camera's `EnvironmentMapLight`. Under a flat sky `TracedAmbient` hangs a
+one-texel cube of the ambient there instead, and a sky that lights but
+doesn't reflect shows traced rays its diffuse cube. `instanced_pbr.wesl` is therefore
 the instanced material's deferred shader too. Box-projected and graph
 surfaces stay forward and keep the raster lights.
 
@@ -776,8 +818,10 @@ layout, and only the sun and emissive meshes light. So `sync_traced_scene`
 mesh (no `Mesh3d`, `traceable` converting the mesh, a standard material
 standing in for instanced, box and graph surfaces) and one emissive stand-in
 per `Light` whose `ray_traced` is on (a sphere for a point, a disk down a
-spot's beam, the rect or disk itself), glowing with the light's power.
-Merged batches, placeholders and particles are left out.
+spot's beam, the rect or disk itself), glowing with the light's power. A
+spot narrower than `HOOD_WIDEST` also gets a black flared hood
+(`TracedHood`), so its disk only lights the cone. Merged batches,
+placeholders and particles are left out.
 
 The path tracer is `SceneView::path_tracer`, an editor preference: the world
 camera gets `Pathtracer` instead, which traces the same copy and starts over
@@ -786,7 +830,11 @@ reach the editor as `RuntimeMessage::RayTracing` and `state.ray_tracing`. An
 EXR capture copies the camera's tracing (`trace_like`) and, under the path
 tracer, waits for the sample or time budget. The GPU half is the ignored
 `embed` tests (traced vs. untraced lamps, switching mid-run, the path tracer
-and its EXR).
+and its EXR, sky and ambient on escaped rays, realtime path tracing, the
+denoiser's grain, a spot's cone). They run on lavapipe too, which has ray
+queries but no dma-bufs: `BLOCKLOOM_TEST_OPAQUE_FD=1
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json`, and
+`BLOCKLOOM_TEST_DUMP=<dir>` saves the frames some of them read as PNGs.
 
 ### Volumetric clouds
 
@@ -927,6 +975,9 @@ a project's other files aren't modules, so `package::`/`super::` are refused.
 2. `vm::compile` flattens each actor's canvas into a `Vec<Step>` with jumps -
    a nested tree can't be suspended mid-body, but a program counter can. Header
    strands become entry points keyed by their trigger.
+   Each value slot is lowered the first time it runs (`vm/lower.rs`): variable
+   names become interned slots in `Variables`, and pure operators over
+   constants fold away, so evaluating one hashes nothing.
 3. Simulation runs on Bevy's `FixedUpdate`: a constant-rate step (`FixedMain`
    catches up whatever the display does) that pulls the project's `world.fixed_rate`
    - set in Project Settings and applied by `pump_editor`/`dim2|dim3::sync_timestep` -
@@ -1094,10 +1145,10 @@ Three things shape the emitted code. Every slot is read into a `let` before the
 act that uses it, because reading a slot borrows the host and so does handing
 it something to do. `and`/`or` take their second operand as a closure, because
 the VM's short circuit is observable: `false and <a bad slot>` reports nothing.
-And everything `Vm::resolve` replaces - a variable, a parameter, a reporter
-call - is hoisted into a `let` ahead of the expression, because the VM resolves
-a whole tree before one operator runs: a reporter on the side `and` never reads
-still runs, and still does whatever it does to the world.
+And every variable, parameter and reporter call is hoisted into a `let` ahead
+of the expression, because the VM runs each of them before the operator over
+it: a reporter on the side `and` never reads still runs, and still does
+whatever it does to the world.
 
 The actor is a value rather than a constant, which is what lets one emitted
 function cover an authored actor and every clone of it: a `State` carries the

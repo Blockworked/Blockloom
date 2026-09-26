@@ -41,6 +41,23 @@ impl Target {
     pub fn is_linux(self) -> bool {
         self.triple.ends_with("linux-gnu")
     }
+
+    /// Whether a build for it renders HDR unless told otherwise, and why.
+    /// ARM64 Linux is mostly single-board computers, where FP16 targets cost
+    /// more than they give and HDR displays are rare.
+    pub fn hdr_default(self) -> (bool, &'static str) {
+        if self.triple == "aarch64-unknown-linux-gnu" {
+            (
+                false,
+                "SDR only by default: ARM64 Linux boards rarely have the GPU for FP16 frames.",
+            )
+        } else {
+            (
+                true,
+                "HDR frames, and HDR output where the display offers it.",
+            )
+        }
+    }
 }
 
 /// Every platform Blockloom knows how to lay a build out for. Whether one is
@@ -124,6 +141,10 @@ pub struct TargetStatus {
     pub fast_ready: bool,
     /// Why native blocks are or are not available.
     pub fast_note: String,
+    /// Whether a build renders HDR unless told otherwise.
+    pub hdr: bool,
+    /// Why, for the dialog.
+    pub hdr_note: String,
 }
 
 /// Every platform, in the order the dialog lists them: this machine first,
@@ -207,6 +228,8 @@ fn status(
         note,
         fast_ready,
         fast_note,
+        hdr: target.hdr_default().0,
+        hdr_note: target.hdr_default().1.to_string(),
     }
 }
 
@@ -819,6 +842,20 @@ mod tests {
     /// are the ones Play writes to.
     fn a_target() -> &'static Target {
         host().expect("the tests run on a platform Blockloom knows")
+    }
+
+    #[test]
+    fn arm64_linux_builds_sdr_unless_told_otherwise() {
+        for target in TARGETS {
+            let (hdr, note) = target.hdr_default();
+            assert_eq!(
+                hdr,
+                target.triple != "aarch64-unknown-linux-gnu",
+                "{}",
+                target.triple
+            );
+            assert!(!note.is_empty());
+        }
     }
 
     #[test]

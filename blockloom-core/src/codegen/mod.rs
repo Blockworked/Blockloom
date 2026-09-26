@@ -1512,9 +1512,8 @@ impl<'a> Pass<'a> {
     /// One value slot: the resolve phase the VM runs first, and the read that
     /// follows it.
     ///
-    /// `Vm::eval` resolves a whole tree - every variable, parameter and
-    /// reporter call replaced by a literal - before one operator runs. That
-    /// order is observable: a reporter on the unused side of an `and` is run
+    /// `Vm::eval` reads every variable, parameter and reporter call in a
+    /// tree before the operator over it runs. That order is observable: a reporter on the unused side of an `and` is run
     /// all the same, even though the operator never looks at what it said. So
     /// each of those gets a `let` of its own here, in the order `resolve`
     /// walks them, and the expression below only reads them back.

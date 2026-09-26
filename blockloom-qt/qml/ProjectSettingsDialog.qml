@@ -31,7 +31,7 @@ BwDialog {
     }
     function writeShadows(next) { writeLighting({ shadows: Object.assign(shadowsOf(), next) }); }
     function tracingOf() {
-        return Object.assign({ enabled: false, bounces: 3, samples: 8, denoiser: "Auto", gi_distance: 50 },
+        return Object.assign({ enabled: false, bounces: 3, samples: 8, denoiser: "Auto", gi_distance: 50, mode: "Hybrid", paths: 1 },
             world && world.lighting ? world.lighting.ray_tracing || {} : {});
     }
     function writeTracing(next) { writeLighting({ ray_tracing: Object.assign(tracingOf(), next) }); }
@@ -675,18 +675,23 @@ BwDialog {
                 heading: "Ray tracing"; visible: !!root.world && root.is3d
                 InspectorRow { label: "Ray traced"; labelWidth: 110; Layout.fillWidth: true
                     SwitchField { value: root.tracingOf().enabled; onToggled: on => root.writeTracing({ enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: root.tracingOf().enabled; label: "Mode"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: [{ value: "Hybrid", label: "Hybrid (ReSTIR)" }, { value: "PathTraced", label: "Path traced" }]
+                        value: root.tracingOf().mode; onChosen: v => root.writeTracing({ mode: v }) } }
                 InspectorRow { visible: root.tracingOf().enabled; label: "Bounces"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: root.tracingOf().bounces; fallback: 3; onCommitted: n => root.writeTracing({ bounces: root.clamp(Math.round(n), 1, 8) }) } }
-                InspectorRow { visible: root.tracingOf().enabled; label: "Samples"; labelWidth: 110; Layout.fillWidth: true
+                InspectorRow { visible: root.tracingOf().enabled && root.tracingOf().mode !== "PathTraced"; label: "Samples"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: root.tracingOf().samples; fallback: 8; onCommitted: n => root.writeTracing({ samples: root.clamp(Math.round(n), 1, 32) }) } }
+                InspectorRow { visible: root.tracingOf().enabled && root.tracingOf().mode === "PathTraced"; label: "Paths / pixel"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.tracingOf().paths; fallback: 1; onCommitted: n => root.writeTracing({ paths: root.clamp(Math.round(n), 1, 16) }) } }
                 InspectorRow { visible: root.tracingOf().enabled; label: "Denoiser"; labelWidth: 110; Layout.fillWidth: true
-                    ChoiceField { options: [{ value: "Auto", label: "Auto" }, { value: "Restir", label: "ReSTIR reuse" }, { value: "None", label: "None (raw)" }]
+                    ChoiceField { options: [{ value: "Auto", label: "Auto" }, { value: "Filter", label: "Filter only" }, { value: "Restir", label: "ReSTIR reuse only" }, { value: "None", label: "None (raw)" }]
                         value: root.tracingOf().denoiser; onChosen: v => root.writeTracing({ denoiser: v }) } }
-                InspectorRow { visible: root.tracingOf().enabled; label: "GI reach m"; labelWidth: 110; Layout.fillWidth: true
+                InspectorRow { visible: root.tracingOf().enabled && root.tracingOf().mode !== "PathTraced"; label: "GI reach m"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: root.tracingOf().gi_distance; fallback: 50; onCommitted: n => root.writeTracing({ gi_distance: root.clamp(n, 1, 10000) }) } }
                 Note { visible: !!root.tracingStatus && !root.tracingStatus.available; color: Theme.warning
                     text: "Not on this machine: " + (root.tracingStatus ? root.tracingStatus.reason : "") + ". The raster lighting stands in." }
-                Note { text: "Traces the sun, glowing surfaces and every light marked Traced for shadows, bounced light and reflections, in place of the raster lighting, on a GPU that can trace rays (Vulkan or DX12 ray queries). Bounces and samples trade noise and reach for speed; blocks can change both mid-run. Box-projected and shader surfaces keep the raster lights. Elsewhere the raster rig carries on." }
+                Note { text: "Traces the sun, the sky, glowing surfaces and every light marked Traced for shadows, bounced light and reflections, in place of the raster lighting, on a GPU that can trace rays (Vulkan or DX12 ray queries). Hybrid reuses samples through ReSTIR and caches bounced light; Path traced sends fresh paths from every pixel each frame, heavier and closer to the truth. Auto filters the noise across space and time. Bounces and samples trade noise and reach for speed; blocks can change both mid-run. Box-projected and shader surfaces keep the raster lights. Elsewhere the raster rig carries on." }
             }
             Section {
                 heading: "Post-process"; visible: !!root.world

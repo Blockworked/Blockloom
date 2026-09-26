@@ -7,7 +7,8 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Master runs finish so rust-cache saves and every commit gets a result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,7 +21,7 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # rust-toolchain.toml pins the version and its components.
       - run: rustup toolchain install
       - run: cargo fmt --all --check
@@ -28,21 +29,26 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # rust-toolchain.toml pins the version and its components.
       - run: rustup toolchain install
       - name: Install Bevy's system libraries
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+            pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
+            mesa-vulkan-drivers libvulkan1
       - uses: Swatinem/rust-cache@v2
       - name: Clippy
         run: >
           cargo clippy --all-targets
           -p blockloom-core -p blockloom-protocol -p blockloom-app -p blockloom-runtime
-      # GPU tests are #[ignore]d and stay manual.
+      # GPU tests are #[ignore]d and stay manual. Tests that only start the
+      # renderer run on lavapipe, Mesa's software Vulkan.
       - name: Test
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+          BLOCKLOOM_TEST_OPAQUE_FD: 1
         run: >
           cargo test
           -p blockloom-core -p blockloom-protocol -p blockloom-app -p blockloom-runtime

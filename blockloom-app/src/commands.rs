@@ -2101,7 +2101,7 @@ pub(crate) fn build_game(
 
     let options = build::BuildOptions {
         fast,
-        sdr_only: hdr == Some(false),
+        sdr_only: !hdr.unwrap_or(target.hdr_default().0),
     };
     let built = build::build(&project, &dir, target, &player, Path::new(&path), options)?;
     s.push_log(LogLine {

@@ -6,117 +6,24 @@
 //! costs one iteration per frame instead of hanging the host.
 
 use super::effect::Effect;
-use super::program::{Action, LoopKind, Program, Step, Trigger, compile, temp_index};
+use super::lower::{Expr, Loaded, lower};
+use super::ops;
+use super::program::{Action, LoopKind, Step, Trigger, compile};
+use super::stores;
+use super::variables::{ScopeId, VarId, VariableSnapshot, Variables};
 use crate::project::Project;
 use crate::sense;
 use crate::sound::{clamp_pitch, normalize_sound, user_to_gain};
 use crate::ui::{UiElement, UiKind};
 use crate::value::{Evaluated, Op, Value};
 use blockstitch_core::graph::{
-    DictEntry, DictItem, ListItem, dict_remove, dict_set, is_dict_reporter, is_list_reporter,
-    list_index, parse_json_array, parse_json_object, resolve_dict_reporter, resolve_list_reporter,
+    DictEntry, DictItem, ListItem, dict_remove, dict_set, list_index, parse_json_array,
+    parse_json_object, resolve_dict_reporter, resolve_list_reporter,
 };
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-
-/// One scope's variables, by name.
-pub type VariableValues = HashMap<String, Evaluated>;
-/// Every actor's own variables, by actor id.
-pub type ActorVariables = HashMap<String, VariableValues>;
-
-/// A snapshot of every variable in play.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct VariableSnapshot {
-    /// The project's shared variables.
-    pub globals: VariableValues,
-    /// Each actor's own, by actor id.
-    pub actors: ActorVariables,
-}
-
-#[derive(Debug, Default)]
-struct VariableState {
-    globals: VariableValues,
-    actors: ActorVariables,
-}
-
-/// The live variables of one run. The VM and compiled logic hold clones of
-/// this handle, so either scheduler reads and writes the same slots.
-#[derive(Debug, Clone, Default)]
-pub struct Variables(Rc<RefCell<VariableState>>);
-
-impl Variables {
-    pub fn load(&self, project: &Project) {
-        let mut state = self.0.borrow_mut();
-        state.globals = project
-            .globals
-            .iter()
-            .map(|variable| (variable.name.clone(), variable.value.clone()))
-            .collect();
-        state.actors = project
-            .actors
-            .iter()
-            .map(|actor| (actor.id.clone(), actor.graph.variable_values()))
-            .collect();
-    }
-
-    pub fn read(&self, actor: &str, name: &str) -> Evaluated {
-        let state = self.0.borrow();
-        state
-            .actors
-            .get(actor)
-            .and_then(|variables| variables.get(name))
-            .or_else(|| state.globals.get(name))
-            .cloned()
-            .unwrap_or(Evaluated::Number(0.0))
-    }
-
-    /// Writes an actor slot first, then a global, and otherwise declares an
-    /// actor slot. This is the variable rule blocks have always used.
-    pub fn write(&self, actor: &str, name: &str, value: Evaluated) {
-        let mut state = self.0.borrow_mut();
-        if let Some(slot) = state
-            .actors
-            .get_mut(actor)
-            .and_then(|variables| variables.get_mut(name))
-        {
-            *slot = value;
-            return;
-        }
-        if let Some(slot) = state.globals.get_mut(name) {
-            *slot = value;
-            return;
-        }
-        state
-            .actors
-            .entry(actor.to_string())
-            .or_default()
-            .insert(name.to_string(), value);
-    }
-
-    /// Gives `to` its own copy of `from`'s variables, as they stand. A clone
-    /// starts life with whatever its template had counted up to, and changes
-    /// either way after that.
-    pub fn copy_actor(&self, from: &str, to: &str) {
-        let mut state = self.0.borrow_mut();
-        let copied = state.actors.get(from).cloned().unwrap_or_default();
-        state.actors.insert(to.to_string(), copied);
-    }
-
-    /// Forgets an actor's own variables. A deleted actor is gone for the rest
-    /// of the run, and so is what it was remembering.
-    pub fn forget_actor(&self, actor: &str) {
-        self.0.borrow_mut().actors.remove(actor);
-    }
-
-    pub fn snapshot(&self) -> VariableSnapshot {
-        let state = self.0.borrow();
-        VariableSnapshot {
-            globals: state.globals.clone(),
-            actors: state.actors.clone(),
-        }
-    }
-}
 
 /// One scope's lists, by name.
 pub type ListValues = HashMap<String, Vec<ListItem>>;
@@ -158,6 +65,20 @@ impl Lists {
             merged.extend(own.clone());
         }
         merged
+    }
+
+    /// The one list `name` means to `actor`, as the only entry of a scope -
+    /// what a list reporter reads when its name is a plain literal, without
+    /// copying every other list along with it.
+    fn scope_of(&self, actor: &str, name: &str) -> ListValues {
+        let state = self.0.borrow();
+        state
+            .actors
+            .get(actor)
+            .and_then(|lists| lists.get(name))
+            .or_else(|| state.globals.get(name))
+            .map(|list| HashMap::from([(name.to_string(), list.clone())]))
+            .unwrap_or_default()
     }
 
     /// Mutates whichever scope declared `name` - the actor's own first, then
@@ -234,6 +155,18 @@ impl Dicts {
             merged.extend(own.clone());
         }
         merged
+    }
+
+    /// The one dict `name` means to `actor`, as the only entry of a scope.
+    fn scope_of(&self, actor: &str, name: &str) -> DictValues {
+        let state = self.0.borrow();
+        state
+            .actors
+            .get(actor)
+            .and_then(|dicts| dicts.get(name))
+            .or_else(|| state.globals.get(name))
+            .map(|dict| HashMap::from([(name.to_string(), dict.clone())]))
+            .unwrap_or_default()
     }
 
     /// Mutates whichever scope declared `name` - the actor's own first, then
@@ -343,6 +276,26 @@ enum Status {
     Done,
 }
 
+/// A custom-block call's bound inputs, in declaration order. A block has a
+/// handful, so a scan beats hashing the name.
+#[derive(Debug, Clone)]
+struct Params {
+    names: Rc<[String]>,
+    values: Vec<Evaluated>,
+}
+
+impl Params {
+    /// The value bound to `name`. A repeated input name reads the last one.
+    fn get(&self, name: &str) -> Option<&Evaluated> {
+        self.names
+            .iter()
+            .zip(&self.values)
+            .rev()
+            .find(|(bound, _)| *bound == name)
+            .map(|(_, value)| value)
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Frame {
     Loop {
@@ -355,7 +308,7 @@ enum Frame {
         /// [`usize::MAX`] marks a reporter's own boundary - returning through
         /// it hands the value back to whoever asked instead of resuming.
         return_pc: usize,
-        params: HashMap<String, Evaluated>,
+        params: Params,
         /// Where an `Invoke` stores its value in the caller, if anywhere.
         temp: Option<usize>,
         /// The caller's temps, restored when this call leaves.
@@ -398,18 +351,20 @@ impl Script {
 /// The block virtual machine: compiled programs, live scripts and variables
 /// for one loaded project.
 pub struct Vm {
-    programs: HashMap<String, Rc<Program>>,
+    programs: FxHashMap<String, Rc<Loaded>>,
     /// Actor id -> name, for matching a collision against `when I touch`.
-    names: HashMap<String, String>,
-    /// Actor id -> custom block id -> input names, in declaration order.
-    block_inputs: HashMap<String, HashMap<String, Vec<String>>>,
+    names: FxHashMap<String, String>,
     /// Clone id -> the authored actor it is a copy of. Only runtime clones
     /// are in here, which is what makes "am I a clone?" answerable.
-    clones: HashMap<String, String>,
+    clones: FxHashMap<String, String>,
     /// Actors deleted during this tick. Their scripts are dropped at the end
     /// of it, and the one that ran the block stops where it stands.
     deleted: Vec<String>,
     variables: Variables,
+    /// The program being stepped, whose slots `eval` lowers and caches.
+    current: Option<Rc<Loaded>>,
+    /// The running actor's variable scope, as last resolved.
+    scope: Option<ScopeId>,
     lists: Lists,
     dicts: Dicts,
     scripts: Vec<Script>,
@@ -446,12 +401,13 @@ impl Vm {
 
     pub fn with_stores(variables: Variables, lists: Lists, dicts: Dicts) -> Self {
         Self {
-            programs: HashMap::new(),
-            names: HashMap::new(),
-            block_inputs: HashMap::new(),
-            clones: HashMap::new(),
+            programs: FxHashMap::default(),
+            names: FxHashMap::default(),
+            clones: FxHashMap::default(),
             deleted: Vec::new(),
             variables,
+            current: None,
+            scope: None,
             lists,
             dicts,
             scripts: Vec::new(),
@@ -470,7 +426,6 @@ impl Vm {
     pub fn load(&mut self, project: &Project) {
         self.programs.clear();
         self.names.clear();
-        self.block_inputs.clear();
         self.clones.clear();
         self.deleted.clear();
         self.scripts.clear();
@@ -482,8 +437,6 @@ impl Vm {
         self.lists.load(project);
         self.dicts.load(project);
         for actor in &project.actors {
-            self.programs
-                .insert(actor.id.clone(), Rc::new(compile(&actor.graph)));
             self.names.insert(actor.id.clone(), actor.name.clone());
             let inputs = actor
                 .graph
@@ -492,11 +445,14 @@ impl Vm {
                 .map(|def| {
                     (
                         def.id.clone(),
-                        def.input_names().map(str::to_string).collect::<Vec<_>>(),
+                        def.input_names()
+                            .map(str::to_string)
+                            .collect::<Rc<[String]>>(),
                     )
                 })
                 .collect();
-            self.block_inputs.insert(actor.id.clone(), inputs);
+            let program = Loaded::new(compile(&actor.graph), inputs);
+            self.programs.insert(actor.id.clone(), Rc::new(program));
         }
     }
 
@@ -521,8 +477,7 @@ impl Vm {
     /// Registers a brand-new actor with no blocks and answers its id.
     pub fn create_actor(&mut self, name: &str) -> String {
         let id = self.new_actor_id();
-        self.programs
-            .insert(id.clone(), Rc::new(Program::default()));
+        self.programs.insert(id.clone(), Rc::new(Loaded::default()));
         self.names.insert(id.clone(), name.to_string());
         id
     }
@@ -726,7 +681,25 @@ impl Vm {
     fn run(
         &mut self,
         script: &mut Script,
-        program: &Rc<Program>,
+        program: &Rc<Loaded>,
+        immediate: bool,
+        out: &mut Vec<Effect>,
+    ) -> Option<Evaluated> {
+        // A reporter body runs for the actor that asked, so it keeps that
+        // actor's scope as it stands, declarations included.
+        if !immediate {
+            self.scope = self.variables.scope(&script.actor);
+        }
+        let caller = self.current.replace(Rc::clone(program));
+        let result = self.step(script, program, immediate, out);
+        self.current = caller;
+        result
+    }
+
+    fn step(
+        &mut self,
+        script: &mut Script,
+        program: &Loaded,
         immediate: bool,
         out: &mut Vec<Effect>,
     ) -> Option<Evaluated> {
@@ -753,9 +726,9 @@ impl Vm {
             match step {
                 Step::Action(action) => {
                     script.pc = pc + 1;
-                    let params = current_params(script);
-                    let temps = script.temps.clone();
-                    self.perform(action, &script.actor, params.as_ref(), &temps, out);
+                    let params = current_params(&script.frames);
+                    let temps = &script.temps;
+                    self.perform(action, &script.actor, params, temps, out);
                     // `delete myself` ends the strand that ran it where it
                     // stands, as `stop all` ends everything.
                     if self.deleted.iter().any(|gone| gone == &script.actor) {
@@ -771,10 +744,10 @@ impl Vm {
                     }
                 }
                 Step::JumpUnless { condition, to } => {
-                    let params = current_params(script);
-                    let temps = script.temps.clone();
+                    let params = current_params(&script.frames);
+                    let temps = &script.temps;
                     let holds = self
-                        .eval(condition, &script.actor, params.as_ref(), &temps, out)
+                        .eval(condition, &script.actor, params, temps, out)
                         .as_bool();
                     script.pc = if holds { pc + 1 } else { *to };
                 }
@@ -791,10 +764,10 @@ impl Vm {
                                 script.pc = pc + 1;
                                 continue;
                             }
-                            let params = current_params(script);
-                            let temps = script.temps.clone();
+                            let params = current_params(&script.frames);
+                            let temps = &script.temps;
                             let n = self
-                                .eval(count, &script.actor, params.as_ref(), &temps, out)
+                                .eval(count, &script.actor, params, temps, out)
                                 .as_number()
                                 .unwrap_or(0.0)
                                 .round() as i64;
@@ -820,10 +793,10 @@ impl Vm {
                             script.pc = pc + 1;
                         }
                         LoopKind::While(condition) => {
-                            let params = current_params(script);
-                            let temps = script.temps.clone();
+                            let params = current_params(&script.frames);
+                            let temps = &script.temps;
                             let holds = self
-                                .eval(condition, &script.actor, params.as_ref(), &temps, out)
+                                .eval(condition, &script.actor, params, temps, out)
                                 .as_bool();
                             if !holds {
                                 if already_entered {
@@ -885,10 +858,10 @@ impl Vm {
                     None => script.pc = pc + 1,
                 },
                 Step::Wait(duration) => {
-                    let params = current_params(script);
-                    let temps = script.temps.clone();
+                    let params = current_params(&script.frames);
+                    let temps = &script.temps;
                     let seconds = self
-                        .eval(duration, &script.actor, params.as_ref(), &temps, out)
+                        .eval(duration, &script.actor, params, temps, out)
                         .as_number()
                         .unwrap_or(0.0)
                         .max(0.0);
@@ -899,10 +872,10 @@ impl Vm {
                     }
                 }
                 Step::WaitUntil(condition) => {
-                    let params = current_params(script);
-                    let temps = script.temps.clone();
+                    let params = current_params(&script.frames);
+                    let temps = &script.temps;
                     let holds = self
-                        .eval(condition, &script.actor, params.as_ref(), &temps, out)
+                        .eval(condition, &script.actor, params, temps, out)
                         .as_bool();
                     if holds || immediate {
                         script.pc = pc + 1;
@@ -916,15 +889,14 @@ impl Vm {
                     target,
                     easing,
                 } => {
-                    let params = current_params(script);
-                    let temps = script.temps.clone();
+                    let params = current_params(&script.frames);
+                    let temps = &script.temps;
                     let seconds = self
-                        .eval(seconds, &script.actor, params.as_ref(), &temps, out)
+                        .eval(seconds, &script.actor, params, temps, out)
                         .as_number()
                         .unwrap_or(0.0)
                         .max(0.0);
-                    let position =
-                        self.eval_vec3(target, &script.actor, params.as_ref(), &temps, out);
+                    let position = self.eval_vec3(target, &script.actor, params, temps, out);
                     out.push(Effect::Glide {
                         actor: script.actor.clone(),
                         seconds: seconds as f32,
@@ -942,11 +914,11 @@ impl Vm {
                     seconds,
                     easing,
                 } => {
-                    let params = current_params(script);
-                    let temps = script.temps.clone();
-                    let factor = self.eval_f32(factor, &script.actor, params.as_ref(), &temps, out);
+                    let params = current_params(&script.frames);
+                    let temps = &script.temps;
+                    let factor = self.eval_f32(factor, &script.actor, params, temps, out);
                     let seconds = self
-                        .eval(seconds, &script.actor, params.as_ref(), &temps, out)
+                        .eval(seconds, &script.actor, params, temps, out)
                         .as_number()
                         .unwrap_or(0.0)
                         .max(0.0);
@@ -968,12 +940,11 @@ impl Vm {
                     seconds,
                     easing,
                 } => {
-                    let params = current_params(script);
-                    let temps = script.temps.clone();
-                    let degrees =
-                        self.eval_f32(degrees, &script.actor, params.as_ref(), &temps, out);
+                    let params = current_params(&script.frames);
+                    let temps = &script.temps;
+                    let degrees = self.eval_f32(degrees, &script.actor, params, temps, out);
                     let seconds = self
-                        .eval(seconds, &script.actor, params.as_ref(), &temps, out)
+                        .eval(seconds, &script.actor, params, temps, out)
                         .as_number()
                         .unwrap_or(0.0)
                         .max(0.0);
@@ -995,13 +966,13 @@ impl Vm {
                     seconds,
                     easing,
                 } => {
-                    let params = current_params(script);
-                    let temps = script.temps.clone();
+                    let params = current_params(&script.frames);
+                    let temps = &script.temps;
                     let color = self
-                        .eval(color, &script.actor, params.as_ref(), &temps, out)
+                        .eval(color, &script.actor, params, temps, out)
                         .as_text();
                     let seconds = self
-                        .eval(seconds, &script.actor, params.as_ref(), &temps, out)
+                        .eval(seconds, &script.actor, params, temps, out)
                         .as_number()
                         .unwrap_or(0.0)
                         .max(0.0);
@@ -1018,20 +989,13 @@ impl Vm {
                     }
                 }
                 Step::Call { block_id, args } => {
-                    let Some(&start) = program.blocks.get(block_id) else {
+                    let Some((start, names)) = program.block(block_id) else {
                         script.pc = pc + 1;
                         continue;
                     };
-                    let params = current_params(script);
-                    let temps = script.temps.clone();
-                    let bound = self.bind_params(
-                        &script.actor,
-                        block_id,
-                        args,
-                        params.as_ref(),
-                        &temps,
-                        out,
-                    );
+                    let params = current_params(&script.frames);
+                    let temps = &script.temps;
+                    let bound = self.bind_params(&script.actor, names, args, params, temps, out);
                     let saved = std::mem::take(&mut script.temps);
                     script.frames.push(Frame::Call {
                         return_pc: pc + 1,
@@ -1047,21 +1011,14 @@ impl Vm {
                     temp,
                 } => {
                     let temp = *temp;
-                    let Some(&start) = program.blocks.get(block_id) else {
+                    let Some((start, names)) = program.block(block_id) else {
                         store_temp(&mut script.temps, temp, Evaluated::Number(0.0));
                         script.pc = pc + 1;
                         continue;
                     };
-                    let params = current_params(script);
-                    let temps = script.temps.clone();
-                    let bound = self.bind_params(
-                        &script.actor,
-                        block_id,
-                        args,
-                        params.as_ref(),
-                        &temps,
-                        out,
-                    );
+                    let params = current_params(&script.frames);
+                    let temps = &script.temps;
+                    let bound = self.bind_params(&script.actor, names, args, params, temps, out);
                     let saved = std::mem::take(&mut script.temps);
                     script.frames.push(Frame::Call {
                         return_pc: pc + 1,
@@ -1072,13 +1029,13 @@ impl Vm {
                     script.pc = start;
                 }
                 Step::Return(value) => {
-                    let params = current_params(script);
-                    let temps = script.temps.clone();
-                    let result = self.eval(value, &script.actor, params.as_ref(), &temps, out);
+                    let params = current_params(&script.frames);
+                    let temps = &script.temps;
+                    let result = self.eval(value, &script.actor, params, temps, out);
                     match nearest_call(script) {
                         Some((index, return_pc, temp)) if return_pc != usize::MAX => {
-                            let saved = match &script.frames[index] {
-                                Frame::Call { saved_temps, .. } => saved_temps.clone(),
+                            let saved = match &mut script.frames[index] {
+                                Frame::Call { saved_temps, .. } => std::mem::take(saved_temps),
                                 _ => Vec::new(),
                             };
                             script.frames.truncate(index);
@@ -1104,8 +1061,8 @@ impl Vm {
                 }
                 Step::End => match nearest_call(script) {
                     Some((index, return_pc, temp)) if return_pc != usize::MAX => {
-                        let saved = match &script.frames[index] {
-                            Frame::Call { saved_temps, .. } => saved_temps.clone(),
+                        let saved = match &mut script.frames[index] {
+                            Frame::Call { saved_temps, .. } => std::mem::take(saved_temps),
                             _ => Vec::new(),
                         };
                         script.frames.truncate(index);
@@ -1131,23 +1088,22 @@ impl Vm {
         &mut self,
         action: &Action,
         actor: &str,
-        params: Option<&HashMap<String, Evaluated>>,
+        params: Option<&Params>,
         temps: &[Evaluated],
         out: &mut Vec<Effect>,
     ) {
-        let owner = actor.to_string();
         match action {
             Action::Move(steps) => {
                 let steps = self.eval_f32(steps, actor, params, temps, out);
                 out.push(Effect::Move {
-                    actor: owner,
+                    actor: actor.to_string(),
                     steps,
                 });
             }
             Action::GoTo(target) => {
                 let position = self.eval_vec3(target, actor, params, temps, out);
                 out.push(Effect::GoTo {
-                    actor: owner,
+                    actor: actor.to_string(),
                     position,
                 });
             }
@@ -1155,7 +1111,7 @@ impl Vm {
                 let position = self.eval_vec3(target, actor, params, temps, out);
                 let speed = self.eval_f32(speed, actor, params, temps, out);
                 out.push(Effect::NavigateTo {
-                    actor: owner,
+                    actor: actor.to_string(),
                     target: position,
                     speed,
                 });
@@ -1163,26 +1119,26 @@ impl Vm {
             Action::BurstParticles(count) => {
                 let count = self.eval_f32(count, actor, params, temps, out);
                 out.push(Effect::BurstParticles {
-                    actor: owner,
+                    actor: actor.to_string(),
                     count: (count as i64).clamp(0, 512) as u32,
                 });
             }
             Action::SetEmitterDial { dial, value } => {
                 let value = self.eval_f32(value, actor, params, temps, out);
                 out.push(Effect::SetEmitterDial {
-                    actor: owner,
+                    actor: actor.to_string(),
                     dial: *dial,
                     value,
                 });
             }
             Action::SetTrailEnabled(enabled) => out.push(Effect::SetTrailEnabled {
-                actor: owner,
+                actor: actor.to_string(),
                 enabled: *enabled,
             }),
             Action::ChangePosition { axis, by } => {
                 let by = self.eval_f32(by, actor, params, temps, out);
                 out.push(Effect::ChangePosition {
-                    actor: owner,
+                    actor: actor.to_string(),
                     axis: *axis,
                     by,
                 });
@@ -1190,7 +1146,7 @@ impl Vm {
             Action::Turn { axis, degrees } => {
                 let degrees = self.eval_f32(degrees, actor, params, temps, out);
                 out.push(Effect::Turn {
-                    actor: owner,
+                    actor: actor.to_string(),
                     axis: *axis,
                     degrees,
                 });
@@ -1198,19 +1154,19 @@ impl Vm {
             Action::SetRotation { axis, degrees } => {
                 let degrees = self.eval_f32(degrees, actor, params, temps, out);
                 out.push(Effect::SetRotation {
-                    actor: owner,
+                    actor: actor.to_string(),
                     axis: *axis,
                     degrees,
                 });
             }
             Action::PointTowards(target) => out.push(Effect::PointTowards {
-                actor: owner,
+                actor: actor.to_string(),
                 target: target.clone(),
             }),
             Action::SetScale(factor) => {
                 let factor = self.eval_f32(factor, actor, params, temps, out);
                 out.push(Effect::SetScale {
-                    actor: owner,
+                    actor: actor.to_string(),
                     factor,
                 });
             }
@@ -1226,7 +1182,7 @@ impl Vm {
                     .unwrap_or(0.0)
                     .max(0.0);
                 out.push(Effect::TweenScale {
-                    actor: owner,
+                    actor: actor.to_string(),
                     factor,
                     seconds: seconds as f32,
                     easing: *easing,
@@ -1245,7 +1201,7 @@ impl Vm {
                     .unwrap_or(0.0)
                     .max(0.0);
                 out.push(Effect::TweenRotation {
-                    actor: owner,
+                    actor: actor.to_string(),
                     axis: *axis,
                     degrees,
                     seconds: seconds as f32,
@@ -1264,27 +1220,31 @@ impl Vm {
                     .unwrap_or(0.0)
                     .max(0.0);
                 out.push(Effect::TweenColor {
-                    actor: owner,
+                    actor: actor.to_string(),
                     color,
                     seconds: seconds as f32,
                     easing: *easing,
                 });
             }
-            Action::StopTweens => out.push(Effect::StopTweens { actor: owner }),
+            Action::StopTweens => out.push(Effect::StopTweens {
+                actor: actor.to_string(),
+            }),
             Action::PlayAnimation { clip, speed } => {
                 let clip = self.eval(clip, actor, params, temps, out).as_text();
                 let speed = self.eval_f32(speed, actor, params, temps, out);
                 out.push(Effect::PlayAnimation {
-                    actor: owner,
+                    actor: actor.to_string(),
                     clip: clip.trim().to_string(),
                     speed,
                 });
             }
-            Action::StopAnimation => out.push(Effect::StopAnimation { actor: owner }),
+            Action::StopAnimation => out.push(Effect::StopAnimation {
+                actor: actor.to_string(),
+            }),
             Action::SetAnimationSpeed(speed) => {
                 let speed = self.eval_f32(speed, actor, params, temps, out);
                 out.push(Effect::SetAnimationSpeed {
-                    actor: owner,
+                    actor: actor.to_string(),
                     speed,
                 });
             }
@@ -1295,14 +1255,14 @@ impl Vm {
             Action::SetLightIntensity(intensity) => {
                 let intensity = self.eval_f32(intensity, actor, params, temps, out);
                 out.push(Effect::SetLightIntensity {
-                    actor: owner,
+                    actor: actor.to_string(),
                     intensity,
                 });
             }
             Action::SetEmissiveStrength(strength) => {
                 let strength = self.eval_f32(strength, actor, params, temps, out);
                 out.push(Effect::SetEmissiveStrength {
-                    actor: owner,
+                    actor: actor.to_string(),
                     strength,
                 });
             }
@@ -1314,7 +1274,7 @@ impl Vm {
             Action::EnableVolume { volume, enabled } => {
                 let volume = self.eval(volume, actor, params, temps, out).as_text();
                 out.push(Effect::SetVolumeEnabled {
-                    actor: owner,
+                    actor: actor.to_string(),
                     volume: volume.trim().to_string(),
                     enabled: *enabled,
                 });
@@ -1323,7 +1283,7 @@ impl Vm {
                 let volume = self.eval(volume, actor, params, temps, out).as_text();
                 let weight = self.eval_f32(weight, actor, params, temps, out);
                 out.push(Effect::SetVolumeWeight {
-                    actor: owner,
+                    actor: actor.to_string(),
                     volume: volume.trim().to_string(),
                     weight,
                 });
@@ -1334,7 +1294,7 @@ impl Vm {
                 out.push(Effect::SetShadowDistance { distance });
             }
             Action::SetLightShadows(enabled) => out.push(Effect::SetLightShadows {
-                actor: owner,
+                actor: actor.to_string(),
                 enabled: *enabled,
             }),
             Action::SetRayTracing(enabled) => out.push(Effect::SetRayTracing { enabled: *enabled }),
@@ -1347,20 +1307,20 @@ impl Vm {
                 out.push(Effect::SetGiSamples { samples });
             }
             Action::SetBody(body) => out.push(Effect::SetBody {
-                actor: owner,
+                actor: actor.to_string(),
                 body: *body,
             }),
             Action::ApplyImpulse(vector) => {
                 let impulse = self.eval_vec3(vector, actor, params, temps, out);
                 out.push(Effect::ApplyImpulse {
-                    actor: owner,
+                    actor: actor.to_string(),
                     impulse,
                 });
             }
             Action::SetVelocity(vector) => {
                 let velocity = self.eval_vec3(vector, actor, params, temps, out);
                 out.push(Effect::SetVelocity {
-                    actor: owner,
+                    actor: actor.to_string(),
                     velocity,
                 });
             }
@@ -1418,44 +1378,50 @@ impl Vm {
             Action::SetDensity(density) => {
                 let density = self.eval_f32(density, actor, params, temps, out);
                 out.push(Effect::SetDensity {
-                    actor: owner,
+                    actor: actor.to_string(),
                     density,
                 });
             }
             Action::SetMass(mass) => {
                 let mass = self.eval_f32(mass, actor, params, temps, out);
-                out.push(Effect::SetMass { actor: owner, mass });
+                out.push(Effect::SetMass {
+                    actor: actor.to_string(),
+                    mass,
+                });
             }
             Action::SetTrigger(trigger) => out.push(Effect::SetTrigger {
-                actor: owner,
+                actor: actor.to_string(),
                 trigger: *trigger,
             }),
             Action::SetCollisionLayer(layer) => {
                 let layer = self.eval_f32(layer, actor, params, temps, out).round() as u8;
                 out.push(Effect::SetCollisionLayer {
-                    actor: owner,
+                    actor: actor.to_string(),
                     layer: layer.clamp(1, 8),
                 });
             }
             Action::SetCollisionMask(mask) => {
                 let mask = self.eval_f32(mask, actor, params, temps, out).round() as i32;
                 out.push(Effect::SetCollisionMask {
-                    actor: owner,
+                    actor: actor.to_string(),
                     mask: mask.clamp(0, 255) as u8,
                 });
             }
             Action::Say(text) => {
                 let text = self.eval(text, actor, params, temps, out).as_text();
-                out.push(Effect::Say { actor: owner, text });
+                out.push(Effect::Say {
+                    actor: actor.to_string(),
+                    text,
+                });
             }
             Action::SetVisible(visible) => out.push(Effect::SetVisible {
-                actor: owner,
+                actor: actor.to_string(),
                 visible: *visible,
             }),
             Action::SetColor(color) => {
                 let color = self.eval(color, actor, params, temps, out).as_text();
                 out.push(Effect::SetColor {
-                    actor: owner,
+                    actor: actor.to_string(),
                     color,
                 });
             }
@@ -1478,12 +1444,12 @@ impl Vm {
                 let pitch = clamp_pitch(self.eval_f32(pitch, actor, params, temps, out));
                 if sound.is_empty() {
                     out.push(Effect::Error {
-                        actor: owner,
+                        actor: actor.to_string(),
                         message: "which sound should I play?".to_string(),
                     });
                 } else {
                     out.push(Effect::PlaySound {
-                        actor: owner,
+                        actor: actor.to_string(),
                         sound,
                         volume,
                         pitch,
@@ -1511,13 +1477,13 @@ impl Vm {
                 let wanted = self.eval(target, actor, params, temps, out).as_text();
                 if sound.is_empty() {
                     out.push(Effect::Error {
-                        actor: owner,
+                        actor: actor.to_string(),
                         message: "which sound should I play?".to_string(),
                     });
                 } else {
                     match self.find_actor(actor, &wanted) {
                         Some(at) => out.push(Effect::PlaySound {
-                            actor: owner,
+                            actor: actor.to_string(),
                             sound,
                             volume,
                             pitch,
@@ -1526,7 +1492,7 @@ impl Vm {
                             at: Some(at),
                         }),
                         None => out.push(Effect::Error {
-                            actor: owner,
+                            actor: actor.to_string(),
                             message: format!("there's no actor named \"{wanted}\" to play at"),
                         }),
                     }
@@ -1535,7 +1501,7 @@ impl Vm {
             Action::StopSound { sound } => {
                 let sound = normalize_sound(&self.eval(sound, actor, params, temps, out).as_text());
                 out.push(Effect::StopSound {
-                    actor: owner,
+                    actor: actor.to_string(),
                     sound,
                 });
             }
@@ -1548,12 +1514,12 @@ impl Vm {
                 );
                 if sound.is_empty() {
                     out.push(Effect::Error {
-                        actor: owner,
+                        actor: actor.to_string(),
                         message: "which sound's volume should I set?".to_string(),
                     });
                 } else {
                     out.push(Effect::SetSoundVolume {
-                        actor: owner,
+                        actor: actor.to_string(),
                         sound,
                         volume,
                     });
@@ -1564,12 +1530,12 @@ impl Vm {
                 let pitch = clamp_pitch(self.eval_f32(pitch, actor, params, temps, out));
                 if sound.is_empty() {
                     out.push(Effect::Error {
-                        actor: owner,
+                        actor: actor.to_string(),
                         message: "which sound's pitch should I set?".to_string(),
                     });
                 } else {
                     out.push(Effect::SetSoundPitch {
-                        actor: owner,
+                        actor: actor.to_string(),
                         sound,
                         pitch,
                     });
@@ -1590,33 +1556,36 @@ impl Vm {
             } => {
                 let value = self.eval(value, actor, params, temps, out);
                 out.push(Effect::SetComponentField {
-                    actor: owner,
+                    actor: actor.to_string(),
                     component: component.trim().to_string(),
                     field: field.trim().to_string(),
                     value,
                 });
             }
             Action::SetCameraView(view) => out.push(Effect::SetCameraView {
-                actor: owner,
+                actor: actor.to_string(),
                 view: *view,
             }),
             Action::SetCameraPitch(degrees) => {
                 let degrees = self.eval_f32(degrees, actor, params, temps, out);
                 out.push(Effect::SetCameraPitch {
-                    actor: owner,
+                    actor: actor.to_string(),
                     degrees,
                 });
             }
             Action::SetCameraFov(fov) => {
                 let fov = self.eval_f32(fov, actor, params, temps, out);
-                out.push(Effect::SetCameraFov { actor: owner, fov });
+                out.push(Effect::SetCameraFov {
+                    actor: actor.to_string(),
+                    fov,
+                });
             }
             Action::AttachComponent(component) => out.push(Effect::AttachComponent {
-                actor: owner,
+                actor: actor.to_string(),
                 component: component.clone(),
             }),
             Action::DetachComponent(component) => out.push(Effect::DetachComponent {
-                actor: owner,
+                actor: actor.to_string(),
                 component: component.clone(),
             }),
             // The name goes to the host as it was written, rather than being
@@ -1627,18 +1596,18 @@ impl Vm {
             Action::SetParent(target) => {
                 let parent = self.eval(target, actor, params, temps, out).as_text();
                 out.push(Effect::SetParent {
-                    actor: owner,
+                    actor: actor.to_string(),
                     parent: parent.trim().to_string(),
                 });
             }
             Action::CreateClone(of) => match self.clone_actor(actor, of) {
                 Some((clone, template)) => out.push(Effect::CreateClone {
-                    actor: owner,
+                    actor: actor.to_string(),
                     clone,
                     of: template,
                 }),
                 None => out.push(Effect::Error {
-                    actor: owner,
+                    actor: actor.to_string(),
                     message: format!("there's no actor named \"{of}\" to clone"),
                 }),
             },
@@ -1649,7 +1618,7 @@ impl Vm {
                 // by and a program slot so deleting it is the same code path.
                 let id = self.create_actor(&name);
                 out.push(Effect::CreateActor {
-                    actor: owner,
+                    actor: actor.to_string(),
                     id,
                     name,
                     position,
@@ -1660,7 +1629,7 @@ impl Vm {
                 match self.delete_actor(actor, &wanted) {
                     Some(gone) => out.push(Effect::DeleteActor { actor: gone }),
                     None => out.push(Effect::Error {
-                        actor: owner,
+                        actor: actor.to_string(),
                         message: format!("there's no actor named \"{wanted}\" to delete"),
                     }),
                 }
@@ -1778,12 +1747,12 @@ impl Vm {
                 let binding = self.eval(binding, actor, params, temps, out).as_text();
                 if crate::input::parse_binding(&binding).is_none() {
                     out.push(Effect::Error {
-                        actor: owner,
+                        actor: actor.to_string(),
                         message: format!("\"{binding}\" isn't a binding"),
                     });
                 } else {
                     out.push(Effect::BindAction {
-                        actor: owner,
+                        actor: actor.to_string(),
                         action: name.trim().to_string(),
                         binding: binding.trim().to_string(),
                     });
@@ -1792,7 +1761,7 @@ impl Vm {
             Action::ClearActionBindings { action } => {
                 let name = self.eval(action, actor, params, temps, out).as_text();
                 out.push(Effect::ClearActionBindings {
-                    actor: owner,
+                    actor: actor.to_string(),
                     action: name.trim().to_string(),
                 });
             }
@@ -1806,7 +1775,7 @@ impl Vm {
                     .as_number()
                     .unwrap_or(0.0);
                 // A non-numeric variable counts as zero, as in Scratch.
-                let current = self.read_var(actor, name).as_number().unwrap_or(0.0);
+                let current = self.read_var(name).as_number().unwrap_or(0.0);
                 self.write_var(actor, name, Evaluated::Number(current + delta));
             }
             Action::AddToList { value, name } => {
@@ -1816,7 +1785,7 @@ impl Vm {
                         .lists
                         .with_list_mut(actor, name, |list| list.push(item)),
                     None => out.push(Effect::Error {
-                        actor: owner.clone(),
+                        actor: actor.to_string(),
                         message: "list items must be number or text".to_string(),
                     }),
                 }
@@ -1865,7 +1834,7 @@ impl Vm {
                         }
                     }),
                     None => out.push(Effect::Error {
-                        actor: owner.clone(),
+                        actor: actor.to_string(),
                         message: "list items must be number or text".to_string(),
                     }),
                 }
@@ -1883,7 +1852,7 @@ impl Vm {
                         }
                     }),
                     None => out.push(Effect::Error {
-                        actor: owner.clone(),
+                        actor: actor.to_string(),
                         message: "list items must be number or text".to_string(),
                     }),
                 }
@@ -1899,7 +1868,7 @@ impl Vm {
                         .dicts
                         .with_dict_mut(actor, name, |dict| dict_set(dict, key, item)),
                     None => out.push(Effect::Error {
-                        actor: owner.clone(),
+                        actor: actor.to_string(),
                         message: "dict values must be number or text".to_string(),
                     }),
                 }
@@ -1920,7 +1889,7 @@ impl Vm {
                         .dicts
                         .with_dict_mut(actor, name, |dict| *dict = entries),
                     Err(message) => out.push(Effect::Error {
-                        actor: owner.clone(),
+                        actor: actor.to_string(),
                         message,
                     }),
                 }
@@ -1930,7 +1899,7 @@ impl Vm {
                 match parse_json_array(&json) {
                     Ok(items) => self.lists.with_list_mut(actor, name, |list| *list = items),
                     Err(message) => out.push(Effect::Error {
-                        actor: owner.clone(),
+                        actor: actor.to_string(),
                         message,
                     }),
                 }
@@ -1975,9 +1944,6 @@ impl Vm {
         if let Some(name) = self.names.get(template).cloned() {
             self.names.insert(id.clone(), name);
         }
-        if let Some(inputs) = self.block_inputs.get(template).cloned() {
-            self.block_inputs.insert(id.clone(), inputs);
-        }
         self.variables.copy_actor(template, &id);
         self.lists.copy_actor(template, &id);
         self.dicts.copy_actor(template, &id);
@@ -1996,7 +1962,6 @@ impl Vm {
     fn forget_actor(&mut self, actor: &str) {
         self.programs.remove(actor);
         self.names.remove(actor);
-        self.block_inputs.remove(actor);
         self.clones.remove(actor);
         self.variables.forget_actor(actor);
         self.lists.forget_actor(actor);
@@ -2022,31 +1987,39 @@ impl Vm {
 
     // ─── Variables ──────────────────────────────────────────────────────────
 
-    fn read_var(&self, actor: &str, name: &str) -> Evaluated {
-        self.variables.read(actor, name)
+    fn read_var(&self, name: &String) -> Evaluated {
+        let var = self.var_id(name);
+        self.variables.read_slot(self.scope, var)
     }
 
     /// Writes to the actor's own variable when it has one by that name, the
     /// project global when it doesn't, and otherwise declares it on the actor.
-    fn write_var(&mut self, actor: &str, name: &str, value: Evaluated) {
-        self.variables.write(actor, name, value);
+    fn write_var(&mut self, actor: &str, name: &String, value: Evaluated) {
+        let var = self.var_id(name);
+        self.scope = self.variables.write_slot(actor, self.scope, var, value);
+    }
+
+    /// A variable name from the running program, interned.
+    fn var_id(&self, name: &String) -> VarId {
+        match &self.current {
+            Some(program) => program.var(name, &self.variables),
+            None => self.variables.intern(name),
+        }
     }
 
     // ─── Evaluation ─────────────────────────────────────────────────────────
 
-    /// Replaces every variable read, bound parameter and reporter-block call
-    /// in `value` with a literal, then evaluates the result. An error is
-    /// reported once and stands in as `0`, so one bad slot never kills a run.
+    /// Evaluates a slot. An error is reported once and stands in as `0`, so
+    /// one bad slot never kills a run.
     fn eval(
         &mut self,
         value: &Value,
         actor: &str,
-        params: Option<&HashMap<String, Evaluated>>,
+        params: Option<&Params>,
         temps: &[Evaluated],
         out: &mut Vec<Effect>,
     ) -> Evaluated {
-        let resolved = self.resolve(value, actor, params, temps, out);
-        match resolved.eval() {
+        match self.evaluate(value, actor, params, temps, out) {
             Ok(evaluated) => evaluated,
             Err(message) => {
                 out.push(Effect::Error {
@@ -2058,11 +2031,119 @@ impl Vm {
         }
     }
 
+    /// What `Value::eval` would make of `value` with its variables, parameters
+    /// and reporter calls filled in. The slot is lowered once and evaluated
+    /// from there. Every argument runs, left to right, before its operator
+    /// does, so a reporter the operator never reads (the far side of an
+    /// `and`) still runs and still does whatever it does.
+    fn evaluate(
+        &mut self,
+        value: &Value,
+        actor: &str,
+        params: Option<&Params>,
+        temps: &[Evaluated],
+        out: &mut Vec<Effect>,
+    ) -> Result<Evaluated, String> {
+        let expr = match &self.current {
+            Some(program) => program.expr(value, &self.variables),
+            None => Rc::new(lower(value, &self.variables)),
+        };
+        self.eval_expr(&expr, actor, params, temps, out)
+    }
+
+    /// Evaluates a lowered slot, reporting an error the way [`Vm::eval`] does.
+    fn eval_reported(
+        &mut self,
+        expr: &Expr,
+        actor: &str,
+        params: Option<&Params>,
+        temps: &[Evaluated],
+        out: &mut Vec<Effect>,
+    ) -> Evaluated {
+        match self.eval_expr(expr, actor, params, temps, out) {
+            Ok(evaluated) => evaluated,
+            Err(message) => {
+                out.push(Effect::Error {
+                    actor: actor.to_string(),
+                    message,
+                });
+                Evaluated::Number(0.0)
+            }
+        }
+    }
+
+    fn eval_expr(
+        &mut self,
+        expr: &Expr,
+        actor: &str,
+        params: Option<&Params>,
+        temps: &[Evaluated],
+        out: &mut Vec<Effect>,
+    ) -> Result<Evaluated, String> {
+        match expr {
+            Expr::Const(value) => value.clone(),
+            Expr::Var(var) => Ok(self.variables.read_slot(self.scope, *var)),
+            Expr::Temp(index, var) => Ok(temps
+                .get(*index)
+                .cloned()
+                .unwrap_or_else(|| self.variables.read_slot(self.scope, *var))),
+            Expr::Param(name) => Ok(params
+                .and_then(|bound| bound.get(name))
+                .cloned()
+                .unwrap_or(Evaluated::Number(0.0))),
+            Expr::Call { block_id, args } => {
+                Ok(self.run_reporter(actor, block_id, args, params, temps, out))
+            }
+            Expr::Store { op, list, args } => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.eval_expr(arg, actor, params, temps, out))
+                    .collect();
+                // A store reporter's own error is reported here and reads as
+                // zero, rather than failing the slot around it.
+                match self.read_store(actor, op, *list, args) {
+                    Ok(value) => Ok(value),
+                    Err(message) => {
+                        out.push(Effect::Error {
+                            actor: actor.to_string(),
+                            message,
+                        });
+                        Ok(Evaluated::Number(0.0))
+                    }
+                }
+            }
+            Expr::Op {
+                op: op @ (Op::Join | Op::Ext(_)),
+                args,
+            } => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.eval_expr(arg, actor, params, temps, out))
+                    .collect::<Vec<_>>();
+                ops::apply_many(op, args)
+            }
+            Expr::Op { op, args } => {
+                let mut args = args.iter();
+                let a = args
+                    .next()
+                    .map(|arg| self.eval_expr(arg, actor, params, temps, out));
+                let b = args
+                    .next()
+                    .map(|arg| self.eval_expr(arg, actor, params, temps, out));
+                // No operator past these reads a third, but it still runs.
+                for extra in args {
+                    let _ = self.eval_expr(extra, actor, params, temps, out);
+                }
+                ops::apply(op, a, b)
+            }
+        }
+    }
+
     fn eval_f32(
         &mut self,
         value: &Value,
         actor: &str,
-        params: Option<&HashMap<String, Evaluated>>,
+        params: Option<&Params>,
         temps: &[Evaluated],
         out: &mut Vec<Effect>,
     ) -> f32 {
@@ -2075,7 +2156,7 @@ impl Vm {
         &mut self,
         values: &[Value; 3],
         actor: &str,
-        params: Option<&HashMap<String, Evaluated>>,
+        params: Option<&Params>,
         temps: &[Evaluated],
         out: &mut Vec<Effect>,
     ) -> [f32; 3] {
@@ -2086,78 +2167,23 @@ impl Vm {
         ]
     }
 
-    fn resolve(
-        &mut self,
-        value: &Value,
+    /// A list or dict reporter over evaluated arguments, reading only the one
+    /// store its name picks.
+    fn read_store(
+        &self,
         actor: &str,
-        params: Option<&HashMap<String, Evaluated>>,
-        temps: &[Evaluated],
-        out: &mut Vec<Effect>,
-    ) -> Value {
-        match value {
-            Value::Number { .. } | Value::Text { .. } | Value::Bool => value.clone(),
-            Value::Var { name } => read_temp(temps, name)
-                .unwrap_or_else(|| self.read_var(actor, name))
-                .into_value(),
-            Value::Param { name } => params
-                .and_then(|bound| bound.get(name))
-                .cloned()
-                .unwrap_or(Evaluated::Number(0.0))
-                .into_value(),
-            Value::Op { op, args, saved } if is_list_reporter(op) => {
-                let args = args
-                    .iter()
-                    .map(|arg| self.resolve(arg, actor, params, temps, out))
-                    .collect::<Vec<_>>();
-                let name: Box<str> = match op {
-                    Op::Ext(name) => name.clone(),
-                    _ => unreachable!("validated by is_list_reporter"),
-                };
-                let lists = self.lists.snapshot_for(actor);
-                match resolve_list_reporter(&name, args, &lists) {
-                    Ok(value) => value,
-                    Err(message) => {
-                        out.push(Effect::Error {
-                            actor: actor.to_string(),
-                            message,
-                        });
-                        Value::number(0.0)
-                    }
-                }
-            }
-            Value::Op { op, args, saved } if is_dict_reporter(op) => {
-                let args = args
-                    .iter()
-                    .map(|arg| self.resolve(arg, actor, params, temps, out))
-                    .collect::<Vec<_>>();
-                let name: Box<str> = match op {
-                    Op::Ext(name) => name.clone(),
-                    _ => unreachable!("validated by is_dict_reporter"),
-                };
-                let dicts = self.dicts.snapshot_for(actor);
-                match resolve_dict_reporter(&name, args, &dicts) {
-                    Ok(value) => value,
-                    Err(message) => {
-                        out.push(Effect::Error {
-                            actor: actor.to_string(),
-                            message,
-                        });
-                        Value::number(0.0)
-                    }
-                }
-            }
-            Value::Op { op, args, saved } => Value::Op {
-                op: op.clone(),
-                args: args
-                    .iter()
-                    .map(|arg| self.resolve(arg, actor, params, temps, out))
-                    .collect(),
-                saved: saved.clone(),
-            },
-            Value::Call { block_id, args, .. } => self
-                .run_reporter(actor, block_id, args, params, temps, out)
-                .into_value(),
-        }
+        op: &str,
+        list: bool,
+        args: Vec<Result<Evaluated, String>>,
+    ) -> Result<Evaluated, String> {
+        let (name, args) = stores::literal_args(op, args)?;
+        let name = name.unwrap_or_default();
+        let value = if list {
+            resolve_list_reporter(op, args, &self.lists.scope_of(actor, &name))?
+        } else {
+            resolve_dict_reporter(op, args, &self.dicts.scope_of(actor, &name))?
+        };
+        value.eval()
     }
 
     /// Runs a reporter-shaped custom block's body to completion, right here,
@@ -2168,8 +2194,8 @@ impl Vm {
         &mut self,
         actor: &str,
         block_id: &str,
-        args: &[Value],
-        params: Option<&HashMap<String, Evaluated>>,
+        args: &[Expr],
+        params: Option<&Params>,
         temps: &[Evaluated],
         out: &mut Vec<Effect>,
     ) -> Evaluated {
@@ -2183,10 +2209,15 @@ impl Vm {
         let Some(program) = self.programs.get(actor).map(Rc::clone) else {
             return Evaluated::Number(0.0);
         };
-        let Some(&start) = program.blocks.get(block_id) else {
+        let Some((start, names)) = program.block(block_id) else {
             return Evaluated::Number(0.0);
         };
-        let bound = self.bind_params(actor, block_id, args, params, temps, out);
+        let values = args
+            .iter()
+            .take(names.len())
+            .map(|arg| self.eval_reported(arg, actor, params, temps, out))
+            .collect();
+        let bound = Params { names, values };
         let mut script = Script {
             actor: actor.to_string(),
             key: None,
@@ -2213,30 +2244,25 @@ impl Vm {
     fn bind_params(
         &mut self,
         actor: &str,
-        block_id: &str,
+        names: Rc<[String]>,
         args: &[Value],
-        params: Option<&HashMap<String, Evaluated>>,
+        params: Option<&Params>,
         temps: &[Evaluated],
         out: &mut Vec<Effect>,
-    ) -> HashMap<String, Evaluated> {
-        let names = self
-            .block_inputs
-            .get(actor)
-            .and_then(|blocks| blocks.get(block_id))
-            .cloned()
-            .unwrap_or_default();
-        names
+    ) -> Params {
+        let values = args
             .iter()
-            .zip(args)
-            .map(|(name, arg)| (name.clone(), self.eval(arg, actor, params, temps, out)))
-            .collect()
+            .take(names.len())
+            .map(|arg| self.eval(arg, actor, params, temps, out))
+            .collect();
+        Params { names, values }
     }
 }
 
 /// The parameters bound by the innermost custom-block call, if any.
-fn current_params(script: &Script) -> Option<HashMap<String, Evaluated>> {
-    script.frames.iter().rev().find_map(|frame| match frame {
-        Frame::Call { params, .. } => Some(params.clone()),
+fn current_params(frames: &[Frame]) -> Option<&Params> {
+    frames.iter().rev().find_map(|frame| match frame {
+        Frame::Call { params, .. } => Some(params),
         Frame::Loop { .. } => None,
     })
 }
@@ -2246,11 +2272,6 @@ fn store_temp(temps: &mut Vec<Evaluated>, temp: usize, value: Evaluated) {
         temps.resize(temp + 1, Evaluated::Number(0.0));
     }
     temps[temp] = value;
-}
-
-fn read_temp(temps: &[Evaluated], name: &str) -> Option<Evaluated> {
-    let index = temp_index(name)?;
-    temps.get(index).cloned()
 }
 
 /// `(frame index, begin, end)` of the nearest enclosing loop. Only the

@@ -22,6 +22,7 @@ ico.workspace = true
 flate2.workspace = true
 crc32fast.workspace = true
 half = "2"
+rustc-hash = "2"
 
 # Web builds (`wasm32-unknown-unknown`) need the JS-backed RNG: getrandom
 # refuses the wasm target by default, and everything id generation and Bevy
@@ -36,3 +37,7 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Syste
 
 [dev-dependencies]
 zip = { version = "7.2", default-features = false, features = ["deflate"] }
+
+[[bench]]
+name = "vm"
+harness = false

@@ -6,9 +6,16 @@
 //! modifier the viewer said it can sample. With no such modifier, frames are
 //! copied into linear system-memory images instead - the CPU never touches a
 //! pixel either way.
+//!
+//! The ring is 8-bit, so an HDR frame can't travel through it. On Wayland the
+//! viewer also offers a surface of its own, under its window, and a frame the
+//! project wants HDR goes there instead: a swapchain in scRGB or HDR10,
+//! presented straight to the compositor while the view shows through to it.
 
 use crate::bridge;
+use crate::display::{self, Formats};
 use crate::engine::Engine;
+use crate::hdr::{DisplayOffers, HdrFrame, HdrMetadata};
 use crate::world::WorldCamera;
 use bevy::app::{PluginsState, TerminalCtrlCHandlerPlugin};
 use bevy::camera::NormalizedRenderTarget;
@@ -17,16 +24,16 @@ use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::render_resource::TextureView;
-use bevy::render::renderer::{RenderDevice, RenderQueue};
+use bevy::render::renderer::{RenderAdapter, RenderDevice, RenderInstance, RenderQueue};
 use bevy::render::texture::{ManualTextureView, ManualTextureViews, OutputColorAttachment};
 use bevy::render::view::{ViewTargetAttachments, clear_view_attachments, prepare_view_attachments};
 use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::ui::{IsDefaultUiCamera, UiScale};
 use bevy::window::ExitCondition;
-use blockloom_core::scene::Mode;
+use blockloom_core::scene::{Mode, OutputSpace};
 use blockloom_protocol::{EditorMessage, GAME_SIZE, RuntimeMessage};
 use std::os::fd::OwnedFd;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
@@ -78,7 +85,9 @@ pub fn run(embedded: Embedded) {
     let _detach = Detach(world, frames.clone());
 
     let mut app = App::new();
-    app.insert_resource(dmabuf::vulkan_settings());
+    let mut vulkan = dmabuf::vulkan_settings();
+    display::add_vulkan_extensions(&mut vulkan);
+    app.insert_resource(vulkan);
     // No winit: the editor owns the display. No log plugin or Ctrl-C
     // handler either, since both are process-wide and the editor has its own.
     app.add_plugins(
@@ -176,6 +185,11 @@ pub struct FrameExchange {
     shown: Condvar,
     offer: Mutex<Offer>,
     wanted: Mutex<Viewport>,
+    /// The viewer's Wayland surface for HDR frames, as the addresses of its
+    /// `wl_display` and `wl_surface`. It outlives every world.
+    hdr_target: Mutex<Option<(usize, usize)>>,
+    /// Whether a world is presenting there rather than into the ring.
+    hdr_live: AtomicBool,
 }
 
 /// What the view shows the game at: physical pixels, and how many of them
@@ -225,7 +239,33 @@ impl FrameExchange {
             shown: Condvar::new(),
             offer: Mutex::new(Offer::default()),
             wanted: Mutex::new(Viewport::default()),
+            hdr_target: Mutex::new(None),
+            hdr_live: AtomicBool::new(false),
         })
+    }
+
+    /// The viewer made a Wayland surface under its window that a world may
+    /// present HDR frames to. It must stay alive as long as the exchange.
+    pub fn offer_hdr_surface(&self, display: usize, surface: usize) {
+        if let Ok(mut target) = self.hdr_target.lock() {
+            *target = Some((display, surface));
+        }
+    }
+
+    fn hdr_target(&self) -> Option<(usize, usize)> {
+        self.hdr_target.lock().ok().and_then(|target| *target)
+    }
+
+    /// Whether the world's frames are going to the HDR surface, so the
+    /// view should show through to it rather than show the ring.
+    pub fn hdr_live(&self) -> bool {
+        self.hdr_live.load(Ordering::Acquire)
+    }
+
+    fn set_hdr_live(&self, live: bool) {
+        if self.hdr_live.swap(live, Ordering::AcqRel) != live {
+            (self.wake)();
+        }
     }
 
     /// The view is `width` x `height` physical pixels at `scale` per logical
@@ -400,6 +440,7 @@ impl FrameExchange {
             ring.ready = None;
             ring.held = None;
         }
+        self.hdr_live.store(false, Ordering::Release);
         (self.wake)();
     }
 }
@@ -439,6 +480,9 @@ struct FrameCopy {
     scratch: Option<wgpu::Texture>,
     ring: Vec<wgpu::Texture>,
     views: Vec<TextureView>,
+    /// The format the cameras draw in on the HDR surface this frame, or
+    /// none while frames go through the ring.
+    hdr: Option<wgpu::TextureFormat>,
 }
 
 /// The slot this frame's cameras are drawing into, render world only.
@@ -460,21 +504,25 @@ fn add_surface(app: &mut App, exchange: Arc<FrameExchange>) {
         scratch: None,
         ring: Vec::new(),
         views: Vec::new(),
+        hdr: None,
     })
     .add_plugins(ExtractResourcePlugin::<FrameCopy>::default())
     .add_systems(Update, (target_cameras, fit_cameras))
     .add_systems(Last, build_surface);
     if let Some(render) = app.get_sub_app_mut(RenderApp) {
-        render.init_resource::<Drawing>().add_systems(
-            Render,
-            (
-                aim_cameras
-                    .in_set(RenderSystems::PrepareViews)
-                    .after(clear_view_attachments)
-                    .before(prepare_view_attachments),
-                finish_frame.in_set(RenderSystems::Cleanup),
-            ),
-        );
+        render
+            .init_resource::<Drawing>()
+            .init_resource::<HdrPlane>()
+            .add_systems(
+                Render,
+                (
+                    (aim_plane, aim_cameras)
+                        .in_set(RenderSystems::PrepareViews)
+                        .after(clear_view_attachments)
+                        .before(prepare_view_attachments),
+                    finish_frame.in_set(RenderSystems::Cleanup),
+                ),
+            );
     }
 }
 
@@ -526,28 +574,41 @@ fn build_surface(
     mut copy: ResMut<FrameCopy>,
     mut target_bytes: ResMut<crate::performance::GameViewTargetBytes>,
     device: Res<RenderDevice>,
+    frame: Res<HdrFrame>,
     mut views: ResMut<ManualTextureViews>,
 ) {
     let offer = surface.exchange.offer();
     let wanted = surface.exchange.wanted();
     let resized = wanted.size != surface.viewport.size;
+    // An HDR frame only ever resolves once the HDR surface has offered it.
+    let hdr = plane_format(frame.space);
+    let reformatted = hdr != copy.hdr;
     surface.viewport.scale = wanted.scale;
-    if surface.failed || (surface.seen == Some(offer.version) && !resized && copy.scratch.is_some())
+    if surface.failed
+        || (surface.seen == Some(offer.version)
+            && !resized
+            && !reformatted
+            && copy.scratch.is_some())
     {
         return;
     }
+    // A new format alone leaves the ring be; a new offer or size doesn't.
+    let ring_stale = surface.seen != Some(offer.version) || resized || copy.ring.is_empty();
     surface.seen = Some(offer.version);
     surface.viewport.size = wanted.size;
     let size = wanted.size;
     let device = device.wgpu_device();
-    if copy.scratch.is_none() || resized {
+    if copy.scratch.is_none() || resized || reformatted {
+        // The cameras' pipelines follow this view's format, so it is the HDR
+        // surface's while frames go there.
+        let format = hdr.unwrap_or(TARGET_FORMAT);
         let scratch = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("game view target"),
             size: extent(size),
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: TARGET_FORMAT,
+            format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
@@ -558,10 +619,14 @@ fn build_surface(
                     .create_view(&wgpu::TextureViewDescriptor::default())
                     .into(),
                 size,
-                view_format: TARGET_FORMAT,
+                view_format: format,
             },
         );
         copy.scratch = Some(scratch);
+        copy.hdr = hdr;
+    }
+    if !ring_stale {
+        return;
     }
 
     // A tiled ring the offer still covers stays put.
@@ -636,7 +701,7 @@ fn aim_cameras(
     mut drawing: ResMut<Drawing>,
 ) {
     drawing.0 = None;
-    let Some(copy) = copy.filter(|copy| copy.direct) else {
+    let Some(copy) = copy.filter(|copy| copy.direct && copy.hdr.is_none()) else {
         return;
     };
     let target = NormalizedRenderTarget::TextureView(VIEW);
@@ -661,11 +726,22 @@ fn aim_cameras(
 fn finish_frame(
     copy: Option<Res<FrameCopy>>,
     mut drawing: ResMut<Drawing>,
+    mut plane: ResMut<HdrPlane>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
 ) {
     let drawn = drawing.0.take();
-    if let Some(copy) = copy {
+    if let Some(texture) = plane.frame.take() {
+        queue.present(texture);
+        if let Some(copy) = &copy {
+            copy.exchange.set_hdr_live(true);
+        }
+    } else if let Some(copy) = copy.as_ref().filter(|copy| copy.hdr.is_none())
+        && plane.surface.is_some()
+    {
+        copy.exchange.set_hdr_live(false);
+    }
+    if let Some(copy) = copy.filter(|copy| copy.hdr.is_none()) {
         let index = if copy.direct {
             drawn
         } else {
@@ -702,6 +778,162 @@ fn copy_frame(copy: &FrameCopy, device: &RenderDevice, queue: &RenderQueue) -> O
     Some(index)
 }
 
+/// The format a frame goes to the HDR surface in, or none for the ring.
+/// Matches what `display::Formats::configure` picks for the space.
+fn plane_format(space: OutputSpace) -> Option<wgpu::TextureFormat> {
+    match space {
+        OutputSpace::Sdr => None,
+        OutputSpace::Scrgb => Some(wgpu::TextureFormat::Rgba16Float),
+        OutputSpace::Hdr10 => Some(wgpu::TextureFormat::Rgb10a2Unorm),
+    }
+}
+
+/// The swapchain on the viewer's HDR surface. Render world only.
+#[derive(Resource, Default)]
+struct HdrPlane {
+    surface: Option<wgpu::Surface<'static>>,
+    formats: Option<Formats>,
+    config: Option<wgpu::SurfaceConfiguration>,
+    metadata: Option<HdrMetadata>,
+    /// This frame's texture, presented once the cameras are submitted.
+    frame: Option<wgpu::SurfaceTexture>,
+    /// Set once the surface was made or found wanting, so it is tried once.
+    tried: bool,
+}
+
+/// Makes a swapchain on the viewer's HDR surface the first time there is
+/// one, says what it offers, and on a frame going out HDR points the
+/// cameras at its next texture.
+#[allow(clippy::too_many_arguments)]
+fn aim_plane(
+    copy: Option<Res<FrameCopy>>,
+    frame: Res<HdrFrame>,
+    offers: Res<DisplayOffers>,
+    instance: Res<RenderInstance>,
+    adapter: Res<RenderAdapter>,
+    device: Res<RenderDevice>,
+    mut plane: ResMut<HdrPlane>,
+    mut attachments: ResMut<ViewTargetAttachments>,
+) {
+    let Some(copy) = copy else { return };
+    let plane = &mut *plane;
+    if !plane.tried
+        && let Some((display, surface)) = copy.exchange.hdr_target()
+    {
+        plane.tried = true;
+        adopt_plane(plane, display, surface, &instance, &adapter, &offers);
+    }
+    let (Some(format), Some(surface), Some(formats), Some(scratch)) =
+        (copy.hdr, &plane.surface, plane.formats, &copy.scratch)
+    else {
+        return;
+    };
+    let (configured, color_space) = formats.configure(frame.space);
+    if configured != format {
+        return;
+    }
+    let size = scratch.size();
+    let caps = surface.get_capabilities(&adapter);
+    let wanted = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format,
+        color_space,
+        width: size.width,
+        height: size.height,
+        // The view paces the world; the surface never makes it wait.
+        present_mode: [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate]
+            .into_iter()
+            .find(|mode| caps.present_modes.contains(mode))
+            .unwrap_or(wgpu::PresentMode::Fifo),
+        desired_maximum_frame_latency: 2,
+        alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+        view_formats: Vec::new(),
+    };
+    if plane.config.as_ref() != Some(&wanted) {
+        device.configure_surface(surface, &wanted);
+        plane.config = Some(wanted);
+        plane.metadata = None;
+    }
+    let mut texture = surface.get_current_texture();
+    if matches!(
+        texture,
+        wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost
+    ) {
+        if let Some(config) = &plane.config {
+            device.configure_surface(surface, config);
+        }
+        plane.metadata = None;
+        texture = surface.get_current_texture();
+    }
+    let texture = match texture {
+        wgpu::CurrentSurfaceTexture::Success(texture)
+        | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+        // The cameras draw into the scratch target, and nothing changes.
+        _ => return,
+    };
+    let metadata = frame.metadata();
+    if metadata != plane.metadata {
+        if let Some(metadata) = &metadata {
+            display::send_metadata(surface, device.wgpu_device(), metadata);
+        }
+        plane.metadata = metadata;
+    }
+    let view = texture
+        .texture
+        .create_view(&wgpu::TextureViewDescriptor::default());
+    attachments.insert(
+        NormalizedRenderTarget::TextureView(VIEW),
+        OutputColorAttachment::new(view.into(), format),
+    );
+    plane.frame = Some(texture);
+}
+
+/// Makes the swapchain's surface on the viewer's `wl_surface`, and keeps
+/// it only if the compositor takes an HDR space there.
+fn adopt_plane(
+    plane: &mut HdrPlane,
+    display: usize,
+    surface: usize,
+    instance: &RenderInstance,
+    adapter: &RenderAdapter,
+    offers: &DisplayOffers,
+) {
+    use std::ptr::NonNull;
+    use wgpu::rwh::{RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle};
+    let (Some(display), Some(surface)) = (
+        NonNull::new(display as *mut std::ffi::c_void),
+        NonNull::new(surface as *mut std::ffi::c_void),
+    ) else {
+        return;
+    };
+    let target = wgpu::SurfaceTargetUnsafe::RawHandle {
+        raw_display_handle: Some(RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
+            display,
+        ))),
+        raw_window_handle: RawWindowHandle::Wayland(WaylandWindowHandle::new(surface)),
+    };
+    // SAFETY: the viewer keeps the display and surface alive for as long as
+    // the exchange, which outlives this world.
+    let surface = match unsafe { instance.create_surface_unsafe(target) } {
+        Ok(surface) => surface,
+        Err(error) => {
+            tracing::info!("game view: no HDR surface: {error}");
+            offers.set(vec![OutputSpace::Sdr]);
+            return;
+        }
+    };
+    let caps = surface.get_capabilities(adapter);
+    match Formats::of(&caps).filter(|formats| formats.offers().len() > 1) {
+        Some(formats) => {
+            tracing::info!("game view: HDR surface offers {:?}", formats.offers());
+            offers.set(formats.offers());
+            plane.formats = Some(formats);
+            plane.surface = Some(surface);
+        }
+        None => offers.set(vec![OutputSpace::Sdr]),
+    }
+}
+
 fn extent(size: UVec2) -> wgpu::Extent3d {
     wgpu::Extent3d {
         width: size.x,
@@ -724,8 +956,19 @@ mod dmabuf {
     const LINEAR_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
     /// Tiled slots are drawn into directly, so they take the target's format.
     const TILED_FORMAT: vk::Format = vk::Format::R8G8B8A8_SRGB;
-    const HANDLE: vk::ExternalMemoryHandleTypeFlags =
+    const DMA_BUF: vk::ExternalMemoryHandleTypeFlags =
         vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT;
+
+    /// How slots are shared. A test on a software driver with no dma-bufs
+    /// (lavapipe without udmabuf) asks for an opaque fd, which it backs with
+    /// a memfd the test can map all the same.
+    fn handle() -> vk::ExternalMemoryHandleTypeFlags {
+        #[cfg(test)]
+        if std::env::var_os("BLOCKLOOM_TEST_OPAQUE_FD").is_some() {
+            return vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD;
+        }
+        DMA_BUF
+    }
 
     /// One slot of the ring: the wgpu texture the world writes, and what
     /// the viewer imports it by.
@@ -780,7 +1023,7 @@ mod dmabuf {
             if !features.contains(vk::FormatFeatureFlags::TRANSFER_DST) {
                 return Err("this GPU can't copy into a linear RGBA image".to_string());
             }
-            let mut external = vk::ExternalMemoryImageCreateInfo::default().handle_types(HANDLE);
+            let mut external = vk::ExternalMemoryImageCreateInfo::default().handle_types(handle());
             let info = image_info(size, LINEAR_FORMAT, vk::ImageUsageFlags::TRANSFER_DST)
                 .tiling(vk::ImageTiling::LINEAR)
                 .push_next(&mut external);
@@ -867,7 +1110,7 @@ mod dmabuf {
                         .drm_format_modifier(modifier)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE);
                     let mut external =
-                        vk::PhysicalDeviceExternalImageFormatInfo::default().handle_type(HANDLE);
+                        vk::PhysicalDeviceExternalImageFormatInfo::default().handle_type(handle());
                     let info = vk::PhysicalDeviceImageFormatInfo2::default()
                         .format(TILED_FORMAT)
                         .ty(vk::ImageType::TYPE_2D)
@@ -943,7 +1186,7 @@ mod dmabuf {
             let hal = device
                 .as_hal::<Vulkan>()
                 .ok_or("the renderer isn't using Vulkan")?;
-            let mut external = vk::ExternalMemoryImageCreateInfo::default().handle_types(HANDLE);
+            let mut external = vk::ExternalMemoryImageCreateInfo::default().handle_types(handle());
             let mut list = vk::ImageDrmFormatModifierListCreateInfoEXT::default()
                 .drm_format_modifiers(modifiers);
             let info = image_info(size, TILED_FORMAT, vk::ImageUsageFlags::COLOR_ATTACHMENT)
@@ -1044,7 +1287,7 @@ mod dmabuf {
                 raw.destroy_image(image, None);
                 return Err("no memory can back a shared image".to_string());
             };
-            let mut export = vk::ExportMemoryAllocateInfo::default().handle_types(HANDLE);
+            let mut export = vk::ExportMemoryAllocateInfo::default().handle_types(handle());
             let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
             let allocation = vk::MemoryAllocateInfo::default()
                 .allocation_size(needs.size)
@@ -1062,7 +1305,7 @@ mod dmabuf {
                 khr::external_memory_fd::Device::new(instance, raw).get_memory_fd(
                     &vk::MemoryGetFdInfoKHR::default()
                         .memory(memory)
-                        .handle_type(HANDLE),
+                        .handle_type(handle()),
                 )
             });
             match exported {
@@ -1467,8 +1710,213 @@ mod tests {
         );
     }
 
+    /// The dark room with ray tracing on in `mode`.
+    fn traced_room(
+        mode: blockloom_core::scene::TracingMode,
+        lamp: bool,
+    ) -> blockloom_core::project::Project {
+        let mut room = dark_room(lamp);
+        let tracing = &mut room.world.lighting.ray_tracing;
+        tracing.enabled = true;
+        tracing.mode = mode;
+        room
+    }
+
+    const TRACING_MODES: [blockloom_core::scene::TracingMode; 2] = [
+        blockloom_core::scene::TracingMode::Hybrid,
+        blockloom_core::scene::TracingMode::PathTraced,
+    ];
+
+    /// A traced ray that escapes sees the sky: with no lamp, no sun and no
+    /// ambient, a white gradient sky is all that lights the floor.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn traced_light_sees_the_sky() {
+        use blockloom_core::sky::SkyKind;
+        let reference = SceneView {
+            path_tracer: blockloom_protocol::PathTracerView {
+                enabled: true,
+                ..Default::default()
+            },
+            ..game_camera()
+        };
+        // Each tracing mode, then the reference path tracer.
+        let runs = TRACING_MODES
+            .map(|mode| (format!("{mode:?}"), mode, game_camera()))
+            .into_iter()
+            .chain([("Reference".to_string(), TRACING_MODES[0], reference)]);
+        for (name, mode, view) in runs {
+            let mut room = traced_room(mode, false);
+            let sky = &mut room.world.sky;
+            sky.kind = SkyKind::Gradient;
+            sky.reflections = false;
+            for stop in [
+                &mut sky.gradient.top,
+                &mut sky.gradient.middle,
+                &mut sky.gradient.bottom,
+            ] {
+                *stop = "#FFFFFF".to_string();
+            }
+            let lit = floor_pixel(run_world(room, |_| {}, view, 0, lit_floor));
+            assert!(
+                lit_floor(lit),
+                "{name}: expected the sky's light, read {lit:?}"
+            );
+        }
+    }
+
+    /// Under a flat sky the ambient is what a traced ray escapes to.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_flat_ambient_lights_a_traced_floor() {
+        for mode in TRACING_MODES {
+            let mut room = traced_room(mode, false);
+            room.world.lighting.ambient_brightness = 1500.0;
+            let lit = floor_pixel(run_world(room, |_| {}, game_camera(), 0, lit_floor));
+            assert!(
+                lit_floor(lit),
+                "{mode:?}: expected the ambient, read {lit:?}"
+            );
+        }
+    }
+
+    /// Realtime path tracing lights the floor from the traced lamp alone.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn realtime_path_tracing_lights_the_floor_from_a_traced_lamp() {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::scene::TracingMode;
+        let traced = |lamp_traced: bool| {
+            let mut room = traced_room(TracingMode::PathTraced, true);
+            for actor in &mut room.actors {
+                if let Some(ActorComponent::Light { light }) = actor.components.get_mut("Light") {
+                    light.ray_traced = lamp_traced;
+                }
+            }
+            let settle = if lamp_traced { 0 } else { 120 };
+            let done = move |pixel| lamp_traced && lit_floor(pixel);
+            floor_pixel(run_world(room, |_| {}, game_camera(), settle, done))
+        };
+        let (lit, dark) = (traced(true), traced(false));
+        assert!(lit_floor(lit), "expected a traced, lit floor, read {lit:?}");
+        assert!(
+            dark.iter().all(|c| *c < 20),
+            "expected the untraced lamp to leave the floor dark, read {dark:?}"
+        );
+    }
+
+    /// One path a pixel is speckled; the filter smooths it into the same
+    /// light rather than a darker or brighter one.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn the_denoiser_smooths_path_traced_light() {
+        use blockloom_core::scene::{Denoiser, TracingMode};
+        let patch = |denoiser: Denoiser| {
+            let mut room = traced_room(TracingMode::PathTraced, true);
+            // One path a pixel off a small lamp and a dim ambient is noisy.
+            room.world.lighting.ambient_brightness = 300.0;
+            room.world.lighting.ray_tracing.denoiser = denoiser;
+            room.world.lighting.ray_tracing.paths = 1;
+            // Once lit, a while longer for the history to fill.
+            let lit = std::cell::Cell::new(0);
+            let done = |pixel| {
+                if lit_floor(pixel) {
+                    lit.set(lit.get() + 1);
+                }
+                lit.get() > 60
+            };
+            let (set, index, errors) = run_world(room, |_| {}, game_camera(), 0, done);
+            assert!(errors.is_empty(), "{errors:?}");
+            let set = set.unwrap_or_else(|| panic!("no frame arrived"));
+            let frame = frame_pixels(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+            dump(&format!("denoise-{denoiser:?}"), &frame);
+            patch_stats(&frame, 24)
+        };
+        let (raw_mean, raw_spread) = patch(Denoiser::None);
+        let (mean, spread) = patch(Denoiser::Filter);
+        assert!(raw_mean > 20.0, "expected a lit floor, mean {raw_mean}");
+        assert!(
+            spread < raw_spread * 0.5,
+            "expected the filter to smooth the grain: raw {raw_spread}, filtered {spread}"
+        );
+        assert!(
+            (mean - raw_mean).abs() < raw_mean * 0.25,
+            "expected the same light: raw {raw_mean}, filtered {mean}"
+        );
+    }
+
+    /// A traced spot lights its cone and leaves the floor outside it dark,
+    /// where a bare glowing disk would light all of it.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_traced_spot_stays_in_its_cone() {
+        use blockloom_core::components::{LightKind, LightSpec};
+        let mut room = room_with(LightSpec {
+            kind: LightKind::Spot,
+            intensity: 1_000_000.0,
+            outer_angle: 30.0,
+            inner_angle: 20.0,
+            radius: 0.1,
+            ..LightSpec::default()
+        });
+        room.world.lighting.ray_tracing.enabled = true;
+        let (set, index, errors) = run_world(room, |_| {}, game_camera(), 120, |_| false);
+        assert!(errors.is_empty(), "{errors:?}");
+        let set = set.unwrap_or_else(|| panic!("no frame arrived"));
+        let (width, height) = (SIZE.x as usize, SIZE.y as usize);
+        let frame = frame_pixels(&set.images[index], width, height);
+        dump("traced-spot", &frame);
+        let brightest = frame
+            .iter()
+            .copied()
+            .max_by_key(|p| p.iter().map(|c| *c as u32).sum::<u32>());
+        let brightest = brightest.unwrap_or_default();
+        let lit = frame.iter().filter(|p| p.iter().any(|c| *c > 20)).count();
+        assert!(
+            lit_floor(brightest),
+            "expected the cone lit, read {brightest:?}"
+        );
+        assert!(
+            lit < frame.len() / 20,
+            "expected the floor outside the cone dark, {lit} of {} pixels lit",
+            frame.len()
+        );
+    }
+
     fn lit_floor(pixel: [u8; 3]) -> bool {
         pixel.iter().all(|c| *c > 60)
+    }
+
+    /// The mean luminance of the square `radius` around the middle of a
+    /// frame, and its grain: the mean step between neighbouring pixels, which
+    /// noise raises and a smooth gradient barely does.
+    fn patch_stats(frame: &[[u8; 3]], radius: usize) -> (f32, f32) {
+        let (width, height) = (SIZE.x as usize, SIZE.y as usize);
+        let luminance = |x: usize, y: usize| {
+            let [r, g, b] = frame[y * width + x];
+            0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32
+        };
+        let (mut sum, mut grain, mut count) = (0.0, 0.0, 0.0);
+        for y in height / 2 - radius..height / 2 + radius {
+            for x in width / 2 - radius..width / 2 + radius {
+                sum += luminance(x, y);
+                grain += (luminance(x + 1, y) - luminance(x, y)).abs();
+                count += 1.0;
+            }
+        }
+        (sum / count, grain / count)
+    }
+
+    /// Writes a frame to `BLOCKLOOM_TEST_DUMP/<name>.png` when that is set,
+    /// for looking at what a test saw.
+    fn dump(name: &str, frame: &[[u8; 3]]) {
+        let Some(dir) = std::env::var_os("BLOCKLOOM_TEST_DUMP") else {
+            return;
+        };
+        let bytes: Vec<u8> = frame.iter().flatten().copied().collect();
+        if let Some(image) = image::RgbImage::from_raw(SIZE.x, SIZE.y, bytes) {
+            let _ = image.save(std::path::Path::new(&dir).join(format!("{name}.png")));
+        }
     }
 
     fn floor_pixel(result: (Option<Arc<SlotSet>>, usize, Vec<RuntimeMessage>)) -> [u8; 3] {
@@ -1699,6 +2147,61 @@ mod tests {
         assert!(
             lit.iter().all(|c| *c > 90),
             "expected the sky's bounce, read {lit:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_bc6h_bake_on_disk_lights_the_floor() {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::pipeline::hdr::HdrCube;
+        use blockloom_core::probe::{self, ProbeKind, ProbeSpec};
+        let dir = std::env::temp_dir().join(format!("blockloom-embed-bake-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A black room: only the white cube written below can light it.
+        let mut room = dark_room(false);
+        room.world.background = "#000000".to_string();
+        let mut volume = blockloom_core::project::Actor::new(
+            "Probe",
+            blockloom_core::scene::Visual::Sphere {
+                color: "#FFFFFF".to_string(),
+                radius: 0.05,
+            },
+        );
+        volume.components.remove("Look");
+        volume.components.placement_mut().position = [0.0, 1.0, 0.0];
+        volume.components.insert(ActorComponent::Probe {
+            probe: ProbeSpec {
+                kind: ProbeKind::Reflection,
+                size: [30.0, 4.0, 30.0],
+                ..ProbeSpec::default()
+            },
+        });
+        let id = volume.id.clone();
+        room.actors.push(volume);
+        // Radiance in nits, as a capture divides it back out of exposure.
+        let cube = HdrCube {
+            size: 16,
+            faces: std::array::from_fn(|_| vec![[5000.0; 3]; 256]),
+        };
+        let stamp = probe::stamp(&room, &id).unwrap();
+        probe::write_cube(&dir, &id, &cube, stamp).unwrap();
+        let load = EditorMessage::Load {
+            project: Box::new(room.clone()),
+            dir: Some(dir.to_string_lossy().into_owned()),
+        };
+        let lit = floor_pixel(run_world_sending(
+            room,
+            |_| {},
+            game_camera(),
+            300,
+            |pixel| pixel.iter().all(|c| *c > 90),
+            vec![load],
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(
+            lit.iter().all(|c| *c > 90),
+            "expected the baked cube's light, read {lit:?}"
         );
     }
 
@@ -2773,6 +3276,35 @@ mod tests {
         assert!(exchange.slots().is_none());
         let (set, index) = seen.map_or((None, 0), |(set, index)| (Some(set), index));
         (set, index, errors)
+    }
+
+    /// Reads a whole frame out of a linear dma-buf, row by row.
+    fn frame_pixels(image: &SharedImage, width: usize, height: usize) -> Vec<[u8; 3]> {
+        use std::os::fd::AsRawFd;
+        assert!(image.stride as usize >= width * 4);
+        let length = image.offset as usize + image.stride as usize * height;
+        // SAFETY: as `middle_pixel`.
+        unsafe {
+            let mapped = libc::mmap(
+                std::ptr::null_mut(),
+                length,
+                libc::PROT_READ,
+                libc::MAP_SHARED,
+                image.fd.as_raw_fd(),
+                0,
+            );
+            assert_ne!(mapped, libc::MAP_FAILED, "the dma-buf can't be mapped");
+            let bytes = std::slice::from_raw_parts(mapped as *const u8, length);
+            let frame = (0..height)
+                .flat_map(|y| (0..width).map(move |x| (x, y)))
+                .map(|(x, y)| {
+                    let at = image.offset as usize + image.stride as usize * y + x * 4;
+                    [bytes[at], bytes[at + 1], bytes[at + 2]]
+                })
+                .collect();
+            libc::munmap(mapped, length);
+            frame
+        }
     }
 
     /// Reads a pixel straight out of a linear dma-buf.
