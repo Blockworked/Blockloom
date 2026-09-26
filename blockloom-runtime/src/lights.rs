@@ -158,6 +158,8 @@ fn insert_light(entity: &mut EntityCommands, spec: &LightSpec, mask: Option<Hand
                 radius,
                 shadow_maps_enabled: spec.shadows,
                 contact_shadows_enabled: spec.contact_shadows,
+                // PCSS is off in a browser (see the runtime's Cargo.toml).
+                #[cfg(not(target_arch = "wasm32"))]
                 soft_shadows_enabled: spec.soft_shadows,
                 shadow_depth_bias: spec
                     .shadow_depth_bias
@@ -183,6 +185,8 @@ fn insert_light(entity: &mut EntityCommands, spec: &LightSpec, mask: Option<Hand
                 radius,
                 shadow_maps_enabled: spec.shadows,
                 contact_shadows_enabled: spec.contact_shadows,
+                // PCSS is off in a browser (see the runtime's Cargo.toml).
+                #[cfg(not(target_arch = "wasm32"))]
                 soft_shadows_enabled: spec.soft_shadows,
                 shadow_depth_bias: spec
                     .shadow_depth_bias
@@ -229,6 +233,8 @@ fn insert_light(entity: &mut EntityCommands, spec: &LightSpec, mask: Option<Hand
                         range,
                         radius: 0.5 * width.max(height),
                         shadow_maps_enabled: true,
+                        // PCSS is off in a browser (see the runtime's Cargo.toml).
+                        #[cfg(not(target_arch = "wasm32"))]
                         soft_shadows_enabled: spec.soft_shadows,
                         shadow_depth_bias: spec
                             .shadow_depth_bias

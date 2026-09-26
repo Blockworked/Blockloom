@@ -42,11 +42,18 @@ impl Target {
         self.triple.ends_with("linux-gnu")
     }
 
+    /// The browser: one `.html` file rather than a folder with a binary.
+    pub fn is_web(self) -> bool {
+        script::is_web(self.triple)
+    }
+
     /// Whether a build for it renders HDR unless told otherwise, and why.
     /// ARM64 Linux is mostly single-board computers, where FP16 targets cost
     /// more than they give and HDR displays are rare.
     pub fn hdr_default(self) -> (bool, &'static str) {
-        if self.triple == "aarch64-unknown-linux-gnu" {
+        if self.is_web() {
+            (false, "SDR only: browsers give a page no HDR output yet.")
+        } else if self.triple == "aarch64-unknown-linux-gnu" {
             (
                 false,
                 "SDR only by default: ARM64 Linux boards rarely have the GPU for FP16 frames.",
@@ -91,6 +98,11 @@ pub const TARGETS: &[Target] = &[
     Target {
         triple: "aarch64-apple-darwin",
         label: "macOS Apple Silicon",
+        windows: false,
+    },
+    Target {
+        triple: "wasm32-unknown-unknown",
+        label: "Web",
         windows: false,
     },
 ];
@@ -180,6 +192,11 @@ fn status(
                 target.triple
             ),
         ),
+        Some(_) if target.is_web() && !has_scripts => (
+            true,
+            "One .html file with the whole game inside; opens in any browser with WebGPU."
+                .to_string(),
+        ),
         Some(_) if !has_scripts => (
             true,
             if host {
@@ -196,6 +213,11 @@ fn status(
                 Err(e) => (false, e),
             },
             Some(triple) => match script::target_installed(triple) {
+                Ok(()) if target.is_web() => (
+                    true,
+                    "One .html file with the whole game inside; scripts compile to wasm."
+                        .to_string(),
+                ),
                 Ok(()) => (true, "Scripts will be cross-compiled for it.".to_string()),
                 Err(e) => (false, format!("This project has scripts, and {e}.")),
             },
@@ -210,6 +232,8 @@ fn status(
             false,
             "The platform is not available for a build.".to_string(),
         )
+    } else if target.is_web() {
+        (false, "Blocks run on the VM in a browser.".to_string())
     } else if let Err(error) = fast_source {
         (false, error.clone())
     } else if let Err(error) = fast_toolchain {
@@ -246,22 +270,26 @@ pub fn player_for(target: &Target, fallback: &Path) -> Option<PathBuf> {
     None
 }
 
-/// A payload under `players/<triple>/` beside this executable. It wins even
-/// for this machine: it is the copy meant for shipping (see `just player`).
+/// A payload under `players/<triple>/` beside this executable, or under
+/// `BLOCKLOOM_PLAYERS` when that is set. It wins even for this machine: it is
+/// the copy meant for shipping (see `just player`). The web player is its
+/// wasm file, with its JS glue beside it (`just web-player`).
 fn staged_player(target: &Target, fallback: &Path) -> Option<PathBuf> {
     let stem = fallback.file_stem()?.to_string_lossy().into_owned();
-    let name = if target.windows {
+    let name = if target.is_web() {
+        crate::web_build::PLAYER_WASM.to_string()
+    } else if target.windows {
         format!("{stem}.exe")
     } else {
         stem
     };
-    let path = std::env::current_exe()
-        .ok()?
-        .parent()?
-        .join("players")
-        .join(target.triple)
-        .join(name);
-    path.is_file().then_some(path)
+    let players = match std::env::var_os("BLOCKLOOM_PLAYERS") {
+        Some(dir) => PathBuf::from(dir),
+        None => std::env::current_exe().ok()?.parent()?.join("players"),
+    };
+    let path = players.join(target.triple).join(name);
+    let complete = !target.is_web() || path.with_file_name(crate::web_build::PLAYER_GLUE).is_file();
+    (path.is_file() && complete).then_some(path)
 }
 
 /// What a build carries beyond the project itself.
@@ -294,6 +322,8 @@ pub struct Build {
     pub shaders: usize,
     /// Whether the HDR sky was baked to BC6H.
     pub sky: bool,
+    /// Bytes of what ships: the ZIP, or for the web the one `.html`.
+    pub size: u64,
 }
 
 /// What the build folder is called. The platform is in the name because one
@@ -318,6 +348,9 @@ pub fn build(
     parent: &Path,
     options: BuildOptions,
 ) -> Result<Build, String> {
+    if target.is_web() {
+        return build_web(project, project_dir, target, player, parent);
+    }
     let fast = options.fast;
     let shaders = check_shaders(project, project_dir)?;
     let dir = parent.join(build_name(project, target));
@@ -361,11 +394,13 @@ pub fn build(
     decorate(project, target, &layout, &icons)?;
     let archive = parent.join(format!("{}.zip", build_name(project, target)));
     distribution::archive(&dir, &archive, &layout.executables)?;
+    let size = file_size(&archive);
 
     Ok(Build {
         dir,
         binary: layout.binary,
         archive,
+        size,
         target: target.triple,
         assets,
         scripts,
@@ -374,6 +409,95 @@ pub fn build(
         shaders,
         sky,
     })
+}
+
+/// A web build: one `.html` holding the player, the pack, the game files and
+/// each script's wasm module (see [`crate::web_build`]). The game folder is
+/// laid out exactly as a native build's, in a scratch folder, then packed
+/// into the page. Always SDR and always the VM.
+fn build_web(
+    project: &Project,
+    project_dir: &Path,
+    target: &'static Target,
+    player: &Path,
+    parent: &Path,
+) -> Result<Build, String> {
+    let shaders = check_shaders(project, project_dir)?;
+    let glue_path = player.with_file_name(crate::web_build::PLAYER_GLUE);
+    let player_wasm = std::fs::read(player).map_err(|e| format!("{}: {e}", player.display()))?;
+    let player_glue =
+        std::fs::read(&glue_path).map_err(|e| format!("{}: {e}", glue_path.display()))?;
+
+    let dir = parent.join(build_name(project, target));
+    clear_build_dir(&dir)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    std::fs::write(dir.join(BUILD_MARKER), target.triple)
+        .map_err(|error| format!("{}: {error}", dir.display()))?;
+
+    let game = dir.join(".game");
+    std::fs::create_dir_all(&game).map_err(|e| format!("{}: {e}", game.display()))?;
+    let mut game_pack = GamePack::new(project.clone());
+    game_pack.hdr = false;
+    game_pack.write(&pack::pack_path(&game))?;
+    let assets = copy_assets(project_dir, &game)?;
+    let atlas = bake_sprite_atlas(project, project_dir, &game)?;
+    let sky = bake_sky(project, project_dir, &game)?;
+    copy_probes(project, project_dir, &game)?;
+    let scripts = copy_scripts(project, project_dir, &game, target)?;
+
+    let mut paths = Vec::new();
+    distribution::collect_files(&game, &mut paths)?;
+    let mut files = Vec::new();
+    for path in paths {
+        let relative = path
+            .strip_prefix(&game)
+            .map_err(|_| format!("{} is outside the game folder", path.display()))?;
+        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        files.push((crate::vfs::key(relative), bytes));
+    }
+    files.sort();
+    let icons = distribution::Icons::load(project_dir, &project.icon)?;
+    let html = crate::web_build::page(crate::web_build::Page {
+        title: &project.name,
+        icon: &icons.png,
+        player_wasm,
+        player_glue,
+        files,
+    })?;
+    std::fs::remove_dir_all(&game).map_err(|e| format!("{}: {e}", game.display()))?;
+
+    let binary = dir.join(format!("{}.html", project::folder_name(&project.name)));
+    std::fs::write(&binary, &html).map_err(|e| format!("{}: {e}", binary.display()))?;
+    let archive = parent.join(format!("{}.zip", build_name(project, target)));
+    distribution::archive(&dir, &archive, &[])?;
+
+    Ok(Build {
+        dir,
+        size: file_size(&binary),
+        binary,
+        archive,
+        target: target.triple,
+        assets,
+        scripts,
+        compiled: false,
+        atlas,
+        shaders,
+        sky,
+    })
+}
+
+/// A byte count the way the Build dialog says it.
+pub fn size_text(bytes: u64) -> String {
+    match bytes {
+        b if b >= 1 << 30 => format!("{:.1} GB", b as f64 / (1u64 << 30) as f64),
+        b if b >= 1 << 20 => format!("{:.1} MB", b as f64 / (1u64 << 20) as f64),
+        b if b >= 1 << 10 => format!("{:.0} KB", b as f64 / 1024.0),
+        b => format!("{b} bytes"),
+    }
+}
+
+fn file_size(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
 }
 
 /// Validates every `.wesl` surface file the project's looks draw with, the
@@ -850,7 +974,7 @@ mod tests {
             let (hdr, note) = target.hdr_default();
             assert_eq!(
                 hdr,
-                target.triple != "aarch64-unknown-linux-gnu",
+                target.triple != "aarch64-unknown-linux-gnu" && !target.is_web(),
                 "{}",
                 target.triple
             );
@@ -896,6 +1020,61 @@ mod tests {
 
         let pack = GamePack::read(&pack::pack_path(&game)).unwrap();
         assert_eq!(pack.title(), "Pond Game");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_web_build_is_one_page_carrying_the_player_and_the_game() {
+        let root = temp("web");
+        let (project, project_dir, _) = a_project(&root);
+        let player = root.join(crate::web_build::PLAYER_WASM);
+        std::fs::write(&player, b"\0asm-player").unwrap();
+        std::fs::write(
+            root.join(crate::web_build::PLAYER_GLUE),
+            b"export default 1",
+        )
+        .unwrap();
+        let target = target("wasm32-unknown-unknown").unwrap();
+        let out = root.join("out");
+
+        let built = build(
+            &project,
+            &project_dir,
+            target,
+            &player,
+            &out,
+            BuildOptions::default(),
+        )
+        .unwrap();
+
+        assert_eq!(built.dir, out.join("Pond Game (Web)"));
+        assert_eq!(built.binary, built.dir.join("Pond Game.html"));
+        assert!(built.archive.is_file());
+        assert!(!built.compiled);
+        assert_eq!(built.size, std::fs::metadata(&built.binary).unwrap().len());
+        // Only the page ships; the scratch game folder is gone.
+        assert!(!built.dir.join(".game").exists());
+
+        let html = std::fs::read_to_string(&built.binary).unwrap();
+        let open = "id=\"blockloom-data\">";
+        let start = html.find(open).unwrap() + open.len();
+        let end = start + html[start..].find("</script>").unwrap();
+        use base64::Engine;
+        let gzipped = base64::engine::general_purpose::STANDARD
+            .decode(&html[start..end])
+            .unwrap();
+        let entries = crate::web_build::unarchive(&gzipped);
+        let find = |name: &str| entries.iter().find(|(n, _)| n == name).map(|(_, b)| b);
+        assert_eq!(find("player.wasm").unwrap(), b"\0asm-player");
+        assert_eq!(find("game/assets/sprites/ball.png").unwrap(), b"png");
+        assert!(find("game/assets/scripts/player.rs").is_none());
+        let pack = GamePack::from_json(
+            std::str::from_utf8(find("game/game.pack").unwrap()).unwrap(),
+            "game.pack",
+        )
+        .unwrap();
+        // A browser has no HDR output.
+        assert!(!pack.hdr);
         let _ = std::fs::remove_dir_all(&root);
     }
 

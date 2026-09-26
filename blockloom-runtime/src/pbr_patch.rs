@@ -13,6 +13,8 @@
 //!   twin up in the fragment's cluster and reads its cube shadow; black
 //!   point lights are skipped in the point loop, since they light nothing.
 //! - The sun's shadow fades to nothing over the last `fade` of its distance.
+//! - In a browser, Bevy's material shaders stop binding textures and
+//!   samplers to `let`s, which naga takes but WGSL (and Chrome) refuses.
 
 use bevy::prelude::*;
 use bevy::shader::Source;
@@ -63,6 +65,34 @@ const PATCHES: &[Patch] = &[
     },
 ];
 
+/// Only the browser needs these: its WGSL compiler holds Bevy's shaders to
+/// the spec. Bindless is never on there, so only the plain bindings matter.
+#[cfg(target_arch = "wasm32")]
+const WEB_PATCHES: &[Patch] = &[
+    Patch {
+        module: "bevy_pbr/render/pbr_fragment.wesl",
+        edit: patch_handle_lets,
+    },
+    Patch {
+        module: "bevy_pbr/render/pbr_prepass.wesl",
+        edit: patch_handle_lets,
+    },
+    Patch {
+        module: "bevy_pbr/render/pbr_prepass_functions.wesl",
+        edit: patch_handle_lets,
+    },
+];
+#[cfg(not(target_arch = "wasm32"))]
+const WEB_PATCHES: &[Patch] = &[];
+
+fn patch_at(index: usize) -> &'static Patch {
+    PATCHES
+        .iter()
+        .chain(WEB_PATCHES)
+        .nth(index)
+        .expect("a known patch")
+}
+
 pub fn register(app: &mut App) {
     app.init_resource::<PbrPatches>()
         .init_resource::<PatchedShaders>()
@@ -98,7 +128,11 @@ pub fn patch_shaders(
         let Some(shader) = shaders.get(*id) else {
             continue;
         };
-        let Some(index) = PATCHES.iter().position(|p| shader.path.ends_with(p.module)) else {
+        let Some(index) = PATCHES
+            .iter()
+            .chain(WEB_PATCHES)
+            .position(|p| shader.path.ends_with(p.module))
+        else {
             continue;
         };
         let source = shader.source.as_str();
@@ -114,7 +148,7 @@ pub fn patch_shaders(
     }
     for id in dirty {
         let (index, original) = &originals.sources[&id];
-        let patch = &PATCHES[*index];
+        let patch = patch_at(*index);
         match (patch.edit)(original, &config) {
             Ok(mut patched) => {
                 patched.push_str(MARKER);
@@ -140,6 +174,68 @@ pub fn patch_shaders(
             }
         }
     }
+}
+
+/// `let texture = pbr_bindings::x;` (and `sampler_`) becomes the phony
+/// `_ = pbr_bindings::x;`, still a statement for the `@else` in front of
+/// it, and the bare `texture`/`sampler_` arguments after it name the
+/// binding itself. The bindless `let`s are left as they are: that branch
+/// never survives in a browser.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn patch_handle_lets(source: &str, _: &PbrPatches) -> Result<String, &'static str> {
+    const NAMES: [&str; 2] = ["texture", "sampler_"];
+    let mut out = String::with_capacity(source.len());
+    let mut bound: [Option<String>; 2] = [None, None];
+    let mut rest = source;
+    let mut edits = 0;
+    while !rest.is_empty() {
+        // A plain `let` of one of the two names.
+        if let Some((slot, binding, len)) = NAMES.iter().enumerate().find_map(|(slot, name)| {
+            let head = format!("let {name} = pbr_bindings::");
+            let tail = rest.strip_prefix(&head)?;
+            let end = tail.find(';')?;
+            let binding = &tail[..end];
+            binding
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                .then(|| {
+                    (
+                        slot,
+                        format!("pbr_bindings::{binding}"),
+                        head.len() + end + 1,
+                    )
+                })
+        }) {
+            out.push_str(&format!("_ = {binding};"));
+            bound[slot] = Some(binding);
+            rest = &rest[len..];
+            edits += 1;
+            continue;
+        }
+        let c = rest.chars().next().unwrap_or_default();
+        let word_start =
+            !out.ends_with(|p: char| p.is_ascii_alphanumeric() || p == '_' || p == '.' || p == ':');
+        // A bindless `let` keeps its own name.
+        let after_let = out.ends_with("let ");
+        if word_start && !after_let {
+            let used = NAMES.iter().enumerate().find_map(|(slot, name)| {
+                let tail = rest.strip_prefix(name)?;
+                let whole = !tail.starts_with(|n: char| n.is_ascii_alphanumeric() || n == '_');
+                (whole && bound[slot].is_some()).then_some((slot, name.len()))
+            });
+            if let Some((slot, len)) = used {
+                out.push_str(bound[slot].as_deref().unwrap_or_default());
+                rest = &rest[len..];
+                continue;
+            }
+        }
+        out.push(c);
+        rest = &rest[c.len_utf8()..];
+    }
+    if edits == 0 {
+        return Err("its texture lets");
+    }
+    Ok(out)
 }
 
 /// `source` with `from` replaced by `to`, exactly once.
@@ -302,4 +398,39 @@ fn patch_shadows(source: &str, config: &PbrPatches) -> Result<String, &'static s
 ",
         "the cascade blend",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_texture_let_becomes_the_binding_it_named() {
+        let source = "\
+@if(BINDLESS)
+        let texture = bindless_textures_2d[material_indices[slot].normal_map_texture];
+@else
+        let texture = pbr_bindings::normal_map_texture;
+@if(BINDLESS)
+        let sampler_ = bindless_samplers_filtering[material_indices[slot].normal_map_sampler];
+@else
+        let sampler_ = pbr_bindings::normal_map_sampler;
+        let Nt = textureSampleBias(
+                texture,
+                sampler_,
+                uv, texture_2d_size, view.texture).rgb;
+";
+        let patched = patch_handle_lets(source, &PbrPatches::default()).unwrap();
+        assert!(patched.contains("@else\n        _ = pbr_bindings::normal_map_texture;"));
+        assert!(patched.contains("@else\n        _ = pbr_bindings::normal_map_sampler;"));
+        // The bindless branch keeps its own lets.
+        assert!(patched.contains("let texture = bindless_textures_2d"));
+        assert!(patched.contains("let sampler_ = bindless_samplers_filtering"));
+        assert!(patched.contains(
+            "textureSampleBias(\n                pbr_bindings::normal_map_texture,\n                pbr_bindings::normal_map_sampler,"
+        ));
+        // Longer names and fields that only start the same are untouched.
+        assert!(patched.contains("uv, texture_2d_size, view.texture).rgb;"));
+        assert!(patch_handle_lets("fn f() {}", &PbrPatches::default()).is_err());
+    }
 }

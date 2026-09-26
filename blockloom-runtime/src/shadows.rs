@@ -101,7 +101,11 @@ pub fn apply_shadows(
     for (entity, _, mut light, _) in &mut suns {
         light.shadow_normal_bias = s.normal_bias;
         light.contact_shadows_enabled = s.contact;
-        light.soft_shadow_size = (s.sun_size > 0.0).then(|| s.sun_size.to_radians());
+        // PCSS is off in a browser (see the runtime's Cargo.toml).
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            light.soft_shadow_size = (s.sun_size > 0.0).then(|| s.sun_size.to_radians());
+        }
         let mut sun = commands.entity(entity);
         sun.insert(cascades.clone());
         match &cookie.image {

@@ -290,6 +290,8 @@ pub fn archive(root: &Path, destination: &Path, executables: &[PathBuf]) -> Resu
         u32::try_from(central_start).map_err(|_| "the ZIP is larger than 4 GB")?,
     )?;
     output.flush().map_err(|error| error.to_string())?;
+    // Closed before the rename, which Windows needs. A no-op in a browser.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::drop_non_drop))]
     drop(output);
     if destination.exists() {
         std::fs::remove_file(destination)
@@ -304,7 +306,7 @@ pub fn archive(root: &Path, destination: &Path, executables: &[PathBuf]) -> Resu
     })
 }
 
-fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+pub(crate) fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
     let mut entries: Vec<_> = std::fs::read_dir(dir)
         .map_err(|error| format!("{}: {error}", dir.display()))?
         .collect::<Result<_, _>>()

@@ -20,7 +20,9 @@ just test               # cargo test --workspace (blockloom-core has the bulk of
 cargo bench -p blockloom-core --bench vm   # block VM ns/tick over a few canvases
 just player             # stage the hard-optimized player a built game ships
 just web-check          # runtime check-build for wasm32-unknown-unknown (Phase 8)
-just web-build [out] [pack=game-dir]  # wasm player folder; serve with just web-serve
+just web-player [profile]            # stage the WebGPU player the Web build target ships
+just web-build <project> [out]       # a project as one self-contained .html
+just web-smoke <page.html> [--scripts N] [--moves ACTOR]  # headless run of a built page
 ```
 
 Build the whole workspace, not just `-p blockloom`: off Linux (or with
@@ -1107,6 +1109,60 @@ import Blockloom's library (`blockloom::fbm`, ...) and Bevy's own modules
 (`bevy_pbr` in 3D, `bevy_sprite_render` in 2D);
 a project's other files aren't modules, so `package::`/`super::` are refused.
 
+### 2D animation and sprites
+
+`blockloom-core/src/animation.rs` is the one animation player, both
+dimensions. A clip is image files or a `SheetRange` (cells row-major on one
+sheet), with per-frame `durations`, a `LoopMode` and frame `markers`.
+`AnimationClip::cursor` counts steps (frames shown since the start), so
+`markers_reached` fires each marker once per frame shown however long the
+tick. States carry `transitions` (clip ended, marker, trigger, or a variable
+compared as a number or text), a crossfade `blend` and `root_motion`;
+`AnimationSpec::transition_from` picks the first that fires, and `next` is
+still the ended shorthand. `play animation` names a state first, then a clip.
+
+`rig2d.rs` is 2D skeletal rigs: Spine or DragonBones JSON (`Rig::parse`) into
+bones, slots, skins, one- and two-bone IK and keyed animations, y up in the
+actor's frame. `sample` gives a `LocalPose`, `blend` crossfades two, `solve`
+composes the hierarchy, runs IK and lists slot sprites in draw order.
+Regions draw as sprites. Spine meshes (`MeshAttachment`: plain or weighted
+across bones, linked meshes, deform keys under 3.x `deform` or 4.x
+`attachments`) come out of `solve` as rig-space vertices; DragonBones meshes
+are skipped. `Curve` eases keys: Spine's beziers (3.x
+normalized, 4.x in time and value per channel) and DragonBones' quad easings
+and chained curves. A clip plays its
+`rig_animation` (or its own name) on the rig when the rig has it, and plays
+its frames otherwise: that is the flipbook fallback.
+
+`sprite2d.rs` is the `Sprite` component: flips, `NineSlice` (Bevy's
+`TextureSlicer`), `SpriteStack` slices, a palette swap (the sprite's red
+channel picks the column, `palette_index` the row), an outline, and `order`
+plus `y_sort` inside the Render layer (`order_depth`, then `y_sort_depths`
+within half an order step, so order always beats height). Y-sort ranks
+actors sharing a layer z and order rather than scaling height, so any spread
+of heights fits the band.
+
+The runtime half is `blockloom-runtime/src/anim2d.rs` and `sprites.rs`.
+`apply_animation_effects` and `step_animations` run in the fixed step, so the
+VM and compiled logic land on the same frames, markers and transitions; they
+fire `Event::AnimationMarker` and `AnimationEnded`, move root-motion actors and
+solve rigs into `RigInstance::pose`. `ensure_rigs` loads a rig through
+`RigCache` and hangs a `RigPart` sprite per slot off the actor, plus a
+`RigMeshPart` for slots with a mesh, `draw_rigs` copies the pose on
+(rebuilding each mesh when its vertices move), and `sync_sprites` applies
+flips and slicing and builds stack slices and the `SpriteFxMaterial` quad
+(`shaders/sprite_fx.wesl`, which slices a 9-slice sprite the way Bevy's own
+sprite shader does, from `slice_uniforms`). `sync_part_effects` gives each
+stack slice and rig part its own palette quad. Their outline is a
+silhouette per piece (flag 8: the outline color wherever the grown piece
+covers; a mesh grows by nine offset copies) drawn behind every piece, so
+only the edge of the whole shape shows.
+Anything drawn through children hides the actor's own sprite with an empty
+`RenderLayers`. Sort depth is render-only: `apply_sort_depth` adds it in
+PostUpdate and `clear_sort_depth` takes it off in `First`, so no pose, drag
+or physics step sees it. A flipbook crossfade draws the old frame on a
+`FadeGhost` child fading out; a rig blends poses instead.
+
 ### How a project runs
 
 1. Play hands the runtime the whole project (`EditorMessage::Load`) and starts
@@ -1230,6 +1286,44 @@ attached to every platform it can't offer.
 A build folder is named for the project and the platform - `Pond Game (Linux
 x64)` - because one output folder holds a build per platform, and three folders
 called the same thing would be three chances to ship the wrong one.
+
+### The web player
+
+The Web build target (`wasm32-unknown-unknown`) makes one `.html` holding
+everything: `build::build_web` lays the game folder out as a native build
+does, then `web_build::page` gzips the staged player (the wasm and its wasm-bindgen glue
+under `players/wasm32-unknown-unknown/`, which `just web-player` stages), the
+pack, every game file and each script's wasm module
+into one archive, base64'd into the page. The page unpacks it with
+`DecompressionStream`, imports the glue from a blob URL, compiles the script
+modules and, on a click (audio needs the gesture), calls `web::start_game`.
+So it opens from disk as well as any static host. Always SDR, always the VM.
+
+The player renders through WebGPU (Bevy's `webgpu` feature, set for wasm in
+the runtime's `Cargo.toml`; WebGL2 has no compute for the sky, fog, cloud and
+luminance passes). `start_game` mounts the files in `blockloom_core::vfs`,
+which every direct read a web run can reach goes through (`vfs::read` rather
+than `std::fs::read`), and `web::GameFiles` serves the same table to Bevy's
+asset server; the game folder is the empty path. Saves go to localStorage,
+pointer lock is asked for on a click on the canvas (`web::want_pointer_lock`),
+and the canvas follows its parent's size. `web::game_actors` reports actor
+positions, which is what `just web-smoke` checks, since headless Chromium
+can't screenshot a WebGPU canvas.
+
+A script on the web is its own wasm module, not part of the player: a module
+can't call another through a function pointer, so there the script imports
+the three host calls from `abi::WASM_MODULE`, each taking a pointer to an
+`abi::WasmCall` in its own memory, and the entry points get a null `HostApi`
+(the prelude's `web` module swaps in its trampolines). `script.rs`'s
+`browser` module instantiates each module once per file and answers the
+imports with the same `number_for`/`text_for`/`act_for` the native
+`extern "C"` calls use. A panic aborts on wasm, so the prelude's panic hook
+logs the message first; the trap then stops that script for the rest of the
+game, and its error names the panic.
+
+Chrome's WGSL compiler holds shaders to the spec where naga doesn't, so
+`pbr_patch.rs` also rewrites the `let texture = pbr_bindings::...` lines in
+Bevy's material shaders on wasm (`patch_handle_lets`).
 
 ### Compiling the blocks
 
@@ -1444,7 +1538,12 @@ lands.
   doesn't carry over - re-attaching a component has always meant the authored
   one.
 - Building for another platform needs its player staged by hand, and a scripted
-  project also needs that target's `std` and a linker for it.
+  project also needs that target's `std` and a linker for it. The web player
+  is staged with `just web-player`, and web builds need the wasm target's
+  `std` for scripts (rust-lld ships with it).
+- A web build loads whole before it starts: no streaming, and base64 costs a
+  third over the gzip'd parts. Blocks run on the VM there, and `scene
+  luminance`, GPU readbacks and the profiler behave as the browser allows.
 - Recursive statement-shaped custom blocks fall back to the VM because their
   loop counters still need to move onto each call frame.
 - A script needs a Rust toolchain on the machine that presses Play, which a
@@ -1459,3 +1558,7 @@ lands.
   one passes straight through.
 - The scene view's camera starts over whenever the world does (a dimension
   switch, reopening a project).
+- 2D rigs draw Spine regions and meshes; DragonBones meshes, clipping and
+  path attachments draw nothing. A rig's or stack's outline is one
+  silhouette per piece, so a translucent outline color darkens where pieces'
+  silhouettes overlap.
