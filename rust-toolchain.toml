@@ -1,0 +1,3 @@
+[toolchain]
+# wesl and wgsl-parse 0.4.4 need 1.97.1 or newer.
+channel = "1.97.1"

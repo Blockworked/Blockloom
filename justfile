@@ -161,13 +161,14 @@ mcp:
 clean:
     cargo clean
 
-# Work on blockstitch locally: link the Vue half and point cargo at the same
-# checkout, without touching the committed lockfiles.
+# Work on blockstitch locally: link the Vue half and point cargo's
+# blockstitch-core and blockstitch-qml at the same checkout, without touching
+# the committed lockfiles.
 blockstitch-local path="../../blockstitch":
     cd ui && npm pkg set dependencies.blockstitch="link:{{path}}" && pnpm install
     git update-index --skip-worktree ui/package.json ui/pnpm-lock.yaml
     {{mkdir-cargo}}
-    {{ if os() == "windows" { 'echo paths = ["' + replace(clean(justfile_directory() / "ui" / path), "\\", "/") + '/crates/blockstitch-core"] > .cargo\config.toml' } else { "printf 'paths = [\"" + "%s/crates/blockstitch-core" + "\"]\\n' \"$(realpath ui/" + path + ")\" > .cargo/config.toml" } }}
+    {{ if os() == "windows" { 'echo paths = ["' + replace(clean(justfile_directory() / "ui" / path), "\\", "/") + '", "' + replace(clean(justfile_directory() / "ui" / path), "\\", "/") + '/crates/blockstitch-core"] > .cargo\config.toml' } else { "printf 'paths = [\"" + "%s\", \"%s/crates/blockstitch-core" + "\"]\\n' \"$(realpath ui/" + path + ")\" \"$(realpath ui/" + path + ")\" > .cargo/config.toml" } }}
 
 blockstitch-published commit="":
     {{rm-cargo-cfg}}

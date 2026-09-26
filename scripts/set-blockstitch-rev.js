@@ -7,7 +7,7 @@ if (!commit) {
 
 const cargo = fs.readFileSync("Cargo.toml", "utf8");
 const next = cargo.replace(
-  /(blockstitch-core = \{ git = "https:\/\/github.com\/Blockworked\/blockstitch", rev = ")[^"]*(" \})/,
+  /(blockstitch-(?:core|qml) = \{ git = "https:\/\/github.com\/Blockworked\/blockstitch", rev = ")[^"]*(" \})/g,
   "$1" + commit + "$2",
 );
 if (next !== cargo) {
