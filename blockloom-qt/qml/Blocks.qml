@@ -19,8 +19,18 @@ QtObject {
         return null;
     }
     readonly property string mode: project ? project.world.mode : "TwoD"
-    // Option lists are functions of the state, so re-evaluate them with it.
-    onAppStateChanged: BlockRegistry.revision++
+    // Option lists are functions of the state, which BlockRegistry can't
+    // watch, so its revision goes up when anything they read changes. Only
+    // then: a bump re-evaluates every dropdown on the canvas and the palette.
+    readonly property string optionSource: {
+        if (!project) return "";
+        const names = xs => (xs || []).map(x => x.name);
+        return JSON.stringify([mode, names(project.actors), names(project.world.input ? project.world.input.actions : []),
+            names(project.globals), names(project.global_lists), names(project.global_dicts),
+            actor ? [names(actor.variables), names(actor.lists), names(actor.dicts),
+                     actor.components.map(c => [componentName(c), (c.fields || []).map(f => f.name)])] : null]);
+    }
+    onOptionSourceChanged: BlockRegistry.revision++
 
     // ─── Fixed option lists (constants.ts) ─────────────────────────────────
     function opts(names) { return names.map(n => ({ value: n, label: n })); }
