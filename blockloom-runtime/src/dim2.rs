@@ -1034,7 +1034,9 @@ mod tests {
         assert_eq!(alpha_at(d - 1, d - 1), 0);
         // White throughout so `Sprite::color` tints the actor exactly.
         assert!(
-            data.chunks_exact(4)
+            data.as_chunks::<4>()
+                .0
+                .iter()
                 .all(|p| p[0] == 255 && p[1] == 255 && p[2] == 255)
         );
         assert_eq!(

@@ -613,7 +613,9 @@ fn cube_faces(image: &Image, scale: f32) -> Option<(u32, [Vec<[f32; 3]>; 6])> {
     let half = |bytes: &[u8]| half::f16::from_le_bytes([bytes[0], bytes[1]]).to_f32() * scale;
     let faces = std::array::from_fn(|face| {
         data[face * face_bytes..(face + 1) * face_bytes]
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|texel| [half(&texel[0..2]), half(&texel[2..4]), half(&texel[4..6])])
             .collect()
     });

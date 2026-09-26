@@ -51,7 +51,7 @@ pub fn spawn(mut commands: Commands) {
     ));
 }
 
-pub fn update_status(engine: NonSend<Engine>, mut overlay: Query<&mut Text, With<OverlayText>>) {
+pub fn update_status(_engine: NonSend<Engine>, mut overlay: Query<&mut Text, With<OverlayText>>) {
     let Ok(mut text) = overlay.single_mut() else {
         return;
     };

@@ -1920,32 +1920,31 @@ pub fn apply_common(
                     }
                     None => (nav::next_step(&[to], from, max_step), false),
                 };
-                if !linked {
-                    if let Some(radius) = engine
+                if !linked
+                    && let Some(radius) = engine
                         .actor(actor)
                         .and_then(|a| a.components.brain())
                         .map(|brain| brain.separation.max(0.0))
                         .filter(|radius| *radius > 0.0)
-                    {
-                        let mut away = Vec2::ZERO;
-                        for (other, position) in &positions {
-                            if other == actor || !engine.has_component(other, "Brain") {
-                                continue;
-                            }
-                            let point = nav::plane_coords(mode, position.to_array());
-                            if (point[0] - to[0]).hypot(point[1] - to[1]) < radius * 0.5 {
-                                continue;
-                            }
-                            let offset = Vec2::new(from[0] - point[0], from[1] - point[1]);
-                            let distance = offset.length();
-                            if distance > 1e-4 && distance < radius {
-                                away += offset / distance * (1.0 - distance / radius);
-                            }
+                {
+                    let mut away = Vec2::ZERO;
+                    for (other, position) in &positions {
+                        if other == actor || !engine.has_component(other, "Brain") {
+                            continue;
                         }
-                        let desired = Vec2::new(next[0] - from[0], next[1] - from[1]);
-                        let step = (desired + away * max_step).clamp_length_max(max_step);
-                        next = [from[0] + step.x, from[1] + step.y];
+                        let point = nav::plane_coords(mode, position.to_array());
+                        if (point[0] - to[0]).hypot(point[1] - to[1]) < radius * 0.5 {
+                            continue;
+                        }
+                        let offset = Vec2::new(from[0] - point[0], from[1] - point[1]);
+                        let distance = offset.length();
+                        if distance > 1e-4 && distance < radius {
+                            away += offset / distance * (1.0 - distance / radius);
+                        }
                     }
+                    let desired = Vec2::new(next[0] - from[0], next[1] - from[1]);
+                    let step = (desired + away * max_step).clamp_length_max(max_step);
+                    next = [from[0] + step.x, from[1] + step.y];
                 }
                 let destination = match mode {
                     Mode::TwoD => Vec3::new(next[0], next[1], from3.z),
@@ -2293,10 +2292,10 @@ pub fn step_tweens(
         if let Some(mut sprite) = sprite {
             sprite.color = mixed;
         }
-        if let Some(handle) = material {
-            if let Some(mut mat) = materials.get_mut(&handle.0) {
-                mat.base_color = mixed;
-            }
+        if let Some(handle) = material
+            && let Some(mut mat) = materials.get_mut(&handle.0)
+        {
+            mat.base_color = mixed;
         }
         if linear >= 1.0 {
             commands.entity(entity).remove::<TweeningColor>();
@@ -2352,12 +2351,12 @@ pub fn step_animations(
             player.elapsed += dt * player.speed;
         }
         let (index, done) = clip.frame_index(player.elapsed);
-        if let Some(path) = clip.frames.get(index) {
-            if let Some(mut sprite) = sprite {
-                let handle: Handle<Image> = assets.load(asset_path(dir.as_deref(), path));
-                if sprite.image != handle {
-                    sprite.image = handle;
-                }
+        if let Some(path) = clip.frames.get(index)
+            && let Some(mut sprite) = sprite
+        {
+            let handle: Handle<Image> = assets.load(asset_path(dir.as_deref(), path));
+            if sprite.image != handle {
+                sprite.image = handle;
             }
         }
         if done && !player.ended_fired {
@@ -2372,25 +2371,23 @@ pub fn step_animations(
                 .cloned()
             {
                 let next = state.next.trim();
-                if !next.is_empty() {
-                    if let Some(follow) = spec
+                if !next.is_empty()
+                    && let Some(follow) = spec
                         .find_state(next)
                         .and_then(|state| spec.find_clip(&state.clip))
                         .or_else(|| spec.find_clip(next))
                         .cloned()
-                    {
-                        if !follow.is_empty() {
-                            player.clip = follow.name.clone();
-                            player.elapsed = 0.0;
-                            player.speed = spec
-                                .find_state(next)
-                                .map(|state| state.speed)
-                                .unwrap_or(1.0)
-                                .clamp(0.0, 8.0);
-                            player.playing = player.speed > 0.0;
-                            player.ended_fired = false;
-                        }
-                    }
+                    && !follow.is_empty()
+                {
+                    player.clip = follow.name.clone();
+                    player.elapsed = 0.0;
+                    player.speed = spec
+                        .find_state(next)
+                        .map(|state| state.speed)
+                        .unwrap_or(1.0)
+                        .clamp(0.0, 8.0);
+                    player.playing = player.speed > 0.0;
+                    player.ended_fired = false;
                 }
             }
         }

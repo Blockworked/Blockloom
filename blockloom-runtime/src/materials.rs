@@ -732,6 +732,7 @@ pub fn spawn_tilemap_2d(
 }
 
 /// See [`spawn_tilemap_2d`]: the 3D half, standing the map up as a wall.
+#[allow(dead_code)] // Not wired into dim3 yet.
 pub fn spawn_tilemap_3d(
     commands: &mut Commands,
     entity: Entity,
