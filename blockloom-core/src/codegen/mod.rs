@@ -69,19 +69,19 @@ pub use runtime::{
     ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_CLOUD_DRIFT,
     ACT_SET_CLOUD_LAYER, ACT_SET_CLOUDS, ACT_SET_COLLISION_LAYER, ACT_SET_COLLISION_MASK,
     ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_EMISSIVE_STRENGTH, ACT_SET_EMITTER_DIAL,
-    ACT_SET_EXPOSURE, ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_FOG_DENSITY, ACT_SET_GI_BOUNCES,
-    ACT_SET_GI_SAMPLES, ACT_SET_GRAVITY, ACT_SET_HDR_OUTPUT, ACT_SET_LIGHT_INTENSITY,
-    ACT_SET_LIGHT_SHADOWS, ACT_SET_LIGHTNING_RATE, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED,
-    ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_PEAK_BRIGHTNESS, ACT_SET_RAY_TRACING, ACT_SET_ROTATION,
-    ACT_SET_SCALE, ACT_SET_SHADOW_DISTANCE, ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME,
-    ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY,
-    ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT, ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT,
-    ACT_STOP_ANIMATION, ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_TURN,
-    ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, Act, Actors, Entry,
-    Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI,
-    SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
-    SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
-    Val,
+    ACT_SET_EMITTER_PLAYING, ACT_SET_EXPOSURE, ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_FOG_DENSITY,
+    ACT_SET_GI_BOUNCES, ACT_SET_GI_SAMPLES, ACT_SET_GRAVITY, ACT_SET_HDR_OUTPUT,
+    ACT_SET_LIGHT_INTENSITY, ACT_SET_LIGHT_SHADOWS, ACT_SET_LIGHTNING_RATE, ACT_SET_MASS,
+    ACT_SET_MOUSE_LOCKED, ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_PEAK_BRIGHTNESS,
+    ACT_SET_RAY_TRACING, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SHADOW_DISTANCE,
+    ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER,
+    ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT,
+    ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT, ACT_STOP_ANIMATION, ACT_STOP_SOUND,
+    ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_TURN, ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION,
+    ACT_TWEEN_SCALE, AbiStr, AbiValue, Act, Actors, Entry, Host, LOGIC_ABI_VERSION, LogicHostApi,
+    R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE,
+    SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET, SYM_LOGIC_TICK, State, Status, TICK_STOPPED,
+    VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
 };
 
 use crate::project::Project;
@@ -353,6 +353,7 @@ fn trigger_name(trigger: &crate::vm::Trigger) -> &'static str {
         Trigger::Message(_) => "Message",
         Trigger::Cloned => "Cloned",
         Trigger::AnimationEnded { .. } => "AnimationEnded",
+        Trigger::Particles(_) => "Particles",
         Trigger::ActionPressed(_) => "Action",
         Trigger::Touched => "Touched",
         Trigger::UiEvent { .. } => "UiEvent",
@@ -368,6 +369,7 @@ fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
         Trigger::Collision { with } => with.clone(),
         Trigger::Message(name) => name.clone(),
         Trigger::AnimationEnded { clip } => clip.clone(),
+        Trigger::Particles(event) => event.name().to_string(),
         Trigger::UiEvent { id, event } => format!("{event}\n{id}"),
         Trigger::UiClicked(id) | Trigger::UiChanged(id) => id.clone(),
         Trigger::ActionPressed(action) => action.clone(),
@@ -1131,6 +1133,9 @@ impl<'a> Pass<'a> {
             ),
             Action::SetTrailEnabled(enabled) => {
                 act(format!("Act::SetTrailEnabled {{ enabled: {enabled} }}"))
+            }
+            Action::SetEmitterPlaying(playing) => {
+                act(format!("Act::SetEmitterPlaying {{ playing: {playing} }}"))
             }
             Action::SetTrigger(trigger) => act(format!("Act::SetTrigger {{ trigger: {trigger} }}")),
             Action::SetCollisionLayer(layer) => reading(

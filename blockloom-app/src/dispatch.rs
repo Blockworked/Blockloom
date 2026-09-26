@@ -175,6 +175,10 @@ impl Backend {
                 let wind: blockloom_core::wind::Wind = arg(&args, "wind")?;
                 to_json(commands::set_wind(state, app, wind)?)
             }
+            "set_vfx" => {
+                let vfx: blockloom_core::vfx::VfxSettings = arg(&args, "vfx")?;
+                to_json(commands::set_vfx(state, app, vfx)?)
+            }
             "set_post_process" => {
                 let post: PostProcess = arg(&args, "post")?;
                 to_json(commands::set_post_process(state, app, post)?)

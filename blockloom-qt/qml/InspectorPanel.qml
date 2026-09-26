@@ -761,8 +761,10 @@ Rectangle {
                 ColorField { value: em.e.color_end; onPicked: col => root.writeEmitter(em.c, { color_end: col }) }
                 Item { Layout.fillWidth: true } }
             InspectorRow { label: "Max"; Layout.fillWidth: true; NumberField { value: em.e.max; fallback: 128; onCommitted: n => root.writeEmitter(em.c, { max: Math.round(n) }) } }
+            EmitterGraphRows { Layout.fillWidth: true; app: root.app; is3d: root.is3d; emitter: em.e
+                onEdited: next => root.writeEmitter(em.c, next) }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
-                text: "Runs while attached - detaching the emitter stops the spray, and what is already flying fades out on its own." }
+                text: "Plays in the scene view while this actor is selected, looping every Duration. In a run it sprays while attached; detaching stops the spray and what is already flying fades out on its own." }
         }
     }
     Component {

@@ -80,6 +80,9 @@ pub enum Act {
     SetTrailEnabled {
         enabled: bool,
     },
+    SetEmitterPlaying {
+        playing: bool,
+    },
     ChangePosition {
         axis: usize,
         by: f32,
@@ -716,6 +719,7 @@ impl Runner {
                     entry.actor == &*template
                         && (entry.detail.is_empty() || entry.detail.eq_ignore_ascii_case(detail))
                 }
+                ("Particles", "Particles") => entry.actor == &*template && entry.detail == detail,
                 _ => false,
             };
             if !matches {
@@ -725,7 +729,7 @@ impl Runner {
             // strand; a broadcast, or an interface element nobody owns,
             // starts every copy's.
             let running = match kind {
-                "Clicked" | "Collision" | "AnimationEnded" => vec![Rc::from(actor)],
+                "Clicked" | "Collision" | "AnimationEnded" | "Particles" => vec![Rc::from(actor)],
                 _ => self.actors.copies_of(entry.actor),
             };
             for id in running {
@@ -1254,6 +1258,8 @@ pub const ACT_SET_CLOUD_LAYER: u32 = 94;
 /// `a` = water dial (`Level`, `Chop`, `Foam`); `n0` = value. The actor's own
 /// water when it has some, every body's otherwise.
 pub const ACT_SET_WATER: u32 = 95;
+/// `n0` != 0 lets the emitter spawn.
+pub const ACT_SET_EMITTER_PLAYING: u32 = 96;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1493,6 +1499,14 @@ impl Host for AbiHost {
                 "",
                 "",
                 [f64::from(enabled as u8), 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetEmitterPlaying { playing } => self.act_wire(
+                actor,
+                ACT_SET_EMITTER_PLAYING,
+                "",
+                "",
+                [f64::from(playing as u8), 0.0, 0.0],
                 &zero,
             ),
             Act::ChangePosition { axis, by } => self.act_wire(

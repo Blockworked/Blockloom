@@ -769,6 +769,46 @@ the surface to the depth, its top row riding the waves (`water_2d.wesl`).
 The GPU half is the ignored `embed` test `a_lake_tints_the_floor_under_it`;
 on lavapipe the water's pipelines take a few hundred frames to compile.
 
+### Particles and VFX
+
+An `Emitter` component (`ParticleSpec`, `blockloom-core/src/material.rs`)
+carries the whole VFX graph (`blockloom-core/src/vfx.rs`): a spawn
+`SpawnShape` and `LaunchDirection`, `rate` plus timed `Burst`s on the
+emitter's own clock (`vfx::due`), an ordered `UpdateModule` stack,
+`ParticleRender` (blend, facing, flipbook, `Curve`s and a `Gradient` over
+life, baked to `LUT` entries for the GPU) and a `RibbonSpec`. `Particle` is
+one 64-byte slot, byte for byte `Particle` in `shaders/vfx.wesl` (the
+`blockloom::vfx` library module), whose hash and noise match core's, so the
+two sims spray the same way.
+
+Two sims fill one buffer. `vfx::Pool` is the CPU one: 2D, `SimMode::Cpu`,
+`VfxSettings::cpu_only`, devices without compute and `RibbonSource::Actor`
+(slot 0 pinned to the actor) run on it, up to `CPU_MAX`, colliding with
+actors' sensor shapes through `physics_query::segment_contact`. Everything
+else in 3D runs `blockloom-runtime/src/shaders/vfx_sim.wesl`: `begin` resets
+one `EmitterState`, `simulate` steps every slot, spawning claims slots
+through an atomic budget, and `Collide` reads the depth prepass (reverse Z).
+`SimParams` in `vfx.rs` matches the WGSL field for field; change the two
+together, and `ParticleLook` with `vfx_particles.wesl`.
+
+`blockloom-runtime/src/vfx.rs` is the main-world half: `step_emitters`
+(Update, after `interpolate_poses`) keeps a `Draws` entry per emitter (the
+buffers, one or two slot meshes, the `ParticleMaterial`s and the sim),
+decides what spawns within the project's budget, steps the pool or pushes a
+`GpuStep`, and fires `Event::Particles` once a frame per kind while a run
+is live. `vfx/gpu.rs` is the render-world half: pool bytes land through
+`VfxFrame` uploads, and the compute pass runs once a frame in `Core3d`
+between the prepass and the main pass. GPU counts come back through a
+`Readback` of the state buffer, tagged with a step sequence so each set is
+used once. `vfx/render.rs` is the draw: the mesh's positions only name a
+slot, a corner and a ribbon segment, and `vfx_particles.wesl` (3D) or
+`vfx_particles_2d.wesl` reads the particle. While nothing runs, the actor
+the scene view has selected plays its emitter on a loop of `duration`.
+Draws go on a rebuild (`fx::despawn_fx`). `fx.rs` is now only splash
+droplets and trails. Counts reach the profiler as `vfx/*`. The GPU half is
+the ignored `embed` tests `gpu_particles_draw_where_they_are_born` and its
+CPU twin.
+
 ### Lighting rig
 
 `Light` (`LightSpec`) is a point, spot, rect or disk light. Rect and disk are

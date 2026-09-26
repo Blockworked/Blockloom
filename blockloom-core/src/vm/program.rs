@@ -33,6 +33,8 @@ pub enum Trigger {
     AnimationEnded {
         clip: String,
     },
+    /// The actor's own particles spawned, died or hit something.
+    Particles(crate::vfx::ParticleEvent),
     /// The named input action went down.
     ActionPressed(String),
     /// A finger touched the screen.
@@ -180,6 +182,7 @@ pub enum Action {
         value: Value,
     },
     SetTrailEnabled(bool),
+    SetEmitterPlaying(bool),
     Say(Value),
     SetVisible(bool),
     SetColor(Value),
@@ -473,6 +476,7 @@ pub fn compile(graph: &ActorGraph) -> Program {
             InstructionKind::WhenAnimationEnds { clip } => Some(Trigger::AnimationEnded {
                 clip: clip.trim().to_string(),
             }),
+            InstructionKind::WhenParticles { event } => Some(Trigger::Particles(*event)),
             InstructionKind::WhenActionPressed { action } => Some(Trigger::ActionPressed(
                 crate::input::normalize_action(action).to_lowercase(),
             )),
@@ -1333,6 +1337,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenMessage { .. }
         | K::WhenCloned
         | K::WhenAnimationEnds { .. }
+        | K::WhenParticles { .. }
         | K::WhenUiEvent { .. }
         | K::WhenUiClicked { .. }
         | K::WhenUiChanged { .. }
@@ -1520,6 +1525,9 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         })),
         K::SetTrailEnabled { enabled } => {
             steps.push(Step::Action(Action::SetTrailEnabled(*enabled)))
+        }
+        K::SetEmitterPlaying { playing } => {
+            steps.push(Step::Action(Action::SetEmitterPlaying(*playing)))
         }
         K::Say { text } => steps.push(Step::Action(Action::Say(text.clone()))),
         K::SetVisible { visible } => steps.push(Step::Action(Action::SetVisible(*visible))),

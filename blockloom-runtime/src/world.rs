@@ -3382,6 +3382,7 @@ pub fn report_status(
     gpu: crate::gpu::GpuReport,
     volumes: Option<Res<crate::volumes::VolumeBlend>>,
     terrain: Option<Res<crate::terrain::TerrainStats>>,
+    vfx: Option<Res<crate::vfx::VfxStats>>,
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
     let now = time.elapsed_secs() as f64;
@@ -3482,6 +3483,15 @@ pub fn report_status(
                 name: name.into(),
                 value: value as f64,
                 unit: "count".into(),
+            });
+        }
+    }
+    if let Some(vfx) = vfx.filter(|vfx| vfx.emitters > 0) {
+        for (name, value, unit) in vfx.metrics() {
+            render_metrics.push(RenderMetric {
+                name: name.into(),
+                value,
+                unit: unit.into(),
             });
         }
     }
@@ -3765,6 +3775,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::BurstParticles { actor, .. }
         | Effect::SetEmitterDial { actor, .. }
         | Effect::SetTrailEnabled { actor, .. }
+        | Effect::SetEmitterPlaying { actor, .. }
         | Effect::SetLightShadows { actor, .. }
         | Effect::ChangePosition { actor, .. }
         | Effect::Glide { actor, .. }

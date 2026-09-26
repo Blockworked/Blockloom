@@ -3169,6 +3169,78 @@ mod tests {
 
     /// The 3D starter's floor with no sun and no ambient light, plus a small
     /// still lamp above the middle of it, which batching merges.
+    /// The dark room with a red emitter at the floor's middle, whose
+    /// particles hang where they are born.
+    fn sparks(sim: blockloom_core::vfx::SimMode) -> blockloom_core::project::Project {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::material::ParticleSpec;
+        use blockloom_core::vfx::{Curve, ParticleBlend};
+        let mut room = dark_room(false);
+        let mut spec = ParticleSpec {
+            rate: 200.0,
+            lifetime: 30.0,
+            speed: 0.0,
+            gravity_scale: 0.0,
+            size_start: 3.0,
+            size_end: 3.0,
+            color_start: "#FF0000".to_string(),
+            color_end: "#FF0000".to_string(),
+            // One particle at a time, so the red doesn't pile up into white.
+            max: 1,
+            wind: 0.0,
+            sim,
+            ..ParticleSpec::default()
+        };
+        spec.render.blend = ParticleBlend::Additive;
+        spec.render.alpha = Curve::constant(1.0);
+        let mut emitter = blockloom_core::project::Actor::new(
+            "Sparks",
+            blockloom_core::scene::Visual::Sphere {
+                color: "#000000".to_string(),
+                radius: 0.01,
+            },
+        );
+        emitter.components.remove("Look");
+        emitter.components.placement_mut().position = [0.0, 1.0, 0.0];
+        emitter
+            .components
+            .insert(ActorComponent::Emitter { emitter: spec });
+        room.actors.push(emitter);
+        room
+    }
+
+    /// Red pixels in a frame of the sparks room, which is black but for
+    /// the particles.
+    fn red_sparks(sim: blockloom_core::vfx::SimMode, name: &str) -> usize {
+        let (set, index, errors) = run_world_sending(
+            sparks(sim),
+            |_| {},
+            game_camera(),
+            120,
+            |_| false,
+            vec![EditorMessage::Start],
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+        let set = set.expect("no frame arrived");
+        let frame = frame_pixels(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        dump(name, &frame);
+        frame.into_iter().filter(|&pixel| is_red(pixel)).count()
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn gpu_particles_draw_where_they_are_born() {
+        let red = red_sparks(blockloom_core::vfx::SimMode::Auto, "gpu_particles");
+        assert!(red > 1000, "expected red sparks, found {red} red pixels");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn cpu_particles_draw_where_they_are_born() {
+        let red = red_sparks(blockloom_core::vfx::SimMode::Cpu, "cpu_particles");
+        assert!(red > 1000, "expected red sparks, found {red} red pixels");
+    }
+
     fn dark_room(lamp: bool) -> blockloom_core::project::Project {
         use blockloom_core::components::{ActorComponent, LightSpec};
         use blockloom_core::scene::Visual;

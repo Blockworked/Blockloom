@@ -65,6 +65,7 @@ pub mod sync;
 pub mod terrain;
 pub mod ui;
 pub mod value;
+pub mod vfx;
 pub mod vm;
 pub mod vocabulary;
 pub mod volume;

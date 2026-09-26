@@ -50,6 +50,8 @@ BwDialog {
     function cloudLayersOf() { return world && world.cloud_layers ? JSON.parse(JSON.stringify(world.cloud_layers)) : []; }
     function writeCloudLayers(layers) { invoke("set_cloud_layers", { layers: layers }); }
     function writeCloudLayer(index, next) { const layers = cloudLayersOf(); layers[index] = Object.assign(layers[index], next); writeCloudLayers(layers); }
+    function vfxOf() { return Object.assign({ budget: 200000, cpu_only: false }, world && world.vfx ? world.vfx : {}); }
+    function writeVfx(next) { invoke("set_vfx", { vfx: Object.assign(vfxOf(), next) }); }
     function writeWind(next) { invoke("set_wind", { wind: Object.assign(JSON.parse(JSON.stringify(world.wind)), next) }); }
     function writeClouds(next) { writeWind({ clouds: Object.assign(JSON.parse(JSON.stringify(world.wind.clouds)), next) }); }
     function writeLighting(next) { invoke("set_lighting", { lighting: Object.assign(JSON.parse(JSON.stringify(world.lighting)), next) }); }
@@ -640,6 +642,14 @@ BwDialog {
                     NumberField { value: windSection.c.seed; fallback: 1; onCommitted: n => root.writeClouds({ seed: Math.max(Math.round(n), 0) }) }
                     BwButton { text: "Shuffle"; iconName: "refresh-cw"; implicitHeight: 30; onClicked: root.writeClouds({ seed: 1 + Math.floor(Math.random() * 2147483646) }) } }
                 Note { text: "Direction is where the wind blows towards, in degrees clockwise from north (-Z in 3D, up the screen in 2D), and speed is measured at the reference height. Gusts come and go on smooth noise, swinging the direction by up to the veer; one seed always blows the same. In 3D the ground profile calms the wind towards the ground on a log law. Storm (0 to 1) triples the speed, quadruples the gusts and triples zone turbulence at full. Particles ride it (each emitter says how much), volumetric fog's noise drifts with it, and the clouds take the wind at their altitude times follow, plus their own drift; time-lapse runs them up to 1000x faster. Volumes can make local wind zones. Blocks: `set wind`, `set cloud drift to`, and the `wind speed`, `wind direction` and `storm` atmosphere readings." }
+            }
+            Section {
+                heading: "Particles"; visible: !!root.world
+                InspectorRow { label: "Budget"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.vfxOf().budget; fallback: 200000; onCommitted: n => root.writeVfx({ budget: Math.max(1, Math.round(n)) }) } }
+                InspectorRow { visible: root.is3d; label: "CPU only"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: root.vfxOf().cpu_only; onToggled: on => root.writeVfx({ cpu_only: on }) } Item { Layout.fillWidth: true } }
+                Note { text: "The budget caps live particles across every emitter: past it, emitters stop spawning until some die. 3D emitters simulate on the GPU where it has compute shaders; CPU only keeps them all on the CPU, with 4096 particles each at most. The profiler shows the count, the GPU emitters and the overdraw." }
             }
             Section {
                 heading: "Shadows"; visible: !!root.world && root.is3d

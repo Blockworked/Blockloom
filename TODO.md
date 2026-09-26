@@ -698,7 +698,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         are fixed for the run (the authored wind direction); the surface has
         no fog of its own (the fog pass sees the floor under it). The ignored
         embed test only checks a lake tints what is under it.
-  - [ ] VFX graph (Niagara/VFX-Graph lite): GPU sim with spawn modules (rate, burst,
+  - [x] VFX graph (Niagara/VFX-Graph lite): GPU sim with spawn modules (rate, burst,
         shape sphere/box/cone/mesh-surface), update modules (velocity, drag, curl noise,
         turbulence, attractor, depth-buffer collide with bounce/friction, kill planes),
         render (flipbook sub-UV, size/color/rotation over life curves, soft particles,
@@ -706,6 +706,38 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         camera, HDR color for glow trails), event hooks (`on collide/die/spawn` fires
         blocks). CPU fallback pool for headless/low-end. Editor: curve editor, live
         loop preview, max-particle budget and overdraw meter.
+        Done: the `Emitter` component grew the graph (older emitters load
+        unchanged): a spawn shape (point, sphere or its surface, box, cone,
+        the actor's own mesh surface) launching along the facing or out of
+        the shape, timed bursts with cycles on the emitter's clock, an
+        ordered update stack (force, drag, curl noise, turbulence, attractor
+        towards an actor or the emitter with a kill radius, collide with
+        bounce/friction/lifetime loss/kill, kill plane), and render options
+        (additive or alpha, facing camera/velocity/flat, velocity stretch,
+        flipbook sheets with frame blending, size/opacity/rotation curves and
+        a color gradient over life, spin, size jitter, soft particles, lit or
+        unlit, HDR intensity). Ribbons follow each particle or the actor
+        itself, with a point history, Catmull-Rom tessellation, a width
+        curve, a color gradient, face-camera and glow intensity. 3D emitters
+        simulate in a compute shader after the depth prepass (up to 65536
+        each) and collide with the depth buffer; 2D, devices without compute,
+        `Runs on: CPU`, a project's CPU-only switch and actor ribbons use the
+        CPU pool in core (up to 4096 each), which collides with actors'
+        collision shapes. Both fill one particle buffer the same draw reads.
+        `when my particles [spawn/die/collide]` runs at most once a frame per
+        event (from the GPU a frame or two late, through a readback) and
+        `start/stop my particles` pauses spawning; both compile to native
+        logic. The inspector edits all of it with a curve editor, the
+        selected actor's emitter loops its duration in the scene view, and
+        Project Settings holds the particle budget. The profiler gets
+        `vfx/particles`, `vfx/emitters`, `vfx/gpu_emitters`, `vfx/budget` and
+        `vfx/overdraw`.
+        Not covered: it is a module stack, not a node graph; GPU collisions
+        only see what is on screen, and GPU events report one position per
+        kind a frame; overdraw is estimated from particle sizes, not counted
+        on the GPU; lit particles are lit as flat cards; a mesh surface uses
+        the actor's own shape, not a model's parts; no script API yet. The
+        ignored embed tests only check that GPU and CPU particles draw.
   - [ ] Decals (transient marks only; lasting stains live in the destruction map
         below): deferred projected (albedo/normal/roughness/emissive, atlas pages,
         angle fade, depth reject to avoid floating edges), pool with LRU steal plus

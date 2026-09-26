@@ -995,6 +995,9 @@ pub struct World {
     /// Snow cover and wetness, which surface masks scale by.
     #[serde(default)]
     pub surface: crate::material::SurfaceWeather,
+    /// The particle budget and where emitters simulate.
+    #[serde(default)]
+    pub vfx: crate::vfx::VfxSettings,
 }
 
 fn default_background() -> String {
@@ -1035,6 +1038,7 @@ impl Default for World {
             lightning: crate::lightning::Lightning::default(),
             wind: crate::wind::Wind::default(),
             surface: crate::material::SurfaceWeather::default(),
+            vfx: crate::vfx::VfxSettings::default(),
         }
     }
 }

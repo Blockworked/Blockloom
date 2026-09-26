@@ -27,6 +27,8 @@ fn main() {
                 "qml/InspectorPanel.qml",
                 "qml/InspectorRow.qml",
                 "qml/SurfaceDetailRows.qml",
+                "qml/EmitterGraphRows.qml",
+                "qml/CurveField.qml",
                 "qml/NumberField.qml",
                 "qml/ColorField.qml",
                 "qml/HdrColorField.qml",

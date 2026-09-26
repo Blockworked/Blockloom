@@ -84,6 +84,12 @@ pub enum InstructionKind {
     WhenAnimationEnds {
         clip: String,
     },
+    /// Runs in the emitting actor when its particles spawn, die or hit
+    /// something: at most once a frame per event, however many there were.
+    WhenParticles {
+        #[serde(default)]
+        event: crate::vfx::ParticleEvent,
+    },
     /// Runs when the interface element named `element` is clicked.
     ///
     /// Spelled `element` rather than `id` because a flattened instruction
@@ -376,6 +382,11 @@ pub enum InstructionKind {
     /// Starts or stops recording snapshots for this run.
     SetTrailEnabled {
         enabled: bool,
+    },
+    /// Starts or stops the emitter spawning. Live particles fly on either
+    /// way; starting again restarts the burst clock.
+    SetEmitterPlaying {
+        playing: bool,
     },
 
     // ─── Sound ──────────────────────────────────────────────────────────────
@@ -1138,6 +1149,7 @@ impl BlockKind for InstructionKind {
             | K::WhenMessage { .. }
             | K::WhenCloned
             | K::WhenAnimationEnds { .. }
+            | K::WhenParticles { .. }
             | K::BlockHeader { .. }
             | K::CreateClone { .. }
             | K::PointTowards { .. }
@@ -1148,6 +1160,7 @@ impl BlockKind for InstructionKind {
             | K::DetachComponent { .. }
             | K::SetVisible { .. }
             | K::SetTrailEnabled { .. }
+            | K::SetEmitterPlaying { .. }
             | K::CaptureProbes
             | K::SetLightShadows { .. }
             | K::SetRayTracing { .. }
@@ -1188,6 +1201,7 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenMessage { .. }
                 | InstructionKind::WhenCloned
                 | InstructionKind::WhenAnimationEnds { .. }
+                | InstructionKind::WhenParticles { .. }
                 | InstructionKind::WhenUiEvent { .. }
                 | InstructionKind::WhenUiClicked { .. }
                 | InstructionKind::WhenUiChanged { .. }

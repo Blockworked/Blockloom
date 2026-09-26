@@ -236,6 +236,11 @@ pub enum Event {
         actor: String,
         clip: String,
     },
+    /// The actor's particles spawned, died or hit something this frame.
+    Particles {
+        actor: String,
+        event: crate::vfx::ParticleEvent,
+    },
     /// The named input action went down, in lowercase action spelling.
     Action(String),
     /// A finger touched the screen.
@@ -636,6 +641,9 @@ impl Vm {
                 Trigger::AnimationEnded { clip: want },
                 Event::AnimationEnded { actor: ended, clip },
             ) => ended == actor && (want.is_empty() || want.eq_ignore_ascii_case(clip)),
+            (Trigger::Particles(want), Event::Particles { actor: from, event }) => {
+                from == actor && want == event
+            }
             (Trigger::ActionPressed(want), Event::Action(got)) => want == got,
             (Trigger::Touched, Event::Touched) => true,
             (
@@ -1134,6 +1142,10 @@ impl Vm {
             Action::SetTrailEnabled(enabled) => out.push(Effect::SetTrailEnabled {
                 actor: actor.to_string(),
                 enabled: *enabled,
+            }),
+            Action::SetEmitterPlaying(playing) => out.push(Effect::SetEmitterPlaying {
+                actor: actor.to_string(),
+                playing: *playing,
             }),
             Action::ChangePosition { axis, by } => {
                 let by = self.eval_f32(by, actor, params, temps, out);
