@@ -1065,6 +1065,20 @@ impl Actor {
         );
     }
 
+    /// One of the volumetric clouds' dials for the rest of the run:
+    /// `"coverage"` 0-1, `"density"` 0-10 or `"type"` 0-1 (stratus to cumulus).
+    pub fn set_clouds(&self, dial: &str, value: f32) {
+        self.act(
+            ACT_SET_CLOUDS,
+            Str::borrow(dial),
+            Str::EMPTY,
+            Str::EMPTY,
+            value as f64,
+            0.0,
+            0.0,
+        );
+    }
+
     /// Extra cloud drift, world units per second, for the rest of the run.
     pub fn set_cloud_drift(&self, x: f32, y: f32, z: f32) {
         self.act(

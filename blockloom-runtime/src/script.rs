@@ -927,6 +927,16 @@ extern "C" fn act(
             },
         },
         abi::ACT_SET_CLOUD_DRIFT => Effect::SetCloudDrift { drift: vector },
+        abi::ACT_SET_CLOUDS => match blockloom_core::clouds::CloudProperty::parse(a) {
+            Some(property) => Effect::SetClouds {
+                property,
+                value: n0 as f32,
+            },
+            None => Effect::Error {
+                actor,
+                message: format!("there's no cloud dial called \"{a}\""),
+            },
+        },
         abi::ACT_SET_BUS_VOLUME => Effect::SetBusVolume {
             bus: SoundBus::parse(a).unwrap_or(SoundBus::Sfx),
             volume: user_to_gain(n0),

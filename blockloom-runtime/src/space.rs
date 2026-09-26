@@ -159,7 +159,7 @@ pub fn aurora_kp(engine: &Engine) -> f32 {
         .clamp(0.0, 9.0)
 }
 
-/// `set aurora` and `set fog density` for the rest of the run.
+/// `set aurora`, `set fog density` and `set clouds` for the rest of the run.
 fn apply_space_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engine>) {
     if !engine.running {
         return;
@@ -172,6 +172,7 @@ fn apply_space_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engi
             Effect::SetFogDensity { density } if density.is_finite() => {
                 engine.fog_density = Some(density.clamp(0.0, 10.0));
             }
+            Effect::SetClouds { property, value } => engine.clouds.set(*property, *value),
             _ => {}
         }
     }

@@ -151,6 +151,10 @@ pub enum Action {
         property: crate::wind::WindProperty,
         value: Value,
     },
+    SetClouds {
+        property: crate::clouds::CloudProperty,
+        value: Value,
+    },
     SetCloudDrift([Value; 3]),
     SetBody(BodyKind),
     ApplyImpulse([Value; 3]),
@@ -618,6 +622,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
         | Action::SetAurora(value)
         | Action::SetLightningRate(value)
         | Action::SetWind { value, .. }
+        | Action::SetClouds { value, .. }
         | Action::Say(value)
         | Action::SetColor(value)
         | Action::StopSound { sound: value }
@@ -892,6 +897,10 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
             Action::StrikeLightning(t)
         }
         Action::SetWind { property, value } => Action::SetWind {
+            property,
+            value: lift_one(value, ctx),
+        },
+        Action::SetClouds { property, value } => Action::SetClouds {
             property,
             value: lift_one(value, ctx),
         },
@@ -1428,6 +1437,10 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             steps.push(Step::Action(Action::SetLightningRate(rate.clone())))
         }
         K::SetWind { property, value } => steps.push(Step::Action(Action::SetWind {
+            property: *property,
+            value: value.clone(),
+        })),
+        K::SetClouds { property, value } => steps.push(Step::Action(Action::SetClouds {
             property: *property,
             value: value.clone(),
         })),

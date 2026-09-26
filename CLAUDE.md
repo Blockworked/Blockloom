@@ -786,6 +786,25 @@ tracer, waits for the sample or time budget. The GPU half is the ignored
 `embed` tests (traced vs. untraced lamps, switching mid-run, the path tracer
 and its EXR).
 
+### Volumetric clouds
+
+`World.clouds` (`blockloom-core/src/clouds.rs`) persists shape, altitude,
+lighting and quality, edited by `set_clouds` and Project Settings. The blended
+`Environment.clouds` carries volume coverage, density and type overrides, and
+`set clouds [coverage/density/type] to` (a script's `set_clouds`) lays
+`engine.clouds` over them for the run.
+`blockloom-runtime/src/clouds.rs` bakes seeded, repeating 128³ shape and 32³
+erosion volumes on the GPU, raymarches at half resolution before fog, and
+uses the shared bilateral upsampler over the scene. WindField supplies drift.
+Each view keeps two color/depth histories, invalidated on edits, resize,
+skipped frames and fast motion. Sun and moon have separate shadow switches.
+The 2048² ground transmittance map is a screen-space approximation over the
+combined surface lighting; it does not isolate the PBR direct-light term.
+Profiler readback reports primary steps and contributing samples per pixel;
+render diagnostics time the march. GPU tests cover sky, terrain preservation
+and ground shadows (`cargo test -p blockloom-runtime volumetric_clouds --lib
+-- --ignored`).
+
 ### Shader library and pass plumbing
 
 `blockloom-core/src/shader_lib.rs` holds Blockloom's own WESL modules
