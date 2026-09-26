@@ -11,31 +11,53 @@
 //! script and a canvas can drive one actor between them, and neither has to
 //! know about the other.
 
+// Everything below `Effect` and `Path` serves the native `dlopen` path;
+// web builds keep the surface (see the `wasm32` impl) but run on the VM
+// until scripts link statically.
+#[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::components::CameraView;
+#[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::scene::Axis;
+#[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::script::abi::{self, HostApi, Str};
+#[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::sense;
+#[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::sound::{SoundBus, clamp_pitch, user_to_gain};
+#[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp, UiTheme};
+#[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::value::Evaluated;
 use blockloom_core::vm::Effect;
+#[cfg(not(target_arch = "wasm32"))]
 use blockloom_protocol::RuntimeMessage;
+#[cfg(not(target_arch = "wasm32"))]
 use std::ffi::c_void;
 use std::path::Path;
 
+#[cfg(not(target_arch = "wasm32"))]
 type StartFn = unsafe extern "C" fn(*mut c_void, *const HostApi);
+#[cfg(not(target_arch = "wasm32"))]
 type TickFn = unsafe extern "C" fn(*mut c_void, *const HostApi, f32);
+#[cfg(not(target_arch = "wasm32"))]
 type AbiFn = unsafe extern "C" fn() -> u32;
 
 /// One actor's script, open and ready to call. The library is kept alive
 /// alongside the pointers into it, and closing it is what dropping this does.
+///
+/// Web builds have no `dlopen`, so scripts stay unloaded there and the actor's
+/// blocks run on the VM; static linking follows the same entry points later.
 pub struct LoadedScript {
     /// Dropped last, after the pointers that live inside it.
+    #[cfg(not(target_arch = "wasm32"))]
     library: libloading::Library,
+    #[cfg(not(target_arch = "wasm32"))]
     start: StartFn,
+    #[cfg(not(target_arch = "wasm32"))]
     tick: TickFn,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl LoadedScript {
     /// Whether the editor has built this script yet. Before the first Play it
     /// hasn't, which is ordinary rather than a problem worth reporting.
@@ -107,6 +129,25 @@ impl LoadedScript {
     }
 }
 
+/// Web builds have no `dlopen`, so nothing is ever built to open: the
+/// actor's blocks run on the VM instead.
+#[cfg(target_arch = "wasm32")]
+impl LoadedScript {
+    pub fn is_built(_project_dir: &Path, _relative: &str) -> bool {
+        false
+    }
+
+    pub fn load(_project_dir: &Path, relative: &str) -> Result<LoadedScript, String> {
+        Err(format!(
+            "{relative} has no web build yet, so its blocks run on the VM"
+        ))
+    }
+
+    pub fn start(&self, _actor: &str, _asked: &mut Asked) {}
+
+    pub fn tick(&self, _actor: &str, _asked: &mut Asked, _dt: f32) {}
+}
+
 /// What one run of a script asked the world for. Effects are applied by the
 /// same systems that apply a block's; a broadcast isn't an effect at all, so
 /// it is carried out separately and fired at the VM by the caller.
@@ -125,6 +166,7 @@ pub struct Asked {
     pub deleted: Vec<(String, String)>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn missing_export(relative: &str) -> String {
     format!(
         "{relative} doesn't name its entry points - end the file with \
@@ -134,6 +176,7 @@ fn missing_export(relative: &str) -> String {
 
 /// What a callback is handed: who is running, and somewhere to put what it
 /// asks for.
+#[cfg(not(target_arch = "wasm32"))]
 struct Ctx<'a> {
     actor: &'a str,
     asked: &'a mut Asked,
@@ -142,12 +185,14 @@ struct Ctx<'a> {
 /// # Safety
 /// Only ever called from a script, with the pointer `LoadedScript::call`
 /// handed it for the duration of that one call.
+#[cfg(not(target_arch = "wasm32"))]
 unsafe fn ctx<'a>(pointer: *mut c_void) -> &'a mut Ctx<'a> {
     unsafe { &mut *pointer.cast::<Ctx>() }
 }
 
 /// The three entry points every script is given. A `static` rather than a
 /// value built per call so its address is stable for as long as the process.
+#[cfg(not(target_arch = "wasm32"))]
 static HOST_API: HostApi = HostApi {
     abi: abi::ABI_VERSION,
     read_number,
@@ -155,6 +200,7 @@ static HOST_API: HostApi = HostApi {
     act,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 fn axis_of(value: f64) -> Axis {
     match value as i32 {
         1 => Axis::Y,
@@ -163,6 +209,7 @@ fn axis_of(value: f64) -> Axis {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn view_of(value: f64) -> CameraView {
     match value as i32 {
         1 => CameraView::FirstPerson,
@@ -173,6 +220,7 @@ fn view_of(value: f64) -> CameraView {
 
 /// What a fresh element a script asked for starts at. A slider reads its
 /// own number off the call; everything else takes the blank its kind means.
+#[cfg(not(target_arch = "wasm32"))]
 fn ui_start(kind: UiKind, flag: bool, value: f64) -> Evaluated {
     match kind {
         UiKind::Slider | UiKind::Progress | UiKind::RadialProgress | UiKind::Scrollbar => {
@@ -183,10 +231,12 @@ fn ui_start(kind: UiKind, flag: bool, value: f64) -> Evaluated {
 }
 
 /// This actor as the frame's snapshot sees it.
+#[cfg(not(target_arch = "wasm32"))]
 fn me(actor: &str) -> Option<sense::ActorSense> {
     sense::read(|sensors| sensors.actors.get(actor).cloned())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 extern "C" fn read_number(
     pointer: *mut c_void,
     what: u32,
@@ -205,6 +255,7 @@ extern "C" fn read_number(
     abi::OK
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64> {
     let bool_as = |value: bool| Some(if value { 1.0 } else { 0.0 });
     match what {
@@ -414,6 +465,7 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
 }
 
 /// Whether `target` is a trigger: empty names the running actor itself.
+#[cfg(not(target_arch = "wasm32"))]
 fn trigger_target(running: &str, target: &str) -> Option<bool> {
     if target.trim().is_empty() {
         return Some(me(running)?.trigger);
@@ -422,6 +474,7 @@ fn trigger_target(running: &str, target: &str) -> Option<bool> {
 }
 
 /// Three space-separated numbers, as the prelude sends a point across.
+#[cfg(not(target_arch = "wasm32"))]
 fn parse_triple(text: &str) -> Option<[f32; 3]> {
     let mut numbers = text.split_whitespace().map(|part| part.parse::<f32>());
     let x = numbers.next()?.ok()?;
@@ -430,6 +483,7 @@ fn parse_triple(text: &str) -> Option<[f32; 3]> {
     Some([x, y, z])
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 extern "C" fn read_text(
     pointer: *mut c_void,
     what: u32,
@@ -521,6 +575,7 @@ extern "C" fn read_text(
     abi::OK
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 extern "C" fn act(
     pointer: *mut c_void,
     what: u32,

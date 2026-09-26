@@ -28,8 +28,6 @@ bevy = { workspace = true, features = [
     "png",
     "tga",
     "webp",
-    "ktx2",
-    "basis-universal",
     # Rect lights' LTC tables, light cookies and IES masks, and PCSS.
     "area_light_luts",
     "pbr_light_textures",
@@ -38,12 +36,19 @@ bevy = { workspace = true, features = [
 bevy_rapier2d.workspace = true
 bevy_rapier3d.workspace = true
 image.workspace = true
-libloading.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 # Bevy's own version; the GPU timer needs query sets it doesn't re-export.
 wgpu = "30"
+
+# Native script and logic libraries open with `dlopen`; wasm has none, so
+# web builds run blocks on the VM and leave scripts unloaded (see script.rs).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libloading.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 # The embedded Game view hands frames to the editor as dma-bufs, which takes
 # the raw Vulkan device under Bevy's wgpu, with the DRM modifier extension
@@ -53,10 +58,15 @@ bevy = { workspace = true, features = ["raw_vulkan_init"] }
 ash = "0.38"
 
 [features]
-default = ["ray_tracing"]
+default = ["ray_tracing", "compressed_textures"]
 # Solari's ray-traced lighting and reference path tracer. Experimental
 # upstream, so a build can leave it out; the raster rig is the fallback.
+# Always off on web: Solari has no WebGPU backend.
 ray_tracing = ["bevy/bevy_solari"]
+# KTX2 and Basis Universal texture compression. Needs a C++ toolchain for
+# the target, which the wasm target has none of here, so web builds leave
+# it out and ship PNG/JPEG instead (see `just web-check`).
+compressed_textures = ["bevy/ktx2", "bevy/basis-universal"]
 
 [dev-dependencies]
 naga.workspace = true

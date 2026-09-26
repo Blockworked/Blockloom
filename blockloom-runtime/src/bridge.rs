@@ -12,8 +12,12 @@
 //! [`attached`] is false, and the reports the editor would have shown are
 //! dropped apart from the ones worth a line on stderr.
 
-use blockloom_protocol::{EditorMessage, RuntimeMessage, decode, encode};
-use std::io::{BufRead, Write};
+#[cfg(not(target_arch = "wasm32"))]
+use blockloom_protocol::decode;
+use blockloom_protocol::{EditorMessage, RuntimeMessage, encode};
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::BufRead;
+use std::io::Write;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -40,31 +44,40 @@ pub fn editor_attached() -> bool {
 /// Starts the reader thread and hands back the channel its lines arrive on.
 /// The channel closes when the editor closes the pipe, which is the signal to
 /// shut down.
+///
+/// Web builds have no pipes: the channel stays open but never delivers, so a
+/// world without an editor idles instead of exiting on a closed pipe.
 pub fn listen() -> Receiver<EditorMessage> {
-    ATTACHED.store(true, Ordering::Relaxed);
     let (tx, rx) = channel();
-    std::thread::Builder::new()
-        .name("editor-stdin".to_string())
-        .spawn(move || {
-            let stdin = std::io::stdin();
-            for line in stdin.lock().lines() {
-                let Ok(line) = line else { break };
-                match decode::<EditorMessage>(&line) {
-                    Some(Ok(message)) => {
-                        if tx.send(message).is_err() {
-                            break;
+    #[cfg(target_arch = "wasm32")]
+    std::mem::forget(tx);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        ATTACHED.store(true, Ordering::Relaxed);
+        std::thread::Builder::new()
+            .name("editor-stdin".to_string())
+            .spawn(move || {
+                let stdin = std::io::stdin();
+                for line in stdin.lock().lines() {
+                    let Ok(line) = line else { break };
+                    match decode::<EditorMessage>(&line) {
+                        Some(Ok(message)) => {
+                            if tx.send(message).is_err() {
+                                break;
+                            }
                         }
+                        Some(Err(e)) => eprintln!("blockloom-runtime: bad message: {e}"),
+                        None => {}
                     }
-                    Some(Err(e)) => eprintln!("blockloom-runtime: bad message: {e}"),
-                    None => {}
                 }
-            }
-        })
-        .expect("failed to start the editor reader thread");
+            })
+            .expect("failed to start the editor reader thread");
+    }
     rx
 }
 
 /// Routes [`send`] into `outgoing` for the embedded world `world`.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub fn attach(world: u64, outgoing: Sender<RuntimeMessage>) {
     ATTACHED.store(true, Ordering::Relaxed);
     if let Ok(mut sink) = SINK.lock() {
@@ -73,6 +86,7 @@ pub fn attach(world: u64, outgoing: Sender<RuntimeMessage>) {
 }
 
 /// Drops `world`'s sender, which is how the editor hears it has gone.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub fn detach(world: u64) {
     if let Ok(mut sink) = SINK.lock()
         && sink.as_ref().is_some_and(|(owner, _)| *owner == world)

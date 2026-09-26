@@ -83,6 +83,9 @@ impl DisplayOffers {
         self.0.lock().ok().and_then(|offers| offers.clone())
     }
 
+    /// Records what the display offers. Only the native HDR surface takeover
+    /// calls this, so web builds never do.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn set(&self, offers: Vec<OutputSpace>) {
         if let Ok(mut slot) = self.0.lock() {
             *slot = Some(offers);

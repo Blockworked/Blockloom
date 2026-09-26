@@ -85,6 +85,15 @@ stage-player target file:
     mkdir -p "target/release/players/{{target}}"
     cp "{{file}}" "target/release/players/{{target}}/{{ if target =~ 'windows' { 'blockloom-runtime.exe' } else { 'blockloom-runtime' } }}"
 
+# Web player groundwork (Phase 8): the runtime check-builds for
+# wasm32-unknown-unknown with --no-default-features - no Solari ray tracing,
+# no Basis/KTX2 C++ codecs (web v1 ships PNG/JPEG), no `dlopen` scripts or
+# native logic (blocks run on the VM there). Needs the target once:
+# `rustup target add wasm32-unknown-unknown`. The single-file `.html` build
+# and `web-serve` smoke host follow once the web entry point lands.
+web-check:
+    cargo check -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown
+
 test:
     cargo test --workspace
 

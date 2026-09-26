@@ -6,43 +6,61 @@
 //! texture the way `prepare_windows` would. Bevy still renders and presents.
 //! A display with no HDR space is left to Bevy entirely.
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::hdr::{DisplayOffers, HdrFrame};
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::ecs::schedule::ApplyDeferred;
 use bevy::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::render::render_resource::{SurfaceTexture, TextureView};
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::render::renderer::{RenderAdapter, RenderDevice, RenderInstance};
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::render::view::window::{ExtractedWindow, SurfaceData, create_surfaces, prepare_windows};
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::render::view::{prepare_view_attachments, prepare_view_targets};
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::render::{Render, RenderApp, RenderSystems};
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::window::{CompositeAlphaMode, PresentMode, RawHandleWrapper};
+#[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::scene::OutputSpace;
+#[cfg(not(target_arch = "wasm32"))]
 use wgpu::{SurfaceColorSpace, SurfaceColorSpaces, TextureFormat};
 
 pub fn register(app: &mut App) {
-    let Some(render) = app.get_sub_app_mut(RenderApp) else {
-        return;
-    };
-    render.add_systems(
-        Render,
-        (
-            // In `PrepareViews` so the frame's extraction has landed before
-            // this reads it (`HdrFrame` only arrives with the first frame),
-            // still ahead of Bevy's own surface creation.
-            (adopt_window, ApplyDeferred)
-                .chain()
-                .in_set(RenderSystems::PrepareViews)
-                .before(create_surfaces),
-            acquire_frame
-                .in_set(RenderSystems::PrepareViews)
-                .after(prepare_windows)
-                .before(prepare_view_attachments)
-                .before(prepare_view_targets),
-        ),
-    );
+    // Web builds stay on Bevy's SDR swapchain: there is no HDR takeover in
+    // the browser, and web builds ship SDR-only.
+    #[cfg(target_arch = "wasm32")]
+    let _ = app;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let Some(render) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        render.add_systems(
+            Render,
+            (
+                // In `PrepareViews` so the frame's extraction has landed before
+                // this reads it (`HdrFrame` only arrives with the first frame),
+                // still ahead of Bevy's own surface creation.
+                (adopt_window, ApplyDeferred)
+                    .chain()
+                    .in_set(RenderSystems::PrepareViews)
+                    .before(create_surfaces),
+                acquire_frame
+                    .in_set(RenderSystems::PrepareViews)
+                    .after(prepare_windows)
+                    .before(prepare_view_attachments)
+                    .before(prepare_view_targets),
+            ),
+        );
+    }
 }
 
 /// A window whose surface this module owns, in the space it last configured.
 #[derive(Component)]
+#[cfg(not(target_arch = "wasm32"))]
 struct OwnSurface {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
@@ -53,16 +71,19 @@ struct OwnSurface {
 
 /// A window whose display offers no HDR space: Bevy keeps it.
 #[derive(Component)]
+#[cfg(not(target_arch = "wasm32"))]
 struct SurfaceDeclined;
 
 /// The format for each space the surface was found to take.
 #[derive(Clone, Copy, Debug)]
+#[cfg(not(target_arch = "wasm32"))]
 struct Formats {
     sdr: TextureFormat,
     scrgb: bool,
     hdr10: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Formats {
     fn of(caps: &wgpu::SurfaceCapabilities) -> Option<Formats> {
         let sdr = caps
@@ -114,6 +135,7 @@ impl Formats {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn present_mode(mode: PresentMode, caps: &wgpu::SurfaceCapabilities) -> wgpu::PresentMode {
     use wgpu::PresentMode as P;
     let wanted: &[P] = match mode {
@@ -131,6 +153,7 @@ fn present_mode(mode: PresentMode, caps: &wgpu::SurfaceCapabilities) -> wgpu::Pr
         .unwrap_or(P::Fifo)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn alpha_mode(mode: CompositeAlphaMode) -> wgpu::CompositeAlphaMode {
     match mode {
         CompositeAlphaMode::Auto => wgpu::CompositeAlphaMode::Auto,
@@ -143,11 +166,13 @@ fn alpha_mode(mode: CompositeAlphaMode) -> wgpu::CompositeAlphaMode {
 
 /// Views are always drawn through an sRGB view of an 8-bit surface, as
 /// Bevy's own are; HDR formats have no sRGB twin.
+#[cfg(not(target_arch = "wasm32"))]
 fn view_format(format: TextureFormat) -> TextureFormat {
     format.add_srgb_suffix()
 }
 
 /// A window nobody has made a surface for yet.
+#[cfg(not(target_arch = "wasm32"))]
 type Unadopted = (
     Without<SurfaceData>,
     Without<OwnSurface>,
@@ -156,6 +181,7 @@ type Unadopted = (
 
 /// Makes a surface for each new window before Bevy can, and keeps it if
 /// the display offers any HDR space.
+#[cfg(not(target_arch = "wasm32"))]
 fn adopt_window(
     mut commands: Commands,
     #[cfg(any(target_os = "macos", target_os = "ios"))] _main: bevy::ecs::system::NonSendMarker,
@@ -218,6 +244,7 @@ fn adopt_window(
 
 /// Reconfigures an owned surface when the window or the frame's space
 /// changes, and hands Bevy this frame's texture to render into.
+#[cfg(not(target_arch = "wasm32"))]
 fn acquire_frame(
     #[cfg(any(target_os = "macos", target_os = "ios"))] _main: bevy::ecs::system::NonSendMarker,
     mut windows: Query<(&mut ExtractedWindow, &mut OwnSurface)>,

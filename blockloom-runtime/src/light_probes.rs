@@ -22,6 +22,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{
     Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::tasks::AsyncComputeTaskPool;
 use blockloom_core::pipeline::{bc6h, hdr::HdrCube};
 use blockloom_core::probe::{self, AmbientCube, IrradianceGrid, ProbeKind, ProbeSpec};
@@ -530,6 +531,7 @@ enum Finished {
     Grid(Vec<AmbientCube>),
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
 fn finish(
     job: Job,
     done: Finished,
@@ -559,31 +561,45 @@ fn finish(
             image: images.add(image),
         },
     );
-    let (Some(dir), Some(stamp)) = (dir, stamp) else {
-        return;
-    };
-    // Encoding a cube to BC6H takes a moment; keep it off the frame.
-    let bricks = job.spec.bricks();
-    AsyncComputeTaskPool::get()
-        .spawn(async move {
-            let written = match done {
-                Finished::Cube(cube) => probe::write_cube(&dir, &job.actor, &cube, stamp),
-                Finished::Grid(cubes) => {
-                    probe::write_grid(&dir, &job.actor, &IrradianceGrid { bricks, cubes }, stamp)
-                }
-            };
-            crate::bridge::send(&match written {
-                Ok(()) => RuntimeMessage::Say {
-                    actor: job.name.clone(),
-                    text: "Baked this light probe".to_string(),
-                },
-                Err(message) => RuntimeMessage::Error {
-                    actor: job.name.clone(),
-                    message: format!("The probe's bake wasn't saved: {message}"),
-                },
-            });
-        })
-        .detach();
+    // Web builds ship pre-baked probes and never write bakes at runtime.
+    #[cfg(target_arch = "wasm32")]
+    if stamp.is_some() {
+        crate::bridge::send(&RuntimeMessage::Error {
+            actor: job.name.clone(),
+            message: "Web builds can't save light probe bakes".into(),
+        });
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let (Some(dir), Some(stamp)) = (dir, stamp) else {
+            return;
+        };
+        // Encoding a cube to BC6H takes a moment; keep it off the frame.
+        let bricks = job.spec.bricks();
+        AsyncComputeTaskPool::get()
+            .spawn(async move {
+                let written = match done {
+                    Finished::Cube(cube) => probe::write_cube(&dir, &job.actor, &cube, stamp),
+                    Finished::Grid(cubes) => probe::write_grid(
+                        &dir,
+                        &job.actor,
+                        &IrradianceGrid { bricks, cubes },
+                        stamp,
+                    ),
+                };
+                crate::bridge::send(&match written {
+                    Ok(()) => RuntimeMessage::Say {
+                        actor: job.name.clone(),
+                        text: "Baked this light probe".to_string(),
+                    },
+                    Err(message) => RuntimeMessage::Error {
+                        actor: job.name.clone(),
+                        message: format!("The probe's bake wasn't saved: {message}"),
+                    },
+                });
+            })
+            .detach();
+    }
 }
 
 /// A read-back FP16 cube as six faces of linear RGB, scaled by `scale`.

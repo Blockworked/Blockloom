@@ -26,6 +26,9 @@ pub struct LoopPace {
 }
 
 impl LoopPace {
+    /// Fold paced-loop timings in. Only the embedded Game view paces, so web
+    /// builds never call this.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn push(&mut self, update_ms: f64, wait_ms: f64) {
         const BLEND: f64 = 0.1;
         self.update_ms += BLEND * (update_ms - self.update_ms);
@@ -112,6 +115,7 @@ pub fn publish_sim_split(mut split: ResMut<SimSplit>) {
 #[derive(Resource, Default, Debug)]
 pub struct UpdateSplit {
     marks: Vec<std::time::Instant>,
+    post_start: Option<std::time::Instant>,
     pub segments: Vec<(String, f64)>,
 }
 
@@ -133,7 +137,14 @@ impl UpdateSplit {
                     (SEGMENT_LABELS[index].to_string(), ms)
                 })
                 .collect();
-            let measured: f64 = spans.iter().map(|(_, ms)| ms).sum();
+            let mut measured: f64 = spans.iter().map(|(_, ms)| ms).sum();
+            // The `PostUpdate` window runs to here, so this also covers the
+            // `Last` systems ahead of it (sub-millisecond).
+            if let Some(t0) = self.post_start.take() {
+                let ms = t0.elapsed().as_secs_f64() * 1000.0;
+                measured += ms;
+                spans.push(("post".to_string(), ms));
+            }
             spans.push((
                 "other".to_string(),
                 (main_ms - fixed_ms - measured).max(0.0),
@@ -151,6 +162,10 @@ impl UpdateSplit {
 
 pub fn mark_update_segment(mut split: ResMut<UpdateSplit>) {
     split.marks.push(std::time::Instant::now());
+}
+
+pub fn mark_post_start(mut split: ResMut<UpdateSplit>) {
+    split.post_start = Some(std::time::Instant::now());
 }
 
 pub fn publish_update_split(

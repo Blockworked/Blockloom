@@ -11,6 +11,7 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::gpu_readback::{ReadbackComplete, ReadbackOnce};
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::tasks::IoTaskPool;
 use blockloom_protocol::RuntimeMessage;
 use std::path::PathBuf;
@@ -209,6 +210,14 @@ fn run_exr_captures(
 struct CaptureCamera(Handle<Image>);
 
 fn write_exr(path: PathBuf, size: UVec2, data: Vec<u8>) {
+    // Web builds have nowhere to write an EXR file, so the capture is
+    // refused instead.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (size, data);
+        fail(&path, "EXR screenshots aren't supported in web builds");
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     IoTaskPool::get()
         .spawn(async move {
             match encode_exr(&path, size, &data) {
@@ -222,7 +231,9 @@ fn write_exr(path: PathBuf, size: UVec2, data: Vec<u8>) {
         .detach();
 }
 
-/// Read-back FP16 rows, padded to 256 bytes, as a float EXR file.
+/// Read-back FP16 rows, padded to 256 bytes, as a float EXR file. Native
+/// only: web builds refuse the capture before ever encoding it.
+#[cfg(not(target_arch = "wasm32"))]
 fn encode_exr(path: &std::path::Path, size: UVec2, data: &[u8]) -> Result<(), String> {
     let pixels = crate::probes::unpad_rows(data, size.x, size.y);
     let floats: Vec<f32> = pixels

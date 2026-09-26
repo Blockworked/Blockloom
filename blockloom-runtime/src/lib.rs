@@ -167,6 +167,10 @@ fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .init_resource::<performance::UpdateSplit>()
         .add_systems(First, performance::mark_main_start)
         .add_systems(
+            PostUpdate,
+            performance::mark_post_start.before(bevy::transform::TransformSystems::Propagate),
+        )
+        .add_systems(
             Last,
             (
                 performance::publish_sim_split,

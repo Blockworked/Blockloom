@@ -5,8 +5,8 @@ use blockloom_core::blocks::{
     parse_json_array, parse_json_object, resolve_dict_reporter, resolve_list_reporter,
 };
 use blockloom_core::codegen::{
-    self, ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH,
-    ACT_BIND_ACTION, ACT_BROADCAST, ACT_BURST_PARTICLES, ACT_CAPTURE_PROBES, ACT_CHANGE_POSITION,
+    ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH, ACT_BIND_ACTION,
+    ACT_BROADCAST, ACT_BURST_PARTICLES, ACT_CAPTURE_PROBES, ACT_CHANGE_POSITION,
     ACT_CLEAR_ACTION_BINDINGS, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR,
     ACT_DELETE_ELEMENT, ACT_DETACH, ACT_DICT_CLEAR, ACT_DICT_DELETE_KEY, ACT_DICT_SET,
     ACT_ENABLE_VOLUME, ACT_ERROR, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_JSON_TO_DICT,
@@ -24,9 +24,14 @@ use blockloom_core::codegen::{
     ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT,
     ACT_SHOW_ELEMENT, ACT_STOP_ANIMATION, ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_TURN,
     ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, LOGIC_ABI_VERSION,
-    LogicHostApi, READ_SENSE, READ_VARIABLE, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE,
-    SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET, SYM_LOGIC_TICK, TICK_STOPPED, VALUE_BOOL,
-    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
+    LogicHostApi, READ_SENSE, READ_VARIABLE, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER,
+    VALUE_TEXT,
+};
+// Symbol names for the native `dlopen` path; web builds link statically later.
+#[cfg(not(target_arch = "wasm32"))]
+use blockloom_core::codegen::{
+    self, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE,
+    SYM_LOGIC_RESET, SYM_LOGIC_TICK,
 };
 use blockloom_core::components::CameraView;
 use blockloom_core::project::Project;
@@ -39,7 +44,9 @@ use blockloom_core::vm::{Dicts, Effect, Event, Lists, Variables};
 use std::ffi::c_void;
 use std::path::Path;
 
+#[cfg(not(target_arch = "wasm32"))]
 type AbiFn = unsafe extern "C" fn() -> u32;
+#[cfg(not(target_arch = "wasm32"))]
 type NewFn = unsafe extern "C" fn() -> *mut c_void;
 type FreeFn = unsafe extern "C" fn(*mut c_void);
 type ResetFn = unsafe extern "C" fn(*mut c_void);
@@ -48,7 +55,11 @@ type TickFn = unsafe extern "C" fn(*mut c_void, *mut c_void, *const LogicHostApi
 type PauseFn = unsafe extern "C" fn(*mut c_void, u32);
 
 /// One generated program and its suspended strands.
+///
+/// Web builds have no `dlopen`, so compiled logic stays unloaded there and
+/// blocks run on the VM; static linking follows the same entry points later.
 pub struct LoadedLogic {
+    #[cfg(not(target_arch = "wasm32"))]
     library: libloading::Library,
     state: *mut c_void,
     free: FreeFn,
@@ -60,6 +71,7 @@ pub struct LoadedLogic {
     pause: Option<PauseFn>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl LoadedLogic {
     pub fn is_built(project_dir: &Path) -> bool {
         codegen::library_path(project_dir).is_file()
@@ -115,7 +127,22 @@ impl LoadedLogic {
             })
         }
     }
+}
 
+/// Web builds have no `dlopen`, so nothing is ever built to open: blocks
+/// run on the VM instead.
+#[cfg(target_arch = "wasm32")]
+impl LoadedLogic {
+    pub fn is_built(_project_dir: &Path) -> bool {
+        false
+    }
+
+    pub fn load(_project_dir: &Path) -> Result<Self, String> {
+        Err("this web build runs blocks on the VM".to_string())
+    }
+}
+
+impl LoadedLogic {
     pub fn reset(&mut self) {
         unsafe { (self.reset)(self.state) };
     }
@@ -232,6 +259,9 @@ impl LoadedLogic {
                 message: format!("compiled block program returned status {other}"),
             }),
         }
+        // Keeps the library alive across the call, which is the whole
+        // reason it is held here. Web builds never open one.
+        #[cfg(not(target_arch = "wasm32"))]
         let _ = &self.library;
     }
 }
@@ -242,6 +272,7 @@ impl Drop for LoadedLogic {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn missing_export() -> String {
     "the compiled block program is missing an entry point".to_string()
 }
