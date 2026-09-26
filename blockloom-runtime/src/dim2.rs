@@ -263,6 +263,11 @@ pub fn spawn_actor(
         }
     }
     insert_body(&mut commands.entity(id), actor);
+    if let Some(spec) = actor.components.sprite() {
+        commands
+            .entity(id)
+            .insert(crate::sprites::SpriteDials(spec.clone()));
+    }
     Some(id)
 }
 

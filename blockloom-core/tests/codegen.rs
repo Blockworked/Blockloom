@@ -21,7 +21,7 @@
 use blockloom_core::animation::TweenEasing;
 use blockloom_core::blocks::{
     BlockDef, BlockPiece, BlockShape, DictDef, DictEntry, DictItem, EmitterDial, InputValueType,
-    Instruction, InstructionKind as K, ListDef, ListItem, Strand, VariableDef,
+    Instruction, InstructionKind as K, ListDef, ListItem, SpriteDial, Strand, VariableDef,
 };
 use blockloom_core::cloud_layers::CloudLayerProperty;
 use blockloom_core::clouds::CloudProperty;
@@ -987,6 +987,11 @@ fn line_of(act: &Act) -> String {
         Act::PlayAnimation { clip, speed } => format!("PlayAnimation {clip} {speed:?}"),
         Act::StopAnimation => "StopAnimation".to_string(),
         Act::SetAnimationSpeed { speed } => format!("SetAnimationSpeed {speed:?}"),
+        Act::FireAnimationTrigger { name } => format!("FireAnimationTrigger {name}"),
+        Act::SetRigSlot { slot, attachment } => format!("SetRigSlot {slot} {attachment}"),
+        Act::SetSlotTint { slot, color } => format!("SetSlotTint {slot} {color}"),
+        Act::SetIkTarget { constraint, x, y } => format!("SetIkTarget {constraint} {x:?} {y:?}"),
+        Act::SetSpriteDial { dial, value } => format!("SetSpriteDial {dial} {value:?}"),
         Act::Turn { axis, degrees } => format!("Turn {axis} {degrees:?}"),
         Act::SetScale { factor } => format!("SetScale {factor:?}"),
         Act::SetExposure { ev } => format!("SetExposure {ev:?}"),
@@ -1119,6 +1124,7 @@ fn main() {
     // case with a `when animation ends` strand gets one, and nothing else
     // sees it.
     runner.fire(ENTRIES, "AnimationEnded", "a1", "Walk", "");
+    runner.fire(ENTRIES, "AnimationMarker", "a1", "Step", "");
 
     for tick in 0..TICKS {
         recorder.tick = tick;
@@ -1196,6 +1202,26 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::StopAnimation { actor } => format!("{actor}|StopAnimation"),
         Effect::SetAnimationSpeed { actor, speed } => {
             format!("{actor}|SetAnimationSpeed {speed:?}")
+        }
+        Effect::FireAnimationTrigger { actor, name } => {
+            format!("{actor}|FireAnimationTrigger {name}")
+        }
+        Effect::SetRigSlot {
+            actor,
+            slot,
+            attachment,
+        } => format!("{actor}|SetRigSlot {slot} {attachment}"),
+        Effect::SetSlotTint { actor, slot, color } => {
+            format!("{actor}|SetSlotTint {slot} {color}")
+        }
+        Effect::SetIkTarget {
+            actor,
+            constraint,
+            x,
+            y,
+        } => format!("{actor}|SetIkTarget {constraint} {x:?} {y:?}"),
+        Effect::SetSpriteDial { actor, dial, value } => {
+            format!("{actor}|SetSpriteDial {dial:?} {value:?}")
         }
         // Nobody's effect in particular: the run itself ending.
         Effect::Stopped => "|Stopped".to_string(),
@@ -1513,6 +1539,10 @@ fn by_vm(project: &Project) -> Vec<String> {
     vm.fire(Event::AnimationEnded {
         actor: ACTOR.to_string(),
         clip: "Walk".to_string(),
+    });
+    vm.fire(Event::AnimationMarker {
+        actor: ACTOR.to_string(),
+        marker: "Step".to_string(),
     });
     let mut lines = Vec::new();
     for tick in 0..TICKS {
@@ -2971,6 +3001,73 @@ fn when_animation_ends_starts_only_for_its_clip() {
                 }],
             ),
         ],
+    );
+}
+
+#[test]
+fn when_animation_marker_starts_only_for_its_marker() {
+    assert_same_headed(
+        "animation-marker",
+        vec![
+            (
+                K::WhenAnimationMarker {
+                    marker: "step".to_string(),
+                },
+                vec![K::Say {
+                    text: Value::text("footstep"),
+                }],
+            ),
+            (
+                K::WhenAnimationMarker {
+                    marker: "land".to_string(),
+                },
+                vec![K::Say {
+                    text: Value::text("never"),
+                }],
+            ),
+            (
+                K::WhenAnimationMarker {
+                    marker: "".to_string(),
+                },
+                vec![K::Say {
+                    text: Value::text("any marker"),
+                }],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn rig_and_sprite_blocks_ask_the_same_things_in_order() {
+    assert_same(
+        "rig-sprite",
+        vec![
+            K::FireAnimationTrigger {
+                name: op("Join", vec![Value::text("ju"), Value::text("mp")]),
+            },
+            K::SetRigSlot {
+                slot: Value::text("hand"),
+                attachment: op("CurrentClip", vec![]),
+            },
+            K::SetSlotTint {
+                slot: Value::text("cape"),
+                color: Value::text("#FF0000"),
+            },
+            K::SetIkTarget {
+                constraint: Value::text("reach"),
+                x: op("Add", vec![number(1.0), number(2.0)]),
+                y: op("CurrentFrame", vec![]),
+            },
+            K::SetSpriteDial {
+                dial: SpriteDial::FlipX,
+                value: number(1.0),
+            },
+            K::SetSpriteDial {
+                dial: SpriteDial::OutlineWidth,
+                value: op("Add", vec![number(2.0), number(1.5)]),
+            },
+        ],
+        &[],
     );
 }
 

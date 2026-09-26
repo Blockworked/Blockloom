@@ -1030,6 +1030,46 @@ import Blockloom's library (`blockloom::fbm`, ...) and Bevy's own modules
 (`bevy_pbr` in 3D, `bevy_sprite_render` in 2D);
 a project's other files aren't modules, so `package::`/`super::` are refused.
 
+### 2D animation and sprites
+
+`blockloom-core/src/animation.rs` is the one animation player, both
+dimensions. A clip is image files or a `SheetRange` (cells row-major on one
+sheet), with per-frame `durations`, a `LoopMode` and frame `markers`.
+`AnimationClip::cursor` counts steps (frames shown since the start), so
+`markers_reached` fires each marker once per frame shown however long the
+tick. States carry `transitions` (clip ended, marker, trigger, or a variable
+compared as a number or text), a crossfade `blend` and `root_motion`;
+`AnimationSpec::transition_from` picks the first that fires, and `next` is
+still the ended shorthand. `play animation` names a state first, then a clip.
+
+`rig2d.rs` is 2D skeletal rigs: Spine or DragonBones JSON (`Rig::parse`) into
+bones, slots, skins, one- and two-bone IK and keyed animations, y up in the
+actor's frame. `sample` gives a `LocalPose`, `blend` crossfades two, `solve`
+composes the hierarchy, runs IK and lists slot sprites in draw order. Only
+region/image attachments draw; bezier curves read as linear. A clip plays its
+`rig_animation` (or its own name) on the rig when the rig has it, and plays
+its frames otherwise: that is the flipbook fallback.
+
+`sprite2d.rs` is the `Sprite` component: flips, `NineSlice` (Bevy's
+`TextureSlicer`), `SpriteStack` slices, a palette swap (the sprite's red
+channel picks the column, `palette_index` the row), an outline, and `order`
+plus `y_sort` inside the Render layer (`sort_offset`, order always beats
+height).
+
+The runtime half is `blockloom-runtime/src/anim2d.rs` and `sprites.rs`.
+`apply_animation_effects` and `step_animations` run in the fixed step, so the
+VM and compiled logic land on the same frames, markers and transitions; they
+fire `Event::AnimationMarker` and `AnimationEnded`, move root-motion actors and
+solve rigs into `RigInstance::pose`. `ensure_rigs` loads a rig through
+`RigCache` and hangs a `RigPart` sprite per slot off the actor, `draw_rigs`
+copies the pose on, and `sync_sprites` applies flips and slicing and builds
+stack slices and the `SpriteFxMaterial` quad (`shaders/sprite_fx.wesl`).
+Anything drawn through children hides the actor's own sprite with an empty
+`RenderLayers`. Sort depth is render-only: `apply_sort_depth` adds it in
+PostUpdate and `clear_sort_depth` takes it off in `First`, so no pose, drag
+or physics step sees it. A flipbook crossfade draws the old frame on a
+`FadeGhost` child fading out; a rig blends poses instead.
+
 ### How a project runs
 
 1. Play hands the runtime the whole project (`EditorMessage::Load`) and starts
@@ -1382,3 +1422,6 @@ lands.
   one passes straight through.
 - The scene view's camera starts over whenever the world does (a dimension
   switch, reopening a project).
+- 2D rigs draw region/image attachments only (no Spine meshes or weights),
+  and read bezier curves as linear. The palette/outline effect ignores 9-slice
+  and doesn't apply to stacked or rigged sprites.

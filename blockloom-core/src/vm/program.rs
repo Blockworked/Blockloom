@@ -33,6 +33,10 @@ pub enum Trigger {
     AnimationEnded {
         clip: String,
     },
+    /// A clip reached a frame marker. Empty matches any marker.
+    AnimationMarker {
+        marker: String,
+    },
     /// The named input action went down.
     ActionPressed(String),
     /// A finger touched the screen.
@@ -124,6 +128,24 @@ pub enum Action {
     },
     StopAnimation,
     SetAnimationSpeed(Value),
+    FireAnimationTrigger(Value),
+    SetRigSlot {
+        slot: Value,
+        attachment: Value,
+    },
+    SetSlotTint {
+        slot: Value,
+        color: Value,
+    },
+    SetIkTarget {
+        constraint: Value,
+        x: Value,
+        y: Value,
+    },
+    SetSpriteDial {
+        dial: crate::blocks::SpriteDial,
+        value: Value,
+    },
     SetExposure(Value),
     SetLightIntensity(Value),
     SetEmissiveStrength(Value),
@@ -469,6 +491,9 @@ pub fn compile(graph: &ActorGraph) -> Program {
             InstructionKind::WhenAnimationEnds { clip } => Some(Trigger::AnimationEnded {
                 clip: clip.trim().to_string(),
             }),
+            InstructionKind::WhenAnimationMarker { marker } => Some(Trigger::AnimationMarker {
+                marker: marker.trim().to_string(),
+            }),
             InstructionKind::WhenActionPressed { action } => Some(Trigger::ActionPressed(
                 crate::input::normalize_action(action).to_lowercase(),
             )),
@@ -636,6 +661,10 @@ fn action_values(action: &Action) -> Vec<&Value> {
         | Action::SetParent(value)
         | Action::DeleteActor(value) => vec![value],
         Action::BurstParticles(value) | Action::SetEmitterDial { value, .. } => vec![value],
+        Action::SetSpriteDial { value, .. } | Action::FireAnimationTrigger(value) => vec![value],
+        Action::SetRigSlot { slot, attachment } => vec![slot, attachment],
+        Action::SetSlotTint { slot, color } => vec![slot, color],
+        Action::SetIkTarget { constraint, x, y } => vec![constraint, x, y],
         Action::GoTo(target)
         | Action::ApplyImpulse(target)
         | Action::SetVelocity(target)
@@ -957,6 +986,24 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         Action::SetEmitterDial { dial, value } => Action::SetEmitterDial {
             dial,
             value: lift_one(value, ctx),
+        },
+        Action::SetSpriteDial { dial, value } => Action::SetSpriteDial {
+            dial,
+            value: lift_one(value, ctx),
+        },
+        Action::FireAnimationTrigger(v) => Action::FireAnimationTrigger(lift_one(v, ctx)),
+        Action::SetRigSlot { slot, attachment } => Action::SetRigSlot {
+            slot: lift_one(slot, ctx),
+            attachment: lift_one(attachment, ctx),
+        },
+        Action::SetSlotTint { slot, color } => Action::SetSlotTint {
+            slot: lift_one(slot, ctx),
+            color: lift_one(color, ctx),
+        },
+        Action::SetIkTarget { constraint, x, y } => Action::SetIkTarget {
+            constraint: lift_one(constraint, ctx),
+            x: lift_one(x, ctx),
+            y: lift_one(y, ctx),
         },
         Action::Say(v) => Action::Say(lift_one(v, ctx)),
         Action::SetColor(v) => Action::SetColor(lift_one(v, ctx)),
@@ -1324,6 +1371,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenMessage { .. }
         | K::WhenCloned
         | K::WhenAnimationEnds { .. }
+        | K::WhenAnimationMarker { .. }
         | K::WhenUiEvent { .. }
         | K::WhenUiClicked { .. }
         | K::WhenUiChanged { .. }
@@ -1392,6 +1440,26 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::SetAnimationSpeed { speed } => {
             steps.push(Step::Action(Action::SetAnimationSpeed(speed.clone())))
         }
+        K::FireAnimationTrigger { name } => {
+            steps.push(Step::Action(Action::FireAnimationTrigger(name.clone())))
+        }
+        K::SetRigSlot { slot, attachment } => steps.push(Step::Action(Action::SetRigSlot {
+            slot: slot.clone(),
+            attachment: attachment.clone(),
+        })),
+        K::SetSlotTint { slot, color } => steps.push(Step::Action(Action::SetSlotTint {
+            slot: slot.clone(),
+            color: color.clone(),
+        })),
+        K::SetIkTarget { constraint, x, y } => steps.push(Step::Action(Action::SetIkTarget {
+            constraint: constraint.clone(),
+            x: x.clone(),
+            y: y.clone(),
+        })),
+        K::SetSpriteDial { dial, value } => steps.push(Step::Action(Action::SetSpriteDial {
+            dial: *dial,
+            value: value.clone(),
+        })),
         K::Turn { axis, degrees } => steps.push(Step::Action(Action::Turn {
             axis: *axis,
             degrees: degrees.clone(),

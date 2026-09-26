@@ -860,6 +860,72 @@ impl Actor {
         );
     }
 
+    /// Fires a named trigger into the animation state machine.
+    pub fn fire_animation_trigger(&self, name: &str) {
+        self.act(
+            ACT_FIRE_ANIMATION_TRIGGER,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Shows `attachment` in one of the rig's slots; empty hides it.
+    pub fn set_rig_slot(&self, slot: &str, attachment: &str) {
+        self.act(
+            ACT_SET_RIG_SLOT,
+            Str::borrow(slot),
+            Str::borrow(attachment),
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Tints one rig slot, `#RRGGBB`, over its authored color.
+    pub fn set_slot_tint(&self, slot: &str, color: &str) {
+        self.act(
+            ACT_SET_SLOT_TINT,
+            Str::borrow(slot),
+            Str::borrow(color),
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Points a rig IK constraint at `(x, y)`, relative to this actor.
+    pub fn set_ik_target(&self, constraint: &str, x: f32, y: f32) {
+        self.act(
+            ACT_SET_IK_TARGET,
+            Str::borrow(constraint),
+            Str::EMPTY,
+            Str::EMPTY,
+            x as f64,
+            y as f64,
+            0.0,
+        );
+    }
+
+    /// Changes a 2D sprite dial: `FlipX`, `FlipY`, `Order`, `YSort`,
+    /// `Palette` or `OutlineWidth`. Switches read nonzero as on.
+    pub fn set_sprite_dial(&self, dial: &str, value: f32) {
+        self.act(
+            ACT_SET_SPRITE_DIAL,
+            Str::borrow(dial),
+            Str::EMPTY,
+            Str::EMPTY,
+            value as f64,
+            0.0,
+            0.0,
+        );
+    }
+
     /// The clip the animation player is holding, or `None` for none.
     pub fn current_clip(&self) -> Option<String> {
         self.text(TEXT_CURRENT_CLIP, Str::EMPTY, Str::EMPTY)

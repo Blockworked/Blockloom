@@ -779,19 +779,19 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           Build dialog lists which target keeps volumetrics and why.
 
 ### Phase 6 - 2D games, parity look and feel (2D-first, uses Phase 2 and Phase 4 footing)
-- [ ] 2D animation stack (builds on the open Phase 2 tweens/sprite-animation item; this is the 2D-specific half):
-  - [ ] Flipbooks: image-strip or atlas-page ranges per clip, fps plus per-frame
+- [x] 2D animation stack (builds on the open Phase 2 tweens/sprite-animation item; this is the 2D-specific half):
+  - [x] Flipbooks: image-strip or atlas-page ranges per clip, fps plus per-frame
         durations, loop/ping-pong/once modes, events on frame marker. API: `play
         clip _`, `set animation speed to`, reporters `current clip`, `current frame`.
-  - [ ] Skeletal/bone 2D rigs: import from common 2D rig formats, bone transform
+  - [x] Skeletal/bone 2D rigs: import from common 2D rig formats, bone transform
         hierarchy with IK-lite (two-bone), slot attachments that swap sprites,
         skin tint per slot. Falls back to flipbook when no rig is present.
-  - [ ] 9-slice/stretchable panels and sprite stacking: borders that do not stretch,
+  - [x] 9-slice/stretchable panels and sprite stacking: borders that do not stretch,
         center tiling modes, per-layer offset for stacked 2.5D sprites.
-  - [ ] Animation player/state machine for 2D: states with transitions on variable
+  - [x] Animation player/state machine for 2D: states with transitions on variable
         or event, blend/crossfade time, root-motion toggle that moves the actor.
         Shared with the Phase 2 player, not a second implementation.
-  - [ ] Sprite dials: flip X/Y, per-sprite material overrides (tint, palette swap
+  - [x] Sprite dials: flip X/Y, per-sprite material overrides (tint, palette swap
         index, outline width/color), sorting layer plus order-in-layer plus
         Y-sort toggle for top-down depth. Fixed-tick sampling so VM and codegen agree.
 - [ ] Tilemaps and level building (builds on the Phase 4 per-tile collision and

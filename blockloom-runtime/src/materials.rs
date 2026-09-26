@@ -925,7 +925,7 @@ pub fn spawn_tilemap_3d(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use blockloom_core::shader_lib;
 
     // Just enough of Bevy's PBR modules for naga to type-check a fragment.

@@ -885,6 +885,34 @@ extern "C" fn act(
             actor,
             speed: n0 as f32,
         },
+        abi::ACT_FIRE_ANIMATION_TRIGGER => Effect::FireAnimationTrigger {
+            actor,
+            name: a.trim().to_string(),
+        },
+        abi::ACT_SET_RIG_SLOT => Effect::SetRigSlot {
+            actor,
+            slot: a.trim().to_string(),
+            attachment: b.trim().to_string(),
+        },
+        abi::ACT_SET_SLOT_TINT => Effect::SetSlotTint {
+            actor,
+            slot: a.trim().to_string(),
+            color: b.to_string(),
+        },
+        abi::ACT_SET_IK_TARGET => Effect::SetIkTarget {
+            actor,
+            constraint: a.trim().to_string(),
+            x: n0 as f32,
+            y: n1 as f32,
+        },
+        abi::ACT_SET_SPRITE_DIAL => match blockloom_core::blocks::SpriteDial::parse(a) {
+            Some(dial) => Effect::SetSpriteDial {
+                actor,
+                dial,
+                value: n0 as f32,
+            },
+            None => return,
+        },
         abi::ACT_SET_EMISSIVE_STRENGTH => Effect::SetEmissiveStrength {
             actor,
             strength: n0 as f32,

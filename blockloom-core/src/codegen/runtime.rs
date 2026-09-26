@@ -115,6 +115,26 @@ pub enum Act {
     SetAnimationSpeed {
         speed: f32,
     },
+    FireAnimationTrigger {
+        name: String,
+    },
+    SetRigSlot {
+        slot: String,
+        attachment: String,
+    },
+    SetSlotTint {
+        slot: String,
+        color: String,
+    },
+    SetIkTarget {
+        constraint: String,
+        x: f32,
+        y: f32,
+    },
+    SetSpriteDial {
+        dial: &'static str,
+        value: f32,
+    },
     Turn {
         axis: usize,
         degrees: f32,
@@ -708,7 +728,7 @@ impl Runner {
                             || entry.detail == detail
                             || entry.detail.eq_ignore_ascii_case(other_name))
                 }
-                ("AnimationEnded", "AnimationEnded") => {
+                ("AnimationEnded", "AnimationEnded") | ("AnimationMarker", "AnimationMarker") => {
                     entry.actor == &*template
                         && (entry.detail.is_empty() || entry.detail.eq_ignore_ascii_case(detail))
                 }
@@ -721,7 +741,9 @@ impl Runner {
             // strand; a broadcast, or an interface element nobody owns,
             // starts every copy's.
             let running = match kind {
-                "Clicked" | "Collision" | "AnimationEnded" => vec![Rc::from(actor)],
+                "Clicked" | "Collision" | "AnimationEnded" | "AnimationMarker" => {
+                    vec![Rc::from(actor)]
+                }
                 _ => self.actors.copies_of(entry.actor),
             };
             for id in running {
@@ -1065,7 +1087,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 22;
+pub const LOGIC_ABI_VERSION: u32 = 23;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1206,6 +1228,16 @@ pub const ACT_PLAY_ANIMATION: u32 = 73;
 pub const ACT_STOP_ANIMATION: u32 = 74;
 /// `n0` = speed. 1 is as authored, 0 freezes.
 pub const ACT_SET_ANIMATION_SPEED: u32 = 75;
+/// `a` = trigger name, for the animation state machine this tick.
+pub const ACT_FIRE_ANIMATION_TRIGGER: u32 = 95;
+/// `a` = rig slot, `b` = attachment; empty hides the slot.
+pub const ACT_SET_RIG_SLOT: u32 = 96;
+/// `a` = rig slot, `b` = `#RRGGBB`.
+pub const ACT_SET_SLOT_TINT: u32 = 97;
+/// `a` = IK constraint; `n0`, `n1` = where, relative to the actor.
+pub const ACT_SET_IK_TARGET: u32 = 98;
+/// `a` = sprite dial name, `n0` = value.
+pub const ACT_SET_SPRITE_DIAL: u32 = 99;
 /// `n0` = multiple of the emissive tint.
 pub const ACT_SET_EMISSIVE_STRENGTH: u32 = 76;
 /// `n0` != 0 turns HDR output on. Window-global: no actor.
@@ -1561,6 +1593,36 @@ impl Host for AbiHost {
                 "",
                 "",
                 [speed as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::FireAnimationTrigger { name } => self.act_wire(
+                actor,
+                ACT_FIRE_ANIMATION_TRIGGER,
+                &name,
+                "",
+                [0.0; 3],
+                &zero,
+            ),
+            Act::SetRigSlot { slot, attachment } => {
+                self.act_wire(actor, ACT_SET_RIG_SLOT, &slot, &attachment, [0.0; 3], &zero)
+            }
+            Act::SetSlotTint { slot, color } => {
+                self.act_wire(actor, ACT_SET_SLOT_TINT, &slot, &color, [0.0; 3], &zero)
+            }
+            Act::SetIkTarget { constraint, x, y } => self.act_wire(
+                actor,
+                ACT_SET_IK_TARGET,
+                &constraint,
+                "",
+                [x as f64, y as f64, 0.0],
+                &zero,
+            ),
+            Act::SetSpriteDial { dial, value } => self.act_wire(
+                actor,
+                ACT_SET_SPRITE_DIAL,
+                dial,
+                "",
+                [value as f64, 0.0, 0.0],
                 &zero,
             ),
             Act::Turn { axis, degrees } => self.act_wire(

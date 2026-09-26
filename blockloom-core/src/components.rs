@@ -20,6 +20,7 @@ use crate::animation::AnimationSpec;
 use crate::material::{ParticleSpec, SurfaceMaterial, TrailSpec};
 use crate::probe::ProbeSpec;
 use crate::scene::{Physics, Placement, Visual};
+use crate::sprite2d::SpriteSpec;
 use crate::terrain::TerrainSpec;
 use crate::value::Evaluated;
 use crate::volume::VolumeSpec;
@@ -45,6 +46,7 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Volume",
     "Probe",
     "Terrain",
+    "Sprite",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -355,6 +357,9 @@ pub enum ActorComponent {
     /// Heightmap ground centred on the actor, with painted layers, grass
     /// and scattered trees and rocks. 3D only.
     Terrain { terrain: TerrainSpec },
+    /// 2D dials over the look: flips, 9-slice, stacking, palette swap,
+    /// outline, and the order and Y-sort inside the Render layer.
+    Sprite { sprite: SpriteSpec },
 }
 
 impl ActorComponent {
@@ -378,6 +383,7 @@ impl ActorComponent {
             ActorComponent::Volume { .. } => "Volume",
             ActorComponent::Probe { .. } => "Probe",
             ActorComponent::Terrain { .. } => "Terrain",
+            ActorComponent::Sprite { .. } => "Sprite",
             ActorComponent::Custom { name, .. } => name,
         }
     }
@@ -694,6 +700,14 @@ impl Components {
     pub fn animation(&self) -> Option<&AnimationSpec> {
         match self.get("Animation") {
             Some(ActorComponent::Animation { animation }) => Some(animation),
+            _ => None,
+        }
+    }
+
+    /// The 2D sprite dials, if the actor carries them.
+    pub fn sprite(&self) -> Option<&SpriteSpec> {
+        match self.get("Sprite") {
+            Some(ActorComponent::Sprite { sprite }) => Some(sprite),
             _ => None,
         }
     }

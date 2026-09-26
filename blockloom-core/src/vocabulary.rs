@@ -180,6 +180,17 @@ const UI_PLACE: &[Slot] = &[
 
 const NO_SLOTS: &[Slot] = &[];
 const NO_DROPDOWNS: &[Dropdown] = &[];
+const SPRITE_DIALS: &[Dropdown] = &[Dropdown {
+    field: "dial",
+    options: &[
+        "FlipX",
+        "FlipY",
+        "Order",
+        "YSort",
+        "Palette",
+        "OutlineWidth",
+    ],
+}];
 const NO_STRINGS: &[&str] = &[];
 const NO_BOOLS: &[&str] = &[];
 const NO_BODIES: &[Body] = &[];
@@ -304,6 +315,18 @@ pub const BLOCKS: &[BlockSpec] = &[
         slots: NO_SLOTS,
         dropdowns: NO_DROPDOWNS,
         strings: &["clip"],
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "WhenAnimationMarker",
+        category: "Events",
+        purpose: "Runs each time the playing clip reaches the named frame marker, or a rig animation reaches the named event. Empty matches any marker.",
+        header: true,
+        three_d: false,
+        slots: NO_SLOTS,
+        dropdowns: NO_DROPDOWNS,
+        strings: &["marker"],
         bools: NO_BOOLS,
         bodies: NO_BODIES,
     },
@@ -567,6 +590,112 @@ pub const BLOCKS: &[BlockSpec] = &[
         three_d: false,
         slots: NO_SLOTS,
         dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "FireAnimationTrigger",
+        category: "Looks",
+        purpose: "Fires a named trigger into the Animation component's state machine this tick: a Trigger transition out of the current state takes it.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "name",
+            id: "AnimTrigger",
+            value: "Any",
+        }],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetRigSlot",
+        category: "Looks",
+        purpose: "Shows a different attachment in one of the 2D rig's slots. Empty hides the slot; the animation's own swaps win again on its next key.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "slot",
+                id: "RigSlot",
+                value: "Any",
+            },
+            Slot {
+                field: "attachment",
+                id: "RigAttachment",
+                value: "Any",
+            },
+        ],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetSlotTint",
+        category: "Looks",
+        purpose: "Tints one 2D rig slot, as #RRGGBB, over its authored color.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "slot",
+                id: "RigSlot",
+                value: "Any",
+            },
+            Slot {
+                field: "color",
+                id: "SlotColor",
+                value: "Any",
+            },
+        ],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetIkTarget",
+        category: "Looks",
+        purpose: "Points a 2D rig IK constraint at x, y relative to the actor, for the rest of the run.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "constraint",
+                id: "IkConstraint",
+                value: "Any",
+            },
+            Slot {
+                field: "x",
+                id: "IkX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "IkY",
+                value: "Any",
+            },
+        ],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetSpriteDial",
+        category: "Looks",
+        purpose: "Changes one 2D sprite dial for the rest of the run: FlipX, FlipY and YSort take 1 for on, Order is -40 to 40 inside the Render layer, Palette is the palette row, OutlineWidth is pixels.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "value",
+            id: "SpriteValue",
+            value: "Any",
+        }],
+        dropdowns: SPRITE_DIALS,
         strings: NO_STRINGS,
         bools: NO_BOOLS,
         bodies: NO_BODIES,

@@ -83,6 +83,36 @@ pub enum Effect {
         actor: String,
         speed: f32,
     },
+    /// A named trigger for the animation state machine, this tick only.
+    FireAnimationTrigger {
+        actor: String,
+        name: String,
+    },
+    /// Shows `attachment` in a rig slot; empty hides it.
+    SetRigSlot {
+        actor: String,
+        slot: String,
+        attachment: String,
+    },
+    /// Tints a rig slot over its authored color.
+    SetSlotTint {
+        actor: String,
+        slot: String,
+        color: String,
+    },
+    /// Points a rig IK constraint at a spot relative to the actor.
+    SetIkTarget {
+        actor: String,
+        constraint: String,
+        x: f32,
+        y: f32,
+    },
+    /// Changes one 2D sprite dial for the run.
+    SetSpriteDial {
+        actor: String,
+        dial: crate::blocks::SpriteDial,
+        value: f32,
+    },
     Turn {
         actor: String,
         axis: Axis,

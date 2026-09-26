@@ -236,6 +236,11 @@ pub enum Event {
         actor: String,
         clip: String,
     },
+    /// The actor's clip reached a frame marker (or a rig event).
+    AnimationMarker {
+        actor: String,
+        marker: String,
+    },
     /// The named input action went down, in lowercase action spelling.
     Action(String),
     /// A finger touched the screen.
@@ -636,6 +641,13 @@ impl Vm {
                 Trigger::AnimationEnded { clip: want },
                 Event::AnimationEnded { actor: ended, clip },
             ) => ended == actor && (want.is_empty() || want.eq_ignore_ascii_case(clip)),
+            (
+                Trigger::AnimationMarker { marker: want },
+                Event::AnimationMarker {
+                    actor: reached,
+                    marker,
+                },
+            ) => reached == actor && (want.is_empty() || want.eq_ignore_ascii_case(marker)),
             (Trigger::ActionPressed(want), Event::Action(got)) => want == got,
             (Trigger::Touched, Event::Touched) => true,
             (
@@ -1246,6 +1258,50 @@ impl Vm {
                 out.push(Effect::SetAnimationSpeed {
                     actor: actor.to_string(),
                     speed,
+                });
+            }
+            Action::FireAnimationTrigger(name) => {
+                let name = self.eval(name, actor, params, temps, out).as_text();
+                out.push(Effect::FireAnimationTrigger {
+                    actor: actor.to_string(),
+                    name: name.trim().to_string(),
+                });
+            }
+            Action::SetRigSlot { slot, attachment } => {
+                let slot = self.eval(slot, actor, params, temps, out).as_text();
+                let attachment = self.eval(attachment, actor, params, temps, out).as_text();
+                out.push(Effect::SetRigSlot {
+                    actor: actor.to_string(),
+                    slot: slot.trim().to_string(),
+                    attachment: attachment.trim().to_string(),
+                });
+            }
+            Action::SetSlotTint { slot, color } => {
+                let slot = self.eval(slot, actor, params, temps, out).as_text();
+                let color = self.eval(color, actor, params, temps, out).as_text();
+                out.push(Effect::SetSlotTint {
+                    actor: actor.to_string(),
+                    slot: slot.trim().to_string(),
+                    color,
+                });
+            }
+            Action::SetIkTarget { constraint, x, y } => {
+                let constraint = self.eval(constraint, actor, params, temps, out).as_text();
+                let x = self.eval_f32(x, actor, params, temps, out);
+                let y = self.eval_f32(y, actor, params, temps, out);
+                out.push(Effect::SetIkTarget {
+                    actor: actor.to_string(),
+                    constraint: constraint.trim().to_string(),
+                    x,
+                    y,
+                });
+            }
+            Action::SetSpriteDial { dial, value } => {
+                let value = self.eval_f32(value, actor, params, temps, out);
+                out.push(Effect::SetSpriteDial {
+                    actor: actor.to_string(),
+                    dial: *dial,
+                    value,
                 });
             }
             Action::SetExposure(ev) => {
