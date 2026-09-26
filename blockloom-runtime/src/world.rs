@@ -616,6 +616,7 @@ pub fn rebuild_world(
     engine.clouds = Default::default();
     engine.surface = Default::default();
     engine.cloud_layers = Default::default();
+    engine.water = Default::default();
     engine.parents = engine
         .project
         .actors
@@ -985,7 +986,10 @@ pub fn publish_sensors(
         Option<&AnimationPlayer>,
     )>,
     sound: Res<crate::sound::SoundState>,
-    atmosphere: Option<Res<crate::atmosphere::Atmosphere>>,
+    (atmosphere, water): (
+        Option<Res<crate::atmosphere::Atmosphere>>,
+        Option<Res<crate::water::WaterSample>>,
+    ),
     preview_pointer: Option<ResMut<crate::preview::PreviewPointer>>,
 ) {
     let now = time.elapsed_secs() as f64;
@@ -1245,6 +1249,7 @@ pub fn publish_sensors(
         // The last fixed tick's, not a fresh one: a frame between ticks
         // reads what the schedulers read.
         atmosphere: atmosphere.map(|air| air.0.clone()).unwrap_or_default(),
+        water: water.map(|water| water.0.clone()).unwrap_or_default(),
     });
 
     // No world event queues while paused, so resuming never bursts.

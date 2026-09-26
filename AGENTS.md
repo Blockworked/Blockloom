@@ -714,6 +714,59 @@ cloud passes are meant to take `field.clouds`. `set wind [dial] to` and
 `set cloud drift to` (and a script's `set_wind`/`set_cloud_drift`) land in
 `engine.wind` for the run.
 
+### Water
+
+A `Water` component (`blockloom-core/src/water.rs`, `WaterSpec`) makes an
+actor an ocean, a lake or a river: the actor's `Place` is the surface's
+centre at rest and its yaw turns the rectangle and a river's `flow`. An ocean
+has no edge and reaches `OCEAN_REACH` from the camera. The surface is 8-12
+Gerstner waves (`WaveSet::build`, seeded, lengths falling from the authored
+wavelength, heading the project's wind or the spec's own), resolved each
+tick with the sea state and chop laid on (`WaveSet::resolve`, horizontal
+amplitudes shrunk before a crest folds). The sea state follows the wind at
+the body through a fetch-limited JONSWAP fit (`sea_target`, eased by
+`settle_sea`). Phillips-spectrum detail waves only bend the shading normal.
+`WaterBody` is one body resolved for a tick, and `sample` inverts the
+Gerstner displacement to answer height, normal, velocity and pinch
+(`jacobian`, where crest foam starts) over any point. `shaders/water.wesl`
+(`blockloom::water`) sums the same waves from the same numbers, so change the
+two together. A 2D body's waves run along x only (`WaveSet::flattened`).
+
+`blockloom-runtime/src/water/` is the rest. `sample_water` runs at the head
+of each fixed tick after `sample_atmosphere`, fills `WaterState` (what the
+surfaces draw) and `WaterSample`, publishes the latter with
+`sense::publish_water`, and `publish_sensors` copies it into each frame's
+snapshot, so `water height at`, `is _ underwater?` and a script's
+`water_at`/`is_underwater` read what buoyancy read. `set water level/chop/
+foam to` (and a script's `set_water`) lands in `engine.water`
+(`WaterOverrides`): on the water actor that ran it, or every body from
+anyone else. A `Buoyancy` component (`BuoyancySpec`) makes a dynamic body
+float: `float_bodies_2d`/`3d` push up at 1, 4 or 8 sample points by what each
+displaces (`buoyant_force`, so density 0.5 rests half under), drag each
+towards the water's own velocity and damp spin, all through rapier's
+`ExternalImpulse` with the mass read back through `ReadMassProperties`. The
+same system splashes any rigid body that crosses the surface faster than the
+body's `splash.min_speed`: droplets (`fx::spawn_splash`), a ripple the
+surface shaders add (at most `MAX_RIPPLES`) and the body's splash sound.
+
+3D (`surface.rs`): each body is its own entity (`WaterSurface`, left out of
+ray-traced proxies), a grid over its rectangle or rings round the camera for
+an ocean, drawn with `WaterMaterial` (`shaders/water_surface.wesl`). Its
+base `StandardMaterial` has transmission, which puts it in Bevy's
+transmissive pass and so after the depth prepass; `sync_surfaces` gives the
+world camera `ScreenSpaceTransmission` while any water exists. The fragment
+refracts the opaque frame (`view_transmission_texture`), absorbs it by the
+distance to the bed (Beer), lays caustics on the bed, foams along the shore
+and on pinched crests, reflects by screen-space march, then the body's probe
+(`ProbeRequest::water`, following the camera over an ocean through
+`ProbeService::relocate`), then the background color, and lets Bevy's
+lighting add the lit water color and the sun's GGX glint. Each body also has
+an opaque floor at its depth, which is what the depth buffer and every pass
+after the main pass (clouds, fog) see where the water is. `under.rs` is a
+pass after the fog that absorbs every ray over its underwater part and lays
+caustics while the camera is under a surface. 2D (`flat.rs`): a strip from
+the surface to the depth, its top row riding the waves (`water_2d.wesl`).
+
 ### Lighting rig
 
 `Light` (`LightSpec`) is a point, spot, rect or disk light. Rect and disk are

@@ -653,6 +653,19 @@ impl WaveSet {
         }
     }
 
+    /// The same waves for a 2D body: each runs straight left or right,
+    /// whichever way its heading leans, so a north wind still makes waves.
+    pub fn flattened(mut self) -> WaveSet {
+        let side = |dir: [f32; 2]| [if dir[0] < 0.0 { -1.0 } else { 1.0 }, 0.0];
+        for wave in &mut self.waves {
+            wave.dir = side(wave.dir);
+        }
+        for wave in &mut self.detail {
+            wave.dir = side(wave.dir);
+        }
+        self
+    }
+
     /// The waves with the sea state `sea` (1 is the authored height) and
     /// `chop` laid on. Horizontal amplitudes shrink together when the sum
     /// would fold a crest over itself.
@@ -1114,6 +1127,15 @@ mod tests {
     }
 
     #[test]
+    fn flat_waves_run_along_x_whatever_the_heading() {
+        let set = WaveSet::build(&WaterSpec::flat(), 0.0, 9.81).flattened();
+        for wave in &set.waves {
+            assert_eq!(wave.dir[1], 0.0);
+            assert_eq!(wave.dir[0].abs(), 1.0);
+        }
+    }
+
+    #[test]
     fn deep_water_dispersion_sets_the_speed() {
         let set = WaveSet::build(&WaterSpec::default(), 0.0, 9.81);
         for wave in &set.waves {
@@ -1265,7 +1287,11 @@ mod tests {
         let total = |d: &[LiveDetail]| d.iter().map(|w| w.slope).sum::<f32>();
         assert!(total(&stormy) > total(&calm));
         assert_eq!(calm.len(), DETAIL_WAVES);
-        assert!(set.resolve_detail(0.0, 1.0, 10.0, 9.81).iter().all(|w| w.slope == 0.0));
+        assert!(
+            set.resolve_detail(0.0, 1.0, 10.0, 9.81)
+                .iter()
+                .all(|w| w.slope == 0.0)
+        );
     }
 
     #[test]

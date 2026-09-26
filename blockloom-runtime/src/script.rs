@@ -1018,7 +1018,6 @@ extern "C" fn act(
     ctx.asked.effects.push(effect);
 }
 
-
 /// One named reading of a water sample, as `READ_WATER` spells them.
 fn water_reading(sample: &blockloom_core::water::WaterSample, what: &str) -> Option<f32> {
     let key: String = what

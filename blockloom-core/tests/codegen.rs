@@ -25,7 +25,6 @@ use blockloom_core::blocks::{
 };
 use blockloom_core::cloud_layers::CloudLayerProperty;
 use blockloom_core::clouds::CloudProperty;
-use blockloom_core::water::WaterProperty;
 use blockloom_core::input::ActionSense;
 use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::{Axis, Mode, Visual};
@@ -34,6 +33,7 @@ use blockloom_core::sound::SoundBus;
 use blockloom_core::ui::{UiAnchor, UiProp, UiTheme};
 use blockloom_core::value::{Evaluated, Op, Value};
 use blockloom_core::vm::{Effect, Event, Vm};
+use blockloom_core::water::WaterProperty;
 use blockloom_core::wind::WindProperty;
 use std::process::Command;
 

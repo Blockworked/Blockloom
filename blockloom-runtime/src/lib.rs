@@ -73,6 +73,7 @@ mod ui;
 mod ui_systems;
 mod volume_heat;
 mod volumes;
+mod water;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 mod world;
@@ -176,6 +177,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     ray_tracing::register(app, mode);
     lightning::register(app);
     wind::register(app);
+    water::register(app, mode);
     edit::configure(app);
     // Both of these only exist to talk to an editor, and a built game has
     // none: no corner status, no handshake.
@@ -323,6 +325,13 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             .configure_sets(
                 FixedUpdate,
                 world::SimulationSet.before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend),
+            )
+            .add_systems(
+                FixedUpdate,
+                water::float_bodies_2d
+                    .in_set(world::SimulationSet)
+                    .after(dim2::apply_effects)
+                    .before(fx::apply_fx_effects),
             )
             // Profiler segment marks, as explicit edges: the chained tuple
             // above is already at Bevy's 20-system cap, and restructuring it
@@ -506,6 +515,13 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     FixedUpdate,
                     world::SimulationSet
                         .before(bevy_rapier3d::prelude::PhysicsSet::SyncBackend),
+                )
+                .add_systems(
+                    FixedUpdate,
+                    water::float_bodies_3d
+                        .in_set(world::SimulationSet)
+                        .after(dim3::apply_effects)
+                        .before(fx::apply_fx_effects),
                 )
                 // Profiler segment marks, as explicit edges: the chained tuple
                 // above is already at Bevy's 20-system cap, and restructuring

@@ -340,6 +340,81 @@ fn spawn_particle(
     }
 }
 
+/// A splash: `count` droplets thrown up and out of `at` at about `speed`
+/// world units a second, falling back under gravity.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_splash(
+    commands: &mut Commands,
+    mode: blockloom_core::scene::Mode,
+    cache: &mut FxCache,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    at: Vec3,
+    count: u32,
+    speed: f32,
+    size: f32,
+    color: Color,
+    seed: &mut u64,
+) {
+    if *seed == 0 {
+        *seed = 0x2545F4914F6CDD1D;
+    }
+    let sphere = mode.is_3d().then(|| {
+        cache
+            .sphere
+            .get_or_insert_with(|| meshes.add(Mesh::from(Sphere::new(0.5))))
+            .clone()
+    });
+    for _ in 0..count {
+        let turn = rand(seed) * std::f32::consts::TAU;
+        let lean = 0.25 + 0.6 * rand(seed);
+        let dir = if mode.is_3d() {
+            Vec3::new(turn.cos() * lean, 1.0, turn.sin() * lean).normalize()
+        } else {
+            Vec3::new((rand(seed) - 0.5) * 1.6, 1.0, 0.0).normalize()
+        };
+        let particle = Particle {
+            owner: String::new(),
+            vel: dir * speed * (0.5 + 0.7 * rand(seed)),
+            age: 0.0,
+            life: 0.5 + 0.5 * rand(seed),
+            size0: size,
+            size1: size * 0.3,
+            color0: color,
+            color1: color.with_alpha(0.0),
+            gravity: 1.0,
+            wind: 0.2,
+            air: Vec3::ZERO,
+        };
+        match &sphere {
+            Some(sphere) => {
+                let material = materials.add(StandardMaterial {
+                    base_color: color,
+                    alpha_mode: AlphaMode::Blend,
+                    ..default()
+                });
+                commands.spawn((
+                    particle,
+                    Transform::from_translation(at).with_scale(Vec3::splat(size.max(0.01))),
+                    Mesh3d(sphere.clone()),
+                    MeshMaterial3d(material),
+                ));
+            }
+            None => {
+                commands.spawn((
+                    particle,
+                    Transform::from_translation(at),
+                    Sprite {
+                        color,
+                        custom_size: Some(Vec2::splat(size)),
+                        ..default()
+                    },
+                ));
+            }
+        }
+    }
+}
+
 /// Fly every particle one step: age, fall, drift, tint, shrink. The dead
 /// despawn here rather than in a third pass, since stepping already visits
 /// them all.
