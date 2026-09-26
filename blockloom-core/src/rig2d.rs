@@ -7,9 +7,11 @@
 //! world transforms for every slot's sprite. Everything is in the rig's own
 //! space: y up, degrees counter-clockwise, the same as a 2D actor.
 //!
-//! Only region/image attachments draw; mesh attachments are read as nothing.
+//! Spine region and mesh attachments draw (meshes weighted to bones and
+//! keyed by deform timelines); DragonBones meshes are read as nothing.
 
 use serde_json::{Map, Value as Json};
+use std::sync::Arc;
 
 /// A 2D affine transform: `p -> (a*x + c*y + tx, b*x + d*y + ty)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -118,6 +120,81 @@ pub struct Attachment {
     pub scale_y: f32,
     pub width: f32,
     pub height: f32,
+    /// Set for a mesh; the placement above is then unused.
+    pub mesh: Option<Arc<MeshAttachment>>,
+    /// Whose deform keys this attachment follows, as a skin and attachment
+    /// name: its own, or a linked mesh's parent's.
+    pub deform_from: (String, String),
+}
+
+/// A triangle mesh over an attachment's image.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeshAttachment {
+    /// 0-1 over the image, y down.
+    pub uvs: Vec<[f32; 2]>,
+    pub triangles: Vec<u32>,
+    pub vertices: MeshVertices,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MeshVertices {
+    /// Positions in the slot's bone frame.
+    Plain(Vec<[f32; 2]>),
+    /// Per vertex, `(bone, position in that bone's frame, weight)`.
+    Weighted(Vec<Vec<(usize, [f32; 2], f32)>>),
+}
+
+impl MeshAttachment {
+    /// How many floats a deform key spans: one x, y per vertex, or per
+    /// bone influence when weighted.
+    pub fn deform_len(&self) -> usize {
+        match &self.vertices {
+            MeshVertices::Plain(points) => points.len() * 2,
+            MeshVertices::Weighted(vertices) => vertices.iter().map(Vec::len).sum::<usize>() * 2,
+        }
+    }
+
+    /// Every vertex in rig space, with `deform` offsets (if any) added in
+    /// the bone frames.
+    pub fn positions(&self, bones: &[Affine2], slot_bone: usize, deform: &[f32]) -> Vec<[f32; 2]> {
+        let offset = |i: usize| {
+            [
+                deform.get(i * 2).copied().unwrap_or(0.0),
+                deform.get(i * 2 + 1).copied().unwrap_or(0.0),
+            ]
+        };
+        match &self.vertices {
+            MeshVertices::Plain(points) => {
+                let bone = bones.get(slot_bone).copied().unwrap_or(Affine2::IDENTITY);
+                points
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        let d = offset(i);
+                        bone.apply([p[0] + d[0], p[1] + d[1]])
+                    })
+                    .collect()
+            }
+            MeshVertices::Weighted(vertices) => {
+                let mut k = 0;
+                vertices
+                    .iter()
+                    .map(|influences| {
+                        let mut sum = [0.0, 0.0];
+                        for (bone, p, weight) in influences {
+                            let d = offset(k);
+                            k += 1;
+                            let bone = bones.get(*bone).copied().unwrap_or(Affine2::IDENTITY);
+                            let q = bone.apply([p[0] + d[0], p[1] + d[1]]);
+                            sum[0] += q[0] * weight;
+                            sum[1] += q[1] * weight;
+                        }
+                        sum
+                    })
+                    .collect()
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -236,12 +313,23 @@ pub struct SlotTimeline {
     pub color: Vec<Key<[f32; 4]>>,
 }
 
+/// Keys over one mesh's vertices: offsets, full length, as
+/// [`MeshAttachment::deform_len`] counts them.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DeformTimeline {
+    pub skin: String,
+    pub slot: usize,
+    pub attachment: String,
+    pub keys: Vec<Key<Vec<f32>>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RigAnimation {
     pub name: String,
     pub duration: f32,
     pub bones: Vec<BoneTimeline>,
     pub slots: Vec<SlotTimeline>,
+    pub deforms: Vec<DeformTimeline>,
     /// Named events by time; they fire as clip markers.
     pub events: Vec<(f32, String)>,
 }
@@ -256,13 +344,23 @@ pub struct BoneLocal {
     pub scale_y: f32,
 }
 
-/// A sampled pose before the hierarchy and IK: every bone's local transform
-/// and every slot's attachment and color.
+/// A mesh's sampled deform offsets.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Deform {
+    pub skin: String,
+    pub slot: usize,
+    pub attachment: String,
+    pub offsets: Vec<f32>,
+}
+
+/// A sampled pose before the hierarchy and IK: every bone's local transform,
+/// every slot's attachment and color, and the deformed meshes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalPose {
     pub bones: Vec<BoneLocal>,
     pub attachments: Vec<String>,
     pub colors: Vec<[f32; 4]>,
+    pub deforms: Vec<Deform>,
 }
 
 impl LocalPose {
@@ -294,10 +392,40 @@ impl LocalPose {
             .zip(&other.colors)
             .map(|(a, b)| std::array::from_fn(|i| lerp(a[i], b[i])))
             .collect();
+        // A mesh only one side deforms blends from its setup shape.
+        let mut deforms: Vec<Deform> = Vec::new();
+        let same = |a: &Deform, b: &Deform| {
+            a.skin == b.skin && a.slot == b.slot && a.attachment == b.attachment
+        };
+        for mine in &self.deforms {
+            let theirs = other.deforms.iter().find(|theirs| same(mine, theirs));
+            let offsets = (0..mine.offsets.len())
+                .map(|i| {
+                    let b = theirs
+                        .and_then(|t| t.offsets.get(i))
+                        .copied()
+                        .unwrap_or(0.0);
+                    lerp(mine.offsets[i], b)
+                })
+                .collect();
+            deforms.push(Deform {
+                offsets,
+                ..mine.clone()
+            });
+        }
+        for theirs in &other.deforms {
+            if !self.deforms.iter().any(|mine| same(mine, theirs)) {
+                deforms.push(Deform {
+                    offsets: theirs.offsets.iter().map(|b| lerp(0.0, *b)).collect(),
+                    ..theirs.clone()
+                });
+            }
+        }
         LocalPose {
             bones,
             attachments,
             colors,
+            deforms,
         }
     }
 }
@@ -310,6 +438,9 @@ pub struct SlotDraw {
     pub transform: Affine2,
     pub size: [f32; 2],
     pub color: [f32; 4],
+    /// A mesh draws these instead: its vertices in rig space, and the
+    /// attachment's UVs and triangles. `transform` is then the identity.
+    pub mesh: Option<(Vec<[f32; 2]>, Arc<MeshAttachment>)>,
 }
 
 /// A solved pose: every bone's world transform and what each slot draws.
@@ -340,27 +471,27 @@ fn wrap_degrees(mut degrees: f32) -> f32 {
 }
 
 /// `lerp` gets each channel's eased fraction.
-fn sample_keys<T: Copy>(
+fn sample_keys<T: Clone>(
     keys: &[Key<T>],
     time: f32,
-    lerp: impl Fn(T, T, [f32; 4]) -> T,
+    lerp: impl Fn(&T, &T, [f32; 4]) -> T,
 ) -> Option<T> {
     let first = keys.first()?;
     if time <= first.time {
-        return Some(first.value);
+        return Some(first.value.clone());
     }
     for pair in keys.windows(2) {
         let (a, b) = (&pair[0], &pair[1]);
         if time < b.time {
             if matches!(a.curve, Curve::Stepped) || b.time <= a.time {
-                return Some(a.value);
+                return Some(a.value.clone());
             }
             let x = (time - a.time) / (b.time - a.time);
             let t = std::array::from_fn(|channel| a.curve.ease(channel, x));
-            return Some(lerp(a.value, b.value, t));
+            return Some(lerp(&a.value, &b.value, t));
         }
     }
-    keys.last().map(|key| key.value)
+    keys.last().map(|key| key.value.clone())
 }
 
 impl Rig {
@@ -430,6 +561,7 @@ impl Rig {
                 .map(|slot| slot.attachment.clone())
                 .collect(),
             colors: self.slots.iter().map(|slot| slot.color).collect(),
+            deforms: Vec::new(),
         }
     }
 
@@ -446,7 +578,7 @@ impl Rig {
             let Some(local) = pose.bones.get_mut(timeline.bone) else {
                 continue;
             };
-            if let Some(angle) = sample_keys(&timeline.rotate, time, |a, b, t| {
+            if let Some(angle) = sample_keys(&timeline.rotate, time, |&a, &b, t| {
                 a + wrap_degrees(b - a) * t[0]
             }) {
                 local.rotation += angle;
@@ -483,6 +615,18 @@ impl Rig {
                 std::array::from_fn(|i| lerp(a[i], b[i], t[i]))
             }) {
                 pose.colors[timeline.slot] = color;
+            }
+        }
+        for timeline in &animation.deforms {
+            if let Some(offsets) = sample_keys(&timeline.keys, time, |a, b, t| {
+                a.iter().zip(b).map(|(a, b)| lerp(*a, *b, t[0])).collect()
+            }) {
+                pose.deforms.push(Deform {
+                    skin: timeline.skin.clone(),
+                    slot: timeline.slot,
+                    attachment: timeline.attachment.clone(),
+                    offsets,
+                });
             }
         }
         pose
@@ -546,6 +690,27 @@ impl Rig {
                 }
                 let attachment = self.attachment(skin, index, name)?;
                 let bone = *world.get(slot.bone)?;
+                let color = local.colors.get(index).copied().unwrap_or([1.0; 4]);
+                if let Some(mesh) = &attachment.mesh {
+                    let deform = local
+                        .deforms
+                        .iter()
+                        .find(|deform| {
+                            let (owner, from) = &attachment.deform_from;
+                            deform.slot == index
+                                && deform.skin.eq_ignore_ascii_case(owner)
+                                && deform.attachment.eq_ignore_ascii_case(from)
+                        })
+                        .map_or(&[][..], |deform| deform.offsets.as_slice());
+                    return Some(SlotDraw {
+                        slot: index,
+                        image: attachment.image.clone(),
+                        transform: Affine2::IDENTITY,
+                        size: [0.0, 0.0],
+                        color,
+                        mesh: Some((mesh.positions(&world, slot.bone, deform), mesh.clone())),
+                    });
+                }
                 Some(SlotDraw {
                     slot: index,
                     image: attachment.image.clone(),
@@ -558,7 +723,8 @@ impl Rig {
                             attachment.scale_y,
                         ),
                     size: [attachment.width, attachment.height],
-                    color: local.colors.get(index).copied().unwrap_or([1.0; 4]),
+                    color,
+                    mesh: None,
                 })
             })
             .collect();
@@ -589,6 +755,15 @@ impl Rig {
         chosen
             .and_then(|skin| find(skin, slot, name))
             .or_else(|| fallback.and_then(|skin| find(skin, slot, name)))
+    }
+
+    /// Whether any skin gives `slot` a mesh.
+    pub fn slot_has_mesh(&self, slot: usize) -> bool {
+        self.skins.iter().any(|skin| {
+            skin.attachments
+                .iter()
+                .any(|(at, attachment)| *at == slot && attachment.mesh.is_some())
+        })
     }
 
     /// Every image any skin names, for preloading.
@@ -806,11 +981,13 @@ fn hex_color(hex: &str) -> [f32; 4] {
 /// Fills in Spine curves once a timeline's keys are read: "stepped", 3.x's
 /// normalized `[cx1, cy1, cx2, cy2]` (3.8 spells it `curve`, `c2`, `c3`,
 /// `c4`), or 4.x's control points in time and value, four per channel.
+/// `channels(is_end, value)` lists a key's values; a deform key is 0 at
+/// its start and 1 at its end.
 fn spine_curves<T>(
     keys: &mut [Key<T>],
     raw: &[Json],
     spine4: bool,
-    channels: impl Fn(&T) -> Vec<f32>,
+    channels: impl Fn(bool, &T) -> Vec<f32>,
 ) {
     for i in 0..keys.len().min(raw.len()) {
         keys[i].curve = match raw[i].get("curve") {
@@ -827,7 +1004,7 @@ fn spine_curves<T>(
                     Curve::Bezier(vec![[points[0], points[1], points[2], points[3]]])
                 } else if let Some(next) = keys.get(i + 1) {
                     let (t0, t1) = (keys[i].time, next.time);
-                    let (v0, v1) = (channels(&keys[i].value), channels(&next.value));
+                    let (v0, v1) = (channels(false, &keys[i].value), channels(true, &next.value));
                     let span = |a: f32, b: f32, v: f32| {
                         if (b - a).abs() > f32::EPSILON {
                             (v - a) / (b - a)
@@ -875,6 +1052,60 @@ fn dragonbones_curve(frame: &Json) -> Curve {
         Some(e) if e <= 1.0 => Curve::QuadOut(e as f32),
         Some(e) => Curve::QuadInOut(e as f32 - 1.0),
     }
+}
+
+/// A Spine mesh: `uvs` and `triangles`, and `vertices` either as plain
+/// x, y pairs (as long as `uvs`) or, weighted, per vertex a bone count then
+/// that many `bone, x, y, weight`. `None` if it doesn't add up.
+fn spine_mesh(attachment: &Json, bone_count: usize) -> Option<MeshAttachment> {
+    let floats = |key: &str| -> Vec<f32> {
+        array(attachment.get(key))
+            .iter()
+            .map(|v| num(Some(v), 0.0))
+            .collect()
+    };
+    let uvs = floats("uvs");
+    let raw = floats("vertices");
+    let count = uvs.len() / 2;
+    let triangles: Vec<u32> = array(attachment.get("triangles"))
+        .iter()
+        .filter_map(Json::as_u64)
+        .filter_map(|i| u32::try_from(i).ok())
+        .collect();
+    if count == 0 || triangles.iter().any(|&i| i as usize >= count) {
+        return None;
+    }
+    let vertices = if raw.len() == uvs.len() {
+        MeshVertices::Plain(raw.as_chunks::<2>().0.to_vec())
+    } else {
+        let mut weighted = Vec::with_capacity(count);
+        let mut at = 0;
+        while at < raw.len() {
+            let bones = raw[at] as usize;
+            at += 1;
+            let entries = raw.get(at..at + bones * 4)?;
+            at += bones * 4;
+            let influences: Vec<(usize, [f32; 2], f32)> = entries
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|[bone, x, y, weight]| (*bone as usize, [*x, *y], *weight))
+                .collect();
+            if influences.iter().any(|(bone, _, _)| *bone >= bone_count) {
+                return None;
+            }
+            weighted.push(influences);
+        }
+        if weighted.len() != count {
+            return None;
+        }
+        MeshVertices::Weighted(weighted)
+    };
+    Some(MeshAttachment {
+        uvs: uvs.as_chunks::<2>().0.to_vec(),
+        triangles: triangles.as_chunks::<3>().0.concat(),
+        vertices,
+    })
 }
 
 fn parse_spine(json: &Json, folder: &str) -> Result<Rig, String> {
@@ -946,6 +1177,8 @@ fn parse_spine(json: &Json, folder: &str) -> Result<Rig, String> {
             .collect(),
         _ => Vec::new(),
     };
+    // (skin, attachment index, parent's skin, parent, follows its deform)
+    let mut links: Vec<(usize, usize, String, String, bool)> = Vec::new();
     for (name, slots) in skins {
         let mut skin = Skin {
             name,
@@ -957,9 +1190,36 @@ fn parse_spine(json: &Json, folder: &str) -> Result<Rig, String> {
             };
             for (key, attachment) in object(Some(attachments)) {
                 let kind = text(attachment.get("type"));
-                if !kind.is_empty() && kind != "region" {
-                    continue;
-                }
+                let mesh = match kind {
+                    "" | "region" => None,
+                    "mesh" => match spine_mesh(attachment, rig.bones.len()) {
+                        Some(mesh) => Some(Arc::new(mesh)),
+                        None => continue,
+                    },
+                    "linkedmesh" => {
+                        let parent_skin = attachment
+                            .get("skin")
+                            .and_then(Json::as_str)
+                            .unwrap_or("default")
+                            .to_string();
+                        let parent = text(attachment.get("parent")).to_string();
+                        // 3.x says `deform`, 4.x `timelines`.
+                        let follows = attachment
+                            .get("timelines")
+                            .or(attachment.get("deform"))
+                            .and_then(Json::as_bool)
+                            .unwrap_or(true);
+                        links.push((
+                            rig.skins.len(),
+                            skin.attachments.len(),
+                            parent_skin,
+                            parent,
+                            follows,
+                        ));
+                        None
+                    }
+                    _ => continue,
+                };
                 let file = attachment
                     .get("path")
                     .or(attachment.get("name"))
@@ -977,11 +1237,48 @@ fn parse_spine(json: &Json, folder: &str) -> Result<Rig, String> {
                         scale_y: num(attachment.get("scaleY"), 1.0),
                         width: num(attachment.get("width"), 0.0),
                         height: num(attachment.get("height"), 0.0),
+                        mesh,
+                        deform_from: (skin.name.clone(), key.clone()),
                     },
                 ));
             }
         }
         rig.skins.push(skin);
+    }
+    // A linked mesh borrows its parent's shape once every skin is read; one
+    // whose parent is missing draws nothing.
+    let mut orphans = Vec::new();
+    for (skin, index, parent_skin, parent, follows) in links {
+        let slot = rig.skins[skin].attachments[index].0;
+        let found = rig
+            .skins
+            .iter()
+            .find(|candidate| candidate.name.eq_ignore_ascii_case(&parent_skin))
+            .or(rig.skins.get(skin))
+            .and_then(|owner| {
+                owner.attachments.iter().find(|(at, attachment)| {
+                    *at == slot && attachment.name.eq_ignore_ascii_case(&parent)
+                })
+            })
+            .and_then(|(_, attachment)| {
+                attachment
+                    .mesh
+                    .clone()
+                    .map(|mesh| (mesh, attachment.deform_from.clone()))
+            });
+        match found {
+            Some((mesh, parent_deform)) => {
+                let linked = &mut rig.skins[skin].attachments[index].1;
+                linked.mesh = Some(mesh);
+                if follows {
+                    linked.deform_from = parent_deform;
+                }
+            }
+            None => orphans.push((skin, index)),
+        }
+    }
+    for (skin, index) in orphans.into_iter().rev() {
+        rig.skins[skin].attachments.remove(index);
     }
     for ik in array(json.get("ik")) {
         let bones: Vec<usize> = array(ik.get("bones"))
@@ -1032,7 +1329,7 @@ fn parse_spine(json: &Json, folder: &str) -> Result<Rig, String> {
                     curve: Curve::Linear,
                 });
             }
-            spine_curves(&mut timeline.rotate, rotate, spine4, |v| vec![*v]);
+            spine_curves(&mut timeline.rotate, rotate, spine4, |_, v| vec![*v]);
             let translate = array(timelines.get("translate"));
             for key in translate {
                 timeline.translate.push(Key {
@@ -1041,7 +1338,9 @@ fn parse_spine(json: &Json, folder: &str) -> Result<Rig, String> {
                     curve: Curve::Linear,
                 });
             }
-            spine_curves(&mut timeline.translate, translate, spine4, |v| v.to_vec());
+            spine_curves(&mut timeline.translate, translate, spine4, |_, v| {
+                v.to_vec()
+            });
             let scale = array(timelines.get("scale"));
             for key in scale {
                 timeline.scale.push(Key {
@@ -1050,7 +1349,7 @@ fn parse_spine(json: &Json, folder: &str) -> Result<Rig, String> {
                     curve: Curve::Linear,
                 });
             }
-            spine_curves(&mut timeline.scale, scale, spine4, |v| v.to_vec());
+            spine_curves(&mut timeline.scale, scale, spine4, |_, v| v.to_vec());
             out.bones.push(timeline);
         }
         for (slot_name, timelines) in object(animation.get("slots")) {
@@ -1074,8 +1373,73 @@ fn parse_spine(json: &Json, folder: &str) -> Result<Rig, String> {
                     curve: Curve::Linear,
                 });
             }
-            spine_curves(&mut timeline.color, color, spine4, |v| v.to_vec());
+            spine_curves(&mut timeline.color, color, spine4, |_, v| v.to_vec());
             out.slots.push(timeline);
+        }
+        // 3.x keys deforms by skin, slot and attachment under `deform`
+        // (`ffd` before 3.5); 4.x under `attachments`, one level deeper.
+        let (deforms, nested) = match animation.get("attachments") {
+            Some(attachments) => (attachments, true),
+            None => match animation.get("deform").or(animation.get("ffd")) {
+                Some(deform) => (deform, false),
+                None => (&Json::Null, false),
+            },
+        };
+        for (skin_name, slots) in object(Some(deforms)) {
+            let Some(skin) = rig
+                .skins
+                .iter()
+                .find(|skin| skin.name.eq_ignore_ascii_case(skin_name))
+            else {
+                continue;
+            };
+            for (slot_name, attachments) in object(Some(slots)) {
+                let Some(slot) = rig.slot_index(slot_name) else {
+                    continue;
+                };
+                for (attachment_name, timeline) in object(Some(attachments)) {
+                    let raw = if nested {
+                        array(timeline.get("deform"))
+                    } else {
+                        array(Some(timeline))
+                    };
+                    let Some(len) = skin
+                        .attachments
+                        .iter()
+                        .find(|(at, a)| *at == slot && a.name.eq_ignore_ascii_case(attachment_name))
+                        .and_then(|(_, a)| a.mesh.as_ref())
+                        .map(|mesh| mesh.deform_len())
+                    else {
+                        continue;
+                    };
+                    let mut keys: Vec<Key<Vec<f32>>> = raw
+                        .iter()
+                        .map(|key| {
+                            let mut offsets = vec![0.0; len];
+                            let start = num(key.get("offset"), 0.0).max(0.0) as usize;
+                            for (i, v) in array(key.get("vertices")).iter().enumerate() {
+                                if let Some(slot) = offsets.get_mut(start + i) {
+                                    *slot = num(Some(v), 0.0);
+                                }
+                            }
+                            Key {
+                                time: time_of(key),
+                                value: offsets,
+                                curve: Curve::Linear,
+                            }
+                        })
+                        .collect();
+                    spine_curves(&mut keys, raw, spine4, |end, _| {
+                        vec![if end { 1.0 } else { 0.0 }]
+                    });
+                    out.deforms.push(DeformTimeline {
+                        skin: skin.name.clone(),
+                        slot,
+                        attachment: attachment_name.clone(),
+                        keys,
+                    });
+                }
+            }
         }
         for key in array(animation.get("events")) {
             let at = time_of(key);
@@ -1184,6 +1548,8 @@ fn parse_dragonbones(json: &Json, folder: &str) -> Result<Rig, String> {
                     scale_y,
                     width: 0.0,
                     height: 0.0,
+                    mesh: None,
+                    deform_from: (skin.name.clone(), name.clone()),
                 },
             ));
         }
@@ -1542,6 +1908,108 @@ mod tests {
             frame(r#"{ "curve": [0.5, 0, 1, 1] }"#),
             Curve::Path(vec![[0.5, 0.0], [1.0, 1.0]])
         );
+    }
+
+    /// A plain cape on the root, a sleeve weighted across both bones, and
+    /// an alt skin whose cape links to the default one.
+    fn meshed(version: &str, animation: &str) -> Rig {
+        let text = format!(
+            r#"{{
+            "skeleton": {{ "spine": "{version}" }},
+            "bones": [ {{ "name": "root" }}, {{ "name": "arm", "parent": "root", "x": 10 }} ],
+            "slots": [
+                {{ "name": "cape", "bone": "root", "attachment": "cape" }},
+                {{ "name": "sleeve", "bone": "arm", "attachment": "sleeve" }}
+            ],
+            "skins": [
+                {{ "name": "default", "attachments": {{
+                    "cape": {{ "cape": {{ "type": "mesh",
+                        "uvs": [0,0, 1,0, 1,1, 0,1],
+                        "vertices": [0,0, 2,0, 2,2, 0,2],
+                        "triangles": [0,1,2, 0,2,3] }} }},
+                    "sleeve": {{ "sleeve": {{ "type": "mesh",
+                        "uvs": [0,0, 1,0, 0,1],
+                        "vertices": [1, 1,0,0,1,  2, 0,0,4,0.5, 1,0,0,0.5,  1, 0,0,3,1],
+                        "triangles": [0,1,2] }} }}
+                }} }},
+                {{ "name": "alt", "attachments": {{
+                    "cape": {{ "cape": {{ "type": "linkedmesh", "parent": "cape",
+                        "skin": "default", "path": "alt-cape" }} }}
+                }} }}
+            ],
+            "animations": {{ "flap": {animation} }}
+        }}"#
+        );
+        Rig::parse(&text, "").unwrap()
+    }
+
+    fn mesh_of(pose: &WorldPose, slot: usize) -> &[[f32; 2]] {
+        let draw = pose.draws.iter().find(|draw| draw.slot == slot).unwrap();
+        &draw.mesh.as_ref().unwrap().0
+    }
+
+    #[test]
+    fn meshes_weigh_their_bones_and_deform() {
+        let rig = meshed(
+            "3.8.99",
+            r#"{ "deform": { "default": { "cape": { "cape": [
+                { "time": 0 }, { "time": 1, "offset": 4, "vertices": [1, 1] }
+            ] } } } }"#,
+        );
+        assert!(rig.slot_has_mesh(0) && rig.slot_has_mesh(1));
+        let pose = rig.solve(&rig.setup_pose(), "", &[]);
+        assert_eq!(mesh_of(&pose, 0)[2], [2.0, 2.0]);
+        // Half the root's (0, 4) and half the arm's own origin at (10, 0).
+        let sleeve = mesh_of(&pose, 1);
+        assert!(near(sleeve[0], [10.0, 0.0]));
+        assert!(near(sleeve[1], [5.0, 2.0]));
+        assert!(near(sleeve[2], [0.0, 3.0]));
+        let flap = rig.animation("flap");
+        let halfway = rig.solve(&rig.sample(flap, 0.5, false), "", &[]);
+        assert!(near(mesh_of(&halfway, 0)[2], [2.5, 2.5]));
+        assert!(near(mesh_of(&halfway, 0)[1], [2.0, 0.0]));
+        // The linked cape shows its own image on the parent's shape and
+        // follows the parent's deform.
+        let alt = rig.solve(&rig.sample(flap, 0.5, false), "alt", &[]);
+        let cape = alt.draws.iter().find(|draw| draw.slot == 0).unwrap();
+        assert_eq!(cape.image, "images/alt-cape.png");
+        assert!(near(mesh_of(&alt, 0)[2], [2.5, 2.5]));
+        // Blending back to the setup pose halves the deform again.
+        let blended = rig.sample(flap, 0.5, false).blend(&rig.setup_pose(), 0.5);
+        let blended = rig.solve(&blended, "", &[]);
+        assert!(near(mesh_of(&blended, 0)[2], [2.25, 2.25]));
+    }
+
+    #[test]
+    fn spine4_deforms_ease_along_their_curve() {
+        let rig = meshed(
+            "4.1.0",
+            r#"{ "attachments": { "default": { "cape": { "cape": { "deform": [
+                { "time": 0, "curve": [0.5, 0, 1, 0] },
+                { "time": 1, "offset": 4, "vertices": [1, 1] }
+            ] } } } } }"#,
+        );
+        let flap = rig.animation("flap");
+        let halfway = rig.solve(&rig.sample(flap, 0.5, false), "", &[]);
+        let moved = mesh_of(&halfway, 0)[2][0] - 2.0;
+        assert!(moved > 0.0 && moved < 0.2, "{moved}");
+        let end = rig.solve(&rig.sample(flap, 1.0, false), "", &[]);
+        assert!(near(mesh_of(&end, 0)[2], [3.0, 3.0]));
+    }
+
+    #[test]
+    fn broken_meshes_are_left_out() {
+        let text = r#"{
+            "bones": [ { "name": "root" } ],
+            "slots": [ { "name": "a", "bone": "root", "attachment": "a" } ],
+            "skins": { "default": { "a": {
+                "a": { "type": "mesh", "uvs": [0,0, 1,0, 0,1], "vertices": [0,0, 1,0, 0,1], "triangles": [0,1,5] },
+                "b": { "type": "mesh", "uvs": [0,0, 1,0, 0,1], "vertices": [1, 9,0,0,1], "triangles": [0,1,2] },
+                "c": { "type": "linkedmesh", "parent": "nowhere" }
+            } } }
+        }"#;
+        let rig = Rig::parse(text, "").unwrap();
+        assert!(rig.skins[0].attachments.is_empty());
     }
 
     #[test]

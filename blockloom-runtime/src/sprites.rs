@@ -6,8 +6,10 @@
 //! [`sync_sprites`] makes the actor's drawing match every frame. A stack or
 //! the effect draws through children and hides the actor's own sprite with
 //! an empty `RenderLayers`, the way batching hides a merged actor in 3D.
-//! [`sync_part_palettes`] does the same for each stack slice and rig part,
-//! palette only: an outline per piece would line the seams between them.
+//! [`sync_part_effects`] does the same for each stack slice and rig part's
+//! palette. Their outline is one silhouette per piece in the outline color,
+//! grown by the width and drawn behind every piece, so only the edge of the
+//! whole shape shows rather than a line along every seam.
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::mesh::Mesh2d;
@@ -76,9 +78,12 @@ pub struct SpriteDecor {
 /// An effect quad child: the entity, its material and the size its mesh is.
 type FxQuad = Option<(Entity, Handle<SpriteFxMaterial>, Vec2)>;
 
-/// The palette quad a stack slice or rig part draws through.
+/// A stack slice's or rig part's palette quad and outline silhouette.
 #[derive(Component, Default)]
-pub struct PartFx(FxQuad);
+pub struct PartFx {
+    palette: FxQuad,
+    outline: FxQuad,
+}
 
 /// One slice of a stacked sprite.
 #[derive(Component)]
@@ -91,6 +96,15 @@ pub struct SpriteFxQuad;
 /// Depth between stacked slices, inside one order step.
 const SLICE_DEPTH: f32 = 0.00005;
 
+/// Shader flag: draw only the outline color where the grown sprite covers.
+pub const SILHOUETTE: f32 = 8.0;
+
+/// Where a piece's silhouette sits under the piece at `z` (both in the
+/// actor's frame): half a step behind the first piece.
+pub fn silhouette_depth(z: f32) -> f32 {
+    -z - SLICE_DEPTH * 0.5
+}
+
 /// Palette swap and outline over one sprite frame.
 #[derive(Asset, TypePath, AsBindGroup, Clone, PartialEq)]
 pub struct SpriteFxMaterial {
@@ -98,7 +112,8 @@ pub struct SpriteFxMaterial {
     pub tint: Vec4,
     #[uniform(1)]
     pub uv_rect: Vec4,
-    /// Width, height, outline width, flags (1 flip x, 2 flip y, 4 palette).
+    /// Width, height, outline width, flags (1 flip x, 2 flip y, 4 palette,
+    /// 8 silhouette).
     #[uniform(2)]
     pub shape: Vec4,
     #[uniform(3)]
@@ -112,6 +127,13 @@ pub struct SpriteFxMaterial {
     #[texture(7)]
     #[sampler(8)]
     pub palette: Option<Handle<Image>>,
+    /// 9-slice: see [`slice_uniforms`].
+    #[uniform(9)]
+    pub slice_scale: Vec4,
+    #[uniform(10)]
+    pub slice_insets: Vec4,
+    #[uniform(11)]
+    pub slice_tiles: Vec4,
 }
 
 impl Material2d for SpriteFxMaterial {
@@ -146,9 +168,9 @@ pub fn slicer(slice: &NineSlice) -> TextureSlicer {
     }
 }
 
-/// The frame a sprite shows, as a size in world units and a UV rectangle,
-/// once its image has loaded.
-fn frame_of(sprite: &Sprite, images: &Assets<Image>) -> Option<(Vec2, Vec4)> {
+/// The frame a sprite shows: its size in world units, its UV rectangle and
+/// its size in pixels, once its image has loaded.
+fn frame_of(sprite: &Sprite, images: &Assets<Image>) -> Option<(Vec2, Vec4, Vec2)> {
     let image = images.get(&sprite.image)?.size_f32().max(Vec2::ONE);
     let rect = sprite.rect.unwrap_or(Rect::from_corners(Vec2::ZERO, image));
     let size = sprite.custom_size.unwrap_or(rect.size());
@@ -160,7 +182,45 @@ fn frame_of(sprite: &Sprite, images: &Assets<Image>) -> Option<(Vec2, Vec4)> {
             rect.max.x / image.x,
             rect.max.y / image.y,
         ),
+        rect.size().max(Vec2::ONE),
     ))
+}
+
+/// A sliced sprite's slice as the effect shader takes it: scale, then the
+/// min and max insets, then the side and center tile values. Bevy's own
+/// sprite material works these out the same way, so the effect lines up
+/// with the sprite it stands in for. All zero when the sprite isn't sliced.
+pub fn slice_uniforms(sprite: &Sprite, frame: Vec2) -> [Vec4; 3] {
+    let (SpriteImageMode::Sliced(slicer), Some(custom)) = (&sprite.image_mode, sprite.custom_size)
+    else {
+        return [Vec4::ZERO; 3];
+    };
+    let custom = custom.max(Vec2::splat(1e-4));
+    let (frame_ratio, custom_ratio) = (frame.x / frame.y, custom.x / custom.y);
+    let mut scale = if frame_ratio > custom_ratio {
+        Vec2::new(1.0, frame_ratio / custom_ratio)
+    } else {
+        Vec2::new(custom_ratio / frame_ratio, 1.0)
+    };
+    let min_inset = slicer.border.min_inset / frame;
+    let max_inset = slicer.border.max_inset / frame;
+    scale /= slicer.max_corner_scale.clamp(f32::EPSILON, 1.0);
+    let tile = |mode: SliceScaleMode| match mode {
+        SliceScaleMode::Stretch => Vec2::ZERO,
+        SliceScaleMode::Tile { stretch_value } => {
+            stretch_value * (frame * (1.0 - max_inset - min_inset))
+                / (custom * (1.0 - max_inset / scale - min_inset / scale))
+        }
+    };
+    let (sides, center) = (
+        tile(slicer.sides_scale_mode),
+        tile(slicer.center_scale_mode),
+    );
+    [
+        scale.extend(0.0).extend(0.0),
+        min_inset.extend(max_inset.x).extend(max_inset.y),
+        sides.extend(center.x).extend(center.y),
+    ]
 }
 
 /// Makes every actor's drawing match its dials: flips and slicing on the
@@ -282,15 +342,14 @@ pub fn sync_sprites(
             .as_deref()
             .and_then(|sprite| frame_of(sprite, &images));
         match (effect, sprite.as_deref(), frame) {
-            (Some(spec), Some(base), Some((size, uv_rect))) => {
+            (Some(spec), Some(base), Some((size, uv_rect, pixels))) => {
                 let width = spec.outline_width;
                 let quad = size + Vec2::splat(width * 2.0);
                 let palette = (!spec.palette.is_empty())
                     .then(|| assets.load(asset_path(dir.as_deref(), &spec.palette)));
                 let material = fx_material(
                     base,
-                    size,
-                    uv_rect,
+                    (size, uv_rect, pixels),
                     width,
                     parse_color(&spec.outline_color).to_linear().to_vec4(),
                     palette,
@@ -318,11 +377,11 @@ pub fn sync_sprites(
     }
 }
 
-/// The effect material for `base`'s frame. Flips come off the sprite.
+/// The effect material for `base`'s frame (from [`frame_of`]). Flips and
+/// slicing come off the sprite.
 fn fx_material(
     base: &Sprite,
-    size: Vec2,
-    uv_rect: Vec4,
+    (size, uv_rect, pixels): (Vec2, Vec4, Vec2),
     outline_width: f32,
     outline_color: Vec4,
     palette: Option<Handle<Image>>,
@@ -330,7 +389,11 @@ fn fx_material(
 ) -> SpriteFxMaterial {
     let flags =
         f32::from(base.flip_x) + 2.0 * f32::from(base.flip_y) + 4.0 * f32::from(palette.is_some());
+    let [slice_scale, slice_insets, slice_tiles] = slice_uniforms(base, pixels);
     SpriteFxMaterial {
+        slice_scale,
+        slice_insets,
+        slice_tiles,
         tint: base.color.to_linear().to_vec4(),
         uv_rect,
         shape: Vec4::new(size.x, size.y, outline_width, flags),
@@ -386,10 +449,16 @@ fn place_quad(
     }
 }
 
-/// Gives each stack slice and rig part of a palette-swapped actor its own
-/// palette quad, and takes it away again when the palette goes.
+/// What one stack slice or rig part should carry.
+struct PartWants {
+    palette: Option<(Handle<Image>, u32)>,
+    outline: Option<(f32, Vec4)>,
+}
+
+/// Gives each stack slice and rig part of a dialed actor its palette quad
+/// and outline silhouette, and takes them away again when the dials go.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-pub fn sync_part_palettes(
+pub fn sync_part_effects(
     mut commands: Commands,
     engine: NonSend<Engine>,
     assets: Res<AssetServer>,
@@ -405,69 +474,125 @@ pub fn sync_part_palettes(
         With<ActorId>,
     >,
     mut parts: Query<
-        (Entity, &Sprite, Option<&mut PartFx>, Has<RenderLayers>),
+        (
+            Entity,
+            &Sprite,
+            &Transform,
+            Option<&mut PartFx>,
+            Has<RenderLayers>,
+        ),
         Or<(With<StackSlice>, With<crate::anim2d::RigPart>)>,
     >,
 ) {
     let dir = engine.project_dir.clone();
-    let mut wanted: HashMap<Entity, (Handle<Image>, u32)> = HashMap::default();
+    let mut wanted: HashMap<Entity, PartWants> = HashMap::default();
     for (dials, decor, rig) in &actors {
         let spec = &dials.0;
-        if spec.palette.is_empty() {
+        let palette = (!spec.palette.is_empty()).then(|| {
+            let image: Handle<Image> = assets.load(asset_path(dir.as_deref(), &spec.palette));
+            (image, spec.palette_index)
+        });
+        let outline = (spec.outline_width > 0.0).then(|| {
+            (
+                spec.outline_width,
+                parse_color(&spec.outline_color).to_linear().to_vec4(),
+            )
+        });
+        if palette.is_none() && outline.is_none() {
             continue;
         }
-        let palette: Handle<Image> = assets.load(asset_path(dir.as_deref(), &spec.palette));
         let rig_parts = rig.filter(|rig| rig.active).map(|rig| rig.parts.as_slice());
         let slices = decor.map(|decor| decor.stack.as_slice());
         for part in rig_parts.into_iter().chain(slices).flatten() {
-            wanted.insert(*part, (palette.clone(), spec.palette_index));
+            wanted.insert(
+                *part,
+                PartWants {
+                    palette: palette.clone(),
+                    outline,
+                },
+            );
         }
     }
-    for (entity, sprite, fx, hidden) in &mut parts {
-        match (wanted.remove(&entity), fx) {
-            (Some((palette, row)), fx) => {
-                let Some((size, uv_rect)) = frame_of(sprite, &images) else {
-                    continue;
-                };
-                let material =
-                    fx_material(sprite, size, uv_rect, 0.0, Vec4::ZERO, Some(palette), row);
-                match fx {
-                    Some(mut fx) => place_quad(
-                        &mut commands,
-                        &mut meshes,
-                        &mut materials,
-                        entity,
-                        &mut fx.0,
-                        material,
-                        size,
-                        0.0,
-                    ),
-                    None => {
-                        let mut slot = None;
-                        place_quad(
-                            &mut commands,
-                            &mut meshes,
-                            &mut materials,
-                            entity,
-                            &mut slot,
-                            material,
-                            size,
-                            0.0,
-                        );
-                        commands.entity(entity).insert(PartFx(slot));
-                    }
-                }
-                if !hidden {
-                    commands.entity(entity).insert(RenderLayers::none());
-                }
-            }
-            (None, Some(mut fx)) => {
-                if let Some((quad_entity, _, _)) = fx.0.take() {
-                    commands.entity(quad_entity).despawn();
+    for (entity, sprite, transform, fx, hidden) in &mut parts {
+        let wants = wanted.remove(&entity);
+        let Some(wants) = wants else {
+            if let Some(mut fx) = fx {
+                for (quad, _, _) in [fx.palette.take(), fx.outline.take()].into_iter().flatten() {
+                    commands.entity(quad).despawn();
                 }
                 commands.entity(entity).remove::<(PartFx, RenderLayers)>();
             }
-            (None, None) => {}
+            continue;
+        };
+        let Some(frame) = frame_of(sprite, &images) else {
+            continue;
+        };
+        let mut fx = fx;
+        let mut now = fx.as_deref_mut().map(std::mem::take).unwrap_or_default();
+        match wants.palette {
+            Some((palette, row)) => {
+                let material = fx_material(sprite, frame, 0.0, Vec4::ZERO, Some(palette), row);
+                place_quad(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    entity,
+                    &mut now.palette,
+                    material,
+                    frame.0,
+                    0.0,
+                );
+            }
+            None => {
+                if let Some((quad, _, _)) = now.palette.take() {
+                    commands.entity(quad).despawn();
+                }
+            }
+        }
+        match wants.outline {
+            Some((width, color)) => {
+                // The width is the actor's; undo the piece's own scale.
+                let scale = transform.scale.truncate().abs();
+                let width = width / (scale.x * scale.y).sqrt().max(1e-4);
+                let mut material = fx_material(sprite, frame, width, color, None, 0);
+                material.shape.w += SILHOUETTE;
+                place_quad(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    entity,
+                    &mut now.outline,
+                    material,
+                    frame.0 + Vec2::splat(width * 2.0),
+                    silhouette_depth(transform.translation.z),
+                );
+            }
+            None => {
+                if let Some((quad, _, _)) = now.outline.take() {
+                    commands.entity(quad).despawn();
+                }
+            }
+        }
+        let palette = now.palette.is_some();
+        let empty = now.palette.is_none() && now.outline.is_none();
+        match (fx, empty) {
+            (Some(mut fx), false) => *fx = now,
+            (Some(_), true) => {
+                commands.entity(entity).remove::<PartFx>();
+            }
+            (None, false) => {
+                commands.entity(entity).insert(now);
+            }
+            (None, true) => {}
+        }
+        match (palette, hidden) {
+            (true, false) => {
+                commands.entity(entity).insert(RenderLayers::none());
+            }
+            (false, true) => {
+                commands.entity(entity).remove::<RenderLayers>();
+            }
+            _ => {}
         }
     }
 }
@@ -701,7 +826,7 @@ struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) world
         app.init_asset::<Mesh>();
         app.init_asset::<SpriteFxMaterial>();
         app.insert_non_send(Engine::new(incoming, blockloom_core::scene::Mode::TwoD));
-        app.add_systems(Update, sync_part_palettes);
+        app.add_systems(Update, sync_part_effects);
         let image = app
             .world_mut()
             .resource_mut::<Assets<Image>>()
@@ -732,14 +857,14 @@ struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) world
         let mut quads = Vec::new();
         for slice in &slices {
             let fx = app.world().get::<PartFx>(*slice).unwrap();
-            let (quad, _, _) = fx.0.as_ref().unwrap();
+            let (quad, _, _) = fx.palette.as_ref().unwrap();
             quads.push(*quad);
             assert!(app.world().get::<RenderLayers>(*slice).is_some());
         }
         // A second frame reuses the quads rather than making more.
         app.update();
         let again = app.world().get::<PartFx>(slices[0]).unwrap();
-        assert_eq!(again.0.as_ref().unwrap().0, quads[0]);
+        assert_eq!(again.palette.as_ref().unwrap().0, quads[0]);
         app.world_mut()
             .get_mut::<SpriteDials>(actor)
             .unwrap()
@@ -750,6 +875,100 @@ struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) world
         for (slice, quad) in slices.iter().zip(quads) {
             assert!(app.world().get::<PartFx>(*slice).is_none());
             assert!(app.world().get::<RenderLayers>(*slice).is_none());
+            assert!(app.world().get_entity(quad).is_err());
+        }
+    }
+
+    #[test]
+    fn slices_follow_bevys_own_sprite_maths() {
+        let mut sprite = Sprite {
+            custom_size: Some(Vec2::new(64.0, 32.0)),
+            ..default()
+        };
+        assert_eq!(slice_uniforms(&sprite, Vec2::splat(32.0)), [Vec4::ZERO; 3]);
+        sprite.image_mode = SpriteImageMode::Sliced(slicer(&NineSlice {
+            border: [8.0, 8.0, 4.0, 4.0],
+            center: SliceFill::Tile,
+            sides: SliceFill::Stretch,
+            max_corner_scale: 1.0,
+        }));
+        let [scale, insets, tiles] = slice_uniforms(&sprite, Vec2::splat(32.0));
+        // Twice as wide as the frame: the corners keep their 8 pixels.
+        assert_eq!(scale.truncate().truncate(), Vec2::new(2.0, 1.0));
+        assert_eq!(insets, Vec4::new(0.25, 0.125, 0.25, 0.125));
+        assert_eq!(64.0 * insets.x / scale.x, 8.0);
+        // Sides stretch; the center tiles every 16 of its 48 pixels.
+        assert_eq!(tiles.truncate().truncate(), Vec2::ZERO);
+        assert!((tiles.z - 16.0 / 48.0).abs() < 1e-6);
+        assert_eq!(tiles.w, 1.0);
+    }
+
+    #[test]
+    fn stacks_get_one_silhouette_under_every_slice() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut app = App::new();
+        app.add_plugins((
+            TaskPoolPlugin::default(),
+            bevy::asset::AssetPlugin::default(),
+        ));
+        app.init_asset::<Image>();
+        app.init_asset::<Mesh>();
+        app.init_asset::<SpriteFxMaterial>();
+        app.insert_non_send(Engine::new(incoming, blockloom_core::scene::Mode::TwoD));
+        app.add_systems(Update, sync_part_effects);
+        let image = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(Image::default());
+        let slices: Vec<Entity> = (0..3)
+            .map(|index| {
+                app.world_mut()
+                    .spawn((
+                        StackSlice,
+                        Sprite::from_image(image.clone()),
+                        Transform::from_xyz(0.0, index as f32, index as f32 * SLICE_DEPTH),
+                    ))
+                    .id()
+            })
+            .collect();
+        let mut dials = dialed(false, 0, "");
+        dials.0.outline_width = 2.0;
+        let actor = app
+            .world_mut()
+            .spawn((
+                ActorId("stack".to_string()),
+                dials,
+                SpriteDecor {
+                    stack: slices.clone(),
+                    ..SpriteDecor::default()
+                },
+            ))
+            .id();
+        app.update();
+        let mut silhouettes = Vec::new();
+        for slice in &slices {
+            let fx = app.world().get::<PartFx>(*slice).unwrap();
+            assert!(fx.palette.is_none());
+            let (quad, material, size) = fx.outline.clone().unwrap();
+            // Outline only: the slice still draws itself.
+            assert!(app.world().get::<RenderLayers>(*slice).is_none());
+            let materials = app.world().resource::<Assets<SpriteFxMaterial>>();
+            assert_eq!(materials.get(&material).unwrap().shape.w, SILHOUETTE);
+            assert_eq!(size, Vec2::ONE + Vec2::splat(4.0));
+            // Every silhouette lands under the first slice.
+            let local = app.world().get::<Transform>(quad).unwrap().translation.z;
+            let own = app.world().get::<Transform>(*slice).unwrap().translation.z;
+            assert!(own + local < 0.0);
+            silhouettes.push(quad);
+        }
+        app.world_mut()
+            .get_mut::<SpriteDials>(actor)
+            .unwrap()
+            .0
+            .outline_width = 0.0;
+        app.update();
+        for (slice, quad) in slices.iter().zip(silhouettes) {
+            assert!(app.world().get::<PartFx>(*slice).is_none());
             assert!(app.world().get_entity(quad).is_err());
         }
     }

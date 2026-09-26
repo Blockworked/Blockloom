@@ -345,7 +345,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     anim2d::ensure_rigs,
                     anim2d::draw_rigs,
                     sprites::sync_sprites,
-                    sprites::sync_part_palettes,
+                    sprites::sync_part_effects,
                 )
                     .chain()
                     .after(world::drive_camera)
