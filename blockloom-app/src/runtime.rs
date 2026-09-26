@@ -273,6 +273,15 @@ impl Backend {
             } => {
                 crate::commands::place_from_view(&mut s, &actor, placement, offset, volume);
             }
+            RuntimeMessage::TerrainStroke { actor, stroke } => {
+                if let Err(message) = crate::commands::terrain_stroke(&mut s, &actor, stroke) {
+                    s.push_log(LogLine {
+                        kind: "error".to_string(),
+                        actor: "Blockloom".to_string(),
+                        text: message,
+                    });
+                }
+            }
             RuntimeMessage::Fatal { message } => {
                 s.running = false;
                 s.push_log(LogLine {

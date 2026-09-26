@@ -375,6 +375,29 @@ impl Backend {
                 arg(&args, "actors").unwrap_or_default(),
             )?),
             "probe_status" => to_json(commands::probe_status(state)?),
+            "paint_terrain" => to_json(commands::paint_terrain(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "stroke")?,
+            )?),
+            "import_terrain_heightmap" => to_json(commands::import_terrain_heightmap(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "path")?,
+            )?),
+            "erode_terrain" => to_json(commands::erode_terrain(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "erosion")?,
+            )?),
+            "preview_terrain_erosion" => to_json(commands::preview_terrain_erosion(
+                state,
+                arg(&args, "actorId")?,
+                arg(&args, "erosion").unwrap_or_default(),
+            )?),
             "set_preview_enabled" => to_json(commands::set_preview_enabled(
                 state,
                 app,

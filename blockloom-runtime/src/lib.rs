@@ -66,6 +66,7 @@ mod solari_patch;
 mod sound;
 mod space;
 mod streaming;
+mod terrain;
 #[cfg(feature = "ray_tracing")]
 mod traced;
 mod ui;
@@ -375,6 +376,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             clouds::register(app);
             cloud_layers::register(app);
             beams::register(app);
+            terrain::register(app);
             use bevy::camera::visibility::VisibilitySystems;
             app.add_systems(
                 PostUpdate,

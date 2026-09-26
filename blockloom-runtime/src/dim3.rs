@@ -91,7 +91,7 @@ fn surface_mesh(
     let Some(material) = actor.components.material() else {
         return cache.mesh(visual, meshes);
     };
-    let revised = material.box_projection
+    let revised = material.is_projected()
         || material.tiling != [1.0, 1.0]
         || material.offset != [0.0, 0.0]
         || material.rotation != 0.0
@@ -256,10 +256,8 @@ fn insert_surface(
             )));
         return;
     }
-    if let Some(material) = material
-        .filter(|material| material.box_projection || !material.roughness_texture.is_empty())
-    {
-        let surface = crate::materials::box_material(commands, material, color, dir, assets);
+    if let Some(material) = material.filter(|material| material.is_projected()) {
+        let mut surface = crate::materials::box_material(commands, material, color, dir, assets);
         let key = format!(
             "projected:{:?}:{}:{}",
             dir,
@@ -267,6 +265,9 @@ fn insert_surface(
             serde_json::to_string(material).unwrap_or_default()
         );
         commands.queue(move |world: &mut World| {
+            if let Some(globals) = world.get_resource::<crate::materials::SurfaceGlobals>() {
+                surface.extension.globals = globals.buffer.clone();
+            }
             let handle =
                 world.resource_scope(|world, mut cache: Mut<crate::performance::RenderCache>| {
                     let mut materials =

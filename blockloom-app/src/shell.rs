@@ -1070,6 +1070,62 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[],
     },
     CommandSpec {
+        name: "paint-terrain",
+        cmd: "paint_terrain",
+        aliases: &["paint_terrain", "sculpt-terrain"],
+        summary: "Apply one brush stroke to a terrain, as one undo step. stroke is {\"brush\": {\"op\": Raise, Lower, Smooth, Flatten, Noise, Terrace, Paint or Erase, \"target\": {\"kind\": \"Heights\"} or {\"kind\": \"Layer\", \"layer\": 1} (also Holes, Grass, Scatter), \"radius\", \"strength\", \"falloff\"}, \"stamps\": [[x, z], ...]} in metres from the terrain's centre.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "stroke",
+                ty: "object {\"brush\", \"stamps\"}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "import-terrain-heightmap",
+        cmd: "import_terrain_heightmap",
+        aliases: &["import_terrain_heightmap"],
+        summary: "Replace a terrain's heights with a heightmap asset (16-bit PNG, .r16/.r32 RAW, or an image marked as a heightmap), stretched to its resolution.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "erode-terrain",
+        cmd: "erode_terrain",
+        aliases: &["erode_terrain"],
+        summary: "Run an erosion filter over a terrain's heights, as one undo step: {\"kind\": \"thermal\", \"iterations\", \"talus\"} or {\"kind\": \"hydraulic\", \"droplets\", \"seed\", \"erosion\", \"deposition\", \"inertia\"}.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "erosion",
+                ty: "object {\"kind\", ...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "preview-terrain-erosion",
+        cmd: "preview_terrain_erosion",
+        aliases: &["preview_terrain_erosion"],
+        summary: "Show an erosion filter on a terrain in the Game view without saving it (same shape as erode-terrain); leave erosion out to put the saved ground back.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "erosion",
+                ty: "object {\"kind\", ...}",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
         name: "close-runtime",
         cmd: "close_runtime",
         aliases: &["close_runtime"],

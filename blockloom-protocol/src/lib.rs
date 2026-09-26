@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 16;
+pub const PROTOCOL_VERSION: u32 = 17;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -144,6 +144,13 @@ pub enum EditorMessage {
         #[serde(default)]
         actors: Vec<String>,
     },
+    /// Shows a terrain with an erosion filter run over it, without touching
+    /// the document; `None` puts the saved ground back.
+    PreviewErosion {
+        actor: String,
+        #[serde(default)]
+        erosion: Option<blockloom_core::terrain::sculpt::Erosion>,
+    },
     /// Close the window and exit.
     Shutdown,
 }
@@ -189,6 +196,12 @@ pub enum RuntimeMessage {
     /// What ray tracing can do and is doing, whenever that changes, and a
     /// few times a second while the path tracer converges.
     RayTracing(RayTracingStatus),
+    /// A terrain brush stroke ended in the scene view, which has already
+    /// drawn it. The editor applies the same stroke to the saved grids.
+    TerrainStroke {
+        actor: String,
+        stroke: blockloom_core::terrain::sculpt::Stroke,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -226,6 +239,8 @@ pub enum SceneTool {
     Move,
     Rotate,
     Scale,
+    /// Sculpt, paint or scatter on the selected terrain with `SceneView::brush`.
+    Brush,
 }
 
 /// What the Game view shows in place of the lit image, for judging exposure.
@@ -248,6 +263,9 @@ pub enum DebugView {
     /// The project's HDR output as an HDR display would show it, paper white
     /// at SDR white and anything brighter clipped.
     HdrPreview,
+    /// Terrain layer weights and surface masks as flat colors: layers red,
+    /// green, blue and yellow, rule masks magenta, snow white, wetness cyan.
+    SurfaceBlend,
 }
 
 /// The scene view's settings, which are the editor's preferences rather than
@@ -270,6 +288,8 @@ pub struct SceneView {
     pub debug_view: DebugView,
     pub volumes: VolumeDebug,
     pub path_tracer: PathTracerView,
+    /// The terrain brush the Brush tool paints with.
+    pub brush: blockloom_core::terrain::sculpt::Brush,
 }
 
 /// The reference path tracer in place of the lit image, for checking a
@@ -333,6 +353,7 @@ impl Default for SceneView {
             debug_view: DebugView::Lit,
             volumes: VolumeDebug::default(),
             path_tracer: PathTracerView::default(),
+            brush: Default::default(),
         }
     }
 }

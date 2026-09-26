@@ -992,6 +992,9 @@ pub struct World {
     /// drift on it.
     #[serde(default)]
     pub wind: crate::wind::Wind,
+    /// Snow cover and wetness, which surface masks scale by.
+    #[serde(default)]
+    pub surface: crate::material::SurfaceWeather,
 }
 
 fn default_background() -> String {
@@ -1031,6 +1034,7 @@ impl Default for World {
             cloud_layers: Vec::new(),
             lightning: crate::lightning::Lightning::default(),
             wind: crate::wind::Wind::default(),
+            surface: crate::material::SurfaceWeather::default(),
         }
     }
 }

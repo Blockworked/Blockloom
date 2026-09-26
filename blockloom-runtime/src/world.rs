@@ -393,6 +393,9 @@ pub fn pump_editor(
                     message: "Light probes need a 3D world".into(),
                 }),
             },
+            EditorMessage::PreviewErosion { actor, erosion } => {
+                engine.terrain_previews.push((actor, erosion));
+            }
             EditorMessage::Shutdown => {
                 exit.write(AppExit::Success);
                 return;
@@ -611,6 +614,7 @@ pub fn rebuild_world(
     engine.lightning_rate = None;
     engine.wind = Default::default();
     engine.clouds = Default::default();
+    engine.surface = Default::default();
     engine.cloud_layers = Default::default();
     engine.parents = engine
         .project
@@ -3372,6 +3376,7 @@ pub fn report_status(
     streaming: crate::streaming::StreamingReport,
     gpu: crate::gpu::GpuReport,
     volumes: Option<Res<crate::volumes::VolumeBlend>>,
+    terrain: Option<Res<crate::terrain::TerrainStats>>,
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
     let now = time.elapsed_secs() as f64;
@@ -3485,6 +3490,15 @@ pub fn report_status(
             ("culling/occlusion_tested", stats.tested),
             ("culling/occluded", stats.occluded),
         ] {
+            render_metrics.push(RenderMetric {
+                name: name.into(),
+                value: value as f64,
+                unit: "count".into(),
+            });
+        }
+    }
+    if let Some(terrain) = terrain.filter(|t| t.terrains > 0) {
+        for (name, value) in terrain.metrics() {
             render_metrics.push(RenderMetric {
                 name: name.into(),
                 value: value as f64,

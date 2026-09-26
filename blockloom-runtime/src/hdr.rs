@@ -322,7 +322,8 @@ impl HdrDebug {
 
     fn mode(self) -> Option<u32> {
         match self.0 {
-            DebugView::Lit => None,
+            // The surface shaders draw the blend view themselves.
+            DebugView::Lit | DebugView::SurfaceBlend => None,
             DebugView::FalseColor => Some(1),
             DebugView::Clipping => Some(2),
             DebugView::Histogram => Some(3),

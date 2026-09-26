@@ -26,6 +26,7 @@ fn main() {
                 "qml/BlockSidebar.qml",
                 "qml/InspectorPanel.qml",
                 "qml/InspectorRow.qml",
+                "qml/SurfaceDetailRows.qml",
                 "qml/NumberField.qml",
                 "qml/ColorField.qml",
                 "qml/HdrColorField.qml",

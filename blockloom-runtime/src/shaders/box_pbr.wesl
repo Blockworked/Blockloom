@@ -3,6 +3,12 @@ import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
 };
+import bevy_pbr::mesh_view_bindings::view;
+import blockloom::texturing::{
+    SurfaceGlobals, MaskUniforms, DetailUniforms, sample_uv, triplanar, triplanar_normal,
+    triplanar_weights, slope_degrees, macro_noise, macro_tint, blend_detail, apply_masks,
+    blend_debug,
+};
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> scale_offset: vec4<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var<uniform> options: vec4<f32>;
@@ -12,56 +18,128 @@ import bevy_pbr::render::{
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var normal_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(106) var roughness_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(107) var roughness_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(108) var<uniform> masks: MaskUniforms;
+@group(constants::MATERIAL_BIND_GROUP) @binding(109) var<uniform> detail: DetailUniforms;
+@group(constants::MATERIAL_BIND_GROUP) @binding(110) var macro_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(111) var macro_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(112) var detail_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(113) var detail_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(114) var<storage, read> globals: SurfaceGlobals;
 
-fn projected_uv(uv: vec2<f32>) -> vec2<f32> {
-    let scaled = uv * scale_offset.xy;
+fn rotate(v: vec2<f32>) -> vec2<f32> {
     let c = cos(options.x);
     let s = sin(options.x);
-    return vec2<f32>(scaled.x * c - scaled.y * s,
-                     scaled.x * s + scaled.y * c) + scale_offset.zw;
+    return vec2<f32>(v.x * c - v.y * s, v.x * s + v.y * c);
 }
 
-fn weights(normal: vec3<f32>) -> vec3<f32> {
-    let w = pow(abs(normal), vec3<f32>(4.0));
-    return w / max(dot(w, vec3<f32>(1.0)), 0.0001);
+fn projected_uv(uv: vec2<f32>) -> vec2<f32> {
+    return rotate(uv * scale_offset.xy) + scale_offset.zw;
+}
+
+// A derivative carried through `projected_uv` (no offset).
+fn projected_grad(g: vec2<f32>) -> vec2<f32> {
+    return rotate(g * scale_offset.xy);
+}
+
+// One map box-projected on the three planes, each lookup optionally hex-tiled.
+fn box_sample(
+    t: texture_2d<f32>,
+    s: sampler,
+    pos: vec3<f32>,
+    gx: vec3<f32>,
+    gy: vec3<f32>,
+    w: vec3<f32>,
+) -> vec4<f32> {
+    let stochastic = detail.tiling.x > 0.5;
+    let contrast = detail.tiling.y;
+    return sample_uv(t, s, projected_uv(pos.yz), projected_grad(gx.yz), projected_grad(gy.yz), stochastic, contrast) * w.x
+        + sample_uv(t, s, projected_uv(pos.xz), projected_grad(gx.xz), projected_grad(gy.xz), stochastic, contrast) * w.y
+        + sample_uv(t, s, projected_uv(pos.xy), projected_grad(gx.xy), projected_grad(gy.xy), stochastic, contrast) * w.z;
 }
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr = pbr_input_from_standard_material(in, is_front);
-    let pos = in.world_position.xyz * options.y;
-    let w = weights(normalize(pbr.world_normal));
-    let uv_x = projected_uv(pos.yz);
-    let uv_y = projected_uv(pos.xz);
-    let uv_z = projected_uv(pos.xy);
+    let world = in.world_position.xyz;
+    let n = normalize(pbr.world_normal);
+    let pos = world * options.y;
+    let gx = dpdx(pos);
+    let gy = dpdy(pos);
+    let wgx = dpdx(world);
+    let wgy = dpdy(world);
+    let w = triplanar_weights(n, 4.0);
+    let projected = options.y > 0.0;
+    var uv = vec2<f32>(0.0);
+    var ugx = vec2<f32>(0.0);
+    var ugy = vec2<f32>(0.0);
+    @if(VERTEX_UVS_A) {
+        uv = projected_uv(in.uv);
+        ugx = dpdx(uv);
+        ugy = dpdy(uv);
+    }
 
     if (options.z > 0.5) {
-        let color = textureSample(albedo_texture, albedo_sampler, uv_x) * w.x
-                  + textureSample(albedo_texture, albedo_sampler, uv_y) * w.y
-                  + textureSample(albedo_texture, albedo_sampler, uv_z) * w.z;
+        var color: vec4<f32>;
+        if (projected) {
+            color = box_sample(albedo_texture, albedo_sampler, pos, gx, gy, w);
+        } else {
+            color = sample_uv(albedo_texture, albedo_sampler, uv, ugx, ugy, detail.tiling.x > 0.5, detail.tiling.y);
+        }
         pbr.material.base_color *= color;
     }
     if (options.w >= 2.0) {
-        if (options.y > 0.0) {
-            let rough = textureSample(roughness_texture, roughness_sampler, uv_x).g * w.x
-                      + textureSample(roughness_texture, roughness_sampler, uv_y).g * w.y
-                      + textureSample(roughness_texture, roughness_sampler, uv_z).g * w.z;
-            pbr.material.perceptual_roughness *= rough;
+        if (projected) {
+            pbr.material.perceptual_roughness *= box_sample(roughness_texture, roughness_sampler, pos, gx, gy, w).g;
         } else {
-            @if(VERTEX_UVS_A)
-            pbr.material.perceptual_roughness *= textureSample(roughness_texture, roughness_sampler, projected_uv(in.uv)).g;
+            pbr.material.perceptual_roughness *= sample_uv(roughness_texture, roughness_sampler, uv, ugx, ugy, detail.tiling.x > 0.5, detail.tiling.y).g;
         }
     }
     if (options.w == 1.0 || options.w == 3.0) {
-        let nx = textureSample(normal_texture, normal_sampler, uv_x).xyz * 2.0 - 1.0;
-        let ny = textureSample(normal_texture, normal_sampler, uv_y).xyz * 2.0 - 1.0;
-        let nz = textureSample(normal_texture, normal_sampler, uv_z).xyz * 2.0 - 1.0;
+        let stochastic = detail.tiling.x > 0.5;
+        let contrast = detail.tiling.y;
+        let nx = sample_uv(normal_texture, normal_sampler, projected_uv(pos.yz), projected_grad(gx.yz), projected_grad(gy.yz), stochastic, contrast).xyz * 2.0 - 1.0;
+        let ny = sample_uv(normal_texture, normal_sampler, projected_uv(pos.xz), projected_grad(gx.xz), projected_grad(gy.xz), stochastic, contrast).xyz * 2.0 - 1.0;
+        let nz = sample_uv(normal_texture, normal_sampler, projected_uv(pos.xy), projected_grad(gx.xy), projected_grad(gy.xy), stochastic, contrast).xyz * 2.0 - 1.0;
         let sign_n = sign(pbr.world_normal);
         pbr.N = normalize(vec3<f32>(nx.z * sign_n.x, nx.x, nx.y) * w.x
                           + vec3<f32>(ny.x, ny.z * sign_n.y, ny.y) * w.y
                           + vec3<f32>(nz.x, nz.y, nz.z * sign_n.z) * w.z);
     }
+
+    // Macro variation breaks up repeats at a scale the tiles can't.
+    if (detail.tiling.z > 0.0) {
+        var v: f32;
+        if (detail.detail.w > 0.5) {
+            v = triplanar(macro_texture, macro_sampler, world, wgx, wgy, w, detail.tiling.w, false, 0.0).r;
+        } else {
+            v = macro_noise(world.xz + world.y * vec2<f32>(0.37, 0.71), detail.tiling.w);
+        }
+        pbr.material.base_color = vec4<f32>(pbr.material.base_color.rgb * macro_tint(v, detail.tiling.z), pbr.material.base_color.a);
+    }
+    // Micro detail normals up close.
+    if (detail.detail.x > 0.0) {
+        let d = triplanar_normal(detail_texture, detail_sampler, world, wgx, wgy, n, w, detail.detail.y, false, 0.0);
+        let distance = length(view.world_position.xyz - world);
+        pbr.N = blend_detail(pbr.N, d, n, detail.detail.x, distance, detail.detail.z);
+    }
+
+    let masked = apply_masks(
+        pbr.material.base_color.rgb,
+        pbr.material.perceptual_roughness,
+        slope_degrees(n),
+        world.y,
+        0.0,
+        masks,
+        globals,
+    );
+    pbr.material.base_color = vec4<f32>(masked.albedo, pbr.material.base_color.a);
+    pbr.material.perceptual_roughness = masked.roughness;
+
     var out: FragmentOutput;
+    if (globals.weather.z > 0.5) {
+        out.color = vec4<f32>(vec3<f32>(0.2) + blend_debug(vec4<f32>(0.0), masked.coverage), 1.0);
+        return out;
+    }
     out.color = main_pass_post_lighting_processing(pbr, apply_pbr_lighting(pbr));
     return out;
 }

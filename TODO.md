@@ -133,11 +133,13 @@ Phased by dependency and value per cost. Each phase unblocks the next.
       primitives, applied in `surface_standard` and the graph ubershaders, with
       inspector rows for the new dials. Old projects normalize to the legacy
       mapping (tiling 1x1, clamp) so nothing already shipped changes look.
-  - [ ] Advanced pass (for Phase 5 terrain): stochastic texture bombing to hide
+  - [x] Advanced pass (for Phase 5 terrain): stochastic texture bombing to hide
         tiling, macro variation plus micro detail maps, mask stack (slope, height,
         cavity plus snow/wetness fed by the weather director and the persistent
         wetness map), blend debug view. Builds on the triplanar toggle and texel
-        density above, not a second implementation.
+        density above, not a second implementation. Not covered: no weather
+        director or persistent wetness map exists yet, so snow and wetness come
+        from World.surface, volumes and the run's overrides.
 - [x] Particle/trail blocks (burst, emitter dials), plus ghost trails for custom-shaded and tilemap actors.
 - [x] Advanced physics: fixed, hinge and rope joints, character controller, one-way platforms, and ragdoll chains built from hinged bodies.
 - [x] AI: live polyanya rebake, navigation cost areas and layer masks, off-mesh links, crowd separation, steering, behavior trees and sight perception.
@@ -651,7 +653,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         and sky ambient don't see them (the cubes are rewritten only when the
         sky changes, and moving layers would refilter them every frame, the
         same reason stars and aurora stay out).
-  - [ ] Terrain and vegetation: heightmap terrain (1k to 4k, import PNG/RAW, sculpt
+  - [x] Terrain and vegetation: heightmap terrain (1k to 4k, import PNG/RAW, sculpt
         raise/lower/smooth/flatten/noise/terrace with radius/falloff/strength, paint
         albedo/normal/roughness layers with slope/height/curvature rules, holes for
         caves), auto collision plus LOD (quadtree or chunked, crack fix, pixel-error
@@ -660,6 +662,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         (instanced LOD0/LOD1/billboard, scatter brush with density/clumping noise and
         slope/altitude/collision filters, per-instance tint/scale jitter). Editor:
         sculpt/paint/scatter brushes, erosion filter preview, stats (tris, instances).
+        Not covered: RAW import is 16/32-bit .r16/.r32 only, and the GPU half
+        has no ignored embed test yet.
   - [ ] Water (ocean, lake, river actor): wave model (8-12 summed Gerstner waves
         with amplitude/chop/steepness plus Phillips-spectrum normal detail, wind
         fetch param), depth color (shallow tint, deep tint, Beer absorption distance),
