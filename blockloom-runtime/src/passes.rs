@@ -421,7 +421,10 @@ pub fn upsample(
                 view: destination,
                 depth_slice: None,
                 resolve_target: None,
-                ops: Operations::default(),
+                ops: Operations {
+                    load: LoadOp::Load,
+                    store: StoreOp::Store,
+                },
             })],
             depth_stencil_attachment: None,
             timestamp_writes: None,

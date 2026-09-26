@@ -63,6 +63,7 @@ Rectangle {
                   tonemapping: p.tonemapping, bloom: p.bloom_enabled, bloom_threshold: p.bloom_threshold, bloom_intensity: p.bloom_intensity,
                   vignette: p.vignette_strength, reflections: 1, indirect: 1,
                   sky_exposure: w.sky ? w.sky.exposure : 0, ambient_dimmer: w.sky ? w.sky.ambient_dimmer : 1,
+                  cloud_coverage: (w.clouds || {}).coverage || 0, cloud_density: (w.clouds || {}).density || 0, cloud_type: (w.clouds || {}).cloud_type || 0,
                   fog_density: 3 / (f.height.distance || 400), fog_color: f.height.day_color || "#C2CAD2", fog_height: f.height.base_height || 0,
                   volumetric_density: f.volumetric.density !== undefined ? f.volumetric.density : 0.02, volumetric_albedo: f.volumetric.albedo || "#FFFFFF",
                   beams: 1, haze_distance: f.aerial.distance || 8000 })[key];
@@ -86,6 +87,9 @@ Rectangle {
         { key: "indirect", label: "Indirect ×", kind: "number", only3d: true },
         { key: "sky_exposure", label: "Sky EV", kind: "number", only3d: true },
         { key: "ambient_dimmer", label: "Sky ambient ×", kind: "number", only3d: true },
+        { key: "cloud_coverage", label: "Cloud coverage", kind: "number", only3d: true },
+        { key: "cloud_density", label: "Cloud density", kind: "number", only3d: true },
+        { key: "cloud_type", label: "Cloud type", kind: "number", only3d: true },
         { key: "fog_density", label: "Fog /m", kind: "number", only3d: true },
         { key: "fog_color", label: "Fog color", kind: "color", only3d: true },
         { key: "fog_height", label: "Fog base", kind: "number", only3d: true },

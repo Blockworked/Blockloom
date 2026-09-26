@@ -20,6 +20,8 @@ pub const MODULES: &[(&str, &str)] = &[
     ("frame", include_str!("shaders/frame.wesl")),
     ("sky", include_str!("shaders/sky.wesl")),
     ("fog", include_str!("shaders/fog.wesl")),
+    ("blue_noise", include_str!("shaders/blue_noise.wesl")),
+    ("clouds", include_str!("shaders/clouds.wesl")),
     ("space", include_str!("shaders/space.wesl")),
 ];
 

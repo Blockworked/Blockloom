@@ -545,12 +545,12 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         Blocks, compiled logic and scripts share `set wind [direction/speed/
         gust/storm] to` and `set cloud drift to`; `wind direction` and
         `storm` join the atmosphere readings beside `wind speed`.
-        Not covered: nothing draws clouds, cloud layers, vegetation or water
-        yet, so the cloud offsets have no reader until those items land;
+        Not covered: cloud layers, vegetation and water have no renderer yet;
+        volumetric clouds now consume the cloud offsets;
         wind doesn't push rigid bodies; dust motes and beam motes keep
         their own drift rather than the wind; there are no wind arrows in
         the viewport (the editor item below).
-  - [ ] Volumetric clouds (the hero feature, raymarched in sky pass at half res with
+  - [x] Volumetric clouds (the hero feature, raymarched in sky pass at half res with
         temporal reprojection and depth-aware upsample):
         - Shape: tileable 128 cubed Worley plus Perlin-Worley FBM asset (authored or
           baked in editor), coverage remap curve (toe for wisps, shoulder for
@@ -572,6 +572,20 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           (e.g. 64/48/32/16) and light steps (8/6/5/3), transmittance threshold for
           early out, blue-noise jitter plus TAA. Stats line in profiler: steps,
           overdraw, ms.
+        Implemented: `World.clouds` with project settings and `set-clouds`,
+        normalized on load and edit, plus coverage/density/type volume overrides.
+        `clouds.rs` bakes seeded tileable 128³ Perlin-Worley and 32³ erosion
+        textures on the GPU, then marches at half resolution with blue-noise
+        jitter, wind advection, sun/moon lightmarching and sky-cube ambient.
+        Per-view history rejects edits, resize, skipped draws and large drift;
+        the shared bilateral upsampler preserves the scene under clear rays.
+        A 2048² sun/moon transmittance map projects onto visible terrain, with
+        independent celestial shadow switches. This is a screen-space shadow
+        approximation: it attenuates the combined surface lighting, including
+        emissives, rather than only the direct-light term inside PBR.
+        Profiler: average primary steps and contributing samples per pixel
+        (`clouds/steps`, `clouds/overdraw`) plus GPU `cloud_march` timing.
+        Noise is generated on demand, not imported from authored volume assets.
   - [ ] Cloud layers (planar 2D cover above and below volumetrics, also the full
         fallback when volumetrics are off):
         - Up to 4 layers, each: coverage texture or procedural FBM (seed, scale,

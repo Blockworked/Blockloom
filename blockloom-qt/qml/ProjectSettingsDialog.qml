@@ -41,6 +41,7 @@ BwDialog {
     function writeSkyPart(part, next) { const o = {}; o[part] = Object.assign(JSON.parse(JSON.stringify(world.sky[part])), next); writeSky(o); }
     function writeFogPart(part, next) { const fog = JSON.parse(JSON.stringify(world.fog)); fog[part] = Object.assign(fog[part], next); invoke("set_fog", { fog: fog }); }
     function writeLightning(next) { invoke("set_lightning", { lightning: Object.assign(JSON.parse(JSON.stringify(world.lightning)), next) }); }
+    function writeVolumetricClouds(next) { invoke("set_clouds", { clouds: Object.assign(JSON.parse(JSON.stringify(world.clouds)), next) }); }
     function writeWind(next) { invoke("set_wind", { wind: Object.assign(JSON.parse(JSON.stringify(world.wind)), next) }); }
     function writeClouds(next) { writeWind({ clouds: Object.assign(JSON.parse(JSON.stringify(world.wind.clouds)), next) }); }
     function writeLighting(next) { invoke("set_lighting", { lighting: Object.assign(JSON.parse(JSON.stringify(world.lighting)), next) }); }
@@ -304,6 +305,71 @@ BwDialog {
                     NumberField { value: skySection.au.horizon_glow; fallback: 0.3; onCommitted: n => root.writeSkyPart("aurora", { horizon_glow: root.clamp(n, 0, 1) }) } }
                 Note { visible: skySection.kind !== "Flat"; text: "Stars fade in as the sun sinks between the two sun-fade elevations; faintness steepens how many dim stars there are for each bright one. The Milky Way is a 2:1 panorama laid over them. Aurora curtains hang between the foot and top altitudes; KP 0-9 sets how far from the pole they reach (9 is overhead), and `set aurora to KP` changes it while the game runs. The moon lights the world as a directional light of its own, dimmed by its phase and fading as it sets." }
                 Note { text: "The sky draws the background and lights the world: its ambient light (scaled by the dimmer) and its reflections come from the same place. A physical sky scatters the sun (Rayleigh for blue, Mie for haze round the sun, ozone for twilight) and reddens the sunlight near the horizon; placing the sun by latitude, longitude, day and hour moves the light too, and the moon trails a geographic sun by its phase. A gradient is three stops that warm near a low sun. An HDR image is an .hdr or .exr panorama (2:1) or a strip of six faces, at its brightness in nits; blur softens the background only. Sky exposure is added to the camera's, never instead of it." }
+            }
+            Section {
+                id: cloudSection
+                heading: "Volumetric clouds"; visible: !!root.world && root.is3d && !!root.world.clouds
+                readonly property var c: root.world && root.world.clouds ? root.world.clouds : ({})
+                InspectorRow { label: "Enabled"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!cloudSection.c.enabled; onToggled: on => root.writeVolumetricClouds({ enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { label: "Quality"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: ["Low", "Medium", "High", "Ultra"].map(v => ({ value: v, label: v })); value: cloudSection.c.quality || "High"; onChosen: v => root.writeVolumetricClouds({ quality: v }) } }
+                InspectorRow { label: "Coverage"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.coverage; fallback: 0.5; onCommitted: n => root.writeVolumetricClouds({ coverage: n }) } }
+                InspectorRow { label: "Density"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.density; fallback: 0.8; onCommitted: n => root.writeVolumetricClouds({ density: n }) } }
+                InspectorRow { label: "Stratus / cumulus"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.cloud_type; fallback: 0.7; onCommitted: n => root.writeVolumetricClouds({ cloud_type: n }) } }
+                InspectorRow { label: "Bottom m"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.bottom; fallback: 1500; onCommitted: n => root.writeVolumetricClouds({ bottom: n }) } }
+                InspectorRow { label: "Top m"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.top; fallback: 3500; onCommitted: n => root.writeVolumetricClouds({ top: n }) } }
+                InspectorRow { label: "Tiling km"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.tiling_km; fallback: 12; onCommitted: n => root.writeVolumetricClouds({ tiling_km: n }) } }
+                InspectorRow { label: "Coverage toe"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.toe; fallback: 0.2; onCommitted: n => root.writeVolumetricClouds({ toe: n }) } }
+                InspectorRow { label: "Shoulder"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.shoulder; fallback: 0.8; onCommitted: n => root.writeVolumetricClouds({ shoulder: n }) } }
+                InspectorRow { label: "Detail scale"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.detail_scale; fallback: 6; onCommitted: n => root.writeVolumetricClouds({ detail_scale: n }) } }
+                InspectorRow { label: "Erosion"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.erosion; fallback: 0.35; onCommitted: n => root.writeVolumetricClouds({ erosion: n }) } }
+                InspectorRow { label: "Detail speed"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.detail_speed; fallback: 1; onCommitted: n => root.writeVolumetricClouds({ detail_speed: n }) } }
+                InspectorRow { label: "Anvil"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.anvil; fallback: 0.3; onCommitted: n => root.writeVolumetricClouds({ anvil: n }) } }
+                InspectorRow { label: "Bottom billow"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.billow; fallback: 0.15; onCommitted: n => root.writeVolumetricClouds({ billow: n }) } }
+                InspectorRow { label: "Top feather"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.feather; fallback: 0.2; onCommitted: n => root.writeVolumetricClouds({ feather: n }) } }
+                InspectorRow { label: "Forward lobe"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.forward; fallback: 0.8; onCommitted: n => root.writeVolumetricClouds({ forward: n }) } }
+                InspectorRow { label: "Back lobe"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.backward; fallback: -0.2; onCommitted: n => root.writeVolumetricClouds({ backward: n }) } }
+                InspectorRow { label: "Back blend"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.back_blend; fallback: 0.2; onCommitted: n => root.writeVolumetricClouds({ back_blend: n }) } }
+                InspectorRow { label: "Powder"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.powder; fallback: 1; onCommitted: n => root.writeVolumetricClouds({ powder: n }) } }
+                InspectorRow { label: "Light bleed"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.lightbleed; fallback: 0.3; onCommitted: n => root.writeVolumetricClouds({ lightbleed: n }) } }
+                InspectorRow { label: "Sky light"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.ambient; fallback: 1; onCommitted: n => root.writeVolumetricClouds({ ambient: n }) } }
+                InspectorRow { label: "Belly occlusion"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.bottom_occlusion; fallback: 0.65; onCommitted: n => root.writeVolumetricClouds({ bottom_occlusion: n }) } }
+                InspectorRow { label: "Shadow strength"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.shadow_strength; fallback: 0.7; onCommitted: n => root.writeVolumetricClouds({ shadow_strength: n }) } }
+                InspectorRow { label: "Shadow range m"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.shadow_range; fallback: 20000; onCommitted: n => root.writeVolumetricClouds({ shadow_range: n }) } }
+                InspectorRow { label: "Early out"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cloudSection.c.threshold; fallback: 0.01; onCommitted: n => root.writeVolumetricClouds({ threshold: n }) } }
+                InspectorRow { label: "Shear X/Z m"; labelWidth: 110; Layout.fillWidth: true
+                    Repeater { model: 2; delegate: NumberField { required property int index; value: (cloudSection.c.shear || [0, 0])[index]; onCommitted: n => root.writeVolumetricClouds({ shear: root.withIndex(cloudSection.c.shear || [0, 0], index, n) }) } } }
+                InspectorRow { label: "Ground shadows"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!cloudSection.c.shadows; onToggled: on => root.writeVolumetricClouds({ shadows: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { label: "Sun / moon shadows"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!cloudSection.c.sun_shadows; onToggled: on => root.writeVolumetricClouds({ sun_shadows: on }) }
+                    SwitchField { value: !!cloudSection.c.moon_shadows; onToggled: on => root.writeVolumetricClouds({ moon_shadows: on }) } }
+                Note { text: "Thickness is top minus bottom, in metres. Clouds ride the Wind section's cloud drift and seed. Quality controls view and light march steps: Low 16/3, Medium 32/5, High 48/6, Ultra 64/8." }
             }
             Section {
                 id: fogSection

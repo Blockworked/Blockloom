@@ -3358,6 +3358,7 @@ pub fn report_status(
     update: Option<Res<crate::performance::UpdateSplit>>,
     batches: Option<Res<crate::batching::Batches>>,
     culling: Option<Res<crate::culling::Culling>>,
+    clouds: Option<Res<crate::clouds::CloudStats>>,
     streaming: crate::streaming::StreamingReport,
     gpu: crate::gpu::GpuReport,
     volumes: Option<Res<crate::volumes::VolumeBlend>>,
@@ -3419,6 +3420,20 @@ pub fn report_status(
             })
         })
         .collect();
+    if engine.project.world.clouds.enabled {
+        if let Some(clouds) = clouds {
+            for (name, value) in [
+                ("clouds/steps", clouds.steps),
+                ("clouds/overdraw", clouds.overdraw),
+            ] {
+                render_metrics.push(RenderMetric {
+                    name: name.into(),
+                    value: value as f64,
+                    unit: "samples/pixel".into(),
+                });
+            }
+        }
+    }
     if let Some(ms) = crate::hdr::tonemap_ms(&render_metrics) {
         render_metrics.push(RenderMetric {
             name: "hdr/tonemap".into(),

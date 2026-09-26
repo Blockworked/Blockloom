@@ -901,6 +901,24 @@ pub(crate) fn set_fog(state: &SharedState, app: &AppHandle, fog: Fog) -> Result<
     Ok(())
 }
 
+pub(crate) fn set_clouds(
+    state: &SharedState,
+    app: &AppHandle,
+    clouds: blockloom_core::clouds::Clouds,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut clouds = clouds;
+    clouds.normalize();
+    if let Some(project) = s.project_mut() {
+        project.world.clouds = clouds;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
 /// Sets how lightning looks and sounds, and the storm that throws it.
 pub(crate) fn set_lightning(
     state: &SharedState,

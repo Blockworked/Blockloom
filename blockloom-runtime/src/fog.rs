@@ -89,6 +89,7 @@ pub fn register(app: &mut App) {
         .add_systems(
             Core3d,
             draw_fog
+                .after(crate::clouds::CloudPass)
                 .after(Core3dSystems::MainPass)
                 .before(Core3dSystems::EarlyPostProcess),
         );

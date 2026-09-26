@@ -389,6 +389,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-clouds",
+        cmd: "set_clouds",
+        aliases: &["set_clouds"],
+        summary: "Set volumetric clouds: shape, altitude, erosion, lighting, shadows and quality.",
+        args: &[ArgSpec {
+            name: "clouds",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-lightning",
         cmd: "set_lightning",
         aliases: &["set_lightning"],

@@ -75,3 +75,5 @@ pub mod wire;
 pub fn init() {
     value::register_blockloom_operators();
 }
+
+pub mod clouds;

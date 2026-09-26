@@ -63,6 +63,7 @@ pub struct Environment {
     pub beams: f32,
     /// Aerial haze's extinction per metre, 0 for none.
     pub haze: f32,
+    pub clouds: blockloom_core::clouds::Clouds,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -102,6 +103,7 @@ impl Environment {
         // default.
         let direction = Vec3::from_array(world.sky.sun_direction(lighting.light_direction));
         Self {
+            clouds: world.clouds.clone(),
             background: parse_color(&world.background),
             sun: Sun {
                 direction,
@@ -228,6 +230,9 @@ impl Environment {
         number(&mut self.indirect, over.indirect);
         number(&mut self.sky_exposure, over.sky_exposure);
         number(&mut self.ambient_dimmer, over.ambient_dimmer);
+        number(&mut self.clouds.coverage, over.cloud_coverage);
+        number(&mut self.clouds.density, over.cloud_density);
+        number(&mut self.clouds.cloud_type, over.cloud_type);
         number(&mut self.fog_density, over.fog_density);
         for fog in &mut self.fog_colors {
             color(fog, over.fog_color);
@@ -260,6 +265,9 @@ pub struct EnvironmentOverride {
     pub indirect: Option<f32>,
     pub sky_exposure: Option<f32>,
     pub ambient_dimmer: Option<f32>,
+    pub cloud_coverage: Option<f32>,
+    pub cloud_density: Option<f32>,
+    pub cloud_type: Option<f32>,
     pub fog_density: Option<f32>,
     pub fog_color: Option<Color>,
     pub fog_height: Option<f32>,
@@ -298,6 +306,21 @@ impl EnvironmentOverride {
             indirect: overrides.indirect.get().map(|m| m.max(0.0)),
             sky_exposure: overrides.sky_exposure.get().filter(|ev| ev.is_finite()),
             ambient_dimmer: overrides.ambient_dimmer.get().map(|m| m.max(0.0)),
+            cloud_coverage: overrides
+                .cloud_coverage
+                .get()
+                .filter(|v| v.is_finite())
+                .map(|v| v.clamp(0.0, 1.0)),
+            cloud_density: overrides
+                .cloud_density
+                .get()
+                .filter(|v| v.is_finite())
+                .map(|v| v.clamp(0.0, 10.0)),
+            cloud_type: overrides
+                .cloud_type
+                .get()
+                .filter(|v| v.is_finite())
+                .map(|v| v.clamp(0.0, 1.0)),
             fog_density: overrides
                 .fog_density
                 .get()
@@ -348,6 +371,9 @@ impl EnvironmentOverride {
             ("indirect", self.indirect.map(show_number)),
             ("sky_exposure", self.sky_exposure.map(show_number)),
             ("ambient_dimmer", self.ambient_dimmer.map(show_number)),
+            ("cloud_coverage", self.cloud_coverage.map(show_number)),
+            ("cloud_density", self.cloud_density.map(show_number)),
+            ("cloud_type", self.cloud_type.map(show_number)),
             ("fog_density", self.fog_density.map(show_number)),
             ("fog_color", self.fog_color.map(show_color)),
             ("fog_height", self.fog_height.map(show_number)),
@@ -386,6 +412,9 @@ impl Environment {
             ("indirect", show_number(self.indirect)),
             ("sky_exposure", show_number(self.sky_exposure)),
             ("ambient_dimmer", show_number(self.ambient_dimmer)),
+            ("cloud_coverage", show_number(self.clouds.coverage)),
+            ("cloud_density", show_number(self.clouds.density)),
+            ("cloud_type", show_number(self.clouds.cloud_type)),
             ("fog_density", show_number(self.fog_density)),
             ("fog_color", show_color(self.fog_colors[0])),
             ("fog_height", show_number(self.fog_height)),
@@ -619,6 +648,23 @@ mod tests {
 
     fn base() -> Environment {
         Environment::from_world(&scene::World::default())
+    }
+
+    #[test]
+    fn clouds_blend_by_volume_weight() {
+        let mut env = Environment::default();
+        env.clouds.coverage = 0.2;
+        env.clouds.density = 0.5;
+        let overrides = EnvironmentOverride {
+            cloud_coverage: Some(1.0),
+            cloud_density: Some(1.5),
+            cloud_type: Some(0.0),
+            ..default()
+        };
+        env.blend(&overrides, 0.5);
+        assert!((env.clouds.coverage - 0.6).abs() < 1e-6);
+        assert_eq!(env.clouds.density, 1.0);
+        assert_eq!(env.clouds.cloud_type, 0.35);
     }
 
     #[test]

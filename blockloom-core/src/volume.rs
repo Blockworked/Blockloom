@@ -84,6 +84,9 @@ pub struct VolumeOverrides {
     pub beams: Override<f32>,
     /// Metres at which aerial haze takes half a far object's light.
     pub haze_distance: Override<f32>,
+    pub cloud_coverage: Override<f32>,
+    pub cloud_density: Override<f32>,
+    pub cloud_type: Override<f32>,
 }
 
 impl Default for VolumeOverrides {
@@ -116,6 +119,9 @@ impl Default for VolumeOverrides {
             volumetric_albedo: Override::off(world.fog.volumetric.albedo.clone()),
             beams: Override::off(1.0),
             haze_distance: Override::off(world.fog.aerial.distance),
+            cloud_coverage: Override::off(world.clouds.coverage),
+            cloud_density: Override::off(world.clouds.density),
+            cloud_type: Override::off(world.clouds.cloud_type),
         }
     }
 }
@@ -141,6 +147,9 @@ impl VolumeOverrides {
             ("indirect", self.indirect.on),
             ("sky_exposure", self.sky_exposure.on),
             ("ambient_dimmer", self.ambient_dimmer.on),
+            ("cloud_coverage", self.cloud_coverage.on),
+            ("cloud_density", self.cloud_density.on),
+            ("cloud_type", self.cloud_type.on),
             ("fog_density", self.fog_density.on),
             ("fog_color", self.fog_color.on),
             ("fog_height", self.fog_height.on),

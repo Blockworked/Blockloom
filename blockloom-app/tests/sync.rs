@@ -282,3 +282,40 @@ fn attach_mode_drives_the_editors_backend() {
         "the editor holds the only copy"
     );
 }
+
+#[test]
+fn cloud_settings_normalize_undo_and_reload() {
+    let (_lock, _data, projects) = isolated("clouds");
+    let backend = backend();
+    let dir = create_project(&backend, projects.path(), "Clouds");
+    backend
+        .dispatch("open_project", json!({"path": dir}))
+        .unwrap();
+    let clouds = |backend: &Backend| {
+        let state = backend.dispatch("get_state", json!({})).unwrap();
+        state["project"]["world"]["clouds"].clone()
+    };
+    let before = clouds(&backend);
+    backend
+        .dispatch(
+            "set_clouds",
+            json!({"clouds": {
+                "enabled": true, "coverage": 2.0, "bottom": 4000.0, "top": 1000.0,
+                "quality": "Ultra", "moon_shadows": false
+            }}),
+        )
+        .unwrap();
+    let edited = clouds(&backend);
+    assert_eq!(edited["coverage"], 1.0);
+    assert_eq!(edited["top"], 4010.0);
+    backend.dispatch("undo", json!({})).unwrap();
+    assert_eq!(clouds(&backend), before);
+    backend.dispatch("redo", json!({})).unwrap();
+    assert_eq!(clouds(&backend), edited);
+    backend.dispatch("close_project", json!({})).unwrap();
+    backend
+        .dispatch("open_project", json!({"path": dir}))
+        .unwrap();
+    assert_eq!(clouds(&backend), edited);
+    backend.dispatch("close_project", json!({})).unwrap();
+}

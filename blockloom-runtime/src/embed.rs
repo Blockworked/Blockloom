@@ -1856,6 +1856,65 @@ mod tests {
 
     #[test]
     #[ignore = "needs a GPU"]
+    fn volumetric_clouds_preserve_terrain_and_cast_shadows() {
+        let render = |enabled, shadows| {
+            let mut room = dark_room(false);
+            room.world.lighting.illuminance = 10000.0;
+            room.world.lighting.light_direction = [0.0, 1.0, 0.0];
+            room.world.clouds.enabled = enabled;
+            room.world.clouds.shadows = shadows;
+            room.world.clouds.coverage = 1.0;
+            room.world.clouds.erosion = 0.0;
+            room.world.clouds.density = 3.0;
+            room.world.clouds.shadow_strength = 1.0;
+            room.world.clouds.quality = blockloom_core::clouds::CloudQuality::Low;
+            floor_pixel(run_world(room, |_| {}, game_camera(), 70, |_| false))
+        };
+        let clear = render(false, false);
+        let unshadowed = render(true, false);
+        let shadowed = render(true, true);
+        assert!(clear[0] > 30, "unlit baseline {clear:?}");
+        assert!(
+            clear[0].abs_diff(unshadowed[0]) < 8,
+            "terrain was lost: clear {clear:?}, clouds {unshadowed:?}"
+        );
+        assert!(
+            shadowed[0] + 20 < unshadowed[0],
+            "no cloud shadow: {shadowed:?}, clear {unshadowed:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn volumetric_clouds_cover_the_sky() {
+        let render = |enabled| {
+            let mut room = dark_room(false);
+            room.world.camera.position = [0.0, 1.0, 0.0];
+            room.world.camera.look_at = [0.0, 6.0, 10.0];
+            room.world.background = "#002080".into();
+            room.world.lighting.illuminance = 10000.0;
+            room.world.clouds.enabled = enabled;
+            room.world.clouds.coverage = 1.0;
+            room.world.clouds.erosion = 0.0;
+            room.world.clouds.density = 2.0;
+            room.world.clouds.quality = blockloom_core::clouds::CloudQuality::Low;
+            let (set, index, errors) = run_world(room, |_| {}, game_camera(), 70, |_| false);
+            assert!(errors.is_empty(), "{errors:?}");
+            let set = set.expect("cloud frame");
+            middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize)
+        };
+        let clear = render(false);
+        let cloudy = render(true);
+        assert!(
+            cloudy[2].saturating_add(40) < clear[2]
+                && cloudy[0] > 5
+                && cloudy[2].abs_diff(cloudy[0]) < 30,
+            "clear {clear:?}, cloudy {cloudy:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
     fn a_physical_sky_paints_a_blue_day_behind_the_world() {
         use blockloom_core::sky::{SkyKind, SunMode};
         let mut room = dark_room(false);

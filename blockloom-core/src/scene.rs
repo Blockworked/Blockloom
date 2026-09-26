@@ -946,6 +946,8 @@ pub struct World {
     /// Height fog, volumetric fog and aerial perspective, 3D only.
     #[serde(default)]
     pub fog: crate::fog::Fog,
+    #[serde(default)]
+    pub clouds: crate::clouds::Clouds,
     /// Strikes and the storm that throws them.
     #[serde(default)]
     pub lightning: crate::lightning::Lightning,
@@ -988,6 +990,7 @@ impl Default for World {
             navigation: crate::nav::NavSettings::default(),
             sky: crate::sky::Sky::default(),
             fog: crate::fog::Fog::default(),
+            clouds: crate::clouds::Clouds::default(),
             lightning: crate::lightning::Lightning::default(),
             wind: crate::wind::Wind::default(),
         }

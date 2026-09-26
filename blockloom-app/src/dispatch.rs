@@ -150,6 +150,10 @@ impl Backend {
                 let fog: blockloom_core::fog::Fog = arg(&args, "fog")?;
                 to_json(commands::set_fog(state, app, fog)?)
             }
+            "set_clouds" => {
+                let clouds: blockloom_core::clouds::Clouds = arg(&args, "clouds")?;
+                to_json(commands::set_clouds(state, app, clouds)?)
+            }
             "set_lightning" => {
                 let lightning: blockloom_core::lightning::Lightning = arg(&args, "lightning")?;
                 to_json(commands::set_lightning(state, app, lightning)?)
