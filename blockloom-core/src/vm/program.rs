@@ -155,6 +155,10 @@ pub enum Action {
         property: crate::clouds::CloudProperty,
         value: Value,
     },
+    SetWater {
+        property: crate::water::WaterProperty,
+        value: Value,
+    },
     SetCloudLayer {
         layer: Value,
         property: crate::cloud_layers::CloudLayerProperty,
@@ -628,6 +632,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
         | Action::SetLightningRate(value)
         | Action::SetWind { value, .. }
         | Action::SetClouds { value, .. }
+        | Action::SetWater { value, .. }
         | Action::Say(value)
         | Action::SetColor(value)
         | Action::StopSound { sound: value }
@@ -907,6 +912,10 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
             value: lift_one(value, ctx),
         },
         Action::SetClouds { property, value } => Action::SetClouds {
+            property,
+            value: lift_one(value, ctx),
+        },
+        Action::SetWater { property, value } => Action::SetWater {
             property,
             value: lift_one(value, ctx),
         },
@@ -1456,6 +1465,10 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             value: value.clone(),
         })),
         K::SetClouds { property, value } => steps.push(Step::Action(Action::SetClouds {
+            property: *property,
+            value: value.clone(),
+        })),
+        K::SetWater { property, value } => steps.push(Step::Action(Action::SetWater {
             property: *property,
             value: value.clone(),
         })),

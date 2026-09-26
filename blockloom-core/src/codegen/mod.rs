@@ -75,7 +75,7 @@ pub use runtime::{
     ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_PEAK_BRIGHTNESS, ACT_SET_RAY_TRACING, ACT_SET_ROTATION,
     ACT_SET_SCALE, ACT_SET_SHADOW_DISTANCE, ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME,
     ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY,
-    ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT, ACT_SET_WIND, ACT_SHOW_ELEMENT, ACT_STOP_ANIMATION,
+    ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT, ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT, ACT_STOP_ANIMATION,
     ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_TURN, ACT_TWEEN_COLOR,
     ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, Act, Actors, Entry, Host,
     LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI,
@@ -1094,6 +1094,13 @@ impl<'a> Pass<'a> {
                 self.number(value)?,
                 &format!(
                     "Act::SetClouds {{ property: \"{}\", value: slot }}",
+                    property.name()
+                ),
+            ),
+            Action::SetWater { property, value } => reading(
+                self.number(value)?,
+                &format!(
+                    "Act::SetWater {{ property: \"{}\", value: slot }}",
                     property.name()
                 ),
             ),

@@ -3817,6 +3817,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetCloudDrift { .. }
         | Effect::SetClouds { .. }
         | Effect::SetCloudLayer { .. }
+        | Effect::SetWater { .. }
         | Effect::SetBusVolume { .. }
         | Effect::RumbleGamepad { .. }
         | Effect::Stopped

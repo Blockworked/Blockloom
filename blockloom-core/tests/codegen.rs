@@ -25,6 +25,7 @@ use blockloom_core::blocks::{
 };
 use blockloom_core::cloud_layers::CloudLayerProperty;
 use blockloom_core::clouds::CloudProperty;
+use blockloom_core::water::WaterProperty;
 use blockloom_core::input::ActionSense;
 use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::{Axis, Mode, Visual};
@@ -1009,6 +1010,7 @@ fn line_of(act: &Act) -> String {
         Act::SetWind { property, value } => format!("SetWind {property} {value:?}"),
         Act::SetCloudDrift { drift } => format!("SetCloudDrift {drift:?}"),
         Act::SetClouds { property, value } => format!("SetClouds {property} {value:?}"),
+        Act::SetWater { property, value } => format!("SetWater {property} {value:?}"),
         Act::SetCloudLayer {
             layer,
             property,
@@ -1243,6 +1245,11 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetClouds { property, value } => {
             format!("|SetClouds {} {value:?}", property.name())
         }
+        Effect::SetWater {
+            actor,
+            property,
+            value,
+        } => format!("{actor}|SetWater {} {value:?}", property.name()),
         Effect::SetCloudLayer {
             layer,
             property,
@@ -1851,6 +1858,14 @@ fn arithmetic_lands_on_the_same_numbers() {
             K::SetClouds {
                 property: CloudProperty::Type,
                 value: Value::text("fluffy"),
+            },
+            K::SetWater {
+                property: WaterProperty::Level,
+                value: op("Sub", vec![number(1.0), number(0.25)]),
+            },
+            K::SetWater {
+                property: WaterProperty::Chop,
+                value: Value::text("choppy"),
             },
             K::Move {
                 steps: op("Math", vec![Value::text("Sqrt"), number(2.0)]),

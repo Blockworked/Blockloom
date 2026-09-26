@@ -23,7 +23,7 @@ use blockloom_core::codegen::{
     ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_PEAK_BRIGHTNESS, ACT_SET_RAY_TRACING, ACT_SET_ROTATION,
     ACT_SET_SCALE, ACT_SET_SHADOW_DISTANCE, ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME,
     ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY,
-    ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT, ACT_SET_WIND, ACT_SHOW_ELEMENT, ACT_STOP_ANIMATION,
+    ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT, ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT, ACT_STOP_ANIMATION,
     ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_TURN, ACT_TWEEN_COLOR,
     ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, LOGIC_ABI_VERSION, LogicHostApi,
     READ_SENSE, READ_VARIABLE, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
@@ -599,6 +599,17 @@ extern "C" fn act(
             None => Effect::Error {
                 actor,
                 message: format!("there's no cloud dial called \"{a}\""),
+            },
+        },
+        ACT_SET_WATER => match blockloom_core::water::WaterProperty::parse(a) {
+            Some(property) => Effect::SetWater {
+                actor,
+                property,
+                value: n0 as f32,
+            },
+            None => Effect::Error {
+                actor,
+                message: format!("there's no water dial called \"{a}\""),
             },
         },
         ACT_SET_BODY => Effect::SetBody {
