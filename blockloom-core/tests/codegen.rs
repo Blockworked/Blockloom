@@ -23,6 +23,7 @@ use blockloom_core::blocks::{
     BlockDef, BlockPiece, BlockShape, DictDef, DictEntry, DictItem, EmitterDial, InputValueType,
     Instruction, InstructionKind as K, ListDef, ListItem, Strand, VariableDef,
 };
+use blockloom_core::cloud_layers::CloudLayerProperty;
 use blockloom_core::clouds::CloudProperty;
 use blockloom_core::input::ActionSense;
 use blockloom_core::project::{Actor, Project};
@@ -312,6 +313,7 @@ impl Host for Recorder {
             | Act::SetWind { .. }
             | Act::SetCloudDrift { .. }
             | Act::SetClouds { .. }
+            | Act::SetCloudLayer { .. }
             | Act::SetPaused { .. } => String::new(),
             _ => actor.to_string(),
         };
@@ -1007,6 +1009,11 @@ fn line_of(act: &Act) -> String {
         Act::SetWind { property, value } => format!("SetWind {property} {value:?}"),
         Act::SetCloudDrift { drift } => format!("SetCloudDrift {drift:?}"),
         Act::SetClouds { property, value } => format!("SetClouds {property} {value:?}"),
+        Act::SetCloudLayer {
+            layer,
+            property,
+            value,
+        } => format!("SetCloudLayer {layer:?} {property} {value:?}"),
         Act::Say { text } => format!("Say {text}"),
         Act::SetColor { color } => format!("SetColor {color}"),
         Act::SetVisible { visible } => format!("SetVisible {visible}"),
@@ -1236,6 +1243,11 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetClouds { property, value } => {
             format!("|SetClouds {} {value:?}", property.name())
         }
+        Effect::SetCloudLayer {
+            layer,
+            property,
+            value,
+        } => format!("|SetCloudLayer {layer:?} {} {value:?}", property.name()),
         Effect::Say { actor, text } => format!("{actor}|Say {text}"),
         Effect::SetColor { actor, color } => format!("{actor}|SetColor {color}"),
         Effect::SetVisible { actor, visible } => format!("{actor}|SetVisible {visible}"),
@@ -1819,6 +1831,17 @@ fn arithmetic_lands_on_the_same_numbers() {
                 x: number(3.0),
                 y: op("Sub", vec![number(0.0), number(0.5)]),
                 z: op("Mul", vec![number(-2.0), number(1.5)]),
+            },
+            K::SetCloudLayer {
+                layer: number(2.0),
+                property: CloudLayerProperty::Opacity,
+                value: op("Div", vec![number(1.0), number(4.0)]),
+            },
+            // A layer that isn't a number stands a zero too.
+            K::SetCloudLayer {
+                layer: Value::text("top"),
+                property: CloudLayerProperty::Spin,
+                value: number(15.0),
             },
             K::SetClouds {
                 property: CloudProperty::Coverage,

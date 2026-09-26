@@ -155,6 +155,11 @@ pub enum Action {
         property: crate::clouds::CloudProperty,
         value: Value,
     },
+    SetCloudLayer {
+        layer: Value,
+        property: crate::cloud_layers::CloudLayerProperty,
+        value: Value,
+    },
     SetCloudDrift([Value; 3]),
     SetBody(BodyKind),
     ApplyImpulse([Value; 3]),
@@ -660,6 +665,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
         Action::PlayAnimation { clip, speed } => vec![clip, speed],
         Action::EnableVolume { volume, .. } => vec![volume],
         Action::SetVolumeWeight { volume, weight } => vec![volume, weight],
+        Action::SetCloudLayer { layer, value, .. } => vec![layer, value],
         Action::PlaySound {
             sound,
             volume,
@@ -917,6 +923,15 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         Action::SetVolumeWeight { volume, weight } => Action::SetVolumeWeight {
             volume: lift_one(volume, ctx),
             weight: lift_one(weight, ctx),
+        },
+        Action::SetCloudLayer {
+            layer,
+            property,
+            value,
+        } => Action::SetCloudLayer {
+            layer: lift_one(layer, ctx),
+            property,
+            value: lift_one(value, ctx),
         },
         Action::ApplyImpulse(mut t) => {
             for v in &mut t {
@@ -1441,6 +1456,15 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             value: value.clone(),
         })),
         K::SetClouds { property, value } => steps.push(Step::Action(Action::SetClouds {
+            property: *property,
+            value: value.clone(),
+        })),
+        K::SetCloudLayer {
+            layer,
+            property,
+            value,
+        } => steps.push(Step::Action(Action::SetCloudLayer {
+            layer: layer.clone(),
             property: *property,
             value: value.clone(),
         })),

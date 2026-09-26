@@ -91,6 +91,7 @@ const TWEEN_EASINGS: &[&str] = &[
 const SOUND_BUSES: &[&str] = &["Master", "Music", "Sfx"];
 const WIND_PROPERTIES: &[&str] = &["Direction", "Speed", "Gust", "Storm"];
 const CLOUD_PROPERTIES: &[&str] = &["Coverage", "Density", "Type"];
+const CLOUD_LAYER_PROPERTIES: &[&str] = &["Coverage", "Opacity", "Contrast", "Altitude", "Spin"];
 const UI_ANCHORS: &[&str] = &[
     "TopLeft",
     "Top",
@@ -1181,6 +1182,32 @@ pub const BLOCKS: &[BlockSpec] = &[
         dropdowns: &[Dropdown {
             field: "property",
             options: CLOUD_PROPERTIES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetCloudLayer",
+        category: "Looks",
+        purpose: "Sets one of a cloud layer's dials for the rest of the run, over the project's own: Coverage 0-1, Opacity 0-1, Contrast 1-16, Altitude in metres, or Spin in degrees a second. Layers count from 1 in Project Settings order; a layer the project doesn't have reports an error. 3D only.",
+        header: false,
+        three_d: true,
+        slots: &[
+            Slot {
+                field: "layer",
+                id: "CloudLayer",
+                value: "Any",
+            },
+            Slot {
+                field: "value",
+                id: "CloudLayerValue",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "property",
+            options: CLOUD_LAYER_PROPERTIES,
         }],
         strings: NO_STRINGS,
         bools: NO_BOOLS,

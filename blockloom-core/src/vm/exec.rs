@@ -1347,6 +1347,19 @@ impl Vm {
                     value,
                 });
             }
+            Action::SetCloudLayer {
+                layer,
+                property,
+                value,
+            } => {
+                let layer = self.eval_f32(layer, actor, params, temps, out);
+                let value = self.eval_f32(value, actor, params, temps, out);
+                out.push(Effect::SetCloudLayer {
+                    layer,
+                    property: *property,
+                    value,
+                });
+            }
             Action::SetClouds { property, value } => {
                 let value = self.eval_f32(value, actor, params, temps, out);
                 out.push(Effect::SetClouds {

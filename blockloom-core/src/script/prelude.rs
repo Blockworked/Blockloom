@@ -1065,6 +1065,20 @@ impl Actor {
         );
     }
 
+    /// One of cloud layer `layer`'s dials (from 1) for the rest of the run:
+    /// `"coverage"`, `"opacity"`, `"contrast"`, `"altitude"` or `"spin"`.
+    pub fn set_cloud_layer(&self, layer: u32, dial: &str, value: f32) {
+        self.act(
+            ACT_SET_CLOUD_LAYER,
+            Str::borrow(dial),
+            Str::EMPTY,
+            Str::EMPTY,
+            layer as f64,
+            value as f64,
+            0.0,
+        );
+    }
+
     /// One of the volumetric clouds' dials for the rest of the run:
     /// `"coverage"` 0-1, `"density"` 0-10 or `"type"` 0-1 (stratus to cumulus).
     pub fn set_clouds(&self, dial: &str, value: f32) {

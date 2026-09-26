@@ -859,6 +859,26 @@ render diagnostics time the march. GPU tests cover sky, terrain preservation
 and ground shadows (`cargo test -p blockloom-runtime volumetric_clouds --lib
 -- --ignored`).
 
+### Cloud layers
+
+`World.cloud_layers` (`blockloom-core/src/cloud_layers.rs`) is up to four
+flat layers, 3D only. Coverage is an image's luma or tileable FBM baked from
+the layer's seed (`bake_coverage`), always at `COVERAGE_SIZE`, and `remap`
+turns it into cloud by coverage and contrast; `cloud_layers.wesl` mirrors
+`remap`, so change the two together. `paint-cloud-layer` paints strokes
+(`paint`, wrapping at the tile's edges) into `assets/clouds/layer-N.png` and
+bumps the layer's `revision`, which is how the runtime knows to reread a file
+whose path didn't change. Each stroke keeps a snapshot per revision under
+`.blockloom/cloud-paint`, and undo/redo call `restore_painted` to put the
+file back. `set cloud layer` lands in `engine.cloud_layers`
+(`CloudLayerOverrides`), laid over the project's layers each frame. `blockloom-runtime/src/cloud_layers.rs` loads or
+bakes every layer into one texture array when their keys change, and draws
+them in `CloudPass`: layers beyond the volumetric slab before `CloudMarch`,
+layers between the camera and it after, so the fog pass lays height fog over
+all of them. The same shader's `shadow` entry point multiplies the ground by
+what the layers let through towards the sun, drawn first. Scroll, flow and
+spin run on `CloudOffsets::time`, cloud time.
+
 ### Shader library and pass plumbing
 
 `blockloom-core/src/shader_lib.rs` holds Blockloom's own WESL modules

@@ -187,6 +187,13 @@ pub enum Effect {
         property: crate::clouds::CloudProperty,
         value: f32,
     },
+    /// One cloud layer's dial, for the rest of the run. `layer` counts from
+    /// 1 and is checked where it lands. Window-global.
+    SetCloudLayer {
+        layer: f32,
+        property: crate::cloud_layers::CloudLayerProperty,
+        value: f32,
+    },
     /// Extra cloud drift, for the rest of the run. Window-global.
     SetCloudDrift {
         drift: [f32; 3],
