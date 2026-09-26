@@ -3879,7 +3879,10 @@ pub(crate) fn load_interface_asset(
 
 // ─── Terrain ───────────────────────────────────────────────────────────────
 
-fn terrain_of(s: &AppState, actor_id: &str) -> Result<blockloom_core::terrain::TerrainSpec, String> {
+fn terrain_of(
+    s: &AppState,
+    actor_id: &str,
+) -> Result<blockloom_core::terrain::TerrainSpec, String> {
     s.project()
         .ok_or("No project is open")?
         .actor(actor_id)
@@ -3919,7 +3922,9 @@ pub(crate) fn terrain_stroke(
         return Ok(());
     }
     let target = stroke.brush.target;
-    let grid = grids.grid(target).ok_or("That brush has nothing to paint")?;
+    let grid = grids
+        .grid(target)
+        .ok_or("That brush has nothing to paint")?;
     let name = store::save(&dir, &grid)?;
     sculpt::set_target(&mut spec, target, name);
     store_terrain(s, actor_id, spec);

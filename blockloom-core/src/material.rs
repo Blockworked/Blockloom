@@ -518,7 +518,13 @@ pub struct SurfaceWeather {
 
 impl SurfaceWeather {
     pub fn normalize(&mut self) {
-        let unit = |v: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+        let unit = |v: f32| {
+            if v.is_finite() {
+                v.clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        };
         self.snow = unit(self.snow);
         self.wetness = unit(self.wetness);
     }

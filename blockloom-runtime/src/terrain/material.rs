@@ -130,7 +130,11 @@ pub fn terrain_material(
     let weights = images.add(grid_image(side, bytes(&built.weights)));
     let surface = images.add(grid_image(side, bytes(&built.geometry.surface)));
     let placeholder = |images: &mut Assets<Image>, fill: [u8; 4], srgb: bool| {
-        images.add(layer_array(4, &std::array::from_fn(|_| flatten(vec![fill; 16])), srgb))
+        images.add(layer_array(
+            4,
+            &std::array::from_fn(|_| flatten(vec![fill; 16])),
+            srgb,
+        ))
     };
     let albedo = placeholder(&mut images, [255; 4], true);
     let normal = placeholder(&mut images, [128, 128, 255, 255], false);
@@ -196,9 +200,15 @@ pub fn terrain_material(
             globals,
         },
     };
-    let handle = world.resource_mut::<Assets<TerrainMaterial>>().add(material);
+    let handle = world
+        .resource_mut::<Assets<TerrainMaterial>>()
+        .add(material);
     let (albedo, normal, roughness) = pending;
-    let any = albedo.iter().chain(&normal).chain(&roughness).any(Option::is_some);
+    let any = albedo
+        .iter()
+        .chain(&normal)
+        .chain(&roughness)
+        .any(Option::is_some);
     let pending = any.then(|| PendingLayers {
         material: handle.clone(),
         albedo,
@@ -327,12 +337,9 @@ pub fn build_layer_arrays(
             .chain(&layers.normal)
             .chain(&layers.roughness)
             .flatten();
-        let settled = all.clone().all(|handle| {
-            images.get(handle).is_some()
-                || assets
-                    .load_state(handle)
-                    .is_failed()
-        });
+        let settled = all
+            .clone()
+            .all(|handle| images.get(handle).is_some() || assets.load_state(handle).is_failed());
         if !settled {
             continue;
         }
@@ -358,8 +365,16 @@ pub fn build_layer_arrays(
                 .filter(|(_, h)| h.as_ref().is_some_and(|h| images.get(h).is_some()))
                 .fold(0u32, |bits, (k, _)| bits | 1 << k) as f32
         };
-        let maps = (bits(&layers.albedo), bits(&layers.normal), bits(&layers.roughness));
-        let (albedo, normal, roughness) = (images.add(albedo), images.add(normal), images.add(roughness));
+        let maps = (
+            bits(&layers.albedo),
+            bits(&layers.normal),
+            bits(&layers.roughness),
+        );
+        let (albedo, normal, roughness) = (
+            images.add(albedo),
+            images.add(normal),
+            images.add(roughness),
+        );
         if let Some(mut material) = materials.get_mut(&layers.material) {
             let ext = &mut material.extension;
             ext.albedo = albedo;
@@ -407,7 +422,12 @@ pub fn grass_material(
             ..default()
         },
         extension: GrassBlades {
-            fade: Vec4::new(grass.fade_start, grass.cull_distance, grass.stiffness, grass.wind),
+            fade: Vec4::new(
+                grass.fade_start,
+                grass.cull_distance,
+                grass.stiffness,
+                grass.wind,
+            ),
             globals,
         },
     })

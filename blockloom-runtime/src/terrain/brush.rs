@@ -12,16 +12,23 @@ use crate::edit::{SceneEditor, editing};
 use crate::engine::Engine;
 use bevy::camera::primitives::Aabb;
 use bevy::prelude::*;
+use blockloom_core::terrain::bake_weight;
 use blockloom_core::terrain::mesh::chunk_mesh;
 use blockloom_core::terrain::sculpt::{self, BrushTarget, Dirty, Editable, Stroke};
 use blockloom_core::terrain::store::{self, Grid};
-use blockloom_core::terrain::bake_weight;
 use blockloom_protocol::{RuntimeMessage, SceneTool};
 use std::sync::Arc;
 
 /// Samples past a height change whose baked maps can move: curvature looks
 /// up to eight samples out.
 const REACH: u32 = 9;
+
+type ChunkQuery<'w, 's> = Query<
+    'w,
+    's,
+    (&'static LodGroup, &'static mut Transform),
+    (With<TerrainChunk>, Without<Terrained>),
+>;
 
 #[derive(Resource, Default)]
 pub struct LiveStroke(Option<Live>);
@@ -47,7 +54,7 @@ pub fn paint(
     mut images: ResMut<Assets<Image>>,
     materials: Res<Assets<TerrainMaterial>>,
     roots: Query<(&Transform, &Terrained)>,
-    mut chunks: Query<(&LodGroup, &mut Transform), (With<TerrainChunk>, Without<Terrained>)>,
+    mut chunks: ChunkQuery,
     mut gizmos: Gizmos,
 ) {
     let target = editor
@@ -76,10 +83,15 @@ pub fn paint(
     let shape = geometry.shape;
     let affine = transform.compute_affine();
     let inverse = affine.inverse();
-    let field = live.0.as_ref().map_or(&geometry.field, |l| &l.grids.heights);
+    let field = live
+        .0
+        .as_ref()
+        .map_or(&geometry.field, |l| &l.grids.heights);
     let hit = editor.pointer_ray.and_then(|ray| {
         let origin = inverse.transform_point3(ray.origin);
-        let direction = inverse.transform_vector3(*ray.direction).normalize_or_zero();
+        let direction = inverse
+            .transform_vector3(*ray.direction)
+            .normalize_or_zero();
         raycast(field, &shape, origin, direction, 20_000.0)
     });
     let brush = editor.view.brush;
@@ -155,7 +167,11 @@ pub fn paint(
         return;
     };
     let reshaped = matches!(one.brush.target, BrushTarget::Heights | BrushTarget::Holes);
-    let region = if reshaped { grow(dirty, REACH, shape.side) } else { dirty };
+    let region = if reshaped {
+        grow(dirty, REACH, shape.side)
+    } else {
+        dirty
+    };
     rebake(state, &terrained.spec, &shape, region, reshaped);
     if let Some(mut image) = images.get_mut(&material.extension.weights) {
         image.data = Some(state.weights.iter().flatten().copied().collect());
@@ -185,8 +201,18 @@ fn grow(dirty: Dirty, by: u32, side: u32) -> Dirty {
 
 /// Re-bakes weights (and, after a height change, the surface map) over
 /// `region`.
-fn rebake(state: &mut Live, spec: &blockloom_core::terrain::TerrainSpec, shape: &blockloom_core::terrain::Shape, region: Dirty, reshaped: bool) {
-    let painted = state.grids.splat.as_ref().map(|grid| grid.bytes.as_chunks::<4>().0);
+fn rebake(
+    state: &mut Live,
+    spec: &blockloom_core::terrain::TerrainSpec,
+    shape: &blockloom_core::terrain::Shape,
+    region: Dirty,
+    reshaped: bool,
+) {
+    let painted = state
+        .grids
+        .splat
+        .as_ref()
+        .map(|grid| grid.bytes.as_chunks::<4>().0);
     let field = &state.grids.heights;
     for j in region.min[1]..=region.max[1] {
         for i in region.min[0]..=region.max[0] {
@@ -207,7 +233,7 @@ fn remesh(
     geometry: &Geometry,
     region: Dirty,
     entities: &[Entity],
-    chunks: &mut Query<(&LodGroup, &mut Transform), (With<TerrainChunk>, Without<Terrained>)>,
+    chunks: &mut ChunkQuery,
     meshes: &mut Assets<Mesh>,
 ) {
     let layout = geometry.layout;
@@ -298,7 +324,11 @@ fn predict(
     let mut spec = spec.clone();
     sculpt::set_target(&mut spec, target, store::name_of(&grid));
     let geometry = if matches!(target, BrushTarget::Heights | BrushTarget::Holes) {
-        Arc::new(Geometry::from_parts(grids.heights, grids.holes.clone(), &spec))
+        Arc::new(Geometry::from_parts(
+            grids.heights,
+            grids.holes.clone(),
+            &spec,
+        ))
     } else {
         built.geometry.clone()
     };

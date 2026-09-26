@@ -256,9 +256,7 @@ fn insert_surface(
             )));
         return;
     }
-    if let Some(material) = material
-        .filter(|material| material.is_projected())
-    {
+    if let Some(material) = material.filter(|material| material.is_projected()) {
         let mut surface = crate::materials::box_material(commands, material, color, dir, assets);
         let key = format!(
             "projected:{:?}:{}:{}",

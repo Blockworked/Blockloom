@@ -232,7 +232,10 @@ impl Ground<'_> {
     fn nearest(&self, x: f32, z: f32) -> usize {
         let [i, j] = self.shape.sample(x, z);
         let last = (self.shape.side - 1) as f32;
-        let (i, j) = (i.round().clamp(0.0, last) as u32, j.round().clamp(0.0, last) as u32);
+        let (i, j) = (
+            i.round().clamp(0.0, last) as u32,
+            j.round().clamp(0.0, last) as u32,
+        );
         (j * self.shape.side + i) as usize
     }
 
@@ -366,13 +369,22 @@ pub fn grass_mesh(blades: &[Blade], grass: &GrassLayer, origin: [f32; 3]) -> Gra
     let tip = hex_to_linear(&grass.tip_color);
     let mut mesh = GrassMesh::default();
     for blade in blades {
-        let up = glam::Vec3::from(blade.normal).lerp(glam::Vec3::Y, 0.6).normalize();
+        let up = glam::Vec3::from(blade.normal)
+            .lerp(glam::Vec3::Y, 0.6)
+            .normalize();
         let lean = glam::Vec3::new(blade.facing.cos(), 0.0, blade.facing.sin());
-        let side = glam::Vec3::new(-blade.facing.sin(), 0.0, blade.facing.cos()) * blade.width * 0.5;
+        let side =
+            glam::Vec3::new(-blade.facing.sin(), 0.0, blade.facing.cos()) * blade.width * 0.5;
         let root = glam::Vec3::from(blade.root) - glam::Vec3::from(origin);
         let shade = 1.0 + blade.shade * grass.variation;
         let first = mesh.positions.len() as u32;
-        for (t, half) in [(0.0f32, 1.0f32), (0.0, -1.0), (0.55, 0.75), (0.55, -0.75), (1.0, 0.0)] {
+        for (t, half) in [
+            (0.0f32, 1.0f32),
+            (0.0, -1.0),
+            (0.55, 0.75),
+            (0.55, -0.75),
+            (1.0, 0.0),
+        ] {
             let bend = lean * (t * t * blade.lean * 0.3 * blade.height);
             let p = root + up * (t * blade.height) + bend + side * half * (1.0 - t * 0.4);
             mesh.positions.push(p.to_array());
@@ -486,7 +498,9 @@ pub fn scatter_instances(
                 continue;
             }
             let yaw = glam::Quat::from_rotation_y(unit(hash(seed, n, 4)) * std::f32::consts::TAU);
-            let up = glam::Vec3::Y.lerp(glam::Vec3::from(normal), layer.align).normalize();
+            let up = glam::Vec3::Y
+                .lerp(glam::Vec3::from(normal), layer.align)
+                .normalize();
             let tilt = glam::Quat::from_rotation_arc(glam::Vec3::Y, up);
             out.push(Instance {
                 position: [x, y - layer.sink * scale, z],
@@ -533,8 +547,22 @@ mod tests {
         let all = grass_blades(&ground, &grass, None, [-32.0; 2], [32.0; 2], usize::MAX);
         // 64 x 64 m at 4 a square metre.
         assert!((all.len() as f32 - 16384.0).abs() < 200.0, "{}", all.len());
-        let left = grass_blades(&ground, &grass, None, [-32.0, -32.0], [0.0, 32.0], usize::MAX);
-        let right = grass_blades(&ground, &grass, None, [0.0, -32.0], [32.0, 32.0], usize::MAX);
+        let left = grass_blades(
+            &ground,
+            &grass,
+            None,
+            [-32.0, -32.0],
+            [0.0, 32.0],
+            usize::MAX,
+        );
+        let right = grass_blades(
+            &ground,
+            &grass,
+            None,
+            [0.0, -32.0],
+            [32.0, 32.0],
+            usize::MAX,
+        );
         assert_eq!(left.len() + right.len(), all.len());
         assert!(all.iter().all(|b| (b.root[1] - 5.0).abs() < 1e-4));
     }
@@ -627,7 +655,10 @@ mod tests {
         assert!(scatter_instances(&ground, &steep_only, None, &[], usize::MAX).is_empty());
         assert_eq!(scatter_instances(&ground, &layer, None, &[], 10).len(), 10);
         // Same inputs, same forest.
-        assert_eq!(trees, scatter_instances(&ground, &layer, None, &avoid, usize::MAX));
+        assert_eq!(
+            trees,
+            scatter_instances(&ground, &layer, None, &avoid, usize::MAX)
+        );
     }
 
     #[test]

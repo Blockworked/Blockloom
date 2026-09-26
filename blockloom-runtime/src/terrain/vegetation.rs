@@ -87,14 +87,27 @@ pub fn stream_grass(
         for (layer, grass) in terrained.spec.grass.iter().enumerate() {
             let reach = grass.cull_distance + GRASS_CELL * 0.75;
             let cell_of = |v: f32, h: f32| ((v + h) / GRASS_CELL).floor() as i32;
-            let (x0, x1) = (cell_of(local_eye.x - reach, half[0]), cell_of(local_eye.x + reach, half[0]));
-            let (z0, z1) = (cell_of(local_eye.z - reach, half[1]), cell_of(local_eye.z + reach, half[1]));
+            let (x0, x1) = (
+                cell_of(local_eye.x - reach, half[0]),
+                cell_of(local_eye.x + reach, half[0]),
+            );
+            let (z0, z1) = (
+                cell_of(local_eye.z - reach, half[1]),
+                cell_of(local_eye.z + reach, half[1]),
+            );
             let max_x = (shape.size[0] / GRASS_CELL).ceil() as i32;
             let max_z = (shape.size[1] / GRASS_CELL).ceil() as i32;
             for gz in z0.max(0)..=z1.min(max_z - 1) {
                 for gx in x0.max(0)..=x1.min(max_x - 1) {
-                    let min = [-half[0] + gx as f32 * GRASS_CELL, -half[1] + gz as f32 * GRASS_CELL];
-                    let centre = Vec3::new(min[0] + GRASS_CELL * 0.5, local_eye.y, min[1] + GRASS_CELL * 0.5);
+                    let min = [
+                        -half[0] + gx as f32 * GRASS_CELL,
+                        -half[1] + gz as f32 * GRASS_CELL,
+                    ];
+                    let centre = Vec3::new(
+                        min[0] + GRASS_CELL * 0.5,
+                        local_eye.y,
+                        min[1] + GRASS_CELL * 0.5,
+                    );
                     let near = Vec2::new(
                         local_eye.x.clamp(min[0], min[0] + GRASS_CELL),
                         local_eye.z.clamp(min[1], min[1] + GRASS_CELL),
@@ -130,11 +143,16 @@ pub fn stream_grass(
             let (_, layer, gx, gz) = key.clone();
             let grass = terrained.spec.grass[layer as usize].clone();
             let built = built.clone();
-            let min = [-half[0] + gx as f32 * GRASS_CELL, -half[1] + gz as f32 * GRASS_CELL];
+            let min = [
+                -half[0] + gx as f32 * GRASS_CELL,
+                -half[1] + gz as f32 * GRASS_CELL,
+            ];
             let max = [min[0] + GRASS_CELL, min[1] + GRASS_CELL];
             let centre = Vec3::new(min[0] + GRASS_CELL * 0.5, 0.0, min[1] + GRASS_CELL * 0.5);
             let world_cell = StreamingCells::cell_at(affine.transform_point3(centre));
-            terrained.grass_cells.insert(key.clone(), GrassSlot::Loading);
+            terrained
+                .grass_cells
+                .insert(key.clone(), GrassSlot::Loading);
             jobs.grass.spawn(&mut cells, key, world_cell, move || {
                 grass_cell(&built, &grass, layer as usize, min, max)
             });
@@ -151,7 +169,11 @@ fn grass_cell(
     max: [f32; 2],
 ) -> Option<(Mesh, usize, [f32; 3])> {
     let ground = built.geometry.ground(Some(&built.weights));
-    let map = built.grass_maps.get(layer).and_then(Option::as_ref).and_then(Grid::mask);
+    let map = built
+        .grass_maps
+        .get(layer)
+        .and_then(Option::as_ref)
+        .and_then(Grid::mask);
     let blades = grass_blades(&ground, grass, map, min, max, BLADES_PER_CELL);
     if blades.is_empty() {
         return None;
@@ -159,12 +181,15 @@ fn grass_cell(
     let height = blades.iter().map(|b| b.root[1]).sum::<f32>() / blades.len() as f32;
     let origin = [(min[0] + max[0]) * 0.5, height, (min[1] + max[1]) * 0.5];
     let data = grass_mesh(&blades, grass, origin);
-    let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, data.positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, data.normals)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, data.uvs)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, data.colors)
-        .with_inserted_indices(Indices::U32(data.indices));
+    let mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, data.positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, data.normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, data.uvs)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, data.colors)
+    .with_inserted_indices(Indices::U32(data.indices));
     Some((mesh, blades.len(), origin))
 }
 
@@ -273,7 +298,12 @@ pub fn spawn_scatter(
                 .with_rotation(Quat::from_array(instance.rotation))
                 .with_scale(Vec3::splat(instance.scale));
             let holder = world
-                .spawn((transform, Visibility::default(), group.clone(), ChildOf(root)))
+                .spawn((
+                    transform,
+                    Visibility::default(),
+                    group.clone(),
+                    ChildOf(root),
+                ))
                 .id();
             let record = InstanceRecord {
                 tint: Vec4::new(instance.tint, instance.tint, instance.tint, 1.0),
@@ -286,11 +316,19 @@ pub fn spawn_scatter(
                 } else {
                     Visibility::Hidden
                 };
-                let entity = world.spawn((Transform::default(), visibility, ChildOf(holder))).id();
+                let entity = world
+                    .spawn((Transform::default(), visibility, ChildOf(holder)))
+                    .id();
                 match source {
                     Source::Mesh { mesh, key, base } => {
                         world.entity_mut(entity).insert(Mesh3d(mesh.clone()));
-                        attach_instanced(world, entity, key.clone(), Some(base.clone()), record);
+                        attach_instanced(
+                            world,
+                            entity,
+                            key.clone(),
+                            Some((**base).clone()),
+                            record,
+                        );
                     }
                     Source::Model { gltf, key } => {
                         world.entity_mut(entity).insert(PendingModel {
@@ -304,7 +342,12 @@ pub fn spawn_scatter(
             }
             if let Some((mesh, key, base)) = &billboard {
                 let entity = world
-                    .spawn((Mesh3d(mesh.clone()), Transform::default(), Visibility::Hidden, ChildOf(holder)))
+                    .spawn((
+                        Mesh3d(mesh.clone()),
+                        Transform::default(),
+                        Visibility::Hidden,
+                        ChildOf(holder),
+                    ))
                     .id();
                 attach_instanced(world, entity, key.clone(), Some(base.clone()), record);
                 parts.push((Part::Billboard, entity));
@@ -316,7 +359,11 @@ pub fn spawn_scatter(
                 } else {
                     rp::Collider::cylinder(height * 0.5, r)
                 };
-                let lift = if layer.shape == ScatterShape::Rock { r * 0.5 } else { height * 0.5 };
+                let lift = if layer.shape == ScatterShape::Rock {
+                    r * 0.5
+                } else {
+                    height * 0.5
+                };
                 world.spawn((
                     rp::RigidBody::Fixed,
                     collider,
@@ -339,7 +386,7 @@ enum Source {
     Mesh {
         mesh: Handle<Mesh>,
         key: String,
-        base: StandardMaterial,
+        base: Box<StandardMaterial>,
     },
     Model {
         gltf: Handle<Gltf>,
@@ -363,17 +410,18 @@ fn level_parts(world: &mut World, layer: &ScatterLayer, dir: Option<&Path>, part
         };
     }
     let detail = if part == Part::Near { 1.0 } else { 0.45 };
-    let mesh = world
-        .resource_mut::<Assets<Mesh>>()
-        .add(shape_mesh(layer.shape, &layer.color, detail));
+    let mesh =
+        world
+            .resource_mut::<Assets<Mesh>>()
+            .add(shape_mesh(layer.shape, &layer.color, detail));
     Source::Mesh {
         mesh,
         key: "scatter-shape".to_string(),
-        base: StandardMaterial {
+        base: Box::new(StandardMaterial {
             base_color: Color::WHITE,
             perceptual_roughness: 0.85,
             ..default()
-        },
+        }),
     }
 }
 
@@ -417,7 +465,10 @@ pub fn swap_levels(
     let Ok(instance) = instances.get(event.entity) else {
         return;
     };
-    let showing = event.level.and_then(|level| instance.levels.get(level)).copied();
+    let showing = event
+        .level
+        .and_then(|level| instance.levels.get(level))
+        .copied();
     for (part, entity) in &instance.parts {
         if let Ok(mut v) = visibility.get_mut(*entity) {
             let wanted = if Some(*part) == showing {
@@ -471,7 +522,11 @@ pub fn attach_models(
                     .unwrap_or_default();
                 let key = format!("{}:{n}:{p}", model.key);
                 let child = commands
-                    .spawn((Mesh3d(primitive.mesh.clone()), node.transform, ChildOf(entity)))
+                    .spawn((
+                        Mesh3d(primitive.mesh.clone()),
+                        node.transform,
+                        ChildOf(entity),
+                    ))
                     .id();
                 commands.queue(move |world: &mut World| {
                     attach_instanced(world, child, key, Some(base), record);
@@ -503,7 +558,14 @@ pub fn shape_mesh(shape: ScatterShape, color: &str, detail: f32) -> Mesh {
     match shape {
         ScatterShape::Tree => {
             builder.cone(Vec3::ZERO, 0.2, 0.14, 2.4, segments.min(8), bark);
-            builder.blob(Vec3::new(0.0, 3.4, 0.0), Vec3::new(1.6, 1.5, 1.6), segments, rings, crown, 0.12);
+            builder.blob(
+                Vec3::new(0.0, 3.4, 0.0),
+                Vec3::new(1.6, 1.5, 1.6),
+                segments,
+                rings,
+                crown,
+                0.12,
+            );
         }
         ScatterShape::Pine => {
             builder.cone(Vec3::ZERO, 0.16, 0.1, 1.4, segments.min(8), bark);
@@ -512,10 +574,24 @@ pub fn shape_mesh(shape: ScatterShape, color: &str, detail: f32) -> Mesh {
             }
         }
         ScatterShape::Bush => {
-            builder.blob(Vec3::new(0.0, 0.5, 0.0), Vec3::new(0.9, 0.6, 0.9), segments, rings, crown, 0.15);
+            builder.blob(
+                Vec3::new(0.0, 0.5, 0.0),
+                Vec3::new(0.9, 0.6, 0.9),
+                segments,
+                rings,
+                crown,
+                0.15,
+            );
         }
         ScatterShape::Rock => {
-            builder.blob(Vec3::new(0.0, 0.3, 0.0), Vec3::new(0.8, 0.55, 0.7), segments, rings, crown, 0.25);
+            builder.blob(
+                Vec3::new(0.0, 0.3, 0.0),
+                Vec3::new(0.8, 0.55, 0.7),
+                segments,
+                rings,
+                crown,
+                0.25,
+            );
         }
     }
     builder.finish()
@@ -530,13 +606,26 @@ struct Builder {
 
 impl Builder {
     /// A capped cone (or cylinder) standing on `base`.
-    fn cone(&mut self, base: Vec3, bottom: f32, top: f32, height: f32, segments: u32, color: [f32; 4]) {
+    fn cone(
+        &mut self,
+        base: Vec3,
+        bottom: f32,
+        top: f32,
+        height: f32,
+        segments: u32,
+        color: [f32; 4],
+    ) {
         let first = self.positions.len() as u32;
         for ring in 0..2 {
-            let (y, r) = if ring == 0 { (0.0, bottom) } else { (height, top) };
+            let (y, r) = if ring == 0 {
+                (0.0, bottom)
+            } else {
+                (height, top)
+            };
             for s in 0..segments {
                 let a = s as f32 / segments as f32 * std::f32::consts::TAU;
-                self.positions.push((base + Vec3::new(a.cos() * r, y, a.sin() * r)).to_array());
+                self.positions
+                    .push((base + Vec3::new(a.cos() * r, y, a.sin() * r)).to_array());
                 self.colors.push(color);
             }
         }
@@ -550,20 +639,33 @@ impl Builder {
         self.positions.push(base.to_array());
         self.colors.push(color);
         for s in 0..segments {
-            self.indices.extend_from_slice(&[centre, first + s, first + (s + 1) % segments]);
+            self.indices
+                .extend_from_slice(&[centre, first + s, first + (s + 1) % segments]);
         }
     }
 
     /// A lumpy ellipsoid.
-    fn blob(&mut self, centre: Vec3, radii: Vec3, segments: u32, rings: u32, color: [f32; 4], lumps: f32) {
+    fn blob(
+        &mut self,
+        centre: Vec3,
+        radii: Vec3,
+        segments: u32,
+        rings: u32,
+        color: [f32; 4],
+        lumps: f32,
+    ) {
         let first = self.positions.len() as u32;
         for ring in 0..=rings {
             let v = ring as f32 / rings as f32 * std::f32::consts::PI;
             for s in 0..segments {
                 let u = s as f32 / segments as f32 * std::f32::consts::TAU;
                 let dir = Vec3::new(v.sin() * u.cos(), v.cos(), v.sin() * u.sin());
-                let bump = 1.0 + lumps * ((u * 3.0).sin() * (v * 2.0 + 1.3).cos() + (u * 5.0 + v * 3.0).sin() * 0.5);
-                self.positions.push((centre + dir * radii * bump).to_array());
+                let bump = 1.0
+                    + lumps
+                        * ((u * 3.0).sin() * (v * 2.0 + 1.3).cos()
+                            + (u * 5.0 + v * 3.0).sin() * 0.5);
+                self.positions
+                    .push((centre + dir * radii * bump).to_array());
                 self.colors.push(color);
             }
         }
@@ -624,7 +726,12 @@ mod tests {
 
     #[test]
     fn procedural_shapes_have_normals_and_a_lighter_level() {
-        for shape in [ScatterShape::Tree, ScatterShape::Pine, ScatterShape::Bush, ScatterShape::Rock] {
+        for shape in [
+            ScatterShape::Tree,
+            ScatterShape::Pine,
+            ScatterShape::Bush,
+            ScatterShape::Rock,
+        ] {
             let near = shape_mesh(shape, "#4A7A30", 1.0);
             let far = shape_mesh(shape, "#4A7A30", 0.45);
             assert!(near.attribute(Mesh::ATTRIBUTE_NORMAL).is_some());

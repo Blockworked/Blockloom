@@ -96,7 +96,13 @@ impl ChunkBounds {
     }
 }
 
-pub fn chunk_bounds(field: &Heightfield, shape: &Shape, layout: &ChunkLayout, cx: u32, cz: u32) -> ChunkBounds {
+pub fn chunk_bounds(
+    field: &Heightfield,
+    shape: &Shape,
+    layout: &ChunkLayout,
+    cx: u32,
+    cz: u32,
+) -> ChunkBounds {
     let ([i0, i1], [j0, j1]) = layout.span(cx, cz);
     let (mut lo, mut hi) = (f32::MAX, f32::MIN);
     for j in j0..=j1 {
@@ -135,7 +141,13 @@ fn simplified(field: &Heightfield, i: u32, j: u32, step: u32) -> f32 {
 
 /// Metres each level of a chunk strays from the full grid at worst, never
 /// less than the level before it.
-pub fn chunk_errors(field: &Heightfield, shape: &Shape, layout: &ChunkLayout, cx: u32, cz: u32) -> Vec<f32> {
+pub fn chunk_errors(
+    field: &Heightfield,
+    shape: &Shape,
+    layout: &ChunkLayout,
+    cx: u32,
+    cz: u32,
+) -> Vec<f32> {
     let ([i0, i1], [j0, j1]) = layout.span(cx, cz);
     let mut errors = Vec::with_capacity(layout.levels as usize);
     let mut worst = 0.0f32;
@@ -179,6 +191,7 @@ pub fn lod_thresholds(errors: &[f32], radius: f32, pixel_error: f32) -> Vec<f32>
 /// Builds one chunk at one level. `holes` is one byte per sample, cutting
 /// the cell whose north-west corner it sits on; `skirt` is how far the
 /// edges hang down.
+#[allow(clippy::too_many_arguments)]
 pub fn chunk_mesh(
     field: &Heightfield,
     shape: &Shape,
@@ -335,7 +348,11 @@ mod tests {
         let errors = chunk_errors(&field, &shape(side), &layout, 0, 0);
         assert!(errors.iter().all(|e| *e == 0.0));
         let thresholds = lod_thresholds(&errors, 10.0, 4.0);
-        assert!(thresholds[..thresholds.len() - 1].iter().all(|t| t.is_infinite()));
+        assert!(
+            thresholds[..thresholds.len() - 1]
+                .iter()
+                .all(|t| t.is_infinite())
+        );
         assert_eq!(*thresholds.last().unwrap(), 0.0);
     }
 
@@ -349,7 +366,10 @@ mod tests {
         assert!(errors.windows(2).all(|w| w[0] <= w[1]));
         assert!(*errors.last().unwrap() > 0.1);
         let thresholds = lod_thresholds(&errors, 20.0, 4.0);
-        assert!(thresholds.windows(2).all(|w| w[0] >= w[1]), "{thresholds:?}");
+        assert!(
+            thresholds.windows(2).all(|w| w[0] >= w[1]),
+            "{thresholds:?}"
+        );
     }
 
     #[test]
@@ -375,7 +395,11 @@ mod tests {
             let out = glam::Vec3::new(mid.x, 0.0, mid.z) - center;
             assert!(normal.dot(out) > 0.0, "skirt faces out");
         }
-        assert!(mesh.positions[top..].iter().all(|p| p[1] + origin[1] < 40.0));
+        assert!(
+            mesh.positions[top..]
+                .iter()
+                .all(|p| p[1] + origin[1] < 40.0)
+        );
     }
 
     #[test]

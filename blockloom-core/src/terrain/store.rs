@@ -346,11 +346,15 @@ pub fn prune(project: &Path, keep: &HashSet<String>) -> Result<usize, String> {
 
 /// Every store name a terrain spec points at.
 pub fn names(spec: &super::TerrainSpec) -> impl Iterator<Item = &str> {
-    [spec.heights.as_str(), spec.splat.as_str(), spec.holes.as_str()]
-        .into_iter()
-        .chain(spec.grass.iter().map(|g| g.density_map.as_str()))
-        .chain(spec.scatter.iter().map(|s| s.density_map.as_str()))
-        .filter(|name| !name.is_empty())
+    [
+        spec.heights.as_str(),
+        spec.splat.as_str(),
+        spec.holes.as_str(),
+    ]
+    .into_iter()
+    .chain(spec.grass.iter().map(|g| g.density_map.as_str()))
+    .chain(spec.scatter.iter().map(|s| s.density_map.as_str()))
+    .filter(|name| !name.is_empty())
 }
 
 /// The store names every terrain in a project points at.

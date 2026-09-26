@@ -761,8 +761,7 @@ impl Project {
             {
                 material.normalize();
             }
-            if let Some(ActorComponent::Terrain { terrain }) = actor.components.get_mut("Terrain")
-            {
+            if let Some(ActorComponent::Terrain { terrain }) = actor.components.get_mut("Terrain") {
                 terrain.normalize();
             }
             actor.graph.migrate_bool_slots();

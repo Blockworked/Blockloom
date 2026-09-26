@@ -39,12 +39,18 @@ pub enum BrushTarget {
     #[default]
     Heights,
     /// A paint layer, by index.
-    Layer { layer: u8 },
+    Layer {
+        layer: u8,
+    },
     Holes,
     /// A grass layer's density map.
-    Grass { layer: u8 },
+    Grass {
+        layer: u8,
+    },
     /// A scatter layer's density map.
-    Scatter { layer: u8 },
+    Scatter {
+        layer: u8,
+    },
 }
 
 /// A brush's settings. Distances are metres.
@@ -90,7 +96,10 @@ impl Brush {
         self.radius = finite(self.radius, 8.0).clamp(0.05, 10_000.0);
         self.strength = finite(self.strength, 0.5).clamp(0.0, 1.0);
         self.falloff = finite(self.falloff, 0.6).clamp(0.0, 1.0);
-        self.level = self.level.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0));
+        self.level = self
+            .level
+            .filter(|v| v.is_finite())
+            .map(|v| v.clamp(0.0, 1.0));
         self.step = finite(self.step, 4.0).clamp(0.01, 10_000.0);
         self.scale = finite(self.scale, 12.0).clamp(0.01, 100_000.0);
     }
@@ -143,14 +152,19 @@ fn reach(shape: &Shape, brush: &Brush, at: [f32; 2]) -> Option<Dirty> {
     let last = (shape.side - 1) as f32;
     let (i0, i1) = ((ci - ri).floor().max(0.0), (ci + ri).ceil().min(last));
     let (j0, j1) = ((cj - rj).floor().max(0.0), (cj + rj).ceil().min(last));
-    (i0 <= i1 && j0 <= j1).then(|| Dirty {
+    (i0 <= i1 && j0 <= j1).then_some(Dirty {
         min: [i0 as u32, j0 as u32],
         max: [i1 as u32, j1 as u32],
     })
 }
 
 /// Runs `visit(index, i, j, weight)` for every sample under a stamp.
-fn under(shape: &Shape, brush: &Brush, at: [f32; 2], mut visit: impl FnMut(u32, u32, f32)) -> Option<Dirty> {
+fn under(
+    shape: &Shape,
+    brush: &Brush,
+    at: [f32; 2],
+    mut visit: impl FnMut(u32, u32, f32),
+) -> Option<Dirty> {
     let dirty = reach(shape, brush, at)?;
     for j in dirty.min[1]..=dirty.max[1] {
         for i in dirty.min[0]..=dirty.max[0] {
@@ -186,13 +200,22 @@ pub fn apply_heights(field: &mut Heightfield, shape: &Shape, stroke: &Stroke) ->
     dirty
 }
 
-fn stamp_heights(field: &mut Heightfield, shape: &Shape, brush: &Brush, at: [f32; 2]) -> Option<Dirty> {
+fn stamp_heights(
+    field: &mut Heightfield,
+    shape: &Shape,
+    brush: &Brush,
+    at: [f32; 2],
+) -> Option<Dirty> {
     let height = shape.height.max(1e-3);
     // A full-strength stamp moves the ground a twentieth of the radius.
     let push = brush.radius * 0.05 / height;
     match brush.op {
         BrushOp::Raise | BrushOp::Lower => {
-            let sign = if brush.op == BrushOp::Raise { 1.0 } else { -1.0 };
+            let sign = if brush.op == BrushOp::Raise {
+                1.0
+            } else {
+                -1.0
+            };
             under(shape, brush, at, |i, j, w| {
                 let k = field.index(i, j);
                 field.samples[k] = (field.samples[k] + sign * push * w).clamp(0.0, 1.0);
@@ -229,8 +252,14 @@ fn stamp_heights(field: &mut Heightfield, shape: &Shape, brush: &Brush, at: [f32
             // Blur from a copy of just the stamp's reach, so samples don't
             // smear into each other.
             let last = field.side as i64 - 1;
-            let (i0, j0) = ((dirty.min[0] as i64 - kernel).max(0), (dirty.min[1] as i64 - kernel).max(0));
-            let (i1, j1) = ((dirty.max[0] as i64 + kernel).min(last), (dirty.max[1] as i64 + kernel).min(last));
+            let (i0, j0) = (
+                (dirty.min[0] as i64 - kernel).max(0),
+                (dirty.min[1] as i64 - kernel).max(0),
+            );
+            let (i1, j1) = (
+                (dirty.max[0] as i64 + kernel).min(last),
+                (dirty.max[1] as i64 + kernel).min(last),
+            );
             let width = i1 - i0 + 1;
             let mut before = Vec::with_capacity((width * (j1 - j0 + 1)) as usize);
             for j in j0..=j1 {
@@ -306,7 +335,11 @@ pub fn apply_mask(mask: &mut Grid, shape: &Shape, stroke: &Stroke) -> Option<Dir
         let d = under(shape, &brush, at, |i, j, w| {
             let k = (j * side + i) as usize;
             let v = bytes[k] as f32;
-            let target = if brush.op == BrushOp::Paint { 255.0 } else { 0.0 };
+            let target = if brush.op == BrushOp::Paint {
+                255.0
+            } else {
+                0.0
+            };
             bytes[k] = (v + (target - v) * w).round().clamp(0.0, 255.0) as u8;
         });
         if let Some(d) = d {
@@ -348,8 +381,16 @@ impl Editable {
             heights: heights_for(project, spec),
             splat: grid_for(project, &spec.splat, side),
             holes: grid_for(project, &spec.holes, side),
-            grass: spec.grass.iter().map(|g| grid_for(project, &g.density_map, side)).collect(),
-            scatter: spec.scatter.iter().map(|s| grid_for(project, &s.density_map, side)).collect(),
+            grass: spec
+                .grass
+                .iter()
+                .map(|g| grid_for(project, &g.density_map, side))
+                .collect(),
+            scatter: spec
+                .scatter
+                .iter()
+                .map(|s| grid_for(project, &s.density_map, side))
+                .collect(),
         }
     }
 
@@ -361,22 +402,32 @@ impl Editable {
         match stroke.brush.target {
             BrushTarget::Heights => apply_heights(&mut self.heights, shape, stroke),
             BrushTarget::Layer { .. } => apply_paint(
-                self.splat.get_or_insert_with(|| Grid::new(GridKind::Rgba8, side)),
+                self.splat
+                    .get_or_insert_with(|| Grid::new(GridKind::Rgba8, side)),
                 shape,
                 stroke,
             ),
             BrushTarget::Holes => apply_mask(
-                self.holes.get_or_insert_with(|| Grid::new(GridKind::Mask8, side)),
+                self.holes
+                    .get_or_insert_with(|| Grid::new(GridKind::Mask8, side)),
                 shape,
                 stroke,
             ),
             BrushTarget::Grass { layer } => {
                 let slot = self.grass.get_mut(layer as usize)?;
-                apply_mask(slot.get_or_insert_with(|| fresh_density(side, op)), shape, stroke)
+                apply_mask(
+                    slot.get_or_insert_with(|| fresh_density(side, op)),
+                    shape,
+                    stroke,
+                )
             }
             BrushTarget::Scatter { layer } => {
                 let slot = self.scatter.get_mut(layer as usize)?;
-                apply_mask(slot.get_or_insert_with(|| fresh_density(side, op)), shape, stroke)
+                apply_mask(
+                    slot.get_or_insert_with(|| fresh_density(side, op)),
+                    shape,
+                    stroke,
+                )
             }
         }
     }
@@ -625,7 +676,11 @@ pub(crate) fn unit(x: u32) -> f32 {
 }
 
 fn lattice(seed: u32, x: i32, z: i32) -> f32 {
-    unit(hash(seed, (x as u32).wrapping_mul(73_856_093) ^ (z as u32).wrapping_mul(19_349_663), 2))
+    unit(hash(
+        seed,
+        (x as u32).wrapping_mul(73_856_093) ^ (z as u32).wrapping_mul(19_349_663),
+        2,
+    ))
 }
 
 /// Smooth value noise, 0-1.
@@ -702,7 +757,11 @@ mod tests {
     fn a_stroke_replays_exactly() {
         let mut a = Heightfield::flat(129, 0.3);
         let mut b = a.clone();
-        let s = stroke(BrushOp::Noise, BrushTarget::Heights, vec![[1.0, 2.0], [4.0, 3.0]]);
+        let s = stroke(
+            BrushOp::Noise,
+            BrushTarget::Heights,
+            vec![[1.0, 2.0], [4.0, 3.0]],
+        );
         apply_heights(&mut a, &shape(), &s);
         apply_heights(&mut b, &shape(), &s);
         assert_eq!(a, b);
@@ -761,7 +820,11 @@ mod tests {
         apply_paint(
             &mut splat,
             &shape(),
-            &stroke(BrushOp::Paint, BrushTarget::Layer { layer: 2 }, vec![[0.0, 0.0]]),
+            &stroke(
+                BrushOp::Paint,
+                BrushTarget::Layer { layer: 2 },
+                vec![[0.0, 0.0]],
+            ),
         )
         .unwrap();
         let k = (64 * 129 + 64) * 4;
@@ -769,7 +832,11 @@ mod tests {
         apply_paint(
             &mut splat,
             &shape(),
-            &stroke(BrushOp::Erase, BrushTarget::Layer { layer: 2 }, vec![[0.0, 0.0]]),
+            &stroke(
+                BrushOp::Erase,
+                BrushTarget::Layer { layer: 2 },
+                vec![[0.0, 0.0]],
+            ),
         );
         assert_eq!(&splat.bytes[k..k + 4], &[0, 0, 0, 0]);
     }
@@ -800,7 +867,10 @@ mod tests {
         thermal(&mut field, &shape(), 50, 30.0);
         assert!(field.slope(&shape(), 64, 64) < before);
         let total: f32 = field.samples.iter().sum();
-        assert!((total - 0.8 * 65.0 * 129.0).abs() < 1.0, "mass is kept: {total}");
+        assert!(
+            (total - 0.8 * 65.0 * 129.0).abs() < 1.0,
+            "mass is kept: {total}"
+        );
     }
 
     #[test]

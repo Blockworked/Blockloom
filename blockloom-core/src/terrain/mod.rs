@@ -231,7 +231,8 @@ impl LayerRules {
             let fall = ((hi - v) / soft + 0.5).clamp(0.0, 1.0);
             rise.min(fall)
         };
-        let mut weight = band(slope, self.slope, soft_slope) * band(height, self.height, soft_height);
+        let mut weight =
+            band(slope, self.slope, soft_slope) * band(height, self.height, soft_height);
         if self.curvature != 0.0 {
             // A positive `curvature` dial wants ridges, which read negative.
             let want = (-curvature * self.curvature.signum() * 4.0 + 0.5).clamp(0.0, 1.0);
@@ -382,10 +383,10 @@ impl Heightfield {
     pub fn normal(&self, shape: &Shape, i: u32, j: u32) -> [f32; 3] {
         let (i, j) = (i as i64, j as i64);
         let spacing = shape.spacing();
-        let dx = (self.clamped(i + 1, j) - self.clamped(i - 1, j)) * shape.height
-            / (2.0 * spacing[0]);
-        let dz = (self.clamped(i, j + 1) - self.clamped(i, j - 1)) * shape.height
-            / (2.0 * spacing[1]);
+        let dx =
+            (self.clamped(i + 1, j) - self.clamped(i - 1, j)) * shape.height / (2.0 * spacing[0]);
+        let dz =
+            (self.clamped(i, j + 1) - self.clamped(i, j - 1)) * shape.height / (2.0 * spacing[1]);
         let n = glam::Vec3::new(-dx, 1.0, -dz).normalize();
         n.to_array()
     }
@@ -402,7 +403,10 @@ impl Heightfield {
 
     /// Degrees from flat at sample `(i, j)`.
     pub fn slope(&self, shape: &Shape, i: u32, j: u32) -> f32 {
-        self.normal(shape, i, j)[1].clamp(-1.0, 1.0).acos().to_degrees()
+        self.normal(shape, i, j)[1]
+            .clamp(-1.0, 1.0)
+            .acos()
+            .to_degrees()
     }
 
     /// How much sample `(i, j)` sits in a hollow (towards 1) or on a ridge
@@ -647,7 +651,10 @@ mod tests {
         let painted = bake_weights(&field, &shape, &layers, Some(&splat));
         assert_eq!(painted[field.index(64, 64)], [255, 0, 0, 0]);
         let partial = painted[field.index(10, 10)];
-        assert!(partial[0] > 50 && partial[0] < 80 && partial[1] > 170, "{partial:?}");
+        assert!(
+            partial[0] > 50 && partial[0] < 80 && partial[1] > 170,
+            "{partial:?}"
+        );
         for w in painted {
             assert_eq!(w.iter().map(|&v| v as u32).sum::<u32>(), 255);
         }

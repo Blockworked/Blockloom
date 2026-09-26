@@ -13,9 +13,9 @@ pub mod material;
 pub mod vegetation;
 
 use crate::culling::LodGroup;
+use crate::engine::ActorId;
 use crate::engine::Engine;
 use crate::streaming::{Cell, CellEntered, CellLeft, CellTasks, StreamingCells};
-use crate::engine::ActorId;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
@@ -160,12 +160,17 @@ impl Geometry {
             holes: self.holes.as_ref().and_then(Grid::mask),
         }
     }
-
 }
 
 /// Where a ray (in the terrain's frame) first meets the ground, marching
 /// the heightfield and refining the crossing.
-pub fn raycast(field: &Heightfield, shape: &Shape, origin: Vec3, direction: Vec3, max: f32) -> Option<Vec3> {
+pub fn raycast(
+    field: &Heightfield,
+    shape: &Shape,
+    origin: Vec3,
+    direction: Vec3,
+    max: f32,
+) -> Option<Vec3> {
     let spacing = shape.spacing();
     let step = (spacing[0].min(spacing[1]) * 0.5).max(0.05);
     let above = |p: Vec3| field.height_at(shape, p.x, p.z).map(|h| p.y - h);
@@ -358,7 +363,10 @@ pub fn sync_terrains(
             commands.queue(spawn_built(id.0.clone(), entity, built.clone()));
             continue;
         }
-        let geometry = cache.geometry.get(&geometry_key(dir.as_deref(), &spec)).cloned();
+        let geometry = cache
+            .geometry
+            .get(&geometry_key(dir.as_deref(), &spec))
+            .cloned();
         let avoid = avoid_list(&engine, &id.0, transform, &placed);
         let cell = StreamingCells::cell_at(transform.translation);
         let dir = dir.clone();
@@ -494,9 +502,10 @@ pub fn land_terrains(
             continue;
         }
         let built = Arc::new(built);
-        cache
-            .geometry
-            .insert(geometry_key(dir.as_deref(), &root.spec), built.geometry.clone());
+        cache.geometry.insert(
+            geometry_key(dir.as_deref(), &root.spec),
+            built.geometry.clone(),
+        );
         cache.built.insert(key, built.clone());
         commands.queue(spawn_built(id, entity, built));
     }
@@ -570,7 +579,13 @@ fn spawn_built(id: String, root: Entity, built: Arc<Built>) -> impl FnOnce(&mut 
 
 /// Takes a terrain's chunks, collider, grass and scatter down and spawns
 /// them again from `built`, for an erosion preview and putting it back.
-pub fn respawn(commands: &mut Commands, id: String, root: Entity, terrained: &mut Terrained, built: Arc<Built>) {
+pub fn respawn(
+    commands: &mut Commands,
+    id: String,
+    root: Entity,
+    terrained: &mut Terrained,
+    built: Arc<Built>,
+) {
     for &part in terrained.chunks.iter().chain(&terrained.parts) {
         commands.entity(part).try_despawn();
     }
@@ -642,7 +657,11 @@ pub fn preview_erosion(
 
 /// A chunk's LOD group over its resident meshes, the mesh to start on and
 /// its triangle count.
-fn resident_group(world: &mut World, geometry: &Geometry, chunk: &Chunk) -> (LodGroup, Handle<Mesh>, usize) {
+fn resident_group(
+    world: &mut World,
+    geometry: &Geometry,
+    chunk: &Chunk,
+) -> (LodGroup, Handle<Mesh>, usize) {
     let first_level = geometry.layout.resident_level();
     let mut meshes = world.resource_mut::<Assets<Mesh>>();
     let mut group = LodGroup::new(chunk.bounds.radius());
@@ -751,7 +770,8 @@ pub fn stream_chunks(
                 if was == 0 && now > 0 {
                     let geometry = geometry.clone();
                     let (cx, cz) = (chunk.cx, chunk.cz);
-                    let cell = StreamingCells::cell_at(affine.transform_point3(Vec3::from(chunk.origin)));
+                    let cell =
+                        StreamingCells::cell_at(affine.transform_point3(Vec3::from(chunk.origin)));
                     jobs.fine.spawn(&mut cells, key, cell, move || {
                         (0..geometry.layout.resident_level())
                             .map(|level| (level, geometry.mesh(cx, cz, level).0))
@@ -759,7 +779,8 @@ pub fn stream_chunks(
                     });
                 } else if was > 0 && now == 0 {
                     jobs.fine.cancel(&mut cells, &key);
-                    let group = resident_only(geometry, chunk, &mut meshes, &terrained.chunks, &mut chunks);
+                    let group =
+                        resident_only(geometry, chunk, &mut meshes, &terrained.chunks, &mut chunks);
                     if let Some(triangles) = group {
                         terrained.triangles = terrained.triangles.saturating_sub(triangles);
                     }
@@ -791,10 +812,14 @@ pub fn stream_chunks(
         let mut added = 0;
         for (level, part) in &fine {
             added = added.max(part.triangles());
-            next = next.level(chunk.thresholds[*level as usize], Some(meshes.add(to_bevy(part))));
+            next = next.level(
+                chunk.thresholds[*level as usize],
+                Some(meshes.add(to_bevy(part))),
+            );
         }
         // Levels already streamed stay; only the resident ones carry over.
-        let resident = (built.geometry.layout.levels - built.geometry.layout.resident_level()) as usize;
+        let resident =
+            (built.geometry.layout.levels - built.geometry.layout.resident_level()) as usize;
         let kept = group.levels().len().saturating_sub(resident);
         for level in &group.levels()[kept..] {
             next = next.level(level.min_screen, level.mesh.clone());
@@ -949,7 +974,10 @@ mod tests {
         assert_eq!(geometry.chunks.len() as u32, layout.chunks * layout.chunks);
         let resident = (layout.levels - layout.resident_level()) as usize;
         assert!(geometry.chunks.iter().all(|c| c.resident.len() == resident));
-        assert!(layout.resident_level() > 0, "1025 streams its finest levels");
+        assert!(
+            layout.resident_level() > 0,
+            "1025 streams its finest levels"
+        );
         let top = raycast(
             &geometry.field,
             &geometry.shape,
@@ -967,7 +995,10 @@ mod tests {
             200.0,
         )
         .unwrap();
-        let ground = geometry.field.height_at(&geometry.shape, slanted.x, slanted.z).unwrap();
+        let ground = geometry
+            .field
+            .height_at(&geometry.shape, slanted.x, slanted.z)
+            .unwrap();
         assert!((slanted.y - ground).abs() < 0.05);
     }
 
@@ -1000,7 +1031,10 @@ mod tests {
     #[test]
     fn bodies_land_on_the_ground_and_fall_through_its_holes() {
         let landed = drop_ball(None);
-        assert!((landed - 7.5).abs() < 0.3, "rests on the hilltop, got {landed}");
+        assert!(
+            (landed - 7.5).abs() < 0.3,
+            "rests on the hilltop, got {landed}"
+        );
         let mut holes = Grid::new(store::GridKind::Mask8, 129);
         let mask = holes.mask_mut().unwrap();
         for j in 60..68 {

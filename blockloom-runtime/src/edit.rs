@@ -686,15 +686,23 @@ fn pick(
                 // A terrain is picked where the ray meets its ground.
                 let inverse = pose.0.compute_affine().inverse();
                 let origin = inverse.transform_point3(ray.origin);
-                let direction = inverse.transform_vector3(*ray.direction).normalize_or_zero();
+                let direction = inverse
+                    .transform_vector3(*ray.direction)
+                    .normalize_or_zero();
                 let geometry = &built.geometry;
-                crate::terrain::raycast(&geometry.field, &geometry.shape, origin, direction, 20_000.0)
-                    .map(|p| (pose.0.compute_affine().transform_point3(p) - ray.origin).length())
+                crate::terrain::raycast(
+                    &geometry.field,
+                    &geometry.shape,
+                    origin,
+                    direction,
+                    20_000.0,
+                )
+                .map(|p| (pose.0.compute_affine().transform_point3(p) - ray.origin).length())
             }
             _ => match lens {
-            Lens::Flat { scale, .. } => hit_2d(visual, &pose.0, ray.origin.truncate(), *scale)
-                .map(|_| -pose.0.translation.z),
-            Lens::Deep { .. } => hit_3d(visual, &pose.0, ray),
+                Lens::Flat { scale, .. } => hit_2d(visual, &pose.0, ray.origin.truncate(), *scale)
+                    .map(|_| -pose.0.translation.z),
+                Lens::Deep { .. } => hit_3d(visual, &pose.0, ray),
             },
         };
         if let Some(distance) = hit

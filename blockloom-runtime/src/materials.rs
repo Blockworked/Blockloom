@@ -34,16 +34,16 @@ use bevy::pbr::{
 };
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
+use bevy::render::render_resource::ShaderType;
 use bevy::render::render_resource::{
     AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
 };
+use bevy::render::storage::ShaderBuffer;
 use bevy::shader::{Shader, ShaderRef};
 use bevy::sprite_render::{
     AlphaMode2d, ColorMaterial, Material2d, Material2dKey, Material2dPipeline, Material2dPlugin,
     MeshMaterial2d,
 };
-use bevy::render::render_resource::ShaderType;
-use bevy::render::storage::ShaderBuffer;
 use blockloom_core::material::{
     GraphEffect, MaskStack, SurfaceDetail, SurfaceMaterial, TextureSampler, TileMesh, Tilemap,
 };
@@ -164,10 +164,8 @@ impl MaterialExtension for BoxProjection {
 
 pub fn terrain_shader() -> ShaderRef {
     ShaderRef::Path(
-        bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!(
-            "shaders/terrain.wesl"
-        ))
-        .with_source("embedded"),
+        bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!("shaders/terrain.wesl"))
+            .with_source("embedded"),
     )
 }
 
@@ -267,8 +265,7 @@ pub fn update_surface_globals(
     let (snow, wetness) = environment
         .map(|env| (env.snow, env.wetness))
         .unwrap_or_default();
-    let blend =
-        debug.is_some_and(|debug| debug.0 == blockloom_protocol::DebugView::SurfaceBlend);
+    let blend = debug.is_some_and(|debug| debug.0 == blockloom_protocol::DebugView::SurfaceBlend);
     let (air, gusts) = wind
         .map(|field| (field.at_camera, field.wind.gust_frequency))
         .unwrap_or_default();
@@ -1003,7 +1000,10 @@ fn position_world_to_clip(p: vec3<f32>) -> vec4<f32> { return vec4<f32>(p, 1.0);
             ("VERTEX_NORMALS", true),
             ("VERTEX_OUTPUT_INSTANCE_INDEX", true),
         ];
-        shader_lib::validate(&stubbed(include_str!("shaders/grass.wesl"), VERTEX_STUB), &defs)
-            .unwrap_or_else(|error| panic!("{error}"));
+        shader_lib::validate(
+            &stubbed(include_str!("shaders/grass.wesl"), VERTEX_STUB),
+            &defs,
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
     }
 }
