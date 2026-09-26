@@ -67,10 +67,12 @@ pub mod sync;
 pub mod terrain;
 pub mod ui;
 pub mod value;
+pub mod vfs;
 pub mod vm;
 pub mod vocabulary;
 pub mod volume;
 pub mod water;
+pub mod web_build;
 pub mod wind;
 pub mod wire;
 

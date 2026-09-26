@@ -524,7 +524,7 @@ pub fn surface_shader(
         })
     };
     let path = crate::world::asset_path(dir, source);
-    let text = match std::fs::read_to_string(&path) {
+    let text = match blockloom_core::vfs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) => {
             report(format!(

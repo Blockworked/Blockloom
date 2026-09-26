@@ -2097,6 +2097,12 @@ pub(crate) fn build_game(
     };
     let fast = match fast {
         Some(false) => false,
+        // A browser runs the blocks on the VM; native logic is a library
+        // nothing there can open.
+        Some(true) if target.is_web() => {
+            return Err("A web build runs its blocks on the VM, so it can't compile them".into());
+        }
+        None if target.is_web() => false,
         Some(true) => {
             fast_source?;
             fast_toolchain?;
@@ -2121,14 +2127,14 @@ pub(crate) fn build_game(
 
     let options = build::BuildOptions {
         fast,
-        sdr_only: !hdr.unwrap_or(target.hdr_default().0),
+        sdr_only: target.is_web() || !hdr.unwrap_or(target.hdr_default().0),
     };
     let built = build::build(&project, &dir, target, &player, Path::new(&path), options)?;
     s.push_log(LogLine {
         kind: "say".to_string(),
         actor: "Blockloom".to_string(),
         text: format!(
-            "Built {} for {}: {} asset(s), {} script(s), {} shader(s), {} blocks, {}{} -> {} and {}",
+            "Built {} for {}: {} asset(s), {} script(s), {} shader(s), {} blocks, {}{}, {} -> {} and {}",
             project.name,
             target.label,
             built.assets,
@@ -2137,6 +2143,7 @@ pub(crate) fn build_game(
             if built.compiled { "native" } else { "VM" },
             if options.sdr_only { "SDR only" } else { "HDR" },
             if built.sky { ", sky baked to BC6H" } else { "" },
+            build::size_text(built.size),
             built.dir.display(),
             built.archive.display()
         ),

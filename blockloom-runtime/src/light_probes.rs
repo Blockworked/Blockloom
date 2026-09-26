@@ -204,7 +204,8 @@ fn load_bake(
     match kind {
         ProbeKind::Reflection => {
             let path = probe::cube_path(dir, actor);
-            let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let bytes =
+                blockloom_core::vfs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             let (size, blocks) = bc6h::read_dds_cube(&bytes)?;
             if !size.is_power_of_two() {
                 return Err(format!("a {size} texel face isn't a power of two"));
@@ -434,7 +435,8 @@ pub fn start_bakes(
                 actor,
                 name,
                 spec,
-                persist: persist && engine.project_dir.is_some(),
+                // A browser has nowhere to keep a bake.
+                persist: persist && engine.project_dir.is_some() && !cfg!(target_arch = "wasm32"),
                 work,
             });
         }

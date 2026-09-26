@@ -136,6 +136,10 @@ fn crate_name(relative: &str) -> String {
 /// machine: a build for another platform has to name the file that platform's
 /// way or nothing there will load it.
 pub(crate) fn dylib_name(stem: &str, target: Option<&str>) -> String {
+    // A browser loads a script as a wasm module of its own.
+    if target.map_or(cfg!(target_arch = "wasm32"), is_web) {
+        return format!("{stem}.wasm");
+    }
     let (windows, apple) = match target {
         Some(triple) => (
             triple.contains("windows"),
@@ -150,6 +154,12 @@ pub(crate) fn dylib_name(stem: &str, target: Option<&str>) -> String {
     } else {
         format!("lib{stem}.so")
     }
+}
+
+/// Whether `triple` is the browser, where a script is a wasm module the
+/// player instantiates rather than a library it opens.
+pub fn is_web(triple: &str) -> bool {
+    triple.starts_with("wasm32")
 }
 
 /// Where a script's built library lands. The runtime looks here rather than
@@ -269,6 +279,15 @@ pub fn compile_for(
     let mut command = Command::new("rustc");
     if let Some(triple) = target {
         command.arg("--target").arg(triple);
+        // A page carries its scripts inside it; debug info would be most of
+        // each module. A panic's message names the script as the project
+        // does, not by where this machine keeps it.
+        if is_web(triple) {
+            command.arg("-C").arg("strip=symbols");
+            let mut prefix = project_dir.as_os_str().to_owned();
+            prefix.push(format!("{}=", std::path::MAIN_SEPARATOR));
+            command.arg("--remap-path-prefix").arg(prefix);
+        }
     }
     let status = command
         .arg("--edition")
@@ -431,6 +450,28 @@ mod tests {
     }
 
     #[test]
+    fn a_script_built_for_the_web_is_a_module_importing_the_host_calls() {
+        const WEB: &str = "wasm32-unknown-unknown";
+        if toolchain_version().is_err() || target_installed(WEB).is_err() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("blockloom-web-script-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let relative = "assets/scripts/player.rs";
+        create(&dir, relative, "Player").unwrap();
+        let built = compile_for(&dir, relative, Some(WEB)).unwrap();
+        assert!(built.ends_with("wasm32-unknown-unknown/player.wasm"));
+        let bytes = std::fs::read(&built).unwrap();
+        assert_eq!(&bytes[..4], b"\0asm");
+        let has = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+        // The three calls come in as imports, and the entry points go out.
+        assert!(has(abi::WASM_MODULE.as_bytes()));
+        assert!(has(abi::WASM_READ_NUMBER.as_bytes()));
+        assert!(has(abi::SYM_TICK));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_library_is_named_and_placed_the_way_its_target_expects() {
         let dir = Path::new("/project");
         let of = |target| {
@@ -443,6 +484,7 @@ mod tests {
             of(Some("x86_64-unknown-linux-gnu")).ends_with("x86_64-unknown-linux-gnu/libplayer.so")
         );
         assert!(of(Some("aarch64-apple-darwin")).ends_with("aarch64-apple-darwin/libplayer.dylib"));
+        assert!(of(Some("wasm32-unknown-unknown")).ends_with("wasm32-unknown-unknown/player.wasm"));
         // This machine's own build stays where Play and the runtime look.
         assert!(!of(None).contains("x86_64"));
     }

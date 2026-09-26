@@ -26,7 +26,9 @@ use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
-use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
+#[cfg(not(target_arch = "wasm32"))]
+use bevy::window::CursorGrabMode;
+use bevy::window::{CursorOptions, PrimaryWindow, WindowFocused};
 use blockloom_core::components::CameraView;
 use blockloom_core::input::{ActionSense, LiveInput, normalize_pad_axis, normalize_pad_button};
 use blockloom_core::nav;
@@ -434,7 +436,6 @@ fn load_saved_data(engine: &mut Engine) {
         let data = crate::web::load_save(&engine.project.id);
         data.apply(&engine.project, &engine.variables);
         engine.save_data = data;
-        return;
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -732,8 +733,9 @@ pub fn rebuild_world(
     // log. The editor already shows all of this in its own panels.
     if !bridge::attached() {
         info!(
-            "built {} actors for '{}'",
+            "built {} actors and opened {} scripts for '{}'",
             engine.entities.len(),
+            engine.scripts.len(),
             engine.project.name
         );
     }
@@ -831,12 +833,19 @@ pub fn step_scripts(
     script_lifetimes(&mut engine, &mut asked);
     for effect in &asked.effects {
         // Says and errors go to the editor the same way the VM's do.
-        if let Effect::Say { actor, text } = effect {
-            engine.note_say(actor, text);
-            bridge::send(&RuntimeMessage::Say {
+        match effect {
+            Effect::Say { actor, text } => {
+                engine.note_say(actor, text);
+                bridge::send(&RuntimeMessage::Say {
+                    actor: actor.clone(),
+                    text: text.clone(),
+                });
+            }
+            Effect::Error { actor, message } => bridge::send(&RuntimeMessage::Error {
                 actor: actor.clone(),
-                text: text.clone(),
-            });
+                message: message.clone(),
+            }),
+            _ => {}
         }
     }
     effects.0.append(&mut asked.effects);
@@ -3594,8 +3603,21 @@ pub fn apply_cursor_lock(
         }
         return;
     };
+    // A browser grants a lock only inside a click, which `web` waits for.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (&mut window, &mut cursor);
+        crate::web::want_pointer_lock(engine.running && engine.wants_cursor_locked);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    lock_window_cursor(&engine, &mut window, &mut cursor);
+}
+
+/// Grabs or frees a native window's pointer to match what the game wants.
+#[cfg(not(target_arch = "wasm32"))]
+fn lock_window_cursor(engine: &Engine, window: &mut Window, cursor: &mut CursorOptions) {
     if !engine.running {
-        set_cursor_locked(&mut cursor, false);
+        set_cursor_locked(cursor, false);
         return;
     }
     // Re-asserted every tick, not just when the block runs. The first request
@@ -3617,14 +3639,15 @@ pub fn apply_cursor_lock(
             let center = Vec2::new(window.width(), window.height()) / 2.0;
             window.set_cursor_position(Some(center));
         }
-        set_cursor_locked(&mut cursor, true);
+        set_cursor_locked(cursor, true);
     } else if cursor.grab_mode != CursorGrabMode::None {
-        set_cursor_locked(&mut cursor, false);
+        set_cursor_locked(cursor, false);
     }
 }
 
 /// Locked is grabbed and hidden, the first-person standard; unlocked is a
 /// plain visible pointer again.
+#[cfg(not(target_arch = "wasm32"))]
 fn set_cursor_locked(cursor: &mut CursorOptions, locked: bool) {
     cursor.grab_mode = if locked {
         CursorGrabMode::Locked

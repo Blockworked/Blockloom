@@ -295,6 +295,8 @@ impl HdrFrame {
     /// HDR10 static metadata for this frame, none when it goes out SDR. The
     /// tone curve never passes the peak, so that is MaxCLL too; a frame
     /// mostly sits at or under paper white, which stands in for MaxFALL.
+    /// A browser has no swapchain to send it with.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn metadata(&self) -> Option<HdrMetadata> {
         let primaries = match self.space {
             OutputSpace::Sdr => return None,
@@ -331,12 +333,14 @@ impl HdrFrame {
 }
 
 /// CIE 1931 xy of red, green, blue and the D65 white point.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 const BT2020: [[f32; 2]; 4] = [
     [0.708, 0.292],
     [0.170, 0.797],
     [0.131, 0.046],
     [0.3127, 0.3290],
 ];
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 const BT709: [[f32; 2]; 4] = [
     [0.640, 0.330],
     [0.300, 0.600],
@@ -347,6 +351,7 @@ const BT709: [[f32; 2]; 4] = [
 /// What an HDR signal was mastered for, sent beside the swapchain so a
 /// display with less range tone maps it rather than clipping.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub struct HdrMetadata {
     /// Red, green, blue and white, as CIE 1931 xy.
     pub primaries: [[f32; 2]; 4],

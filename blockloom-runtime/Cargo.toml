@@ -32,10 +32,9 @@ bevy = { workspace = true, features = [
     "png",
     "tga",
     "webp",
-    # Rect lights' LTC tables, light cookies and IES masks, and PCSS.
+    # Rect lights' LTC tables, light cookies and IES masks.
     "area_light_luts",
     "pbr_light_textures",
-    "experimental_pbr_pcss",
 ] }
 bevy_rapier2d.workspace = true
 bevy_rapier3d.workspace = true
@@ -49,19 +48,31 @@ web-time = "1"
 # Bevy's own version; the GPU timer needs query sets it doesn't re-export.
 wgpu = "30"
 
-# Native script and logic libraries open with `dlopen`; wasm has none, so
-# web builds run blocks on the VM and leave scripts unloaded (see script.rs).
+# Native script and logic libraries open with `dlopen`; a browser loads
+# scripts as wasm modules instead (see script.rs).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libloading.workspace = true
+# PCSS soft shadows. Not in a browser: its blocker search samples depth
+# through a filtering sampler, which WebGPU refuses, and Bevy's shaders then
+# fall back to hard shadows as they do on WebGL2.
+bevy = { workspace = true, features = ["experimental_pbr_pcss"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# WebGPU, not Bevy's WebGL2 default: the world's compute passes (sky cubes,
+# froxel fog, clouds, the luminance meter) need compute and storage textures,
+# which WebGL2 has neither of. A browser without WebGPU gets a message.
+bevy = { workspace = true, features = ["webgpu"] }
 getrandom = { version = "0.4", features = ["wasm_js"] }
 wasm-bindgen = "0.2"
-# DOM error overlay and localStorage saves (see `web.rs`). Bevy already
-# pulls these for its own web backend, so this adds no new crates.
+# Instantiating script modules (see `script.rs`). Bevy already pulls it.
+js-sys = "0.3"
+# DOM error overlay, localStorage saves and pointer lock (see `web.rs`).
+# Bevy already pulls these for its own web backend, so this adds no new
+# crates.
 web-sys = { version = "0.3", features = [
     "Document",
     "Element",
+    "EventTarget",
     "HtmlElement",
     "Node",
     "Storage",

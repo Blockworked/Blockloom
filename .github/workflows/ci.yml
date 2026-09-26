@@ -52,3 +52,24 @@ jobs:
         run: >
           cargo test
           -p blockloom-core -p blockloom-protocol -p blockloom-app -p blockloom-runtime
+
+  # The browser player (Phase 8): the runtime has to keep building for wasm,
+  # and a script has to keep compiling to a wasm module. The headless smoke
+  # run (`just web-smoke`) needs a WebGPU browser and stays manual.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32
+      - name: Clippy (wasm32)
+        run: >
+          cargo clippy -p blockloom-runtime --no-default-features
+          --target wasm32-unknown-unknown
+      - name: Scripts compile for the web
+        run: >
+          cargo test -p blockloom-core --lib
+          script::tests::a_script_built_for_the_web_is_a_module_importing_the_host_calls
