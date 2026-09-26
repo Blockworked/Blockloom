@@ -388,9 +388,11 @@ mod tests {
 
     #[test]
     fn sim_split_reports_steps_and_blends() {
-        let mut split = SimSplit::default();
-        split.accum_ms = 10.0;
-        split.steps = 2;
+        let mut split = SimSplit {
+            accum_ms: 10.0,
+            steps: 2,
+            ..Default::default()
+        };
         split.publish();
         assert_eq!(split.last_steps, 2);
         assert_eq!(split.steps, 0);

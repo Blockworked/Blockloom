@@ -335,11 +335,15 @@ impl IrradianceGrid {
             .get(20..20 + count * 18 * 4)
             .ok_or_else(|| "the irradiance bake is truncated".to_string())?;
         let values: Vec<f32> = floats
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
             .collect();
         let cubes = values
-            .chunks_exact(18)
+            .as_chunks::<18>()
+            .0
+            .iter()
             .map(|cube| std::array::from_fn(|axis| std::array::from_fn(|c| cube[axis * 3 + c])))
             .collect();
         Ok(IrradianceGrid { bricks, cubes })

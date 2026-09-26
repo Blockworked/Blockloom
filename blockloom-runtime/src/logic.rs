@@ -182,9 +182,6 @@ impl LoadedLogic {
             }
             Event::Action(action) => self.fire_raw("Action", "", &action, ""),
             Event::Touched => self.fire_raw("Touched", "", "", ""),
-            Event::AnimationEnded { actor, clip } => {
-                self.fire_raw("AnimationEnded", &actor, &clip, "")
-            }
             // The program makes its own clones and starts their strands
             // itself, so nothing outside it queues one. A script's clone
             // comes through `cloned` below instead.

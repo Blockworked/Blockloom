@@ -28,7 +28,8 @@ sitting next to it, and a stale or missing runtime is exactly what `cargo run -p
 blockloom` would leave you with. The editor says so in a banner rather than
 letting Play do nothing.
 
-There's no clippy.toml/rustfmt.toml - just `cargo clippy`/`cargo fmt` with
+`rust-toolchain.toml` pins the Rust version (rustup installs it on first
+build). There's no clippy.toml/rustfmt.toml - just `cargo clippy`/`cargo fmt` with
 defaults.
 
 ## Style
@@ -40,7 +41,7 @@ defaults.
 
 The QML is compiled into the binary by `blockloom-qt/build.rs` (cxx-qt's
 `CxxQtBuilder` + qmlcachegen), so a plain `cargo build` picks up every edit.
-It needs Qt 6 with Quick, QuickControls2, QuickDialogs2 and Multimedia; use
+It needs Qt 6.10 or newer with Quick, QuickControls2, QuickDialogs2 and Multimedia; use
 Qt 6's `qml`/`qmlls` (`/usr/lib/qt6/bin` on Arch), not Qt 5's. A new `.qml`
 file must also be listed in `build.rs`'s `QmlModule`.
 
@@ -50,12 +51,13 @@ file must also be listed in `build.rs`'s `QmlModule`.
 the same block editor. Two halves of it are used here:
 
 - `crates/blockstitch-core`, the Rust backend (value system, document model,
-  editor operations), a git dependency in the root `Cargo.toml`;
-- the QML block canvas and controls (`blockstitch-qml`, module
-  `com.blockworked.Blockstitch`), a path dependency on `../blockstitch` in
-  `blockloom-qt/Cargo.toml`, so that checkout has to exist beside this one.
+  editor operations);
+- the QML block canvas and controls (`blockstitch-qml` at the repo root,
+  module `com.blockworked.Blockstitch`), which lives on blockstitch's `qml`
+  branch.
 
-To build against a local checkout of the Rust half too:
+Both are git dependencies in the root `Cargo.toml`, pinned to the same
+commit. To build against a local checkout instead:
 
 ```bash
 just blockstitch-local [path]        # default path: ../../blockstitch, relative to ui/

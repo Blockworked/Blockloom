@@ -2486,6 +2486,7 @@ dependencies = [
 [[package]]
 name = "blockstitch-qml"
 version = "0.1.0"
+source = "git+https://github.com/Blockworked/blockstitch?rev=686f82b3#686f82b3d210882094ace78c4e0b180576f14283"
 dependencies = [
  "cxx-qt",
  "cxx-qt-build",

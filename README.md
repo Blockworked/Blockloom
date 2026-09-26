@@ -24,9 +24,11 @@ just build     # everything: the editor and the game runtime
 just run
 ```
 
-Requires Rust (2024 edition), Qt 6 (Quick, Quick Controls 2, Quick Dialogs 2,
-Multimedia), and a `blockstitch` checkout beside this one. Build the whole workspace: the editor launches the
-`blockloom-runtime` binary from beside itself.
+Requires Rust (pinned in `rust-toolchain.toml`, which rustup picks up) and Qt
+6.10 or newer (Quick, Quick Controls 2, Quick Dialogs 2, Multimedia).
+`blockstitch` comes in as a git dependency, so no sibling checkout is needed.
+Build the whole workspace: the editor launches the `blockloom-runtime` binary
+from beside itself.
 
 ## Layout
 
