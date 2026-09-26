@@ -766,6 +766,8 @@ after the main pass (clouds, fog) see where the water is. `under.rs` is a
 pass after the fog that absorbs every ray over its underwater part and lays
 caustics while the camera is under a surface. 2D (`flat.rs`): a strip from
 the surface to the depth, its top row riding the waves (`water_2d.wesl`).
+The GPU half is the ignored `embed` test `a_lake_tints_the_floor_under_it`;
+on lavapipe the water's pipelines take a few hundred frames to compile.
 
 ### Lighting rig
 

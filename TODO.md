@@ -696,8 +696,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         flatten beyond about 16 wavelengths from the camera, so buoyancy out
         there floats on slightly taller water than is drawn; wave headings
         are fixed for the run (the authored wind direction); the surface has
-        no fog of its own (the fog pass sees the floor under it); no GPU
-        embed test yet.
+        no fog of its own (the fog pass sees the floor under it). The ignored
+        embed test only checks a lake tints what is under it.
   - [ ] VFX graph (Niagara/VFX-Graph lite): GPU sim with spawn modules (rate, burst,
         shape sphere/box/cone/mesh-surface), update modules (velocity, drag, curl noise,
         turbulence, attractor, depth-buffer collide with bounce/friction, kill planes),
