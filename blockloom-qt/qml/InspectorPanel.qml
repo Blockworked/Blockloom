@@ -54,7 +54,7 @@ Rectangle {
     // A 2D pool is in pixels; the backend fills in whatever a spec leaves out.
     function waterOf(c) { return c.water || {}; }
     function parallaxOf(c) { return Object.assign({ scroll: [0.5, 0.5], wrap: [false, false], dim: 0 }, c.parallax || {}); }
-    function roomOf(c) { return Object.assign({ size: [1280, 720], camera: true, blend: 0.4, stream: false }, c.room || {}); }
+    function roomOf(c) { return Object.assign(is3d ? { size: [20, 10], depth: 20 } : { size: [1280, 720], depth: 720 }, { camera: true, blend: 0.4, stream: false }, c.room || {}); }
     function buoyancyOf(c) { return Object.assign({ density: 0.5, drag: 1, angular_drag: 1, points: 4, splash: true }, c.buoyancy || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
@@ -281,7 +281,7 @@ Rectangle {
         if (!actor) return [];
         const held = actor.components.map(componentName);
         return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Water","Buoyancy","Parallax","Room","Custom"]
-            .filter(n => (n !== "Sprite" && n !== "Parallax" && n !== "Room") || !is3d)
+            .filter(n => n !== "Sprite" || !is3d)
             .filter(n => n === "Custom" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }));
     }
     function blank(name) {
@@ -1364,7 +1364,7 @@ Rectangle {
             InspectorRow { label: "Distance dim"; Layout.fillWidth: true
                 NumberField { value: px.p.dim; fallback: 0; onCommitted: n => root.writeParallax(px.c, { dim: Math.min(1, Math.max(0, n)) }) } }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
-                text: "0 rides the camera like a sky, 1 moves with the actors, up to 2 sweeps past as foreground. Where it stands is where it shows with the camera at the origin. The Render layer puts it behind or in front of actors; a wrapped layer repeats, so make it at least a screen wide." }
+                text: "0 rides the camera like a sky, 1 moves with the actors, up to 2 sweeps past as foreground. Where it stands is where it shows with the camera " + (root.is3d ? "where it starts; it scrolls against the camera's x and y." : "at the origin.") + (root.is3d ? " Its depth puts it behind or in front of actors" : " The Render layer puts it behind or in front of actors") + "; a wrapped layer repeats, so make it at least a screen wide." }
         }
     }
     Component {
@@ -1377,6 +1377,8 @@ Rectangle {
             InspectorRow { label: "Size"; Layout.fillWidth: true
                 NumberField { value: rm.r.size[0]; fallback: 1280; onCommitted: n => root.writeRoom(rm.c, { size: [Math.max(1, n), rm.r.size[1]] }) }
                 NumberField { value: rm.r.size[1]; fallback: 720; onCommitted: n => root.writeRoom(rm.c, { size: [rm.r.size[0], Math.max(1, n)] }) } }
+            InspectorRow { visible: root.is3d; label: "Depth"; Layout.fillWidth: true
+                NumberField { value: rm.r.depth; fallback: 20; onCommitted: n => root.writeRoom(rm.c, { depth: Math.max(0.01, n) }) } }
             InspectorRow { label: "Holds camera"; Layout.fillWidth: true
                 SwitchField { value: rm.r.camera; onToggled: on => root.writeRoom(rm.c, { camera: on }) } Item { Layout.fillWidth: true } }
             InspectorRow { visible: rm.r.camera; label: "Handoff s"; Layout.fillWidth: true
@@ -1384,7 +1386,7 @@ Rectangle {
             InspectorRow { label: "Stream maps"; Layout.fillWidth: true
                 SwitchField { value: rm.r.stream; onToggled: on => root.writeRoom(rm.c, { stream: on }) } Item { Layout.fillWidth: true } }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
-                text: "Centred on this actor. The camera stays inside the room its target stands in, sliding over when it moves on; `when I enter room` fires with this actor's name. Streamed rooms build the tilemaps inside them only while the camera is near." }
+                text: root.is3d ? "A box centred on this actor. The camera stays inside the room its target stands in, a little off the walls, sliding over when it moves on; `when I enter room` fires with this actor's name. Streamed rooms draw the tilemaps inside them only while the camera is near." : "Centred on this actor. The camera stays inside the room its target stands in, sliding over when it moves on; `when I enter room` fires with this actor's name. Streamed rooms build the tilemaps inside them only while the camera is near." }
         }
     }
     Component {

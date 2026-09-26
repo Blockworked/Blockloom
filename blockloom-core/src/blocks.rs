@@ -357,13 +357,16 @@ pub enum InstructionKind {
         value: Value,
     },
     /// Paints one cell of a tilemap for the rest of the run, at a world
-    /// point. `map` names the tilemap; empty means this actor if it is one,
-    /// else whichever map covers the point. Tile -1 erases.
+    /// point (z only matters in 3D). `map` names the tilemap; empty means
+    /// this actor if it is one, else whichever map covers the point. Tile -1
+    /// erases.
     PaintTile {
         map: Value,
         tile: Value,
         x: Value,
         y: Value,
+        #[serde(default = "zero")]
+        z: Value,
     },
     /// A parallax layer's scroll factor (0-2) for the rest of the run.
     SetParallax {
@@ -1020,11 +1023,12 @@ impl BlockKind for InstructionKind {
                 f(layer, InputValueType::Any);
                 f(value, InputValueType::Any);
             }
-            K::PaintTile { map, tile, x, y } => {
+            K::PaintTile { map, tile, x, y, z } => {
                 f(map, InputValueType::Any);
                 f(tile, InputValueType::Any);
                 f(x, InputValueType::Any);
                 f(y, InputValueType::Any);
+                f(z, InputValueType::Any);
             }
             K::SetParallax { layer, value, .. } => {
                 f(layer, InputValueType::Any);
@@ -1421,4 +1425,9 @@ impl InstructionKind {
             _ => None,
         }
     }
+}
+
+/// A slot older documents didn't have, read as 0.
+fn zero() -> Value {
+    Value::number(0.0)
 }

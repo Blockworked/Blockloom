@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 30;
+pub const ABI_VERSION: u32 = 31;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -153,8 +153,9 @@ pub const READ_WATER: u32 = 45;
 /// `a` = actor name, empty for this actor. Whether it is below a water
 /// surface and above that body's bottom.
 pub const READ_UNDERWATER: u32 = 46;
-/// `a` = "x y" (world), `b` = tilemap name, empty for any. The sheet index
-/// there, -1 for an empty cell or no map; [`MISSING`] for an unknown map.
+/// `a` = "x y" or "x y z" (world), `b` = tilemap name, empty for any. The
+/// sheet index there, -1 for an empty cell or no map; [`MISSING`] for an
+/// unknown map.
 pub const READ_TILE_AT: u32 = 47;
 
 // ─── What a script can read as text ────────────────────────────────────────
@@ -374,7 +375,7 @@ pub const ACT_SET_IK_TARGET: u32 = 81;
 /// `OutlineWidth`); `n0` = value.
 pub const ACT_SET_SPRITE_DIAL: u32 = 82;
 /// `a` = tilemap actor (empty for this actor, or whichever map covers the
-/// point); `n0` = tile (-1 erases), `n1`, `n2` = world x, y.
+/// point); `n0` = tile (-1 erases), `n1`, `n2`, `n3` = world x, y, z.
 pub const ACT_PAINT_TILE: u32 = 83;
 /// `a` = parallax layer actor, `b` = axis (`both`, `x` or `y`); `n0` = scroll
 /// factor 0-2.

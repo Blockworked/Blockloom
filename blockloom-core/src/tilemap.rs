@@ -937,6 +937,9 @@ impl ParallaxAxis {
 pub struct RoomSpec {
     /// World units across and up, before the actor's scale.
     pub size: [f32; 2],
+    /// World units deep (z), before the actor's scale. 3D only: a 2D room
+    /// reaches every layer.
+    pub depth: f32,
     /// Keeps the camera inside the room while its target is in it.
     pub camera: bool,
     /// Seconds the camera takes to slide into a newly entered room.
@@ -950,6 +953,7 @@ impl Default for RoomSpec {
     fn default() -> Self {
         Self {
             size: [1280.0, 720.0],
+            depth: 720.0,
             camera: true,
             blend: 0.4,
             stream: false,
@@ -962,6 +966,11 @@ impl RoomSpec {
         for side in &mut self.size {
             *side = if side.is_finite() { side.max(1.0) } else { 1.0 };
         }
+        self.depth = if self.depth.is_finite() {
+            self.depth.max(0.01)
+        } else {
+            1.0
+        };
         self.blend = if self.blend.is_finite() {
             self.blend.clamp(0.0, 5.0)
         } else {
@@ -969,48 +978,68 @@ impl RoomSpec {
         };
     }
 
-    /// The room's world rectangle for an actor at `center` scaled by
-    /// `scale`. Rotation is ignored: rooms are axis-aligned.
-    pub fn bounds(&self, center: [f32; 2], scale: [f32; 2]) -> RoomBounds {
+    /// The room's world box for an actor at `center` scaled by `scale`.
+    /// Rotation is ignored: rooms are axis-aligned. A `flat` (2D) room
+    /// reaches every depth.
+    pub fn bounds(&self, center: [f32; 3], scale: [f32; 3], flat: bool) -> RoomBounds {
         let half = [
             self.size[0] * scale[0].abs() / 2.0,
             self.size[1] * scale[1].abs() / 2.0,
+            if flat {
+                f32::INFINITY
+            } else {
+                self.depth * scale[2].abs() / 2.0
+            },
         ];
         RoomBounds {
-            min: [center[0] - half[0], center[1] - half[1]],
-            max: [center[0] + half[0], center[1] + half[1]],
+            min: [
+                center[0] - half[0],
+                center[1] - half[1],
+                center[2] - half[2],
+            ],
+            max: [
+                center[0] + half[0],
+                center[1] + half[1],
+                center[2] + half[2],
+            ],
         }
     }
 }
 
+/// A room's world box. A 2D room's z runs to infinity both ways.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct RoomBounds {
-    pub min: [f32; 2],
-    pub max: [f32; 2],
+    pub min: [f32; 3],
+    pub max: [f32; 3],
 }
 
 impl RoomBounds {
-    pub fn contains(&self, point: [f32; 2]) -> bool {
-        (self.min[0]..=self.max[0]).contains(&point[0])
-            && (self.min[1]..=self.max[1]).contains(&point[1])
+    pub fn contains(&self, point: [f32; 3]) -> bool {
+        (0..3).all(|axis| (self.min[axis]..=self.max[axis]).contains(&point[axis]))
     }
 
-    pub fn area(&self) -> f32 {
-        (self.max[0] - self.min[0]) * (self.max[1] - self.min[1])
+    /// Its area across x and y, times its depth when it has one: what
+    /// "smallest" compares.
+    pub fn size(&self) -> f32 {
+        let depth = self.max[2] - self.min[2];
+        let area = (self.max[0] - self.min[0]) * (self.max[1] - self.min[1]);
+        if depth.is_finite() {
+            area * depth
+        } else {
+            area
+        }
     }
 
-    pub fn overlaps(&self, min: [f32; 2], max: [f32; 2]) -> bool {
-        self.min[0] <= max[0]
-            && min[0] <= self.max[0]
-            && self.min[1] <= max[1]
-            && min[1] <= self.max[1]
+    /// Whether it overlaps a rectangle on two of its axes.
+    pub fn overlaps(&self, axes: [usize; 2], min: [f32; 2], max: [f32; 2]) -> bool {
+        (0..2).all(|i| self.min[axes[i]] <= max[i] && min[i] <= self.max[axes[i]])
     }
 
-    /// A camera centre moved so a view of `half` half-extents stays inside
-    /// the room, or centred on it along an axis the view is wider than.
-    pub fn confine(&self, center: [f32; 2], half: [f32; 2]) -> [f32; 2] {
+    /// A camera moved so a view of `half` half-extents stays inside the
+    /// room, or centred on it along an axis the view is wider than.
+    pub fn confine(&self, center: [f32; 3], half: [f32; 3]) -> [f32; 3] {
         let mut out = center;
-        for axis in 0..2 {
+        for axis in 0..3 {
             let (lo, hi) = (self.min[axis] + half[axis], self.max[axis] - half[axis]);
             out[axis] = if lo > hi {
                 (self.min[axis] + self.max[axis]) / 2.0
@@ -1029,28 +1058,53 @@ impl RoomBounds {
 pub struct TilemapSense {
     pub id: String,
     pub name: String,
-    pub center: [f32; 2],
-    pub scale: [f32; 2],
+    pub center: [f32; 3],
+    pub scale: [f32; 3],
+    /// The map's turn, as a quaternion (x, y, z, w).
+    pub rotation: [f32; 4],
+    /// 2D: a point is read on the map's plane whatever its z (layer).
+    pub flat: bool,
     pub map: Arc<Tilemap>,
 }
 
 impl TilemapSense {
-    /// A world point in the map's own frame.
-    pub fn local(&self, point: [f32; 2]) -> [f32; 2] {
-        [
-            (point[0] - self.center[0]) / self.scale[0].abs().max(1e-6),
-            (point[1] - self.center[1]) / self.scale[1].abs().max(1e-6),
-        ]
+    fn affine(&self) -> glam::Affine3A {
+        let scale = glam::Vec3::from(self.scale)
+            .abs()
+            .max(glam::Vec3::splat(1e-6));
+        glam::Affine3A::from_scale_rotation_translation(
+            scale,
+            glam::Quat::from_array(self.rotation).normalize(),
+            glam::Vec3::from(self.center),
+        )
     }
 
-    pub fn world(&self, local: [f32; 2]) -> [f32; 2] {
-        [
-            self.center[0] + local[0] * self.scale[0].abs(),
-            self.center[1] + local[1] * self.scale[1].abs(),
-        ]
+    /// A world point in the map's own frame; z is how far off its face.
+    pub fn local3(&self, point: [f32; 3]) -> [f32; 3] {
+        let mut point = point;
+        if self.flat {
+            point[2] = self.center[2];
+        }
+        self.affine()
+            .inverse()
+            .transform_point3(glam::Vec3::from(point))
+            .to_array()
     }
 
-    pub fn cell_at(&self, point: [f32; 2]) -> Option<(u32, u32)> {
+    /// A world point in the map's own frame, on its face.
+    pub fn local(&self, point: [f32; 3]) -> [f32; 2] {
+        let [x, y, _] = self.local3(point);
+        [x, y]
+    }
+
+    /// A point on the map's face in world units.
+    pub fn world(&self, local: [f32; 2]) -> [f32; 3] {
+        self.affine()
+            .transform_point3(glam::Vec3::new(local[0], local[1], 0.0))
+            .to_array()
+    }
+
+    pub fn cell_at(&self, point: [f32; 3]) -> Option<(u32, u32)> {
         self.map.cell_at_local(self.local(point))
     }
 
@@ -1058,16 +1112,49 @@ impl TilemapSense {
         self.id == wanted || self.name.eq_ignore_ascii_case(wanted)
     }
 
+    /// A cell centre (map frame) moved off the face as far as `near` is:
+    /// where a body standing at `near` goes back to. 2D keeps its layer z.
+    pub fn beside(&self, local: [f32; 2], near: [f32; 3]) -> [f32; 3] {
+        if self.flat {
+            let [x, y, _] = self.world(local);
+            return [x, y, near[2]];
+        }
+        let depth = self.local3(near)[2];
+        self.affine()
+            .transform_point3(glam::Vec3::new(local[0], local[1], depth))
+            .to_array()
+    }
+
     /// The strongest region a world box touches (see [`RegionKind::rank`]),
-    /// the cell nearest the box's centre among equals, with that cell's
-    /// centre in world units.
-    pub fn region_touching(&self, min: [f32; 2], max: [f32; 2]) -> Option<(RegionKind, [f32; 2])> {
-        let (a, b) = (self.local(min), self.local(max));
-        let lo = [a[0].min(b[0]), a[1].min(b[1])];
-        let hi = [a[0].max(b[0]), a[1].max(b[1])];
+    /// the cell nearest the box's centre among equals. The box is taken
+    /// into the map's frame whole, so a turned map sees the box's bounds
+    /// there; in 3D it must also come within half a tile of the map's face.
+    pub fn region_touching(&self, min: [f32; 3], max: [f32; 3]) -> Option<RegionHit<'_>> {
+        let mut lo = [f32::INFINITY; 3];
+        let mut hi = [f32::NEG_INFINITY; 3];
+        for corner in 0..8 {
+            let pick = |axis: usize| {
+                if corner & (1 << axis) == 0 {
+                    min[axis]
+                } else {
+                    max[axis]
+                }
+            };
+            let local = self.local3([pick(0), pick(1), pick(2)]);
+            for axis in 0..3 {
+                lo[axis] = lo[axis].min(local[axis]);
+                hi[axis] = hi[axis].max(local[axis]);
+            }
+        }
+        if !self.flat {
+            let reach = self.map.tile_size[0].max(self.map.tile_size[1]) / 2.0;
+            if lo[2] > reach || hi[2] < -reach {
+                return None;
+            }
+        }
         let mid = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
         let mut best: Option<(RegionKind, f32, [f32; 2])> = None;
-        for (x, y) in self.map.cells_in_local(lo, hi) {
+        for (x, y) in self.map.cells_in_local([lo[0], lo[1]], [hi[0], hi[1]]) {
             let Some(kind) = self.map.tile_at(x, y).and_then(|t| self.map.region_of(t)) else {
                 continue;
             };
@@ -1080,7 +1167,27 @@ impl TilemapSense {
                 best = Some((kind, d, at));
             }
         }
-        best.map(|(kind, _, at)| (kind, self.world(at)))
+        best.map(|(kind, _, cell)| RegionHit {
+            kind,
+            cell,
+            map: self,
+        })
+    }
+}
+
+/// A region a body touches: its kind, the cell's centre in the map's frame
+/// and the map.
+#[derive(Debug, Clone, Copy)]
+pub struct RegionHit<'a> {
+    pub kind: RegionKind,
+    pub cell: [f32; 2],
+    pub map: &'a TilemapSense,
+}
+
+impl RegionHit<'_> {
+    /// The cell's centre, as far off the map's face as `near` is.
+    pub fn at(&self, near: [f32; 3]) -> [f32; 3] {
+        self.map.beside(self.cell, near)
     }
 }
 
@@ -1103,8 +1210,9 @@ pub struct LevelSense {
 impl LevelSense {
     /// The tile at a world point: in the named map (empty for any, the first
     /// map with a tile there winning). `-1` for an empty cell or no map
-    /// there; `Err` for a map name nothing answers to.
-    pub fn tile_at(&self, point: [f32; 2], map: &str) -> Result<i32, String> {
+    /// there; `Err` for a map name nothing answers to. In 3D the point is
+    /// read on each map's face, however far in front of it.
+    pub fn tile_at(&self, point: [f32; 3], map: &str) -> Result<i32, String> {
         let map = map.trim();
         if !map.is_empty() {
             let found = self
@@ -1129,7 +1237,7 @@ impl LevelSense {
     }
 
     /// The region under a world point, the first map with one winning.
-    pub fn region_at(&self, point: [f32; 2]) -> Option<(RegionKind, &TilemapSense)> {
+    pub fn region_at(&self, point: [f32; 3]) -> Option<(RegionKind, &TilemapSense)> {
         self.tilemaps.iter().find_map(|sense| {
             let kind = sense.map.region_at_local(sense.local(point))?;
             Some((kind, sense))
@@ -1138,12 +1246,12 @@ impl LevelSense {
 
     /// [`TilemapSense::region_touching`] over every map, the strongest winning
     /// (the first map among equals).
-    pub fn region_touching(&self, min: [f32; 2], max: [f32; 2]) -> Option<(RegionKind, [f32; 2])> {
+    pub fn region_touching(&self, min: [f32; 3], max: [f32; 3]) -> Option<RegionHit<'_>> {
         region_touching(self.tilemaps.iter(), min, max)
     }
 
     /// The smallest room holding a point (the first of equals).
-    pub fn room_at(&self, point: [f32; 2]) -> Option<&RoomSense> {
+    pub fn room_at(&self, point: [f32; 3]) -> Option<&RoomSense> {
         smallest_room(&self.rooms, point)
     }
 }
@@ -1151,26 +1259,23 @@ impl LevelSense {
 /// The strongest region a world box touches across `maps`.
 pub fn region_touching<'a>(
     maps: impl Iterator<Item = &'a TilemapSense>,
-    min: [f32; 2],
-    max: [f32; 2],
-) -> Option<(RegionKind, [f32; 2])> {
+    min: [f32; 3],
+    max: [f32; 3],
+) -> Option<RegionHit<'a>> {
     maps.filter_map(|sense| sense.region_touching(min, max))
-        .fold(
-            None,
-            |best: Option<(RegionKind, [f32; 2])>, found| match best {
-                Some(best) if best.0.rank() >= found.0.rank() => Some(best),
-                _ => Some(found),
-            },
-        )
+        .fold(None, |best: Option<RegionHit<'a>>, found| match best {
+            Some(best) if best.kind.rank() >= found.kind.rank() => Some(best),
+            _ => Some(found),
+        })
 }
 
 /// The smallest room holding `point`, so a nested room wins over its hall.
-pub fn smallest_room(rooms: &[RoomSense], point: [f32; 2]) -> Option<&RoomSense> {
+pub fn smallest_room(rooms: &[RoomSense], point: [f32; 3]) -> Option<&RoomSense> {
     rooms
         .iter()
         .filter(|room| room.bounds.contains(point))
         .fold(None, |best: Option<&RoomSense>, room| match best {
-            Some(best) if best.bounds.area() <= room.bounds.area() => Some(best),
+            Some(best) if best.bounds.size() <= room.bounds.size() => Some(best),
             _ => Some(room),
         })
 }
@@ -1337,24 +1442,35 @@ mod tests {
         let sense = TilemapSense {
             id: "m".into(),
             name: "Map".into(),
-            center: [100.0, 0.0],
-            scale: [1.0, 1.0],
+            center: [100.0, 0.0, 0.0],
+            scale: [1.0, 1.0, 1.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            flat: true,
             map: Arc::new(m),
         };
         // Centre over the water cell, edge over the kill cell: the kill wins.
+        let hit = sense.region_touching([103.0, -8.0, 0.0], [111.0, -2.0, 0.0]);
+        assert_eq!(hit.map(|h| h.kind), Some(RegionKind::Kill));
         assert_eq!(
-            sense.region_touching([103.0, -8.0], [111.0, -2.0]),
-            Some((RegionKind::Kill, [115.0, -5.0]))
+            hit.map(|h| h.at([107.0, -5.0, 3.0])),
+            Some([115.0, -5.0, 3.0])
         );
         // Wholly over water.
-        assert_eq!(
-            sense.region_touching([101.0, -8.0], [109.0, -2.0]),
-            Some((RegionKind::Water, [105.0, -5.0]))
-        );
+        let hit = sense.region_touching([101.0, -8.0, 0.0], [109.0, -2.0, 0.0]);
+        assert_eq!(hit.map(|h| h.kind), Some(RegionKind::Water));
+        assert_eq!(hit.map(|h| h.cell), Some([5.0, -5.0]));
         // Above both.
-        assert_eq!(sense.region_touching([101.0, 2.0], [119.0, 8.0]), None);
+        assert!(
+            sense
+                .region_touching([101.0, 2.0, 0.0], [119.0, 8.0, 0.0])
+                .is_none()
+        );
         // Off the map altogether.
-        assert_eq!(sense.region_touching([200.0, 0.0], [210.0, 5.0]), None);
+        assert!(
+            sense
+                .region_touching([200.0, 0.0, 0.0], [210.0, 5.0, 0.0])
+                .is_none()
+        );
     }
 
     #[test]
@@ -1442,7 +1558,7 @@ mod tests {
         let hall = RoomSense {
             id: "a".into(),
             name: "Hall".into(),
-            bounds: RoomSpec::default().bounds([0.0, 0.0], [1.0, 1.0]),
+            bounds: RoomSpec::default().bounds([0.0; 3], [1.0; 3], true),
         };
         let closet = RoomSense {
             id: "b".into(),
@@ -1451,21 +1567,27 @@ mod tests {
                 size: [100.0, 100.0],
                 ..RoomSpec::default()
             }
-            .bounds([0.0, 0.0], [1.0, 1.0]),
+            .bounds([0.0; 3], [1.0; 3], true),
         };
         let rooms = [hall.clone(), closet.clone()];
-        assert_eq!(smallest_room(&rooms, [10.0, 10.0]).unwrap().name, "Closet");
-        assert_eq!(smallest_room(&rooms, [500.0, 10.0]).unwrap().name, "Hall");
-        assert!(smallest_room(&rooms, [5000.0, 10.0]).is_none());
+        assert_eq!(
+            smallest_room(&rooms, [10.0, 10.0, 5.0]).unwrap().name,
+            "Closet"
+        );
+        assert_eq!(
+            smallest_room(&rooms, [500.0, 10.0, -3.0]).unwrap().name,
+            "Hall"
+        );
+        assert!(smallest_room(&rooms, [5000.0, 10.0, 0.0]).is_none());
         // The hall is 1280 wide; a 400-wide view can't see past its edge.
         assert_eq!(
-            hall.bounds.confine([1000.0, 0.0], [200.0, 100.0]),
-            [440.0, 0.0]
+            hall.bounds.confine([1000.0, 0.0, 7.0], [200.0, 100.0, 0.0]),
+            [440.0, 0.0, 7.0]
         );
         // The closet is narrower than the view: centre on it.
         assert_eq!(
-            closet.bounds.confine([30.0, 0.0], [200.0, 100.0]),
-            [0.0, 0.0]
+            closet.bounds.confine([30.0, 0.0, 0.0], [200.0, 100.0, 0.0]),
+            [0.0, 0.0, 0.0]
         );
     }
 
@@ -1478,15 +1600,72 @@ mod tests {
             tilemaps: vec![TilemapSense {
                 id: "m1".into(),
                 name: "Ground".into(),
-                center: [100.0, 0.0],
-                scale: [1.0, 1.0],
+                center: [100.0, 0.0, 0.0],
+                scale: [1.0, 1.0, 1.0],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                flat: true,
                 map: Arc::new(m),
             }],
             ..Default::default()
         };
-        assert_eq!(level.tile_at([105.0, 5.0], ""), Ok(4));
-        assert_eq!(level.tile_at([95.0, 5.0], "ground"), Ok(-1));
-        assert_eq!(level.tile_at([0.0, 0.0], ""), Ok(-1));
-        assert!(level.tile_at([0.0, 0.0], "Sky").is_err());
+        assert_eq!(level.tile_at([105.0, 5.0, 0.0], ""), Ok(4));
+        assert_eq!(level.tile_at([95.0, 5.0, 0.0], "ground"), Ok(-1));
+        assert_eq!(level.tile_at([0.0, 0.0, 0.0], ""), Ok(-1));
+        assert!(level.tile_at([0.0, 0.0, 0.0], "Sky").is_err());
+    }
+
+    #[test]
+    fn a_turned_map_reads_in_its_own_frame() {
+        let mut m = map(4, 2);
+        m.tile_size = [1.0, 1.0];
+        // Cell (3, 0) is the right end of the top row: local (1.5, 0.5).
+        m.set_tile(3, 0, 6);
+        // A wall turned a quarter about y: its right runs towards -z.
+        let turn = glam::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let sense = TilemapSense {
+            id: "w".into(),
+            name: "Wall".into(),
+            center: [10.0, 0.0, 0.0],
+            scale: [1.0; 3],
+            rotation: turn.to_array(),
+            flat: false,
+            map: Arc::new(m),
+        };
+        let level = LevelSense {
+            tilemaps: vec![sense.clone()],
+            ..Default::default()
+        };
+        // Standing a metre in front of the face still reads the cell.
+        assert_eq!(level.tile_at([11.0, 0.5, -1.5], ""), Ok(6));
+        assert_eq!(level.tile_at([11.0, 0.5, 1.5], ""), Ok(-1));
+        let at = sense.world([1.5, 0.5]);
+        assert!((at[0] - 10.0).abs() < 1e-5 && (at[2] + 1.5).abs() < 1e-5);
+        // A flat (2D) map ignores the point's z.
+        let flat = TilemapSense {
+            flat: true,
+            rotation: glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2).to_array(),
+            ..sense
+        };
+        // Turned about z, the map's right runs up the screen.
+        assert_eq!(flat.cell_at([10.0, 1.5, 99.0]), Some((3, 1)));
+    }
+
+    #[test]
+    fn a_3d_room_has_depth() {
+        let room = RoomSpec {
+            size: [10.0, 4.0],
+            depth: 6.0,
+            ..RoomSpec::default()
+        };
+        let bounds = room.bounds([0.0, 2.0, 0.0], [1.0; 3], false);
+        assert!(bounds.contains([4.0, 1.0, 2.9]));
+        assert!(!bounds.contains([4.0, 1.0, 3.1]));
+        assert_eq!(bounds.size(), 240.0);
+        // A camera kept half a metre inside the walls.
+        assert_eq!(bounds.confine([9.0, 2.0, -9.0], [0.5; 3]), [4.5, 2.0, -2.5]);
+        assert!(
+            room.bounds([0.0; 3], [1.0; 3], true)
+                .contains([0.0, 0.0, 1e6])
+        );
     }
 }

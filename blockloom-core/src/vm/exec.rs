@@ -1443,17 +1443,19 @@ impl Vm {
                     value,
                 });
             }
-            Action::PaintTile { map, tile, x, y } => {
+            Action::PaintTile { map, tile, x, y, z } => {
                 let map = self.eval(map, actor, params, temps, out).as_text();
                 let tile = self.eval_f32(tile, actor, params, temps, out);
                 let x = self.eval_f32(x, actor, params, temps, out);
                 let y = self.eval_f32(y, actor, params, temps, out);
+                let z = self.eval_f32(z, actor, params, temps, out);
                 out.push(Effect::PaintTile {
                     actor: actor.to_string(),
                     map: map.trim().to_string(),
                     tile: (tile.floor() as i32).max(-1),
                     x,
                     y,
+                    z,
                 });
             }
             Action::SetParallax { layer, axis, value } => {

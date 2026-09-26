@@ -223,6 +223,7 @@ pub enum Act {
         tile: f32,
         x: f32,
         y: f32,
+        z: f32,
     },
     SetParallax {
         layer: String,
@@ -1104,7 +1105,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 25;
+pub const LOGIC_ABI_VERSION: u32 = 26;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1825,12 +1826,13 @@ impl Host for AbiHost {
                 [value as f64, 0.0, 0.0],
                 &zero,
             ),
-            Act::PaintTile { map, tile, x, y } => self.act_wire(
+            Act::PaintTile { map, tile, x, y, z } => self.act_many(
                 actor,
                 ACT_PAINT_TILE,
                 &map,
                 "",
-                [tile as f64, x as f64, y as f64],
+                "",
+                &[tile as f64, x as f64, y as f64, z as f64],
                 &zero,
             ),
             Act::SetParallax { layer, axis, value } => self.act_wire(

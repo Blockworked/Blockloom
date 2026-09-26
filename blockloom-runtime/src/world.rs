@@ -1696,8 +1696,8 @@ pub(crate) fn half_extents3(visual: &Visual) -> Vec3 {
 }
 
 /// What a physics query sees: the actor's collider in world units, or
-/// nothing for an actor with no body. Scale is folded in; rotation is not,
-/// so a spun actor still queries against its unrotated box.
+/// nothing for an actor with no body. Scale is folded in; the query turns it
+/// by the actor's rotation.
 fn collider_shape(
     engine: &Engine,
     id: &str,

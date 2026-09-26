@@ -490,9 +490,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .chain()
                     .after(bevy::transform::TransformSystems::Propagate),
             );
-            // The level's tilemaps: painted tiles and regions on the fixed
-            // tick, the Tiles tool and overlays per frame. Rooms and parallax
-            // are 2D ideas and stay there.
+            // The level: painted tiles, regions and rooms on the fixed tick;
+            // parallax, room cameras, streaming and the Tiles tool per frame.
             app.init_resource::<tiles::Level>()
                 .add_systems(
                     FixedUpdate,
@@ -500,6 +499,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         tiles::apply_level_effects,
                         tiles::redraw_maps_3d,
                         tiles::apply_regions_3d,
+                        tiles::track_rooms,
                     )
                         .chain()
                         .in_set(world::SimulationSet)
@@ -516,8 +516,25 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                             .after(tiles::paint_tiles)
                             .after(world::rebuild_world),
                         tiles::publish_level.after(world::publish_sensors),
+                        tiles::confine_camera
+                            .after(world::drive_camera)
+                            .before(edit::apply_view),
+                        tiles::stream_rooms_3d
+                            .after(streaming::update_streaming_cells)
+                            .after(world::rebuild_world),
                         tiles::draw_overlays.after(edit::draw),
                     ),
+                )
+                .add_systems(
+                    First,
+                    (tiles::clear_parallax, tiles::clear_parallax_3d).chain(),
+                )
+                .add_systems(
+                    PostUpdate,
+                    (tiles::apply_parallax_3d, tiles::sync_parallax_copies_3d)
+                        .chain()
+                        .before(batching::upload_instances)
+                        .before(bevy::transform::TransformSystems::Propagate),
                 );
             app.insert_resource(bevy_rapier3d::prelude::TimestepMode::Fixed {
                 dt: 1.0 / 60.0,

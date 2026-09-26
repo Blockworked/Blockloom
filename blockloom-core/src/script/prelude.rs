@@ -1196,6 +1196,24 @@ impl Actor {
         );
     }
 
+    /// [`Self::paint_tile`] at a 3D point, read on the map's own face.
+    pub fn paint_tile_at(&self, map: &str, tile: i32, x: f32, y: f32, z: f32) {
+        self.act_many(
+            ACT_PAINT_TILE,
+            Str::borrow(map),
+            Str::EMPTY,
+            Str::EMPTY,
+            &[tile as f64, x as f64, y as f64, z as f64],
+        );
+    }
+
+    /// [`Self::tile_at`] at a 3D point, read on each map's own face.
+    pub fn tile_at_xyz(&self, map: &str, x: f32, y: f32, z: f32) -> Option<i32> {
+        let at = format!("{x} {y} {z}");
+        self.number(READ_TILE_AT, Str::borrow(&at), Str::borrow(map), 0.0)
+            .map(|tile| tile as i32)
+    }
+
     /// The sheet index at a world point, -1 for an empty cell or no map
     /// there. `map` names one tilemap, or empty for any; `None` when no map
     /// answers to that name.

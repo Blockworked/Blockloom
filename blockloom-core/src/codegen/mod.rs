@@ -1141,13 +1141,14 @@ impl<'a> Pass<'a> {
             Action::SetCloudDrift(vector) => {
                 reading(self.vec3(vector)?, "Act::SetCloudDrift { drift: slot }")
             }
-            Action::PaintTile { map, tile, x, y } => format!(
+            Action::PaintTile { map, tile, x, y, z } => format!(
                 "    let map = {}.trim().to_string();\n    let tile = {};\n    let x = {};\n    \
-                 let y = {};\n    h.act(&me, Act::PaintTile {{ map, tile, x, y }});\n",
+                 let y = {};\n    let z = {};\n    h.act(&me, Act::PaintTile {{ map, tile, x, y, z }});\n",
                 self.text(map)?,
                 self.number(tile)?,
                 self.number(x)?,
                 self.number(y)?,
+                self.number(z)?,
             ),
             Action::SetParallax { layer, axis, value } => format!(
                 "    let layer = {}.trim().to_string();\n    let value = {};\n    \

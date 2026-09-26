@@ -10,12 +10,13 @@
 //! active, and dropped (collision kept) once none is. Parallax is
 //! render-only, like sort depth: added in PostUpdate, taken off in `First`.
 
+use crate::batching::{InstanceRecord, InstanceSlot, InstanceTable, InstancedMaterial};
 use crate::edit::{SceneEditor, editing};
 use crate::engine::{ActorId, CameraRig, Engine, PendingEffects, PhysicsPose, PrevPose};
 use crate::materials::{AnimatedTiles, TilemapMesh};
 use crate::streaming::{CellEntered, CellLeft, CellTasks, StreamingCells, cell_rect_2d};
 use crate::world::WorldCamera;
-use bevy::mesh::Mesh2d;
+use bevy::mesh::{Mesh2d, MeshTag};
 use bevy::prelude::*;
 use bevy::sprite_render::{ColorMaterial, MeshMaterial2d};
 use bevy_rapier2d::prelude as rp;
@@ -35,6 +36,9 @@ use std::sync::Arc;
 /// The level's live state for one build of the world.
 #[derive(Resource, Default)]
 pub struct Level {
+    /// A 2D level: maps read points on their plane whatever the z, rooms
+    /// reach every depth.
+    pub flat: bool,
     /// Each tilemap actor's map as the run has it, by actor id.
     pub maps: HashMap<String, Arc<Tilemap>>,
     /// Maps whose mesh and collider need redoing.
@@ -58,16 +62,19 @@ pub struct Level {
     /// Who entered which room (by name) on the last tick, for scripts.
     entered: HashMap<String, String>,
     /// Where each body goes back to when it touches a kill tile.
-    respawn: HashMap<String, Vec2>,
+    respawn: HashMap<String, Vec3>,
     handoff: Option<Handoff>,
     /// Where the camera ended up last frame.
-    last_camera: Option<Vec2>,
+    last_camera: Option<Vec3>,
+    /// Where the world camera stood when parallax first saw it (3D), which
+    /// layers scroll against.
+    camera_origin: Option<Vec2>,
 }
 
 /// The camera sliding into a room it just entered.
 struct Handoff {
     room: String,
-    from: Vec2,
+    from: Vec3,
     elapsed: f32,
 }
 
@@ -92,17 +99,17 @@ pub struct ParallaxCopies(Vec<(Entity, IVec2)>);
 #[derive(Component)]
 pub struct ParallaxCopy;
 
-fn scale2(placement: &blockloom_core::scene::Placement) -> [f32; 2] {
-    [
-        placement.scale * placement.stretch[0],
-        placement.scale * placement.stretch[1],
-    ]
+fn scale3(placement: &blockloom_core::scene::Placement) -> [f32; 3] {
+    placement.stretch.map(|axis| placement.scale * axis)
 }
 
 impl Level {
     /// The level as the document authored it.
     pub fn seed(project: &Project) -> Self {
-        let mut level = Level::default();
+        let mut level = Level {
+            flat: project.world.mode == Mode::TwoD,
+            ..Level::default()
+        };
         for actor in &project.actors {
             if let Some(Visual::Tilemap { tilemap }) = actor.visual() {
                 level
@@ -126,7 +133,7 @@ impl Level {
                 Some(RoomSense {
                     id: actor.id.clone(),
                     name: actor.name.clone(),
-                    bounds: room.bounds([place.position[0], place.position[1]], scale2(&place)),
+                    bounds: room.bounds(place.position, scale3(&place), level.flat),
                 })
             })
             .collect();
@@ -135,7 +142,7 @@ impl Level {
                 continue;
             }
             let at = actor.components.placement().position;
-            if let Some(room) = smallest_room(&rooms, [at[0], at[1]]) {
+            if let Some(room) = smallest_room(&rooms, at) {
                 level.streamed.insert(actor.id.clone(), room.id.clone());
             }
         }
@@ -171,6 +178,25 @@ impl Level {
             .is_none_or(|room| self.loaded.contains(room))
     }
 
+    /// One map as blocks read it, standing where `t` puts it.
+    fn sense_of(
+        &self,
+        engine: &Engine,
+        id: &str,
+        map: &Arc<Tilemap>,
+        t: &Transform,
+    ) -> TilemapSense {
+        TilemapSense {
+            id: id.to_string(),
+            name: engine.actor(id).map(|a| a.name.clone()).unwrap_or_default(),
+            center: t.translation.to_array(),
+            scale: t.scale.to_array(),
+            rotation: t.rotation.to_array(),
+            flat: self.flat,
+            map: Arc::clone(map),
+        }
+    }
+
     /// Room bounds as they stand, ordered by id so a replay walks them alike.
     fn room_senses(
         &self,
@@ -186,8 +212,11 @@ impl Level {
                     RoomSense {
                         id: id.clone(),
                         name: engine.actor(id).map(|a| a.name.clone()).unwrap_or_default(),
-                        bounds: spec
-                            .bounds([t.translation.x, t.translation.y], [t.scale.x, t.scale.y]),
+                        bounds: spec.bounds(
+                            t.translation.to_array(),
+                            t.scale.to_array(),
+                            self.flat,
+                        ),
                     },
                     spec.camera,
                 ))
@@ -207,13 +236,7 @@ impl Level {
             .iter()
             .filter_map(|(id, map)| {
                 let t = placed.get(id)?;
-                Some(TilemapSense {
-                    id: id.clone(),
-                    name: engine.actor(id).map(|a| a.name.clone()).unwrap_or_default(),
-                    center: [t.translation.x, t.translation.y],
-                    scale: [t.scale.x, t.scale.y],
-                    map: Arc::clone(map),
-                })
+                Some(self.sense_of(engine, id, map, t))
             })
             .collect();
         maps.sort_by(|a, b| a.id.cmp(&b.id));
@@ -251,6 +274,21 @@ pub(crate) fn tile_shape(
     }
 }
 
+/// A world point in a map's own frame, on its face: the inverse of where
+/// the map stands. A flat (2D) map reads the point at its own depth.
+fn local_on(t: &Transform, point: Vec3, flat: bool) -> Vec2 {
+    let mut point = point;
+    if flat {
+        point.z = t.translation.z;
+    }
+    let mut t = *t;
+    t.scale = t.scale.abs().max(Vec3::splat(1e-6));
+    t.compute_affine()
+        .inverse()
+        .transform_point3(point)
+        .truncate()
+}
+
 fn report(actor: &str, message: String) {
     crate::bridge::send(&RuntimeMessage::Error {
         actor: actor.to_string(),
@@ -278,15 +316,14 @@ pub fn apply_level_effects(
                 tile,
                 x,
                 y,
+                z,
             } => {
-                let point = Vec2::new(*x, *y);
+                let point = Vec3::new(*x, *y, *z);
+                let flat = level.flat;
                 let local = |id: &str| {
                     let entity = engine.entities.get(id)?;
                     let (_, t) = placed.get(*entity).ok()?;
-                    Some(
-                        (point - t.translation.truncate())
-                            / t.scale.truncate().abs().max(Vec2::splat(1e-6)),
-                    )
+                    Some(local_on(t, point, flat))
                 };
                 let target = if map.is_empty() {
                     let own = matches!(
@@ -489,34 +526,62 @@ pub fn redraw_maps_3d(
         {
             crate::dim3::insert_body_with(&mut target, actor, collider);
         }
-        let built = map.build_mesh();
-        if built.is_empty() {
-            target.remove::<(Mesh3d, AnimatedTiles)>();
+        if !level.drawn(&id) {
             continue;
         }
-        // A fresh handle: the render cache may share the authored mesh.
-        let mesh = meshes.add(crate::materials::tilemesh_to_bevy(&built));
-        target.insert((Mesh3d(mesh.clone()), crate::materials::TilemapLook));
-        match AnimatedTiles::of(&map, &mesh) {
-            Some(animated) => target.insert(animated),
-            None => target.remove::<AnimatedTiles>(),
-        };
-        if surfaces.get(entity).is_err() {
-            // A map that started empty spawned with nothing to draw with.
-            let texture = (!map.tileset.trim().is_empty()).then(|| {
-                assets.load(crate::world::asset_path(
-                    engine.project_dir.as_deref(),
-                    map.tileset.trim(),
-                ))
-            });
-            target.insert(MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                base_color_texture: texture,
-                alpha_mode: AlphaMode::Blend,
-                cull_mode: None,
-                ..default()
-            })));
-        }
+        let built = map.build_mesh();
+        let has_surface = surfaces.get(entity).is_ok();
+        draw_map_3d(
+            &mut target,
+            &engine,
+            &map,
+            &built,
+            has_surface,
+            &mut meshes,
+            &mut materials,
+            &assets,
+        );
+    }
+}
+
+/// Gives a 3D map entity its built mesh (a fresh handle, since the render
+/// cache may share the authored one), or takes it away for an empty map.
+#[allow(clippy::too_many_arguments)]
+fn draw_map_3d(
+    target: &mut EntityCommands,
+    engine: &Engine,
+    map: &Tilemap,
+    built: &TileMesh,
+    has_surface: bool,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    assets: &AssetServer,
+) {
+    if built.is_empty() {
+        target.remove::<(Mesh3d, AnimatedTiles)>();
+        return;
+    }
+    let mesh = meshes.add(crate::materials::tilemesh_to_bevy(built));
+    target.insert((Mesh3d(mesh.clone()), crate::materials::TilemapLook));
+    match AnimatedTiles::of(map, &mesh) {
+        Some(animated) => target.insert(animated),
+        None => target.remove::<AnimatedTiles>(),
+    };
+    if !has_surface {
+        // A map that started empty spawned with nothing to draw with.
+        let texture = (!map.tileset.trim().is_empty()).then(|| {
+            assets.load(crate::world::asset_path(
+                engine.project_dir.as_deref(),
+                map.tileset.trim(),
+            ))
+        });
+        target.insert(MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: texture,
+            alpha_mode: AlphaMode::Blend,
+            cull_mode: None,
+            ..default()
+        })));
     }
 }
 
@@ -606,8 +671,7 @@ pub fn track_rooms(
     ids.sort();
     let mut entered = Vec::new();
     for id in ids {
-        let at = all[id].translation;
-        let now = smallest_room(&rooms, [at.x, at.y]);
+        let now = smallest_room(&rooms, all[id].translation.to_array());
         let fresh = level.seen.insert(id.clone());
         let was = level.in_room.get(id);
         if now.map(|room| &room.id) == was {
@@ -634,39 +698,22 @@ pub fn track_rooms(
     }
 }
 
-/// The world box a body tests regions with: its look's extents, scaled,
-/// pulled in a little so a body merely resting against a cell doesn't count.
-fn body_box(engine: &Engine, id: &str, t: &Transform, mode: Mode) -> ([f32; 2], [f32; 2], f32) {
+/// The world box a body tests regions with: its look's extents, scaled and
+/// turned, pulled in a little so a body merely resting against a cell
+/// doesn't count.
+fn body_box(engine: &Engine, id: &str, t: &Transform, mode: Mode) -> ([f32; 3], [f32; 3]) {
     let visual = engine.actor(id).and_then(|a| a.visual());
-    let (half, depth) = match (visual, mode) {
-        (Some(visual), Mode::TwoD) => (crate::world::half_extents(visual), 0.0),
-        (Some(visual), Mode::ThreeD) => {
-            let half = crate::world::half_extents3(visual);
-            (half.truncate(), half.z * t.scale.z.abs())
-        }
-        (None, _) => (Vec2::ZERO, 0.0),
-    };
-    let half = half * t.scale.truncate().abs() * 0.98;
-    let at = t.translation.truncate();
-    ((at - half).into(), (at + half).into(), depth)
-}
-
-/// The maps a body at depth `z` (3D) stands in front of: those whose plane
-/// lies within its depth plus half a tile.
-fn maps_near(
-    maps: &[(TilemapSense, f32)],
-    mode: Mode,
-    z: f32,
-    depth: f32,
-) -> impl Iterator<Item = &TilemapSense> {
-    maps.iter()
-        .filter(move |(sense, map_z)| {
-            mode == Mode::TwoD || {
-                let tile = sense.map.tile_size[0].max(sense.map.tile_size[1]) / 2.0;
-                (map_z - z).abs() <= depth + tile * sense.scale[0].abs().max(sense.scale[1].abs())
-            }
-        })
-        .map(|(sense, _)| sense)
+    let half = match (visual, mode) {
+        (Some(visual), Mode::TwoD) => crate::world::half_extents(visual).extend(0.0),
+        (Some(visual), Mode::ThreeD) => crate::world::half_extents3(visual),
+        (None, _) => Vec3::ZERO,
+    } * t.scale.abs()
+        * 0.98;
+    // The turned box's world bounds.
+    let axes = Mat3::from_quat(t.rotation);
+    let half = axes.x_axis.abs() * half.x + axes.y_axis.abs() * half.y + axes.z_axis.abs() * half.z;
+    let at = t.translation;
+    ((at - half).to_array(), (at + half).to_array())
 }
 
 /// What a moving body does in the region its box touches, the strongest
@@ -704,21 +751,17 @@ macro_rules! region_system {
                 .filter(|(_, id, ..)| level.maps.contains_key(&id.0))
                 .map(|(_, id, t, ..)| (id.0.clone(), *t))
                 .collect();
-            let maps: Vec<(TilemapSense, f32)> = level
+            let maps: Vec<TilemapSense> = level
                 .map_senses(&engine, &placed)
                 .into_iter()
                 .filter(|sense| !sense.map.regions.is_empty())
-                .map(|sense| {
-                    let z = placed[&sense.id].translation.z;
-                    (sense, z)
-                })
                 .collect();
             if maps.is_empty() {
                 return;
             }
-            let spawn = maps.iter().find_map(|(sense, _)| {
+            let spawn = maps.iter().find_map(|sense| {
                 let (x, y) = sense.map.first_region_cell(RegionKind::Spawn)?;
-                Some(Vec2::from(sense.world(sense.map.cell_center_local(x, y))))
+                Some((sense, sense.map.cell_center_local(x, y)))
             });
             for (entity, id, mut transform, pose, prev, body, velocity, gravity, hold) in
                 &mut bodies
@@ -730,31 +773,35 @@ macro_rules! region_system {
                 if !moving {
                     continue;
                 }
-                let (min, max, depth) = body_box(&engine, &id.0, &transform, mode);
-                let near = maps_near(&maps, mode, transform.translation.z, depth);
-                let region = region_touching(near, min, max)
-                    .map(|(kind, center)| (kind, Vec2::from(center)));
+                let (min, max) = body_box(&engine, &id.0, &transform, mode);
+                let near = transform.translation.to_array();
+                let region = region_touching(maps.iter(), min, max)
+                    .map(|hit| (hit.kind, Vec3::from(hit.at(near))));
                 let mut want_gravity = None;
                 match region {
                     Some((RegionKind::Spawn | RegionKind::Checkpoint, center)) => {
                         level.respawn.insert(id.0.clone(), center);
                     }
                     Some((RegionKind::Kill, _)) => {
-                        let back =
-                            level
-                                .respawn
-                                .get(&id.0)
-                                .copied()
-                                .or(spawn)
-                                .unwrap_or_else(|| {
-                                    let authored = engine
+                        let mut back = level
+                            .respawn
+                            .get(&id.0)
+                            .copied()
+                            .or_else(|| {
+                                spawn.map(|(sense, cell)| Vec3::from(sense.beside(cell, near)))
+                            })
+                            .unwrap_or_else(|| {
+                                Vec3::from(
+                                    engine
                                         .actor(&id.0)
                                         .map(|a| a.components.placement().position)
-                                        .unwrap_or_default();
-                                    Vec2::new(authored[0], authored[1])
-                                });
-                        transform.translation.x = back.x;
-                        transform.translation.y = back.y;
+                                        .unwrap_or_default(),
+                                )
+                            });
+                        if mode == Mode::TwoD {
+                            back.z = transform.translation.z;
+                        }
+                        transform.translation = back;
                         if let Some(mut pose) = pose {
                             pose.0.translation = transform.translation;
                         }
@@ -806,8 +853,12 @@ use bevy_rapier3d::prelude as rp3;
 region_system!(apply_regions, rp);
 region_system!(apply_regions_3d, rp3);
 
+/// How far inside a 3D room's walls the camera stays.
+const ROOM_MARGIN: f32 = 0.3;
+
 /// Keeps the camera inside the room its target stands in, sliding into a
-/// newly entered one over the room's blend time.
+/// newly entered one over the room's blend time. In 2D the whole view stays
+/// inside; in 3D the camera itself does, a little off the walls.
 #[allow(clippy::type_complexity)]
 pub fn confine_camera(
     engine: NonSend<Engine>,
@@ -825,10 +876,10 @@ pub fn confine_camera(
     let Ok((mut camera, projection)) = cameras.single_mut() else {
         return;
     };
-    let Projection::Orthographic(ortho) = projection else {
-        return;
+    let half = match projection {
+        Projection::Orthographic(ortho) if level.flat => ortho.area.half_size().extend(0.0),
+        _ => Vec3::splat(ROOM_MARGIN),
     };
-    let half = ortho.area.half_size();
     let Some(target) = rigs.iter().next() else {
         return;
     };
@@ -843,17 +894,16 @@ pub fn confine_camera(
         .filter(|(_, camera)| *camera)
         .map(|(room, _)| room)
         .collect();
-    let here = camera.translation.truncate();
-    let at = target.translation;
-    let Some(room) = smallest_room(&rooms, [at.x, at.y]).cloned() else {
+    let here = camera.translation;
+    let Some(room) = smallest_room(&rooms, target.translation.to_array()).cloned() else {
         level.handoff = None;
         level.last_camera = Some(here);
         return;
     };
-    if half.x <= 0.0 || half.y <= 0.0 {
+    if level.flat && (half.x <= 0.0 || half.y <= 0.0) {
         return;
     }
-    let confined = Vec2::from(room.bounds.confine(here.into(), half.into()));
+    let confined = Vec3::from(room.bounds.confine(here.to_array(), half.to_array()));
     if level.handoff.as_ref().is_none_or(|h| h.room != room.id) {
         let from = level.last_camera.unwrap_or(confined);
         level.handoff = Some(Handoff {
@@ -872,13 +922,87 @@ pub fn confine_camera(
         t * t * (3.0 - 2.0 * t)
     };
     let next = handoff.from.lerp(confined, t);
-    camera.translation.x = next.x;
-    camera.translation.y = next.y;
+    camera.translation = next;
     level.last_camera = Some(next);
 }
 
-/// Builds the maps of every streaming room a live cell overlaps, and drops
-/// the drawing of those none does. Collision stays either way.
+/// Which streamed maps to drop and which finished building this frame: a
+/// streaming room loads while a live cell overlaps it (XY cells in 2D, XZ in
+/// 3D) and unloads once none does. Collision stays either way.
+fn plan_streaming(
+    level: &mut Level,
+    engine: &Engine,
+    cells: &mut StreamingCells,
+    placed: &Query<(&ActorId, &Transform)>,
+) -> (Vec<String>, Vec<(String, TileMesh)>) {
+    let all: HashMap<String, Transform> = placed
+        .iter()
+        .filter(|(id, _)| level.rooms.contains_key(&id.0))
+        .map(|(id, t)| (id.0.clone(), *t))
+        .collect();
+    let bounds: HashMap<String, RoomBounds> = level
+        .room_senses(engine, &all)
+        .into_iter()
+        .map(|(room, _)| (room.id, room.bounds))
+        .collect();
+    let flat = level.flat;
+    let overlaps = |b: &RoomBounds, cell: (i32, i32)| {
+        if flat {
+            let (min, max) = cell_rect_2d(cell);
+            b.overlaps([0, 1], min.into(), max.into())
+        } else {
+            let side = StreamingCells::SIZE;
+            let min = [cell.0 as f32 * side, cell.1 as f32 * side];
+            b.overlaps([0, 2], min, [min[0] + side, min[1] + side])
+        }
+    };
+    let streaming: HashSet<&String> = level.streamed.values().collect();
+    let mut wanted: HashMap<String, (i32, i32)> = HashMap::new();
+    for room in streaming {
+        let Some(b) = bounds.get(room) else {
+            continue;
+        };
+        if let Some(cell) = cells.active.iter().copied().find(|&cell| overlaps(b, cell)) {
+            wanted.insert(room.clone(), cell);
+        }
+    }
+    let mut maps: Vec<(String, String)> = level
+        .streamed
+        .iter()
+        .map(|(map, room)| (map.clone(), room.clone()))
+        .collect();
+    maps.sort();
+    let mut dropped = Vec::new();
+    for (map, room) in &maps {
+        let loaded = level.loaded.contains(room);
+        match (wanted.get(room), loaded) {
+            (Some(&cell), false) => {
+                if let Some(live) = level.maps.get(map).cloned() {
+                    level
+                        .tasks
+                        .spawn(cells, map.clone(), cell, move || live.build_mesh());
+                }
+            }
+            (None, _) => {
+                if loaded {
+                    level.tasks.cancel(cells, map);
+                }
+                dropped.push(map.clone());
+            }
+            _ => {}
+        }
+    }
+    for (_, room) in &maps {
+        if wanted.contains_key(room) {
+            level.loaded.insert(room.clone());
+        } else {
+            level.loaded.remove(room);
+        }
+    }
+    (dropped, level.tasks.poll(cells))
+}
+
+/// [`plan_streaming`] in 2D: a streamed map draws through a child mesh.
 #[allow(clippy::too_many_arguments)]
 pub fn stream_rooms(
     mut commands: Commands,
@@ -898,66 +1022,16 @@ pub fn stream_rooms(
     if level.streamed.is_empty() {
         return;
     }
-    let level = &mut *level;
-    let all: HashMap<String, Transform> = placed
-        .iter()
-        .filter(|(id, _)| level.rooms.contains_key(&id.0))
-        .map(|(id, t)| (id.0.clone(), *t))
-        .collect();
-    let bounds: HashMap<String, RoomBounds> = level
-        .room_senses(&engine, &all)
-        .into_iter()
-        .map(|(room, _)| (room.id, room.bounds))
-        .collect();
-    let streaming: HashSet<&String> = level.streamed.values().collect();
-    let mut wanted: HashMap<String, (i32, i32)> = HashMap::new();
-    for room in streaming {
-        let Some(b) = bounds.get(room) else {
-            continue;
-        };
-        if let Some(cell) = cells.active.iter().copied().find(|&cell| {
-            let (min, max) = cell_rect_2d(cell);
-            b.overlaps(min.into(), max.into())
-        }) {
-            wanted.insert(room.clone(), cell);
+    let (dropped, built) = plan_streaming(&mut level, &engine, &mut cells, &placed);
+    for map in dropped {
+        if let Some(entity) = engine.entities.get(&map)
+            && let Ok(marker) = markers.get(*entity)
+        {
+            commands.entity(marker.0).despawn();
+            commands.entity(*entity).remove::<TilemapMesh>();
         }
     }
-    let mut maps: Vec<(String, String)> = level
-        .streamed
-        .iter()
-        .map(|(map, room)| (map.clone(), room.clone()))
-        .collect();
-    maps.sort();
-    for (map, room) in &maps {
-        let loaded = level.loaded.contains(room);
-        match (wanted.get(room), loaded) {
-            (Some(&cell), false) => {
-                if let Some(live) = level.maps.get(map).cloned() {
-                    level
-                        .tasks
-                        .spawn(&mut cells, map.clone(), cell, move || live.build_mesh());
-                }
-            }
-            (None, true) => {
-                level.tasks.cancel(&mut cells, map);
-                if let Some(entity) = engine.entities.get(map)
-                    && let Ok(marker) = markers.get(*entity)
-                {
-                    commands.entity(marker.0).despawn();
-                    commands.entity(*entity).remove::<TilemapMesh>();
-                }
-            }
-            _ => {}
-        }
-    }
-    for (_, room) in &maps {
-        if wanted.contains_key(room) {
-            level.loaded.insert(room.clone());
-        } else {
-            level.loaded.remove(room);
-        }
-    }
-    for (map, built) in level.tasks.poll(&mut cells) {
+    for (map, built) in built {
         let (Some(entity), Some(live)) = (engine.entities.get(&map), level.maps.get(&map)) else {
             continue;
         };
@@ -973,6 +1047,51 @@ pub fn stream_rooms(
             &assets,
             &mut meshes,
             &mut materials,
+        );
+    }
+}
+
+/// [`plan_streaming`] in 3D: a streamed map draws on its own entity, so
+/// dropping it takes its mesh away.
+#[allow(clippy::too_many_arguments)]
+pub fn stream_rooms_3d(
+    mut commands: Commands,
+    engine: NonSend<Engine>,
+    mut level: ResMut<Level>,
+    mut cells: ResMut<StreamingCells>,
+    placed: Query<(&ActorId, &Transform)>,
+    drawn: Query<(), With<Mesh3d>>,
+    surfaces: Query<(), With<MeshMaterial3d<StandardMaterial>>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    assets: Res<AssetServer>,
+) {
+    if level.streamed.is_empty() {
+        return;
+    }
+    let (dropped, built) = plan_streaming(&mut level, &engine, &mut cells, &placed);
+    for map in dropped {
+        if let Some(&entity) = engine.entities.get(&map)
+            && drawn.get(entity).is_ok()
+        {
+            commands.entity(entity).remove::<(Mesh3d, AnimatedTiles)>();
+        }
+    }
+    for (map, built) in built {
+        let (Some(&entity), Some(live)) = (engine.entities.get(&map), level.maps.get(&map)) else {
+            continue;
+        };
+        let live = Arc::clone(live);
+        let has_surface = surfaces.get(entity).is_ok();
+        draw_map_3d(
+            &mut commands.entity(entity),
+            &engine,
+            &live,
+            &built,
+            has_surface,
+            &mut meshes,
+            &mut materials,
+            &assets,
         );
     }
 }
@@ -1081,6 +1200,62 @@ pub fn clear_parallax(
     }
 }
 
+/// Keeps a layer's neighbour copies in step with its wrap: made or unmade
+/// as it changes, each placed one repeat (`size`, unscaled) away. `None`
+/// when it has none.
+fn wrapped_copies(
+    commands: &mut Commands,
+    entity: Entity,
+    wrap: [bool; 2],
+    size: Vec2,
+    copies: Option<&ParallaxCopies>,
+) -> Option<Vec<(Entity, IVec2)>> {
+    let mut want = Vec::new();
+    for j in -1..=1 {
+        for i in -1..=1 {
+            if (i, j) != (0, 0) && (wrap[0] || i == 0) && (wrap[1] || j == 0) {
+                want.push(IVec2::new(i, j));
+            }
+        }
+    }
+    let have: Vec<IVec2> = copies
+        .map(|copies| copies.0.iter().map(|(_, at)| *at).collect())
+        .unwrap_or_default();
+    let entities: Vec<(Entity, IVec2)> = if have != want {
+        if let Some(copies) = copies {
+            for (copy, _) in &copies.0 {
+                commands.entity(*copy).despawn();
+            }
+        }
+        if want.is_empty() {
+            if copies.is_some() {
+                commands.entity(entity).remove::<ParallaxCopies>();
+            }
+            return None;
+        }
+        let made: Vec<(Entity, IVec2)> = want
+            .iter()
+            .map(|at| {
+                let copy = commands
+                    .spawn((ParallaxCopy, Transform::default(), Visibility::Inherited))
+                    .id();
+                commands.entity(entity).add_child(copy);
+                (copy, *at)
+            })
+            .collect();
+        commands.entity(entity).insert(ParallaxCopies(made.clone()));
+        made
+    } else {
+        copies.map(|copies| copies.0.clone()).unwrap_or_default()
+    };
+    for (copy, at) in &entities {
+        commands.entity(*copy).insert(Transform::from_translation(
+            (at.as_vec2() * size).extend(0.0),
+        ));
+    }
+    (!entities.is_empty()).then_some(entities)
+}
+
 /// Gives each wrapped layer its neighbour copies, drawing what it draws.
 #[allow(clippy::type_complexity)]
 pub fn sync_parallax_copies(
@@ -1102,65 +1277,205 @@ pub fn sync_parallax_copies(
             .get(&id.0)
             .map(|spec| spec.wrap)
             .unwrap_or([false; 2]);
-        let mut want = Vec::new();
-        for j in -1..=1 {
-            for i in -1..=1 {
-                if (i, j) != (0, 0) && (wrap[0] || i == 0) && (wrap[1] || j == 0) {
-                    want.push(IVec2::new(i, j));
-                }
-            }
-        }
-        let have: Vec<IVec2> = copies
-            .map(|copies| copies.0.iter().map(|(_, at)| *at).collect())
-            .unwrap_or_default();
         let size = engine
             .actor(&id.0)
             .and_then(|a| a.visual())
             .map(crate::world::half_extents)
             .unwrap_or_default()
             * 2.0;
-        let entities: Vec<(Entity, IVec2)> = if have != want {
-            if let Some(copies) = copies {
-                for (copy, _) in &copies.0 {
-                    commands.entity(*copy).despawn();
-                }
-            }
-            if want.is_empty() {
-                if copies.is_some() {
-                    commands.entity(entity).remove::<ParallaxCopies>();
-                }
-                continue;
-            }
-            let made: Vec<(Entity, IVec2)> = want
-                .iter()
-                .map(|at| {
-                    let copy = commands
-                        .spawn((
-                            ParallaxCopy,
-                            Transform::from_translation((at.as_vec2() * size).extend(0.0)),
-                            Visibility::Inherited,
-                        ))
-                        .id();
-                    commands.entity(entity).add_child(copy);
-                    (copy, *at)
-                })
-                .collect();
-            commands.entity(entity).insert(ParallaxCopies(made.clone()));
-            made
-        } else {
-            copies.map(|copies| copies.0.clone()).unwrap_or_default()
+        let Some(entities) = wrapped_copies(&mut commands, entity, wrap, size, copies) else {
+            continue;
         };
-        for (copy, at) in entities {
+        for (copy, _) in entities {
             let mut copy = commands.entity(copy);
-            copy.insert(Transform::from_translation(
-                (at.as_vec2() * size).extend(0.0),
-            ));
             if let Some(sprite) = sprite {
                 copy.insert(sprite.clone());
             } else if let Some(marker) = marker
                 && let Ok((mesh, material)) = drawing.get(marker.0)
             {
                 copy.insert((mesh.clone(), material.clone()));
+            }
+        }
+    }
+}
+
+/// A 3D parallax layer, kept out of mesh batching: it moves every frame.
+#[derive(Component)]
+pub struct ParallaxLayer;
+
+/// An instanced 3D layer's own record under its dimming, put back in `First`.
+#[derive(Component)]
+pub struct ParallaxRecord(InstanceRecord);
+
+/// A 3D layer's own copy of its standard material, and the color it had.
+#[derive(Component)]
+pub struct ParallaxMaterial(Color);
+
+/// [`apply_parallax`] in 3D: layers scroll against the camera's x and y
+/// from where it first stood, and dim through their instance tint or their
+/// own copy of a standard material.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn apply_parallax_3d(
+    mut commands: Commands,
+    engine: NonSend<Engine>,
+    mut editor: Option<ResMut<SceneEditor>>,
+    mut level: ResMut<Level>,
+    environment: Res<crate::environment::Environment>,
+    cameras: Query<&Transform, With<WorldCamera>>,
+    mut layers: Query<
+        (
+            Entity,
+            &ActorId,
+            &mut Transform,
+            Option<&InstanceSlot>,
+            Option<&MeshMaterial3d<StandardMaterial>>,
+            Option<&ParallaxMaterial>,
+            Has<ParallaxLayer>,
+        ),
+        Without<WorldCamera>,
+    >,
+    mut table: Option<ResMut<InstanceTable>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if let Some(editor) = editor.as_mut()
+        && !editor.parallax.is_empty()
+    {
+        editor.parallax.clear();
+    }
+    if level.parallax.is_empty() {
+        return;
+    }
+    for (entity, id, _, _, _, _, marked) in &layers {
+        if !marked && level.parallax.contains_key(&id.0) {
+            commands.entity(entity).insert(ParallaxLayer);
+        }
+    }
+    if !parallax_shown(&engine, editor.as_deref()) {
+        return;
+    }
+    let Ok(camera) = cameras.single() else {
+        return;
+    };
+    let camera = camera.translation.truncate();
+    let origin = *level.camera_origin.get_or_insert(camera);
+    let moved = camera - origin;
+    let background = environment.background;
+    for (entity, id, mut transform, slot, standard, own, _) in &mut layers {
+        let Some(spec) = level.parallax.get(&id.0) else {
+            continue;
+        };
+        let size = engine
+            .actor(&id.0)
+            .and_then(|a| a.visual())
+            .map(|visual| crate::world::half_extents3(visual).truncate())
+            .unwrap_or_default()
+            * 2.0
+            * transform.scale.truncate().abs();
+        let at = transform.translation.truncate();
+        let drawn = Vec2::from(spec.drawn_at(at.into(), moved.into(), camera.into(), size.into()));
+        let offset = drawn - at;
+        if offset != Vec2::ZERO {
+            transform.translation += offset.extend(0.0);
+            commands.entity(entity).insert(ParallaxOffset(offset));
+            if let Some(editor) = editor.as_mut() {
+                editor.parallax.insert(id.0.clone(), offset.extend(0.0));
+            }
+        }
+        let dim = spec.dimming();
+        if dim <= 0.0 {
+            continue;
+        }
+        if let (Some(slot), Some(table)) = (slot, table.as_mut())
+            && let Some(record) = table.get(slot.0)
+        {
+            let own = Color::LinearRgba(LinearRgba::from_vec4(record.tint));
+            let tint = crate::world::mix_color(own, background, dim)
+                .to_linear()
+                .to_vec4();
+            table.set(slot.0, InstanceRecord { tint, ..record });
+            commands.entity(entity).insert(ParallaxRecord(record));
+        } else if let Some(standard) = standard {
+            match own {
+                Some(ParallaxMaterial(own)) => {
+                    let want = crate::world::mix_color(*own, background, dim);
+                    if materials
+                        .get(&standard.0)
+                        .is_some_and(|m| m.base_color != want)
+                        && let Some(mut material) = materials.get_mut(&standard.0)
+                    {
+                        material.base_color = want;
+                    }
+                }
+                None => {
+                    // Take a copy first: the render cache shares materials.
+                    let Some(material) = materials.get(&standard.0).cloned() else {
+                        continue;
+                    };
+                    let color = material.base_color;
+                    commands.entity(entity).insert((
+                        MeshMaterial3d(materials.add(material)),
+                        ParallaxMaterial(color),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// Puts an instanced layer's own record back, after [`clear_parallax`].
+pub fn clear_parallax_3d(
+    mut commands: Commands,
+    layers: Query<(Entity, &InstanceSlot, &ParallaxRecord)>,
+    mut table: Option<ResMut<InstanceTable>>,
+) {
+    for (entity, slot, record) in &layers {
+        if let Some(table) = table.as_mut() {
+            table.set(slot.0, record.0);
+        }
+        commands.entity(entity).remove::<ParallaxRecord>();
+    }
+}
+
+/// [`sync_parallax_copies`] in 3D, copying the layer's mesh and surface.
+#[allow(clippy::type_complexity)]
+pub fn sync_parallax_copies_3d(
+    mut commands: Commands,
+    engine: NonSend<Engine>,
+    level: Res<Level>,
+    layers: Query<(
+        Entity,
+        &ActorId,
+        Option<&Mesh3d>,
+        Option<&MeshMaterial3d<StandardMaterial>>,
+        Option<&MeshMaterial3d<InstancedMaterial>>,
+        Option<&MeshTag>,
+        Option<&ParallaxCopies>,
+    )>,
+) {
+    for (entity, id, mesh, standard, instanced, tag, copies) in &layers {
+        let wrap = level
+            .parallax
+            .get(&id.0)
+            .map(|spec| spec.wrap)
+            .unwrap_or([false; 2]);
+        let size = engine
+            .actor(&id.0)
+            .and_then(|a| a.visual())
+            .map(|visual| crate::world::half_extents3(visual).truncate())
+            .unwrap_or_default()
+            * 2.0;
+        let Some(entities) = wrapped_copies(&mut commands, entity, wrap, size, copies) else {
+            continue;
+        };
+        for (copy, _) in entities {
+            let mut copy = commands.entity(copy);
+            if let Some(mesh) = mesh {
+                copy.insert(mesh.clone());
+            }
+            if let Some(standard) = standard {
+                copy.insert(standard.clone());
+            } else if let (Some(instanced), Some(tag)) = (instanced, tag) {
+                copy.insert((instanced.clone(), tag.clone()));
             }
         }
     }
@@ -1415,18 +1730,25 @@ pub fn draw_overlays(
     }
     if flags.rooms {
         for (room, camera) in level.room_senses(&engine, &placed) {
-            let min = Vec2::from(room.bounds.min);
-            let max = Vec2::from(room.bounds.max);
+            let min = Vec3::from(room.bounds.min);
+            let max = Vec3::from(room.bounds.max);
             let color = if camera {
                 Color::srgba(0.8, 0.6, 1.0, 0.9)
             } else {
                 Color::srgba(0.8, 0.6, 1.0, 0.4)
             };
-            gizmos.rect_2d(
-                Isometry2d::from_translation((min + max) / 2.0),
-                max - min,
-                color,
-            );
+            if level.flat {
+                gizmos.rect_2d(
+                    Isometry2d::from_translation(((min + max) / 2.0).truncate()),
+                    (max - min).truncate(),
+                    color,
+                );
+            } else {
+                gizmos.cube(
+                    Transform::from_translation((min + max) / 2.0).with_scale(max - min),
+                    color,
+                );
+            }
         }
     }
 }
@@ -1541,5 +1863,98 @@ mod tests {
         // It lasts one tick.
         app.update();
         assert!(app.world().resource::<Level>().entered.is_empty());
+    }
+
+    /// A world for `project` with each listed actor standing at its transform.
+    fn level_app(project: Project, placed: &[(&str, Transform)]) -> App {
+        let mode = project.world.mode;
+        let level = Level::seed(&project);
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, mode);
+        engine.project = project;
+        engine.running = true;
+        let mut app = App::new();
+        for (id, t) in placed {
+            let entity = app.world_mut().spawn((ActorId(id.to_string()), *t)).id();
+            engine.entities.insert(id.to_string(), entity);
+        }
+        app.insert_non_send(engine);
+        app.insert_resource(level);
+        app
+    }
+
+    #[test]
+    fn a_3d_room_is_entered_through_its_depth() {
+        let mut project = Project::starter("Rooms", Mode::ThreeD);
+        project.actors.clear();
+        let cube = Visual::Cuboid {
+            color: "#000000".into(),
+            size: [1.0, 1.0, 1.0],
+        };
+        let mut room = actor("room", cube.clone(), 0.0);
+        room.name = "Vault".into();
+        room.components.insert(ActorComponent::Room {
+            room: RoomSpec {
+                size: [10.0, 10.0],
+                depth: 4.0,
+                ..RoomSpec::default()
+            },
+        });
+        project.actors.push(room);
+        project.actors.push(actor("walker", cube, 0.0));
+        let mut app = level_app(
+            project,
+            &[
+                ("room", Transform::IDENTITY),
+                ("walker", Transform::from_xyz(0.0, 0.0, 10.0)),
+            ],
+        );
+        app.add_systems(Update, track_rooms);
+        // Level with the room in x and y, but in front of it.
+        app.update();
+        assert!(app.world().resource::<Level>().entered.is_empty());
+        let walker = app.world().non_send::<Engine>().entities["walker"];
+        app.world_mut()
+            .entity_mut(walker)
+            .get_mut::<Transform>()
+            .unwrap()
+            .translation
+            .z = 1.0;
+        app.update();
+        let entered = &app.world().resource::<Level>().entered;
+        assert_eq!(entered.get("walker").map(String::as_str), Some("Vault"));
+    }
+
+    #[test]
+    fn paint_tile_finds_the_cell_on_a_turned_3d_wall() {
+        let mut project = Project::starter("Wall", Mode::ThreeD);
+        project.actors.clear();
+        let mut map = Tilemap {
+            sheet_columns: 8,
+            sheet_rows: 8,
+            tile_size: [1.0, 1.0],
+            ..Tilemap::default()
+        };
+        map.resize(4, 2);
+        project
+            .actors
+            .push(actor("wall", Visual::Tilemap { tilemap: map }, 10.0));
+        // Turned a quarter about y, the wall's right runs towards -z.
+        let turned = Transform::from_xyz(10.0, 0.0, 0.0)
+            .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
+        let mut app = level_app(project, &[("wall", turned)]);
+        app.insert_resource(PendingEffects(vec![Effect::PaintTile {
+            actor: "wall".into(),
+            map: String::new(),
+            tile: 3,
+            x: 11.0,
+            y: 0.5,
+            z: -1.5,
+        }]));
+        app.add_systems(Update, apply_level_effects);
+        app.update();
+        let level = app.world().resource::<Level>();
+        assert_eq!(level.maps["wall"].tile_at(3, 0), Some(3));
+        assert!(level.dirty.contains("wall"));
     }
 }

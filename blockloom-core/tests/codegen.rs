@@ -1017,9 +1017,10 @@ fn line_of(act: &Act) -> String {
         Act::SetCloudDrift { drift } => format!("SetCloudDrift {drift:?}"),
         Act::SetClouds { property, value } => format!("SetClouds {property} {value:?}"),
         Act::SetWater { property, value } => format!("SetWater {property} {value:?}"),
-        Act::PaintTile { map, tile, x, y } => {
-            format!("PaintTile {map} {} {x:?} {y:?}", (tile.floor() as i32).max(-1))
-        }
+        Act::PaintTile { map, tile, x, y, z } => format!(
+            "PaintTile {map} {} {x:?} {y:?} {z:?}",
+            (tile.floor() as i32).max(-1)
+        ),
         Act::SetParallax { layer, axis, value } => format!("SetParallax {layer} {axis} {value:?}"),
         Act::SetCloudLayer {
             layer,
@@ -1288,7 +1289,8 @@ fn line_of(effect: &Effect) -> Option<String> {
             tile,
             x,
             y,
-        } => format!("{actor}|PaintTile {map} {tile} {x:?} {y:?}"),
+            z,
+        } => format!("{actor}|PaintTile {map} {tile} {x:?} {y:?} {z:?}"),
         Effect::SetParallax {
             actor,
             layer,
@@ -3118,12 +3120,14 @@ fn level_blocks_ask_the_same_things_in_order() {
                 tile: op("Add", vec![number(2.0), number(1.5)]),
                 x: op("Mul", vec![number(16.0), number(3.0)]),
                 y: number(-8.0),
+                z: op("Sub", vec![number(1.0), number(3.0)]),
             },
             K::PaintTile {
                 map: Value::text(""),
                 tile: number(-7.0),
                 x: Value::text("left"),
                 y: number(0.5),
+                z: number(0.0),
             },
             K::SetParallax {
                 layer: Value::text("Hills"),

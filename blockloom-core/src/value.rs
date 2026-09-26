@@ -722,13 +722,19 @@ static OPERATORS: &[ExtOperator] = &[
     ExtOperator {
         kind: "TileAt",
         op: "TileAt",
-        arity: 3,
-        default_args: || vec![number(0.0), number(0.0), text("")],
-        // The sheet index at a world point in the live tilemaps, -1 for an
-        // empty cell or no map there. An empty map name reads any map.
+        arity: 4,
+        default_args: || vec![number(0.0), number(0.0), number(0.0), text("")],
+        // The sheet index at a world point (x, y, z; z only matters in 3D)
+        // in the live tilemaps, -1 for an empty cell or no map there. An
+        // empty map name reads any map. Three arguments are (x, y, map).
         eval: |args| {
-            let point = [num(args.first()) as f32, num(args.get(1)) as f32];
-            let map = args.get(2).map(|arg| arg.as_text()).unwrap_or_default();
+            let (z, map) = if args.len() >= 4 {
+                (num(args.get(2)) as f32, args.get(3))
+            } else {
+                (0.0, args.get(2))
+            };
+            let point = [num(args.first()) as f32, num(args.get(1)) as f32, z];
+            let map = map.map(|arg| arg.as_text()).unwrap_or_default();
             sense::read(|sensors| sensors.level.tile_at(point, &map))
                 .map(|tile| Evaluated::Number(tile as f64))
         },
@@ -751,7 +757,7 @@ static OPERATORS: &[ExtOperator] = &[
             Ok(Evaluated::Text(sense::read(|sensors| {
                 sensors
                     .level
-                    .room_at([position[0], position[1]])
+                    .room_at(position)
                     .map(|room| room.name.clone())
                     .unwrap_or_default()
             })))
@@ -1134,14 +1140,16 @@ mod tests {
             tilemaps: vec![TilemapSense {
                 id: "m".into(),
                 name: "Ground".into(),
-                center: [0.0, 0.0],
-                scale: [1.0, 1.0],
+                center: [0.0, 0.0, 0.0],
+                scale: [1.0, 1.0, 1.0],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                flat: true,
                 map: std::sync::Arc::new(map),
             }],
             rooms: vec![RoomSense {
                 id: "r".into(),
                 name: "Cave".into(),
-                bounds: RoomSpec::default().bounds([0.0, 0.0], [1.0, 1.0]),
+                bounds: RoomSpec::default().bounds([0.0; 3], [1.0; 3], true),
             }],
             ..Default::default()
         };
@@ -1149,10 +1157,25 @@ mod tests {
         let tile = |x: f64, y: f64, map: &str| {
             Value::op(
                 Op::from_name("TileAt"),
-                vec![Value::number(x), Value::number(y), Value::text(map)],
+                vec![
+                    Value::number(x),
+                    Value::number(y),
+                    Value::number(0.0),
+                    Value::text(map),
+                ],
             )
             .eval()
         };
+        // An older three-slot reporter still reads (x, y, map).
+        let old = Value::op(
+            Op::from_name("TileAt"),
+            vec![
+                Value::number(10.0),
+                Value::number(10.0),
+                Value::text("Ground"),
+            ],
+        );
+        assert_eq!(old.eval(), Ok(Evaluated::Number(2.0)));
         // Cell (4, 3) of an 8x8 map of 32s spans x 0..32, y 0..32.
         assert_eq!(tile(10.0, 10.0, ""), Ok(Evaluated::Number(2.0)));
         assert_eq!(tile(-10.0, -10.0, "Ground"), Ok(Evaluated::Number(-1.0)));

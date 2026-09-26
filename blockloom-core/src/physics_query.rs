@@ -3,10 +3,10 @@
 //! The sensing operators in [`crate::value`] are plain functions with no
 //! physics world handle, so raycasts and overlap checks run here against the
 //! shapes `publish_sensors` stored on each [`ActorSense`]: an axis-aligned
-//! box or a ball, in world units. Rotation is ignored, which is what a
-//! platformer's ground check wants.
+//! box, a ball or a set of boxes, in world units and the actor's own frame,
+//! so a turned actor is hit where it is turned to.
 
-use crate::sense::{ActorSense, ColliderShape, Sensors, ShapePart};
+use crate::sense::{ActorSense, ColliderShape, Sensors};
 
 /// The nearest body a segment hits, excluding `skip` (usually the querier
 /// itself). Only actors with a body whose layer `mask` names take part, so a
@@ -108,22 +108,25 @@ impl ActorSense {
     }
 }
 
-fn part_center(actor: &ActorSense, part: &ShapePart) -> [f32; 3] {
-    [
-        actor.position[0] + part.offset[0],
-        actor.position[1] + part.offset[1],
-        actor.position[2] + part.offset[2],
-    ]
+/// A world point in the actor's frame: moved to its position, turned back
+/// by its rotation. The shape's own extents already carry its scale.
+fn to_local(actor: &ActorSense, point: [f32; 3]) -> [f32; 3] {
+    let [rx, ry, rz] = actor.rotation.map(f32::to_radians);
+    let turn = glam::Quat::from_euler(glam::EulerRot::XYZ, rx, ry, rz);
+    let offset = glam::Vec3::from(point) - glam::Vec3::from(actor.position);
+    (turn.inverse() * offset).to_array()
 }
 
 fn segment_hit(from: [f32; 3], to: [f32; 3], actor: &ActorSense) -> Option<f32> {
+    // Turning preserves length, so distances in the actor's frame are world ones.
+    let (from, to) = (to_local(actor, from), to_local(actor, to));
     match &actor.shape {
         ColliderShape::None => None,
-        ColliderShape::Box { half } => segment_box(from, to, actor.position, *half),
-        ColliderShape::Ball { radius } => segment_ball(from, to, actor.position, *radius),
+        ColliderShape::Box { half } => segment_box(from, to, [0.0; 3], *half),
+        ColliderShape::Ball { radius } => segment_ball(from, to, [0.0; 3], *radius),
         ColliderShape::Parts(parts) => parts
             .iter()
-            .filter_map(|part| segment_box(from, to, part_center(actor, part), part.half))
+            .filter_map(|part| segment_box(from, to, part.offset, part.half))
             .min_by(f32::total_cmp),
     }
 }
@@ -135,17 +138,15 @@ fn in_box(point: [f32; 3], center: [f32; 3], half: [f32; 3]) -> bool {
 }
 
 fn contains(actor: &ActorSense, point: [f32; 3]) -> bool {
+    let point = to_local(actor, point);
     match &actor.shape {
         ColliderShape::None => false,
-        ColliderShape::Box { half } => in_box(point, actor.position, *half),
+        ColliderShape::Box { half } => in_box(point, [0.0; 3], *half),
         ColliderShape::Parts(parts) => parts
             .iter()
-            .any(|part| in_box(point, part_center(actor, part), part.half)),
+            .any(|part| in_box(point, part.offset, part.half)),
         ColliderShape::Ball { radius } => {
-            let dx = point[0] - actor.position[0];
-            let dy = point[1] - actor.position[1];
-            let dz = point[2] - actor.position[2];
-            dx * dx + dy * dy + dz * dz <= radius * radius
+            point[0] * point[0] + point[1] * point[1] + point[2] * point[2] <= radius * radius
         }
     }
 }
@@ -158,18 +159,16 @@ fn box_touches_ball(at: [f32; 3], half: [f32; 3], center: [f32; 3], radius: f32)
 }
 
 fn touches_ball(actor: &ActorSense, center: [f32; 3], radius: f32) -> bool {
+    let center = to_local(actor, center);
     match &actor.shape {
         ColliderShape::None => false,
-        ColliderShape::Box { half } => box_touches_ball(actor.position, *half, center, radius),
+        ColliderShape::Box { half } => box_touches_ball([0.0; 3], *half, center, radius),
         ColliderShape::Parts(parts) => parts
             .iter()
-            .any(|part| box_touches_ball(part_center(actor, part), part.half, center, radius)),
+            .any(|part| box_touches_ball(part.offset, part.half, center, radius)),
         ColliderShape::Ball { radius: other } => {
-            let dx = center[0] - actor.position[0];
-            let dy = center[1] - actor.position[1];
-            let dz = center[2] - actor.position[2];
             let sum = radius + other;
-            dx * dx + dy * dy + dz * dz <= sum * sum
+            center[0] * center[0] + center[1] * center[1] + center[2] * center[2] <= sum * sum
         }
     }
 }
@@ -259,6 +258,7 @@ fn segment_ball(from: [f32; 3], to: [f32; 3], center: [f32; 3], radius: f32) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sense::ShapePart;
     use std::collections::HashSet;
 
     fn boxed(id: &str, at: [f32; 3], half: [f32; 3], layer: u8) -> (String, ActorSense) {
@@ -419,5 +419,21 @@ mod tests {
             overlap_circle(&sensors, [10.0, 0.0, 0.0], 1.0, None, 0xFF).len(),
             1
         );
+    }
+
+    #[test]
+    fn a_turned_box_is_hit_where_it_is_turned_to() {
+        let (id, mut plank) = boxed("plank", [0.0; 3], [10.0, 1.0, 1.0], 1);
+        // A quarter turn about z stands the plank upright.
+        plank.rotation = [0.0, 0.0, 90.0];
+        let sensors = world(vec![(id, plank)]);
+        assert!(overlap_point(&sensors, [8.0, 0.0, 0.0], 0xFF).is_empty());
+        assert_eq!(
+            overlap_point(&sensors, [0.0, 8.0, 0.0], 0xFF),
+            vec!["plank"]
+        );
+        let hit = ray_hit(&sensors, [0.0, 20.0, 0.0], [0.0, -20.0, 0.0], None, 0xFF);
+        assert!(hit.is_some_and(|(_, d)| (d - 10.0).abs() < 1e-3));
+        assert!(overlap_circle(&sensors, [5.0, 0.0, 0.0], 3.0, None, 0xFF).is_empty());
     }
 }

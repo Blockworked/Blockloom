@@ -1065,7 +1065,8 @@ loaded files alive across rebuilds so an edit doesn't flash the box.
 A solid tilemap collides per tile, as the merged rects of
 `Tilemap::solid_rects` (minus its `passable` tiles), and nav blocks the same
 rects. Ray and overlap queries see them too, as a `ColliderShape::Parts`
-that `tiles::publish_level` fills from the live map. Animated tiles cycle their frames on the wall clock;
+that `tiles::publish_level` fills from the live map. Every query shape is in
+its actor's frame and turned by its rotation (`physics_query::to_local`). Animated tiles cycle their frames on the wall clock;
 `materials::animate_tiles` rewrites only the mesh's UVs when a frame turns.
 
 A custom effect's `GraphEffect::starter_graph` is the uniform path spelled as
@@ -1144,7 +1145,7 @@ or physics step sees it. A flipbook crossfade draws the old frame on a
 
 ### Tilemaps and levels
 
-`blockloom-core/src/tilemap.rs` is level building over
+Both dimensions. `blockloom-core/src/tilemap.rs` is level building over
 `material::Tilemap`: `AutotileSet`s pick a cell from its neighbours (16 edge
 cases, or 47 blob cases where a corner only counts between two filled
 edges; off the map counts as filled), `TileBrush` is every stroke (paint,
@@ -1153,43 +1154,56 @@ and `Tilemap::apply_brush` runs one and re-resolves autotiles around what
 changed. Painting an animation's frame paints its base tile, so every cell
 cycles in step. `TileRegion`s mark sheet tiles as spawn, checkpoint, kill,
 ladder or water; a body acts on the strongest region its box touches
-(`RegionKind::rank`: kill, checkpoint, spawn, water, ladder). `import_tiled_tileset` reads a Tiled JSON tileset:
-collision shapes and `passable`/`solid` properties, animations, `region`
-properties, and edge or mixed wang sets as autotiles.
+(`RegionKind::rank`: kill, checkpoint, spawn, water, ladder).
+`import_tiled_tileset` reads a Tiled JSON tileset: collision shapes and
+`passable`/`solid` properties, animations, `region` properties, and edge or
+mixed wang sets as autotiles.
+
+`TilemapSense` is a live map with its whole transform: `local` takes a
+world point into the map's frame (turned and scaled with it; a `flat` 2D map
+reads any z at its own layer), so `tile at x y z`, `paint tile` and a
+script's `tile_at_xyz`/`paint_tile_at` read a turned map, and a wall or
+floor in 3D, where the point falls on its face. `region_touching` takes a
+body's world box into the same frame (in 3D it must come within half a tile
+of the face) and `RegionHit::at` puts a respawn point at the body's own
+distance off the face.
 
 The `Parallax` component (`ParallaxSpec`) scrolls a layer at 0-2 per axis
-against the camera, from where it stands with the camera at the origin,
+against the camera's x and y, from where it stands with the camera at the
+origin (2D) or where the camera first stood (3D, `Level::camera_origin`),
 wraps it, and dims it towards the background by its distance from the
-actors' plane; the Render layer sorts it. The `Room` component (`RoomSpec`)
-is a rectangle centred on its actor: the camera stays in the room its
-target stands in and slides into a new one over `blend`, `when I enter
-room` fires per actor on the fixed tick (the smallest room wins, and an
-actor first seen inside one, at the start or as a clone, hasn't entered
-it), a script reads the same as `entered_room` (`LevelSense::entered`,
-published each tick), and a streaming room's maps are payloads on the
-Phase 4 cells. Rooms and parallax are 2D only.
+actors' plane. The `Room` component (`RoomSpec`) is a box centred on its
+actor (`RoomBounds`; a 2D room reaches every depth, a 3D one is `depth`
+deep): the camera stays in the room its target stands in (the whole view in
+2D, the camera itself `ROOM_MARGIN` off the walls in 3D) and slides into a
+new one over `blend`, `when I enter room` fires per actor on the fixed tick
+(the smallest room wins, and an actor first seen inside one, at the start
+or as a clone, hasn't entered it), a script reads the same as
+`entered_room` (`LevelSense::entered`, published each tick), and a
+streaming room's maps are payloads on the Phase 4 cells.
 
-`blockloom-runtime/src/tiles.rs` is the rest, in both dimensions but for
-rooms and parallax. `Level` is seeded from the document on every rebuild;
-`paint tile` and scripts write its live maps and `redraw_maps` (a child
-`Mesh2d`) or `redraw_maps_3d` (the actor's own `Mesh3d`, kept out of
-batching by `TilemapLook`) rebuilds a dirty map's mesh and compound
-collider.
-`publish_level` puts the live maps and rooms in the snapshot
-(`Sensors.level`), which `tile at`, `room containing` and scripts read,
-ignoring rotation. `apply_regions`/`apply_regions_3d` (one macro over each
-dimension's rapier types) act on dynamic and kinematic bodies by the
-region their look's box touches, pulled in 2% so resting against a cell
-doesn't count; in 3D only maps within the body's depth plus half a tile.
-Parallax is render-only like sort depth (`apply_parallax` in PostUpdate,
-`clear_parallax` in `First`), and a wrapped layer draws `ParallaxCopy`
-children beside itself; it also leaves each layer's offset in
-`SceneEditor::parallax`, so the scene view picks, outlines and handles a
-layer where it shows. 2D streaming
-runs the same `StreamingCells` over XY (`update_streaming_cells_2d`, a cell
-unit being `PIXELS_PER_CELL_UNIT` pixels); a map inside a streaming room is
-spawned bare and meshed on a `CellTasks` task once a cell overlapping its
-room is active, and its drawing dropped (collision kept) once none is.
+`blockloom-runtime/src/tiles.rs` is the rest. `Level` is seeded from the
+document on every rebuild; `paint tile` and scripts write its live maps and
+`redraw_maps` (a child `Mesh2d`) or `redraw_maps_3d` (the actor's own
+`Mesh3d`, kept out of batching by `TilemapLook`) rebuilds a dirty map's
+mesh and compound collider. `publish_level` puts the live maps and rooms in
+the snapshot (`Sensors.level`), which `tile at`, `room containing` and
+scripts read. `apply_regions`/`apply_regions_3d` (one macro over each
+dimension's rapier types) act on dynamic and kinematic bodies by the region
+their look's turned box touches, pulled in 2% so resting against a cell
+doesn't count. Parallax is render-only like sort depth (`apply_parallax` or
+`apply_parallax_3d` in PostUpdate, `clear_parallax` in `First`), and a
+wrapped layer draws `ParallaxCopy` children beside itself; it leaves each
+layer's offset in `SceneEditor::parallax`, so the scene view picks,
+outlines and handles a layer where it shows. A 3D layer dims through its
+instance tint (`ParallaxRecord`, put back in `First`) or its own copy of a
+standard material (`ParallaxMaterial`), and `ParallaxLayer` keeps it out of
+batching. Streaming (`plan_streaming`) runs `StreamingCells` over XY in 2D
+(`update_streaming_cells_2d`, a cell unit being `PIXELS_PER_CELL_UNIT`
+pixels) and its usual XZ in 3D; a map inside a streaming room is meshed on
+a `CellTasks` task once a cell overlapping its room is active, and its
+drawing dropped (collision kept) once none is: a 2D one spawns bare, a 3D
+one loses its `Mesh3d` until then.
 
 The scene view's Tiles tool (`SceneTool::Tiles`, `SceneView::tile_brush`)
 paints where the pointer meets the map's own plane, turned or in 3D, on the
@@ -1595,9 +1609,8 @@ lands.
   one passes straight through.
 - The scene view's camera starts over whenever the world does (a dimension
   switch, reopening a project).
-- Rooms and parallax are 2D only; a 3D tilemap paints, senses and has
-  regions, but blocks and scripts read it by world x and y, ignoring its
-  rotation.
+- Rooms are axis-aligned boxes: turning a room's actor doesn't turn the
+  room.
 - 2D rigs draw Spine regions and meshes; DragonBones meshes, clipping and
   path attachments draw nothing. A rig's or stack's outline is one
   silhouette per piece, so a translucent outline color darkens where pieces'

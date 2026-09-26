@@ -220,7 +220,7 @@ QtObject {
             SetWind: row([lb("set wind"), dd("property", windOptions), lb("to"), slot("WindValue", "value")]),
             SetClouds: row([lb("set clouds"), dd("property", cloudOptions), lb("to"), slot("CloudValue", "value")]),
             SetWater: row([lb("set water"), dd("property", waterOptions), lb("to"), slot("WaterValue", "value")]),
-            PaintTile: row([lb("paint tile"), slot("TileIndex", "tile"), lb("at x"), slot("TileX", "x"), lb("y"), slot("TileY", "y"), lb("of map"), slot("TileMap", "map")]),
+            PaintTile: row([lb("paint tile"), slot("TileIndex", "tile"), lb("at x"), slot("TileX", "x"), lb("y"), slot("TileY", "y"), lb("z", true), slot("TileZ", "z", { when: is3d }), lb("of map"), slot("TileMap", "map")]),
             SetParallax: row([lb("set parallax of layer"), slot("ParallaxLayer", "layer"), dd("axis", parallaxAxisOptions), lb("to"), slot("ParallaxValue", "value")]),
             SetCloudLayer: row([lb("set cloud layer"), slot("CloudLayer", "layer"), dd("property", cloudLayerOptions), lb("to"), slot("CloudLayerValue", "value")]),
             SetCloudDrift: row(vector("set cloud drift to", ["CloudDriftX","CloudDriftY","CloudDriftZ"], ["x","y","z"])),
@@ -383,7 +383,7 @@ QtObject {
         case "SetWind": return { property: "Speed", value: num(5) };
         case "SetClouds": return { property: "Coverage", value: num(0.5) };
         case "SetWater": return { property: "Level", value: num(0) };
-        case "PaintTile": return { map: txt(""), tile: num(0), x: num(0), y: num(0) };
+        case "PaintTile": return { map: txt(""), tile: num(0), x: num(0), y: num(0), z: num(0) };
         case "SetParallax": return { layer: txt("Background"), axis: "Both", value: num(0.5) };
         case "SetCloudLayer": return { layer: num(1), property: "Coverage", value: num(0.5) };
         case "SetCloudDrift": return { x: num(0), y: num(0), z: num(0) };
@@ -529,7 +529,7 @@ QtObject {
         RayTracingAvailable: { prefix: "ray tracing available?", result: "bool", arity: 0 },
         WaterHeight: { prefix: "water height at", result: "number", arity: 2, args: ["number","number"] },
         Underwater: { prefix: "is", suffix: "underwater?", result: "bool", arity: 1, args: ["text"] },
-        TileAt: { prefix: "tile at", suffix: "of map", result: "number", arity: 3, args: ["number","number","text"] },
+        TileAt: { prefix: "tile at", suffix: "of map", result: "number", arity: 4, args: ["number","number","number","text"] },
         RoomContaining: { prefix: "room containing", result: "text", arity: 1, args: ["text"] }
     })
     // Arity and slot types of blockstitch's own operators, for fresh palette values.

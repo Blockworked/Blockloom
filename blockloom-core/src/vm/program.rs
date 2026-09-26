@@ -190,6 +190,7 @@ pub enum Action {
         tile: Value,
         x: Value,
         y: Value,
+        z: Value,
     },
     SetParallax {
         layer: Value,
@@ -718,7 +719,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
         Action::EnableVolume { volume, .. } => vec![volume],
         Action::SetVolumeWeight { volume, weight } => vec![volume, weight],
         Action::SetCloudLayer { layer, value, .. } => vec![layer, value],
-        Action::PaintTile { map, tile, x, y } => vec![map, tile, x, y],
+        Action::PaintTile { map, tile, x, y, z } => vec![map, tile, x, y, z],
         Action::SetParallax { layer, value, .. } => vec![layer, value],
         Action::PlaySound {
             sound,
@@ -991,11 +992,12 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
             property,
             value: lift_one(value, ctx),
         },
-        Action::PaintTile { map, tile, x, y } => Action::PaintTile {
+        Action::PaintTile { map, tile, x, y, z } => Action::PaintTile {
             map: lift_one(map, ctx),
             tile: lift_one(tile, ctx),
             x: lift_one(x, ctx),
             y: lift_one(y, ctx),
+            z: lift_one(z, ctx),
         },
         Action::SetParallax { layer, axis, value } => Action::SetParallax {
             layer: lift_one(layer, ctx),
@@ -1581,11 +1583,12 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             property: *property,
             value: value.clone(),
         })),
-        K::PaintTile { map, tile, x, y } => steps.push(Step::Action(Action::PaintTile {
+        K::PaintTile { map, tile, x, y, z } => steps.push(Step::Action(Action::PaintTile {
             map: map.clone(),
             tile: tile.clone(),
             x: x.clone(),
             y: y.clone(),
+            z: z.clone(),
         })),
         K::SetParallax { layer, axis, value } => steps.push(Step::Action(Action::SetParallax {
             layer: layer.clone(),

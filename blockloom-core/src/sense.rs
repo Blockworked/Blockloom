@@ -68,9 +68,8 @@ pub struct ActorSense {
     pub shape: ColliderShape,
 }
 
-/// What shape an actor collides (and raycasts) with, in world units and
-/// axis-aligned. Rotation is ignored on purpose: a spun actor still queries
-/// against its unrotated box, which is what a platformer's ground check wants.
+/// What shape an actor collides (and raycasts) with, in world units, in the
+/// actor's own frame: queries turn it by the actor's rotation.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum ColliderShape {
     /// Nothing to hit: no body, or a visual with no collider in this mode.

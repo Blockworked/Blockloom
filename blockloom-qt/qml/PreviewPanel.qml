@@ -502,8 +502,8 @@ Rectangle {
                             spacing: 2
                             BwCheckBox { text: "Collision"; checked: scene.tileCollision; onToggled: scene.tileCollision = checked }
                             BwCheckBox { text: "Regions"; checked: scene.tileRegions; onToggled: scene.tileRegions = checked }
-                            BwCheckBox { text: "Rooms"; visible: !root.is3d; checked: scene.tileRooms; onToggled: scene.tileRooms = checked }
-                            BwCheckBox { text: "Parallax"; visible: !root.is3d; checked: scene.tileParallax; onToggled: scene.tileParallax = checked
+                            BwCheckBox { text: "Rooms"; checked: scene.tileRooms; onToggled: scene.tileRooms = checked }
+                            BwCheckBox { text: "Parallax"; checked: scene.tileParallax; onToggled: scene.tileParallax = checked
                                 ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: "Scroll parallax layers against this camera, as the game's will" }
                         }
                         // The tileset sliced into its sheet: click a tile to paint with it, Shift-click to add a variant.

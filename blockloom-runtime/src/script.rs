@@ -417,7 +417,8 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
         abi::READ_TILE_AT => {
             let mut at = a.split_whitespace().map(|n| n.parse::<f32>().ok());
             let (x, y) = (at.next()??, at.next()??);
-            sense::read(|sensors| sensors.level.tile_at([x, y], b).ok()).map(f64::from)
+            let z = at.next().flatten().unwrap_or(0.0);
+            sense::read(|sensors| sensors.level.tile_at([x, y, z], b).ok()).map(f64::from)
         }
         abi::READ_IS_TWEENING => bool_as(me(actor)?.tweening),
         abi::READ_ANIM_FRAME => Some(me(actor)?.anim_frame as f64),
@@ -539,7 +540,7 @@ fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
             sense::read(|sensors| {
                 sensors
                     .level
-                    .room_at([position[0], position[1]])
+                    .room_at(position)
                     .map(|room| room.name.clone())
             })
         }
@@ -1010,6 +1011,7 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
             tile: (n0.floor() as i32).max(-1),
             x: n1 as f32,
             y: n2 as f32,
+            z: at(3) as f32,
         },
         abi::ACT_SET_PARALLAX => match blockloom_core::tilemap::ParallaxAxis::parse(b) {
             Some(axis) => Effect::SetParallax {

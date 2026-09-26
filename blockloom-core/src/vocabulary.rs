@@ -335,7 +335,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "WhenEnterRoom",
         category: "Events",
-        purpose: "Runs in this actor each time it walks into a room (an actor with a Room component), named by the room actor's name. Empty matches any room. 2D; checked every fixed tick against the smallest room holding the actor's position.",
+        purpose: "Runs in this actor each time it walks into a room (an actor with a Room component), named by the room actor's name. Empty matches any room. Checked every fixed tick against the smallest room holding the actor's position; an actor that starts inside a room hasn't entered it.",
         header: true,
         three_d: false,
         slots: NO_SLOTS,
@@ -1352,7 +1352,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "PaintTile",
         category: "Looks",
-        purpose: "Paints one tilemap cell at a world point (x, y) for the rest of the run: the sheet index, or -1 to erase. `map` names the tilemap actor; empty means this actor if it is a tilemap, else the first map covering the point. Collision, animation and `tile at` follow on the next tick. 2D.",
+        purpose: "Paints one tilemap cell at a world point (x, y, z; z only matters in 3D) for the rest of the run: the sheet index, or -1 to erase. The point is read on the map's own face, turned with it. `map` names the tilemap actor; empty means this actor if it is a tilemap, else the first map covering the point. Collision, animation and `tile at` follow on the next tick.",
         header: false,
         three_d: false,
         slots: &[
@@ -1376,6 +1376,11 @@ pub const BLOCKS: &[BlockSpec] = &[
                 id: "TileY",
                 value: "Any",
             },
+            Slot {
+                field: "z",
+                id: "TileZ",
+                value: "Any",
+            },
         ],
         dropdowns: NO_DROPDOWNS,
         strings: NO_STRINGS,
@@ -1385,7 +1390,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "SetParallax",
         category: "Looks",
-        purpose: "Sets a parallax layer's scroll factor (0-2) for the rest of the run: 0 rides the camera like a sky, 1 moves with the actors, above 1 sweeps past as foreground. `layer` names an actor with a Parallax component. 2D.",
+        purpose: "Sets a parallax layer's scroll factor (0-2) for the rest of the run: 0 rides the camera like a sky, 1 moves with the actors, above 1 sweeps past as foreground. `layer` names an actor with a Parallax component.",
         header: false,
         three_d: false,
         slots: &[

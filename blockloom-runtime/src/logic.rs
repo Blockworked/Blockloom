@@ -641,6 +641,7 @@ extern "C" fn act(
             tile: (n0.floor() as i32).max(-1),
             x: n1 as f32,
             y: n2 as f32,
+            z: at(3) as f32,
         },
         ACT_SET_PARALLAX => match blockloom_core::tilemap::ParallaxAxis::parse(b) {
             Some(axis) => Effect::SetParallax {
