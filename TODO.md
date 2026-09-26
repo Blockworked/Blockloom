@@ -407,13 +407,20 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         EXR camera waits for the budget. Blocks, compiled logic and scripts
         share `turn ray tracing`, `set GI bounces/samples to`, `ray tracing
         on?` and `ray tracing available?`, sampled on the fixed tick.
-        Not covered: DLSS Ray Reconstruction (no build carries the SDK, so
-        Auto is ReSTIR's reuse); converging stills in the inspector; a spot
-        traces as a disk down its beam, not a cone, and cookies and IES
-        profiles aren't traced; box-projected and shader surfaces stay forward
-        with raster lights; skinned meshes trace in their bind pose; the path
-        tracer shows a flat background as black (a sky shows); only run here
-        on Intel Arc through Mesa, not yet on RTX or DX12.
+        Then: a realtime path tracer mode beside Hybrid ReSTIR (paths per
+        pixel, NEE with MIS), an SVGF-style spatiotemporal denoiser (Auto is
+        ReSTIR's reuse plus the filter; Filter, ReSTIR and None pick one or
+        neither), traced rays that escape see the sky (Solari's shaders
+        patched to read the environment map) or a flat sky's ambient, and a
+        hooded spot emitter that only lights its cone.
+        Not covered: DLSS Ray Reconstruction (no build carries the SDK);
+        converging stills in the inspector; cookies and IES profiles aren't
+        traced; box-projected and shader surfaces stay forward with raster
+        lights; skinned meshes trace in their bind pose; the denoiser has no
+        separate specular signal, so glossy reflections only get a shorter
+        history and blur; the realtime path tracer has no reuse, so it wants
+        the filter; only run here on Intel Arc through Mesa and on lavapipe,
+        not yet on RTX or DX12.
   - [x] Sky types (all feed background, ambient probe and reflections together):
         - Procedural physical sky: sun disk (size, limb darkening, intensity) plus
           moon disk (size, phase 0-1, halo power), Rayleigh RGB scattering, Mie

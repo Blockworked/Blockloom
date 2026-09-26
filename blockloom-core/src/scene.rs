@@ -474,14 +474,41 @@ pub struct Lighting {
 /// What cleans up ray-traced lighting's noise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Denoiser {
-    /// The best this build has. That is ReSTIR's reuse for now: no build
-    /// carries DLSS Ray Reconstruction yet.
+    /// The best this build has: ReSTIR's reuse (hybrid tracing) under
+    /// Blockloom's spatiotemporal filter. No build carries DLSS Ray
+    /// Reconstruction yet.
     #[default]
     Auto,
     /// ReSTIR's temporal and spatial reuse only.
     Restir,
+    /// The spatiotemporal filter alone, without ReSTIR's reuse.
+    Filter,
     /// The raw samples, for judging what a denoiser is working from.
     None,
+}
+
+impl Denoiser {
+    /// Whether the spatiotemporal filter runs.
+    pub fn filters(self) -> bool {
+        matches!(self, Self::Auto | Self::Filter)
+    }
+
+    /// Whether hybrid tracing reuses samples through ReSTIR.
+    pub fn reuses(self) -> bool {
+        matches!(self, Self::Auto | Self::Restir)
+    }
+}
+
+/// How ray-traced lighting is worked out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TracingMode {
+    /// Solari: ReSTIR direct light and shadows, a world cache for bounced
+    /// light, traced reflections. The fast one.
+    #[default]
+    Hybrid,
+    /// Fresh paths from every pixel each frame, bounced to the end with no
+    /// cache, then denoised. Closer to the truth and heavier.
+    PathTraced,
 }
 
 /// Ray-traced lighting for a 3D world (Bevy Solari): traced direct light
@@ -501,6 +528,9 @@ pub struct RayTracingSettings {
     pub denoiser: Denoiser,
     /// Metres a bounced-light ray reaches before it gives up.
     pub gi_distance: f32,
+    pub mode: TracingMode,
+    /// Paths per pixel each frame when path traced, 1-16.
+    pub paths: u32,
 }
 
 impl Default for RayTracingSettings {
@@ -511,6 +541,8 @@ impl Default for RayTracingSettings {
             samples: 8,
             denoiser: Denoiser::Auto,
             gi_distance: 50.0,
+            mode: TracingMode::Hybrid,
+            paths: 1,
         }
     }
 }
@@ -518,6 +550,7 @@ impl Default for RayTracingSettings {
 impl RayTracingSettings {
     pub const MAX_BOUNCES: u32 = 8;
     pub const MAX_SAMPLES: u32 = 32;
+    pub const MAX_PATHS: u32 = 16;
 
     /// The same settings pulled into the ranges the renderer accepts.
     pub fn sanitized(self) -> Self {
@@ -529,6 +562,7 @@ impl RayTracingSettings {
         Self {
             bounces: self.bounces.clamp(1, Self::MAX_BOUNCES),
             samples: self.samples.clamp(1, Self::MAX_SAMPLES),
+            paths: self.paths.clamp(1, Self::MAX_PATHS),
             gi_distance,
             ..self
         }
@@ -1067,6 +1101,21 @@ mod tests {
             assert!(TonemapName::parse(name).is_some(), "{name}");
         }
         assert_eq!(TonemapName::parse("nope"), None);
+    }
+
+    #[test]
+    fn older_ray_tracing_settings_load_as_hybrid_with_one_path() {
+        let old: RayTracingSettings =
+            serde_json::from_str(r#"{"enabled":true,"bounces":2,"denoiser":"Restir"}"#).unwrap();
+        assert_eq!(old.mode, TracingMode::Hybrid);
+        assert_eq!(old.paths, 1);
+        assert!(old.denoiser.reuses() && !old.denoiser.filters());
+        let wild = RayTracingSettings {
+            paths: 99,
+            ..RayTracingSettings::default()
+        };
+        assert_eq!(wild.sanitized().paths, RayTracingSettings::MAX_PATHS);
+        assert!(Denoiser::Filter.filters() && !Denoiser::Filter.reuses());
     }
 
     #[test]

@@ -783,11 +783,32 @@ raster rig carries on and the editor hears why once. The atmosphere sample
 copies `active`/`available` on the fixed tick, so `is ray tracing on?` and
 `ray tracing available?` agree between the VM and compiled logic.
 
-Realtime tracing puts `SolariLighting` on the world camera (plus `Msaa::Off`,
-`Hdr` and a storage-capable main texture) and turns sun shadow maps off.
-Solari lights the G-buffer, so while it is on `DefaultOpaqueRendererMethod`
-is deferred and every standard and instanced material is touched to
-re-prepare; off, both go back to forward. `instanced_pbr.wesl` is therefore
+`RayTracingSettings::mode` picks the realtime tracer. `Hybrid` puts
+`SolariLighting` on the world camera (ReSTIR direct light plus a world cache
+for GI). `PathTraced` puts `traced::TracedPaths` there instead: fresh paths
+from every G-buffer pixel each frame (`shaders/traced_paths.wesl`, `paths`
+per pixel, light sampling MIS'd against the BRDF), with Bevy's deferred
+lighting skipped. Either way the camera also gets `Msaa::Off`, `Hdr` and a
+storage-capable main texture, and sun shadow maps turn off. Tracing lights
+the G-buffer, so while it is on `DefaultOpaqueRendererMethod` is deferred and
+every standard and instanced material is touched to re-prepare; off, both go
+back to forward.
+
+`Denoiser` picks the cleanup: ReSTIR's reuse (`reuses`, Hybrid only) and
+`traced::TracedDenoiser` (`filters`), an SVGF-style filter
+(`shaders/denoise.wesl`) that runs after the opaque pass: demodulate by the
+G-buffer albedo, reproject along motion vectors, five a-trous passes steered
+by the variance, remodulate. Glossy surfaces keep a shorter history and a
+tighter blur. It only touches pixels with a G-buffer (forward surfaces and
+the background are left alone) and drops NaNs and clips fireflies first,
+since its moments are half floats.
+
+Solari ignores the environment map, so `solari_patch.rs` edits its shaders
+as they load (the `pbr_patch` rules): a realtime bounce, a world cache GI ray
+past its reach and a reference path tracer bounce that escape all see the
+camera's `EnvironmentMapLight`. Under a flat sky `TracedAmbient` hangs a
+one-texel cube of the ambient there instead, and a sky that lights but
+doesn't reflect shows traced rays its diffuse cube. `instanced_pbr.wesl` is therefore
 the instanced material's deferred shader too. Box-projected and graph
 surfaces stay forward and keep the raster lights.
 
@@ -797,8 +818,10 @@ layout, and only the sun and emissive meshes light. So `sync_traced_scene`
 mesh (no `Mesh3d`, `traceable` converting the mesh, a standard material
 standing in for instanced, box and graph surfaces) and one emissive stand-in
 per `Light` whose `ray_traced` is on (a sphere for a point, a disk down a
-spot's beam, the rect or disk itself), glowing with the light's power.
-Merged batches, placeholders and particles are left out.
+spot's beam, the rect or disk itself), glowing with the light's power. A
+spot narrower than `HOOD_WIDEST` also gets a black flared hood
+(`TracedHood`), so its disk only lights the cone. Merged batches,
+placeholders and particles are left out.
 
 The path tracer is `SceneView::path_tracer`, an editor preference: the world
 camera gets `Pathtracer` instead, which traces the same copy and starts over
@@ -807,7 +830,11 @@ reach the editor as `RuntimeMessage::RayTracing` and `state.ray_tracing`. An
 EXR capture copies the camera's tracing (`trace_like`) and, under the path
 tracer, waits for the sample or time budget. The GPU half is the ignored
 `embed` tests (traced vs. untraced lamps, switching mid-run, the path tracer
-and its EXR).
+and its EXR, sky and ambient on escaped rays, realtime path tracing, the
+denoiser's grain, a spot's cone). They run on lavapipe too, which has ray
+queries but no dma-bufs: `BLOCKLOOM_TEST_OPAQUE_FD=1
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json`, and
+`BLOCKLOOM_TEST_DUMP=<dir>` saves the frames some of them read as PNGs.
 
 ### Volumetric clouds
 

@@ -34,18 +34,21 @@ use bevy::camera::{CameraMainTextureUsages, Hdr};
 use bevy::core_pipeline::prepass::{
     DeferredPrepass, DeferredPrepassDoubleBuffer, DepthPrepassDoubleBuffer, MotionVectorPrepass,
 };
+use bevy::light::EnvironmentMapLight;
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::pbr::DefaultOpaqueRendererMethod;
 use bevy::prelude::*;
-use bevy::render::render_resource::TextureUsages;
+use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy::render::renderer::RenderDevice;
 use bevy::render::view::Msaa;
 use blockloom_core::components::{LightKind, LightSpec};
-use blockloom_core::scene::{Denoiser, Mode, RayTracingSettings};
+use blockloom_core::scene::{Mode, RayTracingSettings, TracingMode};
 use blockloom_core::vm::Effect;
 use blockloom_protocol::{RayTracingStatus, RuntimeMessage};
 use std::collections::{HashMap, HashSet};
 
+#[cfg(feature = "ray_tracing")]
+use crate::traced::{TracedDenoiser, TracedPaths};
 #[cfg(feature = "ray_tracing")]
 use bevy::solari::{
     pathtracer::{Pathtracer, PathtracingPlugin},
@@ -55,6 +58,10 @@ use bevy::solari::{
 /// Smallest emitter a light stands in as, in metres, so a zero-radius point
 /// light isn't infinitely bright.
 const MIN_EMITTER_RADIUS: f32 = 0.05;
+/// How far a spot's hood reaches down its beam, in emitter radii.
+const HOOD_DEPTH: f32 = 4.0;
+/// Degrees. A spot wider than this gets no hood, which would barely shade it.
+const HOOD_WIDEST: f32 = 75.0;
 /// Seconds between path tracer progress reports. Each re-sends the editor's
 /// whole state, so not often.
 const PROGRESS_EVERY: f32 = 0.5;
@@ -70,10 +77,20 @@ pub fn register(app: &mut App, mode: Mode) {
     }
     app.init_resource::<RayTracingState>();
     app.init_resource::<TracedScene>()
-        .init_resource::<PathTraceProgress>();
+        .init_resource::<PathTraceProgress>()
+        .init_resource::<TracedAmbient>()
+        .add_systems(
+            Update,
+            update_traced_ambient.after(crate::environment::blend_environment),
+        );
     #[cfg(feature = "ray_tracing")]
     {
-        app.add_plugins((SolariPlugins, PathtracingPlugin));
+        app.add_plugins((
+            SolariPlugins,
+            PathtracingPlugin,
+            crate::traced::TracedPlugin,
+        ));
+        crate::solari_patch::register(app);
         // Solari asks for deferred everywhere; only a traced camera needs it.
         app.insert_resource(DefaultOpaqueRendererMethod::forward());
     }
@@ -112,6 +129,11 @@ pub struct TracedScene {
     /// Proxy materials for surfaces that aren't a plain standard material.
     materials: HashMap<SurfaceKey, Handle<StandardMaterial>>,
     shapes: Option<EmitterShapes>,
+    /// Light child entity -> its spot's hood.
+    hoods: HashMap<Entity, Entity>,
+    /// Hood meshes by cone angle in degrees.
+    hood_meshes: HashMap<u16, Handle<Mesh>>,
+    hood_material: Option<Handle<StandardMaterial>>,
     /// Anything in the copy moved, came or went this frame.
     pub changed: bool,
 }
@@ -143,6 +165,11 @@ pub struct TracedProxy {
 #[derive(Component)]
 pub struct TracedEmitter(EmitterKey);
 
+/// On a spot emitter's black hood: its cone in degrees. A lambertian disk
+/// lights everything in front of it, so the hood keeps it to the beam.
+#[derive(Component)]
+pub struct TracedHood(u16);
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct EmitterKey {
     kind: LightKind,
@@ -150,6 +177,8 @@ struct EmitterKey {
     size: Vec2,
     /// Linear radiance in nits.
     radiance: Vec3,
+    /// A spot's hooded cone in degrees, or 0 for no hood.
+    cone: u16,
 }
 
 /// What the project and this run ask for.
@@ -238,8 +267,12 @@ pub fn apply_ray_tracing(
     #[cfg(feature = "ray_tracing")] cameras: Query<
         (
             Entity,
-            Option<&SolariLighting>,
-            Has<Pathtracer>,
+            (
+                Option<&SolariLighting>,
+                Option<&TracedPaths>,
+                Has<TracedDenoiser>,
+                Has<Pathtracer>,
+            ),
             &Msaa,
             Has<Hdr>,
             Option<&CameraMainTextureUsages>,
@@ -306,8 +339,11 @@ pub fn apply_ray_tracing(
     }
 
     #[cfg(feature = "ray_tracing")]
-    for (entity, solari, has_pathtracer, msaa, has_hdr, usages) in &cameras {
+    for (entity, (solari, paths, has_denoiser, has_pathtracer), msaa, has_hdr, usages) in &cameras {
         let mut camera = commands.entity(entity);
+        let hybrid = active && settings.mode == TracingMode::Hybrid;
+        let path_traced = active && settings.mode == TracingMode::PathTraced;
+        let filtered = active && settings.denoiser.filters();
         if active || path_tracing {
             if *msaa != Msaa::Off {
                 camera.insert(Msaa::Off);
@@ -320,16 +356,39 @@ pub fn apply_ray_tracing(
                 camera.insert(usages.with(TextureUsages::STORAGE_BINDING));
             }
         }
-        if active {
+        if hybrid {
             let lighting = solari_lighting(&settings, solari);
             if solari.is_none_or(|live| !same_dials(live, &lighting)) {
                 camera.insert(lighting);
             }
         } else if solari.is_some() {
+            camera.remove::<(
+                SolariLighting,
+                DeferredPrepassDoubleBuffer,
+                DepthPrepassDoubleBuffer,
+            )>();
+        }
+        if path_traced {
+            let wanted = TracedPaths {
+                paths: settings.paths,
+                bounces: settings.bounces,
+            };
+            if paths != Some(&wanted) {
+                camera.insert(wanted);
+            }
+        } else if paths.is_some() {
+            camera.remove::<TracedPaths>();
+        }
+        if filtered && !has_denoiser {
+            camera.insert(TracedDenoiser::default());
+        } else if !filtered && has_denoiser {
+            camera.remove::<TracedDenoiser>();
+        }
+        let traced_before = solari.is_some() || paths.is_some() || has_denoiser;
+        if !active && traced_before {
             // The depth prepass stays: every 3D world camera has one, for
             // occlusion culling.
             camera.remove::<(
-                SolariLighting,
                 DeferredPrepass,
                 MotionVectorPrepass,
                 DeferredPrepassDoubleBuffer,
@@ -341,7 +400,7 @@ pub fn apply_ray_tracing(
         } else if !path_tracing && has_pathtracer {
             camera.remove::<Pathtracer>();
         }
-        if !active && !path_tracing && (solari.is_some() || has_pathtracer) {
+        if !active && !path_tracing && (traced_before || has_pathtracer) {
             // What `apply_environment` would have left. A multisampled
             // target can't be a storage texture, so that usage goes first.
             camera.insert((
@@ -358,13 +417,68 @@ pub fn apply_ray_tracing(
     let _ = (&mut commands, &environment);
 }
 
+/// The flat ambient as a one-texel cube, for traced rays that escape a world
+/// with no sky: `apply_sky` hangs it on the world camera when the sky has no
+/// light of its own, and Solari reads the camera's environment light.
+#[derive(Resource, Default)]
+pub struct TracedAmbient {
+    pub light: Option<EnvironmentMapLight>,
+    cube: Option<(Handle<Image>, [u16; 3])>,
+}
+
+pub fn update_traced_ambient(
+    state: Res<RayTracingState>,
+    environment: Res<Environment>,
+    mut ambient: ResMut<TracedAmbient>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    if !(state.active || state.path_tracing) {
+        if ambient.light.is_some() {
+            ambient.light = None;
+        }
+        return;
+    }
+    let color = LinearRgba::from(environment.ambient_color);
+    let texel =
+        [color.red, color.green, color.blue].map(|c| half::f16::from_f32(c.max(0.0)).to_bits());
+    let image = || {
+        let data = [texel[0], texel[1], texel[2], half::f16::ONE.to_bits()]
+            .repeat(6)
+            .into_iter()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        crate::sky::cube_image(1, 1, data, TextureFormat::Rgba16Float)
+    };
+    let cube = match &ambient.cube {
+        Some((cube, written)) if *written == texel => cube.clone(),
+        Some((cube, _)) => {
+            let _ = images.insert(cube.id(), image());
+            cube.clone()
+        }
+        None => images.add(image()),
+    };
+    ambient.cube = Some((cube.clone(), texel));
+    let wanted = EnvironmentMapLight {
+        diffuse_map: cube.clone(),
+        specular_map: cube,
+        intensity: environment.ambient_brightness,
+        ..default()
+    };
+    let same = ambient.light.as_ref().is_some_and(|light| {
+        light.specular_map == wanted.specular_map && light.intensity == wanted.intensity
+    });
+    if !same {
+        ambient.light = Some(wanted);
+    }
+}
+
 /// The camera's Solari settings for these project settings, keeping the
 /// live one's reset flag so a rewrite doesn't throw its history away.
 #[cfg(feature = "ray_tracing")]
 fn solari_lighting(settings: &RayTracingSettings, live: Option<&SolariLighting>) -> SolariLighting {
     let base = live.cloned().unwrap_or_default();
     SolariLighting {
-        restir: settings.denoiser != Denoiser::None,
+        restir: settings.denoiser.reuses(),
         max_bounces: settings.bounces,
         primary_di_samples: settings.samples,
         secondary_di_samples: (settings.samples / 2).max(1),
@@ -419,6 +533,7 @@ pub fn sync_traced_scene(
         (
             Without<TracedProxy>,
             Without<TracedEmitter>,
+            Without<TracedHood>,
             Without<MergedBatch>,
             Without<crate::streaming::Placeholder>,
             Without<crate::fx::Particle>,
@@ -436,12 +551,17 @@ pub fn sync_traced_scene(
             With<ActorLight>,
             Without<TracedProxy>,
             Without<TracedEmitter>,
+            Without<TracedHood>,
         ),
     >,
     lit: Query<&Lit>,
     mut emitters: Query<
         (&mut TracedEmitter, &mut Transform, &mut GlobalTransform),
-        Without<TracedProxy>,
+        (Without<TracedProxy>, Without<TracedHood>),
+    >,
+    mut hoods: Query<
+        (&mut TracedHood, &mut Transform, &mut GlobalTransform),
+        (Without<TracedProxy>, Without<TracedEmitter>),
     >,
 ) {
     scene.changed = false;
@@ -453,6 +573,7 @@ pub fn sync_traced_scene(
                 .proxies
                 .drain()
                 .chain(scene.emitters.drain())
+                .chain(scene.hoods.drain())
                 .map(|(_, copy)| copy)
                 .collect();
             for copy in copies {
@@ -632,6 +753,16 @@ pub fn sync_traced_scene(
                 scene.changed = true;
             }
         }
+        sync_hood(
+            &mut commands,
+            &mut scene,
+            &mut meshes,
+            &mut standard,
+            &mut hoods,
+            light,
+            &key,
+            pose,
+        );
     }
     let dark: Vec<Entity> = scene
         .emitters
@@ -644,8 +775,124 @@ pub fn sync_traced_scene(
             commands.entity(emitter).try_despawn();
             scene.changed = true;
         }
+        if let Some(hood) = scene.hoods.remove(&light) {
+            commands.entity(hood).try_despawn();
+        }
     }
     scene.shapes = Some(shapes);
+}
+
+/// Keeps a spot's hood on its emitter, or takes it off a light that no
+/// longer wants one.
+#[cfg(feature = "ray_tracing")]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn sync_hood(
+    commands: &mut Commands,
+    scene: &mut TracedScene,
+    meshes: &mut Assets<Mesh>,
+    standard: &mut Assets<StandardMaterial>,
+    hoods: &mut Query<
+        (&mut TracedHood, &mut Transform, &mut GlobalTransform),
+        (Without<TracedProxy>, Without<TracedEmitter>),
+    >,
+    light: Entity,
+    key: &EmitterKey,
+    pose: Transform,
+) {
+    if key.cone == 0 {
+        if let Some(hood) = scene.hoods.remove(&light) {
+            commands.entity(hood).try_despawn();
+            scene.changed = true;
+        }
+        return;
+    }
+    let pose = Transform {
+        scale: Vec3::splat(key.size.x),
+        ..pose
+    };
+    let mesh = scene
+        .hood_meshes
+        .entry(key.cone)
+        .or_insert_with(|| meshes.add(hood_mesh(key.cone)))
+        .clone();
+    match scene.hoods.get(&light).copied() {
+        Some(hood) => {
+            let Ok((mut record, mut local, mut global)) = hoods.get_mut(hood) else {
+                return;
+            };
+            if record.0 != key.cone {
+                record.0 = key.cone;
+                commands.entity(hood).insert(RaytracingMesh3d(mesh));
+                scene.changed = true;
+            }
+            let placed = GlobalTransform::from(pose);
+            if *global != placed {
+                *local = pose;
+                *global = placed;
+                scene.changed = true;
+            }
+        }
+        None => {
+            let material = scene
+                .hood_material
+                .get_or_insert_with(|| {
+                    standard.add(StandardMaterial {
+                        base_color: Color::BLACK,
+                        perceptual_roughness: 1.0,
+                        reflectance: 0.0,
+                        ..default()
+                    })
+                })
+                .clone();
+            let hood = commands
+                .spawn((
+                    TracedHood(key.cone),
+                    RaytracingMesh3d(mesh),
+                    MeshMaterial3d(material),
+                    pose,
+                    GlobalTransform::from(pose),
+                    Name::new("traced spot hood"),
+                ))
+                .id();
+            scene.hoods.insert(light, hood);
+            scene.changed = true;
+        }
+    }
+}
+
+/// An open, flared tube around a unit disk facing +Z, reaching `HOOD_DEPTH`
+/// down the beam and opening at the cone's angle, black inside and out.
+fn hood_mesh(cone: u16) -> Mesh {
+    const SEGMENTS: u32 = 24;
+    let near = 1.02;
+    let slope = (cone as f32).to_radians().tan();
+    let far = near + HOOD_DEPTH * slope;
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    for i in 0..=SEGMENTS {
+        let u = i as f32 / SEGMENTS as f32;
+        let (sin, cos) = (u * std::f32::consts::TAU).sin_cos();
+        let inward = Vec3::new(-cos, -sin, slope).normalize();
+        positions.push([near * cos, near * sin, 0.0]);
+        positions.push([far * cos, far * sin, HOOD_DEPTH]);
+        normals.extend([inward.to_array(); 2]);
+        uvs.extend([[u, 0.0], [u, 1.0]]);
+    }
+    let mut indices = Vec::new();
+    for i in 0..SEGMENTS {
+        let (a, b, c, d) = (2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 3);
+        indices.extend([a, b, c, b, d, c]);
+    }
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(indices));
+    traceable(&mesh).unwrap_or(mesh)
 }
 
 /// The traceable copy of a mesh, made on first use. `None` while the source
@@ -810,10 +1057,17 @@ impl EmitterKey {
         };
         let color = LinearRgba::from(parse_color(&spec.color));
         let nits = lumens / area;
+        let outer = spec.cone().1.to_degrees();
+        let cone = if spec.kind == LightKind::Spot && outer < HOOD_WIDEST {
+            outer.round().max(1.0) as u16
+        } else {
+            0
+        };
         Self {
             kind: spec.kind,
             size,
             radiance: Vec3::new(color.red, color.green, color.blue) * nits,
+            cone,
         }
     }
 }
@@ -1029,6 +1283,33 @@ mod tests {
         // A lambertian sphere emits pi * L * area.
         let power = PI * key.radiance.x * 4.0 * PI * key.size.x * key.size.x;
         assert!((power - 800.0).abs() < 0.01, "{power}");
+    }
+
+    #[test]
+    fn a_narrow_spot_is_hooded_to_its_cone() {
+        let spot = LightSpec {
+            kind: LightKind::Spot,
+            outer_angle: 30.0,
+            ..LightSpec::default()
+        };
+        assert_eq!(EmitterKey::of(&spot).cone, 30);
+        let wide = LightSpec {
+            outer_angle: 85.0,
+            ..spot.clone()
+        };
+        assert_eq!(EmitterKey::of(&wide).cone, 0);
+        assert_eq!(EmitterKey::of(&LightSpec::default()).cone, 0);
+
+        let mesh = hood_mesh(30);
+        let Some(VertexAttributeValues::Float32x3(positions)) =
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!("no positions");
+        };
+        // The far rim opens at the cone's angle from the disk's rim.
+        let (near, far) = (Vec3::from(positions[0]), Vec3::from(positions[1]));
+        let flare = (far.truncate().length() - near.truncate().length()).atan2(far.z - near.z);
+        assert!((flare.to_degrees() - 30.0).abs() < 0.01, "{flare}");
     }
 
     #[test]
