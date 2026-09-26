@@ -222,6 +222,12 @@ pub struct Engine {
     pub wind: blockloom_core::wind::WindOverrides,
     /// `set clouds` this run, over the blended volumetric clouds.
     pub clouds: blockloom_core::clouds::CloudOverrides,
+    /// `set snow cover to` and `set surface wetness to`, for the run.
+    pub surface: SurfaceOverrides,
+    /// Erosion previews the editor asked for, by terrain actor.
+    pub terrain_previews: Vec<(String, Option<blockloom_core::terrain::sculpt::Erosion>)>,
+    /// `set cloud layer` this run, over the project's layers.
+    pub cloud_layers: blockloom_core::cloud_layers::CloudLayerOverrides,
     /// Dynamic actors a walk verb (`move`, `change position`) drove this
     /// tick. A walk sets an absolute velocity, so when a driven actor goes
     /// quiet the dimension pass brakes it - otherwise the last written
@@ -303,6 +309,9 @@ impl Engine {
             lightning_rate: None,
             wind: Default::default(),
             clouds: Default::default(),
+            surface: Default::default(),
+            terrain_previews: Vec::new(),
+            cloud_layers: Default::default(),
             last_created: HashMap::new(),
             driven: HashSet::new(),
             physics_filter: HashMap::new(),
@@ -473,4 +482,12 @@ mod tests {
         engine.note_say("player", "");
         assert!(!engine.speech.contains_key("player"));
     }
+}
+
+/// Surface weather blocks and scripts set for the run, laid over the
+/// blended environment.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SurfaceOverrides {
+    pub snow: Option<f32>,
+    pub wetness: Option<f32>,
 }

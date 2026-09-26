@@ -87,6 +87,10 @@ pub struct VolumeOverrides {
     pub cloud_coverage: Override<f32>,
     pub cloud_density: Override<f32>,
     pub cloud_type: Override<f32>,
+    /// Snow cover 0-1 inside, for surface snow masks.
+    pub snow: Override<f32>,
+    /// Wetness 0-1 inside, for surface wetness masks.
+    pub wetness: Override<f32>,
 }
 
 impl Default for VolumeOverrides {
@@ -122,6 +126,8 @@ impl Default for VolumeOverrides {
             cloud_coverage: Override::off(world.clouds.coverage),
             cloud_density: Override::off(world.clouds.density),
             cloud_type: Override::off(world.clouds.cloud_type),
+            snow: Override::off(world.surface.snow),
+            wetness: Override::off(world.surface.wetness),
         }
     }
 }
@@ -157,6 +163,8 @@ impl VolumeOverrides {
             ("volumetric_albedo", self.volumetric_albedo.on),
             ("beams", self.beams.on),
             ("haze_distance", self.haze_distance.on),
+            ("snow", self.snow.on),
+            ("wetness", self.wetness.on),
         ]
         .into_iter()
         .filter_map(|(name, on)| on.then_some(name))

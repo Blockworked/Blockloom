@@ -20,6 +20,7 @@ use crate::animation::AnimationSpec;
 use crate::material::{ParticleSpec, SurfaceMaterial, TrailSpec};
 use crate::probe::ProbeSpec;
 use crate::scene::{Physics, Placement, Visual};
+use crate::terrain::TerrainSpec;
 use crate::value::Evaluated;
 use crate::volume::VolumeSpec;
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,7 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Animation",
     "Volume",
     "Probe",
+    "Terrain",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -350,6 +352,9 @@ pub enum ActorComponent {
     /// A light probe: a box whose reflections (a cubemap) or bounced light
     /// (an irradiance grid) are baked from where it stands.
     Probe { probe: ProbeSpec },
+    /// Heightmap ground centred on the actor, with painted layers, grass
+    /// and scattered trees and rocks. 3D only.
+    Terrain { terrain: TerrainSpec },
 }
 
 impl ActorComponent {
@@ -372,6 +377,7 @@ impl ActorComponent {
             ActorComponent::Animation { .. } => "Animation",
             ActorComponent::Volume { .. } => "Volume",
             ActorComponent::Probe { .. } => "Probe",
+            ActorComponent::Terrain { .. } => "Terrain",
             ActorComponent::Custom { name, .. } => name,
         }
     }
@@ -670,6 +676,13 @@ impl Components {
     }
 
     /// The light, if the actor carries one.
+    pub fn terrain(&self) -> Option<&TerrainSpec> {
+        match self.get("Terrain") {
+            Some(ActorComponent::Terrain { terrain }) => Some(terrain),
+            _ => None,
+        }
+    }
+
     pub fn light(&self) -> Option<&LightSpec> {
         match self.get("Light") {
             Some(ActorComponent::Light { light }) => Some(light),

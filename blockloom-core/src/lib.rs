@@ -62,6 +62,7 @@ pub mod shader_lib;
 pub mod sky;
 pub mod sound;
 pub mod sync;
+pub mod terrain;
 pub mod ui;
 pub mod value;
 pub mod vm;
@@ -76,4 +77,5 @@ pub fn init() {
     value::register_blockloom_operators();
 }
 
+pub mod cloud_layers;
 pub mod clouds;

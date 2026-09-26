@@ -485,6 +485,9 @@ pub struct CloudOffsets {
     /// How far planar layers have scrolled, across the ground plane (x and
     /// z in 3D, x and y in 2D).
     pub layers: [f32; 2],
+    /// Seconds of cloud time, time-lapse included: what layer scroll, flow
+    /// and spin run on.
+    pub time: f32,
 }
 
 impl CloudOffsets {
@@ -510,6 +513,7 @@ impl CloudOffsets {
         let layer = aloft * clouds.layer_scroll + drift;
         let across = if flat { layer.truncate() } else { layer.xz() };
         self.layers = (Vec2::from(self.layers) + across * dt).to_array();
+        self.time += dt;
     }
 }
 
@@ -828,6 +832,7 @@ mod tests {
         let mut fast = CloudOffsets::default();
         fast.step(&lapse, aloft.to_array(), [0.0; 3], 1.0, false);
         assert!((Vec3::from(fast.advection) - aloft * 100.0).length() < 1e-2);
+        assert_eq!((offsets.time, fast.time), (1.0, 100.0));
     }
 
     #[test]

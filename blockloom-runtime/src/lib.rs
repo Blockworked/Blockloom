@@ -25,6 +25,7 @@ mod batching;
 mod beams;
 mod bridge;
 mod capture;
+mod cloud_layers;
 mod clouds;
 mod culling;
 mod dim2;
@@ -60,9 +61,14 @@ mod ray_tracing;
 mod script;
 mod shadows;
 mod sky;
+#[cfg(feature = "ray_tracing")]
+mod solari_patch;
 mod sound;
 mod space;
 mod streaming;
+mod terrain;
+#[cfg(feature = "ray_tracing")]
+mod traced;
 mod ui;
 mod ui_systems;
 mod volume_heat;
@@ -368,7 +374,9 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             space::register(app);
             fog::register(app);
             clouds::register(app);
+            cloud_layers::register(app);
             beams::register(app);
+            terrain::register(app);
             use bevy::camera::visibility::VisibilitySystems;
             app.add_systems(
                 PostUpdate,

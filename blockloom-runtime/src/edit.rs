@@ -157,6 +157,10 @@ pub struct SceneEditor {
     hover: Option<Handle>,
     /// What to tell the editor, sent by [`report`] once input is done.
     outbox: Vec<RuntimeMessage>,
+    /// The left button is down with the Brush tool on a terrain.
+    pub brushing: bool,
+    /// Where the pointer looks into the world, for the terrain brush.
+    pub pointer_ray: Option<Ray3d>,
 }
 
 impl Default for SceneEditor {
@@ -185,6 +189,8 @@ impl Default for SceneEditor {
             drag: None,
             hover: None,
             outbox: Vec::new(),
+            brushing: false,
+            pointer_ray: None,
         }
     }
 }
@@ -200,10 +206,17 @@ impl SceneEditor {
     }
 
     /// Drops everything half done, for a world that started running.
+    /// Queues a message for the editor, sent with the scene view's own.
+    pub fn tell(&mut self, message: RuntimeMessage) {
+        self.outbox.push(message);
+    }
+
     fn let_go(&mut self) {
         self.nav = None;
         self.drag = None;
         self.hover = None;
+        self.brushing = false;
+        self.pointer_ray = None;
         self.buttons = [false; 3];
         self.keys.clear();
     }
@@ -304,6 +317,7 @@ pub fn interact(
     actors: Query<(&ActorId, &Visibility)>,
     mut posed: Query<(&mut Transform, &mut PhysicsPose, &mut PrevPose)>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    terrains: Option<Res<crate::terrain::TerrainIndex>>,
     #[cfg(target_os = "linux")] surface: Option<Res<crate::embed::GameSurface>>,
 ) {
     if !editing(&engine, &editor) {
@@ -363,10 +377,14 @@ pub fn interact(
                         px_scale,
                         &actors,
                         &posed,
+                        terrains.as_deref(),
                     );
                 } else {
                     // The release is where the drag ends, not where the
                     // pointer last moved.
+                    if index == 0 {
+                        editor.brushing = false;
+                    }
                     if index == 0 && editor.drag.is_some() {
                         update_drag(&mut engine, editor, &lens, at, mode, px_scale, &mut posed);
                         finish_drag(&engine, editor, &posed);
@@ -388,6 +406,7 @@ pub fn interact(
                 }
             }
             PreviewInput::Focus { focused: false } => {
+                editor.brushing = false;
                 cancel_drag(&mut engine, editor, &mut posed);
                 editor.keys.clear();
                 editor.buttons = [false; 3];
@@ -408,6 +427,7 @@ pub fn interact(
     }
 
     let lens = lens(editor, mode, camera, space, px_scale);
+    editor.pointer_ray = editor.pointer.and_then(|at| lens.ray(at));
     if editor.frame {
         editor.frame = false;
         frame_selected(&engine, editor, mode, &posed);
@@ -474,17 +494,28 @@ fn press(
     px_scale: f32,
     actors: &Query<(&ActorId, &Visibility)>,
     posed: &Query<(&mut Transform, &mut PhysicsPose, &mut PrevPose)>,
+    terrains: Option<&crate::terrain::TerrainIndex>,
 ) {
     let alt = editor.held(&["AltLeft", "AltRight"]);
     let flat = matches!(lens, Lens::Flat { .. });
     match button {
         0 if alt && !flat => editor.nav = Some(Nav::Orbit),
+        // The Brush tool on a terrain paints rather than picks.
+        0 if editor.view.tool == SceneTool::Brush
+            && editor
+                .selected
+                .as_deref()
+                .and_then(|id| engine.actor(id))
+                .is_some_and(|actor| actor.components.terrain().is_some()) =>
+        {
+            editor.brushing = true;
+        }
         0 => {
             if let Some(handle) = hovered(engine, editor, lens, at, px_scale, posed) {
                 start_drag(engine, editor, lens, handle, at, posed);
                 return;
             }
-            let Some(actor) = pick(engine, lens, at, actors, posed) else {
+            let Some(actor) = pick(engine, lens, at, actors, posed, terrains) else {
                 return;
             };
             if editor.selected.as_deref() != Some(actor.as_str()) {
@@ -634,6 +665,7 @@ fn pick(
     at: Vec2,
     actors: &Query<(&ActorId, &Visibility)>,
     posed: &Query<(&mut Transform, &mut PhysicsPose, &mut PrevPose)>,
+    terrains: Option<&crate::terrain::TerrainIndex>,
 ) -> Option<String> {
     let ray = lens.ray(at)?;
     let mut best: Option<(f32, String)> = None;
@@ -648,10 +680,30 @@ fn pick(
             continue;
         };
         let visual = engine.actor(&id.0).and_then(|actor| actor.visual());
-        let hit = match lens {
-            Lens::Flat { scale, .. } => hit_2d(visual, &pose.0, ray.origin.truncate(), *scale)
-                .map(|_| -pose.0.translation.z),
-            Lens::Deep { .. } => hit_3d(visual, &pose.0, ray),
+        let ground = terrains.and_then(|t| t.terrains.get(&id.0));
+        let hit = match (lens, ground) {
+            (Lens::Deep { .. }, Some((_, built))) => {
+                // A terrain is picked where the ray meets its ground.
+                let inverse = pose.0.compute_affine().inverse();
+                let origin = inverse.transform_point3(ray.origin);
+                let direction = inverse
+                    .transform_vector3(*ray.direction)
+                    .normalize_or_zero();
+                let geometry = &built.geometry;
+                crate::terrain::raycast(
+                    &geometry.field,
+                    &geometry.shape,
+                    origin,
+                    direction,
+                    20_000.0,
+                )
+                .map(|p| (pose.0.compute_affine().transform_point3(p) - ray.origin).length())
+            }
+            _ => match lens {
+                Lens::Flat { scale, .. } => hit_2d(visual, &pose.0, ray.origin.truncate(), *scale)
+                    .map(|_| -pose.0.translation.z),
+                Lens::Deep { .. } => hit_3d(visual, &pose.0, ray),
+            },
         };
         if let Some(distance) = hit
             && best
@@ -851,6 +903,7 @@ fn gizmo_hovered(
                 }
             }
         }
+        SceneTool::Brush => return None,
         SceneTool::Rotate => {
             for &axis in offered(lens, false) {
                 let points: Option<Vec<Vec2>> = ring_points(&frame, axis)
@@ -1502,6 +1555,10 @@ pub fn draw(
         draw_game_camera(&mut lines, game_camera);
     }
 
+    if mode == Mode::ThreeD {
+        draw_cloud_layers(&mut lines, &engine.project.world.cloud_layers, &editor);
+    }
+
     // Actors with nothing to draw still get a marker, so they can be found.
     for (id, visibility) in &actors {
         let Some(entity) = engine.entities.get(&id.0) else {
@@ -1576,6 +1633,7 @@ pub fn draw(
                 tint(Handle::Free, Color::WHITE),
             );
         }
+        SceneTool::Brush => {}
         SceneTool::Rotate => {
             for &axis in offered(&lens, false) {
                 handles.linestrip(
@@ -1767,6 +1825,39 @@ fn draw_grid_2d(lines: &mut Gizmos, editor: &SceneEditor, size: Vec2, px_scale: 
 }
 
 /// Where the game's own camera stands, and which way it looks.
+/// Each cloud layer as one tile of grid at its altitude, under the view,
+/// plus a ring round the pivot of a spinning one.
+fn draw_cloud_layers(
+    lines: &mut Gizmos,
+    layers: &[blockloom_core::cloud_layers::CloudLayer],
+    editor: &SceneEditor,
+) {
+    let flat = Quat::from_rotation_x(-FRAC_PI_2);
+    for layer in layers.iter().filter(|l| l.enabled) {
+        let tile = layer.tiling_km * 1000.0;
+        let color = Color::srgba(0.7, 0.85, 1.0, 0.35);
+        let center = Vec3::new(
+            snap(editor.fly.position.x, tile),
+            layer.altitude,
+            snap(editor.fly.position.z, tile),
+        );
+        lines.grid(
+            Isometry3d::new(center, flat),
+            UVec2::splat(8),
+            Vec2::splat(tile / 8.0),
+            color,
+        );
+        if layer.spin != 0.0 {
+            let pivot = Vec3::new(layer.pivot[0], layer.altitude, layer.pivot[1]);
+            lines.circle(
+                Isometry3d::new(pivot, flat),
+                tile * 0.1,
+                color.with_alpha(0.7),
+            );
+        }
+    }
+}
+
 fn draw_game_camera(lines: &mut Gizmos, camera: &blockloom_core::scene::Camera) {
     let from = Vec3::from(camera.position);
     let at = Vec3::from(camera.look_at);

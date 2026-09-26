@@ -283,6 +283,13 @@ pub enum InstructionKind {
         property: crate::clouds::CloudProperty,
         value: Value,
     },
+    /// One cloud layer's dial (layer counted from 1) for the rest of the run.
+    /// Window-global.
+    SetCloudLayer {
+        layer: Value,
+        property: crate::cloud_layers::CloudLayerProperty,
+        value: Value,
+    },
     /// Extra drift of the clouds, world units per second, for the rest of
     /// the run.
     SetCloudDrift {
@@ -904,6 +911,10 @@ impl BlockKind for InstructionKind {
             K::SetVolumeWeight { volume, weight } => {
                 f(volume, InputValueType::Any);
                 f(weight, InputValueType::Any);
+            }
+            K::SetCloudLayer { layer, value, .. } => {
+                f(layer, InputValueType::Any);
+                f(value, InputValueType::Any);
             }
             K::CreateActor { name, x, y, z } => {
                 f(name, InputValueType::Any);

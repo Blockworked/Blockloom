@@ -400,6 +400,40 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-cloud-layers",
+        cmd: "set_cloud_layers",
+        aliases: &["set_cloud_layers"],
+        summary: "Set the planar cloud layers (up to 4): coverage texture or seeded FBM, coverage, contrast, tiling, opacity, altitude, parallax, tints and ramps, horizon fade, scroll, wind, flow map and spin.",
+        args: &[ArgSpec {
+            name: "layers",
+            ty: "[layer objects]",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "paint-cloud-layer",
+        cmd: "paint_cloud_layer",
+        aliases: &["paint_cloud_layer"],
+        summary: "Paint a stroke into a cloud layer's coverage (assets/clouds/layer-N.png): layer index from 0, brush {tool: Cloud|Eraser|Blur|Advect, radius, strength, falloff}, points [[u,v],...] across the tile.",
+        args: &[
+            ArgSpec {
+                name: "layer",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "brush",
+                ty: "object {tool, radius, strength, falloff}",
+                required: true,
+            },
+            ArgSpec {
+                name: "points",
+                ty: "[[u, v]]",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
         name: "bake-cloud-noise",
         cmd: "bake_cloud_noise",
         aliases: &["bake_cloud_noise"],
@@ -1034,6 +1068,62 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         aliases: &["probe_status"],
         summary: "Every light probe's bake: whether one is on disk and whether the probe or the scene around it changed since.",
         args: &[],
+    },
+    CommandSpec {
+        name: "paint-terrain",
+        cmd: "paint_terrain",
+        aliases: &["paint_terrain", "sculpt-terrain"],
+        summary: "Apply one brush stroke to a terrain, as one undo step. stroke is {\"brush\": {\"op\": Raise, Lower, Smooth, Flatten, Noise, Terrace, Paint or Erase, \"target\": {\"kind\": \"Heights\"} or {\"kind\": \"Layer\", \"layer\": 1} (also Holes, Grass, Scatter), \"radius\", \"strength\", \"falloff\"}, \"stamps\": [[x, z], ...]} in metres from the terrain's centre.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "stroke",
+                ty: "object {\"brush\", \"stamps\"}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "import-terrain-heightmap",
+        cmd: "import_terrain_heightmap",
+        aliases: &["import_terrain_heightmap"],
+        summary: "Replace a terrain's heights with a heightmap asset (16-bit PNG, .r16/.r32 RAW, or an image marked as a heightmap), stretched to its resolution.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "erode-terrain",
+        cmd: "erode_terrain",
+        aliases: &["erode_terrain"],
+        summary: "Run an erosion filter over a terrain's heights, as one undo step: {\"kind\": \"thermal\", \"iterations\", \"talus\"} or {\"kind\": \"hydraulic\", \"droplets\", \"seed\", \"erosion\", \"deposition\", \"inertia\"}.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "erosion",
+                ty: "object {\"kind\", ...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "preview-terrain-erosion",
+        cmd: "preview_terrain_erosion",
+        aliases: &["preview_terrain_erosion"],
+        summary: "Show an erosion filter on a terrain in the Game view without saving it (same shape as erode-terrain); leave erosion out to put the saved ground back.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "erosion",
+                ty: "object {\"kind\", ...}",
+                required: false,
+            },
+        ],
     },
     CommandSpec {
         name: "close-runtime",

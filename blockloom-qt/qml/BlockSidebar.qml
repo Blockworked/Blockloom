@@ -64,10 +64,11 @@ Rectangle {
         id: entry
         required property string modelData
         readonly property var names: root.namesFor(modelData)
-        instruction: Blocks.fresh(modelData)
+        // Made once: as a binding it was remade (and redrawn) on every edit to the actor.
+        Component.onCompleted: instruction = Blocks.fresh(modelData)
         spec: ({ kind: "instruction", type: modelData, instruction: instruction })
         blockDefinitions: root.blockDefs
-        onNamesChanged: if (names && names.length && names.indexOf(instruction.name) < 0) { const next = JSON.parse(JSON.stringify(instruction)); next.name = names[0]; instruction = next; }
+        onNamesChanged: if (instruction && names && names.length && names.indexOf(instruction.name) < 0) { const next = JSON.parse(JSON.stringify(instruction)); next.name = names[0]; instruction = next; }
         onDragStarted: (sp, sx, sy, ox, oy) => root.dragStarted(sp, sx, sy, ox, oy)
         onDragMoved: (sx, sy) => root.dragMoved(sx, sy)
         onDragEnded: (sx, sy) => root.dragEnded(sx, sy)

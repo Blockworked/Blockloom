@@ -786,11 +786,32 @@ raster rig carries on and the editor hears why once. The atmosphere sample
 copies `active`/`available` on the fixed tick, so `is ray tracing on?` and
 `ray tracing available?` agree between the VM and compiled logic.
 
-Realtime tracing puts `SolariLighting` on the world camera (plus `Msaa::Off`,
-`Hdr` and a storage-capable main texture) and turns sun shadow maps off.
-Solari lights the G-buffer, so while it is on `DefaultOpaqueRendererMethod`
-is deferred and every standard and instanced material is touched to
-re-prepare; off, both go back to forward. `instanced_pbr.wesl` is therefore
+`RayTracingSettings::mode` picks the realtime tracer. `Hybrid` puts
+`SolariLighting` on the world camera (ReSTIR direct light plus a world cache
+for GI). `PathTraced` puts `traced::TracedPaths` there instead: fresh paths
+from every G-buffer pixel each frame (`shaders/traced_paths.wesl`, `paths`
+per pixel, light sampling MIS'd against the BRDF), with Bevy's deferred
+lighting skipped. Either way the camera also gets `Msaa::Off`, `Hdr` and a
+storage-capable main texture, and sun shadow maps turn off. Tracing lights
+the G-buffer, so while it is on `DefaultOpaqueRendererMethod` is deferred and
+every standard and instanced material is touched to re-prepare; off, both go
+back to forward.
+
+`Denoiser` picks the cleanup: ReSTIR's reuse (`reuses`, Hybrid only) and
+`traced::TracedDenoiser` (`filters`), an SVGF-style filter
+(`shaders/denoise.wesl`) that runs after the opaque pass: demodulate by the
+G-buffer albedo, reproject along motion vectors, five a-trous passes steered
+by the variance, remodulate. Glossy surfaces keep a shorter history and a
+tighter blur. It only touches pixels with a G-buffer (forward surfaces and
+the background are left alone) and drops NaNs and clips fireflies first,
+since its moments are half floats.
+
+Solari ignores the environment map, so `solari_patch.rs` edits its shaders
+as they load (the `pbr_patch` rules): a realtime bounce, a world cache GI ray
+past its reach and a reference path tracer bounce that escape all see the
+camera's `EnvironmentMapLight`. Under a flat sky `TracedAmbient` hangs a
+one-texel cube of the ambient there instead, and a sky that lights but
+doesn't reflect shows traced rays its diffuse cube. `instanced_pbr.wesl` is therefore
 the instanced material's deferred shader too. Box-projected and graph
 surfaces stay forward and keep the raster lights.
 
@@ -800,8 +821,10 @@ layout, and only the sun and emissive meshes light. So `sync_traced_scene`
 mesh (no `Mesh3d`, `traceable` converting the mesh, a standard material
 standing in for instanced, box and graph surfaces) and one emissive stand-in
 per `Light` whose `ray_traced` is on (a sphere for a point, a disk down a
-spot's beam, the rect or disk itself), glowing with the light's power.
-Merged batches, placeholders and particles are left out.
+spot's beam, the rect or disk itself), glowing with the light's power. A
+spot narrower than `HOOD_WIDEST` also gets a black flared hood
+(`TracedHood`), so its disk only lights the cone. Merged batches,
+placeholders and particles are left out.
 
 The path tracer is `SceneView::path_tracer`, an editor preference: the world
 camera gets `Pathtracer` instead, which traces the same copy and starts over
@@ -810,7 +833,11 @@ reach the editor as `RuntimeMessage::RayTracing` and `state.ray_tracing`. An
 EXR capture copies the camera's tracing (`trace_like`) and, under the path
 tracer, waits for the sample or time budget. The GPU half is the ignored
 `embed` tests (traced vs. untraced lamps, switching mid-run, the path tracer
-and its EXR).
+and its EXR, sky and ambient on escaped rays, realtime path tracing, the
+denoiser's grain, a spot's cone). They run on lavapipe too, which has ray
+queries but no dma-bufs: `BLOCKLOOM_TEST_OPAQUE_FD=1
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json`, and
+`BLOCKLOOM_TEST_DUMP=<dir>` saves the frames some of them read as PNGs.
 
 ### Volumetric clouds
 
@@ -834,6 +861,86 @@ Profiler readback reports primary steps and contributing samples per pixel;
 render diagnostics time the march. GPU tests cover sky, terrain preservation
 and ground shadows (`cargo test -p blockloom-runtime volumetric_clouds --lib
 -- --ignored`).
+
+### World-space texturing
+
+`Material::detail` (`SurfaceDetail`, `blockloom-core/src/material.rs`) is the
+advanced pass over box projection, shared by materials and terrain (a
+terrain's `texturing`): stochastic texture bombing (three hex tiles, randomly
+offset and turned, blended by `stochastic_contrast`), macro variation (an
+image or noise multiplied over albedo), a detail normal map faded by camera
+distance, and a `MaskStack` of slope, height and cavity rule masks plus snow
+and wetness. Cavity is baked per terrain sample; other surfaces read none.
+The shader half is `blockloom::texturing` (core's `shaders/texturing.wesl`),
+which `box_pbr.wesl`, `terrain.wesl` and `grass.wesl` import. Snow and
+wetness also follow `World.surface`, volume overrides (`snow`, `wetness`) and
+`engine.surface`; `materials::SurfaceGlobals` is one storage buffer of weather
+and wind every surface reads, written only on change. `DebugView::SurfaceBlend`
+draws layer weights and masks as flat colors.
+
+### Terrain and vegetation
+
+A `Terrain` component (`blockloom-core/src/terrain/`, `TerrainSpec`) is a
+heightfield of 2ⁿ+1 samples (129 to 4097) over `size` metres, `height` metres
+tall, with up to four paint layers (each with slope, height and curvature
+rules), optional holes, grass layers and scatter layers. Grids never live in
+the document: `store.rs` keeps them content-addressed under
+`.blockloom/terrain` (64² tiles plus a manifest), the spec names the manifest,
+and `open_project` prunes what no terrain names. `store::name_of` predicts a
+save's name without writing it.
+
+`sculpt.rs` is every edit: a `Brush` (raise, lower, smooth, flatten, noise,
+terrace, paint, erase) on a `BrushTarget` (heights, a layer, holes, a grass
+or scatter density map), a `Stroke` of stamps applied to an `Editable`, and
+`Erosion` (thermal or droplet hydraulic). The editor applies strokes
+(`paint_terrain`, or the scene view's `TerrainStroke`), imports heightmaps
+through `pipeline::load_heightmap` and erodes, each as one undo step.
+
+`blockloom-runtime/src/terrain/` draws it, 3D only. `Geometry` cuts the
+field into chunks (`mesh::ChunkLayout`), each a `LodGroup` of levels picked
+by `pixel_error`; skirts hide the cracks between levels. Coarse levels stay
+resident and finer ones stream as `CellTasks` payloads on `StreamingCells`.
+Builds run off the main thread and are cached by spec (`TerrainCache`), so a
+rebuild that didn't touch a terrain reuses it. Collision is one rapier
+heightfield with holes removed. The material (`material.rs`) samples baked
+layer weights and a normal/cavity surface map at the grid UV, and the
+layers' maps triplanar from texture arrays.
+
+`vegetation.rs` streams grass in 32 m cells within its cull distance: seeded
+blades (`scatter::grass_blades`) merged into one mesh per cell, bent by the
+`WindField` and thinned by distance in `grass.wesl`. Scatter layers place
+trees and rocks once per build (`scatter::scatter_instances`: density,
+clumping noise, slope, altitude and actor-avoidance filters, tint and scale
+jitter); each instance is a holder `LodGroup` with a child per level (LOD0,
+LOD1, crossed-quad billboard), procedural shapes or glTF parts drawn
+instanced, and an optional trunk collider.
+
+The scene view's Brush tool (`SceneTool::Brush`, `brush.rs`) stamps onto a
+working copy and redraws touched chunks, weights and the surface map in
+place; on release it sends the stroke and files the predicted result in the
+cache under the spec the editor will send back, so the reload doesn't flash.
+`EditorMessage::PreviewErosion` shows an erosion filter without saving it.
+Triangle, chunk and instance counts reach the profiler as `terrain/*`.
+
+### Cloud layers
+
+`World.cloud_layers` (`blockloom-core/src/cloud_layers.rs`) is up to four
+flat layers, 3D only. Coverage is an image's luma or tileable FBM baked from
+the layer's seed (`bake_coverage`), always at `COVERAGE_SIZE`, and `remap`
+turns it into cloud by coverage and contrast; `cloud_layers.wesl` mirrors
+`remap`, so change the two together. `paint-cloud-layer` paints strokes
+(`paint`, wrapping at the tile's edges) into `assets/clouds/layer-N.png` and
+bumps the layer's `revision`, which is how the runtime knows to reread a file
+whose path didn't change. Each stroke keeps a snapshot per revision under
+`.blockloom/cloud-paint`, and undo/redo call `restore_painted` to put the
+file back. `set cloud layer` lands in `engine.cloud_layers`
+(`CloudLayerOverrides`), laid over the project's layers each frame. `blockloom-runtime/src/cloud_layers.rs` loads or
+bakes every layer into one texture array when their keys change, and draws
+them in `CloudPass`: layers beyond the volumetric slab before `CloudMarch`,
+layers between the camera and it after, so the fog pass lays height fog over
+all of them. The same shader's `shadow` entry point multiplies the ground by
+what the layers let through towards the sun, drawn first. Scroll, flow and
+spin run on `CloudOffsets::time`, cloud time.
 
 ### Shader library and pass plumbing
 
@@ -1213,6 +1320,11 @@ row and an icon in `Blocks.qml`'s `buildRows()`, a label in its `labels`, a
 field id if it has value slots, and a `Step`/`Effect` if it does something
 new** - not a new QML file. `BlockHeader` and `CallBlock` take their row from
 a `BlockDef` rather than their type, which blockstitch draws itself.
+
+Keep the canvas's inputs identity-stable, since any change rebuilds what is
+bound to it. `Main.qml`'s `reuse` swaps every unchanged part of a new
+snapshot for the old object, and `Blocks.qml` bumps `BlockRegistry.revision`
+only when `optionSource` (the names its dropdowns list) changes.
 
 The asset tray along the bottom (`AssetTray.qml`) is a file manager
 over the project folder: it lists, makes, imports, renames, moves and deletes

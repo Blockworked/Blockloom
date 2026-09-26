@@ -47,6 +47,13 @@ Rectangle {
         property bool volumePanel: false
         property int pathSamples: 256
         property real pathSeconds: 60
+        property string brushOp: "Raise"
+        property string brushTarget: "Heights"
+        property real brushRadius: 8
+        property real brushStrength: 0.5
+        property real brushFalloff: 0.6
+        property real brushStep: 4
+        property real brushScale: 12
     }
     // The reference path tracer is heavy, so it is never remembered on.
     property bool pathTracing: false
@@ -61,8 +68,33 @@ Rectangle {
         grid: is3d ? scene.grid3d : scene.grid2d, angle: scene.angle, scale: scene.scaleStep, show_grid: scene.showGrid,
         debug_view: scene.debugView,
         volumes: { bounds: scene.volumeBounds, heatmap: scene.volumeHeatmap, freeze: root.volumeFreeze },
-        path_tracer: { enabled: root.pathTracing && is3d, samples: scene.pathSamples, seconds: scene.pathSeconds }
+        path_tracer: { enabled: root.pathTracing && is3d, samples: scene.pathSamples, seconds: scene.pathSeconds },
+        brush: { op: scene.brushOp, target: brushTarget(scene.brushTarget), radius: scene.brushRadius, strength: scene.brushStrength,
+                 falloff: scene.brushFalloff, level: null, step: scene.brushStep, scale: scene.brushScale, seed: 1 }
     })
+    // "Layer:1" stands for { kind: "Layer", layer: 1 }.
+    function brushTarget(name) {
+        const parts = name.split(":");
+        return parts.length > 1 ? { kind: parts[0], layer: Number(parts[1]) } : { kind: parts[0] };
+    }
+    // The selected actor's terrain, which the Brush tool paints on.
+    readonly property var brushTerrain: {
+        const p = appState.project;
+        if (!p || !appState.selected_actor) return null;
+        const a = p.actors.find(x => x.id === appState.selected_actor);
+        const c = a ? a.components.find(x => x.component === "Terrain") : null;
+        return c ? c.terrain : null;
+    }
+    readonly property var brushTargets: {
+        const t = brushTerrain;
+        const list = [{ value: "Heights", label: "Heights" }, { value: "Holes", label: "Holes" }];
+        if (!t) return list;
+        (t.layers || []).forEach((l, i) => list.push({ value: "Layer:" + i, label: "Paint " + l.name }));
+        (t.grass || []).forEach((g, i) => list.push({ value: "Grass:" + i, label: "Grass " + g.name }));
+        (t.scatter || []).forEach((g, i) => list.push({ value: "Scatter:" + i, label: "Scatter " + g.name }));
+        return list;
+    }
+    readonly property bool brushShapes: scene.brushTarget === "Heights"
     onSceneViewChanged: app.invoke("set_scene_view", { view: sceneView }, null, () => {})
     // The scene view is what's showing: a world is up and nothing runs.
     readonly property bool editing: !running && scene.enabled && appState.runtime_open === true
@@ -178,13 +210,15 @@ Rectangle {
                 options: [{ value: "lit", label: "Lit" }, { value: "false_color", label: "False color" }, { value: "clipping", label: "Clipping" },
                           { value: "histogram", label: "Histogram" }, { value: "waveform", label: "Waveform" },
                           { value: "calibration", label: "Calibration" }, { value: "hdr_preview", label: "HDR preview" }]
+                          .concat(root.is3d ? [{ value: "surface_blend", label: "Surface blend" }] : [])
                 value: scene.debugView
                 onChosen: v => scene.debugView = v
                 ToolTip.visible: hovered; ToolTip.delay: 500
                 ToolTip.text: "False color bands the exposed image by stops: green is middle grey, yellow nears white, red is past it.\n"
                     + "Clipping stripes whatever the display can't show. Histogram and waveform plot luminance in stops.\n"
                     + "Calibration shows patches at black, paper white and peak brightness.\n"
-                    + "HDR preview shows the HDR output at paper white, clipping what only an HDR display could show."
+                    + "HDR preview shows the HDR output at paper white, clipping what only an HDR display could show.\n"
+                    + "Surface blend paints terrain layers red, green, blue and yellow, rule masks magenta, snow white and wetness cyan."
             }
             IconButton {
                 iconName: "layers"; tip: "Environment volumes: bounds, heat map, the blend and its lerp"
@@ -329,6 +363,7 @@ Rectangle {
                         ToolToggle { visible: scene.enabled; icon: "move"; tip: "Move (W)"; checked: scene.tool === "move"; onClicked: root.setTool("move") }
                         ToolToggle { visible: scene.enabled; icon: "rotate-cw"; tip: "Rotate (E)"; checked: scene.tool === "rotate"; onClicked: root.setTool("rotate") }
                         ToolToggle { visible: scene.enabled; icon: "scale"; tip: "Scale (R)"; checked: scene.tool === "scale"; onClicked: root.setTool("scale") }
+                        ToolToggle { visible: scene.enabled && root.is3d; icon: "pencil"; tip: "Terrain brush (B): sculpt, paint, cut holes and place grass or trees on the selected terrain"; checked: scene.tool === "brush"; onClicked: root.setTool("brush") }
                         ToolToggle { visible: scene.enabled && root.is3d; icon: "move-3d"; tip: scene.local ? "Local axes: the actor's own" : "World axes"; checked: scene.local; onClicked: scene.local = !scene.local }
                         Rectangle { width: 1; height: 20; color: Theme.border; anchors.verticalCenter: parent.verticalCenter; visible: scene.enabled }
                         ToolToggle { visible: scene.enabled; icon: "layout-grid"; tip: "Snap to the grid (hold Ctrl to flip)"; checked: scene.snap; onClicked: scene.snap = !scene.snap }
@@ -353,6 +388,45 @@ Rectangle {
                             tip: root.is3d
                                 ? "Hold the right button to look around, and fly with W A S D, Q and E (Shift to hurry, wheel for speed).\nMiddle-drag pans, Alt-drag orbits, the wheel dollies.\nClick an actor to select it; drag it or its handles to place it. Esc cancels a drag."
                                 : "Right- or middle-drag pans, the wheel zooms.\nClick an actor to select it; drag it or its handles to place it. Esc cancels a drag."
+                        }
+                    }
+                }
+                // The terrain brush's settings, under the toolbar.
+                Rectangle {
+                    visible: root.editing && scene.tool === "brush" && root.is3d
+                    anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 8; anchors.topMargin: 48
+                    width: brushRows.implicitWidth + 16; height: brushRows.implicitHeight + 16; radius: 6
+                    color: "#d0202124"; border.color: Theme.borderSoft
+                    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }
+                    ColumnLayout {
+                        id: brushRows
+                        anchors.centerIn: parent; spacing: 4
+                        Text { visible: !root.brushTerrain; text: "Select a terrain to brush on."; color: Theme.textDim; font.pixelSize: 11 }
+                        RowLayout {
+                            spacing: 4
+                            ChoiceField { Layout.preferredWidth: 130; options: root.brushTargets; value: scene.brushTarget
+                                onChosen: v => { scene.brushTarget = v; if (v === "Heights") { if (scene.brushOp === "Paint" || scene.brushOp === "Erase") scene.brushOp = "Raise"; }
+                                                 else if (scene.brushOp !== "Paint" && scene.brushOp !== "Erase") scene.brushOp = "Paint"; } }
+                            ChoiceField { Layout.preferredWidth: 100
+                                options: Blocks.opts(root.brushShapes ? ["Raise", "Lower", "Smooth", "Flatten", "Noise", "Terrace"] : ["Paint", "Erase"])
+                                value: scene.brushOp; onChosen: v => scene.brushOp = v }
+                        }
+                        RowLayout {
+                            spacing: 4
+                            Text { text: "Radius"; color: Theme.textDim; font.pixelSize: 11 }
+                            NumberField { Layout.preferredWidth: 48; value: scene.brushRadius; fallback: 8; onCommitted: n => scene.brushRadius = Math.max(0.1, Number(n)) }
+                            Text { text: "Strength"; color: Theme.textDim; font.pixelSize: 11 }
+                            NumberField { Layout.preferredWidth: 44; value: scene.brushStrength; fallback: 0.5; onCommitted: n => scene.brushStrength = Math.min(1, Math.max(0, Number(n))) }
+                            Text { text: "Falloff"; color: Theme.textDim; font.pixelSize: 11 }
+                            NumberField { Layout.preferredWidth: 44; value: scene.brushFalloff; fallback: 0.6; onCommitted: n => scene.brushFalloff = Math.min(1, Math.max(0, Number(n))) }
+                        }
+                        RowLayout {
+                            visible: scene.brushOp === "Terrace" || scene.brushOp === "Noise"
+                            spacing: 4
+                            Text { text: scene.brushOp === "Terrace" ? "Step (m)" : "Feature size (m)"; color: Theme.textDim; font.pixelSize: 11 }
+                            NumberField { Layout.preferredWidth: 48
+                                value: scene.brushOp === "Terrace" ? scene.brushStep : scene.brushScale; fallback: scene.brushOp === "Terrace" ? 4 : 12
+                                onCommitted: n => { const v = Math.max(0.05, Number(n)); if (scene.brushOp === "Terrace") scene.brushStep = v; else scene.brushScale = v; } }
                         }
                     }
                 }
@@ -450,7 +524,7 @@ Rectangle {
                     const code = root.keyCode(event);
                     // The scene view's own keys, by where they sit; flying uses the same ones.
                     if (root.editing && !root.looking && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier)) && !event.isAutoRepeat) {
-                        const tools = { KeyW: "move", KeyE: "rotate", KeyR: "scale" };
+                        const tools = { KeyW: "move", KeyE: "rotate", KeyR: "scale", KeyB: "brush" };
                         if (tools[code]) root.setTool(tools[code]);
                         else if (code === "KeyF") root.report("frame_selected");
                         else if (code === "KeyG") scene.showGrid = !scene.showGrid;

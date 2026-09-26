@@ -346,3 +346,71 @@ fn cloud_noise_bakes_to_volume_assets() {
     assert_eq!(state["project"]["world"]["clouds"]["shape_volume"], "");
     backend.dispatch("close_project", json!({})).unwrap();
 }
+
+#[test]
+fn cloud_layers_normalize_paint_and_undo() {
+    let (_lock, _data, projects) = isolated("cloud-layers");
+    let backend = backend();
+    let dir = create_project(&backend, projects.path(), "Layers");
+    backend
+        .dispatch("open_project", json!({"path": dir}))
+        .unwrap();
+    let layers = json!([{}, {}, {}, {}, {}, {"coverage": 7.0}]);
+    backend
+        .dispatch("set_cloud_layers", json!({"layers": layers}))
+        .unwrap();
+    let state = backend.dispatch("get_state", json!({})).unwrap();
+    let saved = &state["project"]["world"]["cloud_layers"];
+    assert_eq!(saved.as_array().unwrap().len(), 4);
+    assert_eq!(saved[0]["coverage_texture"], "");
+    let painted = backend
+        .dispatch(
+            "paint_cloud_layer",
+            json!({"layer": 1, "brush": {"tool": "Cloud", "radius": 0.1, "strength": 1.0},
+                   "points": [[0.2, 0.2], [0.8, 0.2]]}),
+        )
+        .unwrap();
+    assert_eq!(painted, json!("assets/clouds/layer-2.png"));
+    let state = backend.dispatch("get_state", json!({})).unwrap();
+    let layer = &state["project"]["world"]["cloud_layers"][1];
+    assert_eq!(layer["coverage_texture"], "assets/clouds/layer-2.png");
+    assert_eq!(layer["revision"], 1);
+    let file = blockloom_core::cloud_layers::CloudLayer {
+        coverage_texture: "assets/clouds/layer-2.png".into(),
+        ..Default::default()
+    };
+    let coverage = blockloom_core::cloud_layers::load_coverage(Some(&dir), &file).unwrap();
+    assert_eq!(coverage.len(), 512 * 512);
+    assert_eq!(coverage[102 * 512 + 256], 255);
+    assert!(
+        backend
+            .dispatch(
+                "paint_cloud_layer",
+                json!({"layer": 9, "brush": {}, "points": [[0.5, 0.5]]})
+            )
+            .is_err()
+    );
+    // A second stroke erases, and undo brings the first one's pixels back.
+    backend
+        .dispatch(
+            "paint_cloud_layer",
+            json!({"layer": 1, "brush": {"tool": "Eraser", "radius": 0.2, "strength": 1.0},
+                   "points": [[0.5, 0.2]]}),
+        )
+        .unwrap();
+    let pixel =
+        || blockloom_core::cloud_layers::load_coverage(Some(&dir), &file).unwrap()[102 * 512 + 256];
+    assert_eq!(pixel(), 0);
+    backend.dispatch("undo", json!({})).unwrap();
+    assert_eq!(pixel(), 255);
+    backend.dispatch("redo", json!({})).unwrap();
+    assert_eq!(pixel(), 0);
+    backend.dispatch("undo", json!({})).unwrap();
+    backend.dispatch("undo", json!({})).unwrap();
+    let state = backend.dispatch("get_state", json!({})).unwrap();
+    assert_eq!(
+        state["project"]["world"]["cloud_layers"][1]["coverage_texture"],
+        ""
+    );
+    backend.dispatch("close_project", json!({})).unwrap();
+}

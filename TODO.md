@@ -133,11 +133,13 @@ Phased by dependency and value per cost. Each phase unblocks the next.
       primitives, applied in `surface_standard` and the graph ubershaders, with
       inspector rows for the new dials. Old projects normalize to the legacy
       mapping (tiling 1x1, clamp) so nothing already shipped changes look.
-  - [ ] Advanced pass (for Phase 5 terrain): stochastic texture bombing to hide
+  - [x] Advanced pass (for Phase 5 terrain): stochastic texture bombing to hide
         tiling, macro variation plus micro detail maps, mask stack (slope, height,
         cavity plus snow/wetness fed by the weather director and the persistent
         wetness map), blend debug view. Builds on the triplanar toggle and texel
-        density above, not a second implementation.
+        density above, not a second implementation. Not covered: no weather
+        director or persistent wetness map exists yet, so snow and wetness come
+        from World.surface, volumes and the run's overrides.
 - [x] Particle/trail blocks (burst, emitter dials), plus ghost trails for custom-shaded and tilemap actors.
 - [x] Advanced physics: fixed, hinge and rope joints, character controller, one-way platforms, and ragdoll chains built from hinged bodies.
 - [x] AI: live polyanya rebake, navigation cost areas and layer masks, off-mesh links, crowd separation, steering, behavior trees and sight perception.
@@ -407,13 +409,20 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         EXR camera waits for the budget. Blocks, compiled logic and scripts
         share `turn ray tracing`, `set GI bounces/samples to`, `ray tracing
         on?` and `ray tracing available?`, sampled on the fixed tick.
-        Not covered: DLSS Ray Reconstruction (no build carries the SDK, so
-        Auto is ReSTIR's reuse); converging stills in the inspector; a spot
-        traces as a disk down its beam, not a cone, and cookies and IES
-        profiles aren't traced; box-projected and shader surfaces stay forward
-        with raster lights; skinned meshes trace in their bind pose; the path
-        tracer shows a flat background as black (a sky shows); only run here
-        on Intel Arc through Mesa, not yet on RTX or DX12.
+        Then: a realtime path tracer mode beside Hybrid ReSTIR (paths per
+        pixel, NEE with MIS), an SVGF-style spatiotemporal denoiser (Auto is
+        ReSTIR's reuse plus the filter; Filter, ReSTIR and None pick one or
+        neither), traced rays that escape see the sky (Solari's shaders
+        patched to read the environment map) or a flat sky's ambient, and a
+        hooded spot emitter that only lights its cone.
+        Not covered: DLSS Ray Reconstruction (no build carries the SDK);
+        converging stills in the inspector; cookies and IES profiles aren't
+        traced; box-projected and shader surfaces stay forward with raster
+        lights; skinned meshes trace in their bind pose; the denoiser has no
+        separate specular signal, so glossy reflections only get a shorter
+        history and blur; the realtime path tracer has no reuse, so it wants
+        the filter; only run here on Intel Arc through Mesa and on lavapipe,
+        not yet on RTX or DX12.
   - [x] Sky types (all feed background, ambient probe and reflections together):
         - Procedural physical sky: sun disk (size, limb darkening, intensity) plus
           moon disk (size, phase 0-1, halo power), Rayleigh RGB scattering, Mie
@@ -557,7 +566,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         Blocks, compiled logic and scripts share `set wind [direction/speed/
         gust/storm] to` and `set cloud drift to`; `wind direction` and
         `storm` join the atmosphere readings beside `wind speed`.
-        Not covered: cloud layers, vegetation and water have no renderer yet;
+        Not covered: vegetation and water have no renderer yet;
         volumetric clouds now consume the cloud offsets;
         wind doesn't push rigid bodies; dust motes and beam motes keep
         their own drift rather than the wind; there are no wind arrows in
@@ -603,7 +612,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         own noise to `assets/clouds/*.png` through a CPU twin of the bake.
         Blocks, compiled logic and scripts share `set clouds [coverage/density/
         type] to`, laid over the project's clouds and any volume for the run.
-  - [ ] Cloud layers (planar 2D cover above and below volumetrics, also the full
+  - [x] Cloud layers (planar 2D cover above and below volumetrics, also the full
         fallback when volumetrics are off):
         - Up to 4 layers, each: coverage texture or procedural FBM (seed, scale,
           octaves), coverage amount plus contrast curve, tiling km, opacity,
@@ -615,7 +624,36 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           and aerial tint with distance so high cirrus still sits in atmosphere.
         - Editor paint mode: paint coverage into a layer texture with cloud/eraser
           brushes, blur and advect tools. Import any grayscale image as coverage.
-  - [ ] Terrain and vegetation: heightmap terrain (1k to 4k, import PNG/RAW, sculpt
+        Done: `World.cloud_layers` (`blockloom-core/src/cloud_layers.rs`, at
+        most four) with every dial above, normalized on load and edit, set by
+        `set-cloud-layers` and Project Settings. Coverage is an image asset's
+        luma or tileable gradient FBM baked from the layer's seed, scale and
+        octaves, remapped live by coverage and contrast. The runtime
+        (`blockloom-runtime/src/cloud_layers.rs`) draws them full resolution,
+        farthest first: layers beyond the volumetric slab before its composite,
+        layers between it and the camera after, and all of them alone when
+        volumetrics are off. Parallax is a second tap along the view ray and a
+        sun tap for self-shadow; sky-cube ambient, sun and moon light, the
+        day/sunset/night ramp, a backlit edge glow and aerial haze towards the
+        horizon's color, with height fog laid on by the fog pass after. Layers
+        scroll on the wind's layer offset times their wind factor plus their
+        own scroll, on cloud time (time-lapse included), turn round a pivot,
+        and follow a two-phase flow map. Layers raise the `cloud cover`
+        reading. Project Settings paints strokes into
+        `assets/clouds/layer-N.png` (`paint-cloud-layer`: cloud, eraser, blur,
+        advect, wrapping at the tile's edges), started from what the layer drew,
+        so an imported image is never overwritten; every stroke keeps a
+        snapshot under `.blockloom/cloud-paint`, so undo and redo take strokes
+        back. Layers shadow the ground towards the sun with their own
+        strength. `set cloud layer _ [coverage/opacity/contrast/altitude/
+        spin] to` (and a script's `set_cloud_layer`) lays run-time dials over
+        a layer. The scene view draws each layer's altitude plane and spin
+        pivot.
+        Not covered: layers stay out of the sky's light cubes, so reflections
+        and sky ambient don't see them (the cubes are rewritten only when the
+        sky changes, and moving layers would refilter them every frame, the
+        same reason stars and aurora stay out).
+  - [x] Terrain and vegetation: heightmap terrain (1k to 4k, import PNG/RAW, sculpt
         raise/lower/smooth/flatten/noise/terrace with radius/falloff/strength, paint
         albedo/normal/roughness layers with slope/height/curvature rules, holes for
         caves), auto collision plus LOD (quadtree or chunked, crack fix, pixel-error
@@ -624,6 +662,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         (instanced LOD0/LOD1/billboard, scatter brush with density/clumping noise and
         slope/altitude/collision filters, per-instance tint/scale jitter). Editor:
         sculpt/paint/scatter brushes, erosion filter preview, stats (tris, instances).
+        Not covered: RAW import is 16/32-bit .r16/.r32 only, and the GPU half
+        has no ignored embed test yet.
   - [ ] Water (ocean, lake, river actor): wave model (8-12 summed Gerstner waves
         with amplitude/chop/steepness plus Phillips-spectrum normal detail, wind
         fetch param), depth color (shallow tint, deep tint, Beer absorption distance),
