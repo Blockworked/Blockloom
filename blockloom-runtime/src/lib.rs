@@ -23,6 +23,7 @@ mod batching;
 mod beams;
 mod bridge;
 mod capture;
+mod cloud_layers;
 mod clouds;
 mod culling;
 mod dim2;
@@ -360,6 +361,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             space::register(app);
             fog::register(app);
             clouds::register(app);
+            cloud_layers::register(app);
             beams::register(app);
             use bevy::camera::visibility::VisibilitySystems;
             app.add_systems(

@@ -1886,6 +1886,48 @@ mod tests {
 
     #[test]
     #[ignore = "needs a GPU"]
+    fn cloud_layers_cover_the_sky_without_volumetrics() {
+        let render = |coverage: Option<(f32, bool)>| {
+            let mut room = dark_room(false);
+            room.world.camera.position = [0.0, 1.0, 0.0];
+            room.world.camera.look_at = [0.0, 6.0, 10.0];
+            room.world.background = "#002080".into();
+            room.world.lighting.illuminance = 10000.0;
+            if let Some((coverage, painted)) = coverage {
+                room.world.cloud_layers = vec![blockloom_core::cloud_layers::CloudLayer {
+                    coverage,
+                    altitude: 2000.0,
+                    horizon_fade: [1.0, 0.0],
+                    ..Default::default()
+                }];
+                if painted {
+                    // A missing file reports and falls back to the noise.
+                    room.world.cloud_layers[0].coverage_texture = "assets/none.png".into();
+                }
+            }
+            let (set, index, errors) = run_world(room, |_| {}, game_camera(), 40, |_| false);
+            let set = set.expect("cloud layer frame");
+            (
+                middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize),
+                errors,
+            )
+        };
+        let (clear, errors) = render(None);
+        assert!(errors.is_empty(), "{errors:?}");
+        let (overcast, errors) = render(Some((1.0, false)));
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(
+            overcast[2].saturating_add(40) < clear[2] || overcast[0] > clear[0].saturating_add(40),
+            "the layer didn't cover the sky: clear {clear:?}, overcast {overcast:?}"
+        );
+        let (none, _) = render(Some((0.0, false)));
+        assert_eq!(none, clear, "a clear layer changed the sky");
+        let (_, errors) = render(Some((1.0, true)));
+        assert!(!errors.is_empty(), "a missing coverage file said nothing");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
     fn volumetric_clouds_cover_the_sky() {
         let render = |enabled| {
             let mut room = dark_room(false);

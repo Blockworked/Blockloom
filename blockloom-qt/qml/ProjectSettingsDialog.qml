@@ -42,6 +42,14 @@ BwDialog {
     function writeFogPart(part, next) { const fog = JSON.parse(JSON.stringify(world.fog)); fog[part] = Object.assign(fog[part], next); invoke("set_fog", { fog: fog }); }
     function writeLightning(next) { invoke("set_lightning", { lightning: Object.assign(JSON.parse(JSON.stringify(world.lightning)), next) }); }
     function writeVolumetricClouds(next) { invoke("set_clouds", { clouds: Object.assign(JSON.parse(JSON.stringify(world.clouds)), next) }); }
+    function cloudLayerDefaults() {
+        return { enabled: true, name: "", coverage_texture: "", seed: 1, scale: 4, octaves: 5, coverage: 0.5, contrast: 2, tiling_km: 20, opacity: 1, altitude: 8000, parallax: 200,
+            tint: "#FFFFFF", sun_tint: "#FFF4E6", edge_tint: "#FFE0C0", horizon_fade: [12, 1], day_tint: "#FFFFFF", sunset_tint: "#FFB08A", night_tint: "#8090B0",
+            scroll: [0, 0], wind: 1, flow_map: "", flow_strength: 0, flow_period: 60, spin: 0, pivot: [0, 0], aerial: 1, revision: 0 };
+    }
+    function cloudLayersOf() { return world && world.cloud_layers ? JSON.parse(JSON.stringify(world.cloud_layers)) : []; }
+    function writeCloudLayers(layers) { invoke("set_cloud_layers", { layers: layers }); }
+    function writeCloudLayer(index, next) { const layers = cloudLayersOf(); layers[index] = Object.assign(layers[index], next); writeCloudLayers(layers); }
     function writeWind(next) { invoke("set_wind", { wind: Object.assign(JSON.parse(JSON.stringify(world.wind)), next) }); }
     function writeClouds(next) { writeWind({ clouds: Object.assign(JSON.parse(JSON.stringify(world.wind.clouds)), next) }); }
     function writeLighting(next) { invoke("set_lighting", { lighting: Object.assign(JSON.parse(JSON.stringify(world.lighting)), next) }); }
@@ -378,6 +386,116 @@ BwDialog {
                 InspectorRow { label: ""; labelWidth: 110; Layout.fillWidth: true
                     BwButton { text: "Bake noise to assets"; iconName: "download"; implicitHeight: 30; onClicked: root.invoke("bake_cloud_noise", {}) } Item { Layout.fillWidth: true } }
                 Note { text: "Thickness is top minus bottom, in metres. Clouds ride the Wind section's cloud drift and seed. Quality controls view and light march steps: Low 16/3, Medium 32/5, High 48/6, Ultra 64/8. Noise volumes are image strips of square slices (e.g. 16384x128) or .cube files: shape reads red as its Perlin-Worley base, erosion reads red, green and blue as Worley octaves. Bake noise to assets writes the seed's own noise into assets/clouds to edit or swap." }
+            }
+            Section {
+                id: layerSection
+                heading: "Cloud layers"; visible: !!root.world && root.is3d
+                readonly property var layers: root.world && root.world.cloud_layers ? root.world.cloud_layers : []
+                // What the paint canvas does with a stroke.
+                property string tool: "Cloud"
+                property real radius: 0.05
+                property real strength: 0.5
+                Repeater {
+                    model: layerSection.layers.length
+                    delegate: ColumnLayout {
+                        id: layerCard
+                        required property int index
+                        readonly property var l: layerSection.layers[index] || ({})
+                        function write(next) { root.writeCloudLayer(index, next); }
+                        Layout.fillWidth: true; spacing: 6
+                        InspectorRow { label: "Layer " + (layerCard.index + 1); labelWidth: 110; Layout.fillWidth: true
+                            SwitchField { value: !!layerCard.l.enabled; onToggled: on => layerCard.write({ enabled: on }) } Item { Layout.fillWidth: true }
+                            IconButton { iconName: "trash-2"; tip: "Remove this layer"; onClicked: { const layers = root.cloudLayersOf(); layers.splice(layerCard.index, 1); root.writeCloudLayers(layers); } } }
+                        InspectorRow { label: "Altitude m, opacity"; labelWidth: 110; Layout.fillWidth: true
+                            NumberField { value: layerCard.l.altitude; fallback: 8000; onCommitted: n => layerCard.write({ altitude: root.clamp(n, -10000, 100000) }) }
+                            NumberField { value: layerCard.l.opacity; fallback: 1; onCommitted: n => layerCard.write({ opacity: root.clamp(n, 0, 1) }) } }
+                        InspectorRow { label: "Cover, contrast"; labelWidth: 110; Layout.fillWidth: true
+                            NumberField { value: layerCard.l.coverage; fallback: 0.5; onCommitted: n => layerCard.write({ coverage: root.clamp(n, 0, 1) }) }
+                            NumberField { value: layerCard.l.contrast; fallback: 2; onCommitted: n => layerCard.write({ contrast: root.clamp(n, 1, 16) }) } }
+                        InspectorRow { label: "Coverage"; labelWidth: 110; Layout.fillWidth: true
+                            AssetField { app: root.app; accept: ["image"]; value: layerCard.l.coverage_texture || ""; placeholderText: "Noise from the seed"; onCommitted: p => layerCard.write({ coverage_texture: p }) }
+                            IconButton { iconName: "x"; tip: "Back to noise"; enabled: !!layerCard.l.coverage_texture; onClicked: layerCard.write({ coverage_texture: "" }) } }
+                        InspectorRow { visible: !layerCard.l.coverage_texture; label: "Seed, scale, oct."; labelWidth: 110; Layout.fillWidth: true
+                            NumberField { value: layerCard.l.seed; fallback: 1; onCommitted: n => layerCard.write({ seed: Math.max(Math.round(n), 0) }) }
+                            NumberField { value: layerCard.l.scale; fallback: 4; onCommitted: n => layerCard.write({ scale: root.clamp(Math.round(n), 1, 64) }) }
+                            NumberField { value: layerCard.l.octaves; fallback: 5; onCommitted: n => layerCard.write({ octaves: root.clamp(Math.round(n), 1, 8) }) } }
+                        InspectorRow { label: "Tiling km, parallax"; labelWidth: 110; Layout.fillWidth: true
+                            NumberField { value: layerCard.l.tiling_km; fallback: 20; onCommitted: n => layerCard.write({ tiling_km: root.clamp(n, 0.1, 1000) }) }
+                            NumberField { value: layerCard.l.parallax; fallback: 200; onCommitted: n => layerCard.write({ parallax: root.clamp(n, 0, 10000) }) } }
+                        InspectorRow { label: "Tint, sun, edge"; labelWidth: 110; Layout.fillWidth: true
+                            ColorField { value: layerCard.l.tint || "#FFFFFF"; onPicked: c => layerCard.write({ tint: c }) }
+                            ColorField { value: layerCard.l.sun_tint || "#FFF4E6"; onPicked: c => layerCard.write({ sun_tint: c }) }
+                            ColorField { value: layerCard.l.edge_tint || "#FFE0C0"; onPicked: c => layerCard.write({ edge_tint: c }) } Item { Layout.fillWidth: true } }
+                        InspectorRow { label: "Day, sunset, night"; labelWidth: 110; Layout.fillWidth: true
+                            ColorField { value: layerCard.l.day_tint || "#FFFFFF"; onPicked: c => layerCard.write({ day_tint: c }) }
+                            ColorField { value: layerCard.l.sunset_tint || "#FFB08A"; onPicked: c => layerCard.write({ sunset_tint: c }) }
+                            ColorField { value: layerCard.l.night_tint || "#8090B0"; onPicked: c => layerCard.write({ night_tint: c }) } Item { Layout.fillWidth: true } }
+                        InspectorRow { label: "Horizon fade °"; labelWidth: 110; Layout.fillWidth: true
+                            Repeater { model: 2; delegate: NumberField { required property int index; value: (layerCard.l.horizon_fade || [12, 1])[index]; onCommitted: n => layerCard.write({ horizon_fade: root.withIndex(layerCard.l.horizon_fade || [12, 1], index, root.clamp(n, 0, 90)) }) } } }
+                        InspectorRow { label: "Scroll m/s, wind"; labelWidth: 110; Layout.fillWidth: true
+                            Repeater { model: 2; delegate: NumberField { required property int index; value: (layerCard.l.scroll || [0, 0])[index]; onCommitted: n => layerCard.write({ scroll: root.withIndex(layerCard.l.scroll || [0, 0], index, root.clamp(n, -10000, 10000)) }) } }
+                            NumberField { value: layerCard.l.wind; fallback: 1; onCommitted: n => layerCard.write({ wind: root.clamp(n, 0, 100) }) } }
+                        InspectorRow { label: "Flow map"; labelWidth: 110; Layout.fillWidth: true
+                            AssetField { app: root.app; accept: ["image"]; value: layerCard.l.flow_map || ""; placeholderText: "None"; onCommitted: p => layerCard.write({ flow_map: p }) }
+                            IconButton { iconName: "x"; tip: "No flow map"; enabled: !!layerCard.l.flow_map; onClicked: layerCard.write({ flow_map: "" }) } }
+                        InspectorRow { visible: !!layerCard.l.flow_map; label: "Flow m, period s"; labelWidth: 110; Layout.fillWidth: true
+                            NumberField { value: layerCard.l.flow_strength; fallback: 0; onCommitted: n => layerCard.write({ flow_strength: root.clamp(n, 0, 100000) }) }
+                            NumberField { value: layerCard.l.flow_period; fallback: 60; onCommitted: n => layerCard.write({ flow_period: root.clamp(n, 0.1, 100000) }) } }
+                        InspectorRow { label: "Spin °/s, pivot"; labelWidth: 110; Layout.fillWidth: true
+                            NumberField { value: layerCard.l.spin; fallback: 0; onCommitted: n => layerCard.write({ spin: root.clamp(n, -360, 360) }) }
+                            Repeater { model: 2; delegate: NumberField { required property int index; value: (layerCard.l.pivot || [0, 0])[index]; onCommitted: n => layerCard.write({ pivot: root.withIndex(layerCard.l.pivot || [0, 0], index, n) }) } } }
+                        InspectorRow { label: "Aerial haze"; labelWidth: 110; Layout.fillWidth: true
+                            NumberField { value: layerCard.l.aerial; fallback: 1; onCommitted: n => layerCard.write({ aerial: root.clamp(n, 0, 1) }) } }
+                        // Paint canvas: one tile of coverage; a drag is one stroke.
+                        Rectangle {
+                            Layout.preferredWidth: 256; Layout.preferredHeight: 256; Layout.alignment: Qt.AlignHCenter
+                            color: Theme.panelRaised; border.color: Theme.border; clip: true
+                            Image {
+                                anchors.fill: parent; cache: false; smooth: true
+                                source: layerCard.l.coverage_texture ? root.app.assetUrl(layerCard.l.coverage_texture) + "?" + (layerCard.l.revision || 0) : ""
+                            }
+                            Text { anchors.centerIn: parent; visible: !layerCard.l.coverage_texture; color: Theme.textDim; font.pixelSize: 11; text: "Paint to start from the noise" }
+                            Canvas {
+                                id: strokeCanvas
+                                anchors.fill: parent
+                                property var points: []
+                                onPaint: {
+                                    const g = getContext("2d");
+                                    g.clearRect(0, 0, width, height);
+                                    if (points.length === 0) return;
+                                    g.strokeStyle = layerSection.tool === "Eraser" ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.6)";
+                                    g.lineWidth = Math.max(layerSection.radius * 2 * width, 1);
+                                    g.lineCap = "round"; g.lineJoin = "round";
+                                    g.beginPath();
+                                    g.moveTo(points[0][0] * width, points[0][1] * height);
+                                    for (let i = 1; i < points.length; i++) g.lineTo(points[i][0] * width, points[i][1] * height);
+                                    g.stroke();
+                                }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                function at(mouse) { return [root.clamp(mouse.x / width, 0, 1), root.clamp(mouse.y / height, 0, 1)]; }
+                                onPressed: mouse => { strokeCanvas.points = [at(mouse)]; strokeCanvas.requestPaint(); }
+                                onPositionChanged: mouse => { const next = strokeCanvas.points.slice(); next.push(at(mouse)); strokeCanvas.points = next; strokeCanvas.requestPaint(); }
+                                onReleased: {
+                                    root.invoke("paint_cloud_layer", { layer: layerCard.index, points: strokeCanvas.points,
+                                        brush: { tool: layerSection.tool, radius: layerSection.radius, strength: layerSection.strength, falloff: 0.7 } });
+                                    strokeCanvas.points = []; strokeCanvas.requestPaint();
+                                }
+                            }
+                        }
+                    }
+                }
+                InspectorRow { visible: layerSection.layers.length > 0; label: "Brush"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: ["Cloud", "Eraser", "Blur", "Advect"].map(v => ({ value: v, label: v })); value: layerSection.tool; onChosen: v => layerSection.tool = v } }
+                InspectorRow { visible: layerSection.layers.length > 0; label: "Radius, strength"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: layerSection.radius; fallback: 0.05; onCommitted: n => layerSection.radius = root.clamp(n, 0.001, 0.5) }
+                    NumberField { value: layerSection.strength; fallback: 0.5; onCommitted: n => layerSection.strength = root.clamp(n, 0, 1) } }
+                InspectorRow { label: ""; labelWidth: 110; Layout.fillWidth: true
+                    BwButton { text: "Add layer"; iconName: "plus"; implicitHeight: 30; enabled: layerSection.layers.length < 4
+                        onClicked: { const layers = root.cloudLayersOf(); const l = root.cloudLayerDefaults(); l.seed = layers.length + 1; l.altitude = 8000 - 2000 * layers.length; layers.push(l); root.writeCloudLayers(layers); } }
+                    Item { Layout.fillWidth: true } }
+                Note { text: "Up to four flat layers of cloud, drawn in front of or behind the volumetric clouds by altitude, and the whole sky's clouds when volumetrics are off. Coverage is an image (its brightness) or noise from the seed; cover 0 is clear, 1 overcast, and contrast sharpens the edges. Parallax is the layer's apparent thickness in metres, which also shades it from the sun. The tint is multiplied by the day, sunset and night tints as the sun sinks. Layers scroll by their own speed plus the Wind section's layer scroll times wind, and turn round the pivot for storm spin; a flow map's red and green push coverage around (0.5 is still). Paint on a layer's tile to draw coverage into assets/clouds/layer-N.png: Cloud adds, Eraser removes, Blur softens, Advect smears along the stroke." }
             }
             Section {
                 id: fogSection

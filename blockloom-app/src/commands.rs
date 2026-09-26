@@ -919,6 +919,59 @@ pub(crate) fn set_clouds(
     Ok(())
 }
 
+pub(crate) fn set_cloud_layers(
+    state: &SharedState,
+    app: &AppHandle,
+    layers: Vec<blockloom_core::cloud_layers::CloudLayer>,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut layers = layers;
+    blockloom_core::cloud_layers::normalize(&mut layers);
+    if let Some(project) = s.project_mut() {
+        project.world.cloud_layers = layers;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Paints a stroke into a cloud layer's coverage file and points the layer
+/// at it, bumping its revision so the runtime rereads it.
+pub(crate) fn paint_cloud_layer(
+    state: &SharedState,
+    app: &AppHandle,
+    layer: usize,
+    brush: blockloom_core::cloud_layers::Brush,
+    points: Vec<[f32; 2]>,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    let dir = project_dir(&s)?;
+    let current = s
+        .project()
+        .ok_or("No project is open")?
+        .world
+        .cloud_layers
+        .get(layer)
+        .cloned()
+        .ok_or_else(|| format!("There is no cloud layer {}", layer + 1))?;
+    let path = blockloom_core::cloud_layers::paint_file(&dir, &current, layer, &brush, &points)?;
+    let _ = pipeline::note_imported(&dir, &path, "cloud layer coverage");
+    push_undo(&mut s);
+    if let Some(l) = s
+        .project_mut()
+        .and_then(|p| p.world.cloud_layers.get_mut(layer))
+    {
+        l.coverage_texture = path.clone();
+        l.revision = l.revision.wrapping_add(1);
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(path)
+}
+
 /// Bakes the clouds' shape and erosion noise from the cloud seed into volume
 /// assets and points the clouds at them, so they can be edited or replaced.
 pub(crate) fn bake_cloud_noise(

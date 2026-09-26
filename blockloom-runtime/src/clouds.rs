@@ -125,6 +125,12 @@ struct CloudBuffer(DynamicUniformBuffer<CloudUniforms>);
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct CloudPass;
+/// The march's own composite, inside `CloudPass`; cloud layers draw round it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct CloudMarch;
+/// Where the clouds' uniforms are resolved each frame.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct CloudResolve;
 
 pub fn register(app: &mut App) {
     app.init_resource::<CloudStats>()
@@ -134,6 +140,7 @@ pub fn register(app: &mut App) {
             Update,
             (load_volumes, resolve)
                 .chain()
+                .in_set(CloudResolve)
                 .after(crate::environment::apply_environment),
         );
     if app.get_sub_app(RenderApp).is_none() {
@@ -168,6 +175,7 @@ pub fn register(app: &mut App) {
             Core3d,
             draw.after(Core3dSystems::MainPass)
                 .in_set(CloudPass)
+                .in_set(CloudMarch)
                 .before(Core3dSystems::EarlyPostProcess),
         );
 }

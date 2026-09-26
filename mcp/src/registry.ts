@@ -44,6 +44,7 @@ function proseToSchema(ty: string): z.ZodType {
   if (ty === "bool" || ty === "boolean (default: on when available)") return z.boolean();
   if (ty === "#RRGGBB") return z.string().regex(/^#[0-9a-fA-F]{6}$/);
   if (ty === "[x, y, z]") return z.array(z.number());
+  if (ty === "[[u, v]]") return z.array(z.array(z.number()));
   if (ty === "[source paths]" || ty === "[actor ids]") return z.array(z.string());
   if (ty.startsWith("[")) return z.array(OPEN_OBJECT);
   if (ty.includes("object") || ty.startsWith("{")) return OPEN_OBJECT;
