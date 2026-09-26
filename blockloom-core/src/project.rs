@@ -761,6 +761,10 @@ impl Project {
             {
                 material.normalize();
             }
+            if let Some(ActorComponent::Terrain { terrain }) = actor.components.get_mut("Terrain")
+            {
+                terrain.normalize();
+            }
             actor.graph.migrate_bool_slots();
             actor.graph.normalize_block_colors();
             actor.graph.prune_orphaned_comments();
@@ -783,6 +787,7 @@ impl Project {
         self.world.clouds.normalize();
         self.world.lightning.normalize();
         self.world.wind.normalize();
+        self.world.surface.normalize();
     }
 
     /// Pre-component projects named the followed actor on the world camera.

@@ -65,6 +65,10 @@ pub struct SurfaceMaterial {
     /// A custom shader-graph effect. `None` is the PBR path above.
     #[serde(default)]
     pub shader: Option<GraphEffect>,
+    /// Anti-tiling, macro/micro variation and the mask stack, on top of the
+    /// box projection above. Terrain layers share it.
+    #[serde(default)]
+    pub detail: SurfaceDetail,
 }
 
 fn default_roughness() -> f32 {
@@ -109,6 +113,7 @@ impl Default for SurfaceMaterial {
             texel_density: default_texel_density(),
             double_sided: false,
             shader: None,
+            detail: SurfaceDetail::default(),
         }
     }
 }
@@ -141,6 +146,7 @@ impl SurfaceMaterial {
         if let Some(effect) = self.shader.as_mut() {
             effect.normalize();
         }
+        self.detail.normalize();
     }
 
     /// True when the material changes anything the runtime must apply.
@@ -160,6 +166,361 @@ impl SurfaceMaterial {
             || self.texel_density != default_texel_density()
             || self.double_sided
             || self.shader.is_some()
+            || self.detail.is_active()
+    }
+
+    /// Whether the surface needs the projected (box) material rather than a
+    /// plain standard one.
+    pub fn is_projected(&self) -> bool {
+        self.box_projection || !self.roughness_texture.is_empty() || self.detail.is_active()
+    }
+}
+
+// ─── Surface detail ──────────────────────────────────────────────────────
+
+/// The advanced texturing pass: stochastic tiling, macro and micro detail,
+/// and a mask stack laid over the surface by world rules. Drawn by the same
+/// shader as box projection (`blockloom::texturing`), so every dial here also
+/// works on a UV-mapped surface.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SurfaceDetail {
+    /// Texture bombing: each map is sampled from three randomly offset and
+    /// rotated hex tiles and blended, so repeats stop lining up.
+    pub stochastic: bool,
+    /// How hard the hex tiles blend, 0 (soft, blurry) to 1 (crisp seams).
+    pub stochastic_contrast: f32,
+    /// A large grayscale image multiplied over albedo to break up repeats.
+    /// Empty uses procedural noise.
+    pub macro_texture: String,
+    /// Metres per repeat of the macro variation.
+    pub macro_size: f32,
+    /// 0 is off; 1 swings albedo by the full range of the map.
+    pub macro_strength: f32,
+    /// A tiling normal map layered over the surface's own up close.
+    pub detail_texture: String,
+    /// Metres per repeat of the detail map.
+    pub detail_size: f32,
+    pub detail_strength: f32,
+    /// Metres past which the detail map fades out.
+    pub detail_distance: f32,
+    pub masks: MaskStack,
+}
+
+impl Default for SurfaceDetail {
+    fn default() -> Self {
+        Self {
+            stochastic: false,
+            stochastic_contrast: 0.5,
+            macro_texture: String::new(),
+            macro_size: 32.0,
+            macro_strength: 0.0,
+            detail_texture: String::new(),
+            detail_size: 0.5,
+            detail_strength: 0.0,
+            detail_distance: 20.0,
+            masks: MaskStack::default(),
+        }
+    }
+}
+
+impl SurfaceDetail {
+    pub fn normalize(&mut self) {
+        let finite = |v: f32, fallback: f32| if v.is_finite() { v } else { fallback };
+        self.stochastic_contrast = finite(self.stochastic_contrast, 0.5).clamp(0.0, 1.0);
+        self.macro_texture = self.macro_texture.trim().to_string();
+        self.detail_texture = self.detail_texture.trim().to_string();
+        self.macro_size = finite(self.macro_size, 32.0).clamp(0.01, 100_000.0);
+        self.macro_strength = finite(self.macro_strength, 0.0).clamp(0.0, 1.0);
+        self.detail_size = finite(self.detail_size, 0.5).clamp(0.001, 1000.0);
+        self.detail_strength = finite(self.detail_strength, 0.0).clamp(0.0, 2.0);
+        self.detail_distance = finite(self.detail_distance, 20.0).clamp(0.1, 10_000.0);
+        self.masks.normalize();
+    }
+
+    /// The `DetailUniforms` lanes of `blockloom::texturing`: tiling, then
+    /// detail. `macro_map` says whether a macro texture is bound.
+    pub fn pack(&self, macro_map: bool) -> [[f32; 4]; 2] {
+        [
+            [
+                f32::from(self.stochastic),
+                self.stochastic_contrast,
+                self.macro_strength,
+                1.0 / self.macro_size.max(0.01),
+            ],
+            [
+                if self.detail_texture.is_empty() {
+                    0.0
+                } else {
+                    self.detail_strength
+                },
+                1.0 / self.detail_size.max(0.001),
+                self.detail_distance,
+                f32::from(macro_map),
+            ],
+        ]
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.stochastic
+            || self.macro_strength > 0.0
+            || (self.detail_strength > 0.0 && !self.detail_texture.is_empty())
+            || self.masks.is_active()
+    }
+}
+
+/// Masks laid over a surface in a fixed order: slope, height and cavity
+/// tint and roughen it, then snow settles and wetness darkens and glosses.
+/// Snow and wetness scale by the world's snow cover and wetness, which the
+/// weather director and `set snow cover to` / `set surface wetness to` move.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct MaskStack {
+    /// Steep faces, by degrees from flat.
+    pub slope: RuleMask,
+    /// High ground, by world height in metres.
+    pub height: RuleMask,
+    /// Hollows and creases, 0 to 1. Terrain bakes its own; other surfaces
+    /// read none.
+    pub cavity: RuleMask,
+    pub snow: SnowMask,
+    pub wetness: WetnessMask,
+}
+
+impl MaskStack {
+    pub fn normalize(&mut self) {
+        self.slope.normalize(0.0, 90.0);
+        self.height.normalize(-100_000.0, 100_000.0);
+        self.cavity.normalize(0.0, 1.0);
+        self.snow.normalize();
+        self.wetness.normalize();
+    }
+
+    /// The `MaskUniforms` lanes of `blockloom::texturing`, colors linear.
+    pub fn pack(&self) -> [[f32; 4]; 9] {
+        let rule = |mask: &RuleMask| {
+            let c = hex_to_linear(&mask.color);
+            [
+                [
+                    mask.start,
+                    mask.blend,
+                    if mask.enabled { mask.strength } else { 0.0 },
+                    mask.roughness,
+                ],
+                [c[0], c[1], c[2], f32::from(mask.invert)],
+            ]
+        };
+        let [slope, slope_color] = rule(&self.slope);
+        let [height, height_color] = rule(&self.height);
+        let [cavity, cavity_color] = rule(&self.cavity);
+        let snow = &self.snow;
+        let white = hex_to_linear(&snow.color);
+        let wet = &self.wetness;
+        [
+            slope,
+            slope_color,
+            height,
+            height_color,
+            cavity,
+            cavity_color,
+            [
+                if snow.enabled { snow.amount } else { 0.0 },
+                snow.max_slope,
+                snow.min_height,
+                snow.blend,
+            ],
+            [white[0], white[1], white[2], snow.roughness],
+            [
+                if wet.enabled { wet.amount } else { 0.0 },
+                wet.darken,
+                wet.roughness,
+                wet.puddles,
+            ],
+        ]
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.slope.enabled
+            || self.height.enabled
+            || self.cavity.enabled
+            || self.snow.enabled
+            || self.wetness.enabled
+    }
+}
+
+/// A tint and roughness laid on wherever a value rises past `start`,
+/// ramping in over `blend`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RuleMask {
+    pub enabled: bool,
+    pub start: f32,
+    pub blend: f32,
+    /// Flip the rule: the mask covers what lies below `start` instead.
+    pub invert: bool,
+    pub color: String,
+    /// How much of the color replaces the surface's, 0 to 1.
+    pub strength: f32,
+    pub roughness: f32,
+}
+
+impl Default for RuleMask {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            start: 35.0,
+            blend: 10.0,
+            invert: false,
+            color: "#6E6A64".to_string(),
+            strength: 1.0,
+            roughness: 0.8,
+        }
+    }
+}
+
+impl RuleMask {
+    fn normalize(&mut self, lo: f32, hi: f32) {
+        let finite = |v: f32, fallback: f32| if v.is_finite() { v } else { fallback };
+        self.start = finite(self.start, 0.0).clamp(lo, hi);
+        self.blend = finite(self.blend, 0.0).max(0.0);
+        self.strength = finite(self.strength, 1.0).clamp(0.0, 1.0);
+        self.roughness = finite(self.roughness, 0.8).clamp(0.0, 1.0);
+    }
+
+    /// How much of the mask covers a surface whose rule reads `value`.
+    pub fn weight(&self, value: f32) -> f32 {
+        if !self.enabled {
+            return 0.0;
+        }
+        let t = if self.blend <= 0.0 {
+            f32::from(value >= self.start)
+        } else {
+            ((value - self.start) / self.blend).clamp(0.0, 1.0)
+        };
+        let t = if self.invert { 1.0 - t } else { t };
+        smooth(t) * self.strength
+    }
+}
+
+/// Snow that settles on faces flatter than `max_slope` and above
+/// `min_height`, as deep as the world's snow cover times `amount`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SnowMask {
+    pub enabled: bool,
+    pub amount: f32,
+    /// Degrees from flat past which snow slides off.
+    pub max_slope: f32,
+    /// Metres of world height below which no snow lies.
+    pub min_height: f32,
+    /// Metres (and degrees) the edges soften over.
+    pub blend: f32,
+    pub color: String,
+    pub roughness: f32,
+}
+
+impl Default for SnowMask {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            amount: 1.0,
+            max_slope: 50.0,
+            min_height: -100_000.0,
+            blend: 8.0,
+            color: "#F2F5F8".to_string(),
+            roughness: 0.75,
+        }
+    }
+}
+
+impl SnowMask {
+    fn normalize(&mut self) {
+        let finite = |v: f32, fallback: f32| if v.is_finite() { v } else { fallback };
+        self.amount = finite(self.amount, 1.0).clamp(0.0, 4.0);
+        self.max_slope = finite(self.max_slope, 50.0).clamp(0.0, 90.0);
+        self.min_height = finite(self.min_height, -100_000.0).clamp(-100_000.0, 100_000.0);
+        self.blend = finite(self.blend, 8.0).max(0.0);
+        self.roughness = finite(self.roughness, 0.75).clamp(0.0, 1.0);
+    }
+
+    /// Snow depth 0-1 on a face `slope` degrees from flat at `height`
+    /// metres, under a world snow cover of `cover`. The shader's twin.
+    pub fn weight(&self, slope: f32, height: f32, cover: f32) -> f32 {
+        if !self.enabled {
+            return 0.0;
+        }
+        let ramp = |v: f32, edge: f32| {
+            if self.blend <= 0.0 {
+                f32::from(v >= edge)
+            } else {
+                ((v - edge) / self.blend + 0.5).clamp(0.0, 1.0)
+            }
+        };
+        let flat = 1.0 - ramp(slope, self.max_slope);
+        let high = ramp(height, self.min_height);
+        let depth = (cover * self.amount).clamp(0.0, 1.0);
+        // More cover buries steeper faces first, then everything.
+        smooth((flat * high * 2.0 * depth).clamp(0.0, 1.0))
+    }
+}
+
+/// Rain on the surface: darker albedo, a glossier finish, and water
+/// pooling in hollows first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WetnessMask {
+    pub enabled: bool,
+    pub amount: f32,
+    /// How much a soaked surface darkens, 0 to 1.
+    pub darken: f32,
+    /// Roughness of a soaked surface.
+    pub roughness: f32,
+    /// How much hollows fill first, 0 (evenly wet) to 1 (puddles).
+    pub puddles: f32,
+}
+
+impl Default for WetnessMask {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            amount: 1.0,
+            darken: 0.4,
+            roughness: 0.08,
+            puddles: 0.5,
+        }
+    }
+}
+
+impl WetnessMask {
+    fn normalize(&mut self) {
+        let finite = |v: f32, fallback: f32| if v.is_finite() { v } else { fallback };
+        self.amount = finite(self.amount, 1.0).clamp(0.0, 4.0);
+        self.darken = finite(self.darken, 0.4).clamp(0.0, 1.0);
+        self.roughness = finite(self.roughness, 0.08).clamp(0.0, 1.0);
+        self.puddles = finite(self.puddles, 0.5).clamp(0.0, 1.0);
+    }
+}
+
+fn smooth(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The world's surface weather: what snow and wetness masks scale by. The
+/// weather director and blocks move it for the run.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct SurfaceWeather {
+    /// Snow cover, 0 (none) to 1 (everything flat enough is white).
+    pub snow: f32,
+    /// Wetness, 0 (dry) to 1 (soaked).
+    pub wetness: f32,
+}
+
+impl SurfaceWeather {
+    pub fn normalize(&mut self) {
+        let unit = |v: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+        self.snow = unit(self.snow);
+        self.wetness = unit(self.wetness);
     }
 }
 
@@ -1587,6 +1948,74 @@ impl TileMesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_old_material_has_no_detail_and_stays_on_its_old_path() {
+        let old: SurfaceMaterial = serde_json::from_str(r#"{"metallic":0.2}"#).unwrap();
+        assert_eq!(old.detail, SurfaceDetail::default());
+        assert!(!old.detail.is_active());
+        assert!(!old.is_projected());
+        let mut stochastic = old.clone();
+        stochastic.detail.stochastic = true;
+        assert!(stochastic.is_projected());
+    }
+
+    #[test]
+    fn snow_settles_on_the_flat_and_slides_off_the_steep() {
+        let snow = SnowMask {
+            enabled: true,
+            max_slope: 40.0,
+            blend: 4.0,
+            ..SnowMask::default()
+        };
+        assert_eq!(snow.weight(10.0, 0.0, 0.0), 0.0);
+        assert!(snow.weight(10.0, 0.0, 1.0) > 0.99);
+        assert!(snow.weight(60.0, 0.0, 1.0) < 0.01);
+        // Half cover whitens flat ground fully, steeper ground partly.
+        assert!(snow.weight(0.0, 0.0, 0.5) > 0.99);
+        assert!(snow.weight(39.0, 0.0, 0.5) < snow.weight(0.0, 0.0, 0.5));
+        let high = SnowMask {
+            min_height: 100.0,
+            ..snow.clone()
+        };
+        assert!(high.weight(0.0, 50.0, 1.0) < 0.01);
+    }
+
+    #[test]
+    fn rule_masks_ramp_in_and_invert() {
+        let mut rule = RuleMask {
+            enabled: true,
+            start: 30.0,
+            blend: 10.0,
+            ..RuleMask::default()
+        };
+        assert_eq!(rule.weight(20.0), 0.0);
+        assert!((rule.weight(35.0) - 0.5).abs() < 1e-5);
+        assert_eq!(rule.weight(45.0), 1.0);
+        rule.invert = true;
+        assert_eq!(rule.weight(20.0), 1.0);
+        rule.enabled = false;
+        assert_eq!(rule.weight(20.0), 0.0);
+    }
+
+    #[test]
+    fn a_disabled_mask_packs_with_zero_strength() {
+        let mut masks = MaskStack::default();
+        let packed = masks.pack();
+        assert_eq!(packed[0][2], 0.0);
+        assert_eq!(packed[6][0], 0.0);
+        masks.snow.enabled = true;
+        masks.wetness.enabled = true;
+        let packed = masks.pack();
+        assert_eq!(packed[6][0], 1.0);
+        assert_eq!(packed[8][0], 1.0);
+        let detail = SurfaceDetail {
+            detail_strength: 1.0,
+            ..SurfaceDetail::default()
+        };
+        // No detail map, no detail.
+        assert_eq!(detail.pack(false)[1][0], 0.0);
+    }
 
     #[test]
     fn a_default_material_changes_nothing() {

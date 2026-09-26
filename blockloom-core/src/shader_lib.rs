@@ -23,6 +23,7 @@ pub const MODULES: &[(&str, &str)] = &[
     ("blue_noise", include_str!("shaders/blue_noise.wesl")),
     ("clouds", include_str!("shaders/clouds.wesl")),
     ("space", include_str!("shaders/space.wesl")),
+    ("texturing", include_str!("shaders/texturing.wesl")),
 ];
 
 pub fn module(name: &str) -> Option<&'static str> {
@@ -115,6 +116,41 @@ fn main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let light = scatter_step(frame.sun_color.rgb * phase, vec3<f32>(density), 0.5);
     let shade = light * exposure_scale(frame.exposure) * beer_powder(density, 1.0);
     return vec4<f32>(shade, luminance(shade));
+}
+";
+        validate(root, &[]).unwrap();
+    }
+
+    #[test]
+    fn texturing_samples_from_a_fragment() {
+        let root = "\
+import blockloom::texturing::{SurfaceGlobals, MaskUniforms, DetailUniforms, triplanar_weights,
+    triplanar, triplanar_array, triplanar_normal, triplanar_normal_array, sample_uv, macro_noise,
+    macro_tint, blend_detail, apply_masks, blend_debug, slope_degrees};
+
+@group(0) @binding(0) var<storage, read> globals: SurfaceGlobals;
+@group(0) @binding(1) var<uniform> masks: MaskUniforms;
+@group(0) @binding(2) var<uniform> detail: DetailUniforms;
+@group(0) @binding(3) var albedo: texture_2d<f32>;
+@group(0) @binding(4) var layers: texture_2d_array<f32>;
+@group(0) @binding(5) var linear: sampler;
+
+@fragment
+fn main(@location(0) pos: vec3<f32>, @location(1) n: vec3<f32>) -> @location(0) vec4<f32> {
+    let gx = dpdx(pos);
+    let gy = dpdy(pos);
+    let w = triplanar_weights(n, 4.0);
+    let stochastic = detail.tiling.x > 0.5;
+    var color = triplanar(albedo, linear, pos, gx, gy, w, 0.5, stochastic, detail.tiling.y);
+    color += triplanar_array(layers, linear, 2, pos, gx, gy, w, 0.5, stochastic, 0.5);
+    color += sample_uv(albedo, linear, pos.xz, gx.xz, gy.xz, true, 0.5);
+    let bumped = triplanar_normal(albedo, linear, pos, gx, gy, n, w, 1.0, stochastic, 0.5);
+    let layered = triplanar_normal_array(layers, linear, 1, pos, gx, gy, n, w, 1.0, false, 0.5);
+    let tint = macro_tint(macro_noise(pos.xz, detail.tiling.w), detail.tiling.z);
+    let normal = blend_detail(bumped, layered, n, detail.detail.x, length(pos), detail.detail.z);
+    let masked = apply_masks(color.rgb * tint, 0.5, slope_degrees(normal), pos.y, 0.5, masks, globals);
+    let debug = blend_debug(vec4<f32>(1.0, 0.0, 0.0, 0.0), masked.coverage);
+    return vec4<f32>(mix(masked.albedo, debug, globals.weather.z), masked.roughness);
 }
 ";
         validate(root, &[]).unwrap();
