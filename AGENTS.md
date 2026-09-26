@@ -1102,8 +1102,11 @@ still the ended shorthand. `play animation` names a state first, then a clip.
 `rig2d.rs` is 2D skeletal rigs: Spine or DragonBones JSON (`Rig::parse`) into
 bones, slots, skins, one- and two-bone IK and keyed animations, y up in the
 actor's frame. `sample` gives a `LocalPose`, `blend` crossfades two, `solve`
-composes the hierarchy, runs IK and lists slot sprites in draw order. Only
-region/image attachments draw. `Curve` eases keys: Spine's beziers (3.x
+composes the hierarchy, runs IK and lists slot sprites in draw order.
+Regions draw as sprites. Spine meshes (`MeshAttachment`: plain or weighted
+across bones, linked meshes, deform keys under 3.x `deform` or 4.x
+`attachments`) come out of `solve` as rig-space vertices; DragonBones meshes
+are skipped. `Curve` eases keys: Spine's beziers (3.x
 normalized, 4.x in time and value per channel) and DragonBones' quad easings
 and chained curves. A clip plays its
 `rig_animation` (or its own name) on the rig when the rig has it, and plays
@@ -1122,11 +1125,16 @@ The runtime half is `blockloom-runtime/src/anim2d.rs` and `sprites.rs`.
 VM and compiled logic land on the same frames, markers and transitions; they
 fire `Event::AnimationMarker` and `AnimationEnded`, move root-motion actors and
 solve rigs into `RigInstance::pose`. `ensure_rigs` loads a rig through
-`RigCache` and hangs a `RigPart` sprite per slot off the actor, `draw_rigs`
-copies the pose on, and `sync_sprites` applies flips and slicing and builds
-stack slices and the `SpriteFxMaterial` quad (`shaders/sprite_fx.wesl`).
-`sync_part_palettes` gives each stack slice and rig part its own palette
-quad; an outline per piece would line the seams, so those have none.
+`RigCache` and hangs a `RigPart` sprite per slot off the actor, plus a
+`RigMeshPart` for slots with a mesh, `draw_rigs` copies the pose on
+(rebuilding each mesh when its vertices move), and `sync_sprites` applies
+flips and slicing and builds stack slices and the `SpriteFxMaterial` quad
+(`shaders/sprite_fx.wesl`, which slices a 9-slice sprite the way Bevy's own
+sprite shader does, from `slice_uniforms`). `sync_part_effects` gives each
+stack slice and rig part its own palette quad. Their outline is a
+silhouette per piece (flag 8: the outline color wherever the grown piece
+covers; a mesh grows by nine offset copies) drawn behind every piece, so
+only the edge of the whole shape shows.
 Anything drawn through children hides the actor's own sprite with an empty
 `RenderLayers`. Sort depth is render-only: `apply_sort_depth` adds it in
 PostUpdate and `clear_sort_depth` takes it off in `First`, so no pose, drag
@@ -1528,6 +1536,7 @@ lands.
   one passes straight through.
 - The scene view's camera starts over whenever the world does (a dimension
   switch, reopening a project).
-- 2D rigs draw region/image attachments only (no Spine meshes or weights).
-  The palette/outline effect ignores 9-slice, and stacked or rigged sprites
-  get the palette but no outline.
+- 2D rigs draw Spine regions and meshes; DragonBones meshes, clipping and
+  path attachments draw nothing. A rig's or stack's outline is one
+  silhouette per piece, so a translucent outline color darkens where pieces'
+  silhouettes overlap.

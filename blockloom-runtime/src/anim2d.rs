@@ -4,23 +4,27 @@
 //! ([`apply_animation_effects`], then [`step_animations`]), so a replay
 //! lands on the same frames, markers and transitions whichever scheduler
 //! ran the blocks. The per-frame half ([`ensure_rigs`], [`draw_rigs`]) only
-//! spawns a rig's slot sprites and copies the solved pose onto them.
+//! spawns a rig's slot sprites and meshes and copies the solved pose onto
+//! them.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, Mesh2d, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::sprite_render::MeshMaterial2d;
 use blockloom_core::animation::{
     AnimationClip, AnimationSpec, ClipFrame, LoopMode, TransitionInputs,
 };
-use blockloom_core::rig2d::{Affine2, Rig, RigAnimation, WorldPose};
+use blockloom_core::rig2d::{Affine2, MeshAttachment, Rig, RigAnimation, SlotDraw, WorldPose};
 use blockloom_core::vm::{Effect, Event};
 use blockloom_protocol::RuntimeMessage;
 
 use crate::bridge;
 use crate::engine::{ActorId, AnimationFade, AnimationPlayer, Engine, PendingEffects};
-use crate::sprites::SpriteDials;
+use crate::sprites::{SILHOUETTE, SpriteDials, SpriteFxMaterial, silhouette_depth};
 use crate::world::{asset_path, parse_color};
 
 /// Rig files by where they are, parsed once and reread when they change.
@@ -63,6 +67,8 @@ pub struct RigInstance {
     pub path: String,
     pub skin: String,
     pub parts: Vec<Entity>,
+    /// Each slot's mesh part, for slots any skin gives a mesh.
+    pub meshes: Vec<Option<Entity>>,
     /// Attachments a block picked, by slot, until the animation keys that
     /// slot again.
     pub attachments: HashMap<usize, String>,
@@ -80,6 +86,22 @@ pub struct RigInstance {
 /// One slot's sprite, a child of the rigged actor.
 #[derive(Component)]
 pub struct RigPart;
+
+/// One slot's mesh, a child of the rigged actor beside its sprite. It draws
+/// through the sprite effect material, so the palette applies as it does
+/// to a sprite.
+#[derive(Component, Default)]
+pub struct RigMeshPart {
+    /// The mesh, its material and the vertices it was last built from.
+    drawn: Option<(Handle<Mesh>, Handle<SpriteFxMaterial>, Vec<[f32; 3]>)>,
+    /// The outline silhouette child, likewise.
+    outline: Option<(
+        Entity,
+        Handle<Mesh>,
+        Handle<SpriteFxMaterial>,
+        Vec<[f32; 3]>,
+    )>,
+}
 
 /// The crossfade ghost: the old clip's frame fading out over the new one.
 #[derive(Component)]
@@ -749,7 +771,11 @@ pub fn ensure_rigs(
             _ => false,
         };
         if stale && let Some(instance) = instance {
-            for part in &instance.parts {
+            for part in instance
+                .parts
+                .iter()
+                .chain(instance.meshes.iter().flatten())
+            {
                 commands.entity(*part).despawn();
             }
             commands.entity(entity).remove::<RigInstance>();
@@ -782,12 +808,28 @@ pub fn ensure_rigs(
                 part
             })
             .collect();
+        let meshes: Vec<Option<Entity>> = (0..rig.slots.len())
+            .map(|index| {
+                rig.slot_has_mesh(index).then(|| {
+                    let part = commands
+                        .spawn((
+                            RigMeshPart::default(),
+                            Transform::from_xyz(0.0, 0.0, index as f32 * SLOT_DEPTH),
+                            Visibility::Hidden,
+                        ))
+                        .id();
+                    commands.entity(entity).add_child(part);
+                    part
+                })
+            })
+            .collect();
         let pose = rig.solve(&rig.setup_pose(), &spec.skin, &[]);
         commands.entity(entity).insert(RigInstance {
             sampled: Vec::new(),
             path: spec.rig.clone(),
             skin: spec.skin.clone(),
             parts,
+            meshes,
             attachments: HashMap::new(),
             tints: HashMap::new(),
             targets: Vec::new(),
@@ -798,42 +840,119 @@ pub fn ensure_rigs(
     }
 }
 
-/// Copies each rig's solved pose onto its slot sprites.
+/// A slot's color: the pose's, times the authored and block tints.
+fn slot_color(draw: &SlotDraw, instance: &RigInstance, spec: Option<&AnimationSpec>) -> Color {
+    let mut color = draw.color;
+    let name = &instance.rig.slots[draw.slot].name;
+    if let Some(tint) = spec.and_then(|spec| spec.slot_tint(name)) {
+        let tint = parse_color(tint).to_srgba().to_f32_array();
+        color = std::array::from_fn(|i| color[i] * tint[i]);
+    }
+    if let Some(tint) = instance.tints.get(&draw.slot) {
+        color = std::array::from_fn(|i| color[i] * tint[i]);
+    }
+    Color::srgba(color[0], color[1], color[2], color[3])
+}
+
+/// How a rig's pieces look beyond their pose: flips and the sprite dials.
+struct PartLook {
+    flip_x: bool,
+    flip_y: bool,
+    palette: Option<(Handle<Image>, u32)>,
+    outline: Option<(f32, Vec4)>,
+}
+
+fn show(visibility: &mut Visibility, shown: bool) {
+    let wanted = if shown {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    if *visibility != wanted {
+        *visibility = wanted;
+    }
+}
+
+/// Copies each rig's solved pose onto its slot sprites and meshes.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn draw_rigs(
+    mut commands: Commands,
     engine: NonSend<Engine>,
     assets: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<SpriteFxMaterial>>,
     rigs: Query<(&ActorId, &RigInstance, Option<&SpriteDials>)>,
     mut parts: Query<(&mut Sprite, &mut Transform, &mut Visibility), With<RigPart>>,
+    mut mesh_parts: Query<(&mut RigMeshPart, &mut Visibility), Without<RigPart>>,
 ) {
     let dir = engine.project_dir.clone();
     for (id, instance, dials) in &rigs {
         if !instance.active {
             for part in &instance.parts {
-                if let Ok((_, _, mut visibility)) = parts.get_mut(*part)
-                    && *visibility != Visibility::Hidden
-                {
-                    *visibility = Visibility::Hidden;
+                if let Ok((_, _, mut visibility)) = parts.get_mut(*part) {
+                    show(&mut visibility, false);
+                }
+            }
+            for part in instance.meshes.iter().flatten() {
+                if let Ok((_, mut visibility)) = mesh_parts.get_mut(*part) {
+                    show(&mut visibility, false);
                 }
             }
             continue;
         }
-        let flip_x = dials.is_some_and(|dials| dials.0.flip_x);
-        let flip_y = dials.is_some_and(|dials| dials.0.flip_y);
+        let dialed = dials.map(|dials| &dials.0);
+        let look = PartLook {
+            flip_x: dialed.is_some_and(|spec| spec.flip_x),
+            flip_y: dialed.is_some_and(|spec| spec.flip_y),
+            palette: dialed.filter(|spec| !spec.palette.is_empty()).map(|spec| {
+                let image: Handle<Image> = assets.load(asset_path(dir.as_deref(), &spec.palette));
+                (image, spec.palette_index)
+            }),
+            outline: dialed.filter(|spec| spec.outline_width > 0.0).map(|spec| {
+                (
+                    spec.outline_width,
+                    parse_color(&spec.outline_color).to_linear().to_vec4(),
+                )
+            }),
+        };
         let spec = engine
             .actor(&id.0)
             .and_then(|actor| actor.components.animation());
         for (slot, part) in instance.parts.iter().enumerate() {
+            let draw = instance.pose.draws.iter().find(|draw| draw.slot == slot);
+            let mesh_part = instance.meshes.get(slot).copied().flatten();
+            if let Some(mesh_entity) = mesh_part
+                && let Ok((mut mesh_part, mut visibility)) = mesh_parts.get_mut(mesh_entity)
+            {
+                match draw.and_then(|draw| Some((draw, draw.mesh.as_ref()?))) {
+                    Some((draw, (positions, source))) => {
+                        let image: Handle<Image> =
+                            assets.load(asset_path(dir.as_deref(), &draw.image));
+                        draw_mesh_part(
+                            &mut commands,
+                            &mut meshes,
+                            &mut materials,
+                            (mesh_entity, &mut mesh_part),
+                            (positions, source),
+                            image,
+                            slot_color(draw, instance, spec),
+                            &look,
+                            slot as f32 * SLOT_DEPTH,
+                        );
+                        show(&mut visibility, true);
+                    }
+                    None => show(&mut visibility, false),
+                }
+            }
             let Ok((mut sprite, mut transform, mut visibility)) = parts.get_mut(*part) else {
                 continue;
             };
-            let Some(draw) = instance.pose.draws.iter().find(|draw| draw.slot == slot) else {
-                if *visibility != Visibility::Hidden {
-                    *visibility = Visibility::Hidden;
-                }
+            let Some(draw) = draw.filter(|draw| draw.mesh.is_none()) else {
+                show(&mut visibility, false);
                 continue;
             };
             let mut m = draw.transform;
-            if flip_x {
+            if look.flip_x {
                 m = Affine2 {
                     a: -m.a,
                     c: -m.c,
@@ -841,7 +960,7 @@ pub fn draw_rigs(
                     ..m
                 };
             }
-            if flip_y {
+            if look.flip_y {
                 m = Affine2 {
                     b: -m.b,
                     d: -m.d,
@@ -867,23 +986,170 @@ pub fn draw_rigs(
             if sprite.custom_size != size {
                 sprite.custom_size = size;
             }
-            let mut color = draw.color;
-            let name = &instance.rig.slots[slot].name;
-            if let Some(tint) = spec.and_then(|spec| spec.slot_tint(name)) {
-                let tint = parse_color(tint).to_srgba().to_f32_array();
-                color = std::array::from_fn(|i| color[i] * tint[i]);
-            }
-            if let Some(tint) = instance.tints.get(&slot) {
-                color = std::array::from_fn(|i| color[i] * tint[i]);
-            }
-            let color = Color::srgba(color[0], color[1], color[2], color[3]);
+            let color = slot_color(draw, instance, spec);
             if sprite.color != color {
                 sprite.color = color;
             }
-            if *visibility != Visibility::Inherited {
-                *visibility = Visibility::Inherited;
-            }
+            show(&mut visibility, true);
         }
+    }
+}
+
+/// A triangle list over rig-space vertices.
+pub fn rig_mesh(positions: Vec<[f32; 3]>, uvs: Vec<[f32; 2]>, triangles: Vec<u32>) -> Mesh {
+    let count = positions.len();
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; count])
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_indices(Indices::U32(triangles))
+}
+
+/// The mesh again at its own place and eight around it `width` away: their
+/// union is the mesh grown by the width, which a silhouette fills.
+pub fn grown_mesh(positions: &[[f32; 3]], source: &MeshAttachment, width: f32) -> Mesh {
+    let count = positions.len() as u32;
+    let offsets = std::iter::once(Vec2::ZERO)
+        .chain((0..8).map(|i| Vec2::from_angle(i as f32 * std::f32::consts::FRAC_PI_4) * width));
+    let mut grown = Vec::with_capacity(positions.len() * 9);
+    let mut triangles = Vec::with_capacity(source.triangles.len() * 9);
+    for (copy, offset) in offsets.enumerate() {
+        grown.extend(
+            positions
+                .iter()
+                .map(|p| [p[0] + offset.x, p[1] + offset.y, 0.0]),
+        );
+        triangles.extend(source.triangles.iter().map(|i| i + copy as u32 * count));
+    }
+    rig_mesh(grown, source.uvs.repeat(9), triangles)
+}
+
+/// Makes a slot's mesh part draw `positions` (rig space) over `image`, and
+/// its outline silhouette when the dials ask for one.
+#[allow(clippy::too_many_arguments)]
+fn draw_mesh_part(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<SpriteFxMaterial>,
+    (entity, part): (Entity, &mut RigMeshPart),
+    (positions, source): (&[[f32; 2]], &Arc<MeshAttachment>),
+    image: Handle<Image>,
+    color: Color,
+    look: &PartLook,
+    depth: f32,
+) {
+    let flip = Vec2::new(
+        if look.flip_x { -1.0 } else { 1.0 },
+        if look.flip_y { -1.0 } else { 1.0 },
+    );
+    let vertices: Vec<[f32; 3]> = positions
+        .iter()
+        .map(|p| [p[0] * flip.x, p[1] * flip.y, 0.0])
+        .collect();
+    let base = SpriteFxMaterial {
+        tint: color.to_linear().to_vec4(),
+        uv_rect: Vec4::new(0.0, 0.0, 1.0, 1.0),
+        shape: Vec4::new(1.0, 1.0, 0.0, 0.0),
+        outline_color: Vec4::ZERO,
+        palette_params: Vec4::ZERO,
+        texture: Some(image),
+        palette: None,
+        slice_scale: Vec4::ZERO,
+        slice_insets: Vec4::ZERO,
+        slice_tiles: Vec4::ZERO,
+    };
+    let material = match &look.palette {
+        Some((palette, row)) => SpriteFxMaterial {
+            shape: Vec4::new(1.0, 1.0, 0.0, 4.0),
+            palette_params: Vec4::new(*row as f32, 0.0, 0.0, 0.0),
+            palette: Some(palette.clone()),
+            ..base.clone()
+        },
+        None => base.clone(),
+    };
+    let fresh = || {
+        rig_mesh(
+            vertices.clone(),
+            source.uvs.clone(),
+            source.triangles.clone(),
+        )
+    };
+    match &mut part.drawn {
+        Some((mesh, handle, drawn)) => {
+            if *drawn != vertices {
+                if let Some(mut mesh) = meshes.get_mut(&*mesh) {
+                    *mesh = fresh();
+                }
+                *drawn = vertices.clone();
+            }
+            set_material(materials, handle, material);
+        }
+        None => {
+            let mesh = meshes.add(fresh());
+            let handle = materials.add(material);
+            commands
+                .entity(entity)
+                .insert((Mesh2d(mesh.clone()), MeshMaterial2d(handle.clone())));
+            part.drawn = Some((mesh, handle, vertices.clone()));
+        }
+    }
+    let Some((width, outline_color)) = look.outline else {
+        if let Some((silhouette, ..)) = part.outline.take() {
+            commands.entity(silhouette).despawn();
+        }
+        return;
+    };
+    let material = SpriteFxMaterial {
+        shape: Vec4::new(1.0, 1.0, 0.0, SILHOUETTE),
+        outline_color,
+        ..base
+    };
+    let key: Vec<[f32; 3]> = vertices
+        .iter()
+        .copied()
+        .chain([[width, 0.0, 0.0]])
+        .collect();
+    match &mut part.outline {
+        Some((_, mesh, handle, drawn)) => {
+            if *drawn != key {
+                if let Some(mut mesh) = meshes.get_mut(&*mesh) {
+                    *mesh = grown_mesh(&vertices, source, width);
+                }
+                *drawn = key;
+            }
+            set_material(materials, handle, material);
+        }
+        None => {
+            let mesh = meshes.add(grown_mesh(&vertices, source, width));
+            let handle = materials.add(material);
+            let silhouette = commands
+                .spawn((
+                    Mesh2d(mesh.clone()),
+                    MeshMaterial2d(handle.clone()),
+                    Transform::from_xyz(0.0, 0.0, silhouette_depth(depth)),
+                ))
+                .id();
+            commands.entity(entity).add_child(silhouette);
+            part.outline = Some((silhouette, mesh, handle, key));
+        }
+    }
+}
+
+/// Writes `material` through only when it differs.
+fn set_material(
+    materials: &mut Assets<SpriteFxMaterial>,
+    handle: &Handle<SpriteFxMaterial>,
+    material: SpriteFxMaterial,
+) {
+    if materials
+        .get(handle)
+        .is_some_and(|existing| *existing != material)
+        && let Some(mut existing) = materials.get_mut(handle)
+    {
+        *existing = material;
     }
 }
 
@@ -1048,5 +1314,134 @@ mod tests {
                 .unwrap_err()
                 .contains("no animation clip")
         );
+    }
+
+    #[test]
+    fn mesh_slots_draw_through_a_mesh_and_grow_a_silhouette() {
+        let dir = std::env::temp_dir().join(format!("blockloom-rig-mesh-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("rig.json"),
+            r#"{
+                "bones": [ { "name": "root" } ],
+                "slots": [
+                    { "name": "cape", "bone": "root", "attachment": "cape" },
+                    { "name": "hat", "bone": "root", "attachment": "hat" }
+                ],
+                "skins": { "default": {
+                    "cape": { "cape": { "type": "mesh",
+                        "uvs": [0,0, 1,0, 1,1, 0,1],
+                        "vertices": [0,0, 2,0, 2,2, 0,2],
+                        "triangles": [0,1,2, 0,2,3] } },
+                    "hat": { "hat": { "width": 4, "height": 4 } }
+                } }
+            }"#,
+        )
+        .unwrap();
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.project_dir = Some(dir.clone());
+        let mut actor = Actor::new(
+            "Hero",
+            Visual::Rect {
+                color: "#FFFFFF".to_string(),
+                size: [10.0, 10.0],
+            },
+        );
+        actor.components.insert(ActorComponent::Animation {
+            animation: AnimationSpec {
+                rig: "rig.json".to_string(),
+                ..AnimationSpec::default()
+            },
+        });
+        let id = actor.id.clone();
+        engine
+            .attached
+            .insert(id.clone(), ["Animation".to_string()].into_iter().collect());
+        engine.project.actors.push(actor);
+        let mut app = App::new();
+        app.add_plugins((
+            TaskPoolPlugin::default(),
+            bevy::asset::AssetPlugin::default(),
+        ));
+        app.init_asset::<Image>();
+        app.init_asset::<Mesh>();
+        app.init_asset::<SpriteFxMaterial>();
+        app.init_resource::<RigCache>();
+        app.insert_non_send(engine);
+        app.add_systems(Update, (ensure_rigs, draw_rigs).chain());
+        let dials = blockloom_core::sprite2d::SpriteSpec {
+            outline_width: 1.0,
+            ..Default::default()
+        };
+        let actor = app
+            .world_mut()
+            .spawn((ActorId(id), Transform::default(), SpriteDials(dials)))
+            .id();
+        app.update();
+        app.update();
+        let instance = app.world().get::<RigInstance>(actor).unwrap();
+        assert!(instance.meshes[1].is_none());
+        let cape = instance.meshes[0].unwrap();
+        let hat_sprite = instance.parts[1];
+        let cape_sprite = instance.parts[0];
+        let vertices = |app: &App, entity: Entity| -> Vec<[f32; 3]> {
+            let handle = &app.world().get::<Mesh2d>(entity).unwrap().0;
+            let meshes = app.world().resource::<Assets<Mesh>>();
+            let mesh = meshes.get(handle).unwrap();
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                .and_then(|values| values.as_float3())
+                .unwrap()
+                .to_vec()
+        };
+        assert_eq!(vertices(&app, cape)[2], [2.0, 2.0, 0.0]);
+        assert_eq!(
+            app.world().get::<Visibility>(cape),
+            Some(&Visibility::Inherited)
+        );
+        // The mesh slot's sprite stays hidden; the region slot's shows.
+        assert_eq!(
+            app.world().get::<Visibility>(cape_sprite),
+            Some(&Visibility::Hidden)
+        );
+        assert_eq!(
+            app.world().get::<Visibility>(hat_sprite),
+            Some(&Visibility::Inherited)
+        );
+        let (silhouette, ..) = app
+            .world()
+            .get::<RigMeshPart>(cape)
+            .unwrap()
+            .outline
+            .clone()
+            .unwrap();
+        let grown = vertices(&app, silhouette);
+        assert_eq!(grown.len(), 4 * 9);
+        assert!(grown.iter().any(|p| p[0] > 2.9));
+        let z = app
+            .world()
+            .get::<Transform>(silhouette)
+            .unwrap()
+            .translation
+            .z;
+        assert!(z < 0.0);
+        // Flipping mirrors the vertices; dropping the outline drops the
+        // silhouette.
+        {
+            let mut dials = app.world_mut().get_mut::<SpriteDials>(actor).unwrap();
+            dials.0.flip_x = true;
+            dials.0.outline_width = 0.0;
+        }
+        app.update();
+        assert_eq!(vertices(&app, cape)[2], [-2.0, 2.0, 0.0]);
+        assert!(
+            app.world()
+                .get::<RigMeshPart>(cape)
+                .unwrap()
+                .outline
+                .is_none()
+        );
+        assert!(app.world().get_entity(silhouette).is_err());
+        std::fs::remove_dir_all(dir).ok();
     }
 }
