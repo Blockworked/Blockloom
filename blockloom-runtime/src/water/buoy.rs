@@ -1,9 +1,10 @@
 //! Floating and splashing. A `Buoyancy` body is pushed up at its sample
 //! points by what they displace and dragged towards the water's own motion;
 //! anything with a rigid body that drops into water fast enough splashes:
-//! droplets, a ripple on the surface and the body's splash sound.
+//! droplets, a dip in the ripple field and the body's splash sound. A
+//! floating body that moves stirs the ripples as it goes: its wake.
 
-use super::{Ripple, WaterSample, WaterState};
+use super::{WaterSample, WaterState};
 use crate::engine::{ActorId, Engine, PendingEffects};
 use crate::fx::FxCache;
 use bevy::prelude::*;
@@ -39,6 +40,9 @@ struct Float {
     torque: Vec3,
     /// 0-1: how much of it is under.
     under: f32,
+    /// Where it cuts the surface: body, point, and how fast it moves
+    /// through the water there.
+    stir: Vec<(String, Vec3, f32)>,
 }
 
 /// Sums the push and drag at each of `spec`'s sample points.
@@ -82,6 +86,11 @@ fn float(
             * (mass / points.len() as f32 * spec.drag * under);
         if flat {
             drag.z = 0.0;
+        }
+        if under < 1.0 {
+            let mut through = moving - Vec3::from(water.velocity);
+            through.y = 0.0;
+            out.stir.push((body.id.clone(), at, through.length()));
         }
         let force = Vec3::Y * lift + drag;
         out.force += force;
@@ -161,13 +170,8 @@ fn maybe_splash(
             splasher.seed,
         );
     }
-    if splash.ripples {
-        state.ripple(Ripple {
-            body: water.clone(),
-            at: [point.x, point.z],
-            age: 0.0,
-            strength: size * 0.12 * hard,
-        });
+    if splash.ripples && spec.ripples.enabled {
+        state.disturb(&water, [point.x, point.z], size, -size * 0.25 * hard, false);
     }
     if !splash.sound.is_empty() {
         splasher.effects.0.push(Effect::PlaySound {
@@ -179,6 +183,24 @@ fn maybe_splash(
             bus: SoundBus::Sfx,
             at: Some(actor.to_string()),
         });
+    }
+}
+
+/// A floating body's wake: each point cutting the surface pushes the water
+/// down in proportion to how fast it moves through it.
+fn stir(engine: &Engine, state: &mut WaterState, result: &Float, half: Vec3, dt: f32) {
+    let radius = half.x.max(half.z).max(1.0e-3) * 0.5;
+    for (body, at, speed) in &result.stir {
+        let Some(spec) = engine.actor(body).and_then(|a| a.components.water()) else {
+            continue;
+        };
+        let ripples = &spec.ripples;
+        if !ripples.enabled || ripples.wake <= 0.0 || *speed <= 0.0 {
+            continue;
+        }
+        // Capped so a speeding boat doesn't dig a hole.
+        let push = (speed * dt * 0.2 * ripples.wake).min(radius * 0.1);
+        state.disturb(body, [at.x, at.z], radius, -push, true);
     }
 }
 
@@ -272,6 +294,7 @@ macro_rules! float_bodies {
                 if result.under <= 0.0 {
                     continue;
                 }
+                stir(&engine, &mut state, &result, half, dt);
                 ($apply)(
                     &mut *impulse,
                     &mut *velocity,
@@ -337,6 +360,8 @@ mod tests {
                 flow: [0.0, 0.0],
                 waves: Vec::new(),
                 flat,
+                calm: [0.0; 3],
+                ripples: None,
             }],
             time: 0.0,
         }
@@ -373,6 +398,9 @@ mod tests {
     #[test]
     fn nothing_pushes_a_body_out_of_the_water() {
         assert_eq!(push(3.0, 0.5), Float::default());
+        // Cutting the surface stirs it; sunk deep doesn't.
+        assert_eq!(push(0.0, 0.5).stir.len(), 4);
+        assert!(push(-5.0, 0.5).stir.is_empty());
         // Deeper pushes harder, up to fully under.
         assert!(push(-0.25, 0.5).force.y > push(0.0, 0.5).force.y);
         let sunk = push(-5.0, 0.5);

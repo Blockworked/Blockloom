@@ -733,6 +733,11 @@ Gerstner displacement to answer height, normal, velocity and pinch
 (`jacobian`, where crest foam starts) over any point. `shaders/water.wesl`
 (`blockloom::water`) sums the same waves from the same numbers, so change the
 two together. A 2D body's waves run along x only (`WaveSet::flattened`).
+Past `CALM_FROM` wavelengths from the camera the drawn waves fade flat, and
+`WaterBody::calm` makes the CPU sample fade the same way, so buoyancy far out
+rides what is drawn. `RippleField` is a height field over the waves, stepped
+by the wave equation (`RippleSim`): `sample` adds its height, slope and rate,
+and `ripple` in `water.wesl` reads the same grid from a texture.
 
 `blockloom-runtime/src/water/` is the rest. `sample_water` runs at the head
 of each fixed tick after `sample_atmosphere`, fills `WaterState` (what the
@@ -742,14 +747,23 @@ snapshot, so `water height at`, `is _ underwater?` and a script's
 `water_at`/`is_underwater` read what buoyancy read. `set water level/chop/
 foam to` (and a script's `set_water`) lands in `engine.water`
 (`WaterOverrides`): on the water actor that ran it, or every body from
-anyone else. A `Buoyancy` component (`BuoyancySpec`) makes a dynamic body
+anyone else. The swell follows the live wind: `Swell` eases a heading
+towards it and, once the waves are `TURN_THRESHOLD` off, builds the new
+heading's set and fades between the two over `waves.turn` seconds
+(`blend_waves`), since rotating a wave in place slides its phase. Each body
+with `ripples.enabled` keeps a `RippleSim` covering it whole, or following the
+camera when it is bigger than `ripples.extent`, and hands a snapshot to its
+`WaterBody` each tick. A `Buoyancy` component (`BuoyancySpec`) makes a dynamic body
 float: `float_bodies_2d`/`3d` push up at 1, 4 or 8 sample points by what each
 displaces (`buoyant_force`, so density 0.5 rests half under), drag each
 towards the water's own velocity and damp spin, all through rapier's
 `ExternalImpulse` with the mass read back through `ReadMassProperties`. The
 same system splashes any rigid body that crosses the surface faster than the
-body's `splash.min_speed`: droplets (`fx::spawn_splash`), a ripple the
-surface shaders add (at most `MAX_RIPPLES`) and the body's splash sound.
+body's `splash.min_speed`: droplets (`fx::spawn_splash`), a dip in the ripple
+field and the body's splash sound, and a floating body's points that cut the
+surface stir the field as it moves (its wake). The surfaces read the field as
+an `Rg32Float` texture of height and last tick's height, lerped between
+ticks.
 
 3D (`surface.rs`): each body is its own entity (`WaterSurface`, left out of
 ray-traced proxies), a grid over its rectangle or rings round the camera for
@@ -762,14 +776,22 @@ distance to the bed (Beer), lays caustics on the bed, foams along the shore
 and on pinched crests, reflects by screen-space march, then the body's probe
 (`ProbeRequest::water`, following the camera over an ocean through
 `ProbeService::relocate`), then the background color, and lets Bevy's
-lighting add the lit water color and the sun's GGX glint. Each body also has
-an opaque floor at its depth, which is what the depth buffer and every pass
-after the main pass (clouds, fog) see where the water is. `under.rs` is a
+lighting add the lit water color and the sun's GGX glint. `Planar`
+reflections instead come from a mirror camera (`mirror.rs`): the world camera
+mirrored under the surface and turned upside down, which keeps triangle
+winding, so the surface samples it with v flipped. Its `MirrorProjection` is
+an oblique reverse-z perspective whose near plane is the water (`oblique`),
+so nothing under the surface blocks it; roughness blurs it with a disc of
+taps. Each body also has an opaque floor at its depth, which is what the
+depth prepass sees where the water is. While water exists the world camera's
+main depth is bindable, and the fog pass reads that instead of the prepass,
+so fog is measured to the surface rather than the floor under it. `under.rs` is a
 pass after the fog that absorbs every ray over its underwater part and lays
 caustics while the camera is under a surface. 2D (`flat.rs`): a strip from
 the surface to the depth, its top row riding the waves (`water_2d.wesl`).
-The GPU half is the ignored `embed` test `a_lake_tints_the_floor_under_it`;
-on lavapipe the water's pipelines take a few hundred frames to compile.
+The GPU half is the ignored `embed` tests `a_lake_tints_the_floor_under_it`
+and `a_planar_mirror_reflects_what_stands_over_the_water`; on lavapipe the
+water's pipelines take a few hundred frames to compile.
 
 ### Lighting rig
 

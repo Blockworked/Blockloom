@@ -10,23 +10,32 @@
 //! the same numbers, so change the two together.
 //!
 //! Finer ripples are Phillips-spectrum detail waves ([`DetailWave`]) that
-//! only bend the shading normal: nothing floats on them.
+//! only bend the shading normal. Splashes and wakes are a simulated height
+//! field ([`RippleField`]) laid over the waves, which floating bodies ride.
 
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Most Gerstner waves one body sums. `MAX_WAVES` in `water.wesl`.
 pub const MAX_WAVES: usize = 12;
 /// Phillips detail waves, normals only. `DETAIL_WAVES` in `water.wesl`.
 pub const DETAIL_WAVES: usize = 16;
-/// Ripples a surface draws at once. `MAX_RIPPLES` in `water.wesl`.
-pub const MAX_RIPPLES: usize = 16;
+/// Cells across a 3D body's ripple field.
+pub const RIPPLE_CELLS: usize = 128;
+/// Cells along a 2D body's ripple field.
+pub const RIPPLE_CELLS_FLAT: usize = 512;
 /// How far an ocean reaches from the camera, in world units.
 pub const OCEAN_REACH: f32 = 20_000.0;
 /// Seconds the sea takes to mostly follow a change in the wind.
 pub const SEA_SETTLE: f32 = 8.0;
 /// Wind speed, world units a second, the authored amplitude stands for.
 const REFERENCE_WIND: f32 = 8.0;
+/// Degrees the wind has to swing away from the waves before they turn.
+pub const TURN_THRESHOLD: f32 = 20.0;
+/// Wavelengths from the camera where far waves start to go flat. The drawn
+/// ocean mesh is too coarse for them past three times this.
+pub const CALM_FROM: f32 = 16.0;
 
 /// What kind of water an actor is. The kind only decides its reach and the
 /// defaults an editor offers; every body has the same waves, foam and color.
@@ -73,6 +82,9 @@ pub struct Waves {
     /// Plays the waves faster or slower than real water.
     pub speed: f32,
     pub seed: u32,
+    /// Seconds the swell takes to turn to a new heading, when the wind
+    /// swings round or `direction` changes mid-run.
+    pub turn: f32,
 }
 
 impl Default for Waves {
@@ -90,6 +102,7 @@ impl Default for Waves {
             fetch: 2.0,
             speed: 1.0,
             seed: 1,
+            turn: 6.0,
         }
     }
 }
@@ -192,6 +205,9 @@ pub enum ReflectionMode {
     ScreenSpace,
     /// The sky's color alone. Cheapest.
     Sky,
+    /// A mirror camera renders the world flipped under the surface: exact
+    /// reflections of everything, at the cost of drawing the scene again.
+    Planar,
 }
 
 impl ReflectionMode {
@@ -201,6 +217,10 @@ impl ReflectionMode {
 
     pub fn probe(self) -> bool {
         matches!(self, Self::Auto | Self::Probe)
+    }
+
+    pub fn planar(self) -> bool {
+        self == Self::Planar
     }
 }
 
@@ -214,6 +234,8 @@ pub struct Reflections {
     pub probe_refresh: u32,
     /// 0-1: how strongly reflections show at all.
     pub strength: f32,
+    /// A planar reflection's resolution against the view's, 0.25-1.
+    pub planar_scale: f32,
 }
 
 impl Default for Reflections {
@@ -223,6 +245,7 @@ impl Default for Reflections {
             probe_resolution: 128,
             probe_refresh: 30,
             strength: 1.0,
+            planar_scale: 0.5,
         }
     }
 }
@@ -257,6 +280,34 @@ impl Default for Underwater {
     }
 }
 
+/// The simulated ripples splashes and wakes make.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Ripples {
+    pub enabled: bool,
+    /// How fast a ring spreads, world units a second.
+    pub speed: f32,
+    /// Seconds until a ripple has mostly died away.
+    pub fade: f32,
+    /// 0-2: how much a floating body stirs the water as it moves.
+    pub wake: f32,
+    /// World units the simulated patch spans. A body smaller than this is
+    /// covered whole; a bigger one gets a patch that follows the camera.
+    pub extent: f32,
+}
+
+impl Default for Ripples {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            speed: 2.0,
+            fade: 3.0,
+            wake: 1.0,
+            extent: 48.0,
+        }
+    }
+}
+
 /// What happens when something crosses the surface fast enough.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -265,7 +316,7 @@ pub struct Splash {
     pub min_speed: f32,
     /// Droplets thrown by a splash at `min_speed`; faster throws more.
     pub particles: u32,
-    /// A ring spreading over the surface.
+    /// Whether a splash sets the ripples going.
     pub ripples: bool,
     /// A sound asset played where it happened. Empty for silence.
     pub sound: String,
@@ -303,6 +354,7 @@ pub struct WaterSpec {
     pub flow: [f32; 2],
     pub underwater: Underwater,
     pub splash: Splash,
+    pub ripples: Ripples,
 }
 
 impl Default for WaterSpec {
@@ -319,6 +371,7 @@ impl Default for WaterSpec {
             flow: [0.0, 0.0],
             underwater: Underwater::default(),
             splash: Splash::default(),
+            ripples: Ripples::default(),
         }
     }
 }
@@ -347,6 +400,7 @@ impl WaterSpec {
         w.wind = finite(w.wind, d.waves.wind).clamp(0.0, 1.0);
         w.fetch = finite(w.fetch, d.waves.fetch).clamp(0.01, 5000.0);
         w.speed = finite(w.speed, 1.0).clamp(0.0, 10.0);
+        w.turn = finite(w.turn, d.waves.turn).clamp(0.0, 120.0);
         self.detail.strength = finite(self.detail.strength, 1.0).clamp(0.0, 2.0);
         self.detail.scale = finite(self.detail.scale, d.detail.scale).max(0.01);
         let l = &mut self.look;
@@ -365,6 +419,7 @@ impl WaterSpec {
         r.probe_resolution = r.probe_resolution.clamp(32, 1024);
         r.probe_refresh = r.probe_refresh.clamp(1, 600);
         r.strength = finite(r.strength, 1.0).clamp(0.0, 1.0);
+        r.planar_scale = finite(r.planar_scale, d.reflections.planar_scale).clamp(0.25, 1.0);
         self.flow = self.flow.map(|v| finite(v, 0.0));
         let u = &mut self.underwater;
         u.distance = finite(u.distance, d.underwater.distance).max(0.01);
@@ -373,6 +428,11 @@ impl WaterSpec {
         let s = &mut self.splash;
         s.min_speed = finite(s.min_speed, d.splash.min_speed).max(0.0);
         s.particles = s.particles.min(128);
+        let p = &mut self.ripples;
+        p.speed = finite(p.speed, d.ripples.speed).max(0.01);
+        p.fade = finite(p.fade, d.ripples.fade).clamp(0.1, 60.0);
+        p.wake = finite(p.wake, 1.0).clamp(0.0, 2.0);
+        p.extent = finite(p.extent, d.ripples.extent).max(0.1);
     }
 
     /// The same water in a 2D project's pixels: a pool 800 wide and 300 deep
@@ -394,6 +454,8 @@ impl WaterSpec {
         spec.underwater.distance = 600.0;
         spec.underwater.caustics_scale = 60.0;
         spec.splash.min_speed = 60.0;
+        spec.ripples.speed = 120.0;
+        spec.ripples.extent = 1600.0;
         spec
     }
 }
@@ -587,6 +649,59 @@ impl Stream {
 pub fn heading_dir(degrees: f32) -> [f32; 2] {
     let r = degrees.to_radians();
     [r.sin(), -r.cos()]
+}
+
+/// The heading a wind vector blows towards, or `None` for still air. In 2D
+/// north is up the screen (+y); in 3D it is -z.
+pub fn heading_of(wind: [f32; 3], flat: bool) -> Option<f32> {
+    let [x, y, z] = wind;
+    let (east, north) = if flat { (x, y) } else { (x, -z) };
+    (east.hypot(north) > 0.05).then(|| east.atan2(north).to_degrees().rem_euclid(360.0))
+}
+
+/// Signed degrees from `from` round to `to`, the short way.
+pub fn turn_between(from: f32, to: f32) -> f32 {
+    (to - from + 180.0).rem_euclid(360.0) - 180.0
+}
+
+/// Two wave sets summed while the swell turns from `was` to `now`: `f`
+/// runs 0 to 1. Weights keep the sea's energy, and past `MAX_WAVES` the
+/// smallest waves drop out.
+pub fn blend_waves(now: Vec<LiveWave>, was: Vec<LiveWave>, f: f32) -> Vec<LiveWave> {
+    let f = f.clamp(0.0, 1.0);
+    let scale = |waves: Vec<LiveWave>, w: f32| {
+        waves.into_iter().map(move |wave| LiveWave {
+            amplitude: wave.amplitude * w,
+            horizontal: wave.horizontal * w,
+            ..wave
+        })
+    };
+    let mut all: Vec<LiveWave> = scale(now, f.sqrt())
+        .chain(scale(was, (1.0 - f).sqrt()))
+        .filter(|wave| wave.amplitude > 0.0)
+        .collect();
+    all.sort_by(|a, b| b.amplitude.total_cmp(&a.amplitude));
+    all.truncate(MAX_WAVES);
+    all
+}
+
+/// [`blend_waves`] for the detail waves, past `DETAIL_WAVES` dropping the
+/// shallowest slopes.
+pub fn blend_detail(now: Vec<LiveDetail>, was: Vec<LiveDetail>, f: f32) -> Vec<LiveDetail> {
+    let f = f.clamp(0.0, 1.0);
+    let scale = |waves: Vec<LiveDetail>, w: f32| {
+        waves.into_iter().map(move |wave| LiveDetail {
+            slope: wave.slope * w,
+            ..wave
+        })
+    };
+    let mut all: Vec<LiveDetail> = scale(now, f.sqrt())
+        .chain(scale(was, (1.0 - f).sqrt()))
+        .filter(|wave| wave.slope > 0.0)
+        .collect();
+    all.sort_by(|a, b| b.slope.total_cmp(&a.slope));
+    all.truncate(DETAIL_WAVES);
+    all
 }
 
 impl WaveSet {
@@ -792,6 +907,12 @@ pub struct WaterBody {
     pub waves: Vec<LiveWave>,
     /// A 2D project's water: waves run along x only and z means nothing.
     pub flat: bool,
+    /// Where far waves go flat, as the drawn surface does: the camera's xz
+    /// and the distance they start to calm from. A zero distance never
+    /// calms.
+    pub calm: [f32; 3],
+    /// The splashes and wakes on top of the waves.
+    pub ripples: Option<Arc<RippleField>>,
 }
 
 /// The surface at one point.
@@ -823,6 +944,17 @@ impl WaterBody {
         along.abs() <= self.half[0] && across.abs() <= self.half[1]
     }
 
+    /// 1 near the camera, falling to 0 far out where the drawn waves go flat.
+    /// `smoothstep(from, 3 from)` as in `water_surface.wesl`.
+    pub fn calm_at(&self, q: [f32; 2]) -> f32 {
+        let [x, z, from] = self.calm;
+        if self.flat || from <= 0.0 {
+            return 1.0;
+        }
+        let far = (q[0] - x).hypot(q[1] - z);
+        1.0 - smoothstep(from, from * 3.0, far)
+    }
+
     fn theta(&self, wave: &LiveWave, q: Vec2, t: f32) -> f32 {
         let d = Vec2::from(wave.dir);
         let drift = Vec2::from(self.flow) * t;
@@ -840,7 +972,8 @@ impl WaterBody {
             offset += self.planar(Vec2::from(wave.dir)) * wave.horizontal * theta.cos();
             height += wave.amplitude * theta.sin();
         }
-        ((q + offset).to_array(), height)
+        let calm = self.calm_at(q.to_array());
+        ((q + offset * calm).to_array(), height * calm)
     }
 
     /// Drops z in 2D.
@@ -861,10 +994,16 @@ impl WaterBody {
         q
     }
 
-    /// The surface height over (x, z) at time `t`.
+    /// The surface height over (x, z) at time `t`, ripples included.
     pub fn height_at(&self, x: f32, z: f32, t: f32) -> f32 {
         let q = self.rest_point(x, z, t);
-        self.center[1] + self.displace(q.to_array(), t).1
+        self.center[1] + self.displace(q.to_array(), t).1 + self.ripple_at(x, z).height
+    }
+
+    fn ripple_at(&self, x: f32, z: f32) -> RippleSample {
+        self.ripples
+            .as_ref()
+            .map_or(RippleSample::default(), |field| field.sample(x, z))
     }
 
     /// Height, normal, velocity and pinch over (x, z) at time `t`.
@@ -904,20 +1043,300 @@ impl WaterBody {
         } else {
             (1.0 - xx) * (1.0 - zz) - xz * xz
         };
+        // Far out the waves fade to flat water, current still flowing.
+        let calm = self.calm_at(q.to_array());
+        let still = Vec3::new(flow.x, 0.0, flow.y);
+        let mut velocity = still + (velocity - still) * calm;
+        let ripple = self.ripple_at(x, z);
+        velocity.y += ripple.rate;
+        let normal = Vec3::Y.lerp(normal, calm)
+            - Vec3::new(
+                ripple.slope[0],
+                0.0,
+                if self.flat { 0.0 } else { ripple.slope[1] },
+            );
+        let normal = if self.flat {
+            Vec3::new(normal.x, normal.y, 0.0)
+        } else {
+            normal
+        };
         if self.flat {
             velocity.z = 0.0;
         }
         WaterSample {
-            height: self.center[1] + height,
-            normal: normal.to_array(),
+            height: self.center[1] + height * calm + ripple.height,
+            normal: normal.normalize_or(Vec3::Y).to_array(),
             velocity: velocity.to_array(),
-            jacobian,
+            jacobian: 1.0 + (jacobian - 1.0) * calm,
         }
     }
 
     /// The bottom of the body, which nothing is under the water below.
     pub fn floor(&self) -> f32 {
         self.center[1] - self.depth
+    }
+}
+
+fn smoothstep(from: f32, to: f32, x: f32) -> f32 {
+    let t = ((x - from) / (to - from).max(1e-6)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+// ─── Ripples ───────────────────────────────────────────────────────────────
+
+/// A patch of simulated ripples: heights on a world-aligned grid, stepped
+/// on the fixed tick by the wave equation. `ripples` in `water.wesl` reads
+/// the same grid, lerping from `before` to `height` between ticks.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RippleField {
+    /// Cells along x and z. A 2D field is one row.
+    pub cells: [usize; 2],
+    /// World units a cell spans.
+    pub cell: f32,
+    /// World xz of cell (0, 0)'s centre. Always a whole number of cells.
+    pub origin: [f32; 2],
+    /// Height above the waves, per cell, row by row along x.
+    pub height: Vec<f32>,
+    /// Heights at the start of the last tick.
+    pub before: Vec<f32>,
+    /// Seconds the last tick stepped.
+    pub dt: f32,
+}
+
+/// The ripples at one point.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct RippleSample {
+    pub height: f32,
+    /// dh/dx, dh/dz.
+    pub slope: [f32; 2],
+    /// How fast the height is changing, world units a second.
+    pub rate: f32,
+}
+
+/// A [`RippleField`] and the state stepping it needs.
+#[derive(Debug, Clone)]
+pub struct RippleSim {
+    pub field: RippleField,
+    previous: Vec<f32>,
+}
+
+impl RippleField {
+    fn len(&self) -> usize {
+        self.cells[0] * self.cells[1]
+    }
+
+    /// Continuous cell coordinates of a world point.
+    fn cell_of(&self, x: f32, z: f32) -> Vec2 {
+        let flat = self.cells[1] == 1;
+        Vec2::new(
+            (x - self.origin[0]) / self.cell,
+            if flat {
+                0.0
+            } else {
+                (z - self.origin[1]) / self.cell
+            },
+        )
+    }
+
+    fn at(&self, grid: &[f32], i: isize, j: isize) -> f32 {
+        let [nx, nz] = self.cells;
+        if i < 0 || j < 0 || i >= nx as isize || j >= nz as isize {
+            return 0.0;
+        }
+        grid[j as usize * nx + i as usize]
+    }
+
+    fn bilinear(&self, grid: &[f32], c: Vec2) -> f32 {
+        let (i, j) = (c.x.floor(), c.y.floor());
+        let (fx, fz) = (c.x - i, c.y - j);
+        let (i, j) = (i as isize, j as isize);
+        let a = self.at(grid, i, j) * (1.0 - fx) + self.at(grid, i + 1, j) * fx;
+        let b = self.at(grid, i, j + 1) * (1.0 - fx) + self.at(grid, i + 1, j + 1) * fx;
+        a * (1.0 - fz) + b * fz
+    }
+
+    /// The ripples over (x, z). Nothing outside the patch.
+    pub fn sample(&self, x: f32, z: f32) -> RippleSample {
+        let c = self.cell_of(x, z);
+        let height = self.bilinear(&self.height, c);
+        let dx = (self.bilinear(&self.height, c + Vec2::X * 0.5)
+            - self.bilinear(&self.height, c - Vec2::X * 0.5))
+            / self.cell;
+        let dz = if self.cells[1] == 1 {
+            0.0
+        } else {
+            (self.bilinear(&self.height, c + Vec2::Y * 0.5)
+                - self.bilinear(&self.height, c - Vec2::Y * 0.5))
+                / self.cell
+        };
+        let rate = if self.dt > 0.0 {
+            (height - self.bilinear(&self.before, c)) / self.dt
+        } else {
+            0.0
+        };
+        RippleSample {
+            height,
+            slope: [dx, dz],
+            rate,
+        }
+    }
+
+    /// World units across the patch, along x and z.
+    pub fn span(&self) -> [f32; 2] {
+        [
+            self.cells[0] as f32 * self.cell,
+            self.cells[1] as f32 * self.cell,
+        ]
+    }
+}
+
+impl RippleSim {
+    /// A still patch `cells` across, each `cell` world units, centred as
+    /// near `centre` as whole cells allow.
+    pub fn new(cells: [usize; 2], cell: f32, centre: [f32; 2]) -> Self {
+        let cells = [cells[0].max(2), cells[1].max(1)];
+        let len = cells[0] * cells[1];
+        let mut sim = RippleSim {
+            field: RippleField {
+                cells,
+                cell: cell.max(1e-4),
+                origin: [0.0; 2],
+                height: vec![0.0; len],
+                before: vec![0.0; len],
+                dt: 0.0,
+            },
+            previous: vec![0.0; len],
+        };
+        sim.field.origin = sim.origin_for(centre);
+        sim
+    }
+
+    fn origin_for(&self, centre: [f32; 2]) -> [f32; 2] {
+        let f = &self.field;
+        let snap =
+            |c: f32, n: usize| ((c / f.cell).round() - (n as f32 - 1.0) * 0.5).floor() * f.cell;
+        let z = if f.cells[1] == 1 {
+            0.0
+        } else {
+            snap(centre[1], f.cells[1])
+        };
+        [snap(centre[0], f.cells[0]), z]
+    }
+
+    /// Moves the patch to centre on `centre`, carrying the ripples it still
+    /// covers by whole cells.
+    pub fn recentre(&mut self, centre: [f32; 2]) {
+        let origin = self.field.origin;
+        let moved = self.origin_for(centre);
+        if moved == origin {
+            return;
+        }
+        let cell = self.field.cell;
+        let di = ((moved[0] - origin[0]) / cell).round() as isize;
+        let dj = ((moved[1] - origin[1]) / cell).round() as isize;
+        let [nx, nz] = self.field.cells;
+        let shift = |grid: &[f32]| {
+            let mut out = vec![0.0; grid.len()];
+            for j in 0..nz as isize {
+                for i in 0..nx as isize {
+                    let (si, sj) = (i + di, j + dj);
+                    if si >= 0 && sj >= 0 && si < nx as isize && sj < nz as isize {
+                        out[j as usize * nx + i as usize] = grid[sj as usize * nx + si as usize];
+                    }
+                }
+            }
+            out
+        };
+        self.field.height = shift(&self.field.height);
+        self.field.before = shift(&self.field.before);
+        self.previous = shift(&self.previous);
+        self.field.origin = moved;
+    }
+
+    /// Steps the ripples `dt` seconds: waves travel at `speed` and mostly
+    /// die within `fade` seconds. The edges hold still.
+    pub fn step(&mut self, dt: f32, speed: f32, fade: f32) {
+        let f = &mut self.field;
+        f.before.copy_from_slice(&f.height);
+        f.dt = dt.max(0.0);
+        if dt <= 0.0 {
+            return;
+        }
+        let [nx, nz] = f.cells;
+        let flat = nz == 1;
+        // Courant number squared: below a quarter keeps it stable.
+        let reach = speed.abs() * dt / f.cell;
+        let steps = (reach / 0.5).ceil().max(1.0) as usize;
+        let h = dt / steps as f32;
+        let c2 = (speed.abs() * h / f.cell).powi(2);
+        let damp = (-h * 3.0 / fade.max(1e-3)).exp();
+        let mut next = vec![0.0; f.len()];
+        for _ in 0..steps {
+            for j in 0..nz {
+                for i in 0..nx {
+                    let k = j * nx + i;
+                    let edge = i == 0 || i == nx - 1 || (!flat && (j == 0 || j == nz - 1));
+                    if edge {
+                        next[k] = 0.0;
+                        continue;
+                    }
+                    let here = f.height[k];
+                    let mut lap = f.height[k - 1] + f.height[k + 1] - 2.0 * here;
+                    if !flat {
+                        lap += f.height[k - nx] + f.height[k + nx] - 2.0 * here;
+                    }
+                    next[k] = here + (here - self.previous[k]) * damp + c2 * lap;
+                }
+            }
+            std::mem::swap(&mut self.previous, &mut f.height);
+            std::mem::swap(&mut f.height, &mut next);
+        }
+    }
+
+    /// Pushes the surface by `amount` world units at (x, z), a bump
+    /// `radius` across. `moving` sets it moving rather than just moving it,
+    /// the way a body ploughing through leaves a wake.
+    pub fn disturb(&mut self, x: f32, z: f32, radius: f32, amount: f32, moving: bool) {
+        let f = &mut self.field;
+        let c = f.cell_of(x, z);
+        let r = (radius / f.cell).max(0.75);
+        let reach = (r * 2.0).ceil() as isize;
+        let [nx, nz] = f.cells;
+        let flat = nz == 1;
+        let (ci, cj) = (c.x.round() as isize, c.y.round() as isize);
+        let rows = if flat { 0..=0 } else { -reach..=reach };
+        for dj in rows {
+            for di in -reach..=reach {
+                let (i, j) = (ci + di, cj + dj);
+                if i < 1 || i >= nx as isize - 1 || j < 0 || j >= nz as isize {
+                    continue;
+                }
+                if !flat && (j < 1 || j >= nz as isize - 1) {
+                    continue;
+                }
+                let d = Vec2::new(i as f32 - c.x, if flat { 0.0 } else { j as f32 - c.y });
+                let w = (-d.length_squared() / (r * r)).exp();
+                let k = j as usize * nx + i as usize;
+                f.height[k] += amount * w;
+                if !moving {
+                    self.previous[k] += amount * w;
+                }
+            }
+        }
+    }
+
+    /// Whether (x, z) is inside the patch.
+    pub fn covers(&self, x: f32, z: f32) -> bool {
+        let c = self.field.cell_of(x, z);
+        let [nx, nz] = self.field.cells;
+        c.x >= 0.0 && c.x <= (nx - 1) as f32 && c.y >= 0.0 && c.y <= (nz - 1) as f32
+    }
+
+    /// Everything back to still water.
+    pub fn clear(&mut self) {
+        self.field.height.fill(0.0);
+        self.field.before.fill(0.0);
+        self.previous.fill(0.0);
     }
 }
 
@@ -1078,7 +1497,107 @@ mod tests {
             flow: [0.0, 0.0],
             waves: set.resolve(sea, spec.waves.chop, spec.waves.steepness),
             flat: false,
+            calm: [0.0; 3],
+            ripples: None,
         }
+    }
+
+    #[test]
+    fn far_waves_go_flat_as_the_drawn_ones_do() {
+        let mut water = body(&WaterSpec::default(), 1.0);
+        let near = water.sample(3.0, 1.0, 0.5);
+        water.calm = [0.0, 0.0, 100.0];
+        assert_eq!(water.sample(3.0, 1.0, 0.5), near);
+        let far = water.sample(1000.0, 0.0, 0.5);
+        assert!((far.height - 2.0).abs() < 1e-6);
+        assert_eq!(far.normal, [0.0, 1.0, 0.0]);
+        let middle = water.calm_at([200.0, 0.0]);
+        assert!(middle > 0.0 && middle < 1.0);
+    }
+
+    #[test]
+    fn a_splash_spreads_as_a_ring_and_dies_away() {
+        let mut sim = RippleSim::new([64, 64], 0.5, [0.0, 0.0]);
+        sim.disturb(0.0, 0.0, 0.5, -0.2, false);
+        assert!(sim.field.sample(0.0, 0.0).height < -0.1);
+        for _ in 0..60 {
+            sim.step(1.0 / 60.0, 2.0, 3.0);
+        }
+        // A second at 2 m/s: the ring is near 2 m out.
+        let ring = (0..30)
+            .map(|i| i as f32 * 0.2)
+            .max_by(|a, b| {
+                let h = |r: f32| sim.field.sample(r, 0.0).height.abs();
+                h(*a).total_cmp(&h(*b))
+            })
+            .unwrap();
+        assert!((ring - 2.0).abs() < 1.0, "{ring}");
+        for _ in 0..600 {
+            sim.step(1.0 / 60.0, 2.0, 3.0);
+        }
+        let left: f32 = sim.field.height.iter().map(|h| h.abs()).fold(0.0, f32::max);
+        assert!(left < 1e-3, "{left}");
+    }
+
+    #[test]
+    fn fast_ripples_stay_stable() {
+        let mut sim = RippleSim::new([32, 1], 1.0, [0.0, 0.0]);
+        sim.disturb(0.0, 0.0, 1.0, 1.0, true);
+        for _ in 0..300 {
+            sim.step(1.0 / 30.0, 200.0, 5.0);
+        }
+        assert!(
+            sim.field
+                .height
+                .iter()
+                .all(|h| h.is_finite() && h.abs() < 2.0)
+        );
+    }
+
+    #[test]
+    fn a_patch_that_follows_the_camera_keeps_its_ripples() {
+        let mut sim = RippleSim::new([64, 64], 1.0, [0.0, 0.0]);
+        sim.disturb(5.0, 5.0, 1.0, 0.3, false);
+        let before = sim.field.sample(5.0, 5.0).height;
+        sim.recentre([10.0, -3.0]);
+        assert!((sim.field.sample(5.0, 5.0).height - before).abs() < 1e-5);
+        assert!(sim.covers(40.0, -3.0));
+        assert!(!sim.covers(-30.0, 0.0));
+    }
+
+    #[test]
+    fn floating_bodies_ride_the_ripples() {
+        let mut water = body(&WaterSpec::default(), 0.0);
+        let mut sim = RippleSim::new([32, 32], 0.5, [0.0, 0.0]);
+        sim.disturb(1.0, 0.0, 1.0, 0.25, false);
+        sim.step(1.0 / 60.0, 2.0, 3.0);
+        water.ripples = Some(Arc::new(sim.field.clone()));
+        let s = water.sample(1.0, 0.0, 0.0);
+        assert!(s.height > 2.1, "{}", s.height);
+        assert!(s.velocity[1] < 0.0, "a bump falls back");
+        assert!(water.height_at(1.0, 0.0, 0.0) > 2.1);
+    }
+
+    #[test]
+    fn turning_waves_keep_the_sea_and_the_limit() {
+        let spec = WaterSpec::default();
+        let now = WaveSet::build(&spec, 0.0, 9.81).resolve(1.0, 0.5, 0.5);
+        let was = WaveSet::build(&spec, 90.0, 9.81).resolve(1.0, 0.5, 0.5);
+        let energy = |w: &[LiveWave]| w.iter().map(|w| w.amplitude.powi(2)).sum::<f32>();
+        let mid = blend_waves(now.clone(), was.clone(), 0.5);
+        assert!(mid.len() <= MAX_WAVES);
+        assert!(energy(&mid) > energy(&now) * 0.8);
+        assert_eq!(blend_waves(now.clone(), was, 1.0), {
+            let mut n = now;
+            n.sort_by(|a, b| b.amplitude.total_cmp(&a.amplitude));
+            n
+        });
+        assert_eq!(heading_of([1.0, 0.0, 0.0], false), Some(90.0));
+        assert_eq!(heading_of([0.0, 0.0, 3.0], false), Some(180.0));
+        assert_eq!(heading_of([0.0, 2.0, 0.0], true), Some(0.0));
+        assert_eq!(heading_of([0.0; 3], false), None);
+        assert_eq!(turn_between(350.0, 10.0), 20.0);
+        assert_eq!(turn_between(10.0, 350.0), -20.0);
     }
 
     #[test]

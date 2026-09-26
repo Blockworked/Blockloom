@@ -2667,6 +2667,97 @@ mod tests {
         assert!(blue(pixel), "expected blue water, read {pixel:?}");
     }
 
+    /// A still, clear lake at y 0.5 with a glowing red wall behind it, the
+    /// wall's reflection landing mid-frame.
+    fn mirror_lake(
+        mode: blockloom_core::water::ReflectionMode,
+    ) -> blockloom_core::project::Project {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::material::SurfaceMaterial;
+        use blockloom_core::scene::Visual;
+        use blockloom_core::water::WaterSpec;
+        let mut room = blockloom_core::project::Project::starter("Mirror", Mode::ThreeD);
+        room.world.background = "#000000".to_string();
+        room.world.lighting.illuminance = 0.0;
+        room.world.lighting.ambient_brightness = 0.0;
+        room.actors.retain(|actor| actor.name == "Ground");
+        let mut spec = WaterSpec {
+            depth: 3.0,
+            ..WaterSpec::default()
+        };
+        spec.waves.amplitude = 0.0;
+        spec.detail.strength = 0.0;
+        spec.foam.amount = 0.0;
+        spec.underwater.caustics = 0.0;
+        spec.look.shallow = "#000000".to_string();
+        spec.look.deep = "#000000".to_string();
+        spec.look.clarity = 0.0;
+        spec.look.roughness = 0.02;
+        spec.reflections.mode = mode;
+        spec.reflections.planar_scale = 1.0;
+        let mut lake = blockloom_core::project::Actor::new(
+            "Lake",
+            Visual::Sphere {
+                color: "#FFFFFF".to_string(),
+                radius: 0.05,
+            },
+        );
+        lake.components.remove("Look");
+        lake.components.placement_mut().position = [0.0, 0.5, 0.0];
+        lake.components
+            .insert(ActorComponent::Water { water: spec });
+        room.actors.push(lake);
+        let mut wall = blockloom_core::project::Actor::new(
+            "Wall",
+            Visual::Cuboid {
+                color: "#000000".to_string(),
+                size: [40.0, 12.0, 1.0],
+            },
+        );
+        wall.components.placement_mut().position = [0.0, 6.0, -10.0];
+        wall.components.insert(ActorComponent::Material {
+            material: SurfaceMaterial {
+                emissive: "#FF0000".to_string(),
+                emissive_energy: 200.0,
+                ..SurfaceMaterial::default()
+            },
+        });
+        room.actors.push(wall);
+        room
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn a_planar_mirror_reflects_what_stands_over_the_water() {
+        use blockloom_core::water::ReflectionMode;
+        let red = |[r, _, _]: [u8; 3]| r > 60;
+        let (set, index, errors) = run_world(
+            mirror_lake(ReflectionMode::Planar),
+            |_| {},
+            game_camera(),
+            600,
+            red,
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+        let set = set.expect("no frame arrived");
+        dump(
+            "mirror",
+            &frame_pixels(&set.images[index], SIZE.x as usize, SIZE.y as usize),
+        );
+        let mirrored = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        let plain = floor_pixel(run_world(
+            mirror_lake(ReflectionMode::Sky),
+            |_| {},
+            game_camera(),
+            400,
+            |_| false,
+        ));
+        assert!(
+            red(mirrored) && mirrored[0] > plain[0].saturating_add(40),
+            "expected the red wall in the water, read {mirrored:?} against {plain:?}"
+        );
+    }
+
     #[test]
     #[ignore = "needs a GPU"]
     fn volumetric_fog_glows_with_its_emissive() {

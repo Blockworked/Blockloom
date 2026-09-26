@@ -1,8 +1,9 @@
 // A water surface: the Gerstner waves of `blockloom::water` displace the
 // mesh, and the fragment works out what is seen through it (refracted,
-// absorbed, with caustics on the bed), what it reflects (screen-space, then
-// the body's probe, then the sky color) and where it foams. The sun's glint
-// and the lit color of the water itself come from Bevy's own lighting.
+// absorbed, with caustics on the bed), what it reflects (a planar mirror, or
+// screen-space, then the body's probe, then the sky color) and where it
+// foams. The sun's glint and the lit color of the water itself come from
+// Bevy's own lighting. Simulated ripples ride on top of the waves.
 
 import bevy_pbr::render::{
     forward_io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex},
@@ -35,6 +36,8 @@ struct WaterLook {
     sky: vec4<f32>,
     // Underwater fog color, fog distance.
     under: vec4<f32>,
+    // 1 with a planar mirror, its blur radius in uv, 0, 0.
+    mirror: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> waves: WaterWaves;
@@ -48,6 +51,9 @@ struct WaterLook {
 @group(constants::MATERIAL_BIND_GROUP) @binding(108) var face_nz: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(109) var caustics_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(110) var caustics_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(111) var ripple_field: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(112) var mirror_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(113) var mirror_sampler: sampler;
 
 @vertex
 fn vertex(vertex_in: Vertex) -> VertexOutput {
@@ -59,8 +65,9 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     let far = distance(q, view.world_position.xz);
     let calm = 1.0 - smoothstep(look.sky.w * 4.0, look.sky.w * 12.0, far);
     let moved = displace(waves, q) * calm;
-    let rings = ripple(waves, q);
-    let world = vec3<f32>(q.x + moved.x, waves.flow.z + moved.y + rings.y, q.y + moved.z);
+    let over = q + moved.xz;
+    let rings = ripple(ripple_field, waves, over);
+    let world = vec3<f32>(over.x, waves.flow.z + moved.y + rings.y, over.y);
 
     var out: VertexOutput;
     out.world_position = vec4<f32>(world, 1.0);
@@ -195,7 +202,31 @@ fn screen_reflection(p: vec3<f32>, r: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(0.0);
 }
 
-fn reflection(p: vec3<f32>, r: vec3<f32>) -> vec3<f32> {
+// The planar mirror at a screen uv, bent by the surface and blurred by its
+// roughness. The mirror camera is upside down, so v flips.
+fn mirror(screen: vec2<f32>, n: vec3<f32>, dist: f32) -> vec3<f32> {
+    let bend = n.xz * look.optics.x * 0.12 / (1.0 + dist * 0.05);
+    let uv = vec2<f32>(screen.x, 1.0 - screen.y) + vec2<f32>(bend.x, -bend.y);
+    let radius = look.mirror.y;
+    if (radius <= 1e-4) {
+        return textureSampleLevel(mirror_texture, mirror_sampler, uv, 0.0).rgb;
+    }
+    // A golden-angle disc of taps.
+    var sum = vec3<f32>(0.0);
+    let taps = 12;
+    for (var i = 0; i < taps; i++) {
+        let f = f32(i) + 0.5;
+        let a = f * 2.39996323;
+        let r = sqrt(f / f32(taps)) * radius;
+        sum += textureSampleLevel(mirror_texture, mirror_sampler, uv + vec2<f32>(cos(a), sin(a)) * r, 0.0).rgb;
+    }
+    return sum / f32(taps);
+}
+
+fn reflection(p: vec3<f32>, r: vec3<f32>, screen: vec2<f32>, n: vec3<f32>, dist: f32) -> vec3<f32> {
+    if (look.mirror.x > 0.5) {
+        return mirror(screen, n, dist);
+    }
     // Below the horizon a flat reflection sees the water's own depths.
     let upward = vec3<f32>(r.x, max(r.y, 0.02), r.z);
     var env = look.sky.rgb;
@@ -235,7 +266,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // The Gerstner frame, then finer slopes that fade before they alias.
     let f = frame(waves, q);
     let fine = 1.0 / (1.0 + dist / max(look.sky.w, 1e-3));
-    let slopes = detail_slope(waves, q) * fine + ripple(waves, q).xz;
+    let slopes = detail_slope(waves, q) * fine + ripple(ripple_field, waves, in.world_position.xz).xz;
     var n = normalize(mix(vec3<f32>(0.0, 1.0, 0.0), f.normal, calm) - vec3<f32>(slopes.x, 0.0, slopes.y));
     let below = !is_front || (view.world_position.y < waves.flow.z - 0.05 && dot(v, n) < 0.0);
     if (below) {
@@ -310,7 +341,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     let r = reflect(-v, n);
     let fr = fresnel(cos_v) * look.optics.w * (1.0 - foam);
-    let color = lit + refracted * (1.0 - fr) * (1.0 - foam) + reflection(p, r) * fr;
+    let color = lit + refracted * (1.0 - fr) * (1.0 - foam) + reflection(p, r, screen, n, dist) * fr;
     out.color = main_pass_post_lighting_processing(pbr, vec4<f32>(color, 1.0));
     return out;
 }

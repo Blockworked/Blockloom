@@ -287,7 +287,7 @@ Rectangle {
         case "Terrain": return { component: "Terrain", terrain: terrainOf({}) };
         case "Water": return { component: "Water", water: is3d ? {} : { size: [800, 300], depth: 300,
             waves: { amplitude: 6, wavelength: 220, direction: 90, spread: 20 }, detail: { scale: 60 }, look: { absorption: 220 },
-            foam: { shore: 12, scale: 40 }, underwater: { distance: 600, caustics_scale: 60 }, splash: { min_speed: 60 } } };
+            foam: { shore: 12, scale: 40 }, underwater: { distance: 600, caustics_scale: 60 }, splash: { min_speed: 60 }, ripples: { speed: 120, extent: 1600 } } };
         case "Buoyancy": return { component: "Buoyancy", buoyancy: buoyancyOf({}) };
         case "Custom": return { component: "Custom", name: "Component", fields: [{ name: "value", value: { kind: "Number", value: 0 } }] };
         default: return null;
@@ -1155,6 +1155,7 @@ Rectangle {
             readonly property var refl: w.reflections || {}
             readonly property var under: w.underwater || {}
             readonly property var splash: w.splash || {}
+            readonly property var rip: w.ripples || {}
             readonly property bool ocean: w.kind === "Ocean"
             function part(name, next) { root.writeWaterPart(wa.c, name, next); }
             function clamp(n, lo, hi) { return Math.min(hi, Math.max(lo, n)); }
@@ -1185,6 +1186,8 @@ Rectangle {
                 SwitchField { value: wa.waves.follow_wind; onToggled: on => wa.part("waves", { follow_wind: on }) } Item { Layout.fillWidth: true } }
             InspectorRow { visible: !wa.waves.follow_wind; label: "Heading"; Layout.fillWidth: true
                 NumberField { value: wa.waves.direction; fallback: 45; onCommitted: n => wa.part("waves", { direction: ((n % 360) + 360) % 360 }) } }
+            InspectorRow { visible: wa.waves.follow_wind; label: "Turn seconds"; Layout.fillWidth: true
+                NumberField { value: wa.waves.turn; fallback: 6; onCommitted: n => wa.part("waves", { turn: wa.clamp(n, 0, 120) }) } }
             InspectorRow { label: "Spread"; Layout.fillWidth: true
                 NumberField { value: wa.waves.spread; fallback: 40; onCommitted: n => wa.part("waves", { spread: wa.clamp(n, 0, 180) }) } }
             InspectorRow { label: "Wind, fetch km"; Layout.fillWidth: true
@@ -1223,8 +1226,10 @@ Rectangle {
 
             Text { visible: root.is3d; text: "Reflections"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
             InspectorRow { visible: root.is3d; label: "Source"; Layout.fillWidth: true
-                ChoiceField { options: [{ value: "Auto", label: "Screen, then probe" }, { value: "Probe", label: "Probe only" }, { value: "ScreenSpace", label: "Screen, then sky" }, { value: "Sky", label: "Sky color" }]
+                ChoiceField { options: [{ value: "Auto", label: "Screen, then probe" }, { value: "Probe", label: "Probe only" }, { value: "ScreenSpace", label: "Screen, then sky" }, { value: "Planar", label: "Mirror camera" }, { value: "Sky", label: "Sky color" }]
                     value: wa.refl.mode || "Auto"; onChosen: m => wa.part("reflections", { mode: m }) } }
+            InspectorRow { visible: root.is3d && wa.refl.mode === "Planar"; label: "Mirror scale"; Layout.fillWidth: true
+                SliderField { from: 0.25; to: 1; value: wa.refl.planar_scale === undefined ? 0.5 : wa.refl.planar_scale; onMoved: wa.part("reflections", { planar_scale: value }) } }
             InspectorRow { visible: root.is3d && (wa.refl.mode === "Auto" || wa.refl.mode === "Probe"); label: "Probe px, frames"; Layout.fillWidth: true
                 ChoiceField { options: [64, 128, 256, 512].map(n => ({ value: String(n), label: n + " px" })); value: String(wa.refl.probe_resolution || 128); onChosen: v => wa.part("reflections", { probe_resolution: Number(v) }) }
                 NumberField { value: wa.refl.probe_refresh; fallback: 30; onCommitted: n => wa.part("reflections", { probe_refresh: wa.clamp(Math.round(n), 1, 600) }) } }
@@ -1245,10 +1250,20 @@ Rectangle {
             InspectorRow { label: "Min speed, drops"; Layout.fillWidth: true
                 NumberField { value: wa.splash.min_speed; fallback: 1.5; onCommitted: n => wa.part("splash", { min_speed: Math.max(0, n) }) }
                 NumberField { value: wa.splash.particles; fallback: 16; onCommitted: n => wa.part("splash", { particles: wa.clamp(Math.round(n), 0, 128) }) } }
-            InspectorRow { label: "Ripples"; Layout.fillWidth: true
+            InspectorRow { label: "Splash ripples"; Layout.fillWidth: true
                 SwitchField { value: wa.splash.ripples !== false; onToggled: on => wa.part("splash", { ripples: on }) } Item { Layout.fillWidth: true } }
             InspectorRow { label: "Sound"; Layout.fillWidth: true
                 AssetField { app: root.app; accept: ["audio"]; value: wa.splash.sound || ""; placeholderText: "Drag a sound here"; onCommitted: p => wa.part("splash", { sound: p }) } }
+
+            Text { text: "Ripples"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            InspectorRow { label: "Simulate"; Layout.fillWidth: true
+                SwitchField { value: wa.rip.enabled !== false; onToggled: on => wa.part("ripples", { enabled: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { visible: wa.rip.enabled !== false; label: "Speed, fade s"; Layout.fillWidth: true
+                NumberField { value: wa.rip.speed; fallback: root.is3d ? 2 : 120; onCommitted: n => wa.part("ripples", { speed: Math.max(0.01, n) }) }
+                NumberField { value: wa.rip.fade; fallback: 3; onCommitted: n => wa.part("ripples", { fade: wa.clamp(n, 0.1, 60) }) } }
+            InspectorRow { visible: wa.rip.enabled !== false; label: "Wake, extent"; Layout.fillWidth: true
+                NumberField { value: wa.rip.wake; fallback: 1; onCommitted: n => wa.part("ripples", { wake: wa.clamp(n, 0, 2) }) }
+                NumberField { value: wa.rip.extent; fallback: root.is3d ? 48 : 1600; onCommitted: n => wa.part("ripples", { extent: Math.max(0.1, n) }) } }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: wa.ocean ? "Reaches the horizon from wherever the camera is. The actor's height is the sea level."
                     : "The actor's position is the middle of the surface at rest; turning it turns the water and its current." }
