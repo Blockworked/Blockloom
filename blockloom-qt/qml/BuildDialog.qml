@@ -33,7 +33,7 @@ BwDialog {
 
     onOpened: {
         error = ""; built = null; busy = false;
-        locationField.text = app.appState.default_project_location;
+        locationField.text = app.appState.default_build_location || app.appState.default_project_location;
         app.invoke("list_build_targets", {}, list => {
             targets = list;
             // This machine comes first and can always build, so it is the default.
