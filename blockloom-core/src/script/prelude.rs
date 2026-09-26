@@ -23,6 +23,19 @@ impl Axis {
     }
 }
 
+/// The water surface at one point, as [`Actor::water_at`] reads it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct WaterSample {
+    /// The surface's height there.
+    pub height: f32,
+    pub normal: (f32, f32, f32),
+    /// How fast the surface there moves, the current included: what a boat
+    /// drifts with.
+    pub velocity: (f32, f32, f32),
+    /// 0-1: how pinched the crest there is, which is where foam gathers.
+    pub foam: f32,
+}
+
 /// How an attached camera frames its actor.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CameraView {
@@ -1085,6 +1098,45 @@ impl Actor {
             value as f64,
             0.0,
         );
+    }
+
+    /// A water dial for the rest of the run: `"level"` (the surface's height
+    /// at rest), `"chop"` 0-1 or `"foam"` 0-2. Moves this actor's own water
+    /// when it has some, and every body's otherwise.
+    pub fn set_water(&self, dial: &str, value: f32) {
+        self.act(
+            ACT_SET_WATER,
+            Str::borrow(dial),
+            Str::EMPTY,
+            Str::EMPTY,
+            value as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// The water surface over (x, z) as of this fixed tick (z means nothing
+    /// in 2D), or `None` over dry land. The highest where bodies overlap.
+    pub fn water_at(&self, x: f32, z: f32) -> Option<WaterSample> {
+        let at = format!("{x} {z}");
+        let read = |what: &str| {
+            self.number(READ_WATER, Str::borrow(&at), Str::borrow(what), 0.0)
+                .map(|value| value as f32)
+        };
+        Some(WaterSample {
+            height: read("height")?,
+            normal: (read("normal x")?, read("normal y")?, read("normal z")?),
+            velocity: (read("velocity x")?, read("velocity y")?, read("velocity z")?),
+            foam: read("foam")?,
+        })
+    }
+
+    /// Whether an actor is below a water surface and above its bottom.
+    /// Empty names this one.
+    pub fn is_underwater(&self, actor: &str) -> bool {
+        self.number(READ_UNDERWATER, Str::borrow(actor), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
     }
 
     /// One of the volumetric clouds' dials for the rest of the run:

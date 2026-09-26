@@ -664,7 +664,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         sculpt/paint/scatter brushes, erosion filter preview, stats (tris, instances).
         Not covered: RAW import is 16/32-bit .r16/.r32 only, and the GPU half
         has no ignored embed test yet.
-  - [ ] Water (ocean, lake, river actor): wave model (8-12 summed Gerstner waves
+  - [x] Water (ocean, lake, river actor): wave model (8-12 summed Gerstner waves
         with amplitude/chop/steepness plus Phillips-spectrum normal detail, wind
         fetch param), depth color (shallow tint, deep tint, Beer absorption distance),
         transparency plus refraction offset, foam (shoreline depth fade, crest foam
@@ -674,6 +674,30 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         for physics blocks and scripts), interaction hooks (splash particle, ripple
         decal, sound). Blocks: `set water level/chop/foam to`, `water height at x y`,
         `is _ underwater?`.
+        Done: a `Water` component (lake, river with a current, or an ocean out
+        to the horizon round the camera) with seeded Gerstner waves whose sea
+        state follows the wind through a fetch-limited fit, Phillips detail
+        normals, shallow/deep color with Beer absorption and clarity,
+        refraction of the opaque frame, shore and crest foam broken up by
+        noise and carried by the current, screen-space reflections falling
+        back to a refreshing probe at the surface and then the sky color, the
+        sun's glint through Bevy's own lighting, an underwater pass (fog,
+        absorption, caustics, built in or from an image) and Snell's window
+        from below. `Buoyancy` floats dynamic bodies at 1, 4 or 8 sample
+        points with drag and spin damping; anything with a rigid body that
+        drops in splashes droplets, a spreading ripple and the water's sound.
+        The CPU sample and the drawn surface sum the same waves. Scripts get
+        `water_at` (height, normal, velocity, foam), `is_underwater` and
+        `set_water`. 2D water is a strip with the same waves, depth color,
+        caustics and a foam line.
+        Not covered: the probe is a cube at the surface rather than a true
+        planar mirror camera, and it doesn't blur with roughness; ripples
+        are drawn, not simulated, and nothing floats on them; far ocean waves
+        flatten beyond about 16 wavelengths from the camera, so buoyancy out
+        there floats on slightly taller water than is drawn; wave headings
+        are fixed for the run (the authored wind direction); the surface has
+        no fog of its own (the fog pass sees the floor under it). The ignored
+        embed test only checks a lake tints what is under it.
   - [ ] VFX graph (Niagara/VFX-Graph lite): GPU sim with spawn modules (rate, burst,
         shape sphere/box/cone/mesh-surface), update modules (velocity, drag, curl noise,
         turbulence, attractor, depth-buffer collide with bounce/friction, kill planes),
@@ -925,7 +949,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
       script (debug info stripped, ~50 KB) that the player instantiates.
       Modules can't call each other through function pointers, so on wasm
       the prelude reaches the three host calls as imports (`abi::WasmCall`
-      in the script's memory; ABI 27) and the runtime's `browser` module
+      in the script's memory; ABI 28) and the runtime's `browser` module
       answers them with the native host code. A panic logs its message
       through the prelude's hook, then the trap stops that script for the
       game. Verified headless: a script moving an actor, reading its

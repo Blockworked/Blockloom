@@ -1428,6 +1428,12 @@ pub(crate) fn set_actor_component(
     if let ActorComponent::Terrain { terrain } = &mut component {
         terrain.normalize();
     }
+    if let ActorComponent::Water { water } = &mut component {
+        water.normalize();
+    }
+    if let ActorComponent::Buoyancy { buoyancy } = &mut component {
+        buoyancy.normalize();
+    }
     push_undo_for(
         &mut s,
         Some(EditSession::Comment {

@@ -400,6 +400,20 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
             )
         }
         abi::READ_ATMOSPHERE => sense::read(|sensors| sensors.atmosphere.field(a)),
+        abi::READ_WATER => {
+            let mut at = a.split_whitespace().map(|n| n.parse::<f32>().ok());
+            let (x, z) = (at.next()??, at.next().flatten().unwrap_or(0.0));
+            let sample = sense::read(|sensors| sensors.water.surface_at(x, z).map(|(_, s)| s))?;
+            water_reading(&sample, b).map(f64::from)
+        }
+        abi::READ_UNDERWATER => {
+            let position = if a.trim().is_empty() {
+                me(actor)?.position
+            } else {
+                sense::read(|sensors| sensors.find(a.trim()).map(|found| found.position))?
+            };
+            bool_as(sense::read(|sensors| sensors.water.underwater(position)))
+        }
         abi::READ_IS_TWEENING => bool_as(me(actor)?.tweening),
         abi::READ_ANIM_FRAME => Some(me(actor)?.anim_frame as f64),
         abi::READ_ANIM_PLAYING => bool_as(me(actor)?.anim_playing),
@@ -943,6 +957,17 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
                 message: format!("there's no cloud dial called \"{a}\""),
             },
         },
+        abi::ACT_SET_WATER => match blockloom_core::water::WaterProperty::parse(a) {
+            Some(property) => Effect::SetWater {
+                actor,
+                property,
+                value: n0 as f32,
+            },
+            None => Effect::Error {
+                actor,
+                message: format!("there's no water dial called \"{a}\""),
+            },
+        },
         abi::ACT_SET_BUS_VOLUME => Effect::SetBusVolume {
             bus: SoundBus::parse(a).unwrap_or(SoundBus::Sfx),
             volume: user_to_gain(n0),
@@ -1227,6 +1252,26 @@ mod browser {
             }
         }
     }
+}
+
+/// One named reading of a water sample, as `READ_WATER` spells them.
+fn water_reading(sample: &blockloom_core::water::WaterSample, what: &str) -> Option<f32> {
+    let key: String = what
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '_')
+        .flat_map(char::to_lowercase)
+        .collect();
+    Some(match key.as_str() {
+        "height" | "level" => sample.height,
+        "normalx" => sample.normal[0],
+        "normaly" => sample.normal[1],
+        "normalz" => sample.normal[2],
+        "velocityx" => sample.velocity[0],
+        "velocityy" => sample.velocity[1],
+        "velocityz" => sample.velocity[2],
+        "foam" => (1.0 - sample.jacobian).clamp(0.0, 1.0),
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

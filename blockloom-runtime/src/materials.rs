@@ -62,6 +62,9 @@ pub fn register(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/box_pbr.wesl");
     bevy::asset::embedded_asset!(app, "shaders/terrain.wesl");
     bevy::asset::embedded_asset!(app, "shaders/grass.wesl");
+    bevy::asset::embedded_asset!(app, "shaders/water_surface.wesl");
+    bevy::asset::embedded_asset!(app, "shaders/water_2d.wesl");
+    bevy::asset::embedded_asset!(app, "shaders/underwater.wesl");
     app.add_plugins(Material2dPlugin::<GraphMaterial2d>::default());
     app.add_plugins(MaterialPlugin::<GraphMaterial3d>::default());
     app.add_plugins(MaterialPlugin::<BoxMaterial>::default());
@@ -174,6 +177,27 @@ pub fn grass_shader() -> ShaderRef {
         bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!("shaders/grass.wesl"))
             .with_source("embedded"),
     )
+}
+
+pub fn water_shader() -> ShaderRef {
+    ShaderRef::Path(
+        bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!(
+            "shaders/water_surface.wesl"
+        ))
+        .with_source("embedded"),
+    )
+}
+
+pub fn water_2d_shader() -> ShaderRef {
+    ShaderRef::Path(
+        bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!("shaders/water_2d.wesl"))
+            .with_source("embedded"),
+    )
+}
+
+pub fn underwater_shader() -> bevy::asset::AssetPath<'static> {
+    bevy::asset::AssetPath::from_path_buf(bevy::asset::embedded_path!("shaders/underwater.wesl"))
+        .with_source("embedded")
 }
 
 /// `MaskUniforms` in `blockloom::texturing`, lane for lane.
@@ -925,7 +949,7 @@ pub fn spawn_tilemap_3d(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use blockloom_core::shader_lib;
 
     // Just enough of Bevy's PBR modules for naga to type-check a fragment.
@@ -957,6 +981,47 @@ fn main_pass_post_lighting_processing(p: PbrInput, c: vec4<f32>) -> vec4<f32> { 
             out.push('\n');
         }
         out.replace("constants::MATERIAL_BIND_GROUP", "2") + stub
+    }
+
+    // The stubbed tests drop Bevy imports, so check their first segment names
+    // one of bevy_pbr's shader modules; a wrong path skips the whole material.
+    #[test]
+    fn bevy_pbr_imports_name_real_modules() {
+        const MODULES: &[&str] = &[
+            "atmosphere",
+            "cluster",
+            "decal",
+            "deferred",
+            "light_probe",
+            "lightmap",
+            "meshlet",
+            "prepass",
+            "render",
+            "ssao",
+            "ssr",
+            "transmission",
+            "volumetric_fog",
+        ];
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shaders");
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let source = std::fs::read_to_string(&path).unwrap();
+            for (at, _) in source.match_indices("bevy_pbr::") {
+                let rest = &source[at + "bevy_pbr::".len()..];
+                if rest.starts_with('{') {
+                    continue;
+                }
+                let module: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                assert!(
+                    MODULES.contains(&module.as_str()),
+                    "{} imports bevy_pbr::{module}, which isn't a module",
+                    path.display()
+                );
+            }
+        }
     }
 
     #[test]

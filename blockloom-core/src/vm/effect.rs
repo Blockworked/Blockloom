@@ -187,6 +187,13 @@ pub enum Effect {
         property: crate::clouds::CloudProperty,
         value: f32,
     },
+    /// A water dial for the rest of the run: `actor`'s own water when it has
+    /// some, every body's otherwise.
+    SetWater {
+        actor: String,
+        property: crate::water::WaterProperty,
+        value: f32,
+    },
     /// One cloud layer's dial, for the rest of the run. `layer` counts from
     /// 1 and is checked where it lands. Window-global.
     SetCloudLayer {

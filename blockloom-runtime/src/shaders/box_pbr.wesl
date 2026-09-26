@@ -3,7 +3,7 @@ import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
 };
-import bevy_pbr::mesh_view_bindings::view;
+import bevy_pbr::render::mesh_view_bindings::view;
 import blockloom::texturing::{
     SurfaceGlobals, MaskUniforms, DetailUniforms, sample_uv, triplanar, triplanar_normal,
     triplanar_weights, slope_degrees, macro_noise, macro_tint, blend_detail, apply_masks,

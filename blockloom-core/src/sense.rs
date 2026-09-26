@@ -154,6 +154,8 @@ pub struct Sensors {
     pub bus_volumes: HashMap<SoundBus, f32>,
     /// Sun, wind, fog and weather as of the last fixed tick.
     pub atmosphere: AtmosphereSense,
+    /// Every water body, sampled with the atmosphere on the fixed tick.
+    pub water: crate::water::WaterSense,
 }
 
 /// The shape of [`AtmosphereSense`]. Bumped when a field changes meaning or
@@ -434,6 +436,11 @@ pub fn publish_ui(ui: HashMap<String, UiSense>, focus: String) {
 /// Samples the atmosphere at the head of each fixed tick.
 pub fn publish_atmosphere(atmosphere: AtmosphereSense) {
     SENSORS.with(|slot| slot.borrow_mut().atmosphere = atmosphere);
+}
+
+/// Samples the water at the head of each fixed tick, beside the atmosphere.
+pub fn publish_water(water: crate::water::WaterSense) {
+    SENSORS.with(|slot| slot.borrow_mut().water = water);
 }
 
 /// Reads the published snapshot. `f` sees a default-empty one before the

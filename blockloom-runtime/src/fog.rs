@@ -58,6 +58,10 @@ pub const FLAG_SKY: u32 = 8;
 pub const FLAG_HISTORY: u32 = 16;
 pub const FLAG_SUN_VOLUMETRIC: u32 = 32;
 
+/// The fog's composite, for passes that must come after it.
+#[derive(bevy::ecs::schedule::SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FogPass;
+
 /// How much of each froxel is this frame's rather than history's.
 const HISTORY_BLEND: f32 = 0.12;
 
@@ -91,6 +95,7 @@ pub fn register(app: &mut App) {
             // Strictly before post: the stages are only weakly chained, and
             // a post pass that ran first would read the frame without fog.
             draw_fog
+                .in_set(FogPass)
                 .after(crate::clouds::CloudPass)
                 .after(Core3dSystems::Prepass)
                 .after(Core3dSystems::MainPass)

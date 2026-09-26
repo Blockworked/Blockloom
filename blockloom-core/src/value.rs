@@ -685,6 +685,41 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "WaterHeight",
+        op: "WaterHeight",
+        arity: 2,
+        default_args: || vec![number(0.0), number(0.0)],
+        // The surface height over x and z (z means nothing in 2D) as of this
+        // fixed tick, the highest where bodies overlap. Dry land is reported
+        // rather than read as sea level.
+        eval: |args| {
+            let (x, z) = (num(args.first()) as f32, num(args.get(1)) as f32);
+            sense::read(|sensors| sensors.water.height_at(x, z))
+                .map(|height| Evaluated::Number(height as f64))
+                .ok_or_else(|| format!("there's no water at {x}, {z}"))
+        },
+    },
+    ExtOperator {
+        kind: "Underwater",
+        op: "Underwater",
+        arity: 1,
+        default_args: || vec![text("")],
+        // Whether an actor stands below a water surface and above its
+        // bottom. Empty names the running actor itself.
+        eval: |args| {
+            let target = args[0].as_text();
+            let position = if target.trim().is_empty() {
+                me()?.position
+            } else {
+                sense::read(|sensors| sensors.find(&target).map(|actor| actor.position))
+                    .ok_or_else(|| format!("there's no actor named \"{target}\""))?
+            };
+            Ok(Evaluated::Bool(sense::read(|sensors| {
+                sensors.water.underwater(position)
+            })))
+        },
+    },
+    ExtOperator {
         kind: "IsTrigger",
         op: "IsTrigger",
         arity: 1,
@@ -1040,5 +1075,52 @@ mod tests {
             ],
         );
         assert_eq!(circle.eval(), Ok(Evaluated::Text("Wall".to_string())));
+    }
+
+    #[test]
+    fn water_reporters_read_the_ticks_sample() {
+        use crate::water::{WaterBody, WaterKind, WaterSense};
+        register_blockloom_operators();
+        let mut sensors = Sensors::default();
+        for (id, y) in [("fish", -1.0), ("gull", 3.0)] {
+            sensors.actors.insert(
+                id.to_string(),
+                ActorSense {
+                    name: id.to_string(),
+                    position: [0.0, y, 0.0],
+                    ..Default::default()
+                },
+            );
+        }
+        sensors.water = WaterSense {
+            bodies: vec![WaterBody {
+                id: "lake".to_string(),
+                kind: WaterKind::Lake,
+                center: [0.0, 0.5, 0.0],
+                axis: [1.0, 0.0],
+                half: [10.0, 10.0],
+                depth: 4.0,
+                flow: [0.0, 0.0],
+                waves: Vec::new(),
+                flat: false,
+            }],
+            time: 0.0,
+        };
+        sense::publish(sensors);
+        let height = |x: f64| {
+            Value::op(
+                Op::from_name("WaterHeight"),
+                vec![Value::number(x), Value::number(0.0)],
+            )
+            .eval()
+        };
+        assert_eq!(height(1.0), Ok(Evaluated::Number(0.5)));
+        assert!(height(50.0).is_err());
+        let under = |who: &str| Value::op(Op::from_name("Underwater"), vec![Value::text(who)]);
+        assert_eq!(under("gull").eval(), Ok(Evaluated::Bool(false)));
+        sense::with_actor("fish", || {
+            assert_eq!(under("").eval(), Ok(Evaluated::Bool(true)));
+        });
+        assert!(under("whale").eval().is_err());
     }
 }
