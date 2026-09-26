@@ -21,24 +21,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      # blockloom-qt path-depends on a blockstitch-qml checkout that CI doesn't
-      # have (and needs Qt), so the workspace only loads without it.
-      - name: Drop the editor crate from the workspace
-        run: sed -i '/^    "blockloom-qt",$/d' Cargo.toml
+      # rust-toolchain.toml pins the version and its components.
+      - run: rustup toolchain install
       - run: cargo fmt --all --check
 
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - name: Drop the editor crate from the workspace
-        run: sed -i '/^    "blockloom-qt",$/d' Cargo.toml
+      # rust-toolchain.toml pins the version and its components.
+      - run: rustup toolchain install
       - name: Install Bevy's system libraries
         run: |
           sudo apt-get update

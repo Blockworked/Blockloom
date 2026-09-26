@@ -197,7 +197,7 @@ fn segment_box(from: [f32; 3], to: [f32; 3], center: [f32; 3], half: [f32; 3]) -
             }
         }
     }
-    if tmin < 0.0 || tmin > 1.0 {
+    if !(0.0..=1.0).contains(&tmin) {
         return None;
     }
     Some(tmin * len)
@@ -234,7 +234,7 @@ fn segment_ball(from: [f32; 3], to: [f32; 3], center: [f32; 3], radius: f32) -> 
         return None;
     }
     let t = (-b - disc.sqrt()) / (2.0 * a);
-    if t < 0.0 || t > 1.0 {
+    if !(0.0..=1.0).contains(&t) {
         return None;
     }
     Some(t * len2.sqrt())
