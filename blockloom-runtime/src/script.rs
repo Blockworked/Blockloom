@@ -414,6 +414,26 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
             };
             bool_as(sense::read(|sensors| sensors.water.underwater(position)))
         }
+        abi::READ_PARTICLES => {
+            let me = me(actor)?;
+            let what = a.trim().to_ascii_lowercase();
+            if what == "alive" {
+                return Some(me.particles.alive as f64);
+            }
+            let (event, axis) = what.split_once(' ').unwrap_or((&what, ""));
+            let event = blockloom_core::vfx::ParticleEvent::parse(event)?;
+            if axis.is_empty() {
+                return Some(me.particles.count(event) as f64);
+            }
+            let at = me.particles.at(event).unwrap_or(me.position);
+            let index = match axis.trim() {
+                "x" => 0,
+                "y" => 1,
+                "z" => 2,
+                _ => return None,
+            };
+            Some(at[index] as f64)
+        }
         abi::READ_IS_TWEENING => bool_as(me(actor)?.tweening),
         abi::READ_ANIM_FRAME => Some(me(actor)?.anim_frame as f64),
         abi::READ_ANIM_PLAYING => bool_as(me(actor)?.anim_playing),
@@ -911,6 +931,25 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
             constraint: a.trim().to_string(),
             x: n0 as f32,
             y: n1 as f32,
+        },
+        abi::ACT_BURST_PARTICLES => Effect::BurstParticles {
+            actor,
+            count: (n0 as i64).clamp(0, 512) as u32,
+        },
+        abi::ACT_SET_EMITTER_DIAL => match blockloom_core::blocks::EmitterDial::parse(a) {
+            Some(dial) => Effect::SetEmitterDial {
+                actor,
+                dial,
+                value: n0 as f32,
+            },
+            None => Effect::Error {
+                actor,
+                message: format!("there's no emitter dial called \"{a}\""),
+            },
+        },
+        abi::ACT_SET_EMITTER_PLAYING => Effect::SetEmitterPlaying {
+            actor,
+            playing: n0 != 0.0,
         },
         abi::ACT_SET_SPRITE_DIAL => match blockloom_core::blocks::SpriteDial::parse(a) {
             Some(dial) => Effect::SetSpriteDial {

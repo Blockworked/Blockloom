@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 28;
+pub const ABI_VERSION: u32 = 29;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -153,6 +153,10 @@ pub const READ_WATER: u32 = 45;
 /// `a` = actor name, empty for this actor. Whether it is below a water
 /// surface and above that body's bottom.
 pub const READ_UNDERWATER: u32 = 46;
+/// `a` = what to read of this actor's particles: `alive`, a count of this
+/// frame's `spawn`, `die` or `collide` events, or where the last one was
+/// (`collide x`, `spawn z`, ...; this actor's position before any).
+pub const READ_PARTICLES: u32 = 47;
 
 // ─── What a script can read as text ────────────────────────────────────────
 
@@ -364,6 +368,13 @@ pub const ACT_SET_IK_TARGET: u32 = 81;
 /// `a` = sprite dial (`FlipX`, `FlipY`, `Order`, `YSort`, `Palette`,
 /// `OutlineWidth`); `n0` = value.
 pub const ACT_SET_SPRITE_DIAL: u32 = 82;
+/// `n0` = how many particles this actor's emitter bursts out now.
+pub const ACT_BURST_PARTICLES: u32 = 83;
+/// `a` = emitter dial (`rate`, `lifetime`, `speed`, `spread`, `gravity`,
+/// `size start`, `size end` or `max`), `n0` = value, for the run.
+pub const ACT_SET_EMITTER_DIAL: u32 = 84;
+/// `n0` = nonzero to keep emitting, zero to stop (live particles finish).
+pub const ACT_SET_EMITTER_PLAYING: u32 = 85;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

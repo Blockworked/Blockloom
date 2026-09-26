@@ -289,6 +289,10 @@ pub enum Effect {
         actor: String,
         enabled: bool,
     },
+    SetEmitterPlaying {
+        actor: String,
+        playing: bool,
+    },
     /// A speech bubble over the actor; an empty text clears it.
     Say {
         actor: String,

@@ -108,6 +108,112 @@ impl ActorSense {
     }
 }
 
+/// Where a segment first enters any body's shape, and the outward normal
+/// there, skipping `skip`. A segment that starts inside a shape doesn't hit
+/// it, so what was born inside a body can leave. The CPU particle pool's
+/// collisions.
+pub fn segment_contact(
+    sensors: &Sensors,
+    from: [f32; 3],
+    to: [f32; 3],
+    skip: Option<&str>,
+) -> Option<([f32; 3], [f32; 3])> {
+    let mut best: Option<(f32, [f32; 3])> = None;
+    for (id, actor) in &sensors.actors {
+        if !actor.has_body || skip.is_some_and(|skip| skip == id) {
+            continue;
+        }
+        let hit = match actor.shape {
+            ColliderShape::None => None,
+            ColliderShape::Box { half } => enter_box(from, to, actor.position, half),
+            ColliderShape::Ball { radius } => enter_ball(from, to, actor.position, radius),
+        };
+        if let Some((t, normal)) = hit
+            && best.is_none_or(|(held, _)| t < held)
+        {
+            best = Some((t, normal));
+        }
+    }
+    best.map(|(t, normal)| {
+        (
+            std::array::from_fn(|i| from[i] + (to[i] - from[i]) * t),
+            normal,
+        )
+    })
+}
+
+/// The segment fraction where it enters a box from outside, and that face's
+/// normal.
+fn enter_box(
+    from: [f32; 3],
+    to: [f32; 3],
+    center: [f32; 3],
+    half: [f32; 3],
+) -> Option<(f32, [f32; 3])> {
+    let mut tmin: f32 = 0.0;
+    let mut tmax: f32 = 1.0;
+    let mut normal = [0.0; 3];
+    let mut outside = false;
+    for axis in 0..3 {
+        let origin = from[axis] - center[axis];
+        let dir = to[axis] - from[axis];
+        if origin.abs() > half[axis] {
+            outside = true;
+        }
+        if dir.abs() < 1e-9 {
+            if origin.abs() > half[axis] {
+                return None;
+            }
+            continue;
+        }
+        let inv = 1.0 / dir;
+        let mut t0 = (-half[axis] - origin) * inv;
+        let mut t1 = (half[axis] - origin) * inv;
+        let mut sign = -1.0;
+        if t0 > t1 {
+            std::mem::swap(&mut t0, &mut t1);
+            sign = 1.0;
+        }
+        if t0 > tmin {
+            tmin = t0;
+            normal = [0.0; 3];
+            normal[axis] = sign;
+        }
+        tmax = tmax.min(t1);
+        if tmin > tmax {
+            return None;
+        }
+    }
+    (outside && normal != [0.0; 3]).then_some((tmin, normal))
+}
+
+fn enter_ball(
+    from: [f32; 3],
+    to: [f32; 3],
+    center: [f32; 3],
+    radius: f32,
+) -> Option<(f32, [f32; 3])> {
+    let dir: [f32; 3] = std::array::from_fn(|i| to[i] - from[i]);
+    let oc: [f32; 3] = std::array::from_fn(|i| from[i] - center[i]);
+    let a = dir.iter().map(|d| d * d).sum::<f32>();
+    let c = oc.iter().map(|d| d * d).sum::<f32>() - radius * radius;
+    if a <= 1e-12 || c <= 0.0 {
+        return None;
+    }
+    let b = 2.0 * (0..3).map(|i| oc[i] * dir[i]).sum::<f32>();
+    let disc = b * b - 4.0 * a * c;
+    if disc < 0.0 {
+        return None;
+    }
+    let t = (-b - disc.sqrt()) / (2.0 * a);
+    if !(0.0..=1.0).contains(&t) {
+        return None;
+    }
+    let at: [f32; 3] = std::array::from_fn(|i| oc[i] + dir[i] * t);
+    let len = at.iter().map(|d| d * d).sum::<f32>().sqrt().max(1e-9);
+    Some((t, at.map(|v| v / len)))
+}
+
 fn segment_hit(from: [f32; 3], to: [f32; 3], actor: &ActorSense) -> Option<f32> {
     match actor.shape {
         ColliderShape::None => None,
@@ -243,6 +349,19 @@ fn segment_ball(from: [f32; 3], to: [f32; 3], center: [f32; 3], radius: f32) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_segment_into_a_box_reports_the_face_it_crossed() {
+        let (point, normal) = enter_box([0.0, 5.0, 0.0], [0.0, -5.0, 0.0], [0.0; 3], [1.0; 3])
+            .map(|(t, n)| ([0.0, 5.0 - 10.0 * t, 0.0], n))
+            .unwrap();
+        assert!((point[1] - 1.0).abs() < 1e-5);
+        assert_eq!(normal, [0.0, 1.0, 0.0]);
+        // Leaving from inside isn't a hit.
+        assert!(enter_box([0.0; 3], [0.0, 5.0, 0.0], [0.0; 3], [1.0; 3]).is_none());
+        let (_, normal) = enter_ball([5.0, 0.0, 0.0], [0.0; 3], [0.0; 3], 1.0).unwrap();
+        assert!((normal[0] - 1.0).abs() < 1e-5);
+    }
     use std::collections::HashSet;
 
     fn boxed(id: &str, at: [f32; 3], half: [f32; 3], layer: u8) -> (String, ActorSense) {

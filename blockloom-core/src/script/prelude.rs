@@ -36,6 +36,20 @@ pub struct WaterSample {
     pub foam: f32,
 }
 
+/// This actor's particles, as [`Actor::particles`] reads them.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Particles {
+    pub alive: u32,
+    /// This frame's events of each kind.
+    pub spawned: u32,
+    pub died: u32,
+    pub collided: u32,
+    /// Where the last of each happened; the actor's position before any.
+    pub spawn_at: (f32, f32, f32),
+    pub die_at: (f32, f32, f32),
+    pub collide_at: (f32, f32, f32),
+}
+
 /// How an attached camera frames its actor.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CameraView {
@@ -945,6 +959,71 @@ impl Actor {
             0.0,
             0.0,
         );
+    }
+
+    /// Bursts `count` particles out of this actor's emitter now.
+    pub fn burst_particles(&self, count: u32) {
+        self.act(
+            ACT_BURST_PARTICLES,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            count as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// One of this actor's emitter dials for the rest of the run: `"rate"`,
+    /// `"lifetime"`, `"speed"`, `"spread"`, `"gravity"`, `"size start"`,
+    /// `"size end"` or `"max"`.
+    pub fn set_emitter(&self, dial: &str, value: f32) {
+        self.act(
+            ACT_SET_EMITTER_DIAL,
+            Str::borrow(dial),
+            Str::EMPTY,
+            Str::EMPTY,
+            value as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Starts or stops this actor's emitter. Live particles finish either way.
+    pub fn set_emitter_playing(&self, playing: bool) {
+        self.act(
+            ACT_SET_EMITTER_PLAYING,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            if playing { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        );
+    }
+
+    /// This actor's particles as of the last frame drawn.
+    pub fn particles(&self) -> Particles {
+        let read = |what: &str| {
+            self.number(READ_PARTICLES, Str::borrow(what), Str::EMPTY, 0.0)
+                .unwrap_or(0.0) as f32
+        };
+        let at = |event: &str| {
+            (
+                read(&format!("{event} x")),
+                read(&format!("{event} y")),
+                read(&format!("{event} z")),
+            )
+        };
+        Particles {
+            alive: read("alive") as u32,
+            spawned: read("spawn") as u32,
+            died: read("die") as u32,
+            collided: read("collide") as u32,
+            spawn_at: at("spawn"),
+            die_at: at("die"),
+            collide_at: at("collide"),
+        }
     }
 
     /// The clip the animation player is holding, or `None` for none.

@@ -962,6 +962,7 @@ fn line_of(act: &Act) -> String {
         Act::BurstParticles { count } => format!("BurstParticles {count}"),
         Act::SetEmitterDial { dial, value } => format!("SetEmitterDial {dial} {value:?}"),
         Act::SetTrailEnabled { enabled } => format!("SetTrailEnabled {enabled}"),
+        Act::SetEmitterPlaying { playing } => format!("SetEmitterPlaying {playing}"),
         Act::ChangePosition { axis, by } => format!("ChangePosition {axis} {by:?}"),
         Act::Glide {
             seconds,
@@ -1126,6 +1127,8 @@ fn main() {
     // case with a `when animation ends` strand gets one, and nothing else
     // sees it.
     runner.fire(ENTRIES, "AnimationEnded", "a1", "Walk", "");
+    // The harness player's particles dying, likewise.
+    runner.fire(ENTRIES, "Particles", "a1", "Die", "");
     runner.fire(ENTRIES, "AnimationMarker", "a1", "Step", "");
 
     for tick in 0..TICKS {
@@ -1166,6 +1169,9 @@ fn line_of(effect: &Effect) -> Option<String> {
             format!("{actor}|SetEmitterDial {dial:?} {value:?}")
         }
         Effect::SetTrailEnabled { actor, enabled } => format!("{actor}|SetTrailEnabled {enabled}"),
+        Effect::SetEmitterPlaying { actor, playing } => {
+            format!("{actor}|SetEmitterPlaying {playing}")
+        }
         Effect::ChangePosition { actor, axis, by } => {
             format!("{actor}|ChangePosition {} {by:?}", axis.index())
         }
@@ -1546,6 +1552,10 @@ fn by_vm(project: &Project) -> Vec<String> {
     vm.fire(Event::AnimationEnded {
         actor: ACTOR.to_string(),
         clip: "Walk".to_string(),
+    });
+    vm.fire(Event::Particles {
+        actor: ACTOR.to_string(),
+        event: blockloom_core::vfx::ParticleEvent::Die,
     });
     vm.fire(Event::AnimationMarker {
         actor: ACTOR.to_string(),
@@ -2500,6 +2510,7 @@ fn the_rest_of_the_leaf_blocks_land_the_same() {
                 value: number(42.0),
             },
             K::SetTrailEnabled { enabled: false },
+            K::SetEmitterPlaying { playing: false },
             K::SetVisible { visible: false },
             K::SetMouseLocked { locked: true },
             K::RumbleGamepad {
@@ -2991,6 +3002,35 @@ fn animation_blocks_play_retune_read_back_and_stop_together() {
             K::StopAnimation,
         ],
         &[],
+    );
+}
+
+#[test]
+fn when_my_particles_starts_only_for_its_event() {
+    use blockloom_core::vfx::ParticleEvent;
+    assert_same_headed(
+        "particles",
+        vec![
+            (
+                K::WhenParticles {
+                    event: ParticleEvent::Die,
+                },
+                vec![
+                    K::Say {
+                        text: Value::text("died"),
+                    },
+                    K::SetEmitterPlaying { playing: false },
+                ],
+            ),
+            (
+                K::WhenParticles {
+                    event: ParticleEvent::Collide,
+                },
+                vec![K::Say {
+                    text: Value::text("hit"),
+                }],
+            ),
+        ],
     );
 }
 

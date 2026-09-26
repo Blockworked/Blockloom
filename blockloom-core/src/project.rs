@@ -804,6 +804,7 @@ impl Project {
         self.world.lightning.normalize();
         self.world.wind.normalize();
         self.world.surface.normalize();
+        self.world.vfx.normalize();
     }
 
     /// Pre-component projects named the followed actor on the world camera.

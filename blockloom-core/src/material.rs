@@ -1479,6 +1479,31 @@ pub struct ParticleSpec {
     /// nothing, so it only shows once the project has wind.
     #[serde(default = "default_wind")]
     pub wind: f32,
+    /// The VFX graph: where particles are born and which way they fly.
+    #[serde(default)]
+    pub shape: crate::vfx::SpawnShape,
+    #[serde(default)]
+    pub direction: crate::vfx::LaunchDirection,
+    /// Bursts on the emitter's own clock, on top of `rate`.
+    #[serde(default)]
+    pub bursts: Vec<crate::vfx::Burst>,
+    /// The update stack, run in order on every live particle.
+    #[serde(default)]
+    pub modules: Vec<crate::vfx::UpdateModule>,
+    #[serde(default)]
+    pub render: crate::vfx::ParticleRender,
+    #[serde(default)]
+    pub ribbon: crate::vfx::RibbonSpec,
+    #[serde(default)]
+    pub sim: crate::vfx::SimMode,
+    /// Seconds one loop of the effect lasts: the burst clock's period in the
+    /// scene view's preview.
+    #[serde(default = "default_duration")]
+    pub duration: f32,
+}
+
+fn default_duration() -> f32 {
+    2.0
 }
 
 fn default_rate() -> f32 {
@@ -1529,6 +1554,14 @@ impl Default for ParticleSpec {
             color_end: default_color_end(),
             max: default_max(),
             wind: default_wind(),
+            shape: Default::default(),
+            direction: Default::default(),
+            bursts: Vec::new(),
+            modules: Vec::new(),
+            render: Default::default(),
+            ribbon: Default::default(),
+            sim: Default::default(),
+            duration: default_duration(),
         }
     }
 }
@@ -1536,19 +1569,20 @@ impl Default for ParticleSpec {
 impl ParticleSpec {
     /// Clamp every dial into its live range, in place.
     pub fn normalize(&mut self) {
-        self.rate = self.rate.clamp(0.0, 240.0);
-        self.lifetime = self.lifetime.clamp(0.05, 10.0);
+        self.rate = self.rate.clamp(0.0, 100_000.0);
+        self.lifetime = self.lifetime.clamp(0.05, 60.0);
         self.speed = self.speed.max(0.0);
         self.spread = self.spread.clamp(0.0, 360.0);
         self.gravity_scale = self.gravity_scale.clamp(0.0, 4.0);
-        self.size_start = self.size_start.clamp(0.5, 256.0);
-        self.size_end = self.size_end.clamp(0.0, 256.0);
-        self.max = self.max.clamp(1, 512);
+        self.size_start = self.size_start.clamp(0.0, 10_000.0);
+        self.size_end = self.size_end.clamp(0.0, 10_000.0);
+        self.max = self.max.clamp(1, crate::vfx::GPU_MAX);
         self.wind = if self.wind.is_finite() {
             self.wind.clamp(0.0, 4.0)
         } else {
             default_wind()
         };
+        crate::vfx::normalize(self);
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -2239,13 +2273,13 @@ mod tests {
     #[test]
     fn particle_specs_clamp_into_shape() {
         let mut spec = ParticleSpec {
-            rate: 9999.0,
+            rate: 999_999.0,
             lifetime: 0.0,
             max: 0,
             ..ParticleSpec::default()
         };
         spec.normalize();
-        assert_eq!(spec.rate, 240.0);
+        assert_eq!(spec.rate, 100_000.0);
         assert_eq!(spec.lifetime, 0.05);
         assert_eq!(spec.max, 1);
         assert!(ParticleSpec::default().validate().is_ok());

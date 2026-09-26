@@ -463,6 +463,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-vfx",
+        cmd: "set_vfx",
+        aliases: &["set_vfx"],
+        summary: "Set the particle budget (live particles across every emitter) and cpu_only, which keeps every emitter off the GPU.",
+        args: &[ArgSpec {
+            name: "vfx",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-post-process",
         cmd: "set_post_process",
         aliases: &["set_post_process"],

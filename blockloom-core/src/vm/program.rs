@@ -33,6 +33,8 @@ pub enum Trigger {
     AnimationEnded {
         clip: String,
     },
+    /// The actor's own particles spawned, died or hit something.
+    Particles(crate::vfx::ParticleEvent),
     /// A clip reached a frame marker. Empty matches any marker.
     AnimationMarker {
         marker: String,
@@ -202,6 +204,7 @@ pub enum Action {
         value: Value,
     },
     SetTrailEnabled(bool),
+    SetEmitterPlaying(bool),
     Say(Value),
     SetVisible(bool),
     SetColor(Value),
@@ -495,6 +498,7 @@ pub fn compile(graph: &ActorGraph) -> Program {
             InstructionKind::WhenAnimationEnds { clip } => Some(Trigger::AnimationEnded {
                 clip: clip.trim().to_string(),
             }),
+            InstructionKind::WhenParticles { event } => Some(Trigger::Particles(*event)),
             InstructionKind::WhenAnimationMarker { marker } => Some(Trigger::AnimationMarker {
                 marker: marker.trim().to_string(),
             }),
@@ -1380,6 +1384,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenMessage { .. }
         | K::WhenCloned
         | K::WhenAnimationEnds { .. }
+        | K::WhenParticles { .. }
         | K::WhenAnimationMarker { .. }
         | K::WhenUiEvent { .. }
         | K::WhenUiClicked { .. }
@@ -1588,6 +1593,9 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         })),
         K::SetTrailEnabled { enabled } => {
             steps.push(Step::Action(Action::SetTrailEnabled(*enabled)))
+        }
+        K::SetEmitterPlaying { playing } => {
+            steps.push(Step::Action(Action::SetEmitterPlaying(*playing)))
         }
         K::Say { text } => steps.push(Step::Action(Action::Say(text.clone()))),
         K::SetVisible { visible } => steps.push(Step::Action(Action::SetVisible(*visible))),
