@@ -94,6 +94,12 @@ pub fn run_process() {
     };
 
     let mut app = App::new();
+    #[cfg(target_os = "linux")]
+    {
+        let mut vulkan = bevy::render::renderer::raw_vulkan_init::RawVulkanInitSettings::default();
+        display::add_vulkan_extensions(&mut vulkan);
+        app.insert_resource(vulkan);
+    }
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {

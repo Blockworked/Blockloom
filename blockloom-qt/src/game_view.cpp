@@ -21,7 +21,13 @@
 #define MESA_EGL_NO_X11_HEADERS
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
+#include <QtGui/qguiapplication_platform.h>
+#include <QtGui/qpa/qplatformnativeinterface.h>
+#include <cstring>
 #include <unistd.h>
+#include <wayland-client.h>
+
+#include "wayland/viewporter-client-protocol.h"
 #endif
 
 #ifndef GL_TEXTURE_EXTERNAL_OES
@@ -128,6 +134,121 @@ void offerModifiers()
     game_view_accept(rust::Slice<const uint64_t>(direct.data(), direct.size()));
 }
 
+// ─── The HDR plane ──────────────────────────────────────────────────────────
+//
+// Qt's window is 8-bit, so HDR frames can't be drawn into it. Instead the
+// world presents them to a Wayland subsurface of its own, placed under the
+// window, and the view leaves its own pixels see-through while it does. The
+// plane is made once, for the first window with a Game view in it, and lives
+// as long as the process: the world holds a swapchain on it.
+
+bool onWayland()
+{
+    return QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
+}
+
+struct Plane {
+    bool tried = false;
+    QQuickWindow *window = nullptr;
+    wl_subcompositor *subcompositor = nullptr;
+    wp_viewporter *viewporter = nullptr;
+    wl_surface *surface = nullptr;
+    wl_subsurface *subsurface = nullptr;
+    wp_viewport *viewport = nullptr;
+    // Where it was last put, in the window surface's logical pixels.
+    QRect placed;
+};
+
+Plane plane;
+
+void onPlaneGlobal(void *, wl_registry *registry, uint32_t name, const char *interface, uint32_t)
+{
+    if (!std::strcmp(interface, wl_subcompositor_interface.name))
+        plane.subcompositor = static_cast<wl_subcompositor *>(wl_registry_bind(registry, name, &wl_subcompositor_interface, 1));
+    else if (!std::strcmp(interface, wp_viewporter_interface.name))
+        plane.viewporter = static_cast<wp_viewporter *>(wl_registry_bind(registry, name, &wp_viewporter_interface, 1));
+}
+
+void onPlaneGlobalRemove(void *, wl_registry *, uint32_t) {}
+
+const wl_registry_listener planeRegistryListener = {onPlaneGlobal, onPlaneGlobalRemove};
+
+// Makes the plane under `window` and offers it to the world. GUI thread,
+// once the window has a surface; BLOCKLOOM_HDR_VIEW=0 turns it off.
+void makePlane(QQuickWindow *window)
+{
+    if (plane.tried)
+        return;
+    if (!onWayland() || qEnvironmentVariable("BLOCKLOOM_HDR_VIEW") == QLatin1String("0")) {
+        plane.tried = true;
+        return;
+    }
+    auto *native = qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
+    auto *parent = static_cast<wl_surface *>(
+        QGuiApplication::platformNativeInterface()->nativeResourceForWindow("surface", window));
+    if (!native || !parent)
+        return;
+    plane.tried = true;
+    wl_display *display = native->display();
+    // Bound on a private queue so Qt's own dispatch is left alone; neither
+    // global sends events.
+    wl_event_queue *queue = wl_display_create_queue(display);
+    auto *wrapper = static_cast<wl_display *>(wl_proxy_create_wrapper(display));
+    wl_proxy_set_queue(reinterpret_cast<wl_proxy *>(wrapper), queue);
+    wl_registry *registry = wl_display_get_registry(wrapper);
+    wl_proxy_wrapper_destroy(wrapper);
+    wl_registry_add_listener(registry, &planeRegistryListener, nullptr);
+    wl_display_roundtrip_queue(display, queue);
+    wl_registry_destroy(registry);
+    for (wl_proxy *proxy : {reinterpret_cast<wl_proxy *>(plane.subcompositor), reinterpret_cast<wl_proxy *>(plane.viewporter)}) {
+        if (proxy)
+            wl_proxy_set_queue(proxy, nullptr);
+    }
+    wl_event_queue_destroy(queue);
+    if (!plane.subcompositor || !plane.viewporter || !(window->format().alphaBufferSize() > 0)) {
+        qInfo("Game view: no HDR plane (needs wl_subcompositor, wp_viewporter and a window with alpha)");
+        return;
+    }
+    wl_compositor *compositor = native->compositor();
+    plane.window = window;
+    plane.surface = wl_compositor_create_surface(compositor);
+    plane.subsurface = wl_subcompositor_get_subsurface(plane.subcompositor, plane.surface, parent);
+    wl_subsurface_place_below(plane.subsurface, parent);
+    wl_subsurface_set_desync(plane.subsurface);
+    // Clicks go straight through to the window above.
+    wl_region *empty = wl_compositor_create_region(compositor);
+    wl_surface_set_input_region(plane.surface, empty);
+    wl_region_destroy(empty);
+    plane.viewport = wp_viewporter_get_viewport(plane.viewporter, plane.surface);
+    wl_surface_commit(plane.surface);
+    wl_display_flush(display);
+    game_view_offer_hdr(reinterpret_cast<size_t>(display), reinterpret_cast<size_t>(plane.surface));
+}
+
+// Puts the plane under `rect`, in the window's logical pixels. The position
+// lands with the window's next commit, the size with the world's next present.
+void placePlane(QQuickWindow *window, const QRect &rect)
+{
+    if (!plane.viewport || window != plane.window || rect == plane.placed || rect.isEmpty())
+        return;
+    plane.placed = rect;
+    const QMargins frame = window->frameMargins();
+    wl_subsurface_set_position(plane.subsurface, rect.x() + frame.left(), rect.y() + frame.top());
+    wp_viewport_set_destination(plane.viewport, rect.width(), rect.height());
+}
+
+// Shrinks a plane nobody presents to out of the way, so a smaller window
+// never leaves it poking out from underneath.
+void parkPlane()
+{
+    if (!plane.viewport || plane.placed == QRect(0, 0, 1, 1))
+        return;
+    plane.placed = QRect(0, 0, 1, 1);
+    wl_subsurface_set_position(plane.subsurface, 0, 0);
+    wp_viewport_set_destination(plane.viewport, 1, 1);
+    wl_surface_commit(plane.surface);
+}
+
 #endif
 
 GLuint compile(QOpenGLFunctions *gl, GLenum type, const char *source)
@@ -220,6 +341,24 @@ public:
         image->markDirty(QSGNode::DirtyMaterial);
     }
 
+    // Shows through to the HDR plane over `rect`: a texture Qt thinks is
+    // opaque, so it is drawn without blending and its zero alpha lands in
+    // the window as is, while items over the view still draw on top.
+    void showHole(const QRectF &rect, QQuickWindow *window)
+    {
+        if (!hole.sgTexture) {
+            QOpenGLFunctions *gl = QOpenGLContext::currentContext()->functions();
+            static const unsigned char clear[4] = {0, 0, 0, 0};
+            gl->glGenTextures(1, &hole.texture);
+            gl->glBindTexture(GL_TEXTURE_2D, hole.texture);
+            gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, clear);
+            setSampling(gl, GL_TEXTURE_2D);
+            gl->glBindTexture(GL_TEXTURE_2D, 0);
+            hole.sgTexture = QNativeInterface::QSGOpenGLTexture::fromNative(hole.texture, window, QSize(1, 1));
+        }
+        show(hole.sgTexture, rect);
+    }
+
     void hide()
     {
         if (!image)
@@ -239,6 +378,7 @@ public:
             drop(gl, slot);
         ring.clear();
         drop(gl, copy);
+        drop(gl, hole);
         if (gl && framebuffer)
             gl->glDeleteFramebuffers(1, &framebuffer);
         framebuffer = 0;
@@ -427,6 +567,7 @@ private:
     GameViewNode **owner;
     QSGSimpleTextureNode *image = nullptr;
     Slot copy;
+    Slot hole;
     GLuint framebuffer = 0;
     GLuint program = 0;
     GLuint vertices = 0;
@@ -517,7 +658,7 @@ void GameView::sendSize()
 
 void GameView::wake()
 {
-    const bool has = game_view_latest().valid;
+    const bool has = game_view_latest().valid || game_view_hdr_live();
     if (has != m_hasFrame) {
         m_hasFrame = has;
         Q_EMIT hasFrameChanged();
@@ -575,6 +716,11 @@ void GameView::hook(QQuickWindow *window)
 void GameView::framePresented()
 {
     game_view_presented();
+#ifdef __linux__
+    // Once the window has put a frame up it has a surface to hang the plane off.
+    if (!plane.tried)
+        QMetaObject::invokeMethod(this, [this] { if (window()) makePlane(window()); }, Qt::QueuedConnection);
+#endif
     // A running world draws a frame per present, so keep presenting.
     if (m_generation)
         QMetaObject::invokeMethod(this, [this] { update(); }, Qt::QueuedConnection);
@@ -610,6 +756,18 @@ QSGNode *GameView::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
         }
     }
 
+#ifdef __linux__
+    // HDR frames are on the plane under the window: show through to it,
+    // letterboxed as the ring's frames would be.
+    if (game_view_hdr_live() && !m_sentSize.isEmpty()) {
+        const QRectF rect = fit(boundingRect(), m_sentSize);
+        placePlane(window(), mapRectToScene(rect).toRect());
+        node->showHole(rect, window());
+        return node;
+    }
+    if (window() == plane.window)
+        parkPlane();
+#endif
     const GameFrame latest = game_view_latest();
     if (!latest.valid || latest.generation != m_generation || latest.index >= node->ring.size()) {
         // Nothing new: a frame from this ring stays up rather than flashing,
@@ -645,4 +803,12 @@ void game_view_wake()
 void game_view_prefer_opengl()
 {
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+#ifdef __linux__
+    // On Wayland the Game view may show through to an HDR plane under the
+    // window, which needs the window to carry alpha. It stays opaque elsewhere.
+    const QByteArray platform = qgetenv("QT_QPA_PLATFORM");
+    if (qEnvironmentVariableIsSet("WAYLAND_DISPLAY") && !platform.startsWith("xcb")
+        && qEnvironmentVariable("BLOCKLOOM_HDR_VIEW") != QLatin1String("0"))
+        QQuickWindow::setDefaultAlphaBuffer(true);
+#endif
 }
