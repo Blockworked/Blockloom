@@ -811,7 +811,10 @@ Two sims fill one buffer. `vfx::Pool` is the CPU one: 2D, `SimMode::Cpu`,
 actors' sensor shapes through `physics_query::segment_contact`. Everything
 else in 3D runs `blockloom-runtime/src/shaders/vfx_sim.wesl`: `begin` resets
 one `EmitterState`, `simulate` steps every slot, spawning claims slots
-through an atomic budget, and `Collide` reads the depth prepass (reverse Z).
+through an atomic budget, and `Collide` tries the frame's actor shapes first
+(`collider_shapes`, the nearest `GPU_COLLIDERS` bodies' sensed boxes and
+balls, the emitter's own left out), then the depth prepass (reverse Z), so
+bodies off screen or hidden still stop particles.
 `SimParams` in `vfx.rs` matches the WGSL field for field; change the two
 together, and `ParticleLook` with `vfx_particles.wesl`.
 
@@ -820,18 +823,27 @@ together, and `ParticleLook` with `vfx_particles.wesl`.
 buffers, one or two slot meshes, the `ParticleMaterial`s and the sim),
 decides what spawns within the project's budget, steps the pool or pushes a
 `GpuStep`, and fires `Event::Particles` once a frame per kind while a run
-is live. `vfx/gpu.rs` is the render-world half: pool bytes land through
+is live. A mesh surface spawns on the actor's own mesh and every mesh
+under it (a model's parts), gathered in the actor's frame. `vfx/gpu.rs` is
+the render-world half: pool bytes land through
 `VfxFrame` uploads, and the compute pass runs once a frame in `Core3d`
 between the prepass and the main pass. GPU counts come back through a
 `Readback` of the state buffer, tagged with a step sequence so each set is
-used once. `vfx/render.rs` is the draw: the mesh's positions only name a
+used once; each event kind carries where its last one happened, and
+`ParticleSenses` hands counts and positions to `publish_sensors` for the
+particle reporters and a script's `particles()`. Overdraw is counted, not
+estimated: every particle fragment adds to one `OverdrawMeter` counter,
+zeroed each frame and read back as fragments over the view's pixels.
+`vfx/render.rs` is the draw: the mesh's positions only name a
 slot, a corner and a ribbon segment, and `vfx_particles.wesl` (3D) or
-`vfx_particles_2d.wesl` reads the particle. While nothing runs, the actor
+`vfx_particles_2d.wesl` reads the particle. A lit 3D particle receives
+shadows and, with `translucency`, adds the light from behind it. While nothing runs, the actor
 the scene view has selected plays its emitter on a loop of `duration`.
 Draws go on a rebuild (`fx::despawn_fx`). `fx.rs` is now only splash
-droplets and trails. Counts reach the profiler as `vfx/*`. The GPU half is
-the ignored `embed` tests `gpu_particles_draw_where_they_are_born` and its
-CPU twin.
+droplets and trails. Counts reach the profiler as `vfx/*`. The emitter is a module stack in the order VFX Graph runs its contexts
+(spawn, initialize, update, output), not a node graph. The GPU half is the
+ignored `embed` tests: GPU and CPU particles draw, a GPU spark lands on a
+hidden body, ribbons draw without heads, and the overdraw meter counts.
 
 ### Lighting rig
 

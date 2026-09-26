@@ -995,9 +995,10 @@ pub fn publish_sensors(
         Option<&AnimationPlayer>,
     )>,
     sound: Res<crate::sound::SoundState>,
-    (atmosphere, water): (
+    (atmosphere, water, particles): (
         Option<Res<crate::atmosphere::Atmosphere>>,
         Option<Res<crate::water::WaterSample>>,
+        Option<Res<crate::vfx::ParticleSenses>>,
     ),
     preview_pointer: Option<ResMut<crate::preview::PreviewPointer>>,
 ) {
@@ -1102,6 +1103,10 @@ pub fn publish_sensors(
                 layer,
                 mask,
                 shape,
+                particles: particles
+                    .as_ref()
+                    .and_then(|particles| particles.0.get(&id.0).cloned())
+                    .unwrap_or_default(),
             },
         );
     }

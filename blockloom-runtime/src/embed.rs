@@ -3258,8 +3258,6 @@ mod tests {
         red
     }
 
-    /// The 3D starter's floor with no sun and no ambient light, plus a small
-    /// still lamp above the middle of it, which batching merges.
     /// The dark room with a red emitter at the floor's middle, whose
     /// particles hang where they are born.
     fn sparks(sim: blockloom_core::vfx::SimMode) -> blockloom_core::project::Project {
@@ -3301,10 +3299,10 @@ mod tests {
     }
 
     /// Red pixels in a frame of the sparks room, which is black but for
-    /// the particles.
-    fn red_sparks(sim: blockloom_core::vfx::SimMode, name: &str) -> usize {
+    /// the particles, and the mean row they sit on.
+    fn red_sparks(room: blockloom_core::project::Project, name: &str) -> (usize, f32) {
         let (set, index, errors) = run_world_sending(
-            sparks(sim),
+            room,
             |_| {},
             game_camera(),
             120,
@@ -3315,23 +3313,156 @@ mod tests {
         let set = set.expect("no frame arrived");
         let frame = frame_pixels(&set.images[index], SIZE.x as usize, SIZE.y as usize);
         dump(name, &frame);
-        frame.into_iter().filter(|&pixel| is_red(pixel)).count()
+        let rows: Vec<usize> = frame
+            .into_iter()
+            .enumerate()
+            .filter(|&(_, pixel)| is_red(pixel))
+            .map(|(i, _)| i / SIZE.x as usize)
+            .collect();
+        let mean = rows.iter().sum::<usize>() as f32 / rows.len().max(1) as f32;
+        (rows.len(), mean)
     }
 
     #[test]
     #[ignore = "needs a GPU"]
     fn gpu_particles_draw_where_they_are_born() {
-        let red = red_sparks(blockloom_core::vfx::SimMode::Auto, "gpu_particles");
+        let (red, _) = red_sparks(sparks(blockloom_core::vfx::SimMode::Auto), "gpu_particles");
         assert!(red > 1000, "expected red sparks, found {red} red pixels");
     }
 
     #[test]
     #[ignore = "needs a GPU"]
     fn cpu_particles_draw_where_they_are_born() {
-        let red = red_sparks(blockloom_core::vfx::SimMode::Cpu, "cpu_particles");
+        let (red, _) = red_sparks(sparks(blockloom_core::vfx::SimMode::Cpu), "cpu_particles");
         assert!(red > 1000, "expected red sparks, found {red} red pixels");
     }
 
+    /// Sparks born a metre over where they are drawn in `sparks`, falling,
+    /// over no floor at all: only a hidden box can stop them.
+    fn falling_sparks(box_under: bool) -> blockloom_core::project::Project {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::scene::{BodyKind, Physics};
+        use blockloom_core::vfx::UpdateModule;
+        let mut room = sparks(blockloom_core::vfx::SimMode::Auto);
+        room.actors.retain(|actor| actor.name == "Sparks");
+        let emitter = &mut room.actors[0];
+        emitter.components.placement_mut().position = [0.0, 2.0, 0.0];
+        if let Some(ActorComponent::Emitter { emitter: spec }) =
+            emitter.components.get_mut("Emitter")
+        {
+            spec.gravity_scale = 1.0;
+            spec.modules = vec![UpdateModule::Collide {
+                bounce: 0.0,
+                friction: 1.0,
+                lifetime_loss: 0.0,
+                kill: false,
+            }];
+        }
+        if box_under {
+            let mut shelf = blockloom_core::project::Actor::new(
+                "Shelf",
+                blockloom_core::scene::Visual::Cuboid {
+                    color: "#000000".to_string(),
+                    size: [4.0, 1.0, 4.0],
+                },
+            );
+            shelf.components.placement_mut().position = [0.0, 0.5, 0.0];
+            // Hidden, so the depth buffer never sees it.
+            shelf.components.set_visible(false);
+            shelf.components.set_physics(Physics {
+                body: BodyKind::Static,
+                ..Physics::default()
+            });
+            room.actors.push(shelf);
+        }
+        room
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn gpu_particles_land_on_an_actor_the_camera_cant_see() {
+        // Where `sparks` draws one hanging at the shelf's top.
+        let (_, shelf) = red_sparks(sparks(blockloom_core::vfx::SimMode::Auto), "gpu_particles");
+        let (red, resting) = red_sparks(falling_sparks(true), "gpu_particles_landed");
+        assert!(
+            red > 1000,
+            "expected a spark on the shelf, found {red} red pixels"
+        );
+        assert!(
+            (resting - shelf).abs() < 8.0,
+            "expected the spark on the shelf at row {shelf}, found it at {resting}"
+        );
+        // With no shelf it falls straight past where the shelf would be.
+        let (_, fallen) = red_sparks(falling_sparks(false), "gpu_particles_fell");
+        assert!(
+            fallen > shelf + 40.0,
+            "expected the spark below row {shelf}, found it at {fallen}"
+        );
+    }
+
+    /// Ribbons behind sparks that fly off sideways, with no heads drawn.
+    fn ribbon_sparks() -> blockloom_core::project::Project {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::vfx::ParticleBlend;
+        let mut room = sparks(blockloom_core::vfx::SimMode::Auto);
+        let emitter = room.actors.last_mut().unwrap();
+        if let Some(ActorComponent::Emitter { emitter: spec }) =
+            emitter.components.get_mut("Emitter")
+        {
+            // Fast, since a software GPU only gets through a fraction of a
+            // second of the run before the frame is read.
+            spec.max = 16;
+            spec.rate = 20.0;
+            spec.lifetime = 5.0;
+            spec.speed = 6.0;
+            spec.size_start = 0.2;
+            spec.size_end = 0.2;
+            spec.render.blend = ParticleBlend::Alpha;
+            spec.ribbon.enabled = true;
+            spec.ribbon.heads = false;
+            spec.ribbon.width = 0.3;
+            spec.ribbon.width_curve = blockloom_core::vfx::Curve::constant(1.0);
+            spec.ribbon.step = 0.02;
+        }
+        room
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn gpu_ribbons_draw_without_heads() {
+        let (red, _) = red_sparks(ribbon_sparks(), "gpu_ribbons");
+        assert!(red > 500, "expected red ribbons, found {red} red pixels");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn the_overdraw_meter_counts_the_sparks() {
+        let (_, _, reports) = run_world_reporting(
+            sparks(blockloom_core::vfx::SimMode::Auto),
+            |_| {},
+            game_camera(),
+            120,
+            |_| false,
+            vec![EditorMessage::Start],
+        );
+        let overdraw = reports.iter().rev().find_map(|report| match report {
+            RuntimeMessage::Status(status) => status
+                .render_metrics
+                .iter()
+                .find(|metric| metric.name == "vfx/overdraw")
+                .map(|metric| metric.value),
+            _ => None,
+        });
+        // One spark covers a sliver of the view.
+        let overdraw = overdraw.expect("no overdraw reported");
+        assert!(
+            overdraw > 0.001 && overdraw < 1.0,
+            "expected a sliver of a screen, read {overdraw}"
+        );
+    }
+
+    /// The 3D starter's floor with no sun and no ambient light, plus a small
+    /// still lamp above the middle of it, which batching merges.
     fn dark_room(lamp: bool) -> blockloom_core::project::Project {
         use blockloom_core::components::{ActorComponent, LightSpec};
         use blockloom_core::scene::Visual;
@@ -3442,6 +3573,28 @@ mod tests {
         done: impl Fn([u8; 3]) -> bool,
         extra: Vec<EditorMessage>,
     ) -> (Option<Arc<SlotSet>>, usize, Vec<RuntimeMessage>) {
+        let (set, index, reports) = run_world_reporting(project, offer, view, settle, done, extra);
+        let errors = reports
+            .into_iter()
+            .filter(|report| {
+                matches!(
+                    report,
+                    RuntimeMessage::Error { .. } | RuntimeMessage::Fatal { .. }
+                )
+            })
+            .collect();
+        (set, index, errors)
+    }
+
+    /// As `run_world_sending`, but hands back everything the world reported.
+    fn run_world_reporting(
+        project: blockloom_core::project::Project,
+        offer: impl FnOnce(&FrameExchange),
+        view: SceneView,
+        settle: usize,
+        done: impl Fn([u8; 3]) -> bool,
+        extra: Vec<EditorMessage>,
+    ) -> (Option<Arc<SlotSet>>, usize, Vec<RuntimeMessage>) {
         blockloom_core::init();
         let (to_world, incoming) = std::sync::mpsc::channel();
         let (outgoing, reports) = std::sync::mpsc::channel();
@@ -3508,19 +3661,11 @@ mod tests {
         to_world.send(EditorMessage::Shutdown).unwrap();
         drop(to_world);
         world.join().unwrap();
-        let errors: Vec<_> = reports
-            .try_iter()
-            .filter(|report| {
-                matches!(
-                    report,
-                    RuntimeMessage::Error { .. } | RuntimeMessage::Fatal { .. }
-                )
-            })
-            .collect();
+        let reports: Vec<_> = reports.try_iter().collect();
         // The world's end is the viewer's cue to show nothing.
         assert!(exchange.slots().is_none());
         let (set, index) = seen.map_or((None, 0), |(set, index)| (Some(set), index));
-        (set, index, errors)
+        (set, index, reports)
     }
 
     /// Reads a whole frame out of a linear dma-buf, row by row.

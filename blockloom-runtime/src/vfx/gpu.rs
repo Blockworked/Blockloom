@@ -81,6 +81,8 @@ pub struct GpuStep {
 pub struct VfxFrame {
     pub uploads: Vec<Upload>,
     pub steps: Vec<GpuStep>,
+    /// The actor shapes every GPU step collides with.
+    pub shapes: Option<Handle<ShaderBuffer>>,
 }
 
 impl ExtractResource<RenderApp> for VfxFrame {
@@ -151,6 +153,7 @@ fn init_pipelines(
                     storage_buffer_sized(false, None),
                     storage_buffer_read_only_sized(false, None),
                     depth,
+                    storage_buffer_read_only_sized(false, None),
                 ),
             ),
         )
@@ -267,6 +270,9 @@ fn simulate(
     ) else {
         return;
     };
+    let Some(shapes) = frame.shapes.as_ref().and_then(|shapes| buffers.get(shapes)) else {
+        return;
+    };
     let layout = cache.get_bind_group_layout(&pipelines.layouts[multisampled as usize]);
     let device = ctx.render_device().clone();
     let diagnostics = ctx.diagnostic_recorder();
@@ -297,6 +303,7 @@ fn simulate(
                 state.buffer.as_entire_buffer_binding(),
                 surface.buffer.as_entire_buffer_binding(),
                 depth,
+                shapes.buffer.as_entire_buffer_binding(),
             )),
         );
         pass.set_bind_group(0, &bind_group, &[*offset]);

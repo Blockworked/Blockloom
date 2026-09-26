@@ -737,12 +737,20 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         Project Settings holds the particle budget. The profiler gets
         `vfx/particles`, `vfx/emitters`, `vfx/gpu_emitters`, `vfx/budget` and
         `vfx/overdraw`.
-        Not covered: it is a module stack, not a node graph; GPU collisions
-        only see what is on screen, and GPU events report one position per
-        kind a frame; overdraw is estimated from particle sizes, not counted
-        on the GPU; lit particles are lit as flat cards; a mesh surface uses
-        the actor's own shape, not a model's parts; no script API yet. The
-        ignored embed tests only check that GPU and CPU particles draw.
+        Then: GPU collisions also test the nearest 128 bodies' boxes and
+        balls, so hidden or off-screen actors stop particles; each event's
+        count and last position reach blocks (`my particle count`, `how many
+        of my particles`, `where my particles last`) and scripts
+        (`burst_particles`, `set_emitter`, `set_emitter_playing`,
+        `particles()`); overdraw is counted per fragment on the GPU; lit
+        particles receive shadows and can be translucent; a mesh surface
+        includes a model's parts; embed tests cover collisions with a hidden
+        body, ribbons and the overdraw meter.
+        Not covered: the emitter stays a module stack laid out like VFX
+        Graph's contexts, with no node editor or operator nodes; GPU
+        collisions see bodies as boxes and balls only (no capsules, meshes
+        or terrain unless on screen); a script polls particle events, since
+        scripts have no event entry point.
   - [ ] Decals (transient marks only; lasting stains live in the destruction map
         below): deferred projected (albedo/normal/roughness/emissive, atlas pages,
         angle fade, depth reject to avoid floating edges), pool with LRU steal plus

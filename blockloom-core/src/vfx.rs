@@ -611,6 +611,10 @@ pub struct ParticleRender {
     /// 0-1: how much smaller than its size a particle may randomly be.
     #[serde(default)]
     pub size_random: f32,
+    /// How much light from behind a lit particle lets through, like thin
+    /// smoke. 0 is opaque to it.
+    #[serde(default)]
+    pub translucency: f32,
 }
 
 fn default_stretch() -> f32 {
@@ -640,6 +644,7 @@ impl Default for ParticleRender {
             spin: 0.0,
             random_rotation: false,
             size_random: 0.0,
+            translucency: 0.0,
         }
     }
 }
@@ -768,6 +773,57 @@ impl VfxSettings {
     }
 }
 
+/// What an actor's particles did, as the reporters and scripts read it: the
+/// live count, how many spawned, died and collided this frame, and where the
+/// last of each happened (GPU emitters report a frame or two late).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ParticleSense {
+    pub alive: u32,
+    pub spawned: u32,
+    pub died: u32,
+    pub collided: u32,
+    pub spawn_at: Option<[f32; 3]>,
+    pub die_at: Option<[f32; 3]>,
+    pub collide_at: Option<[f32; 3]>,
+}
+
+impl ParticleSense {
+    /// This frame's count of one event.
+    pub fn count(&self, event: ParticleEvent) -> u32 {
+        match event {
+            ParticleEvent::Spawn => self.spawned,
+            ParticleEvent::Die => self.died,
+            ParticleEvent::Collide => self.collided,
+        }
+    }
+
+    /// Where the last one of an event happened, this run.
+    pub fn at(&self, event: ParticleEvent) -> Option<[f32; 3]> {
+        match event {
+            ParticleEvent::Spawn => self.spawn_at,
+            ParticleEvent::Die => self.die_at,
+            ParticleEvent::Collide => self.collide_at,
+        }
+    }
+
+    /// Folds one step's events in: counts replace, positions stick.
+    pub fn record(&mut self, alive: u32, events: &StepEvents) {
+        self.alive = alive;
+        self.spawned = events.spawned;
+        self.died = events.died;
+        self.collided = events.collided;
+        for (at, new) in [
+            (&mut self.spawn_at, events.spawn_at),
+            (&mut self.die_at, events.die_at),
+            (&mut self.collide_at, events.collide_at),
+        ] {
+            if new.is_some() {
+                *at = new;
+            }
+        }
+    }
+}
+
 /// Which particle event a `when my particles` hat waits for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum ParticleEvent {
@@ -793,7 +849,9 @@ impl ParticleEvent {
     }
 
     pub fn parse(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|event| event.name() == name)
+        Self::ALL
+            .into_iter()
+            .find(|event| event.name().eq_ignore_ascii_case(name.trim()))
     }
 }
 
@@ -820,6 +878,7 @@ pub fn normalize(spec: &mut ParticleSpec) {
     render.intensity = finite_or(render.intensity, 1.0).clamp(0.0, 1000.0);
     render.spin = finite_or(render.spin, 0.0).clamp(-7200.0, 7200.0);
     render.size_random = finite_or(render.size_random, 0.0).clamp(0.0, 1.0);
+    render.translucency = finite_or(render.translucency, 0.0).clamp(0.0, 4.0);
     render.flipbook.columns = render.flipbook.columns.clamp(1, 64);
     render.flipbook.rows = render.flipbook.rows.clamp(1, 64);
     render.flipbook.fps = finite_or(render.flipbook.fps, 0.0).clamp(0.0, 240.0);

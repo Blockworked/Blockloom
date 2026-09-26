@@ -58,6 +58,28 @@ pub enum EmitterDial {
     Max,
 }
 
+impl EmitterDial {
+    /// A dial by the name a script spells it, any case, spaces or not.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name
+            .trim()
+            .to_ascii_lowercase()
+            .replace([' ', '_'], "")
+            .as_str()
+        {
+            "rate" => Some(Self::Rate),
+            "lifetime" => Some(Self::Lifetime),
+            "speed" => Some(Self::Speed),
+            "spread" => Some(Self::Spread),
+            "gravity" => Some(Self::Gravity),
+            "sizestart" => Some(Self::SizeStart),
+            "sizeend" => Some(Self::SizeEnd),
+            "max" => Some(Self::Max),
+            _ => None,
+        }
+    }
+}
+
 pub use blockstitch_core::graph::{
     BlockDef, BlockGraph, BlockKind, BlockPiece, BlockShape, Comment, DictDef, DictEntry, DictItem,
     FloatingValue, InputValueType, ListDef, ListItem, VariableDef, default_block_color,

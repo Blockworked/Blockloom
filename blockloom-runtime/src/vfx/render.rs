@@ -120,7 +120,12 @@ impl ParticleLook {
                 render.flipbook.fps,
                 render.flipbook.frames() as f32,
             ),
-            extra: Vec4::new(render.soft, ribbon.width, ribbon.intensity, 0.0),
+            extra: Vec4::new(
+                render.soft,
+                ribbon.width,
+                ribbon.intensity,
+                render.translucency,
+            ),
             modes: UVec4::new(ribbons as u32, facing, flags, capacity),
             ribbon: UVec4::new(points, ribbon.tessellation, 0, 0),
             curves: std::array::from_fn(|i| Vec4::new(size[i], alpha[i], rotation[i], width[i])),
@@ -149,6 +154,9 @@ pub struct ParticleMaterial {
     #[texture(3)]
     #[sampler(4)]
     pub sheet: Option<Handle<Image>>,
+    /// The overdraw meter's fragment counter, shared by every draw.
+    #[storage(5, visibility(fragment))]
+    pub overdraw: Handle<ShaderBuffer>,
     pub additive: bool,
 }
 

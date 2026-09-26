@@ -22,7 +22,7 @@ ColumnLayout {
     readonly property var modules: e.modules || []
     readonly property var r: {
         const r = e.render || {};
-        return Object.assign({ blend: "Additive", facing: "Camera", stretch: 0.05, lit: false, soft: 0, intensity: 1, spin: 0, random_rotation: false, size_random: 0 }, r, {
+        return Object.assign({ blend: "Additive", facing: "Camera", stretch: 0.05, lit: false, translucency: 0, soft: 0, intensity: 1, spin: 0, random_rotation: false, size_random: 0 }, r, {
             flipbook: Object.assign({ image: "", columns: 1, rows: 1, fps: 0, random_start: false, blend: true }, r.flipbook || {}),
             size: r.size || curve(1, 1),
             alpha: r.alpha || curve(1, 0),
@@ -196,6 +196,9 @@ ColumnLayout {
         NumberField { value: root.r.intensity; fallback: 1; onCommitted: n => root.setRender({ intensity: Math.max(0, n) }) } }
     InspectorRow { visible: root.is3d; label: "Lit"; Layout.fillWidth: true
         SwitchField { value: root.r.lit; onToggled: on => root.setRender({ lit: on }) } Item { Layout.fillWidth: true } }
+    InspectorRow { visible: root.is3d && root.r.lit; label: "Translucency"; Layout.fillWidth: true
+        NumberField { value: root.r.translucency; fallback: 0; ToolTip.visible: hovered; ToolTip.text: "Light let through from behind, as smoke and leaves do"
+            onCommitted: n => root.setRender({ translucency: Math.min(4, Math.max(0, n)) }) } }
     InspectorRow { visible: root.is3d; label: "Soft"; Layout.fillWidth: true
         NumberField { value: root.r.soft; fallback: 0; ToolTip.visible: hovered; ToolTip.text: "Distance over which particles fade into what they touch"
             onCommitted: n => root.setRender({ soft: Math.max(0, n) }) } }

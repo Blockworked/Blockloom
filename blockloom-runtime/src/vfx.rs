@@ -35,7 +35,7 @@ use blockloom_core::sense;
 use blockloom_core::vfx::{
     self as model, CPU_MAX, GPU_MAX, LaunchDirection, MAX_MODULES, Particle, ParticleBlend,
     ParticleEvent, Pool, RibbonSource, SimMode, SpawnShape, StepEvents, Surface, Triangle,
-    UpdateModule, ViewSize,
+    UpdateModule,
 };
 use blockloom_core::vm::Event;
 use gpu::{GpuStep, Upload, VfxFrame};
@@ -45,6 +45,8 @@ use std::sync::Arc;
 
 pub fn register(app: &mut App, mode: Mode) {
     app.init_resource::<Draws>()
+        .init_resource::<OverdrawMeter>()
+        .init_resource::<ParticleSenses>()
         .init_resource::<VfxStats>()
         .init_resource::<GpuCounts>();
     // A bare test world has no render assets to draw with.
@@ -110,6 +112,7 @@ pub struct SimParams {
     pub ribbon: Vec4,
     pub size_lut: [Vec4; 8],
     pub modules: [Vec4; 24],
+    pub colliders: UVec4,
 }
 
 const SIM_FLAT: u32 = 1;
@@ -191,11 +194,10 @@ struct GpuState {
     spawned: u32,
     died: u32,
     collided: u32,
-    overdraw: f32,
     sequence: u32,
-    spawn_at: [f32; 3],
-    die_at: [f32; 3],
-    collide_at: [f32; 3],
+    spawn_at: Option<[f32; 3]>,
+    die_at: Option<[f32; 3]>,
+    collide_at: Option<[f32; 3]>,
 }
 
 impl GpuState {
@@ -206,13 +208,16 @@ impl GpuState {
             ))
         };
         let float = |i: usize| word(i).map(f32::from_bits);
-        let at = |i: usize| -> Option<[f32; 3]> { Some([float(i)?, float(i + 1)?, float(i + 2)?]) };
+        // A lane's w says whether anything has landed there yet.
+        let at = |i: usize| -> Option<Option<[f32; 3]>> {
+            let point = [float(i)?, float(i + 1)?, float(i + 2)?];
+            Some((float(i + 3)? > 0.5).then_some(point))
+        };
         Some(GpuState {
             alive: word(1)?,
             spawned: word(2)?,
             died: word(3)?,
             collided: word(4)?,
-            overdraw: word(5)? as f32 / 10_000.0,
             sequence: word(6)?,
             spawn_at: at(8)?,
             die_at: at(12)?,
@@ -225,9 +230,9 @@ impl GpuState {
             spawned: self.spawned,
             died: self.died,
             collided: self.collided,
-            spawn_at: Some(self.spawn_at),
-            die_at: Some(self.die_at),
-            collide_at: Some(self.collide_at),
+            spawn_at: self.spawn_at,
+            die_at: self.die_at,
+            collide_at: self.collide_at,
         }
     }
 }
@@ -287,7 +292,6 @@ struct Draw {
     /// The scene view's preview keeps its own clock.
     preview: EmitterState,
     alive: u32,
-    overdraw: f32,
     touched: bool,
 }
 
@@ -318,7 +322,7 @@ fn gpu_ready(device: Option<&RenderDevice>) -> bool {
     device.is_some_and(|device| {
         let limits = device.limits();
         limits.max_compute_workgroup_size_x >= 64
-            && limits.max_storage_buffers_per_shader_stage >= 4
+            && limits.max_storage_buffers_per_shader_stage >= 5
     })
 }
 
@@ -335,8 +339,8 @@ struct DrawAssets<'w> {
 struct Surroundings<'w, 's> {
     wind: Option<Res<'w, WindField>>,
     editor: Option<Res<'w, crate::edit::SceneEditor>>,
-    cameras: Query<'w, 's, (&'static GlobalTransform, &'static Projection), With<WorldCamera>>,
-    shapes: Query<'w, 's, &'static Mesh3d>,
+    cameras: Query<'w, 's, (&'static GlobalTransform, &'static Camera), With<WorldCamera>>,
+    shapes: Query<'w, 's, (&'static Mesh3d, &'static GlobalTransform)>,
     children: Query<'w, 's, &'static Children>,
     poses: Query<'w, 's, &'static Transform, With<ActorId>>,
 }
@@ -353,6 +357,8 @@ fn step_emitters(
     mut frame: ResMut<VfxFrame>,
     counts: Res<GpuCounts>,
     mut stats: ResMut<VfxStats>,
+    mut meter: ResMut<OverdrawMeter>,
+    mut senses: ResMut<ParticleSenses>,
 ) {
     let mode = dimension.0;
     let dt = time.delta_secs().min(0.1);
@@ -369,33 +375,33 @@ fn step_emitters(
     let gpu_ok =
         mode.is_3d() && gpu_ready(assets.device.as_deref()) && !engine.project.world.vfx.cpu_only;
     let budget = engine.project.world.vfx.budget;
-    let camera = around.cameras.iter().next().map(|(transform, projection)| {
-        let view = match projection {
-            Projection::Perspective(p) => ViewSize::Perspective {
-                fov_y: p.fov,
-                aspect: p.aspect_ratio,
-            },
-            Projection::Orthographic(o) => ViewSize::Orthographic {
-                height: o.area.height().max(1e-3),
-                aspect: (o.area.width() / o.area.height().max(1e-3)).max(1e-3),
-            },
-            _ => ViewSize::Perspective {
-                fov_y: 1.0,
-                aspect: 1.0,
-            },
-        };
-        (transform.translation(), view)
-    });
+    let camera = around.cameras.iter().next();
+    let eye = camera.map_or(Vec3::ZERO, |(transform, _)| transform.translation());
+    let pixels = camera
+        .and_then(|(_, camera)| camera.physical_viewport_size())
+        .map_or(0, |size| size.x * size.y);
     frame.uploads.clear();
     frame.steps.clear();
+    let (shapes, shape_ids) = collider_shapes(eye);
+    frame.shapes = meter.shapes(&mut assets.buffers, &shapes, &mut frame.uploads);
+    frame
+        .uploads
+        .push(meter.restart(&mut commands, &mut assets.buffers));
     for draw in draws.0.values_mut() {
         draw.touched = false;
     }
     let mut room = budget.saturating_sub(stats.particles);
     let mut next = VfxStats {
         budget,
+        // Last frame's fragments over the screen's pixels.
+        overdraw: if pixels > 0 {
+            meter.fragments as f32 / pixels as f32
+        } else {
+            0.0
+        },
         ..default()
     };
+    let mut sensed = HashMap::new();
     let mut fired = Vec::new();
     let gravity = Vec3::from_array(engine.project.world.gravity);
     for (entity, id, transform, state) in &mut emitters {
@@ -440,7 +446,17 @@ fn step_emitters(
             Draws::drop_draw(&mut commands, old);
         }
         if !draws.0.contains_key(id) {
-            let draw = new_draw(&mut commands, &mut assets, &engine, mode, id, key, &spec);
+            let overdraw = meter.counter(&mut assets.buffers);
+            let draw = new_draw(
+                &mut commands,
+                &mut assets,
+                &engine,
+                mode,
+                id,
+                key,
+                &spec,
+                overdraw,
+            );
             draws.0.insert(id.clone(), draw);
         }
         let Some(draw) = draws.0.get_mut(id) else {
@@ -472,11 +488,13 @@ fn step_emitters(
         next.emitters += 1;
         if frozen {
             next.particles += draw.alive;
-            next.overdraw += draw.overdraw;
+            if let Some(sense) = senses.0.get(id) {
+                sensed.insert(id.clone(), *sense);
+            }
             continue;
         }
         if draw.key.mesh_surface && draw.surface.is_none() {
-            draw.surface = mesh_surface(entity, transform.scale, &around, &assets.meshes);
+            draw.surface = mesh_surface(entity, transform, &around, &assets.meshes);
             if let (
                 Some(surface),
                 Sim::Gpu {
@@ -556,9 +574,6 @@ fn step_emitters(
                 };
                 let events = pool.step(&spec, &input);
                 draw.alive = pool.alive();
-                draw.overdraw = camera.map_or(0.0, |(eye, view)| {
-                    pool.overdraw(&spec, model::Vec3::from_array(eye.to_array()), view)
-                });
                 let mut bytes = Vec::new();
                 Particle::to_bytes(&pool.particles, &mut bytes);
                 frame.uploads.push(Upload {
@@ -608,6 +623,11 @@ fn step_emitters(
                             triangles: triangles as u32,
                             sequence: *sequence,
                             targets: &targets,
+                            colliders: shapes.len() as u32,
+                            skip: shape_ids
+                                .iter()
+                                .position(|shape| shape == id)
+                                .map_or(0, |i| i as u32 + 1),
                         },
                     ),
                     particles: draw.particles.clone(),
@@ -622,7 +642,6 @@ fn step_emitters(
                     Some(counts) if counts.sequence != *seen => {
                         *seen = counts.sequence;
                         draw.alive = counts.alive;
-                        draw.overdraw = counts.overdraw;
                         counts.events()
                     }
                     _ => StepEvents::default(),
@@ -630,7 +649,9 @@ fn step_emitters(
             }
         };
         next.particles += draw.alive;
-        next.overdraw += draw.overdraw;
+        let mut sense = senses.0.get(id).copied().unwrap_or_default();
+        sense.record(draw.alive, &events);
+        sensed.insert(id.clone(), sense);
         if draw.key.gpu {
             next.gpu_emitters += 1;
         }
@@ -657,6 +678,7 @@ fn step_emitters(
         }
     }
     *stats = next;
+    senses.0 = sensed;
     for event in fired {
         engine.fire(event);
     }
@@ -724,45 +746,170 @@ fn target_position(
     poses.get(*entity).ok().map(|pose| pose.translation)
 }
 
-/// The actor's own drawn mesh, as triangles in its frame (scaled, not
-/// turned or moved).
+/// Most triangles a mesh surface gathers before thinning, so a detailed
+/// model doesn't stall the frame it is read on.
+const SURFACE_GATHER: usize = 1 << 16;
+
+/// The actor's drawn meshes (its own and every part of a model under it),
+/// as triangles in its frame: scaled, not turned or moved.
 fn mesh_surface(
     entity: Entity,
-    scale: Vec3,
+    pose: &Transform,
     around: &Surroundings,
     meshes: &Assets<Mesh>,
 ) -> Option<Surface> {
-    let handle = around.shapes.get(entity).ok().or_else(|| {
-        around
-            .children
-            .get(entity)
-            .ok()?
-            .iter()
-            .find_map(|child| around.shapes.get(child).ok())
-    })?;
-    let mesh = meshes.get(&handle.0)?;
-    let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION)?.as_float3()?;
+    // From world into the emitter's frame, keeping its scale.
+    let frame = Mat4::from_rotation_translation(pose.rotation, pose.translation).inverse();
+    let mut triangles = Vec::new();
+    let mut stack = vec![entity];
+    while let Some(next) = stack.pop() {
+        if let Ok((handle, world)) = around.shapes.get(next)
+            && let Some(mesh) = meshes.get(&handle.0)
+        {
+            let into = frame * world.to_matrix();
+            gather_triangles(mesh, into, &mut triangles);
+        }
+        if let Ok(children) = around.children.get(next) {
+            stack.extend(children.iter());
+        }
+        if triangles.len() >= SURFACE_GATHER {
+            break;
+        }
+    }
+    (!triangles.is_empty()).then(|| Surface::new(triangles))
+}
+
+fn gather_triangles(mesh: &Mesh, into: Mat4, out: &mut Vec<Triangle>) {
+    let Some(positions) = mesh
+        .attribute(Mesh::ATTRIBUTE_POSITION)
+        .and_then(|values| values.as_float3())
+    else {
+        return;
+    };
     let at = |i: usize| -> model::Vec3 {
-        let p = Vec3::from_array(positions[i]) * scale;
+        let p = into.transform_point3(Vec3::from_array(positions[i]));
         model::Vec3::from_array(p.to_array())
     };
     let indices: Vec<usize> = match mesh.indices() {
         Some(indices) => indices.iter().collect(),
         None => (0..positions.len()).collect(),
     };
-    let triangles: Vec<Triangle> = indices
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .filter(|tri| tri.iter().all(|&i| i < positions.len()))
-        .map(|tri| Triangle {
-            a: at(tri[0]),
-            b: at(tri[1]),
-            c: at(tri[2]),
-        })
-        .collect();
-    (!triangles.is_empty()).then(|| Surface::new(triangles))
+    out.extend(
+        indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .filter(|tri| tri.iter().all(|&i| i < positions.len()))
+            .map(|tri| Triangle {
+                a: at(tri[0]),
+                b: at(tri[1]),
+                c: at(tri[2]),
+            }),
+    );
 }
+
+/// Actor shapes the GPU sim collides with, at most this many, nearest the
+/// camera first.
+pub const GPU_COLLIDERS: usize = 128;
+
+/// Every actor with a body and a collider, as the CPU pool collides with,
+/// as two lanes each (centre and kind, then half extents or radius), and
+/// the ids in the same order.
+fn collider_shapes(eye: Vec3) -> (Vec<[f32; 8]>, Vec<String>) {
+    use blockloom_core::sense::ColliderShape;
+    let mut found: Vec<(f32, String, [f32; 8])> = sense::read(|sensors| {
+        sensors
+            .actors
+            .iter()
+            .filter(|(_, actor)| actor.has_body)
+            .filter_map(|(id, actor)| {
+                let [x, y, z] = actor.position;
+                let lanes = match actor.shape {
+                    ColliderShape::None => return None,
+                    ColliderShape::Box { half } => [x, y, z, 1.0, half[0], half[1], half[2], 0.0],
+                    ColliderShape::Ball { radius } => [x, y, z, 2.0, radius, 0.0, 0.0, 0.0],
+                };
+                let far = Vec3::from_array(actor.position).distance_squared(eye);
+                Some((far, id.clone(), lanes))
+            })
+            .collect()
+    });
+    found.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    found.truncate(GPU_COLLIDERS);
+    found.into_iter().map(|(_, id, lanes)| (lanes, id)).unzip()
+}
+
+/// The overdraw meter: one counter every particle draw adds its shaded
+/// fragments to, zeroed before each frame and read back after it. Also
+/// holds the GPU sim's shape list, since both are one small buffer a frame.
+#[derive(Resource, Default)]
+pub struct OverdrawMeter {
+    counter: Option<Handle<ShaderBuffer>>,
+    reader: Option<Entity>,
+    shapes: Option<Handle<ShaderBuffer>>,
+    /// Fragments the last frame read back shaded.
+    fragments: u32,
+}
+
+impl OverdrawMeter {
+    fn counter(&mut self, buffers: &mut Assets<ShaderBuffer>) -> Handle<ShaderBuffer> {
+        self.counter
+            .get_or_insert_with(|| buffers.add(zeroed(16)))
+            .clone()
+    }
+
+    /// Zeroes the counter for this frame, and makes sure it is read back.
+    fn restart(&mut self, commands: &mut Commands, buffers: &mut Assets<ShaderBuffer>) -> Upload {
+        let counter = self.counter(buffers);
+        if self.reader.is_none() {
+            let reader = commands
+                .spawn(Readback::buffer(counter.clone()))
+                .observe(read_overdraw)
+                .id();
+            self.reader = Some(reader);
+        }
+        Upload {
+            buffer: counter,
+            bytes: Arc::new(vec![0; 16]),
+        }
+    }
+
+    /// This frame's collider list, written into one fixed-size buffer.
+    fn shapes(
+        &mut self,
+        buffers: &mut Assets<ShaderBuffer>,
+        shapes: &[[f32; 8]],
+        uploads: &mut Vec<Upload>,
+    ) -> Option<Handle<ShaderBuffer>> {
+        let handle = self
+            .shapes
+            .get_or_insert_with(|| buffers.add(zeroed(GPU_COLLIDERS as u64 * 32)))
+            .clone();
+        if !shapes.is_empty() {
+            let bytes = shapes
+                .iter()
+                .flatten()
+                .flat_map(|v| v.to_le_bytes())
+                .collect();
+            uploads.push(Upload {
+                buffer: handle.clone(),
+                bytes: Arc::new(bytes),
+            });
+        }
+        Some(handle)
+    }
+}
+
+fn read_overdraw(event: On<ReadbackComplete>, mut meter: ResMut<OverdrawMeter>) {
+    if let Some(word) = event.data.get(0..4) {
+        meter.fragments = u32::from_le_bytes(word.try_into().unwrap_or_default());
+    }
+}
+
+/// Every emitter's `ParticleSense`, by actor id, which `publish_sensors`
+/// copies into each actor's reading.
+#[derive(Resource, Default)]
+pub struct ParticleSenses(pub HashMap<String, blockloom_core::vfx::ParticleSense>);
 
 /// Four lanes a triangle: a and the running area, b, c, normal.
 fn surface_buffer(surface: &Surface) -> ShaderBuffer {
@@ -795,6 +942,7 @@ fn new_draw(
     id: &str,
     key: DrawKey,
     spec: &ParticleSpec,
+    overdraw: Handle<ShaderBuffer>,
 ) -> Draw {
     let capacity = key.capacity;
     let particles = assets
@@ -845,6 +993,7 @@ fn new_draw(
             particles: particles.clone(),
             trail: trail.clone(),
             sheet: sheet.clone(),
+            overdraw: overdraw.clone(),
             additive: spec.render.blend == ParticleBlend::Additive,
         });
         let mesh = assets.meshes.add(mesh);
@@ -881,7 +1030,6 @@ fn new_draw(
         surface: None,
         preview: EmitterState::fresh(),
         alive: 0,
-        overdraw: 0.0,
         touched: true,
     }
 }
@@ -901,6 +1049,9 @@ struct SimInput<'a> {
     triangles: u32,
     sequence: u32,
     targets: &'a [Option<Vec3>],
+    /// Actor shapes in this frame's list, and the emitter's own plus one.
+    colliders: u32,
+    skip: u32,
 }
 
 /// One GPU step's uniforms, bar the camera's half.
@@ -1019,6 +1170,7 @@ fn sim_params(spec: &ParticleSpec, input: SimInput) -> SimParams {
             Vec4::from_array(std::array::from_fn(|j| size[i * 4 + j]))
         }),
         modules,
+        colliders: UVec4::new(input.colliders, input.skip, 0, 0),
     }
 }
 
@@ -1044,7 +1196,8 @@ view_from_clip: mat4x4<f32>, world_from_view: mat4x4<f32>, world_position: vec3<
 fn depth_ndc_to_view_z(d: f32) -> f32 { return d; }\n\
 struct Mat { base_color: vec4<f32>, perceptual_roughness: f32, metallic: f32, reflectance: vec3<f32> }\n\
 struct Pbr { material: Mat, frag_coord: vec4<f32>, world_position: vec4<f32>, \
-world_normal: vec3<f32>, N: vec3<f32>, V: vec3<f32>, is_orthographic: bool }\n\
+world_normal: vec3<f32>, N: vec3<f32>, V: vec3<f32>, is_orthographic: bool, flags: u32 }\n\
+const MESH_FLAGS_SHADOW_RECEIVER_BIT: u32 = 1u;\n\
 fn pbr_input_new() -> Pbr { var p: Pbr; return p; }\n\
 fn apply_pbr_lighting(p: Pbr) -> vec4<f32> { return p.material.base_color; }\n";
         let source =
@@ -1083,15 +1236,16 @@ fn apply_pbr_lighting(p: Pbr) -> vec4<f32> { return p.material.base_color; }\n";
         };
         put(&mut bytes, 1, 7);
         put(&mut bytes, 3, 2);
-        put(&mut bytes, 5, 5_000);
         put(&mut bytes, 6, 42);
         put(&mut bytes, 12, 3.5f32.to_bits());
+        put(&mut bytes, 15, 1.0f32.to_bits());
         let state = GpuState::parse(&bytes).unwrap();
         assert_eq!(state.alive, 7);
         assert_eq!(state.died, 2);
-        assert_eq!(state.overdraw, 0.5);
         assert_eq!(state.sequence, 42);
-        assert_eq!(state.die_at[0], 3.5);
+        assert_eq!(state.die_at, Some([3.5, 0.0, 0.0]));
+        // Nothing has spawned into that lane yet.
+        assert_eq!(state.spawn_at, None);
     }
 
     #[test]
@@ -1123,6 +1277,8 @@ fn apply_pbr_lighting(p: Pbr) -> vec4<f32> { return p.material.base_color; }\n";
                 triangles: 0,
                 sequence: 9,
                 targets: &[],
+                colliders: 3,
+                skip: 2,
             },
         );
         assert_eq!(params.modules[0], Vec4::new(2.0, 3.0, 0.0, 0.0));

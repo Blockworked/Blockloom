@@ -66,6 +66,8 @@ pub struct ActorSense {
     pub mask: u8,
     /// What the actor collides (and raycasts) with, in world units.
     pub shape: ColliderShape,
+    /// What its emitter's particles did this frame, and where last.
+    pub particles: crate::vfx::ParticleSense,
 }
 
 /// What shape an actor collides (and raycasts) with, in world units and
@@ -366,6 +368,7 @@ impl Default for ActorSense {
             layer: 1,
             mask: 0xFF,
             shape: ColliderShape::None,
+            particles: crate::vfx::ParticleSense::default(),
         }
     }
 }

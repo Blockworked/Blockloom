@@ -33,6 +33,8 @@ struct SimParams {
     size_lut: array<vec4<f32>, 8>,
     // Three lanes a module: [kind, a, b, c], [d, e, f, g], [target, has target].
     modules: array<vec4<f32>, 24>,
+    // Actor shapes in `shapes`, and which one is the emitter's own plus one.
+    colliders: vec4<u32>,
 }
 
 // What one step reports, read back on the CPU.
@@ -42,8 +44,7 @@ struct EmitterState {
     spawned: atomic<u32>,
     died: atomic<u32>,
     collided: atomic<u32>,
-    // Screens of particle area, times 10000.
-    overdraw: atomic<u32>,
+    unused: u32,
     // Which step these counts are from, so a readback of a frame that
     // didn't step isn't counted twice.
     sequence: u32,
@@ -57,7 +58,6 @@ const FLAG_FLAT: u32 = 1u;
 const FLAG_OUTWARD: u32 = 2u;
 const FLAG_RIBBONS: u32 = 4u;
 const MAX_MODULES: u32 = 8u;
-const COVERAGE: f32 = 10000.0;
 
 @group(0) @binding(0) var<uniform> params: SimParams;
 @group(0) @binding(1) var<storage, read_write> particles: array<Particle>;
@@ -65,6 +65,9 @@ const COVERAGE: f32 = 10000.0;
 @group(0) @binding(3) var<storage, read_write> state: EmitterState;
 // Four lanes a triangle, in the emitter's frame: a and the running area, b, c, normal.
 @group(0) @binding(4) var<storage, read> surface: array<vec4<f32>>;
+// Two lanes an actor shape, as the CPU pool collides with: centre and kind
+// (1 box, 2 ball), then half extents or the radius.
+@group(0) @binding(6) var<storage, read> shapes: array<vec4<f32>>;
 @if(MULTISAMPLED)
 @group(0) @binding(5) var depth: texture_depth_multisampled_2d;
 @if(!MULTISAMPLED)
@@ -74,15 +77,6 @@ fn flag(bit: u32) -> bool {
     return (params.counts.w & bit) != 0u;
 }
 
-fn size_at(t: f32) -> f32 {
-    let at = lut_at(t);
-    let i = u32(at.x);
-    let j = min(i + 1u, 31u);
-    let a = params.size_lut[i / 4u][i % 4u];
-    let b = params.size_lut[j / 4u][j % 4u];
-    return mix(params.size.x, params.size.y, t) * mix(a, b, at.y);
-}
-
 @compute @workgroup_size(1)
 fn begin() {
     atomicStore(&state.budget, i32(params.counts.y));
@@ -90,7 +84,6 @@ fn begin() {
     atomicStore(&state.spawned, 0u);
     atomicStore(&state.died, 0u);
     atomicStore(&state.collided, 0u);
-    atomicStore(&state.overdraw, 0u);
     state.sequence = u32(params.ribbon.w);
 }
 
@@ -215,6 +208,100 @@ fn scene_at(world: vec3<f32>) -> array<vec4<f32>, 2> {
     return array<vec4<f32>, 2>(vec4<f32>(s, 1.0), vec4<f32>(n, 0.0));
 }
 
+// Where the segment enters a box start outside, as [t, hit] and the face's
+// normal. `physics_query::enter_box` on the CPU.
+fn enter_box(start: vec3<f32>, to: vec3<f32>, center: vec3<f32>, half: vec3<f32>) -> array<vec4<f32>, 2> {
+    var none = array<vec4<f32>, 2>(vec4<f32>(0.0), vec4<f32>(0.0));
+    var tmin = 0.0;
+    var tmax = 1.0;
+    var normal = vec3<f32>(0.0);
+    var outside = false;
+    for (var axis = 0; axis < 3; axis++) {
+        let origin = start[axis] - center[axis];
+        let dir = to[axis] - start[axis];
+        if (abs(origin) > half[axis]) {
+            outside = true;
+        }
+        if (abs(dir) < 1e-9) {
+            if (abs(origin) > half[axis]) {
+                return none;
+            }
+            continue;
+        }
+        var t0 = (-half[axis] - origin) / dir;
+        var t1 = (half[axis] - origin) / dir;
+        var sign = -1.0;
+        if (t0 > t1) {
+            let swap = t0;
+            t0 = t1;
+            t1 = swap;
+            sign = 1.0;
+        }
+        if (t0 > tmin) {
+            tmin = t0;
+            normal = vec3<f32>(0.0);
+            normal[axis] = sign;
+        }
+        tmax = min(tmax, t1);
+        if (tmin > tmax) {
+            return none;
+        }
+    }
+    if (!outside || all(normal == vec3<f32>(0.0))) {
+        return none;
+    }
+    return array<vec4<f32>, 2>(vec4<f32>(tmin, 1.0, 0.0, 0.0), vec4<f32>(normal, 0.0));
+}
+
+// `physics_query::enter_ball` on the CPU.
+fn enter_ball(start: vec3<f32>, to: vec3<f32>, center: vec3<f32>, radius: f32) -> array<vec4<f32>, 2> {
+    var none = array<vec4<f32>, 2>(vec4<f32>(0.0), vec4<f32>(0.0));
+    let dir = to - start;
+    let oc = start - center;
+    let a = dot(dir, dir);
+    let c = dot(oc, oc) - radius * radius;
+    if (a <= 1e-12 || c <= 0.0) {
+        return none;
+    }
+    let b = 2.0 * dot(oc, dir);
+    let disc = b * b - 4.0 * a * c;
+    if (disc < 0.0) {
+        return none;
+    }
+    let t = (-b - sqrt(disc)) / (2.0 * a);
+    if (t < 0.0 || t > 1.0) {
+        return none;
+    }
+    let at = oc + dir * t;
+    return array<vec4<f32>, 2>(vec4<f32>(t, 1.0, 0.0, 0.0), vec4<f32>(at / max(length(at), 1e-9), 0.0));
+}
+
+// The first actor shape a step from `start` to `to` enters: the point and
+// its normal, or w = 0 where it enters none.
+fn shape_at(start: vec3<f32>, to: vec3<f32>) -> array<vec4<f32>, 2> {
+    var best = array<vec4<f32>, 2>(vec4<f32>(2.0, 0.0, 0.0, 0.0), vec4<f32>(0.0));
+    for (var k = 0u; k < params.colliders.x; k++) {
+        if (k + 1u == params.colliders.y) {
+            continue;
+        }
+        let head = shapes[k * 2u];
+        let size = shapes[k * 2u + 1u];
+        var hit: array<vec4<f32>, 2>;
+        if (head.w < 1.5) {
+            hit = enter_box(start, to, head.xyz, size.xyz);
+        } else {
+            hit = enter_ball(start, to, head.xyz, size.x);
+        }
+        if (hit[0].y > 0.5 && hit[0].x < best[0].x) {
+            best = hit;
+        }
+    }
+    if (best[0].x > 1.0) {
+        return array<vec4<f32>, 2>(vec4<f32>(0.0), vec4<f32>(0.0));
+    }
+    return array<vec4<f32>, 2>(vec4<f32>(start + (to - start) * best[0].x, 1.0), best[1]);
+}
+
 fn unproject(ndc: vec2<f32>, d: f32) -> vec3<f32> {
     let w = params.world_from_clip * vec4<f32>(ndc, d, 1.0);
     return w.xyz / w.w;
@@ -299,9 +386,17 @@ fn simulate(@builtin(global_invocation_id) id: vec3<u32>) {
             // The air eases in over about a quarter second.
             let next = pos + (vel + params.wind.xyz * min(p.age / 0.25, 1.0)) * dt;
             var moved = true;
-            if (collide >= 0 && !flat) {
-                let hit = scene_at(next);
-                if (hit[0].w > 0.5 && distance(next, hit[0].xyz) < params.screen.w) {
+            if (collide >= 0) {
+                // Actor shapes first, wherever they are; then what the
+                // camera sees, which catches everything else on screen.
+                var hit = shape_at(pos, next);
+                if (hit[0].w < 0.5 && !flat) {
+                    hit = scene_at(next);
+                    if (distance(next, hit[0].xyz) >= params.screen.w) {
+                        hit[0].w = 0.0;
+                    }
+                }
+                if (hit[0].w > 0.5) {
                     let a = params.modules[u32(collide) * 3u];
                     let b = params.modules[u32(collide) * 3u + 1u];
                     var n = hit[1].xyz;
@@ -355,13 +450,6 @@ fn simulate(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     if (alive(p)) {
         atomicAdd(&state.alive, 1u);
-        // The share of the screen this one covers, for the overdraw meter.
-        let clip = params.clip_from_world * vec4<f32>(p.position, 1.0);
-        if (clip.w > 1e-4) {
-            let side = size_at(p.age / p.life) * p.size * params.size.z / (2.0 * clip.w);
-            let area = min(side * side / max(params.size.w, 1e-3), 16.0);
-            atomicAdd(&state.overdraw, u32(area * COVERAGE));
-        }
     }
     particles[i] = p;
 }

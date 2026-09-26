@@ -35,6 +35,8 @@ const FLAG_ADDITIVE: u32 = 64u;
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var<storage, read> trail: array<vec4<f32>>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(3) var sheet: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(4) var sheet_sampler: sampler;
+// Fragments every particle draw shades this frame, for the overdraw meter.
+@group(constants::MATERIAL_BIND_GROUP) @binding(5) var<storage, read_write> overdraw: array<atomic<u32>>;
 
 struct Vertex {
     @location(0) position: vec3<f32>,
@@ -212,6 +214,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if (color.a <= 1e-4) {
         discard;
     }
+    atomicAdd(&overdraw[0], 1u);
     let intensity = select(look.size.w, look.extra.z, in.kind == 1u);
     var out = vec4<f32>(color.rgb * intensity, color.a);
     if (has(FLAG_ADDITIVE)) {

@@ -38,6 +38,7 @@ QtObject {
         .concat("abcdefghijklmnopqrstuvwxyz".split("")).concat("0123456789".split("")))
     // The atmosphere slot's readings, spelled as `AtmosphereSense::field` takes them.
     readonly property var atmosphereOptions: opts(["sun x","sun y","sun z","sun brightness","wind x","wind y","wind z","wind speed","wind gust","wind direction","storm","fog density","cloud cover","rain","snow","wetness","temperature","exposure","luminance","hdr","peak brightness","ray tracing","ray tracing available","aurora","lightning"])
+    readonly property var particleEventOptions: [{value:"Spawn",label:"spawn"},{value:"Die",label:"die"},{value:"Collide",label:"collide"}]
     readonly property var axisOptions: [{value:"X",label:"x"},{value:"Y",label:"y"},{value:"Z",label:"z"}]
     readonly property var bodyOptions: [{value:"None",label:"none (blocks only)"},{value:"Static",label:"static"},{value:"Dynamic",label:"dynamic"},{value:"Kinematic",label:"kinematic"}]
     readonly property var triggerOptions: [{value:"false",label:"solid"},{value:"true",label:"a trigger"}]
@@ -164,7 +165,7 @@ QtObject {
             WhenCollision: header([lb("when I touch"), dd("with", () => [{ value: "", label: "anything" }].concat(actorOptions(false)), { placeholder: "anything" })]),
             WhenMessage: header([lb("when I get"), field("name", "message")]),
             WhenCloned: header([lb("when I start as a clone")]),
-            WhenParticles: header([lb("when my particles"), dd("event", () => [{ value: "Spawn", label: "spawn" }, { value: "Die", label: "die" }, { value: "Collide", label: "collide" }])]),
+            WhenParticles: header([lb("when my particles"), dd("event", () => particleEventOptions)]),
             WhenUiEvent: header([lb("when"), field("element", "element id"), dd("event", () => opts(["press", "release", "hover", "leave", "drag", "scroll", "focus"]))]),
             WhenUiClicked: header([lb("when"), field("element", "element id"), lb("clicked")]),
             WhenUiChanged: header([lb("when"), field("element", "element id"), lb("changed")]),
@@ -525,7 +526,11 @@ QtObject {
         IsRayTracing: { prefix: "ray tracing on?", result: "bool", arity: 0 },
         RayTracingAvailable: { prefix: "ray tracing available?", result: "bool", arity: 0 },
         WaterHeight: { prefix: "water height at", result: "number", arity: 2, args: ["number","number"] },
-        Underwater: { prefix: "is", suffix: "underwater?", result: "bool", arity: 1, args: ["text"] }
+        Underwater: { prefix: "is", suffix: "underwater?", result: "bool", arity: 1, args: ["text"] },
+        ParticleCount: { prefix: "my particle count", result: "number", arity: 0 },
+        ParticleEventCount: { prefix: "how many of my particles", result: "number", enumArg: { index: 0, options: particleEventOptions }, arity: 1, args: ["text"] },
+        // The axis is typed (x, y or z); only one slot of a reporter can be a dropdown.
+        ParticleEventPosition: { prefix: "where my particles last", infix: "on axis", result: "number", enumArg: { index: 0, options: particleEventOptions }, arity: 2, args: ["text","text"] }
     })
     // Arity and slot types of blockstitch's own operators, for fresh palette values.
     readonly property var builtinShapes: ({
@@ -538,7 +543,7 @@ QtObject {
     })
     // Palette groups, the way the sidebar shows them.
     readonly property var operatorGroups: [
-        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","ActorPosition","ActorLocalPosition","ComponentField","SoundPlaying","BusVolume","IsTweening","CurrentClip","CurrentFrame","AnimationPlaying","Atmosphere","SceneLuminance","IsHdrDisplay","PeakBrightness","ActiveVolumes","CastsShadows","IsRayTracing","RayTracingAvailable","WaterHeight","Underwater"] },
+        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","ActorPosition","ActorLocalPosition","ComponentField","SoundPlaying","BusVolume","IsTweening","CurrentClip","CurrentFrame","AnimationPlaying","Atmosphere","SceneLuminance","IsHdrDisplay","PeakBrightness","ActiveVolumes","CastsShadows","IsRayTracing","RayTracingAvailable","WaterHeight","Underwater","ParticleCount","ParticleEventCount","ParticleEventPosition"] },
         { label: "Interface", kinds: ["UiSelectedIndex","UiValue","UiText","UiShown","UiExists","UiFocus","GamePaused"] },
         { label: "Actors", kinds: ["IsClone","MyParent","NewActor","ActorCount"] },
         { label: "Maths", kinds: ["Add","Sub","Mul","Div","Mod","Round","Math","Random"] },

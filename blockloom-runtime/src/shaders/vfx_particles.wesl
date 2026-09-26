@@ -8,6 +8,7 @@ import bevy_pbr::render::{
     view_transformations::depth_ndc_to_view_z,
     pbr_types::pbr_input_new,
     pbr_functions::apply_pbr_lighting,
+    mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT,
 };
 import bevy_pbr::render::mesh_view_bindings as view_bindings;
 import blockloom::vfx::{Particle, alive, pinned, life_t, lut_at, frame_rect};
@@ -23,7 +24,7 @@ struct ParticleLook {
     size: vec4<f32>,
     // Flipbook columns, rows, fps, frames.
     flipbook: vec4<f32>,
-    // Soft distance, ribbon width, ribbon intensity, 0.
+    // Soft distance, ribbon width, ribbon intensity, translucency.
     extra: vec4<f32>,
     // Mode (0 billboards, 1 ribbons), facing, flags, capacity.
     modes: vec4<u32>,
@@ -48,6 +49,8 @@ const FLAG_ADDITIVE: u32 = 64u;
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var<storage, read> trail: array<vec4<f32>>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(3) var sheet: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(4) var sheet_sampler: sampler;
+// Fragments every particle draw shades this frame, for the overdraw meter.
+@group(constants::MATERIAL_BIND_GROUP) @binding(5) var<storage, read_write> overdraw: array<atomic<u32>>;
 
 struct Vertex {
     // Slot, corner, ribbon segment.
@@ -284,6 +287,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if (color.a <= 1e-4) {
         discard;
     }
+    atomicAdd(&overdraw[0], 1u);
     var rgb = color.rgb;
     if (has(FLAG_LIT)) {
         // A billboard lit like the front of a ball, so light wraps round it.
@@ -304,7 +308,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         pbr.N = n;
         pbr.V = to_eye;
         pbr.is_orthographic = view.clip_from_view[3].w == 1.0;
+        pbr.flags = MESH_FLAGS_SHADOW_RECEIVER_BIT;
         rgb = apply_pbr_lighting(pbr).rgb;
+        // Thin smoke lets light through: the back half of the ball, lit
+        // from behind, shadows and all.
+        if (look.extra.w > 0.0) {
+            pbr.world_normal = -n;
+            pbr.N = -n;
+            pbr.V = -to_eye;
+            rgb += apply_pbr_lighting(pbr).rgb * look.extra.w;
+        }
     }
     let intensity = select(look.size.w, look.extra.z, in.kind == 1u);
     rgb *= intensity;
