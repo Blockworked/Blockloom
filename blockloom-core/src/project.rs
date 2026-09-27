@@ -1277,17 +1277,17 @@ impl Project {
             actor.id = next;
         }
         for actor in &mut copy.actors {
-            if let Some(parent) = actor.parent() {
-                if let Some(next) = remap.get(parent) {
-                    actor.components.set_parent(next);
-                }
+            if let Some(parent) = actor.parent()
+                && let Some(next) = remap.get(parent)
+            {
+                actor.components.set_parent(next);
             }
-            if let Some(joint) = actor.components.joint() {
-                if let Some(next) = remap.get(&joint.target) {
-                    let mut joint = joint.clone();
-                    joint.target = next.clone();
-                    actor.components.insert(ActorComponent::Joint { joint });
-                }
+            if let Some(joint) = actor.components.joint()
+                && let Some(next) = remap.get(&joint.target)
+            {
+                let mut joint = joint.clone();
+                joint.target = next.clone();
+                actor.components.insert(ActorComponent::Joint { joint });
             }
         }
         let new_id = copy.id.clone();
@@ -2492,7 +2492,7 @@ mod tests {
     #[test]
     fn a_scene_file_moved_outside_the_editor_is_followed() {
         let temp = TempDir::new();
-        let mut project = Project::starter("Scenes", Mode::TwoD);
+        let project = Project::starter("Scenes", Mode::TwoD);
         let dir = create_project(&project, &temp.0).unwrap();
         let id = project.scenes[0].id.clone();
         // Rename the file the way an OS file manager would.

@@ -7,7 +7,6 @@ use crate::environment::Environment;
 use crate::world::WorldCamera;
 use bevy::camera::{Hdr, RenderTarget};
 use bevy::core_pipeline::tonemapping::Tonemapping;
-use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::gpu_readback::{ReadbackComplete, ReadbackOnce};
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
@@ -68,7 +67,7 @@ type CapturedView = (
     Has<Camera3d>,
     Option<&'static crate::sky::SkyView>,
     Option<&'static bevy::light::EnvironmentMapLight>,
-    Option<&'static Bloom>,
+    Option<&'static crate::post::PostStack>,
 );
 
 fn run_exr_captures(
@@ -90,7 +89,7 @@ fn run_exr_captures(
                 let size = found.1.physical_target_size()?;
                 (size.min_element() > 0).then_some((found, size))
             });
-        let Some(((source, camera, projection, transform, is_3d, sky, sky_light, bloom), size)) =
+        let Some(((source, camera, projection, transform, is_3d, sky, sky_light, post), size)) =
             ready
         else {
             captures.waited += 1;
@@ -139,8 +138,9 @@ fn run_exr_captures(
         } else {
             entity.insert(Camera2d);
         }
-        if let Some(bloom) = bloom {
-            entity.insert(bloom.clone());
+        // The capture is the linear scene: bloom, but no grade, LUT or grain.
+        if let Some(stack) = post {
+            entity.insert(stack.linear_only());
         }
         let capture = entity.id();
         commands.queue(move |world: &mut World| {

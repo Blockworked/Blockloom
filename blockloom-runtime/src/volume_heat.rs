@@ -50,12 +50,14 @@ pub fn register(app: &mut App) {
             Core3d,
             draw_heat
                 .after(tonemapping)
+                .after(crate::post::PostLdrPass)
                 .in_set(Core3dSystems::PostProcess),
         )
         .add_systems(
             Core2d,
             draw_heat
                 .after(tonemapping)
+                .after(crate::post::PostLdrPass)
                 .in_set(Core2dSystems::PostProcess),
         );
 }

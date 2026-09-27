@@ -15,6 +15,9 @@
 //! - The sun's shadow fades to nothing over the last `fade` of its distance.
 //! - In a browser, Bevy's material shaders stop binding textures and
 //!   samplers to `let`s, which naga takes but WGSL (and Chrome) refuses.
+//! - SSAO's visibility is raised to the project's AO intensity, and depth
+//!   of field leaves the near field sharp when its far limit is negative
+//!   (`post.rs` sets both).
 
 use bevy::prelude::*;
 use bevy::shader::Source;
@@ -29,11 +32,24 @@ const MARKER: &str = "\n// blockloom: patched\n";
 pub struct PbrPatches {
     /// Fraction of the shadow distance the sun's shadows fade over.
     pub shadow_fade: f32,
+    /// The power on SSAO's visibility: 1 leaves Bevy's, 0 turns it off.
+    pub ao_intensity: f32,
 }
 
 impl Default for PbrPatches {
     fn default() -> Self {
-        Self { shadow_fade: 0.1 }
+        Self {
+            shadow_fade: 0.1,
+            ao_intensity: 1.0,
+        }
+    }
+}
+
+impl PbrPatches {
+    /// The AO power as the shader bakes it, in twentieths so a slider
+    /// doesn't recompile SSAO on every pixel it moves.
+    pub fn ao_power(&self) -> f32 {
+        (self.ao_intensity.clamp(0.0, 4.0) * 20.0).round() / 20.0
     }
 }
 
@@ -48,24 +64,53 @@ struct Patch {
     /// The end of the shader's asset path.
     module: &'static str,
     edit: fn(&str, &PbrPatches) -> Result<String, &'static str>,
+    /// What of the config the edit bakes in; a change re-patches only the
+    /// shaders whose key moved.
+    key: fn(&PbrPatches) -> u32,
+}
+
+fn no_key(_: &PbrPatches) -> u32 {
+    0
+}
+
+fn fade_key(config: &PbrPatches) -> u32 {
+    config.shadow_fade.to_bits()
+}
+
+fn ao_key(config: &PbrPatches) -> u32 {
+    config.ao_power().to_bits()
 }
 
 const PATCHES: &[Patch] = &[
     Patch {
         module: "bevy_pbr/decal/clustered.wesl",
         edit: crate::decals::patch_shader,
+        key: no_key,
     },
     Patch {
         module: "bevy_pbr/render/pbr_lighting.wesl",
         edit: patch_lighting,
+        key: no_key,
     },
     Patch {
         module: "bevy_pbr/render/pbr_functions.wesl",
         edit: patch_functions,
+        key: no_key,
     },
     Patch {
         module: "bevy_pbr/render/shadows.wesl",
         edit: patch_shadows,
+        key: fade_key,
+    },
+    Patch {
+        module: "bevy_pbr/ssao/ssao.wesl",
+        edit: patch_ssao,
+        key: ao_key,
+    },
+    Patch {
+        module: "bevy_post_process/dof/dof.wesl",
+        edit: patch_depth_of_field,
+        key: no_key,
     },
 ];
 
@@ -76,14 +121,17 @@ const WEB_PATCHES: &[Patch] = &[
     Patch {
         module: "bevy_pbr/render/pbr_fragment.wesl",
         edit: patch_handle_lets,
+        key: no_key,
     },
     Patch {
         module: "bevy_pbr/render/pbr_prepass.wesl",
         edit: patch_handle_lets,
+        key: no_key,
     },
     Patch {
         module: "bevy_pbr/render/pbr_prepass_functions.wesl",
         edit: patch_handle_lets,
+        key: no_key,
     },
 ];
 #[cfg(not(target_arch = "wasm32"))]
@@ -107,8 +155,8 @@ pub fn register(app: &mut App) {
 /// patched with.
 #[derive(Default)]
 pub struct Originals {
-    sources: HashMap<AssetId<Shader>, (usize, String)>,
-    built: Option<PbrPatches>,
+    /// The patch, the original source and the key it was last built with.
+    sources: HashMap<AssetId<Shader>, (usize, String, Option<u32>)>,
 }
 
 pub fn patch_shaders(
@@ -143,15 +191,19 @@ pub fn patch_shaders(
         if source.contains(MARKER) {
             continue;
         }
-        originals.sources.insert(*id, (index, source.to_string()));
-        dirty.push(*id);
+        originals
+            .sources
+            .insert(*id, (index, source.to_string(), None));
     }
-    if originals.built != Some(*config) {
-        originals.built = Some(*config);
-        dirty = originals.sources.keys().copied().collect();
+    for (id, (index, _, built)) in &mut originals.sources {
+        let key = (patch_at(*index).key)(&config);
+        if *built != Some(key) {
+            *built = Some(key);
+            dirty.push(*id);
+        }
     }
     for id in dirty {
-        let (index, original) = &originals.sources[&id];
+        let (index, original, _) = &originals.sources[&id];
         let patch = patch_at(*index);
         match (patch.edit)(original, &config) {
             Ok(mut patched) => {
@@ -252,6 +304,33 @@ pub(crate) fn replace_once(
         return Err(what);
     }
     Ok(source.replacen(from, to, 1))
+}
+
+/// SSAO's visibility to the power of the project's AO intensity, before
+/// Bevy's floor so fully open sky stays open.
+fn patch_ssao(source: &str, config: &PbrPatches) -> Result<String, &'static str> {
+    let power = config.ao_power();
+    replace_once(
+        source,
+        "    visibility = clamp(visibility, 0.03, 1.0);",
+        &format!("    visibility = clamp(pow(visibility, {power:?}), 0.03, 1.0);"),
+        "the visibility clamp",
+    )
+}
+
+/// A negative far limit means the near field stays sharp: the limit is its
+/// size, and anything nearer than the focus has no blur.
+fn patch_depth_of_field(source: &str, _: &PbrPatches) -> Result<String, &'static str> {
+    let source = replace_once(
+        source,
+        "    let depth = min(-depth_ndc_to_view_z(raw_depth), dof_params.max_depth);",
+        "    let depth = min(-depth_ndc_to_view_z(raw_depth), abs(dof_params.max_depth));
+             if dof_params.max_depth < 0.0 && depth < focus {
+        return 0.0;
+    }",
+        "the depth clamp",
+    )?;
+    Ok(source)
 }
 
 /// Disk lights: `rect_light` integrates through `blockloom_area_integral`,

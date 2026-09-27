@@ -819,7 +819,7 @@ fn bake_sky(project: &Project, project_dir: &Path, game: &Path) -> Result<bool, 
         let Some(relative) = crate::assets::normalize(&sky.hdri.path) else {
             continue;
         };
-        if done.iter().any(|known| *known == relative) {
+        if done.contains(&relative) {
             baked_any = true;
             continue;
         }
@@ -1361,9 +1361,11 @@ mod tests {
         field.samples[64 * 129 + 64] = 1.0;
         let grid = store::Grid::from_heights(&field);
         let name = store::save(&project_dir, &grid).unwrap();
-        let mut spec = crate::terrain::TerrainSpec::default();
-        spec.resolution = 129;
-        spec.heights = name.clone();
+        let spec = crate::terrain::TerrainSpec {
+            resolution: 129,
+            heights: name.clone(),
+            ..Default::default()
+        };
         project.actors[0]
             .components
             .insert(crate::components::ActorComponent::Terrain { terrain: spec });

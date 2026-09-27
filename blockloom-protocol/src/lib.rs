@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 18;
+pub const PROTOCOL_VERSION: u32 = 19;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -279,6 +279,12 @@ pub enum DebugView {
     /// Terrain layer weights and surface masks as flat colors: layers red,
     /// green, blue and yellow, rule masks magenta, snow white, wetness cyan.
     SurfaceBlend,
+    /// One level of the bloom chain on its own, `SceneView::bloom_mip`.
+    BloomMip,
+    /// Depth of field's blur size: near orange, far blue, in focus black.
+    CircleOfConfusion,
+    /// Ambient occlusion alone, white where nothing is occluded.
+    AmbientOcclusion,
 }
 
 /// The scene view's settings, which are the editor's preferences rather than
@@ -299,6 +305,8 @@ pub struct SceneView {
     pub show_grid: bool,
     /// Applies while a game runs too, since exposure is judged in play.
     pub debug_view: DebugView,
+    /// Which bloom level `DebugView::BloomMip` shows, 0 the sharpest.
+    pub bloom_mip: u32,
     pub volumes: VolumeDebug,
     pub path_tracer: PathTracerView,
     /// The terrain brush the Brush tool paints with.
@@ -393,6 +401,7 @@ impl Default for SceneView {
             scale: 0.1,
             show_grid: true,
             debug_view: DebugView::Lit,
+            bloom_mip: 0,
             volumes: VolumeDebug::default(),
             path_tracer: PathTracerView::default(),
             brush: Default::default(),

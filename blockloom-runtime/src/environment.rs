@@ -6,12 +6,15 @@
 use crate::engine::{Dimension, Engine};
 use crate::hdr::{HdrDebug, HdrFrame};
 use crate::world::{WorldCamera, WorldLight, parse_color};
+use bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening;
 use bevy::camera::Hdr;
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::light::DirectionalLightShadowMap;
-use bevy::pbr::ScreenSpaceAmbientOcclusion;
-use bevy::post_process::bloom::{Bloom, BloomPrefilter};
-use bevy::post_process::effect_stack::Vignette;
+use bevy::pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceReflections};
+use bevy::post_process::bloom::Bloom;
+use bevy::post_process::dof::{DepthOfField, DepthOfFieldMode};
+use bevy::post_process::effect_stack::{ChromaticAberration, Vignette};
+use bevy::post_process::motion_blur::MotionBlur;
 use bevy::prelude::*;
 use bevy::render::RenderApp;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
@@ -37,11 +40,9 @@ pub struct Environment {
     /// EV100, already resolved through `ExposureClaims`. The one exposure
     /// value every pass reads.
     pub exposure: f32,
-    pub tonemapping: TonemapName,
-    pub bloom: bool,
-    pub bloom_threshold: f32,
-    pub bloom_intensity: f32,
-    pub vignette: f32,
+    /// The rest of the post chain, blended. Its `exposure_ev` is the manual
+    /// EV before any claim; `exposure` above is what the camera uses.
+    pub post: scene::PostProcess,
     /// Multiplier on reflection probes and the sky's light. Only volumes
     /// move it off 1.
     pub reflections: f32,
@@ -123,11 +124,11 @@ impl Environment {
             ambient_brightness: lighting.ambient_brightness.max(0.0),
             ao: lighting.ao_enabled,
             exposure: post.exposure_ev,
-            tonemapping: post.tonemapping,
-            bloom: post.bloom_enabled,
-            bloom_threshold: post.bloom_threshold,
-            bloom_intensity: post.bloom_intensity,
-            vignette: post.vignette_strength.clamp(0.0, 1.0),
+            post: {
+                let mut post = post.clone();
+                post.normalize();
+                post
+            },
             reflections: 1.0,
             indirect: 1.0,
             sky_exposure: world.sky.exposure,
@@ -227,11 +228,50 @@ impl Environment {
         number(&mut self.ambient_brightness, over.ambient_brightness);
         switch(&mut self.ao, over.ao, t);
         number(&mut self.exposure, over.exposure);
-        switch(&mut self.tonemapping, over.tonemapping, t);
-        switch(&mut self.bloom, over.bloom, t);
-        number(&mut self.bloom_threshold, over.bloom_threshold);
-        number(&mut self.bloom_intensity, over.bloom_intensity);
-        number(&mut self.vignette, over.vignette);
+        let triple = |from: &mut [f32; 3], to: Option<[f32; 3]>| {
+            if let Some(to) = to {
+                for (from, to) in from.iter_mut().zip(to) {
+                    *from += (to - *from) * t;
+                }
+            }
+        };
+        let post = &mut self.post;
+        switch(&mut post.tonemapping, over.tonemapping, t);
+        switch(&mut post.bloom_enabled, over.bloom, t);
+        number(&mut post.bloom_threshold, over.bloom_threshold);
+        number(&mut post.bloom_intensity, over.bloom_intensity);
+        number(&mut post.bloom_knee, over.bloom_knee);
+        number(&mut post.bloom_scatter, over.bloom_scatter);
+        number(&mut post.bloom_dirt_intensity, over.bloom_dirt_intensity);
+        number(&mut post.vignette_strength, over.vignette);
+        let auto = &mut post.auto_exposure;
+        switch(&mut auto.enabled, over.auto_exposure, t);
+        number(&mut auto.min_ev, over.auto_exposure_min);
+        number(&mut auto.max_ev, over.auto_exposure_max);
+        number(&mut auto.compensation, over.exposure_compensation);
+        number(&mut post.tone.toe, over.tone_toe);
+        number(&mut post.tone.shoulder, over.tone_shoulder);
+        let grading = &mut post.grading;
+        number(&mut grading.temperature, over.temperature);
+        number(&mut grading.tint, over.tint);
+        triple(&mut grading.lift, over.lift);
+        triple(&mut grading.gamma, over.gamma);
+        triple(&mut grading.gain, over.gain);
+        number(&mut grading.saturation, over.saturation);
+        number(&mut grading.contrast, over.contrast);
+        number(&mut grading.lut_contribution, over.lut_contribution);
+        let dof = &mut post.depth_of_field;
+        switch(&mut dof.enabled, over.depth_of_field, t);
+        number(&mut dof.focus_distance, over.focus_distance);
+        number(&mut dof.f_stops, over.f_stops);
+        switch(&mut post.motion_blur.enabled, over.motion_blur, t);
+        number(&mut post.motion_blur.shutter_angle, over.shutter_angle);
+        number(&mut post.ao.radius, over.ao_radius);
+        switch(&mut post.ssr.enabled, over.ssr, t);
+        number(&mut post.ssr.roughness_cutoff, over.ssr_roughness);
+        number(&mut post.chromatic_aberration, over.chromatic_aberration);
+        number(&mut post.grain.intensity, over.grain);
+        number(&mut post.sharpen, over.sharpen);
         number(&mut self.reflections, over.reflections);
         number(&mut self.indirect, over.indirect);
         number(&mut self.sky_exposure, over.sky_exposure);
@@ -269,6 +309,34 @@ pub struct EnvironmentOverride {
     pub bloom_threshold: Option<f32>,
     pub bloom_intensity: Option<f32>,
     pub vignette: Option<f32>,
+    pub auto_exposure: Option<bool>,
+    pub auto_exposure_min: Option<f32>,
+    pub auto_exposure_max: Option<f32>,
+    pub exposure_compensation: Option<f32>,
+    pub bloom_knee: Option<f32>,
+    pub bloom_scatter: Option<f32>,
+    pub bloom_dirt_intensity: Option<f32>,
+    pub tone_toe: Option<f32>,
+    pub tone_shoulder: Option<f32>,
+    pub temperature: Option<f32>,
+    pub tint: Option<f32>,
+    pub lift: Option<[f32; 3]>,
+    pub gamma: Option<[f32; 3]>,
+    pub gain: Option<[f32; 3]>,
+    pub saturation: Option<f32>,
+    pub contrast: Option<f32>,
+    pub lut_contribution: Option<f32>,
+    pub depth_of_field: Option<bool>,
+    pub focus_distance: Option<f32>,
+    pub f_stops: Option<f32>,
+    pub motion_blur: Option<bool>,
+    pub shutter_angle: Option<f32>,
+    pub ao_radius: Option<f32>,
+    pub ssr: Option<bool>,
+    pub ssr_roughness: Option<f32>,
+    pub chromatic_aberration: Option<f32>,
+    pub grain: Option<f32>,
+    pub sharpen: Option<f32>,
     pub reflections: Option<f32>,
     pub indirect: Option<f32>,
     pub sky_exposure: Option<f32>,
@@ -298,6 +366,14 @@ impl EnvironmentOverride {
     /// A `Volume` component's checked properties.
     pub fn from_volume(overrides: &VolumeOverrides) -> Self {
         let color = |value: Option<String>| value.map(|hex| parse_color(&hex));
+        let within = |value: Option<f32>, lo: f32, hi: f32| {
+            value.filter(|v| v.is_finite()).map(|v| v.clamp(lo, hi))
+        };
+        let triple = |value: Option<[f32; 3]>, lo: f32, hi: f32| {
+            value
+                .filter(|v| v.iter().all(|c| c.is_finite()))
+                .map(|v| v.map(|c| c.clamp(lo, hi)))
+        };
         Self {
             background: color(overrides.background.get()),
             sun_direction: overrides.sun_direction.get().map(Vec3::from),
@@ -312,6 +388,34 @@ impl EnvironmentOverride {
             bloom_threshold: overrides.bloom_threshold.get(),
             bloom_intensity: overrides.bloom_intensity.get(),
             vignette: overrides.vignette.get().map(|v| v.clamp(0.0, 1.0)),
+            auto_exposure: overrides.auto_exposure.get(),
+            auto_exposure_min: within(overrides.auto_exposure_min.get(), -10.0, 30.0),
+            auto_exposure_max: within(overrides.auto_exposure_max.get(), -10.0, 30.0),
+            exposure_compensation: within(overrides.exposure_compensation.get(), -10.0, 10.0),
+            bloom_knee: within(overrides.bloom_knee.get(), 0.0, 1.0),
+            bloom_scatter: within(overrides.bloom_scatter.get(), 0.0, 1.0),
+            bloom_dirt_intensity: within(overrides.bloom_dirt_intensity.get(), 0.0, 10.0),
+            tone_toe: within(overrides.tone_toe.get(), -1.0, 1.0),
+            tone_shoulder: within(overrides.tone_shoulder.get(), 0.0, 1.0),
+            temperature: within(overrides.temperature.get(), -1.0, 1.0),
+            tint: within(overrides.tint.get(), -1.0, 1.0),
+            lift: triple(overrides.lift.get(), -1.0, 1.0),
+            gamma: triple(overrides.gamma.get(), 0.1, 10.0),
+            gain: triple(overrides.gain.get(), 0.0, 10.0),
+            saturation: within(overrides.saturation.get(), 0.0, 2.0),
+            contrast: within(overrides.contrast.get(), 0.0, 2.0),
+            lut_contribution: within(overrides.lut_contribution.get(), 0.0, 1.0),
+            depth_of_field: overrides.depth_of_field.get(),
+            focus_distance: within(overrides.focus_distance.get(), 0.05, 100_000.0),
+            f_stops: within(overrides.f_stops.get(), 0.5, 64.0),
+            motion_blur: overrides.motion_blur.get(),
+            shutter_angle: within(overrides.shutter_angle.get(), 0.0, 360.0),
+            ao_radius: within(overrides.ao_radius.get(), 0.01, 10.0),
+            ssr: overrides.ssr.get(),
+            ssr_roughness: within(overrides.ssr_roughness.get(), 0.05, 1.0),
+            chromatic_aberration: within(overrides.chromatic_aberration.get(), 0.0, 1.0),
+            grain: within(overrides.grain.get(), 0.0, 1.0),
+            sharpen: within(overrides.sharpen.get(), 0.0, 1.0),
             reflections: overrides.reflections.get().map(|m| m.max(0.0)),
             indirect: overrides.indirect.get().map(|m| m.max(0.0)),
             sky_exposure: overrides.sky_exposure.get().filter(|ev| ev.is_finite()),
@@ -387,6 +491,43 @@ impl EnvironmentOverride {
             ("bloom_threshold", self.bloom_threshold.map(show_number)),
             ("bloom_intensity", self.bloom_intensity.map(show_number)),
             ("vignette", self.vignette.map(show_number)),
+            ("auto_exposure", self.auto_exposure.map(show_bool)),
+            ("auto_exposure_min", self.auto_exposure_min.map(show_number)),
+            ("auto_exposure_max", self.auto_exposure_max.map(show_number)),
+            (
+                "exposure_compensation",
+                self.exposure_compensation.map(show_number),
+            ),
+            ("bloom_knee", self.bloom_knee.map(show_number)),
+            ("bloom_scatter", self.bloom_scatter.map(show_number)),
+            (
+                "bloom_dirt_intensity",
+                self.bloom_dirt_intensity.map(show_number),
+            ),
+            ("tone_toe", self.tone_toe.map(show_number)),
+            ("tone_shoulder", self.tone_shoulder.map(show_number)),
+            ("temperature", self.temperature.map(show_number)),
+            ("tint", self.tint.map(show_number)),
+            ("lift", self.lift.map(show_triple)),
+            ("gamma", self.gamma.map(show_triple)),
+            ("gain", self.gain.map(show_triple)),
+            ("saturation", self.saturation.map(show_number)),
+            ("contrast", self.contrast.map(show_number)),
+            ("lut_contribution", self.lut_contribution.map(show_number)),
+            ("depth_of_field", self.depth_of_field.map(show_bool)),
+            ("focus_distance", self.focus_distance.map(show_number)),
+            ("f_stops", self.f_stops.map(show_number)),
+            ("motion_blur", self.motion_blur.map(show_bool)),
+            ("shutter_angle", self.shutter_angle.map(show_number)),
+            ("ao_radius", self.ao_radius.map(show_number)),
+            ("ssr", self.ssr.map(show_bool)),
+            ("ssr_roughness", self.ssr_roughness.map(show_number)),
+            (
+                "chromatic_aberration",
+                self.chromatic_aberration.map(show_number),
+            ),
+            ("grain", self.grain.map(show_number)),
+            ("sharpen", self.sharpen.map(show_number)),
             ("reflections", self.reflections.map(show_number)),
             ("indirect", self.indirect.map(show_number)),
             ("sky_exposure", self.sky_exposure.map(show_number)),
@@ -425,11 +566,66 @@ impl Environment {
             ("ambient_brightness", show_number(self.ambient_brightness)),
             ("ao", show_bool(self.ao)),
             ("exposure", show_number(self.exposure)),
-            ("tonemapping", format!("{:?}", self.tonemapping)),
-            ("bloom", show_bool(self.bloom)),
-            ("bloom_threshold", show_number(self.bloom_threshold)),
-            ("bloom_intensity", show_number(self.bloom_intensity)),
-            ("vignette", show_number(self.vignette)),
+            ("tonemapping", format!("{:?}", self.post.tonemapping)),
+            ("bloom", show_bool(self.post.bloom_enabled)),
+            ("bloom_threshold", show_number(self.post.bloom_threshold)),
+            ("bloom_intensity", show_number(self.post.bloom_intensity)),
+            ("vignette", show_number(self.post.vignette_strength)),
+            ("auto_exposure", show_bool(self.post.auto_exposure.enabled)),
+            (
+                "auto_exposure_min",
+                show_number(self.post.auto_exposure.min_ev),
+            ),
+            (
+                "auto_exposure_max",
+                show_number(self.post.auto_exposure.max_ev),
+            ),
+            (
+                "exposure_compensation",
+                show_number(self.post.auto_exposure.compensation),
+            ),
+            ("bloom_knee", show_number(self.post.bloom_knee)),
+            ("bloom_scatter", show_number(self.post.bloom_scatter)),
+            (
+                "bloom_dirt_intensity",
+                show_number(self.post.bloom_dirt_intensity),
+            ),
+            ("tone_toe", show_number(self.post.tone.toe)),
+            ("tone_shoulder", show_number(self.post.tone.shoulder)),
+            ("temperature", show_number(self.post.grading.temperature)),
+            ("tint", show_number(self.post.grading.tint)),
+            ("lift", show_triple(self.post.grading.lift)),
+            ("gamma", show_triple(self.post.grading.gamma)),
+            ("gain", show_triple(self.post.grading.gain)),
+            ("saturation", show_number(self.post.grading.saturation)),
+            ("contrast", show_number(self.post.grading.contrast)),
+            (
+                "lut_contribution",
+                show_number(self.post.grading.lut_contribution),
+            ),
+            (
+                "depth_of_field",
+                show_bool(self.post.depth_of_field.enabled),
+            ),
+            (
+                "focus_distance",
+                show_number(self.post.depth_of_field.focus_distance),
+            ),
+            ("f_stops", show_number(self.post.depth_of_field.f_stops)),
+            ("motion_blur", show_bool(self.post.motion_blur.enabled)),
+            (
+                "shutter_angle",
+                show_number(self.post.motion_blur.shutter_angle),
+            ),
+            ("ao_radius", show_number(self.post.ao.radius)),
+            ("ssr", show_bool(self.post.ssr.enabled)),
+            ("ssr_roughness", show_number(self.post.ssr.roughness_cutoff)),
+            (
+                "chromatic_aberration",
+                show_number(self.post.chromatic_aberration),
+            ),
+            ("grain", show_number(self.post.grain.intensity)),
+            ("sharpen", show_number(self.post.sharpen)),
             ("reflections", show_number(self.reflections)),
             ("indirect", show_number(self.indirect)),
             ("sky_exposure", show_number(self.sky_exposure)),
@@ -461,6 +657,10 @@ fn show_haze(haze: f32) -> String {
 
 fn show_color(color: Color) -> String {
     color.to_srgba().to_hex()
+}
+
+fn show_triple(v: [f32; 3]) -> String {
+    show_vec(Vec3::from(v))
 }
 
 fn show_vec(v: Vec3) -> String {
@@ -569,7 +769,7 @@ pub fn apply_environment(
         let tonemapping = if debug.bypasses_tonemapping() || frame.is_hdr() {
             Tonemapping::None
         } else {
-            tonemapping_of(env.tonemapping)
+            tonemapping_of(env.post.tonemapping)
         };
         // Bevy's dither rides its tonemapper, so it goes where that does.
         let deband = if tonemapping == Tonemapping::None {
@@ -594,38 +794,38 @@ pub fn apply_environment(
         }
         debug.apply(&mut camera, is_3d, &frame);
         frame.apply(&mut camera, is_3d);
-        if env.bloom {
-            camera.insert(Bloom {
-                intensity: env.bloom_intensity,
-                prefilter: BloomPrefilter {
-                    threshold: env.bloom_threshold,
-                    ..default()
-                },
-                ..default()
-            });
-        } else {
-            camera.remove::<Bloom>();
-        }
-        if env.vignette > 0.0 {
+        // Bloom is Blockloom's own chain (`post.rs`), so Bevy's stays off.
+        camera.remove::<Bloom>();
+        let post = &env.post;
+        if post.vignette_strength > 0.0 {
             // Radius and softness stay at Bevy's defaults; games tune how
             // dark the corners get.
             camera.insert(Vignette {
-                intensity: env.vignette,
+                intensity: post.vignette_strength,
                 ..default()
             });
         } else {
             camera.remove::<Vignette>();
         }
+        if post.chromatic_aberration > 0.0 {
+            camera.insert(ChromaticAberration {
+                intensity: post.chromatic_aberration * CHROMATIC_ABERRATION_MAX,
+                ..default()
+            });
+        } else {
+            camera.remove::<ChromaticAberration>();
+        }
+        if post.sharpen > 0.0 {
+            camera.insert(ContrastAdaptiveSharpening {
+                enabled: true,
+                sharpening_strength: post.sharpen,
+                denoise: false,
+            });
+        } else {
+            camera.remove::<ContrastAdaptiveSharpening>();
+        }
         if is_3d {
-            if env.ao {
-                // SSAO needs multisampling off on the same camera, or
-                // `bevy_pbr` logs a mismatch and skips the effect.
-                camera.insert((ScreenSpaceAmbientOcclusion::default(), Msaa::Off));
-            } else {
-                camera
-                    .remove::<ScreenSpaceAmbientOcclusion>()
-                    .insert(Msaa::default());
-            }
+            apply_camera_3d(&mut camera, env);
         }
     }
 
@@ -655,6 +855,82 @@ pub fn apply_environment(
     }
 }
 
+/// Bevy's chromatic aberration at a project's 1: strong fringes at the edges.
+const CHROMATIC_ABERRATION_MAX: f32 = 0.08;
+
+/// The 3D-only screen-space effects: SSAO, SSR, depth of field and motion
+/// blur, each Bevy's own. Autofocus (`post::focus_depth_of_field`) moves the
+/// depth of field's distance after this.
+fn apply_camera_3d(camera: &mut EntityCommands, env: &Environment) {
+    let post = &env.post;
+    // SSAO and the G-buffer SSR reads both need multisampling off on the
+    // camera, or Bevy logs a mismatch and skips them.
+    camera.insert(if env.wants_msaa_off() {
+        Msaa::Off
+    } else {
+        Msaa::default()
+    });
+    if env.ao {
+        camera.insert(ScreenSpaceAmbientOcclusion {
+            radius: post.ao.radius,
+            ..default()
+        });
+    } else {
+        camera.remove::<ScreenSpaceAmbientOcclusion>();
+    }
+    if post.ssr.enabled {
+        let cutoff = post.ssr.roughness_cutoff;
+        camera.insert(ScreenSpaceReflections {
+            // Fades out over the last fifth below the cutoff.
+            min_perceptual_roughness: 0.0..0.0,
+            max_perceptual_roughness: cutoff * 0.8..cutoff,
+            thickness: post.ssr.thickness,
+            ..default()
+        });
+    } else {
+        camera.remove::<ScreenSpaceReflections>();
+    }
+    let dof = &post.depth_of_field;
+    if dof.enabled {
+        let far = if dof.far_limit > 0.0 {
+            dof.far_limit
+        } else {
+            f32::INFINITY
+        };
+        camera.insert(DepthOfField {
+            mode: match dof.bokeh {
+                scene::Bokeh::Hexagonal => DepthOfFieldMode::Bokeh,
+                scene::Bokeh::Circular => DepthOfFieldMode::Gaussian,
+            },
+            focal_distance: dof.focus_distance,
+            aperture_f_stops: dof.f_stops,
+            max_circle_of_confusion_diameter: dof.max_blur,
+            // A negative limit asks the patched shader to leave the near
+            // field sharp (`post::patch_depth_of_field`).
+            max_depth: if dof.near { far } else { -far },
+            ..default()
+        });
+    } else {
+        camera.remove::<DepthOfField>();
+    }
+    let blur = &post.motion_blur;
+    if blur.enabled && blur.shutter_angle > 0.0 {
+        camera.insert(MotionBlur {
+            shutter_angle: blur.shutter_angle / 360.0,
+            samples: blur.samples,
+        });
+    } else {
+        camera.remove::<MotionBlur>();
+    }
+}
+
+impl Environment {
+    /// SSAO and SSR can't share the camera with multisampling.
+    pub fn wants_msaa_off(&self) -> bool {
+        self.ao || self.post.ssr.enabled
+    }
+}
+
 /// The tonemapper as the camera component. TonyMcMapface is Bevy's own
 /// default, so spelling it out changes nothing for old projects.
 fn tonemapping_of(name: TonemapName) -> Tonemapping {
@@ -667,6 +943,8 @@ fn tonemapping_of(name: TonemapName) -> Tonemapping {
         TonemapName::AcesFitted => Tonemapping::AcesFitted,
         TonemapName::TonyMcMapface => Tonemapping::TonyMcMapface,
         TonemapName::Filmic => Tonemapping::BlenderFilmic,
+        TonemapName::AgX => Tonemapping::AgX,
+        TonemapName::Neutral => Tonemapping::KhronosPbrNeutral,
     }
 }
 
@@ -780,7 +1058,7 @@ mod tests {
     fn apply_follows_the_environment_onto_camera_and_sun() {
         let mut app = App::new();
         let mut env = base();
-        env.bloom = true;
+        env.post.bloom_enabled = true;
         env.ao = true;
         env.exposure = 7.0;
         app.insert_resource(Dimension(Mode::ThreeD))
@@ -808,7 +1086,8 @@ mod tests {
             world.get::<bevy::camera::Exposure>(camera).unwrap().ev100,
             7.0
         );
-        assert!(world.get::<Bloom>(camera).is_some());
+        // Bloom is the post stack's, never Bevy's.
+        assert!(world.get::<Bloom>(camera).is_none());
         assert!(world.get::<Hdr>(camera).is_some());
         assert!(world.get::<ScreenSpaceAmbientOcclusion>(camera).is_some());
         assert_eq!(world.resource::<ClearColor>().0, base().background);
@@ -819,10 +1098,9 @@ mod tests {
         assert!(world.contains_resource::<GlobalAmbientLight>());
 
         let mut env = app.world_mut().resource_mut::<Environment>();
-        env.bloom = false;
+        env.post.bloom_enabled = false;
         env.ao = false;
         app.update();
-        assert!(app.world().get::<Bloom>(camera).is_none());
         assert!(
             app.world()
                 .get::<ScreenSpaceAmbientOcclusion>(camera)

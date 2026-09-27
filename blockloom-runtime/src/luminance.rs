@@ -25,8 +25,9 @@ use bevy::render::{RenderApp, RenderStartup};
 use blockloom_core::scene::Mode;
 use std::num::NonZero;
 
-/// Bytes the shader writes: log-average, peak, a measured flag, padding.
-const RESULT_BYTES: u64 = 16;
+/// Bytes the shader writes: log-average, peak, a measured flag, the
+/// center-weighted and spot log-averages, padding.
+const RESULT_BYTES: u64 = 32;
 
 pub fn register(app: &mut App) {
     app.init_resource::<SceneLuminance>();
@@ -60,6 +61,7 @@ pub fn register(app: &mut App) {
         .add_systems(
             Core3d,
             meter
+                .in_set(MeterPass)
                 .in_set(Core3dSystems::PostProcess)
                 .after(bloom)
                 .before(fullscreen_material_system::<HdrDebugView3d>)
@@ -69,6 +71,7 @@ pub fn register(app: &mut App) {
         .add_systems(
             Core2d,
             meter
+                .in_set(MeterPass)
                 .in_set(Core2dSystems::PostProcess)
                 .after(bloom)
                 .before(fullscreen_material_system::<HdrDebugView2d>)
@@ -77,11 +80,18 @@ pub fn register(app: &mut App) {
         );
 }
 
+/// The meter's pass, for passes that must read the frame after it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct MeterPass;
+
 /// The last metered frame, in exposed units (1.0 is paper white).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct SceneLuminance {
     pub average: f32,
     pub peak: f32,
+    /// Log-averages weighted towards the middle, broadly and in a spot.
+    pub center: f32,
+    pub spot: f32,
     /// False until a metered frame has come back.
     pub measured: bool,
 }
@@ -129,7 +139,7 @@ fn read_meter(event: On<ReadbackComplete>, mut luminance: ResMut<SceneLuminance>
     let Some(values) = event
         .data
         .get(..RESULT_BYTES as usize)
-        .map(bytemuck::pod_read_unaligned::<[f32; 4]>)
+        .map(bytemuck::pod_read_unaligned::<[f32; 8]>)
     else {
         return;
     };
@@ -139,6 +149,8 @@ fn read_meter(event: On<ReadbackComplete>, mut luminance: ResMut<SceneLuminance>
     luminance.set_if_neq(SceneLuminance {
         average: values[0],
         peak: values[1],
+        center: values[3],
+        spot: values[4],
         measured: true,
     });
 }
@@ -246,6 +258,7 @@ mod tests {
             average: 0.5,
             peak: 2.0,
             measured: true,
+            ..default()
         };
         assert_eq!(metered.nits(Mode::ThreeD, 0.0, 200.0), 0.6);
         assert_eq!(metered.nits(Mode::ThreeD, 2.0, 200.0), 2.4);

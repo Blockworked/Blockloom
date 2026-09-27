@@ -316,6 +316,6 @@ mod tests {
                 assert_eq!(page[corner + 3], 0);
             }
         }
-        assert!(pages[0].chunks_exact(4).any(|p| p[3] == 255));
+        assert!(pages[0].as_chunks::<4>().0.iter().any(|p| p[3] == 255));
     }
 }

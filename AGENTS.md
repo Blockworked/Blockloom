@@ -580,8 +580,8 @@ The choice is `SceneView::debug_view`, an editor preference that applies while
 a game runs too. `luminance.rs` meters the world camera's exposed image with a
 compute pass and reads it back; the atmosphere sample turns it into the
 `scene luminance` reporter's nits on the fixed tick, beside `is HDR display?`
-and `peak brightness`. The meter, the debug views and the tone curve run after
-everything Bevy's tonemapper runs after: `hdr::ToneInputs`, a schedule build
+and `peak brightness`. The meter, the post stack's HDR pass, the debug views and the tone
+curve run after everything Bevy's tonemapper runs after: `hdr::ToneInputs`, a schedule build
 pass, adds those edges, since passes that flip the main texture must be
 ordered or they submit out of the order they flipped in. `capture.rs` answers `EditorMessage::CaptureExr`: a
 second camera renders the same view untonemapped into FP16, read back and
@@ -603,6 +603,49 @@ The GPU half is checked by the ignored tests in `embed.rs` (`cargo test -p
 blockloom-runtime -- --ignored embed`), which read pixels back from a real
 world: false color in both dimensions, a lamp that still lights the floor
 after batching, and an EXR capture that stays linear.
+
+### Post stack
+
+`World.post` (`scene::PostProcess`) is the whole camera finish, both
+dimensions unless noted, in a fixed HDR-first order: motion blur, depth of
+field, chromatic aberration and vignette (Bevy's own, set in
+`environment::apply_environment`), then Blockloom's HDR pass (bloom, white
+balance, grading, the toe/shoulder `ToneShape`), the tonemapper (AgX and
+Khronos Neutral included), FXAA/SMAA and CAS sharpening, then Blockloom's LDR
+pass (LUT and film grain). Every property volumes can blend has a field on
+`VolumeOverrides` and `EnvironmentOverride`, and `Environment.post` holds the
+blended chain; the LUT and dirt files, bokeh, metering mode and AO intensity
+stay the project's.
+
+`post.rs` is Blockloom's half. `apply_post` resolves each world camera's
+`PostStack` from the blended environment, loading the LUT through
+`pipeline::load_volume` into a 3D image and the lens dirt as an asset.
+`post_hdr` (in `hdr::ToneInputs`, after `luminance::MeterPass`) runs a
+five-level bloom chain at half resolution (Karis-weighted soft-threshold
+prefilter, 13-tap downsamples, tent upsamples scattering each level into the
+one above) and a composite that adds bloom times dirt, then grades.
+`post_ldr` (`PostLdrPass`, after the tonemapper and `cas`) works on display
+values; the LUT is skipped under HDR output. `shaders/post.wesl` holds every
+entry point with unique binding numbers, and `PostUniforms` matches it field
+for field. Bevy's `Bloom` is never used. The debug views `BloomMip`
+(`SceneView::bloom_mip`), `CircleOfConfusion` and `AmbientOcclusion` are
+drawn by `post_hdr` and bypass the tonemapper.
+
+Auto-exposure (3D) reads the meter's average, center-weighted or spot
+log-average (`luminance.wesl`), aims for middle grey plus compensation inside
+`min_ev..max_ev` and moves at `speed_up`/`speed_down` stops a second
+(`AutoExposure::target`/`step`); `post::auto_expose` writes that into
+`ExposureClaims::auto`, so the director track still wins. Depth of field
+focuses on the named actor's depth along the view (`focus_depth_of_field`),
+maps Hexagonal/Circular bokeh to Bevy's Bokeh/Gaussian, and a negative
+`max_depth` tells the `pbr_patch` edit of Bevy's `dof.wesl` to keep the near
+field sharp. AO intensity is a power on SSAO visibility, baked into Bevy's
+`ssao.wesl` by `pbr_patch` in twentieths (each patch re-applies only when its
+own `key` changes). SSR turns opaque surfaces deferred through
+`ray_tracing::apply_ray_tracing`, and it and SSAO turn MSAA off
+(`Environment::wants_msaa_off`). EXR captures copy only the bloom
+(`PostStack::linear_only`). The GPU half is the ignored `embed` tests
+(grading, every bloom level, grain, AO and blur size debug views).
 
 ### Sky
 

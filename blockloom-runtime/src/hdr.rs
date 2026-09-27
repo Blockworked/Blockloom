@@ -61,6 +61,7 @@ pub fn register(app: &mut App) {
         render.edit_schedule(Core3d, |schedule| {
             schedule.add_build_pass(ToneInputs::new(vec![
                 crate::luminance::meter_type(),
+                crate::post::hdr_type(),
                 system_type(fullscreen_material_system::<HdrDebugView3d>),
                 system_type(fullscreen_material_system::<HdrTone3d>),
             ]));
@@ -68,6 +69,7 @@ pub fn register(app: &mut App) {
         render.edit_schedule(Core2d, |schedule| {
             schedule.add_build_pass(ToneInputs::new(vec![
                 crate::luminance::meter_type(),
+                crate::post::hdr_type(),
                 system_type(fullscreen_material_system::<HdrDebugView2d>),
                 system_type(fullscreen_material_system::<HdrTone2d>),
             ]));
@@ -80,8 +82,8 @@ pub fn register(app: &mut App) {
     }
 }
 
-/// Puts the meter, debug views and tone curve after everything the tonemapper
-/// runs after. Bevy's effect stack and path tracer can't be named, and a pass
+/// Puts the meter, the post stack's HDR pass, debug views and tone curve
+/// after everything the tonemapper runs after. Bevy's effect stack and path tracer can't be named, and a pass
 /// unordered against them can flip the main texture in one order and submit
 /// in the other.
 #[derive(Debug)]
@@ -436,14 +438,24 @@ impl HdrDebug {
     pub fn bypasses_tonemapping(self) -> bool {
         matches!(
             self.0,
-            DebugView::FalseColor | DebugView::Calibration | DebugView::HdrPreview
+            DebugView::FalseColor
+                | DebugView::Calibration
+                | DebugView::HdrPreview
+                | DebugView::BloomMip
+                | DebugView::CircleOfConfusion
+                | DebugView::AmbientOcclusion
         )
     }
 
     fn mode(self) -> Option<u32> {
         match self.0 {
-            // The surface shaders draw the blend view themselves.
-            DebugView::Lit | DebugView::SurfaceBlend => None,
+            // The surface shaders draw the blend view themselves, and the
+            // post stack its own views (`post::PostDebug`).
+            DebugView::Lit
+            | DebugView::SurfaceBlend
+            | DebugView::BloomMip
+            | DebugView::CircleOfConfusion
+            | DebugView::AmbientOcclusion => None,
             DebugView::FalseColor => Some(1),
             DebugView::Clipping => Some(2),
             DebugView::Histogram => Some(3),

@@ -21,7 +21,7 @@ BwDialog {
     function invoke(command, args) { app.invoke(command, args); }
     function withIndex(array, index, value) { const next = array.slice(); next[index] = value; return next; }
     function clamp(n, lo, hi) { return Math.min(Math.max(n, lo), hi); }
-    function postOf() { return Object.assign({ exposure_ev: 9.7, tonemapping: "TonyMcMapface", bloom_enabled: false, bloom_threshold: 1, bloom_intensity: 0.15, vignette_strength: 0 }, world && world.post ? world.post : {}); }
+    function postOf() { return Object.assign({ exposure_ev: 9.7, tonemapping: "TonyMcMapface", bloom_enabled: false, bloom_threshold: 1, bloom_intensity: 0.15, bloom_knee: 0.5, bloom_scatter: 0.7, bloom_dirt: "", bloom_dirt_intensity: 0, vignette_strength: 0, chromatic_aberration: 0, sharpen: 0 }, world && world.post ? world.post : {}); }
     function soundOf() { return Object.assign({ master_volume: 1, music_volume: 1, sfx_volume: 1 }, world && world.sound ? world.sound : {}); }
     function navigationOf() { return Object.assign({ areas: [], links: [] }, world && world.navigation ? world.navigation : {}); }
     function writeNavigation(next) { invoke("set_navigation", { navigation: Object.assign(navigationOf(), next) }); }
@@ -79,6 +79,7 @@ BwDialog {
         ColumnLayout { id: body; Layout.fillWidth: true; spacing: 6 }
     }
     component Note: Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11 }
+    component SubHeading: Text { color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold; Layout.topMargin: 4 }
 
     ScrollView {
         id: scroll
@@ -718,22 +719,126 @@ BwDialog {
                 Note { text: "Traces the sun, the sky, glowing surfaces and every light marked Traced for shadows, bounced light and reflections, in place of the raster lighting, on a GPU that can trace rays (Vulkan or DX12 ray queries). Hybrid reuses samples through ReSTIR and caches bounced light; Path traced sends fresh paths from every pixel each frame, heavier and closer to the truth. Auto filters the noise across space and time. Bounces and samples trade noise and reach for speed; blocks can change both mid-run. Box-projected and shader surfaces keep the raster lights. Elsewhere the raster rig carries on." }
             }
             Section {
+                id: postSection
                 heading: "Post-process"; visible: !!root.world
-                InspectorRow { label: "Exposure"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: root.postOf().exposure_ev; fallback: 9.7; onCommitted: n => root.writePost({ exposure_ev: root.clamp(n, 0, 20) }) } }
-                InspectorRow { label: "Tonemap"; labelWidth: 110; Layout.fillWidth: true
-                    ChoiceField { options: Blocks.opts(["TonyMcMapface","None","Reinhard","ReinhardLuminance","AcesFitted","Filmic"]); value: root.postOf().tonemapping; onChosen: v => root.writePost({ tonemapping: v }) } }
+                readonly property var p: root.postOf()
+                readonly property var auto: p.auto_exposure || {}
+                readonly property var grading: p.grading || {}
+                readonly property var tone: p.tone || {}
+                readonly property var dof: p.depth_of_field || {}
+                readonly property var blur: p.motion_blur || {}
+                readonly property var ao: p.ao || {}
+                readonly property var ssr: p.ssr || {}
+                readonly property var grain: p.grain || {}
+                function writePart(key, next) { const part = {}; part[key] = Object.assign({}, postSection.p[key] || {}, next); root.writePost(part); }
+                function percent(v) { return Math.round(v * 100) + "%"; }
+                SubHeading { text: "Exposure" }
+                InspectorRow { label: "Exposure EV"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: postSection.p.exposure_ev; fallback: 9.7; onCommitted: n => root.writePost({ exposure_ev: root.clamp(n, 0, 20) }) } }
+                InspectorRow { visible: root.is3d; label: "Auto"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!postSection.auto.enabled; onToggled: on => postSection.writePart("auto_exposure", { enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: root.is3d && !!postSection.auto.enabled; label: "Metering"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: [{ value: "Spot", label: "Spot" }, { value: "CenterWeighted", label: "Center-weighted" }, { value: "Average", label: "Average" }]
+                        value: postSection.auto.metering || "Spot"; onChosen: v => postSection.writePart("auto_exposure", { metering: v }) } }
+                InspectorRow { visible: root.is3d && !!postSection.auto.enabled; label: "EV min, max"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: postSection.auto.min_ev; fallback: 2; onCommitted: n => postSection.writePart("auto_exposure", { min_ev: root.clamp(n, -10, 30) }) }
+                    NumberField { value: postSection.auto.max_ev; fallback: 16; onCommitted: n => postSection.writePart("auto_exposure", { max_ev: root.clamp(n, -10, 30) }) } }
+                InspectorRow { visible: root.is3d && !!postSection.auto.enabled; label: "EV/s up, down"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: postSection.auto.speed_up; fallback: 3; onCommitted: n => postSection.writePart("auto_exposure", { speed_up: root.clamp(n, 0.01, 100) }) }
+                    NumberField { value: postSection.auto.speed_down; fallback: 1; onCommitted: n => postSection.writePart("auto_exposure", { speed_down: root.clamp(n, 0.01, 100) }) } }
+                InspectorRow { visible: root.is3d && !!postSection.auto.enabled; label: "Compensation"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: postSection.auto.compensation; fallback: 0; onCommitted: n => postSection.writePart("auto_exposure", { compensation: root.clamp(n, -10, 10) }) } }
+                SubHeading { text: "Bloom" }
                 InspectorRow { label: "Glow"; labelWidth: 110; Layout.fillWidth: true
-                    SwitchField { value: root.postOf().bloom_enabled; onToggled: on => root.writePost({ bloom_enabled: on }) } Item { Layout.fillWidth: true } }
-                InspectorRow { visible: root.postOf().bloom_enabled; label: "Glow limit"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: root.postOf().bloom_threshold; fallback: 1; onCommitted: n => root.writePost({ bloom_threshold: Math.max(n, 0) }) } }
-                InspectorRow { visible: root.postOf().bloom_enabled; label: "Glow amount"; labelWidth: 110; Layout.fillWidth: true
-                    SliderField { from: 0; to: 100; stepSize: 1; value: Math.round(root.postOf().bloom_intensity * 100); onMoved: root.writePost({ bloom_intensity: value / 100 }) }
-                    Text { text: Math.round(root.postOf().bloom_intensity * 100) + "%"; color: Theme.textDim; font.pixelSize: 12 } }
+                    SwitchField { value: postSection.p.bloom_enabled; onToggled: on => root.writePost({ bloom_enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: postSection.p.bloom_enabled; label: "Glow limit, knee"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: postSection.p.bloom_threshold; fallback: 1; onCommitted: n => root.writePost({ bloom_threshold: Math.max(n, 0) }) }
+                    NumberField { value: postSection.p.bloom_knee; fallback: 0.5; onCommitted: n => root.writePost({ bloom_knee: root.clamp(n, 0, 1) }) } }
+                InspectorRow { visible: postSection.p.bloom_enabled; label: "Glow amount"; labelWidth: 110; Layout.fillWidth: true
+                    SliderField { from: 0; to: 100; stepSize: 1; value: Math.round(postSection.p.bloom_intensity * 100); onMoved: root.writePost({ bloom_intensity: value / 100 }) }
+                    Text { text: postSection.percent(postSection.p.bloom_intensity); color: Theme.textDim; font.pixelSize: 12 } }
+                InspectorRow { visible: postSection.p.bloom_enabled; label: "Spread"; labelWidth: 110; Layout.fillWidth: true
+                    SliderField { from: 0; to: 100; stepSize: 1; value: Math.round(postSection.p.bloom_scatter * 100); onMoved: root.writePost({ bloom_scatter: value / 100 }) }
+                    Text { text: postSection.percent(postSection.p.bloom_scatter); color: Theme.textDim; font.pixelSize: 12 } }
+                InspectorRow { visible: postSection.p.bloom_enabled; label: "Lens dirt"; labelWidth: 110; Layout.fillWidth: true
+                    AssetField { app: root.app; accept: ["image"]; value: postSection.p.bloom_dirt || ""; placeholderText: "Drag a dirt image here"; onCommitted: p => root.writePost({ bloom_dirt: p }) }
+                    NumberField { Layout.preferredWidth: 60; value: postSection.p.bloom_dirt_intensity; fallback: 0; onCommitted: n => root.writePost({ bloom_dirt_intensity: root.clamp(n, 0, 10) }) } }
+                SubHeading { text: "Tone and color" }
+                InspectorRow { label: "Tonemap"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: Blocks.opts(["TonyMcMapface","None","Reinhard","ReinhardLuminance","AcesFitted","Filmic","AgX","Neutral"]); value: postSection.p.tonemapping; onChosen: v => root.writePost({ tonemapping: v }) } }
+                InspectorRow { label: "Toe, shoulder"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: postSection.tone.toe; fallback: 0; onCommitted: n => postSection.writePart("tone", { toe: root.clamp(n, -1, 1) }) }
+                    NumberField { value: postSection.tone.shoulder; fallback: 0; onCommitted: n => postSection.writePart("tone", { shoulder: root.clamp(n, 0, 1) }) } }
+                InspectorRow { label: "Warmth, tint"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: postSection.grading.temperature; fallback: 0; onCommitted: n => postSection.writePart("grading", { temperature: root.clamp(n, -1, 1) }) }
+                    NumberField { value: postSection.grading.tint; fallback: 0; onCommitted: n => postSection.writePart("grading", { tint: root.clamp(n, -1, 1) }) } }
+                Repeater {
+                    model: [{ key: "lift", label: "Lift RGB", lo: -1, hi: 1, base: 0 }, { key: "gamma", label: "Gamma RGB", lo: 0.1, hi: 10, base: 1 }, { key: "gain", label: "Gain RGB", lo: 0, hi: 10, base: 1 }]
+                    delegate: InspectorRow {
+                        id: lgg
+                        required property var modelData
+                        label: modelData.label; labelWidth: 110; Layout.fillWidth: true
+                        Repeater {
+                            model: 3
+                            NumberField { required property int index; Layout.fillWidth: true
+                                value: (postSection.grading[lgg.modelData.key] || [lgg.modelData.base, lgg.modelData.base, lgg.modelData.base])[index]; fallback: lgg.modelData.base
+                                onCommitted: n => { const part = {}; part[lgg.modelData.key] = root.withIndex(postSection.grading[lgg.modelData.key] || [lgg.modelData.base, lgg.modelData.base, lgg.modelData.base], index, root.clamp(n, lgg.modelData.lo, lgg.modelData.hi)); postSection.writePart("grading", part); } }
+                        }
+                    }
+                }
+                InspectorRow { label: "Saturation, contrast"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: postSection.grading.saturation; fallback: 1; onCommitted: n => postSection.writePart("grading", { saturation: root.clamp(n, 0, 2) }) }
+                    NumberField { value: postSection.grading.contrast; fallback: 1; onCommitted: n => postSection.writePart("grading", { contrast: root.clamp(n, 0, 2) }) } }
+                InspectorRow { label: "LUT, amount"; labelWidth: 110; Layout.fillWidth: true
+                    AssetField { app: root.app; accept: ["image", "volume"]; value: postSection.grading.lut || ""; placeholderText: "Drag a .cube LUT here"; onCommitted: p => postSection.writePart("grading", { lut: p }) }
+                    NumberField { Layout.preferredWidth: 60; value: postSection.grading.lut_contribution; fallback: 1; onCommitted: n => postSection.writePart("grading", { lut_contribution: root.clamp(n, 0, 1) }) } }
+                SubHeading { text: "Lens" }
                 InspectorRow { label: "Corners"; labelWidth: 110; Layout.fillWidth: true
-                    SliderField { from: 0; to: 100; stepSize: 1; value: Math.round(root.postOf().vignette_strength * 100); onMoved: root.writePost({ vignette_strength: value / 100 }) }
-                    Text { text: Math.round(root.postOf().vignette_strength * 100) + "%"; color: Theme.textDim; font.pixelSize: 12 } }
-                Note { text: "The camera's finish, in both dimensions. Lower exposure brightens; glow makes emissive surfaces bloom; corners darkens the frame edges. Applies on the next run of the game." }
+                    SliderField { from: 0; to: 100; stepSize: 1; value: Math.round(postSection.p.vignette_strength * 100); onMoved: root.writePost({ vignette_strength: value / 100 }) }
+                    Text { text: postSection.percent(postSection.p.vignette_strength); color: Theme.textDim; font.pixelSize: 12 } }
+                InspectorRow { label: "Color fringes"; labelWidth: 110; Layout.fillWidth: true
+                    SliderField { from: 0; to: 100; stepSize: 1; value: Math.round((postSection.p.chromatic_aberration || 0) * 100); onMoved: root.writePost({ chromatic_aberration: value / 100 }) }
+                    Text { text: postSection.percent(postSection.p.chromatic_aberration || 0); color: Theme.textDim; font.pixelSize: 12 } }
+                InspectorRow { label: "Film grain"; labelWidth: 110; Layout.fillWidth: true
+                    SliderField { from: 0; to: 100; stepSize: 1; value: Math.round((postSection.grain.intensity || 0) * 100); onMoved: postSection.writePart("grain", { intensity: value / 100 }) }
+                    Text { text: postSection.percent(postSection.grain.intensity || 0); color: Theme.textDim; font.pixelSize: 12 } }
+                InspectorRow { visible: (postSection.grain.intensity || 0) > 0; label: "Grain size, response"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: postSection.grain.size; fallback: 1.5; onCommitted: n => postSection.writePart("grain", { size: root.clamp(n, 1, 4) }) }
+                    NumberField { value: postSection.grain.response; fallback: 0.8; onCommitted: n => postSection.writePart("grain", { response: root.clamp(n, 0, 1) }) } }
+                InspectorRow { label: "Sharpen"; labelWidth: 110; Layout.fillWidth: true
+                    SliderField { from: 0; to: 100; stepSize: 1; value: Math.round((postSection.p.sharpen || 0) * 100); onMoved: root.writePost({ sharpen: value / 100 }) }
+                    Text { text: postSection.percent(postSection.p.sharpen || 0); color: Theme.textDim; font.pixelSize: 12 } }
+                SubHeading { visible: root.is3d; text: "Depth of field" }
+                InspectorRow { visible: root.is3d; label: "Enabled"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!postSection.dof.enabled; onToggled: on => postSection.writePart("depth_of_field", { enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: root.is3d && !!postSection.dof.enabled; label: "Focus on"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { Layout.fillWidth: true; options: [{ value: "", label: "Fixed distance" }].concat((root.project ? root.project.actors : []).map(a => ({ value: a.name, label: a.name })))
+                        value: postSection.dof.target || ""; onChosen: v => postSection.writePart("depth_of_field", { target: v }) } }
+                InspectorRow { visible: root.is3d && !!postSection.dof.enabled; label: "Distance m, f-stop"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: postSection.dof.focus_distance; fallback: 10; onCommitted: n => postSection.writePart("depth_of_field", { focus_distance: root.clamp(n, 0.05, 100000) }) }
+                    NumberField { value: postSection.dof.f_stops; fallback: 2.8; onCommitted: n => postSection.writePart("depth_of_field", { f_stops: root.clamp(n, 0.5, 64) }) } }
+                InspectorRow { visible: root.is3d && !!postSection.dof.enabled; label: "Bokeh"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: [{ value: "Hexagonal", label: "Six blades" }, { value: "Circular", label: "Circular" }]; value: postSection.dof.bokeh || "Hexagonal"; onChosen: v => postSection.writePart("depth_of_field", { bokeh: v }) } }
+                InspectorRow { visible: root.is3d && !!postSection.dof.enabled; label: "Blur near"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: postSection.dof.near !== false; onToggled: on => postSection.writePart("depth_of_field", { near: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: root.is3d && !!postSection.dof.enabled; label: "Far limit m, max px"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: postSection.dof.far_limit; fallback: 0; onCommitted: n => postSection.writePart("depth_of_field", { far_limit: Math.max(0, n) }) }
+                    NumberField { value: postSection.dof.max_blur; fallback: 32; onCommitted: n => postSection.writePart("depth_of_field", { max_blur: root.clamp(n, 1, 128) }) } }
+                SubHeading { visible: root.is3d; text: "Screen space" }
+                InspectorRow { visible: root.is3d; label: "Motion blur"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!postSection.blur.enabled; onToggled: on => postSection.writePart("motion_blur", { enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: root.is3d && !!postSection.blur.enabled; label: "Shutter °, samples"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: postSection.blur.shutter_angle; fallback: 180; onCommitted: n => postSection.writePart("motion_blur", { shutter_angle: root.clamp(n, 0, 360) }) }
+                    NumberField { value: postSection.blur.samples; fallback: 4; onCommitted: n => postSection.writePart("motion_blur", { samples: root.clamp(Math.round(n), 1, 32) }) } }
+                InspectorRow { visible: root.is3d && !!root.world && root.world.lighting.ao_enabled; label: "AO reach m, strength"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: postSection.ao.radius; fallback: 0.7285; onCommitted: n => postSection.writePart("ao", { radius: root.clamp(n, 0.01, 10) }) }
+                    NumberField { value: postSection.ao.intensity; fallback: 1; onCommitted: n => postSection.writePart("ao", { intensity: root.clamp(n, 0, 4) }) } }
+                InspectorRow { visible: root.is3d; label: "Reflections"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!postSection.ssr.enabled; onToggled: on => postSection.writePart("ssr", { enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: root.is3d && !!postSection.ssr.enabled; label: "Rough cutoff, thick"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: postSection.ssr.roughness_cutoff; fallback: 0.4; onCommitted: n => postSection.writePart("ssr", { roughness_cutoff: root.clamp(n, 0.05, 1) }) }
+                    NumberField { value: postSection.ssr.thickness; fallback: 0.25; onCommitted: n => postSection.writePart("ssr", { thickness: root.clamp(n, 0.001, 10) }) } }
+                Note { text: "The camera's finish, in a fixed order: blur and lens first, then glow, color and tone, then the tonemapper, sharpening, the LUT and grain. Lower exposure brightens; auto exposure meters the frame and adapts within its EV range at its speed, and a set exposure block still wins. Glow lets bright light bleed across five levels, spread by Spread and lit up by lens dirt. Toe deepens (or lifts) the shadows and shoulder rolls off the highlights ahead of the tonemapper. The LUT maps display colors. Volumes can override most of these. Screen-space reflections draw surfaces deferred. The Game view's debug menu shows bloom levels, blur size and AO alone." }
             }
             Section {
                 heading: "Display"; visible: !!root.world

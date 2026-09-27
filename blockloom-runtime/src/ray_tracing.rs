@@ -317,11 +317,13 @@ pub fn apply_ray_tracing(
         return;
     }
 
-    // The G-buffer is what Solari lights, so opaque surfaces go deferred
-    // while it is on. Touching every material re-prepares it in the new way.
-    if *deferred != active {
-        *deferred = active;
-        *method = if active {
+    // The G-buffer is what Solari lights and screen-space reflections read,
+    // so opaque surfaces go deferred while either is on. Touching every
+    // material re-prepares it in the new way.
+    let wants_deferred = active || environment.post.ssr.enabled;
+    if *deferred != wants_deferred {
+        *deferred = wants_deferred;
+        *method = if wants_deferred {
             DefaultOpaqueRendererMethod::deferred()
         } else {
             DefaultOpaqueRendererMethod::forward()
@@ -405,7 +407,7 @@ pub fn apply_ray_tracing(
             // target can't be a storage texture, so that usage goes first.
             camera.insert((
                 CameraMainTextureUsages::default(),
-                if environment.ao {
+                if environment.wants_msaa_off() {
                     Msaa::Off
                 } else {
                     Msaa::default()

@@ -766,6 +766,9 @@ pub enum TonemapName {
     #[default]
     TonyMcMapface,
     Filmic,
+    AgX,
+    /// Khronos PBR Neutral: keeps base colors true up to the highlights.
+    Neutral,
 }
 
 impl TonemapName {
@@ -777,6 +780,8 @@ impl TonemapName {
         TonemapName::ReinhardLuminance,
         TonemapName::AcesFitted,
         TonemapName::Filmic,
+        TonemapName::AgX,
+        TonemapName::Neutral,
     ];
 
     pub fn name(self) -> &'static str {
@@ -787,6 +792,8 @@ impl TonemapName {
             TonemapName::AcesFitted => "AcesFitted",
             TonemapName::TonyMcMapface => "TonyMcMapface",
             TonemapName::Filmic => "Filmic",
+            TonemapName::AgX => "AgX",
+            TonemapName::Neutral => "Neutral",
         }
     }
 
@@ -798,6 +805,8 @@ impl TonemapName {
             "AcesFitted" => Some(TonemapName::AcesFitted),
             "TonyMcMapface" => Some(TonemapName::TonyMcMapface),
             "Filmic" => Some(TonemapName::Filmic),
+            "AgX" => Some(TonemapName::AgX),
+            "Neutral" => Some(TonemapName::Neutral),
             _ => None,
         }
     }
@@ -805,11 +814,17 @@ impl TonemapName {
 
 /// Post-process on the world camera, in both dimensions. Everything off or
 /// neutral reads exactly like no post pass, so old projects don't change.
+/// The chain runs in a fixed order, HDR first: motion blur, depth of field,
+/// chromatic aberration and vignette, then bloom, white balance, grading
+/// and the tone shape, then the tonemapper, sharpening, the LUT and grain.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PostProcess {
     /// Camera exposure in EV100. 9.7 is Bevy's own default; lower is brighter.
     #[serde(default = "default_exposure")]
     pub exposure_ev: f32,
+    /// Meters the frame and moves the exposure itself, 3D only.
+    #[serde(default)]
+    pub auto_exposure: AutoExposure,
     #[serde(default)]
     pub tonemapping: TonemapName,
     /// Bloom: emissive surfaces and bright lights glow.
@@ -819,9 +834,41 @@ pub struct PostProcess {
     pub bloom_threshold: f32,
     #[serde(default = "default_bloom_intensity")]
     pub bloom_intensity: f32,
+    /// 0-1, how softly the threshold lets light in: 0 is a hard cut.
+    #[serde(default = "default_bloom_knee")]
+    pub bloom_knee: f32,
+    /// 0-1, how far the glow spreads out through the mip chain.
+    #[serde(default = "default_bloom_scatter")]
+    pub bloom_scatter: f32,
+    /// A lens dirt image the glow lights up, empty for none.
+    #[serde(default)]
+    pub bloom_dirt: String,
+    #[serde(default)]
+    pub bloom_dirt_intensity: f32,
     /// Vignette: darkened corners, 0 for off.
     #[serde(default)]
     pub vignette_strength: f32,
+    #[serde(default)]
+    pub tone: ToneShape,
+    #[serde(default)]
+    pub grading: Grading,
+    #[serde(default)]
+    pub depth_of_field: DepthOfField,
+    #[serde(default)]
+    pub motion_blur: MotionBlur,
+    /// Ambient occlusion's reach and strength; the switch is the lighting's.
+    #[serde(default)]
+    pub ao: AmbientOcclusion,
+    #[serde(default)]
+    pub ssr: Reflections,
+    /// 0-1, color fringes towards the frame's edges.
+    #[serde(default)]
+    pub chromatic_aberration: f32,
+    #[serde(default)]
+    pub grain: Grain,
+    /// 0-1, contrast adaptive sharpening after the tonemapper.
+    #[serde(default)]
+    pub sharpen: f32,
 }
 
 fn default_exposure() -> f32 {
@@ -836,30 +883,448 @@ fn default_bloom_intensity() -> f32 {
     0.15
 }
 
+fn default_bloom_knee() -> f32 {
+    0.5
+}
+
+fn default_bloom_scatter() -> f32 {
+    0.7
+}
+
 impl Default for PostProcess {
     fn default() -> Self {
         Self {
             exposure_ev: default_exposure(),
+            auto_exposure: AutoExposure::default(),
             tonemapping: TonemapName::default(),
             bloom_enabled: false,
             bloom_threshold: default_bloom_threshold(),
             bloom_intensity: default_bloom_intensity(),
+            bloom_knee: default_bloom_knee(),
+            bloom_scatter: default_bloom_scatter(),
+            bloom_dirt: String::new(),
+            bloom_dirt_intensity: 0.0,
             vignette_strength: 0.0,
+            tone: ToneShape::default(),
+            grading: Grading::default(),
+            depth_of_field: DepthOfField::default(),
+            motion_blur: MotionBlur::default(),
+            ao: AmbientOcclusion::default(),
+            ssr: Reflections::default(),
+            chromatic_aberration: 0.0,
+            grain: Grain::default(),
+            sharpen: 0.0,
         }
     }
 }
 
 impl PostProcess {
     pub fn normalize(&mut self) {
-        self.exposure_ev = self.exposure_ev.clamp(0.0, 20.0);
-        self.bloom_threshold = self.bloom_threshold.max(0.0);
-        self.bloom_intensity = self.bloom_intensity.clamp(0.0, 1.0);
-        self.vignette_strength = self.vignette_strength.clamp(0.0, 1.0);
+        let finite = |v: f32, fallback: f32| if v.is_finite() { v } else { fallback };
+        self.exposure_ev = finite(self.exposure_ev, default_exposure()).clamp(0.0, 20.0);
+        self.auto_exposure.normalize();
+        self.bloom_threshold = finite(self.bloom_threshold, 1.0).max(0.0);
+        self.bloom_intensity = finite(self.bloom_intensity, 0.15).clamp(0.0, 1.0);
+        self.bloom_knee = finite(self.bloom_knee, default_bloom_knee()).clamp(0.0, 1.0);
+        self.bloom_scatter = finite(self.bloom_scatter, default_bloom_scatter()).clamp(0.0, 1.0);
+        self.bloom_dirt_intensity = finite(self.bloom_dirt_intensity, 0.0).clamp(0.0, 10.0);
+        self.vignette_strength = finite(self.vignette_strength, 0.0).clamp(0.0, 1.0);
+        self.tone.normalize();
+        self.grading.normalize();
+        self.depth_of_field.normalize();
+        self.motion_blur.normalize();
+        self.ao.normalize();
+        self.ssr.normalize();
+        self.chromatic_aberration = finite(self.chromatic_aberration, 0.0).clamp(0.0, 1.0);
+        self.grain.normalize();
+        self.sharpen = finite(self.sharpen, 0.0).clamp(0.0, 1.0);
     }
 
     /// True when any pass would change a pixel.
     pub fn is_active(&self) -> bool {
         *self != PostProcess::default()
+    }
+}
+
+/// Which part of the frame auto-exposure reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum Metering {
+    /// The whole frame, evenly.
+    Average,
+    /// Mostly the middle of the frame, fading out towards the edges.
+    CenterWeighted,
+    /// A small spot in the middle, which is what the player looks at.
+    #[default]
+    Spot,
+}
+
+impl Metering {
+    pub const ALL: &[Metering] = &[Metering::Spot, Metering::CenterWeighted, Metering::Average];
+}
+
+/// Auto-exposure: the meter's log-average steers the EV towards middle grey
+/// at `speed` stops a second, inside `min_ev`..`max_ev`. A `set exposure to`
+/// block still wins over it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutoExposure {
+    pub enabled: bool,
+    pub metering: Metering,
+    /// EV100 bounds: the darkest and brightest scene it adapts to.
+    pub min_ev: f32,
+    pub max_ev: f32,
+    /// Stops a second towards a brighter scene, then a darker one.
+    pub speed_up: f32,
+    pub speed_down: f32,
+    /// Stops added after metering: positive brightens the result.
+    pub compensation: f32,
+}
+
+impl Default for AutoExposure {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            metering: Metering::Spot,
+            min_ev: 2.0,
+            max_ev: 16.0,
+            speed_up: 3.0,
+            speed_down: 1.0,
+            compensation: 0.0,
+        }
+    }
+}
+
+impl AutoExposure {
+    pub fn normalize(&mut self) {
+        let finite = |v: f32, fallback: f32| if v.is_finite() { v } else { fallback };
+        self.min_ev = finite(self.min_ev, 2.0).clamp(-10.0, 30.0);
+        self.max_ev = finite(self.max_ev, 16.0).clamp(self.min_ev, 30.0);
+        self.speed_up = finite(self.speed_up, 3.0).clamp(0.01, 100.0);
+        self.speed_down = finite(self.speed_down, 1.0).clamp(0.01, 100.0);
+        self.compensation = finite(self.compensation, 0.0).clamp(-10.0, 10.0);
+    }
+
+    /// The EV the metered frame asks for. `measured` is the log-average of
+    /// the frame as it was exposed at `current`, where 0.18 is middle grey.
+    pub fn target(&self, current: f32, measured: f32) -> f32 {
+        let measured = measured.max(1.0e-4);
+        let target = current + (measured / 0.18).log2() - self.compensation;
+        target.clamp(self.min_ev, self.max_ev.max(self.min_ev))
+    }
+
+    /// One step from `current` towards `target` over `dt` seconds. A higher
+    /// EV darkens, so moving up is adapting to a brighter scene.
+    pub fn step(&self, current: f32, target: f32, dt: f32) -> f32 {
+        let speed = if target > current {
+            self.speed_up
+        } else {
+            self.speed_down
+        };
+        let most = speed * dt.max(0.0);
+        current + (target - current).clamp(-most, most)
+    }
+}
+
+/// Shapes the exposed signal ahead of the tonemapper: the toe deepens (or,
+/// below 0, lifts) what is under middle grey, the shoulder rolls off what is
+/// over it. Both 0 leave the tonemapper's own curve alone.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ToneShape {
+    /// -1 to 1.
+    pub toe: f32,
+    /// 0 to 1.
+    pub shoulder: f32,
+}
+
+impl ToneShape {
+    pub fn normalize(&mut self) {
+        self.toe = if self.toe.is_finite() { self.toe } else { 0.0 }.clamp(-1.0, 1.0);
+        self.shoulder = if self.shoulder.is_finite() {
+            self.shoulder
+        } else {
+            0.0
+        }
+        .clamp(0.0, 1.0);
+    }
+
+    /// The curve on one channel, as `post_hdr.wesl` applies it.
+    pub fn apply(&self, x: f32) -> f32 {
+        const GREY: f32 = 0.18;
+        let x = x.max(0.0);
+        if x < GREY {
+            let t = x / GREY;
+            // Blends out towards grey so the curve meets itself there.
+            let weight = 1.0 - t * t * (3.0 - 2.0 * t);
+            GREY * t.powf(1.0 + self.toe * weight)
+        } else {
+            let over = x - GREY;
+            GREY + over / (1.0 + self.shoulder * over)
+        }
+    }
+}
+
+/// White balance and grading, applied in linear light before the
+/// tonemapper, then an optional LUT after it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Grading {
+    /// -1 cool to 1 warm.
+    pub temperature: f32,
+    /// -1 green to 1 magenta.
+    pub tint: f32,
+    /// Added to the shadows, per channel.
+    pub lift: [f32; 3],
+    /// Midtone power, per channel; 1 leaves it.
+    pub gamma: [f32; 3],
+    /// Multiplies everything, per channel.
+    pub gain: [f32; 3],
+    /// 0 grey, 1 as is, 2 doubled.
+    pub saturation: f32,
+    /// Around middle grey: 1 as is.
+    pub contrast: f32,
+    /// A `.cube` LUT or an image strip, applied to the display values.
+    pub lut: String,
+    /// 0-1, how much of the LUT shows.
+    pub lut_contribution: f32,
+}
+
+impl Default for Grading {
+    fn default() -> Self {
+        Self {
+            temperature: 0.0,
+            tint: 0.0,
+            lift: [0.0; 3],
+            gamma: [1.0; 3],
+            gain: [1.0; 3],
+            saturation: 1.0,
+            contrast: 1.0,
+            lut: String::new(),
+            lut_contribution: 1.0,
+        }
+    }
+}
+
+impl Grading {
+    pub fn normalize(&mut self) {
+        let finite = |v: f32, fallback: f32| if v.is_finite() { v } else { fallback };
+        self.temperature = finite(self.temperature, 0.0).clamp(-1.0, 1.0);
+        self.tint = finite(self.tint, 0.0).clamp(-1.0, 1.0);
+        for v in &mut self.lift {
+            *v = finite(*v, 0.0).clamp(-1.0, 1.0);
+        }
+        for v in &mut self.gamma {
+            *v = finite(*v, 1.0).clamp(0.1, 10.0);
+        }
+        for v in &mut self.gain {
+            *v = finite(*v, 1.0).clamp(0.0, 10.0);
+        }
+        self.saturation = finite(self.saturation, 1.0).clamp(0.0, 2.0);
+        self.contrast = finite(self.contrast, 1.0).clamp(0.0, 2.0);
+        self.lut_contribution = finite(self.lut_contribution, 1.0).clamp(0.0, 1.0);
+    }
+
+    /// True when the grade before the tonemapper would change a pixel.
+    pub fn is_active(&self) -> bool {
+        let neutral = Grading {
+            lut: self.lut.clone(),
+            lut_contribution: self.lut_contribution,
+            ..Grading::default()
+        };
+        *self != neutral
+    }
+}
+
+/// How out-of-focus highlights spread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum Bokeh {
+    /// Six-bladed bokeh: bright spots blur into hexagons.
+    #[default]
+    Hexagonal,
+    /// A soft round blur, cheaper and without shaped highlights.
+    Circular,
+}
+
+/// Depth of field, 3D only. Focus sits on the named actor when it has one,
+/// or at `focus_distance` metres.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DepthOfField {
+    pub enabled: bool,
+    /// An actor's name to keep in focus, empty for the fixed distance.
+    pub target: String,
+    /// Metres.
+    pub focus_distance: f32,
+    pub f_stops: f32,
+    pub bokeh: Bokeh,
+    /// Blur things nearer than the focus.
+    pub near: bool,
+    /// Metres past which the blur stops growing, 0 for no limit.
+    pub far_limit: f32,
+    /// The widest blur, in pixels.
+    pub max_blur: f32,
+}
+
+impl Default for DepthOfField {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            target: String::new(),
+            focus_distance: 10.0,
+            f_stops: 2.8,
+            bokeh: Bokeh::Hexagonal,
+            near: true,
+            far_limit: 0.0,
+            max_blur: 32.0,
+        }
+    }
+}
+
+impl DepthOfField {
+    pub fn normalize(&mut self) {
+        let finite = |v: f32, fallback: f32| if v.is_finite() { v } else { fallback };
+        self.focus_distance = finite(self.focus_distance, 10.0).clamp(0.05, 100_000.0);
+        self.f_stops = finite(self.f_stops, 2.8).clamp(0.5, 64.0);
+        self.far_limit = finite(self.far_limit, 0.0).max(0.0);
+        self.max_blur = finite(self.max_blur, 32.0).clamp(1.0, 128.0);
+    }
+}
+
+/// Camera motion blur along the motion vectors, 3D only.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MotionBlur {
+    pub enabled: bool,
+    /// Degrees: 180 is half a frame of exposure, 360 the whole frame.
+    pub shutter_angle: f32,
+    pub samples: u32,
+}
+
+impl Default for MotionBlur {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            shutter_angle: 180.0,
+            samples: 4,
+        }
+    }
+}
+
+impl MotionBlur {
+    pub fn normalize(&mut self) {
+        self.shutter_angle = if self.shutter_angle.is_finite() {
+            self.shutter_angle
+        } else {
+            180.0
+        }
+        .clamp(0.0, 360.0);
+        self.samples = self.samples.clamp(1, 32);
+    }
+}
+
+/// Screen-space ambient occlusion, 3D only, turned on by `Lighting::ao_enabled`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AmbientOcclusion {
+    /// How far to look for occluders, in metres.
+    pub radius: f32,
+    /// 0-4: how dark the occluded corners get; 1 is the default.
+    pub intensity: f32,
+}
+
+impl Default for AmbientOcclusion {
+    fn default() -> Self {
+        Self {
+            radius: 0.7285,
+            intensity: 1.0,
+        }
+    }
+}
+
+impl AmbientOcclusion {
+    pub fn normalize(&mut self) {
+        self.radius = if self.radius.is_finite() {
+            self.radius
+        } else {
+            0.7285
+        }
+        .clamp(0.01, 10.0);
+        self.intensity = if self.intensity.is_finite() {
+            self.intensity
+        } else {
+            1.0
+        }
+        .clamp(0.0, 4.0);
+    }
+}
+
+/// Screen-space reflections, 3D only. Turning them on draws opaque surfaces
+/// deferred, since the reflections read the G-buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Reflections {
+    pub enabled: bool,
+    /// Surfaces rougher than this reflect nothing on screen.
+    pub roughness_cutoff: f32,
+    /// How thick a depth sample counts as, in metres.
+    pub thickness: f32,
+}
+
+impl Default for Reflections {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            roughness_cutoff: 0.4,
+            thickness: 0.25,
+        }
+    }
+}
+
+impl Reflections {
+    pub fn normalize(&mut self) {
+        self.roughness_cutoff = if self.roughness_cutoff.is_finite() {
+            self.roughness_cutoff
+        } else {
+            0.4
+        }
+        .clamp(0.05, 1.0);
+        self.thickness = if self.thickness.is_finite() {
+            self.thickness
+        } else {
+            0.25
+        }
+        .clamp(0.001, 10.0);
+    }
+}
+
+/// Film grain over the display image.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Grain {
+    /// 0-1, 0 for off.
+    pub intensity: f32,
+    /// Grain size in pixels, 1 to 4.
+    pub size: f32,
+    /// 0-1: how much the grain fades out of the highlights.
+    pub response: f32,
+}
+
+impl Default for Grain {
+    fn default() -> Self {
+        Self {
+            intensity: 0.0,
+            size: 1.5,
+            response: 0.8,
+        }
+    }
+}
+
+impl Grain {
+    pub fn normalize(&mut self) {
+        let finite = |v: f32, fallback: f32| if v.is_finite() { v } else { fallback };
+        self.intensity = finite(self.intensity, 0.0).clamp(0.0, 1.0);
+        self.size = finite(self.size, 1.5).clamp(1.0, 4.0);
+        self.response = finite(self.response, 0.8).clamp(0.0, 1.0);
     }
 }
 
