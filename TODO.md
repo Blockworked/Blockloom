@@ -92,7 +92,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         other reporters so VM and codegen agree.
   Implementation and usage: [Interface guide](docs/interface.md).
 - [ ] Save slots/profiles plus localization: builds on save system we have.
-- [ ] Multiple scenes plus loading between scenes (menu, level 1, level 2):
+- [x] Multiple scenes plus loading between scenes (menu, level 1, level 2):
   - [x] Document: `Project` holds a scene list (each with its own actors and
         `World` settings); one active scene; old single-scene docs migrate as
         scene one; scene add/rename/duplicate/delete with undo.
@@ -106,10 +106,11 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         scene switch across dimensions rebuilds the dim2/dim3 pipeline plus
         rapier backend the way a project dimension switch does today.
         Done: each scene has its own `World` (including `mode`), `Scene` and
-        active-scene `switch_mode` convert units and visuals, and
-        `set_active_scene` respawns the runtime when the mode changes, like
-        `set_mode`. Builds bake skies, atlases, probes, scripts and terrain
-        from all scenes.
+        active-scene `switch_mode` convert units and visuals, and both
+        dimensions' pipelines register at launch with the live `Dimension`
+        following the active scene - so `set_active_scene`, `set_mode` and
+        `set_scene_component` reload instead of respawning. Builds bake skies,
+        atlases, probes, scripts and terrain from all scenes.
   - [x] Blocks and scripts: `switch scene to _` (plus `with transition _`),
         reporters `current scene`, `scene names`, events `when scene
         starts/ends`; globals plus save data cross scenes, actor locals do
@@ -133,49 +134,64 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         `Vm::load_scene` does (ABI 29, `blockloom_logic_scene`). The host
         switches the program instead of dropping it, falling back to the VM
         for a stale build only.
-        Not covered: opt-in survivor actors across scenes.
-  - [ ] Runtime: unload the current world, load the scene doc the way
+        Done: opt-in survivors via a `Persist` component (`components.rs`,
+        `BUILT_IN_NAMES`, inspector card, attach/detach palette): authored or
+        runtime-attached carriers survive with live placement, variables,
+        lists, dicts and attached components, while clones still die with the
+        old scene. `Vm`/`Variables`/`Lists`/`Dicts::load_scene_keep` preserve
+        survivor scopes, programs, names and running strands; the host carries
+        survivor docs in `spawned` (`survivor_keep` through the rebuild, which
+        respawns and converts them across dimensions) and reseeds their
+        attached/parents/filters. A switch carrying survivors drops native
+        logic to the VM (the runner holds one active table), so survivors run
+        correct before they run native; parity case
+        `survivors_keep_live_locals_lists_and_dicts_across_scenes` in
+        `tests/vm.rs` plus `persist_marks_its_actor_as_a_scene_survivor`.
+  - [x] Runtime: unload the current world, load the scene doc the way
         `EditorMessage::Load` does now, rebuild and warm up before the green
         flag continues; transitions run on the wall clock like UI strands;
         rooms stay intra-scene camera zones, not scenes.
-        Partial: same-dimension switches unload (spawned actors, clones,
-        speech, touches), set the new active scene, reload the VM with
-        globals kept, flag a rebuild (which reopens scripts, reseeds the
-        level and reopens the warmup window) and fire `SceneStarted` after
-        firing `SceneEnded` two ticks earlier so ended strands run first;
-        unknown scenes report, the requesting strand ends, and the first ask
-        per tick wins (blocks and scripts share the path). Rooms reseed per
-        scene and stay intra-scene. Named transitions run on the wall clock:
-        `Engine.veil` covers the outgoing scene first (`transition.rs` - a
-        fullscreen veil over the interface, fade as an alpha wash, wipe as a
-        left-to-right panel, circle as a fade until it gets its own mask),
-        the swap waits for cover, and the reveal holds until the rebuild's
-        warmup window closes. `none` (and typos) keep the immediate cut, and
-        a cross-dimension ask never covers first so its refusal flashes
-        nothing.
-        Not covered: cross-dimension switches report and stay put instead of
-        rebuilding the dim2/dim3 pipeline and rapier backend live (which
-        needs a fresh process, so only the editor's scene picker can do it
-        today).
-  - [ ] Editor and tooling: scene picker plus per-scene actor list/canvas and
+        Done: switches unload non-survivors (spawned actors, clones, speech,
+        touches), set the new active scene, reload the VM with globals kept
+        (`load_scene_keep` for survivors), flag a rebuild (which reopens
+        scripts including survivors', reseeds the level and reopens the
+        warmup window) and fire `SceneStarted` after firing `SceneEnded` two
+        ticks earlier so ended strands run first; unknown scenes report, the
+        requesting strand ends, and the first ask per tick wins (blocks and
+        scripts share the path). Rooms reseed per scene and stay intra-scene.
+        Named transitions run on the wall clock: `Engine.veil` covers first
+        (`transition.rs` - fade as an alpha wash, wipe as a left-to-right
+        panel, circle as a centered iris disc growing to cover and shrinking
+        to reveal), the swap waits for cover, and the reveal holds until the
+        rebuild's warmup closes. `none` (and typos) keep the immediate cut.
+        Cross-dimension switches rebuild live: both rapier plugins and both
+        pipelines register at launch (gated `is_2d`/`is_3d` chains, shared
+        systems run once), `rebuild_world` syncs the live `Dimension` plus
+        audio scale from the new scene and converts survivor visuals, so
+        editor, player and web all swap 2D/3D mid-run with no fresh process.
+  - [x] Editor and tooling: scene picker plus per-scene actor list/canvas and
         World settings; project folder, pack, build and web carry all scenes;
         shell/MCP commands (`add-scene`, `switch-scene`, ...).
-        Partial: pack, build and web already carry all scenes (the `Project`
+        Done: pack, build and web already carry all scenes (the `Project`
         JSON holds them, builds collect assets from every scene), and the
         shell/MCP has `add-scene`, `duplicate-scene`, `rename-scene`,
         `remove-scene`, `set-active-scene` (`switch-scene` alias),
         `set-default-scene` plus `scene-components`, `set-scene-component`,
         `remove-scene-component` and `import-scene`. The block palette
         (`Blocks.qml` rows, `vocabulary.rs` specs) now carries `switch scene
-        to`, `when scene starts/ends`, `current scene` and `scene names`.
-        Scenes live in the asset tray like normal files: the tray's New scene
-        item makes one where listed, the filename is the scene name (renaming
-        the file renames the scene, deleting it deletes the scene with undo),
-        double-click or Open scene loads it, and project settings names the
-        default scene a fresh open - and a built game - boots into. The actor
-        list keeps a scene box showing which scene is open (no add button);
-        per-scene canvas routing and World settings editing still go through
-        the active scene's compat fields.
+        to`, `when scene starts/ends`, `current scene` and `scene names`, plus
+        `Persist` in attach/detach. Scenes live in the asset tray like normal
+        files: the tray's New scene item makes one where listed, the filename
+        is the scene name (renaming the file renames the scene, deleting it
+        deletes the scene with undo), double-click or Open scene loads it, and
+        project settings names the default scene a fresh open - and a built
+        game - boots into plus which scene is open (World rows edit that
+        scene). The actor list keeps a scene box showing which scene is open
+        (no add button); per-scene canvas routing and World settings editing
+        go through the active scene's compat fields, which is what makes them
+        per-scene (switching scenes clears selection and swaps the canvas).
+        The inspector adds a `Persist` card; dimension changes reload instead
+        of respawning.
   - [x] Scene assets (Unity-style): each scene becomes its own asset file
         under the project folder (one file per scene, referenced by the
         project), so scenes can be shared, duplicated and versioned like any

@@ -78,12 +78,21 @@ impl Lists {
     /// `switch scene to` calls, so a score carries over and a clone's bag
     /// does not.
     pub fn load_scene(&self, project: &Project) {
+        self.load_scene_keep(project, &std::collections::HashSet::new());
+    }
+
+    /// The same, keeping live lists for `keep` (survivor ids).
+    pub fn load_scene_keep(&self, project: &Project, keep: &std::collections::HashSet<String>) {
         let mut state = self.0.borrow_mut();
-        state.actors = project
-            .actors
-            .iter()
-            .map(|actor| (actor.id.clone(), actor.graph.list_values()))
-            .collect();
+        state.actors.retain(|id, _| keep.contains(id));
+        for actor in &project.actors {
+            if keep.contains(&actor.id) {
+                continue;
+            }
+            state
+                .actors
+                .insert(actor.id.clone(), actor.graph.list_values());
+        }
     }
 
     /// What `actor` reads: its own lists over the shared ones.
@@ -179,12 +188,21 @@ impl Dicts {
     /// Reloads one scene's actors without touching the shared dicts, the way
     /// [`Lists::load_scene`] does for lists.
     pub fn load_scene(&self, project: &Project) {
+        self.load_scene_keep(project, &std::collections::HashSet::new());
+    }
+
+    /// The same, keeping live dicts for `keep` (survivor ids).
+    pub fn load_scene_keep(&self, project: &Project, keep: &std::collections::HashSet<String>) {
         let mut state = self.0.borrow_mut();
-        state.actors = project
-            .actors
-            .iter()
-            .map(|actor| (actor.id.clone(), actor.graph.dict_values()))
-            .collect();
+        state.actors.retain(|id, _| keep.contains(id));
+        for actor in &project.actors {
+            if keep.contains(&actor.id) {
+                continue;
+            }
+            state
+                .actors
+                .insert(actor.id.clone(), actor.graph.dict_values());
+        }
     }
 
     /// What `actor` reads: its own dicts over the shared ones.
@@ -522,18 +540,30 @@ impl Vm {
     /// dicts keep what the run has written. Pending events from the old
     /// scene are dropped; the caller fires `SceneStarted` after.
     pub fn load_scene(&mut self, project: &Project) {
-        self.programs.clear();
-        self.names.clear();
+        self.load_scene_keep(project, &std::collections::HashSet::new());
+    }
+
+    /// The same, keeping `keep` (survivor ids) alive: their programs, names,
+    /// variables, lists, dicts and running strands survive the switch, while
+    /// every other actor starts fresh. Clones still die with the old scene.
+    pub fn load_scene_keep(&mut self, project: &Project, keep: &std::collections::HashSet<String>) {
+        self.programs.retain(|id, _| keep.contains(id));
+        self.names.retain(|id, _| keep.contains(id));
         self.clones.clear();
-        self.deleted.clear();
-        self.scripts.clear();
+        self.deleted.retain(|id| keep.contains(id));
+        // Survivors keep running; everyone else's strands go with the old
+        // scene. Their `when scene starts` strands fire via SceneStarted.
+        self.scripts.retain(|script| keep.contains(&script.actor));
         self.pending.clear();
         self.stopping = false;
         self.made = 0;
-        self.variables.load_scene(project);
-        self.lists.load_scene(project);
-        self.dicts.load_scene(project);
+        self.variables.load_scene_keep(project, keep);
+        self.lists.load_scene_keep(project, keep);
+        self.dicts.load_scene_keep(project, keep);
         for actor in &project.actors {
+            if keep.contains(&actor.id) {
+                continue;
+            }
             self.names.insert(actor.id.clone(), actor.name.clone());
             let inputs = actor
                 .graph

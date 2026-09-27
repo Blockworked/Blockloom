@@ -44,6 +44,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub fn register(app: &mut App, mode: Mode) {
+    let _ = mode;
     app.init_resource::<Draws>()
         .init_resource::<OverdrawMeter>()
         .init_resource::<ParticleSenses>()
@@ -57,19 +58,15 @@ pub fn register(app: &mut App, mode: Mode) {
     bevy::asset::embedded_asset!(app, "shaders/vfx_particles_2d.wesl");
     bevy::asset::embedded_asset!(app, "shaders/vfx_sim.wesl");
     gpu::register(app);
-    match mode {
-        Mode::TwoD => {
-            app.add_plugins(Material2dPlugin::<ParticleMaterial>::default());
-        }
-        Mode::ThreeD => {
-            app.add_plugins(MaterialPlugin::<ParticleMaterial>::default());
-            let shader = app
-                .world()
-                .resource::<AssetServer>()
-                .load(sim_shader_path());
-            gpu::register_sim(app, shader);
-        }
-    }
+    // Both dimensions' pipelines live side by side for live cross-dimension
+    // switches; each finds only its own entities in the wrong dimension.
+    app.add_plugins(Material2dPlugin::<ParticleMaterial>::default());
+    app.add_plugins(MaterialPlugin::<ParticleMaterial>::default());
+    let shader = app
+        .world()
+        .resource::<AssetServer>()
+        .load(sim_shader_path());
+    gpu::register_sim(app, shader);
     app.add_systems(
         Update,
         (step_emitters, mark_views)

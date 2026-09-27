@@ -1,8 +1,9 @@
 //! Supervising the game world.
 //!
-//! The runtime is started on Play and kept for as long as the editor lives (or
-//! until the project switches dimension, which needs a different plugin set and
-//! so a fresh world). It is either a child process, whose stdout is read on a
+//! The runtime is started on Play and kept for as long as the editor lives.
+//! Both dimensions' pipelines live side by side, so a project or scene switch
+//! across dimensions swaps live under the next rebuild. It is either a child
+//! process, whose stdout is read on a
 //! thread, or - when the host supplies an [`EmbeddedRuntime`] - a world inside
 //! this process talking over channels. Either way every message is folded
 //! straight into app state.

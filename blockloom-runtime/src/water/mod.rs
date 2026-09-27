@@ -32,6 +32,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub fn register(app: &mut App, mode: Mode) {
+    let _ = mode;
     app.init_resource::<WaterState>()
         .init_resource::<WaterSample>()
         .add_systems(
@@ -47,13 +48,11 @@ pub fn register(app: &mut App, mode: Mode) {
                     .before(crate::world::clear_effects),
             ),
         );
-    match mode {
-        Mode::TwoD => flat::register(app),
-        Mode::ThreeD => {
-            surface::register(app);
-            under::register(app);
-        }
-    }
+    // Both dimensions' surfaces live side by side for live cross-dimension
+    // switches; each finds only its own bodies in the wrong dimension.
+    flat::register(app);
+    surface::register(app);
+    under::register(app);
 }
 
 /// Every body as of the last fixed tick, as the reporters read it.

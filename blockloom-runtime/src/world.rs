@@ -554,7 +554,7 @@ pub fn finish_step(mut engine: NonSendMut<Engine>, time: Res<Time>) {
 pub fn rebuild_world(
     mut commands: Commands,
     mut engine: NonSendMut<Engine>,
-    dimension: Res<Dimension>,
+    mut dimension: ResMut<Dimension>,
     mut effects: ResMut<PendingEffects>,
     assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -573,6 +573,15 @@ pub fn rebuild_world(
         return;
     }
     engine.rebuild = false;
+    // A scene switch across dimensions swaps the pipeline live: the Dimension
+    // resource follows the newly active scene, so the spawn below picks up
+    // the other side without a fresh process. Audio scale follows in
+    // `sync_audio_scale` (a separate system, so this one stays within
+    // Bevy's system-parameter limit).
+    let mode = engine.project.active_scene().world.mode;
+    if dimension.0 != mode {
+        dimension.0 = mode;
+    }
     // A `set exposure` lasts exactly as long as the run.
     if let Some(mut claims) = claims {
         claims.director = None;
@@ -600,9 +609,28 @@ pub fn rebuild_world(
     engine.touching.clear();
     // Remaps last exactly as long as the run, like everything else live.
     engine.reset_input_run();
-    // Everything the last run made goes with it: Play starts from the
-    // document, which is the one thing a clone was never in.
-    engine.spawned.clear();
+    // Everything the last run made goes with it - except opt-in survivors
+    // carried across a scene switch, which live in `spawned` already and are
+    // named by `survivor_keep`. Play/Stop/Load clears all; a switch keeps its
+    // carriers. Clones never survive, even of a survivor.
+    let keep = std::mem::take(&mut engine.survivor_keep);
+    engine.spawned.retain(|id, _| keep.contains(id));
+    // Survivor live state the reseed below would otherwise drop: attached
+    // components, parents and collision filters ride along.
+    let mut kept_attached: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut kept_parents: HashMap<String, String> = HashMap::new();
+    let mut kept_filters: HashMap<String, (u8, u8, bool)> = HashMap::new();
+    for id in &keep {
+        if let Some(held) = engine.attached.get(id) {
+            kept_attached.insert(id.clone(), held.clone());
+        }
+        if let Some(parent) = engine.parents.get(id) {
+            kept_parents.insert(id.clone(), parent.clone());
+        }
+        if let Some(filter) = engine.physics_filter.get(id) {
+            kept_filters.insert(id.clone(), *filter);
+        }
+    }
     engine.clones.clear();
     engine.last_created.clear();
     engine.light_intensity.clear();
@@ -662,6 +690,23 @@ pub fn rebuild_world(
             )
         })
         .collect();
+    // Survivors ride along: their live components, parents and filters
+    // survive the reseed above.
+    for (id, held) in kept_attached {
+        engine.attached.insert(id, held);
+    }
+    for (id, parent) in kept_parents {
+        // A survivor hanging off something gone hangs off nothing now.
+        let parent_alive = engine.attached.contains_key(&parent)
+            || engine.project.actor(&parent).is_some()
+            || engine.spawned.contains_key(&parent);
+        if parent_alive {
+            engine.parents.insert(id, parent);
+        }
+    }
+    for (id, filter) in kept_filters {
+        engine.physics_filter.insert(id, filter);
+    }
 
     let mut project = engine.project.clone();
     // A child authored in its parent's frame is put where that works out to,
@@ -704,6 +749,37 @@ pub fn rebuild_world(
                 crate::fx::insert_fx_state(&mut commands, actor, entity);
                 engine.entities.insert(actor.id.clone(), entity);
             }
+            // Survivors stand where they stood, in the new scene alongside
+            // its own actors, converted when crossing dimensions.
+            for actor in engine.spawned.values().cloned().collect::<Vec<_>>() {
+                let mut actor = actor;
+                if let Some(visual) = actor.visual().cloned()
+                    && visual.is_3d()
+                {
+                    actor
+                        .components
+                        .set_visual(blockloom_core::project::visual_for_mode(
+                            &visual,
+                            Mode::TwoD,
+                        ));
+                    actor.components.placement_mut().position[2] = 0.0;
+                }
+                let entity = dim2::spawn_actor(
+                    &mut commands,
+                    &actor,
+                    dir.as_deref(),
+                    &assets,
+                    &mut textures,
+                    &mut meshes,
+                    &mut stores.graph_2d,
+                    &mut stores.tiles,
+                    streamed.contains(&actor.id),
+                )
+                .unwrap_or_else(|| spawn_unseen(&mut commands, &actor, Mode::TwoD));
+                attach_camera(&mut commands, &actor, entity);
+                crate::fx::insert_fx_state(&mut commands, &actor, entity);
+                engine.entities.insert(actor.id.clone(), entity);
+            }
         }
         Mode::ThreeD => {
             dim3::spawn_scenery(&mut commands, &project.world.camera);
@@ -721,6 +797,34 @@ pub fn rebuild_world(
                 .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::ThreeD));
                 attach_camera(&mut commands, actor, entity);
                 crate::fx::insert_fx_state(&mut commands, actor, entity);
+                engine.entities.insert(actor.id.clone(), entity);
+            }
+            for actor in engine.spawned.values().cloned().collect::<Vec<_>>() {
+                let mut actor = actor;
+                if let Some(visual) = actor.visual().cloned()
+                    && !visual.is_3d()
+                    && !matches!(visual, blockloom_core::scene::Visual::Tilemap { .. })
+                {
+                    actor
+                        .components
+                        .set_visual(blockloom_core::project::visual_for_mode(
+                            &visual,
+                            Mode::ThreeD,
+                        ));
+                }
+                let entity = dim3::spawn_actor(
+                    &mut commands,
+                    &actor,
+                    dir.as_deref(),
+                    &assets,
+                    &mut meshes,
+                    &mut materials,
+                    &mut stores.graph_3d,
+                    &mut performance.cache,
+                )
+                .unwrap_or_else(|| spawn_unseen(&mut commands, &actor, Mode::ThreeD));
+                attach_camera(&mut commands, &actor, entity);
+                crate::fx::insert_fx_state(&mut commands, &actor, entity);
                 engine.entities.insert(actor.id.clone(), entity);
             }
         }
@@ -753,6 +857,26 @@ pub fn rebuild_world(
     }
 }
 
+/// Keeps the audio listener's scale matched to the live dimension: pixels
+/// in 2D hear in hundreds, metres in 3D hear as-is. Runs after every rebuild
+/// (which is where a cross-dimension switch lands), so a separate system
+/// keeps `rebuild_world` within Bevy's system-parameter limit.
+pub fn sync_audio_scale(
+    engine: NonSend<Engine>,
+    scale: Option<ResMut<bevy::audio::DefaultSpatialScale>>,
+) {
+    let Some(mut scale) = scale else {
+        return;
+    };
+    // Idempotent: setting the same scale every rebuild costs nothing and
+    // keeps a cross-dimension switch hearing in the right units.
+    *scale = if engine.project.active_scene().world.mode.is_3d() {
+        bevy::audio::DefaultSpatialScale::default()
+    } else {
+        bevy::audio::DefaultSpatialScale(bevy::audio::SpatialScale::new_2d(1.0 / 500.0))
+    };
+}
+
 /// The saved mix, for reseeding the runtime's live gains on a rebuild.
 fn project_sound(engine: &Engine) -> blockloom_core::sound::SoundMixer {
     engine.project.world.sound
@@ -766,7 +890,7 @@ fn open_scripts(engine: &mut Engine, project: &blockloom_core::project::Project)
     let Some(dir) = engine.project_dir.clone() else {
         return;
     };
-    for actor in &project.actors {
+    for actor in project.actors.iter().chain(engine.spawned.values()) {
         let Some(path) = actor.components.script() else {
             continue;
         };
@@ -901,11 +1025,9 @@ pub fn step_scripts(
                 message: format!("there's no scene named \"{scene}\""),
             }),
             Some(target) if target == engine.project.active_scene => {}
-            Some(target) => {
+            Some(_) => {
                 engine.fire(Event::SceneEnded);
-                if scene_mode(&engine, &target) == Some(engine.project.active_scene().world.mode) {
-                    engine.veil.start(&transition);
-                }
+                engine.veil.start(&transition);
                 engine.pending_scene = Some((scene, transition, 2));
             }
         }
@@ -1860,6 +1982,7 @@ pub fn step_vm(
     mut engine: NonSendMut<Engine>,
     time: Res<Time>,
     mut effects: ResMut<PendingEffects>,
+    transforms: Query<&Transform, With<ActorId>>,
 ) {
     // A paused world is still stepped: the scheduler gives a slice to the
     // strands the interface started and skips everything else, which is what
@@ -1884,7 +2007,7 @@ pub fn step_vm(
             .is_some_and(|(_, _, ticks)| *ticks == 0);
         if due && engine.veil.ready_to_switch() {
             let (scene, transition, _) = engine.pending_scene.take().expect("checked above");
-            perform_scene_switch(&mut engine, &scene, &transition);
+            perform_scene_switch(&mut engine, &transforms, &scene, &transition);
         }
     }
     let elapsed = time.elapsed_secs() as f64;
@@ -1948,13 +2071,12 @@ pub fn step_vm(
                 message: format!("there's no scene named \"{scene}\""),
             }),
             Some(target) if target == engine.project.active_scene => {}
-            Some(target) => {
+            Some(_) => {
                 engine.fire(Event::SceneEnded);
-                // A cross-dimension ask is refused at the swap with an
-                // error, so it never covers first and flashes nothing.
-                if scene_mode(&engine, &target) == Some(engine.project.active_scene().world.mode) {
-                    engine.veil.start(&transition);
-                }
+                // Every switch covers first on the wall clock - including
+                // across dimensions, since the rebuild swaps the pipeline
+                // live under cover.
+                engine.veil.start(&transition);
                 engine.pending_scene = Some((scene, transition, 2));
             }
         }
@@ -1982,11 +2104,17 @@ fn resolve_scene(engine: &Engine, wanted: &str) -> Option<String> {
 }
 
 /// Unloads the current scene and loads `wanted` (a scene name as the block
-/// spelled it): globals and save data carry over, actor locals start fresh,
-/// and the new scene rebuilds and warms up like a fresh Play before its
-/// `when scene starts` strands run. Same-dimension switches only for now; a
-/// cross-dimension ask reports and stays put.
-fn perform_scene_switch(engine: &mut Engine, wanted: &str, transition: &str) {
+/// spelled it): globals and save data carry over, actor locals start fresh
+/// except opt-in survivors, and the new scene rebuilds and warms up like a
+/// fresh Play before its `when scene starts` strands run. Works across
+/// dimensions too: the rebuild swaps the dim2/dim3 pipeline live under the
+/// veil's cover.
+fn perform_scene_switch(
+    engine: &mut Engine,
+    transforms: &Query<&Transform, With<ActorId>>,
+    wanted: &str,
+    transition: &str,
+) {
     let _ = transition;
     let Some(target) = resolve_scene(engine, wanted) else {
         engine.veil.reset();
@@ -1996,55 +2124,115 @@ fn perform_scene_switch(engine: &mut Engine, wanted: &str, transition: &str) {
         engine.veil.reset();
         return;
     }
-    let mode_now = engine.project.active_scene().world.mode;
-    let mode_next = scene_mode(engine, &target).unwrap_or(mode_now);
-    if mode_next != mode_now {
-        engine.veil.reset();
-        bridge::send(&RuntimeMessage::Error {
-            actor: String::new(),
-            message: format!(
-                "can't switch from a {} scene to a {} one mid-run yet",
-                mode_name(mode_now),
-                mode_name(mode_next)
-            ),
-        });
-        return;
+    // Opt-in survivors: authored or spawned actors carrying `Persist` stay
+    // alive across the switch with live position, variables, lists, dicts
+    // and attached components. Clones die even when their template survives.
+    let keep = collect_survivors(engine);
+    // Snapshot live placements into the carried docs before the world goes.
+    for id in &keep {
+        let live = engine
+            .entities
+            .get(id)
+            .and_then(|entity| transforms.get(*entity).ok())
+            .map(|transform| transform.translation.to_array());
+        if let Some(position) = live {
+            if let Some(actor) = engine.spawned.get_mut(id) {
+                actor.components.placement_mut().position = position;
+            } else if let Some(actor) = engine.project.active_scene().actor(id).cloned() {
+                let mut carried = actor;
+                carried.components.placement_mut().position = position;
+                // A survivor whose parent didn't survive (and isn't in the
+                // new scene) hangs off nothing rather than a ghost.
+                if let Some(parent) = carried.parent().map(str::to_string) {
+                    let parent_survives = keep.contains(&parent);
+                    let parent_in_new = engine
+                        .project
+                        .scene(&target)
+                        .is_some_and(|scene| scene.actor(&parent).is_some());
+                    if !parent_survives && !parent_in_new {
+                        carried.components.remove("Parent");
+                    }
+                }
+                engine.spawned.insert(id.clone(), carried);
+            }
+        } else if !engine.spawned.contains_key(id) {
+            // Alive without a transform (unseen)? Carry the authored doc.
+            if let Some(actor) = engine.project.active_scene().actor(id).cloned() {
+                engine.spawned.insert(id.clone(), actor);
+            }
+        }
     }
     engine.project.active_scene = target.clone();
-    // Run-made actors die with the scene they were made in; a clone's
-    // template lives in the new scene's document or not at all.
-    engine.spawned.clear();
+    // Run-made actors die with the scene they were made in, survivors
+    // excepted; a clone's template lives in the new scene's document or in
+    // the carried survivors, or not at all.
+    engine.spawned.retain(|id, _| keep.contains(id));
+    engine.survivor_keep = keep.clone();
     engine.clones.clear();
     engine.last_created.clear();
-    engine.speech.clear();
+    engine.speech.retain(|id, _| keep.contains(id));
     engine.touching.clear();
-    engine.driven.clear();
+    engine.driven.retain(|id| keep.contains(id));
     let project = engine.project.clone();
     if let Some(logic) = &mut engine.logic {
         // The generated program carries every scene, so it switches the way
         // the VM does below. A stale build that never saw this scene - or one
-        // from before multi-scene logic - falls back to the VM instead.
-        if !logic.load_scene(&target) {
+        // from before multi-scene logic - falls back to the VM instead. So
+        // does a switch carrying survivors: native survivors ride the VM
+        // until the runner learns them.
+        let stale = !logic.load_scene(&target);
+        if stale || !keep.is_empty() {
             engine.logic = None;
         }
     }
-    engine.vm.load_scene(&project);
+    engine.vm.load_scene_keep(&project, &keep);
     engine.rebuild = true;
     engine.fire(Event::SceneStarted);
     // The swap lands under cover; the reveal waits out the rebuild's warmup.
     engine.veil.begin_reveal();
 }
 
-/// The dimension of the scene `id` names, for switch validation.
-fn scene_mode(engine: &Engine, id: &str) -> Option<Mode> {
-    engine.project.scene(id).map(|scene| scene.world.mode)
-}
-
-fn mode_name(mode: Mode) -> &'static str {
-    match mode {
-        Mode::TwoD => "2D",
-        Mode::ThreeD => "3D",
+/// Who survives the switch: live authored or spawned actors carrying
+/// `Persist` (authored or attached mid-run). Clones never do, even of a
+/// survivor - they die with the scene they were made in.
+fn collect_survivors(engine: &Engine) -> std::collections::HashSet<String> {
+    let mut keep = std::collections::HashSet::new();
+    // Authored survivors: in the old scene's document, alive, persisting.
+    for actor in &engine.project.active_scene().actors {
+        if engine.clones.contains_key(&actor.id) {
+            continue;
+        }
+        if !engine.entities.contains_key(&actor.id) {
+            continue;
+        }
+        let authored = actor.persists();
+        let attached = engine
+            .attached
+            .get(&actor.id)
+            .is_some_and(|held| held.contains("Persist"));
+        if authored || attached {
+            keep.insert(actor.id.clone());
+        }
     }
+    // Spawned survivors: created mid-run and given `Persist` since. Clones
+    // still die - only non-clone spawned actors can carry.
+    for (id, actor) in &engine.spawned {
+        if engine.clones.contains_key(id) {
+            continue;
+        }
+        if !engine.entities.contains_key(id) {
+            continue;
+        }
+        let authored = actor.persists();
+        let attached = engine
+            .attached
+            .get(id)
+            .is_some_and(|held| held.contains("Persist"));
+        if authored || attached {
+            keep.insert(id.clone());
+        }
+    }
+    keep
 }
 
 /// The dimension-agnostic effects: anything that's a transform, a scale or a
@@ -4294,6 +4482,72 @@ mod tests {
         assert!(!engine.paused);
         assert_eq!(engine.run_time(25.0), 5.0);
         assert_eq!(engine.run_time(30.0), 10.0);
+    }
+
+    #[test]
+    fn only_persist_carriers_survive_a_scene_switch_and_never_clones() {
+        use blockloom_core::components::ActorComponent;
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        // Authored carrier with Persist, authored passer-by without, a clone
+        // of the carrier, and a spawned actor with runtime-attached Persist.
+        let mut carrier = blockloom_core::project::Actor::new(
+            "Carrier",
+            blockloom_core::scene::Visual::Rect {
+                color: "#FFFFFF".to_string(),
+                size: [10.0, 10.0],
+            },
+        );
+        carrier.components.insert(ActorComponent::Persist);
+        let carrier_id = carrier.id.clone();
+        let mut passer = blockloom_core::project::Actor::new(
+            "Passer",
+            blockloom_core::scene::Visual::Rect {
+                color: "#FFFFFF".to_string(),
+                size: [10.0, 10.0],
+            },
+        );
+        let passer_id = passer.id.clone();
+        engine.project.scenes[0].actors = vec![carrier, passer];
+        engine.project.active_scene = engine.project.scenes[0].id.clone();
+        let clone_id = "~1".to_string();
+        engine.clones.insert(clone_id.clone(), carrier_id.clone());
+        let made = blockloom_core::project::Actor::new(
+            "Made",
+            blockloom_core::scene::Visual::Rect {
+                color: "#FFFFFF".to_string(),
+                size: [10.0, 10.0],
+            },
+        );
+        let made_id = made.id.clone();
+        engine.spawned.insert(made_id.clone(), made);
+        // All alive with entities; the clone carries Persist too but still dies.
+        for id in [&carrier_id, &passer_id, &clone_id, &made_id] {
+            engine.entities.insert(id.clone(), Entity::PLACEHOLDER);
+            engine
+                .attached
+                .insert(id.clone(), ["Place".to_string()].into_iter().collect());
+        }
+        engine
+            .attached
+            .get_mut(&carrier_id)
+            .unwrap()
+            .insert("Persist".to_string());
+        engine
+            .attached
+            .get_mut(&clone_id)
+            .unwrap()
+            .insert("Persist".to_string());
+        engine
+            .attached
+            .get_mut(&made_id)
+            .unwrap()
+            .insert("Persist".to_string());
+        let keep = collect_survivors(&engine);
+        assert!(keep.contains(&carrier_id));
+        assert!(keep.contains(&made_id));
+        assert!(!keep.contains(&passer_id));
+        assert!(!keep.contains(&clone_id));
     }
 
     #[test]

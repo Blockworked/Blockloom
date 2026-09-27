@@ -53,6 +53,7 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Buoyancy",
     "Parallax",
     "Room",
+    "Persist",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -375,6 +376,11 @@ pub enum ActorComponent {
     /// A 2D room: bounds the camera keeps inside, and `when actor enters
     /// room` fires across.
     Room { room: RoomSpec },
+    /// Keeps this actor across scene switches: a `switch scene to` carries it
+    /// - live position, variables and attached components included - into the
+    /// new scene instead of unloading it with the old one. Opt-in per actor,
+    /// the DontDestroyOnLoad half of multi-scene support.
+    Persist,
 }
 
 impl ActorComponent {
@@ -403,6 +409,7 @@ impl ActorComponent {
             ActorComponent::Buoyancy { .. } => "Buoyancy",
             ActorComponent::Parallax { .. } => "Parallax",
             ActorComponent::Room { .. } => "Room",
+            ActorComponent::Persist => "Persist",
             ActorComponent::Custom { name, .. } => name,
         }
     }
@@ -730,6 +737,12 @@ impl Components {
             Some(ActorComponent::Parallax { parallax }) => Some(parallax),
             _ => None,
         }
+    }
+
+    /// Whether this actor opted into surviving scene switches: a `Persist`
+    /// component, authored or attached mid-run.
+    pub fn persists(&self) -> bool {
+        self.contains("Persist")
     }
 
     /// The room, if the actor is one.

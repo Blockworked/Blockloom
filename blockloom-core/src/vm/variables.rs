@@ -164,11 +164,32 @@ impl Variables {
     /// globals keep what the run has written, actor locals start as
     /// authored. What a `switch scene to` calls.
     pub fn load_scene(&self, project: &Project) {
+        self.load_scene_keep(project, &std::collections::HashSet::new());
+    }
+
+    /// The same, keeping live locals for `keep` (survivor ids): their scopes
+    /// survive the switch untouched, while every other actor starts as
+    /// authored. Globals always keep what the run wrote.
+    pub fn load_scene_keep(&self, project: &Project, keep: &std::collections::HashSet<String>) {
         let mut state = self.0.borrow_mut();
-        state.scope_ids.clear();
-        state.scopes.clear();
+        // Drop every scope except survivors; survivors keep live locals.
+        state.scope_ids.retain(|id, _| keep.contains(id));
+        state
+            .scopes
+            .retain(|slot| slot.as_ref().is_some_and(|(id, _)| keep.contains(id)));
         for actor in &project.actors {
+            if keep.contains(&actor.id) {
+                continue;
+            }
+            // A fresh scope for the new scene's actor; survivors already
+            // have theirs.
             let slots = state.values(actor.graph.variable_values());
+            // Reuse an existing empty slot when the id collides with a
+            // survivor? Ids never collide (uuids), but a new scene could
+            // reuse an old non-survivor id in theory - drop it first.
+            if let Some(old) = state.scope_ids.remove(&actor.id) {
+                state.scopes[old.0 as usize] = None;
+            }
             let scope = state.scope_or_new(&actor.id);
             if let Some(own) = state.slots_mut(scope) {
                 *own = slots;

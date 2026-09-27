@@ -291,6 +291,12 @@ pub struct Engine {
     /// The wall-clock veil over a scene switch. Started by the fixed step
     /// alongside `pending_scene`, drawn by `transition::drive_veil`.
     pub veil: crate::transition::SceneVeil,
+    /// Survivor ids carried across the last scene switch: authored or spawned
+    /// actors with `Persist` that the next rebuild must spawn alongside the
+    /// new scene instead of dropping with the old one. Set by the switch,
+    /// consumed by the rebuild, then cleared - the actors themselves live in
+    /// `spawned` from then on.
+    pub survivor_keep: std::collections::HashSet<String>,
 }
 
 impl Engine {
@@ -360,6 +366,7 @@ impl Engine {
             pause_after_tick: false,
             pending_scene: None,
             veil: crate::transition::SceneVeil::default(),
+            survivor_keep: Default::default(),
         }
     }
 

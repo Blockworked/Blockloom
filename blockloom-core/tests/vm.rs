@@ -428,6 +428,106 @@ fn loading_a_scene_keeps_globals_but_resets_actor_locals() {
 }
 
 #[test]
+fn survivors_keep_live_locals_lists_and_dicts_across_scenes() {
+    use blockloom_core::blocks::VariableDef;
+    use blockloom_core::vm::{Dicts, Lists, Variables};
+    use std::collections::HashSet;
+    // First scene: a Persist carrier plus a passer-by, both with locals.
+    let mut project = project_with(vec![started(vec![])]);
+    let carrier = project.scenes[0].actors[0].id.clone();
+    project.scenes[0].actors[0]
+        .components
+        .insert(blockloom_core::components::ActorComponent::Persist);
+    project.scenes[0].actors[0]
+        .graph
+        .variables
+        .push(VariableDef {
+            name: "ammo".to_string(),
+            value: Evaluated::Number(3.0),
+        });
+    project.scenes[0].actors[0].graph.lists.push(ListDef {
+        name: "bag".to_string(),
+        items: Vec::new(),
+        editor_visible: false,
+        editor_x: 0,
+        editor_y: 0,
+    });
+    project.scenes[0].actors[0].graph.dicts.push(DictDef {
+        name: "kit".to_string(),
+        entries: Vec::new(),
+        editor_visible: false,
+        editor_x: 0,
+        editor_y: 0,
+    });
+    let mut passer = Actor::new("Passer", rect());
+    passer.graph.variables.push(VariableDef {
+        name: "ammo".to_string(),
+        value: Evaluated::Number(1.0),
+    });
+    let passer_id = passer.id.clone();
+    project.scenes[0].actors.push(passer);
+
+    let vm_vars = Variables::default();
+    let vm_lists = Lists::default();
+    let vm_dicts = Dicts::default();
+    let mut vm = Vm::with_stores(vm_vars.clone(), vm_lists.clone(), vm_dicts.clone());
+    vm.load(&project);
+    // A run's writes: survivor locals, passer-by locals.
+    vm_vars.write(&carrier, "ammo", Evaluated::Number(30.0));
+    vm_lists.with_list_mut(&carrier, "bag", |list| {
+        list.push(ListItem::Number(1.0));
+    });
+    vm_dicts.with_dict_mut(&carrier, "kit", |dict| {
+        dict.push(DictEntry::new("key".to_string(), DictItem::Number(2.0)));
+    });
+    vm_vars.write(&passer_id, "ammo", Evaluated::Number(10.0));
+
+    // Second scene with a fresh actor; the carrier is not in its document -
+    // it rides in `spawned` instead.
+    let mut fresh = Actor::new("Fresh", rect());
+    fresh.graph.variables.push(VariableDef {
+        name: "ammo".to_string(),
+        value: Evaluated::Number(5.0),
+    });
+    let fresh_id = fresh.id.clone();
+    project.scenes.push(Scene {
+        id: "s2".to_string(),
+        name: "Scene 2".to_string(),
+        path: "assets/scenes/Scene 2.blockscene".to_string(),
+        world: blockloom_core::scene::World {
+            mode: Mode::TwoD,
+            ..Default::default()
+        },
+        actors: vec![fresh],
+    });
+    project.active_scene = "s2".to_string();
+    let keep: HashSet<String> = [carrier.clone()].into_iter().collect();
+    vm.load_scene_keep(&project, &keep);
+    // Survivor keeps live locals; the passer-by's scope is gone; the fresh
+    // actor starts as authored.
+    assert_eq!(vm_vars.read(&carrier, "ammo"), Evaluated::Number(30.0));
+    assert_eq!(
+        vm_lists
+            .snapshot_for(&carrier)
+            .get("bag")
+            .cloned()
+            .unwrap_or_default(),
+        vec![ListItem::Number(1.0)]
+    );
+    assert_eq!(
+        vm_dicts
+            .snapshot_for(&carrier)
+            .get("kit")
+            .cloned()
+            .unwrap_or_default(),
+        vec![DictEntry::new("key".to_string(), DictItem::Number(2.0))]
+    );
+    assert_eq!(vm_vars.read(&fresh_id, "ammo"), Evaluated::Number(5.0));
+    // A non-survivor id reads its global-or-zero, not its old local.
+    assert_eq!(vm_vars.read(&passer_id, "ammo"), Evaluated::Number(0.0));
+}
+
+#[test]
 fn a_reporter_block_returns_a_value_into_the_slot_that_called_it() {
     // `double (n)` returns n * 2; `say (double (21))` says 42.
     let block = BlockDef {

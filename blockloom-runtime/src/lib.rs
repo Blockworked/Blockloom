@@ -3,9 +3,10 @@
 //! A Bevy app that renders one project and runs its blocks. It runs either as
 //! its own process, talking to the editor over its pipes (see
 //! `blockloom-protocol`), or on a thread inside the editor (see [`embed`]),
-//! rendering offscreen into images the editor's Game view shows. Which
-//! dimension to build is fixed at launch, since the plugin set differs: the
-//! editor restarts the runtime when a project changes mode.
+//! rendering offscreen into images the editor's Game view shows. Both
+//! dimensions' pipelines register at launch and the live `Dimension` follows
+//! the active scene, so a project or scene switch across dimensions swaps
+//! live under the next rebuild.
 //!
 //! The same binary is what a built game ships: with a pack beside it (see
 //! `blockloom_core::pack`) it loads that instead of waiting for an editor,
@@ -93,6 +94,30 @@ use blockloom_core::scene::Mode;
 use blockloom_protocol::{GAME_SIZE, PROTOCOL_VERSION, RuntimeMessage};
 use engine::{Dimension, PendingEffects};
 use player::Launch;
+
+/// True while the live world is 2D: what gates the 2D simulation chain when
+/// both dimensions' pipelines are registered for live cross-dimension switches.
+fn is_2d(dimension: Res<Dimension>) -> bool {
+    dimension.0 == Mode::TwoD
+}
+
+/// True while the live world is 3D.
+fn is_3d(dimension: Res<Dimension>) -> bool {
+    dimension.0 == Mode::ThreeD
+}
+
+/// Rebuild gating for the unified world: 3D rebuilds at once, 2D waits for
+/// the sprite shader bindings, mirroring the old per-dimension behavior.
+fn rebuild_ready(
+    dimension: Res<Dimension>,
+    ready: Local<bool>,
+    shaders: Res<Assets<bevy::shader::Shader>>,
+) -> bool {
+    if dimension.0 == Mode::ThreeD {
+        return true;
+    }
+    dim2::sprite_shaders_ready(ready, shaders)
+}
 
 /// Runs the world as its own process: the editor's child, or a built game.
 pub fn run_process() {
@@ -189,7 +214,9 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     hdr::register(app);
     luminance::register(app);
     capture::register(app);
-    ray_tracing::register(app, mode);
+    // Ray tracing is 3D only, but registers always so a live switch into
+    // 3D finds it; its systems no-op in 2D.
+    ray_tracing::register(app, Mode::ThreeD);
     lightning::register(app);
     decals::register(app);
     wind::register(app);
@@ -223,490 +250,400 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 .chain(),
         );
 
-    // Only the dimension in use gets a physics pipeline: two would simulate
-    // the same actors twice. Simulation runs on Bevy's `FixedUpdate` - a
-    // constant-rate step whatever the display does - while input, sensors and
-    // rendering stay on the per-frame `Update`.
-    match mode {
-        Mode::TwoD => {
-            // The plugin starts its timestep mode at a fixed 60Hz; the loaded
-            // project's own rate takes over on the first step.
-            app.insert_resource(bevy_rapier2d::prelude::TimestepMode::Fixed {
-                dt: 1.0 / 60.0,
-                substeps: 1,
-            });
-            // Positions are pixels in 2D, so the listener hears in hundreds:
-            // scale the world down to speaking distance for the pan to mean
-            // anything.
-            app.insert_resource(bevy::audio::DefaultSpatialScale(
-                bevy::audio::SpatialScale::new_2d(1.0 / 500.0),
-            ));
-            app.add_plugins(
-                bevy_rapier2d::prelude::RapierPhysicsPlugin::<dim2::OneWayHooks>::pixels_per_meter(
-                    dim2::PIXELS_PER_METER,
-                )
-                .in_fixed_schedule(),
-            )
-            .add_systems(
-                FixedUpdate,
-                (
-                    dim2::sync_pause,
-                    dim2::sync_timestep,
-                    (world::restore_poses, atmosphere::sample_atmosphere).chain(),
-                    (ui_systems::bindings, world::step_vm).chain(),
-                    (world::step_scripts, ai::tick).chain(),
-                    overlay::apply_ui_effects,
-                    world::apply_saved_data,
-                    (world::apply_lifetimes, world::sync_navmesh).chain(),
-                    (
-                        world::apply_common,
-                        environment::apply_exposure_effects,
-                        hdr::apply_hdr_effects,
-                        volumes::apply_volume_effects,
-                    )
-                        .chain(),
-                    dim2::apply_effects,
-                    world::apply_component_effects,
-                    dim2::sync_joints,
-                    fx::apply_fx_effects,
-                    sound::apply_sound_effects,
-                    (
-                        world::step_glides,
-                        world::step_tweens,
-                        anim2d::apply_animation_effects,
-                        anim2d::step_animations,
-                    )
-                        .chain(),
-                    world::apply_input_effects,
-                    world::apply_rumble,
-                    world::apply_cursor_lock,
-                    world::clear_effects,
-                    world::finish_step,
-                )
+    // Both dimensions' physics pipelines live side by side for live
+    // cross-dimension scene switches. Each only simulates its own bodies, so
+    // the idle one no-ops; `sync_pause`/`sync_timestep` keep both configs in
+    // step. Simulation runs on Bevy's `FixedUpdate` - a constant-rate step
+    // whatever the display does - while input, sensors and rendering stay on
+    // the per-frame `Update`.
+    //
+    // Both dimensions' systems are registered below too. Shared systems appear
+    // exactly once - Bevy cannot order against a system type with two
+    // instances in one schedule, so a duplicated whole chain gated by `run_if`
+    // still panics at schedule init. Only dimension-specific pairs run side
+    // by side (each no-ops on the other side); the rest is gated per system
+    // with `is_2d`/`is_3d` where it must not run out of dimension.
+    app.insert_resource(bevy_rapier2d::prelude::TimestepMode::Fixed {
+        dt: 1.0 / 60.0,
+        substeps: 1,
+    });
+    app.insert_resource(bevy_rapier3d::prelude::TimestepMode::Fixed {
+        dt: 1.0 / 60.0,
+        substeps: 1,
+    });
+    app.insert_resource(bevy::audio::DefaultSpatialScale(if mode.is_3d() {
+        bevy::audio::SpatialScale::default()
+    } else {
+        bevy::audio::SpatialScale::new_2d(1.0 / 500.0)
+    }));
+    app.init_resource::<model::ModelCache>();
+    app.init_resource::<lights::LightMasks>();
+    app.add_plugins(
+        bevy_rapier2d::prelude::RapierPhysicsPlugin::<dim2::OneWayHooks>::pixels_per_meter(
+            dim2::PIXELS_PER_METER,
+        )
+        .in_fixed_schedule(),
+    );
+    app.add_plugins(
+        bevy_rapier3d::prelude::RapierPhysicsPlugin::<bevy_rapier3d::prelude::NoUserData>::default(
+        )
+        .in_fixed_schedule(),
+    );
+    // The veil and the audio scale follow the live scene, not the launch
+    // mode, so they run once outside the gated dimension blocks.
+    app.add_systems(Update, transition::drive_veil);
+    app.add_systems(Update, world::sync_audio_scale.after(world::rebuild_world));
+    // Both dimensions register always for live cross-dimension switches;
+    // each side's chains run only while its Dimension is live.
+    {
+        // Both dimensions register for live cross-dimension switches.
+        // Shared systems appear exactly once: Bevy cannot order against a
+        // system type with two instances in one schedule, so gating a whole
+        // duplicated chain with `run_if` is not enough. Dimension-specific
+        // pairs (dim2/dim3) run side by side; each no-ops on the other side.
+        use bevy::camera::visibility::VisibilitySystems;
+        // 3D-only rendering registrations (no-op with no 3D content).
+        batching::register(app);
+        culling::register(app);
+        probes::register(app);
+        light_probes::register(app);
+        pbr_patch::register(app);
+        sky::register(app);
+        space::register(app);
+        fog::register(app);
+        clouds::register(app);
+        cloud_layers::register(app);
+        beams::register(app);
+        terrain::register(app);
+        app.add_systems(
+            PostUpdate,
+            (
+                (culling::select_lod, batching::batch_meshes)
                     .chain()
-                    .in_set(world::SimulationSet),
+                    .after(bevy::transform::TransformSystems::Propagate)
+                    .after(VisibilitySystems::VisibilityPropagate)
+                    .before(VisibilitySystems::CalculateBounds)
+                    .before(VisibilitySystems::CheckVisibility),
+                batching::upload_instances,
+                culling::configure_cameras,
+                culling::cull_views
+                    .after(VisibilitySystems::CheckVisibility)
+                    .before(VisibilitySystems::MarkNewlyHiddenEntitiesInvisible),
+                probes::hide_from_captures
+                    .after(VisibilitySystems::CheckVisibility)
+                    .before(VisibilitySystems::MarkNewlyHiddenEntitiesInvisible),
             )
-            .add_systems(
-                FixedPostUpdate,
-                (world::apply_parenting, dim2::record_poses).chain(),
+                .run_if(is_3d),
+        );
+        #[cfg(feature = "ray_tracing")]
+        app.add_systems(
+            PostUpdate,
+            (
+                ray_tracing::sync_traced_scene,
+                ray_tracing::drive_path_tracer,
             )
-            .add_systems(
-                Update,
+                .chain()
+                .after(bevy::transform::TransformSystems::Propagate)
+                .run_if(is_3d),
+        );
+        // ── Simulation (FixedUpdate), shared once ──
+        app.add_systems(
+            FixedUpdate,
+            (
+                (dim2::sync_pause, dim3::sync_pause).chain(),
+                (dim2::sync_timestep, dim3::sync_timestep).chain(),
+                (world::restore_poses, atmosphere::sample_atmosphere).chain(),
+                (ui_systems::bindings, world::step_vm).chain(),
+                (world::step_scripts, ai::tick).chain(),
+                overlay::apply_ui_effects,
+                world::apply_saved_data,
+                (world::apply_lifetimes, world::sync_navmesh).chain(),
                 (
-                    world::pump_editor,
-                    (edit::interact, edit::report).chain(),
-                    preview::apply_preview_visibility,
-                    preview::drain_preview_inputs,
-                    fx::despawn_fx,
+                    world::apply_common,
+                    environment::apply_exposure_effects,
+                    hdr::apply_hdr_effects,
+                    volumes::apply_volume_effects,
+                )
+                    .chain(),
+                (dim2::apply_effects, dim3::apply_effects).chain(),
+                (
+                    world::apply_component_effects,
+                    lights::apply_light_effects.run_if(is_3d),
+                    ray_tracing::apply_ray_tracing_effects.run_if(is_3d),
+                )
+                    .chain(),
+                (dim2::sync_joints, dim3::sync_joints).chain(),
+                fx::apply_fx_effects,
+                sound::apply_sound_effects,
+                (
+                    world::step_glides,
+                    world::step_tweens,
+                    anim2d::apply_animation_effects,
+                    anim2d::step_animations,
+                )
+                    .chain(),
+                world::apply_input_effects,
+                world::apply_rumble,
+                world::apply_cursor_lock,
+                world::clear_effects,
+                world::finish_step,
+            )
+                .chain()
+                .in_set(world::SimulationSet),
+        )
+        .add_systems(
+            FixedPostUpdate,
+            (
+                world::apply_parenting,
+                dim2::record_poses,
+                dim3::record_poses,
+            )
+                .chain(),
+        )
+        .add_systems(
+            Update,
+            (
+                world::pump_editor,
+                (edit::interact, edit::report).chain(),
+                preview::apply_preview_visibility,
+                preview::drain_preview_inputs,
+                fx::despawn_fx,
+                (
+                    world::rebuild_world.run_if(rebuild_ready),
+                    volumes::gather_volumes,
+                    environment::blend_environment,
+                    hdr::resolve_frame,
+                    environment::apply_environment,
                     (
-                        world::rebuild_world.run_if(dim2::sprite_shaders_ready),
-                        volumes::gather_volumes,
-                        environment::blend_environment,
-                        hdr::resolve_frame,
-                        environment::apply_environment,
+                        lights::sync_lights,
+                        shadows::apply_shadows,
+                        ray_tracing::apply_ray_tracing,
+                        light_probes::load_baked,
+                        light_probes::sync_probes,
                     )
-                        .chain(),
-                    dim2::relay_collisions,
-                    (
-                        ui_systems::canvas,
-                        ui_systems::collections,
-                        ui_systems::hover,
-                        ui_systems::navigation,
-                        ui_systems::touch,
-                        ui_systems::project_widgets,
-                        overlay::draw_ui,
-                        ui_systems::animate,
-                        ui_systems::atlas,
-                    )
-                        .chain(),
-                    world::type_into_focused_input,
-                    world::scroll_ui_lists,
-                    world::detect_clicks,
-                    world::publish_sensors,
-                    sound::maintain_voices,
-                    world::interpolate_poses,
-                    (
-                        world::drive_camera,
-                        edit::apply_view,
-                        edit::draw,
-                        volumes::draw_volumes,
-                        volume_heat::collect_heat,
-                    )
-                        .chain(),
+                        .chain()
+                        .run_if(is_3d),
+                )
+                    .chain(),
+                (dim2::relay_collisions, dim3::relay_collisions).chain(),
+                (
+                    ui_systems::canvas,
+                    ui_systems::collections,
+                    ui_systems::hover,
+                    ui_systems::navigation,
+                    ui_systems::touch,
+                    ui_systems::project_widgets,
+                    overlay::draw_ui,
+                    ui_systems::animate,
+                    ui_systems::atlas,
+                )
+                    .chain(),
+                world::type_into_focused_input,
+                world::scroll_ui_lists,
+                world::detect_clicks,
+                world::publish_sensors,
+                sound::maintain_voices,
+                world::interpolate_poses,
+                (
+                    world::drive_camera,
+                    edit::apply_view,
+                    edit::draw,
+                    volumes::draw_volumes,
+                    volume_heat::collect_heat,
+                )
+                    .chain(),
+                streaming::update_streaming_cells.run_if(is_3d),
+                (
                     overlay::update_speech_bubbles,
                     preview::capture_preview_frame,
+                )
+                    .chain(),
+                (
                     world::report_status.run_if(bridge::editor_attached),
                     overlay::update_status.run_if(bridge::editor_attached),
+                    ray_tracing::report_ray_tracing
+                        .run_if(bridge::editor_attached)
+                        .run_if(is_3d),
                 )
                     .chain(),
             )
-            // Outside the chained tuple above (already at Bevy's tuple
-            // cap): the veil owns its own node, so order is irrelevant.
-            .add_systems(Update, transition::drive_veil)
-            .configure_sets(
-                FixedUpdate,
-                world::SimulationSet.before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend),
+                .chain(),
+        )
+        .configure_sets(
+            FixedUpdate,
+            world::SimulationSet.before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend),
+        )
+        .configure_sets(
+            FixedUpdate,
+            world::SimulationSet.before(bevy_rapier3d::prelude::PhysicsSet::SyncBackend),
+        )
+        // Rigs and sprite dials draw after the camera settles, so Y-sort
+        // measures from where it ended up.
+        .add_systems(
+            Update,
+            (
+                anim2d::ensure_rigs,
+                anim2d::draw_rigs,
+                sprites::sync_sprites,
+                sprites::sync_part_effects,
             )
-            // Rigs and sprite dials draw after the camera settles, so Y-sort
-            // measures from where it ended up.
-            .add_systems(
-                Update,
-                (
-                    anim2d::ensure_rigs,
-                    anim2d::draw_rigs,
-                    sprites::sync_sprites,
-                    sprites::sync_part_effects,
-                )
+                .chain()
+                .after(world::drive_camera)
+                .before(overlay::update_speech_bubbles)
+                .run_if(is_2d),
+        )
+        // The level: painted tiles, regions and rooms on the fixed tick;
+        // parallax, room cameras, streaming and the Tiles tool per frame.
+        // Shared level systems run once; per-dimension variants are gated.
+        .init_resource::<tiles::Level>()
+        .add_systems(
+            FixedUpdate,
+            (
+                tiles::apply_level_effects,
+                tiles::redraw_maps.run_if(is_2d),
+                tiles::redraw_maps_3d.run_if(is_3d),
+                tiles::apply_regions.run_if(is_2d),
+                tiles::apply_regions_3d.run_if(is_3d),
+                tiles::track_rooms,
+            )
+                .chain()
+                .in_set(world::SimulationSet)
+                .after(dim2::apply_effects)
+                .after(dim3::apply_effects)
+                .before(world::clear_effects),
+        )
+        .add_systems(
+            Update,
+            (
+                tiles::paint_tiles
+                    .after(edit::interact)
+                    .before(edit::report),
+                tiles::redraw_maps
+                    .after(tiles::paint_tiles)
+                    .after(world::rebuild_world)
+                    .run_if(is_2d),
+                tiles::redraw_maps_3d
+                    .after(tiles::paint_tiles)
+                    .after(world::rebuild_world)
+                    .run_if(is_3d),
+                tiles::publish_level.after(world::publish_sensors),
+                tiles::confine_camera
+                    .after(world::drive_camera)
+                    .before(edit::apply_view),
+                (streaming::update_streaming_cells_2d, tiles::stream_rooms)
                     .chain()
                     .after(world::drive_camera)
+                    .after(world::rebuild_world)
+                    .run_if(is_2d),
+                tiles::stream_rooms_3d
+                    .after(streaming::update_streaming_cells)
+                    .after(world::rebuild_world)
+                    .run_if(is_3d),
+                tiles::draw_overlays.after(edit::draw),
+            ),
+        )
+        .add_systems(
+            First,
+            (
+                sprites::clear_sort_depth.run_if(is_2d),
+                tiles::clear_parallax,
+                tiles::clear_parallax_3d.run_if(is_3d),
+            ),
+        )
+        .add_systems(
+            PostUpdate,
+            (tiles::apply_parallax, tiles::sync_parallax_copies)
+                .chain()
+                .after(sprites::apply_sort_depth)
+                .before(bevy::transform::TransformSystems::Propagate)
+                .run_if(is_2d),
+        )
+        .add_systems(
+            PostUpdate,
+            sprites::apply_sort_depth
+                .before(bevy::transform::TransformSystems::Propagate)
+                .run_if(is_2d),
+        )
+        .add_systems(
+            PostUpdate,
+            (tiles::apply_parallax_3d, tiles::sync_parallax_copies_3d)
+                .chain()
+                .before(batching::upload_instances)
+                .before(bevy::transform::TransformSystems::Propagate)
+                .run_if(is_3d),
+        )
+        .add_systems(
+            FixedUpdate,
+            water::float_bodies_2d
+                .in_set(world::SimulationSet)
+                .after(dim2::apply_effects)
+                .before(fx::apply_fx_effects)
+                .run_if(is_2d),
+        )
+        .add_systems(
+            FixedUpdate,
+            water::float_bodies_3d
+                .in_set(world::SimulationSet)
+                .after(dim3::apply_effects)
+                .before(fx::apply_fx_effects)
+                .run_if(is_3d),
+        )
+        // Profiler segment marks, as explicit edges: the chained tuple
+        // above is already at Bevy's 20-system cap, and restructuring it
+        // would move its ApplyDeferred points.
+        .add_systems(
+            Update,
+            (
+                performance::mark_update_segment.before(world::pump_editor),
+                performance::mark_update_segment
+                    .after(fx::despawn_fx)
+                    .before(volumes::gather_volumes),
+                performance::mark_update_segment
+                    .after(environment::apply_environment)
+                    .before(dim2::relay_collisions)
+                    .run_if(is_2d),
+                performance::mark_update_segment
+                    .after(light_probes::sync_probes)
+                    .before(dim3::relay_collisions)
+                    .run_if(is_3d),
+                performance::mark_update_segment
+                    .after(world::detect_clicks)
+                    .before(world::publish_sensors),
+                performance::mark_update_segment
+                    .after(world::interpolate_poses)
+                    .before(world::drive_camera),
+                performance::mark_update_segment
+                    .after(volume_heat::collect_heat)
                     .before(overlay::update_speech_bubbles),
+                performance::mark_update_segment.after(overlay::update_status),
+            ),
+        )
+        .add_systems(
+            Update,
+            (
+                fx::step_particles,
+                fx::snapshot_trails,
+                fx::step_ghosts,
+                materials::tick_graph_time,
+                materials::animate_tiles,
             )
-            // The level: painted tiles, regions and rooms on the fixed tick;
-            // parallax, room cameras, streaming and the Tiles tool per frame.
-            .init_resource::<tiles::Level>()
-            .add_systems(
-                FixedUpdate,
+                .chain(),
+        )
+        .add_systems(
+            Update,
+            (
+                model::watch_models,
+                model::pause_rigs,
                 (
-                    tiles::apply_level_effects,
-                    tiles::redraw_maps,
-                    tiles::apply_regions,
-                    tiles::track_rooms,
-                )
-                    .chain()
-                    .in_set(world::SimulationSet)
-                    .after(dim2::apply_effects)
-                    .before(world::clear_effects),
-            )
-            .add_systems(
-                Update,
-                (
-                    tiles::paint_tiles
-                        .after(edit::interact)
-                        .before(edit::report),
-                    tiles::redraw_maps
-                        .after(tiles::paint_tiles)
-                        .after(world::rebuild_world),
-                    tiles::publish_level.after(world::publish_sensors),
-                    tiles::confine_camera
-                        .after(world::drive_camera)
-                        .before(edit::apply_view),
-                    (streaming::update_streaming_cells_2d, tiles::stream_rooms)
-                        .chain()
-                        .after(world::drive_camera)
-                        .after(world::rebuild_world),
-                    tiles::draw_overlays.after(edit::draw),
-                ),
-            )
-            .add_systems(First, (sprites::clear_sort_depth, tiles::clear_parallax))
-            .add_systems(
-                PostUpdate,
-                (tiles::apply_parallax, tiles::sync_parallax_copies)
-                    .chain()
-                    .after(sprites::apply_sort_depth)
-                    .before(bevy::transform::TransformSystems::Propagate),
-            )
-            .add_systems(
-                PostUpdate,
-                sprites::apply_sort_depth.before(bevy::transform::TransformSystems::Propagate),
-            )
-            .add_systems(
-                FixedUpdate,
-                water::float_bodies_2d
-                    .in_set(world::SimulationSet)
-                    .after(dim2::apply_effects)
-                    .before(fx::apply_fx_effects),
-            )
-            // Profiler segment marks, as explicit edges: the chained tuple
-            // above is already at Bevy's 20-system cap, and restructuring it
-            // would move its ApplyDeferred points.
-            .add_systems(
-                Update,
-                (
-                    performance::mark_update_segment.before(world::pump_editor),
-                    performance::mark_update_segment
-                        .after(fx::despawn_fx)
-                        .before(volumes::gather_volumes),
-                    performance::mark_update_segment
-                        .after(environment::apply_environment)
-                        .before(dim2::relay_collisions),
-                    performance::mark_update_segment
-                        .after(world::detect_clicks)
-                        .before(world::publish_sensors),
-                    performance::mark_update_segment
-                        .after(world::interpolate_poses)
-                        .before(world::drive_camera),
-                    performance::mark_update_segment
-                        .after(volume_heat::collect_heat)
-                        .before(overlay::update_speech_bubbles),
-                    performance::mark_update_segment.after(overlay::update_status),
-                ),
-            )
-            .add_systems(
-                Update,
-                (
-                    fx::step_particles,
-                    fx::snapshot_trails,
-                    fx::step_ghosts,
-                    materials::tick_graph_time,
-                    materials::animate_tiles,
+                    light_probes::start_bakes,
+                    probes::run_captures,
+                    light_probes::collect_bakes,
                 )
                     .chain(),
-            );
-        }
-        Mode::ThreeD => {
-            app.init_resource::<model::ModelCache>();
-            batching::register(app);
-            culling::register(app);
-            probes::register(app);
-            light_probes::register(app);
-            pbr_patch::register(app);
-            app.init_resource::<lights::LightMasks>();
-            sky::register(app);
-            space::register(app);
-            fog::register(app);
-            clouds::register(app);
-            cloud_layers::register(app);
-            beams::register(app);
-            terrain::register(app);
-            use bevy::camera::visibility::VisibilitySystems;
-            app.add_systems(
-                PostUpdate,
-                (
-                    (culling::select_lod, batching::batch_meshes)
-                        .chain()
-                        .after(bevy::transform::TransformSystems::Propagate)
-                        .after(VisibilitySystems::VisibilityPropagate)
-                        .before(VisibilitySystems::CalculateBounds)
-                        .before(VisibilitySystems::CheckVisibility),
-                    batching::upload_instances,
-                    culling::configure_cameras,
-                    culling::cull_views
-                        .after(VisibilitySystems::CheckVisibility)
-                        .before(VisibilitySystems::MarkNewlyHiddenEntitiesInvisible),
-                    probes::hide_from_captures
-                        .after(VisibilitySystems::CheckVisibility)
-                        .before(VisibilitySystems::MarkNewlyHiddenEntitiesInvisible),
-                ),
-            );
-            #[cfg(feature = "ray_tracing")]
-            app.add_systems(
-                PostUpdate,
-                (
-                    ray_tracing::sync_traced_scene,
-                    ray_tracing::drive_path_tracer,
-                )
-                    .chain()
-                    .after(bevy::transform::TransformSystems::Propagate),
-            );
-            // The level: painted tiles, regions and rooms on the fixed tick;
-            // parallax, room cameras, streaming and the Tiles tool per frame.
-            app.init_resource::<tiles::Level>()
-                .add_systems(
-                    FixedUpdate,
-                    (
-                        tiles::apply_level_effects,
-                        tiles::redraw_maps_3d,
-                        tiles::apply_regions_3d,
-                        tiles::track_rooms,
-                    )
-                        .chain()
-                        .in_set(world::SimulationSet)
-                        .after(dim3::apply_effects)
-                        .before(world::clear_effects),
-                )
-                .add_systems(
-                    Update,
-                    (
-                        tiles::paint_tiles
-                            .after(edit::interact)
-                            .before(edit::report),
-                        tiles::redraw_maps_3d
-                            .after(tiles::paint_tiles)
-                            .after(world::rebuild_world),
-                        tiles::publish_level.after(world::publish_sensors),
-                        tiles::confine_camera
-                            .after(world::drive_camera)
-                            .before(edit::apply_view),
-                        tiles::stream_rooms_3d
-                            .after(streaming::update_streaming_cells)
-                            .after(world::rebuild_world),
-                        tiles::draw_overlays.after(edit::draw),
-                    ),
-                )
-                .add_systems(
-                    First,
-                    (tiles::clear_parallax, tiles::clear_parallax_3d).chain(),
-                )
-                .add_systems(
-                    PostUpdate,
-                    (tiles::apply_parallax_3d, tiles::sync_parallax_copies_3d)
-                        .chain()
-                        .before(batching::upload_instances)
-                        .before(bevy::transform::TransformSystems::Propagate),
-                );
-            app.insert_resource(bevy_rapier3d::prelude::TimestepMode::Fixed {
-                dt: 1.0 / 60.0,
-                substeps: 1,
-            });
-            // `ScreenSpaceAmbientOcclusion` on the camera is driven by
-            // `bevy_pbr`'s `PbrPlugin` (inside `DefaultPlugins`), so no extra
-            // plugin is needed here.
-            app.add_plugins(bevy_rapier3d::prelude::RapierPhysicsPlugin::<
-                bevy_rapier3d::prelude::NoUserData,
-            >::default()
-            .in_fixed_schedule())
-                .add_systems(
-                    FixedUpdate,
-                    (
-                        dim3::sync_pause,
-                        dim3::sync_timestep,
-                        (world::restore_poses, atmosphere::sample_atmosphere).chain(),
-                        (ui_systems::bindings, world::step_vm).chain(),
-                        (world::step_scripts, ai::tick).chain(),
-                        overlay::apply_ui_effects,
-                        world::apply_saved_data,
-                        (world::apply_lifetimes, world::sync_navmesh).chain(),
-                        (
-                        world::apply_common,
-                        environment::apply_exposure_effects,
-                        hdr::apply_hdr_effects,
-                        volumes::apply_volume_effects,
-                    )
-                        .chain(),
-                        dim3::apply_effects,
-                        (
-                            world::apply_component_effects,
-                            lights::apply_light_effects,
-                            ray_tracing::apply_ray_tracing_effects,
-                        )
-                            .chain(),
-                        dim3::sync_joints,
-                        fx::apply_fx_effects,
-                        sound::apply_sound_effects,
-                        (
-                            world::step_glides,
-                            world::step_tweens,
-                            anim2d::apply_animation_effects,
-                            anim2d::step_animations,
-                        )
-                            .chain(),
-                        world::apply_input_effects,
-                        world::apply_rumble,
-                        world::apply_cursor_lock,
-                        world::clear_effects,
-                        world::finish_step,
-                    )
-                        .chain()
-                        .in_set(world::SimulationSet),
-                )
-                .add_systems(
-                    FixedPostUpdate,
-                    (world::apply_parenting, dim3::record_poses).chain(),
-                )
-                .add_systems(
-                    Update,
-                    (
-                        world::pump_editor,
-                        (edit::interact, edit::report).chain(),
-                        preview::apply_preview_visibility,
-                        preview::drain_preview_inputs,
-                        fx::despawn_fx,
-                        (
-                            world::rebuild_world,
-                            volumes::gather_volumes,
-                            environment::blend_environment,
-                            hdr::resolve_frame,
-                            environment::apply_environment,
-                            lights::sync_lights,
-                            shadows::apply_shadows,
-                            ray_tracing::apply_ray_tracing,
-                            light_probes::load_baked,
-                            light_probes::sync_probes,
-                        )
-                            .chain(),
-                        dim3::relay_collisions,
-                        (ui_systems::canvas, ui_systems::collections, ui_systems::hover, ui_systems::navigation, ui_systems::touch, ui_systems::project_widgets, overlay::draw_ui, ui_systems::animate, ui_systems::atlas).chain(),
-                        world::type_into_focused_input,
-                        world::scroll_ui_lists,
-                        world::detect_clicks,
-                        world::publish_sensors,
-                        sound::maintain_voices,
-                        world::interpolate_poses,
-                        (world::drive_camera, edit::apply_view, edit::draw, volumes::draw_volumes, volume_heat::collect_heat).chain(),
-                        streaming::update_streaming_cells,
-                        overlay::update_speech_bubbles,
-                        preview::capture_preview_frame,
-                        world::report_status.run_if(bridge::editor_attached),
-                        (
-                            overlay::update_status,
-                            ray_tracing::report_ray_tracing,
-                        )
-                            .run_if(bridge::editor_attached),
-                    )
-                        .chain(),
-                )
-                .configure_sets(
-                    FixedUpdate,
-                    world::SimulationSet
-                        .before(bevy_rapier3d::prelude::PhysicsSet::SyncBackend),
-                )
-                // Outside the chained Update tuple (already at Bevy's tuple
-                // cap): the veil owns its own node, so order is irrelevant.
-                .add_systems(Update, transition::drive_veil)
-                .add_systems(
-                    FixedUpdate,
-                    water::float_bodies_3d
-                        .in_set(world::SimulationSet)
-                        .after(dim3::apply_effects)
-                        .before(fx::apply_fx_effects),
-                )
-                // Profiler segment marks, as explicit edges: the chained tuple
-                // above is already at Bevy's 20-system cap, and restructuring
-                // it would move its ApplyDeferred points.
-                .add_systems(
-                    Update,
-                    (
-                        performance::mark_update_segment.before(world::pump_editor),
-                        performance::mark_update_segment
-                            .after(fx::despawn_fx)
-                            .before(volumes::gather_volumes),
-                        performance::mark_update_segment
-                            .after(light_probes::sync_probes)
-                            .before(dim3::relay_collisions),
-                        performance::mark_update_segment
-                            .after(world::detect_clicks)
-                            .before(world::publish_sensors),
-                        performance::mark_update_segment
-                            .after(world::interpolate_poses)
-                            .before(world::drive_camera),
-                        performance::mark_update_segment
-                            .after(streaming::update_streaming_cells)
-                            .before(overlay::update_speech_bubbles),
-                        performance::mark_update_segment
-                            .after(overlay::update_status)
-                            .after(ray_tracing::report_ray_tracing),
-                    ),
-                )
-                .add_systems(
-                    Update,
-                    (
-                            fx::step_particles,
-                        fx::snapshot_trails,
-                        fx::step_ghosts,
-                        materials::tick_graph_time,
-                        materials::animate_tiles,
-                        model::watch_models,
-                        model::pause_rigs,
-                        (
-                            light_probes::start_bakes,
-                            probes::run_captures,
-                            light_probes::collect_bakes,
-                        )
-                            .chain(),
-                    )
-                        .chain(),
-                );
-        }
+            )
+                .chain()
+                .run_if(is_3d),
+        );
     }
 }
 

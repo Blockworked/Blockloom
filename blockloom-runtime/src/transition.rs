@@ -9,9 +9,10 @@
 //! `SceneVeil` is plain state on [`crate::engine::Engine`]: the fixed step
 //! starts it and waits for cover before swapping scenes, and `drive_veil`
 //! (per-frame `Update`, on [`bevy::time::Time<Real>`] so pause never freezes
-//! it) draws one fullscreen Bevy UI node over everything, including the
-//! interface root. `wipe` sweeps a panel left to right; `circle` reads as a
-//! fade until it gets its own mask.
+//! it) draws Bevy UI nodes over everything, including the interface root.
+//! `fade` is a fullscreen wash, `wipe` sweeps a panel left to right, and
+//! `circle` is an iris: a centered black disc growing to cover and shrinking
+//! to reveal.
 
 use bevy::prelude::*;
 
@@ -148,23 +149,43 @@ impl SceneVeil {
     }
 }
 
-/// Marker on the fullscreen veil node the driver owns.
+/// Marker on the fullscreen veil node the driver owns. For `circle` this is
+/// the transparent fullscreen root; the black disc itself is [`VeilCircle`].
 #[derive(Component)]
 pub(crate) struct VeilNode;
 
-/// Draws [`SceneVeil`] as one fullscreen node over everything (the interface
-/// root sits at z 40; the veil takes 50). Runs on the real clock so a
-/// transition outlives pause, and holds the reveal while the new scene's
-/// warmup window is still open so the cut lands on settled frames.
+/// Marker on the black iris disc a `circle` transition draws.
+#[derive(Component)]
+pub(crate) struct VeilCircle;
+
+/// How big the iris gets when fully covered, in vmin (percent of the smaller
+/// viewport side). 400 covers even a 32:9 screen's corners from the center.
+pub const CIRCLE_COVER_VMIN: f32 = 400.0;
+
+/// Draws [`SceneVeil`] over everything (the interface root sits at z 40; the
+/// veil takes 50). Runs on the real clock so a transition outlives pause, and
+/// holds the reveal while the new scene's warmup window is still open so the
+/// cut lands on settled frames. Fade and wipe are one fullscreen node;
+/// circle is a transparent root with a centered black disc child.
 pub fn drive_veil(
     mut commands: Commands,
     mut engine: NonSendMut<crate::engine::Engine>,
     real: Res<Time<Real>>,
     warmup: Res<crate::streaming::Warmup>,
-    mut nodes: Query<(Entity, &mut Node, &mut BackgroundColor), With<VeilNode>>,
+    mut nodes: Query<
+        (Entity, &mut Node, &mut BackgroundColor),
+        (With<VeilNode>, Without<VeilCircle>),
+    >,
+    mut discs: Query<
+        (Entity, &mut Node, &mut BackgroundColor),
+        (With<VeilCircle>, Without<VeilNode>),
+    >,
 ) {
     if !engine.veil.running() {
         for (entity, _, _) in &nodes {
+            commands.entity(entity).despawn();
+        }
+        for (entity, _, _) in &discs {
             commands.entity(entity).despawn();
         }
         return;
@@ -187,9 +208,22 @@ pub fn drive_veil(
         for (entity, _, _) in &nodes {
             commands.entity(entity).despawn();
         }
+        for (entity, _, _) in &discs {
+            commands.entity(entity).despawn();
+        }
         return;
     }
     let (kind, phase, t) = (engine.veil.kind, engine.veil.phase, engine.veil.t);
+    if kind == VeilKind::Circle {
+        drive_circle(&mut commands, &mut nodes, &mut discs, t);
+        // A stale wash from a previous fade/wipe must not linger under the
+        // disc; the disc path owns no wash, so drop extras.
+        return;
+    }
+    // Fade/wipe own no disc; a stale one from an interrupted circle goes.
+    for (entity, _, _) in &discs {
+        commands.entity(entity).despawn();
+    }
     if let Some((_, mut node, mut color)) = nodes.iter_mut().next() {
         style_veil(&mut node, &mut color, kind, phase, t);
         // One veil only; a second node is a leftover from a reset race.
@@ -208,6 +242,94 @@ pub fn drive_veil(
     }
 }
 
+/// Draws the circle iris: a transparent fullscreen root centering a black
+/// disc whose diameter is the cover. Out grows it to cover, in shrinks it to
+/// reveal from the edges inward.
+fn drive_circle(
+    commands: &mut Commands,
+    nodes: &mut Query<
+        (Entity, &mut Node, &mut BackgroundColor),
+        (With<VeilNode>, Without<VeilCircle>),
+    >,
+    discs: &mut Query<
+        (Entity, &mut Node, &mut BackgroundColor),
+        (With<VeilCircle>, Without<VeilNode>),
+    >,
+    t: f32,
+) {
+    let t = t.clamp(0.0, 1.0);
+    let root = if let Some((_, mut node, mut color)) = nodes.iter_mut().next() {
+        node.position_type = PositionType::Absolute;
+        node.left = Val::Percent(0.0);
+        node.right = Val::Percent(0.0);
+        node.top = Val::Percent(0.0);
+        node.bottom = Val::Percent(0.0);
+        node.width = Val::Percent(100.0);
+        node.height = Val::Percent(100.0);
+        node.display = Display::Flex;
+        node.justify_content = JustifyContent::Center;
+        node.align_items = AlignItems::Center;
+        color.0 = Color::BLACK.with_alpha(0.0);
+        for (entity, _, _) in nodes.iter().skip(1) {
+            commands.entity(entity).despawn();
+        }
+        None
+    } else {
+        let mut node = Node::default();
+        node.position_type = PositionType::Absolute;
+        node.left = Val::Percent(0.0);
+        node.right = Val::Percent(0.0);
+        node.top = Val::Percent(0.0);
+        node.bottom = Val::Percent(0.0);
+        node.width = Val::Percent(100.0);
+        node.height = Val::Percent(100.0);
+        node.display = Display::Flex;
+        node.justify_content = JustifyContent::Center;
+        node.align_items = AlignItems::Center;
+        Some(
+            commands
+                .spawn((
+                    Name::new("scene-veil"),
+                    VeilNode,
+                    node,
+                    BackgroundColor(Color::BLACK.with_alpha(0.0)),
+                    GlobalZIndex(50),
+                ))
+                .id(),
+        )
+    };
+    let root_entity = root.or_else(|| nodes.iter().next().map(|(entity, _, _)| entity));
+    let diameter = Val::VMin(t * CIRCLE_COVER_VMIN);
+    if let Some((_, mut node, mut color)) = discs.iter_mut().next() {
+        node.width = diameter;
+        node.height = diameter;
+        node.border_radius = BorderRadius::all(Val::Percent(50.0));
+        color.0 = Color::BLACK;
+        for (entity, _, _) in discs.iter().skip(1) {
+            commands.entity(entity).despawn();
+        }
+    } else {
+        let mut node = Node::default();
+        node.width = diameter;
+        node.height = diameter;
+        node.border_radius = BorderRadius::all(Val::Percent(50.0));
+        let disc = commands
+            .spawn((
+                Name::new("scene-veil-disc"),
+                VeilCircle,
+                node,
+                BackgroundColor(Color::BLACK),
+                GlobalZIndex(50),
+            ))
+            .id();
+        // Flex centering needs the disc under the root; without a root yet
+        // (first frame race) it draws top-left once, then centers.
+        if let Some(root) = root_entity {
+            commands.entity(root).add_child(disc);
+        }
+    }
+}
+
 fn veil_bundle(kind: VeilKind, phase: VeilPhase, t: f32) -> (Node, BackgroundColor) {
     let mut node = Node::default();
     let mut color = BackgroundColor(Color::BLACK);
@@ -215,10 +337,10 @@ fn veil_bundle(kind: VeilKind, phase: VeilPhase, t: f32) -> (Node, BackgroundCol
     (node, color)
 }
 
-/// A fade (and, until it gets its own mask, a circle) is a fullscreen wash
-/// whose alpha is the cover. A wipe is an opaque panel sweeping left to
-/// right: it grows from the left edge while covering, then shrinks toward
-/// the right edge while revealing.
+/// A fade is a fullscreen wash whose alpha is the cover. A wipe is an
+/// opaque panel sweeping left to right: it grows from the left edge while
+/// covering, then shrinks toward the right edge while revealing. A circle is
+/// an iris handled by `style_circle` (a centered disc, not this wash).
 fn style_veil(
     node: &mut Node,
     color: &mut BackgroundColor,
@@ -228,6 +350,18 @@ fn style_veil(
 ) {
     let t = t.clamp(0.0, 1.0);
     match kind {
+        // Circle never reaches here: `drive_veil` draws it as a disc, not a
+        // wash. Keep it opaque-black fullscreen if it ever does, so a bug
+        // covers rather than flashes.
+        VeilKind::Circle => {
+            node.position_type = PositionType::Absolute;
+            node.left = Val::Percent(0.0);
+            node.right = Val::Percent(0.0);
+            node.top = Val::Percent(0.0);
+            node.height = Val::Percent(100.0);
+            node.width = Val::Percent(100.0);
+            color.0 = Color::BLACK;
+        }
         VeilKind::Wipe => {
             node.position_type = PositionType::Absolute;
             node.top = Val::Percent(0.0);
@@ -242,7 +376,7 @@ fn style_veil(
             }
             color.0 = Color::BLACK;
         }
-        VeilKind::Fade | VeilKind::Circle | VeilKind::None => {
+        VeilKind::Fade | VeilKind::None => {
             node.position_type = PositionType::Absolute;
             node.left = Val::Percent(0.0);
             node.right = Val::Percent(0.0);
@@ -281,6 +415,21 @@ mod tests {
         assert!(!veil.advance_in(IN_SECS * 0.9));
         assert!(veil.advance_in(IN_SECS * 0.2));
         assert_eq!(veil.phase, VeilPhase::Idle);
+    }
+
+    #[test]
+    fn a_circle_covers_like_a_fade_with_its_own_kind() {
+        let mut veil = SceneVeil::default();
+        assert!(veil.start("circle"));
+        assert_eq!(veil.kind, VeilKind::Circle);
+        assert!(!veil.ready_to_switch());
+        assert!(veil.advance_out(OUT_SECS));
+        assert!(veil.ready_to_switch());
+        veil.begin_reveal();
+        assert!(veil.advance_in(IN_SECS));
+        assert_eq!(veil.phase, VeilPhase::Idle);
+        // The disc covers the diagonal: even ultrawide corners hide.
+        assert!(CIRCLE_COVER_VMIN >= 300.0);
     }
 
     #[test]

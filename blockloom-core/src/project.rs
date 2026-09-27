@@ -214,6 +214,12 @@ impl Actor {
     pub fn camera(&self) -> Option<&CameraAttach> {
         self.components.camera()
     }
+
+    /// Whether this actor survives `switch scene to`: an opt-in `Persist`
+    /// component, authored or attached mid-run.
+    pub fn persists(&self) -> bool {
+        self.components.persists()
+    }
 }
 
 /// One scene: its own world settings and its own actors. A project holds a
@@ -1896,7 +1902,7 @@ fn moved_path(path: &str, from: &str, to: &str) -> Option<String> {
         .map(|rest| format!("{to}/{rest}"))
 }
 
-fn visual_for_mode(visual: &Visual, mode: Mode) -> Visual {
+pub fn visual_for_mode(visual: &Visual, mode: Mode) -> Visual {
     const PIXELS_PER_METRE: f32 = 100.0;
 
     if visual.is_3d() == mode.is_3d() {
@@ -2420,6 +2426,61 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(project_file(&dir)).unwrap()).unwrap();
         let entry = index.scenes.iter().find(|s| s.id == second).unwrap();
         assert_eq!(entry.path, "assets/scenes/Level 2.blockscene");
+    }
+
+    #[test]
+    fn persist_marks_its_actor_as_a_scene_survivor() {
+        let mut project = Project::starter("Scenes", Mode::TwoD);
+        let id = project.actors[0].id.clone();
+        assert!(!project.actors[0].persists());
+        project.actors[0].components.insert(ActorComponent::Persist);
+        assert!(project.actors[0].persists());
+        // It round-trips through the scene file like any other component.
+        let temp = TempDir::new();
+        let dir = create_project(&project, &temp.0).unwrap();
+        let loaded = read_project_dir(&dir).unwrap();
+        assert!(
+            loaded
+                .scene(&loaded.active_scene)
+                .unwrap()
+                .actor(&id)
+                .unwrap()
+                .persists()
+        );
+        // And detaching drops it again.
+        let mut project = loaded;
+        let scene_id = project.active_scene.clone();
+        project
+            .scene_mut(&scene_id)
+            .unwrap()
+            .actor_mut(&id)
+            .unwrap()
+            .components
+            .remove("Persist");
+        assert!(!project.active_scene().actor(&id).unwrap().persists());
+    }
+
+    #[test]
+    fn visuals_convert_across_dimensions_for_carried_survivors() {
+        use crate::scene::Visual;
+        // 2D square becomes a 3D cuboid; 3D sphere becomes a 2D ball.
+        let square = Visual::Rect {
+            color: "#FFFFFF".to_string(),
+            size: [60.0, 60.0],
+        };
+        let cuboid = visual_for_mode(&square, Mode::ThreeD);
+        assert!(cuboid.is_3d());
+        let ball = Visual::Sphere {
+            color: "#FFFFFF".to_string(),
+            radius: 0.5,
+        };
+        let circle = visual_for_mode(&ball, Mode::TwoD);
+        assert!(!circle.is_3d());
+        // A tilemap renders in both, so it never converts.
+        let map = Visual::Tilemap {
+            tilemap: crate::material::Tilemap::default(),
+        };
+        assert_eq!(visual_for_mode(&map, Mode::ThreeD), map);
     }
 
     #[test]

@@ -6,7 +6,8 @@ import com.blockworked.Blockstitch 1.0
 
 // Everything that belongs to the whole project rather than one actor: its
 // dimension and icon, the world, lighting, post-process, the sound mix and
-// input actions. Each row writes straight through to the backend.
+// input actions. Each row writes straight through to the backend. World rows
+// edit the open scene (see its name below); each scene owns its own World.
 BwDialog {
     id: root
     required property var app
@@ -91,7 +92,7 @@ BwDialog {
                     BwButton { text: "2D"; iconName: "square"; primary: !root.is3d; implicitHeight: 30; onClicked: if (root.is3d) { modeDialog.target = "TwoD"; modeDialog.open(); } }
                     BwButton { text: "3D"; iconName: "box"; primary: root.is3d; implicitHeight: 30; onClicked: if (!root.is3d) { modeDialog.target = "ThreeD"; modeDialog.open(); } }
                     Item { Layout.fillWidth: true } }
-                Note { text: (root.is3d ? "Meshes and 3D physics, measured in metres." : "Sprites and flat physics, measured in pixels.") + " Switching converts the scene and restarts a running game." }
+                Note { text: (root.is3d ? "Meshes and 3D physics, measured in metres." : "Sprites and flat physics, measured in pixels.") + " Switching converts the open scene; a running game swaps live." }
                 InspectorRow { label: "Game icon"; labelWidth: 110; Layout.fillWidth: true
                     Rectangle {
                         implicitWidth: 40; implicitHeight: 40; radius: 6; color: Theme.field; border.color: Theme.border
@@ -111,6 +112,10 @@ BwDialog {
                         onChosen: v => root.invoke("set_default_scene", { sceneId: v })
                     } }
                 Note { text: "Which scene loads when the project boots, and where a built game starts." }
+                InspectorRow { label: "Open scene"; labelWidth: 110; Layout.fillWidth: true
+                    Text { Layout.fillWidth: true; color: Theme.text; font.pixelSize: 12; elide: Text.ElideRight
+                        text: { const s = (root.project && root.project.scenes ? root.project.scenes : []).find(x => x.id === root.project.active_scene); return s ? s.name : ""; } } }
+                Note { text: "World rows below edit this scene; each scene owns its own World. Double-click another scene file in the Assets tray to open it." }
             }
             Section {
                 heading: "World"; visible: !!root.world

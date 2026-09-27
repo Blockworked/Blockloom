@@ -93,7 +93,7 @@ QtObject {
     }
     function attachableOptions() {
         const held = (actor ? actor.components : []).map(componentName);
-        const extra = ["Look","Render","Body","Joint","Brain","Camera","Material","Emitter","Trail","Light","Animation","Volume","Probe"].filter(n => held.indexOf(n) < 0);
+        const extra = ["Look","Render","Body","Joint","Brain","Camera","Material","Emitter","Trail","Light","Animation","Volume","Probe","Persist"].filter(n => held.indexOf(n) < 0);
         return opts(held.filter(n => n !== "Place" && n !== "Script").concat(extra));
     }
     function detachableOptions() { return opts((actor ? actor.components : []).map(componentName).filter(n => n !== "Place")); }
