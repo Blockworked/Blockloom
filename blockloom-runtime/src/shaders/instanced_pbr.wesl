@@ -42,7 +42,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
     var pbr = pbr_input_from_standard_material(local, is_front);
     pbr.material.base_color *= data.tint;
-    apply_decals(&pbr);
+    @if(!PREPASS_PIPELINE) {
+        apply_decals(&pbr);
+    }
     pbr.material.base_color = alpha_discard(pbr.material.flags, pbr.material.alpha_cutoff, pbr.material.base_color);
     @if(PREPASS_PIPELINE) {
         return deferred_output(in, pbr);

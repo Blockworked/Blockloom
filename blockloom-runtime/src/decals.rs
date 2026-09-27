@@ -28,6 +28,7 @@ pub fn register(app: &mut App) {
                 .before(crate::world::rebuild_world),
         );
     if app.world().resource::<Dimension>().0 == Mode::ThreeD {
+        crate::decals_deferred::register(app);
         app.add_systems(Update, draw.after(crate::world::rebuild_world));
     }
 }

@@ -868,8 +868,10 @@ Both run through the VM and compiled logic. Marks are never saved.
 decals. `pbr_patch` appends `shaders/decals.wesl` to Bevy's decal module:
 the tag packs atlas cell and opacity, and the shader fades by surface angle
 and projector depth before blending albedo, normal, roughness and emission.
-Standard, instanced, box-projected and terrain PBR surfaces receive them;
-instanced surfaces also write them into the deferred G-buffer. The pool
+Standard, instanced, box-projected and terrain PBR surfaces receive them.
+`decals_deferred.rs` applies the same shader to the G-buffer between prepass
+and lighting, using a scratch target to avoid reading an attachment being
+written. This also feeds Solari and the traced game lighting. The pool
 touches visible projectors, pauses with the run and clears before rebuilds.
 Profiler counts are `decals/active`, `decals/budget` and `decals/stolen`.
 This path needs native texture binding arrays and reports an error once on

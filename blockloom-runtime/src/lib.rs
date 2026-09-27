@@ -30,6 +30,7 @@ mod cloud_layers;
 mod clouds;
 mod culling;
 mod decals;
+mod decals_deferred;
 mod dim2;
 mod dim3;
 mod display;
