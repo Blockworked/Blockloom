@@ -52,6 +52,10 @@ struct Patch {
 
 const PATCHES: &[Patch] = &[
     Patch {
+        module: "bevy_pbr/decal/clustered.wesl",
+        edit: crate::decals::patch_shader,
+    },
+    Patch {
         module: "bevy_pbr/render/pbr_lighting.wesl",
         edit: patch_lighting,
     },
@@ -165,8 +169,7 @@ pub fn patch_shaders(
                     crate::bridge::send(&RuntimeMessage::Error {
                         actor: "Blockloom".into(),
                         message: format!(
-                            "Couldn't patch {} ({missing}); disk lights, area light shadows \
-                             or the shadow fade fall back to Bevy's own",
+                            "Couldn't patch {} ({missing}); its PBR extensions fall back to Bevy's own shader",
                             patch.module
                         ),
                     });

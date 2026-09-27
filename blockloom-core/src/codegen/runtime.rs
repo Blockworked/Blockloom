@@ -206,6 +206,13 @@ pub enum Act {
     StrikeLightning {
         at: [f32; 3],
     },
+    SpawnDecal {
+        preset: &'static str,
+        values: [f32; 9],
+    },
+    FadeDecals {
+        values: [f32; 5],
+    },
     SetLightningRate {
         rate: f32,
     },
@@ -1110,7 +1117,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 26;
+pub const LOGIC_ABI_VERSION: u32 = 27;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1312,6 +1319,10 @@ pub const ACT_SET_EMITTER_PLAYING: u32 = 101;
 pub const ACT_PAINT_TILE: u32 = 102;
 /// `a` = layer actor, `b` = axis (`Both`, `X`, `Y`); `n0` = scroll factor.
 pub const ACT_SET_PARALLAX: u32 = 103;
+/// `a` = preset; numbers = position, normal, size, lifetime, fade.
+pub const ACT_SPAWN_DECAL: u32 = 104;
+/// Numbers = centre x/y/z, radius, fade seconds. Window-global.
+pub const ACT_FADE_DECALS: u32 = 105;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1800,6 +1811,28 @@ impl Host for AbiHost {
             ),
             Act::SetAurora { kp } => {
                 self.act_wire(actor, ACT_SET_AURORA, "", "", [kp as f64, 0.0, 0.0], &zero)
+            }
+            Act::SpawnDecal { preset, values } => {
+                self.act_many(
+                    actor,
+                    ACT_SPAWN_DECAL,
+                    preset,
+                    "",
+                    "",
+                    &values.map(f64::from),
+                    &zero,
+                );
+            }
+            Act::FadeDecals { values } => {
+                self.act_many(
+                    actor,
+                    ACT_FADE_DECALS,
+                    "",
+                    "",
+                    "",
+                    &values.map(f64::from),
+                    &zero,
+                );
             }
             Act::StrikeLightning { at } => self.act_wire(
                 actor,

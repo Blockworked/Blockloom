@@ -990,6 +990,7 @@ struct FragmentOutput { @location(0) color: vec4<f32> }\n\
 struct StandardMaterial { base_color: vec4<f32>, perceptual_roughness: f32 }\n\
 struct PbrInput { material: StandardMaterial, world_normal: vec3<f32>, N: vec3<f32> }\n\
 fn pbr_input_from_standard_material(in: VertexOutput, is_front: bool) -> PbrInput { var p: PbrInput; p.world_normal = in.world_normal; return p; }\n\
+fn apply_decals(p: ptr<function, PbrInput>) {}\n\
 fn apply_pbr_lighting(p: PbrInput) -> vec4<f32> { return p.material.base_color; }\n\
 fn main_pass_post_lighting_processing(p: PbrInput, c: vec4<f32>) -> vec4<f32> { return c; }\n";
 

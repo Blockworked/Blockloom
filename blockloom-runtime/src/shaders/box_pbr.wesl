@@ -1,3 +1,4 @@
+import bevy_pbr::decal::clustered::apply_decals;
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
@@ -140,6 +141,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         out.color = vec4<f32>(vec3<f32>(0.2) + blend_debug(vec4<f32>(0.0), masked.coverage), 1.0);
         return out;
     }
+    apply_decals(&pbr);
     out.color = main_pass_post_lighting_processing(pbr, apply_pbr_lighting(pbr));
     return out;
 }

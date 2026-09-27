@@ -856,6 +856,26 @@ droplets and trails. Counts reach the profiler as `vfx/*`. The emitter is a modu
 ignored `embed` tests: GPU and CPU particles draw, a GPU spark lands on a
 hidden body, ribbons draw without heads, and the overdraw meter counts.
 
+### Decals
+
+`blockloom-core/src/decals.rs` owns transient marks: a 256-entry LRU pool,
+lifetimes and radius fades, plus four matching atlas pages for blood,
+footprints and fresh scorch. `SpawnDecal` takes a position, outward normal,
+size, lifetime and final fade; `FadeDecals` fades centres within a sphere.
+Both run through the VM and compiled logic. Marks are never saved.
+
+`blockloom-runtime/src/decals.rs` projects the atlas with Bevy's clustered
+decals. `pbr_patch` appends `shaders/decals.wesl` to Bevy's decal module:
+the tag packs atlas cell and opacity, and the shader fades by surface angle
+and projector depth before blending albedo, normal, roughness and emission.
+Standard, instanced, box-projected and terrain PBR surfaces receive them;
+instanced surfaces also write them into the deferred G-buffer. The pool
+touches visible projectors, pauses with the run and clears before rebuilds.
+Profiler counts are `decals/active`, `decals/budget` and `decals/stolen`.
+This path needs native texture binding arrays and reports an error once on
+unsupported renderers, including WebGPU. Unlit graph surfaces and the
+reference path tracer do not receive decals.
+
 ### Lighting rig
 
 `Light` (`LightSpec`) is a point, spot, rect or disk light. Rect and disk are

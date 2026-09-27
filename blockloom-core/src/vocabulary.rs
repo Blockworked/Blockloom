@@ -1249,6 +1249,105 @@ pub const BLOCKS: &[BlockSpec] = &[
         bodies: NO_BODIES,
     },
     BlockSpec {
+        r#type: "SpawnDecal",
+        category: "Looks",
+        purpose: "Projects a transient Blood, Footprint or FreshScorch mark onto nearby 3D surfaces. Position and size are in metres; the normal points out of the receiving surface. Lifetime includes the final fade, in seconds. The oldest mark is reused at the 256-mark cap. Requires native texture binding arrays.",
+        header: false,
+        three_d: true,
+        slots: &[
+            Slot {
+                field: "x",
+                id: "DecalX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "DecalY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "DecalZ",
+                value: "Any",
+            },
+            Slot {
+                field: "nx",
+                id: "DecalNormalX",
+                value: "Any",
+            },
+            Slot {
+                field: "ny",
+                id: "DecalNormalY",
+                value: "Any",
+            },
+            Slot {
+                field: "nz",
+                id: "DecalNormalZ",
+                value: "Any",
+            },
+            Slot {
+                field: "size",
+                id: "DecalSize",
+                value: "Any",
+            },
+            Slot {
+                field: "lifetime",
+                id: "DecalLifetime",
+                value: "Any",
+            },
+            Slot {
+                field: "fade",
+                id: "DecalFade",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "preset",
+            options: &["Blood", "Footprint", "FreshScorch"],
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "FadeDecals",
+        category: "Looks",
+        purpose: "Fades transient decals whose centres lie within the world-space radius. Zero seconds removes them immediately; repeated requests never extend an existing fade.",
+        header: false,
+        three_d: true,
+        slots: &[
+            Slot {
+                field: "x",
+                id: "DecalX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "DecalY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "DecalZ",
+                value: "Any",
+            },
+            Slot {
+                field: "radius",
+                id: "DecalRadius",
+                value: "Any",
+            },
+            Slot {
+                field: "seconds",
+                id: "DecalSeconds",
+                value: "Any",
+            },
+        ],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
         r#type: "StrikeLightning",
         category: "Looks",
         purpose: "Strikes lightning at a point: a flash of light there (3D), a pulse of the sky's light, and thunder that arrives later the further it is from the camera. z is ignored in a 2D project.",

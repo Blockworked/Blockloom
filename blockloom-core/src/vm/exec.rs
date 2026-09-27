@@ -1412,6 +1412,27 @@ impl Vm {
                 let kp = self.eval_f32(kp, actor, params, temps, out);
                 out.push(Effect::SetAurora { kp });
             }
+            Action::SpawnDecal { preset, values } => {
+                let [x, y, z, nx, ny, nz, size, lifetime, fade] =
+                    std::array::from_fn(|i| self.eval_f32(&values[i], actor, params, temps, out));
+                out.push(Effect::SpawnDecal(crate::decals::Spawn {
+                    preset: *preset,
+                    at: [x, y, z],
+                    normal: [nx, ny, nz],
+                    size,
+                    lifetime,
+                    fade,
+                }));
+            }
+            Action::FadeDecals(values) => {
+                let [x, y, z, radius, seconds] =
+                    std::array::from_fn(|i| self.eval_f32(&values[i], actor, params, temps, out));
+                out.push(Effect::FadeDecals {
+                    at: [x, y, z],
+                    radius,
+                    seconds,
+                });
+            }
             Action::StrikeLightning(vector) => {
                 let at = self.eval_vec3(vector, actor, params, temps, out);
                 out.push(Effect::StrikeLightning { at });

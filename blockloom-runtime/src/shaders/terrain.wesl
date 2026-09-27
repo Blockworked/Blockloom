@@ -2,6 +2,7 @@
 // triplanar-projected from a texture array, then the same macro, detail and
 // mask passes as any projected surface.
 
+import bevy_pbr::decal::clustered::apply_decals;
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
@@ -133,6 +134,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         out.color = vec4<f32>(blend_debug(weights, masked.coverage), 1.0);
         return out;
     }
+    apply_decals(&pbr);
     out.color = main_pass_post_lighting_processing(pbr, apply_pbr_lighting(pbr));
     return out;
 }

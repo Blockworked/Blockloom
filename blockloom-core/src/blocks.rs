@@ -355,6 +355,27 @@ pub enum InstructionKind {
     SetAurora {
         kp: Value,
     },
+    /// A temporary 3D surface mark, with its outward normal and lifetime.
+    SpawnDecal {
+        preset: crate::decals::DecalPreset,
+        x: Value,
+        y: Value,
+        z: Value,
+        nx: Value,
+        ny: Value,
+        nz: Value,
+        size: Value,
+        lifetime: Value,
+        fade: Value,
+    },
+    /// Fade marks whose centres lie inside a world-space sphere.
+    FadeDecals {
+        x: Value,
+        y: Value,
+        z: Value,
+        radius: Value,
+        seconds: Value,
+    },
     /// A lightning strike landing at a point: a flash, a pulse of the sky
     /// and thunder late by the distance.
     StrikeLightning {
@@ -998,6 +1019,33 @@ impl BlockKind for InstructionKind {
                 f(x, InputValueType::Any);
                 f(y, InputValueType::Any);
                 f(z, InputValueType::Any);
+            }
+            K::SpawnDecal {
+                x,
+                y,
+                z,
+                nx,
+                ny,
+                nz,
+                size,
+                lifetime,
+                fade,
+                ..
+            } => {
+                for v in [x, y, z, nx, ny, nz, size, lifetime, fade] {
+                    f(v, InputValueType::Any);
+                }
+            }
+            K::FadeDecals {
+                x,
+                y,
+                z,
+                radius,
+                seconds,
+            } => {
+                for v in [x, y, z, radius, seconds] {
+                    f(v, InputValueType::Any);
+                }
             }
             K::NavigateTo { x, y, z, speed } => {
                 f(x, InputValueType::Any);

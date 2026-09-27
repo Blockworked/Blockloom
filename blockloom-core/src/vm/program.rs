@@ -174,6 +174,11 @@ pub enum Action {
     SetFogDensity(Value),
     SetAurora(Value),
     StrikeLightning([Value; 3]),
+    SpawnDecal {
+        preset: crate::decals::DecalPreset,
+        values: [Value; 9],
+    },
+    FadeDecals([Value; 5]),
     SetLightningRate(Value),
     SetWind {
         property: crate::wind::WindProperty,
@@ -699,6 +704,8 @@ fn action_values(action: &Action) -> Vec<&Value> {
         | Action::SetGravity(target)
         | Action::StrikeLightning(target)
         | Action::SetCloudDrift(target) => target.iter().collect(),
+        Action::SpawnDecal { values, .. } => values.iter().collect(),
+        Action::FadeDecals(values) => values.iter().collect(),
         Action::NavigateTo { target, speed } => {
             let mut values: Vec<&Value> = target.iter().collect();
             values.push(speed);
@@ -955,6 +962,11 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         Action::SetFogDensity(v) => Action::SetFogDensity(lift_one(v, ctx)),
         Action::SetAurora(v) => Action::SetAurora(lift_one(v, ctx)),
         Action::SetLightningRate(v) => Action::SetLightningRate(lift_one(v, ctx)),
+        Action::SpawnDecal { preset, values } => Action::SpawnDecal {
+            preset,
+            values: values.map(|v| lift_one(v, ctx)),
+        },
+        Action::FadeDecals(values) => Action::FadeDecals(values.map(|v| lift_one(v, ctx))),
         Action::StrikeLightning(mut t) => {
             for v in &mut t {
                 *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
@@ -1559,6 +1571,30 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             steps.push(Step::Action(Action::SetFogDensity(density.clone())))
         }
         K::SetAurora { kp } => steps.push(Step::Action(Action::SetAurora(kp.clone()))),
+        K::SpawnDecal {
+            preset,
+            x,
+            y,
+            z,
+            nx,
+            ny,
+            nz,
+            size,
+            lifetime,
+            fade,
+        } => steps.push(Step::Action(Action::SpawnDecal {
+            preset: *preset,
+            values: [x, y, z, nx, ny, nz, size, lifetime, fade].map(|v| v.clone()),
+        })),
+        K::FadeDecals {
+            x,
+            y,
+            z,
+            radius,
+            seconds,
+        } => steps.push(Step::Action(Action::FadeDecals(
+            [x, y, z, radius, seconds].map(|v| v.clone()),
+        ))),
         K::StrikeLightning { x, y, z } => steps.push(Step::Action(Action::StrikeLightning([
             x.clone(),
             y.clone(),

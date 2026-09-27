@@ -41,6 +41,7 @@ pub mod blocks;
 pub mod build;
 pub mod codegen;
 pub mod components;
+pub mod decals;
 mod distribution;
 pub mod fields;
 pub mod fog;

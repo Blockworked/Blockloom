@@ -3296,7 +3296,10 @@ pub fn report_status(
     gpu: crate::gpu::GpuReport,
     volumes: Option<Res<crate::volumes::VolumeBlend>>,
     terrain: Option<Res<crate::terrain::TerrainStats>>,
-    vfx: Option<Res<crate::vfx::VfxStats>>,
+    (vfx, decals): (
+        Option<Res<crate::vfx::VfxStats>>,
+        Option<Res<crate::decals::Decals>>,
+    ),
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
     let now = time.elapsed_secs() as f64;
@@ -3396,6 +3399,19 @@ pub fn report_status(
             render_metrics.push(RenderMetric {
                 name: name.into(),
                 value: value as f64,
+                unit: "count".into(),
+            });
+        }
+    }
+    if let Some(decals) = decals {
+        for (name, value) in [
+            ("decals/active", decals.pool.marks.len() as f64),
+            ("decals/budget", blockloom_core::decals::CAPACITY as f64),
+            ("decals/stolen", decals.pool.stolen as f64),
+        ] {
+            render_metrics.push(RenderMetric {
+                name: name.into(),
+                value,
                 unit: "count".into(),
             });
         }
@@ -3761,6 +3777,8 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetFogDensity { .. }
         | Effect::SetAurora { .. }
         | Effect::StrikeLightning { .. }
+        | Effect::SpawnDecal(_)
+        | Effect::FadeDecals { .. }
         | Effect::SetLightningRate { .. }
         | Effect::SetWind { .. }
         | Effect::SetCloudDrift { .. }

@@ -9,8 +9,8 @@ use blockloom_core::codegen::{
     ACT_BROADCAST, ACT_BURST_PARTICLES, ACT_CAPTURE_PROBES, ACT_CHANGE_POSITION,
     ACT_CLEAR_ACTION_BINDINGS, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR,
     ACT_DELETE_ELEMENT, ACT_DETACH, ACT_DICT_CLEAR, ACT_DICT_DELETE_KEY, ACT_DICT_SET,
-    ACT_ENABLE_VOLUME, ACT_ERROR, ACT_FIRE_ANIMATION_TRIGGER, ACT_GLIDE, ACT_GO_TO,
-    ACT_HIDE_ELEMENT, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD, ACT_LIST_CLEAR,
+    ACT_ENABLE_VOLUME, ACT_ERROR, ACT_FADE_DECALS, ACT_FIRE_ANIMATION_TRIGGER, ACT_GLIDE,
+    ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD, ACT_LIST_CLEAR,
     ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE, ACT_LIST_SHIFT, ACT_MOVE,
     ACT_NAVIGATE_TO, ACT_PAINT_TILE, ACT_PLAY_ANIMATION, ACT_PLAY_SOUND, ACT_POINT_TOWARDS,
     ACT_RUMBLE_GAMEPAD, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_ANIMATION_SPEED, ACT_SET_AURORA,
@@ -25,10 +25,11 @@ use blockloom_core::codegen::{
     ACT_SET_RIG_SLOT, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SHADOW_DISTANCE, ACT_SET_SLOT_TINT,
     ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_SPRITE_DIAL, ACT_SET_TRAIL_ENABLED,
     ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE,
-    ACT_SET_VOLUME_WEIGHT, ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT, ACT_STOP_ANIMATION,
-    ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_TURN, ACT_TWEEN_COLOR,
-    ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, LOGIC_ABI_VERSION, LogicHostApi,
-    READ_SENSE, READ_VARIABLE, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
+    ACT_SET_VOLUME_WEIGHT, ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT, ACT_SPAWN_DECAL,
+    ACT_STOP_ANIMATION, ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_TURN,
+    ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, LOGIC_ABI_VERSION,
+    LogicHostApi, READ_SENSE, READ_VARIABLE, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER,
+    VALUE_TEXT,
 };
 // Symbol names for the native `dlopen` path; web builds link statically later.
 #[cfg(not(target_arch = "wasm32"))]
@@ -609,6 +610,24 @@ extern "C" fn act(
         ACT_SET_FOG_DENSITY => Effect::SetFogDensity { density: n0 as f32 },
         ACT_SET_AURORA => Effect::SetAurora { kp: n0 as f32 },
         ACT_STRIKE_LIGHTNING => Effect::StrikeLightning { at: vector },
+        ACT_SPAWN_DECAL => {
+            let Some(preset) = blockloom_core::decals::DecalPreset::parse(a) else {
+                return;
+            };
+            Effect::SpawnDecal(blockloom_core::decals::Spawn {
+                preset,
+                at: vector,
+                normal: [at(3) as f32, at(4) as f32, at(5) as f32],
+                size: at(6) as f32,
+                lifetime: at(7) as f32,
+                fade: at(8) as f32,
+            })
+        }
+        ACT_FADE_DECALS => Effect::FadeDecals {
+            at: vector,
+            radius: at(3) as f32,
+            seconds: at(4) as f32,
+        },
         ACT_SET_LIGHTNING_RATE => Effect::SetLightningRate { rate: n0 as f32 },
         ACT_SET_WIND => match blockloom_core::wind::WindProperty::parse(a) {
             Some(property) => Effect::SetWind {
@@ -1067,6 +1086,25 @@ mod tests {
                         name: "distance".to_string(),
                     },
                 }),
+                Instruction::new(K::SpawnDecal {
+                    preset: blockloom_core::decals::DecalPreset::Footprint,
+                    x: Value::number(1.0),
+                    y: Value::number(2.0),
+                    z: Value::number(3.0),
+                    nx: Value::number(0.0),
+                    ny: Value::number(1.0),
+                    nz: Value::number(0.0),
+                    size: Value::number(0.5),
+                    lifetime: Value::number(12.0),
+                    fade: Value::number(2.0),
+                }),
+                Instruction::new(K::FadeDecals {
+                    x: Value::number(1.0),
+                    y: Value::number(2.0),
+                    z: Value::number(3.0),
+                    radius: Value::number(5.0),
+                    seconds: Value::number(1.0),
+                }),
             ],
         ));
         project.actors.push(actor);
@@ -1094,10 +1132,25 @@ mod tests {
 
         assert_eq!(
             effects,
-            vec![Effect::Move {
-                actor: "a1".to_string(),
-                steps: 9.0,
-            }]
+            vec![
+                Effect::Move {
+                    actor: "a1".to_string(),
+                    steps: 9.0,
+                },
+                Effect::SpawnDecal(blockloom_core::decals::Spawn {
+                    preset: blockloom_core::decals::DecalPreset::Footprint,
+                    at: [1.0, 2.0, 3.0],
+                    normal: [0.0, 1.0, 0.0],
+                    size: 0.5,
+                    lifetime: 12.0,
+                    fade: 2.0,
+                }),
+                Effect::FadeDecals {
+                    at: [1.0, 2.0, 3.0],
+                    radius: 5.0,
+                    seconds: 1.0
+                }
+            ]
         );
         assert_eq!(variables.read("a1", "distance"), Evaluated::Number(9.0));
         drop(logic);

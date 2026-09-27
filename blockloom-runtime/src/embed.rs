@@ -3461,6 +3461,84 @@ mod tests {
         );
     }
 
+    #[test]
+    #[ignore = "needs a GPU with texture binding arrays"]
+    fn decals_project_reject_and_fade_on_instanced_surfaces() {
+        use blockloom_core::blocks::{Instruction, InstructionKind as K, Strand};
+        use blockloom_core::decals::DecalPreset;
+        use blockloom_core::value::Value;
+        let run_mark = |normal_y: f64, height: f64, remove: bool, traced: bool| {
+            let mut room = dark_room(true);
+            room.world.lighting.ray_tracing.enabled = traced;
+            let mut blocks = vec![
+                Instruction::new(K::WhenStarted),
+                Instruction::new(K::SpawnDecal {
+                    preset: DecalPreset::Blood,
+                    x: Value::number(0.0),
+                    y: Value::number(height),
+                    z: Value::number(0.0),
+                    nx: Value::number(0.0),
+                    ny: Value::number(normal_y),
+                    nz: Value::number(0.0),
+                    size: Value::number(12.0),
+                    lifetime: Value::number(60.0),
+                    fade: Value::number(2.0),
+                }),
+            ];
+            if remove {
+                blocks.push(Instruction::new(K::FadeDecals {
+                    x: Value::number(0.0),
+                    y: Value::number(0.0),
+                    z: Value::number(0.0),
+                    radius: Value::number(20.0),
+                    seconds: Value::number(0.0),
+                }));
+            }
+            room.actors[0]
+                .graph
+                .strands
+                .push(Strand::with_instructions(0, 0, blocks));
+            let result = run_world_sending(
+                room,
+                |_| {},
+                game_camera(),
+                90,
+                |_| false,
+                vec![EditorMessage::Start],
+            );
+            if let (Some(set), index, _) = &result {
+                dump(
+                    &format!("decal-{normal_y}-{height}-{remove}-{traced}"),
+                    &frame_pixels(&set.images[*index], SIZE.x as usize, SIZE.y as usize),
+                );
+            }
+            floor_pixel(result)
+        };
+        let marked = run_mark(1.0, 0.0, false, false);
+        let backwards = run_mark(-1.0, 0.0, false, false);
+        let detached = run_mark(1.0, 0.5, false, false);
+        let removed = run_mark(1.0, 0.0, true, false);
+        assert!(
+            marked[0] > marked[1] + 25,
+            "blood should tint red: {marked:?}"
+        );
+        for bare in [backwards, detached, removed] {
+            assert!(
+                bare[1] > marked[1] + 25,
+                "expected an unmarked floor: {bare:?}, marked {marked:?}"
+            );
+        }
+        #[cfg(feature = "ray_tracing")]
+        {
+            let marked = run_mark(1.0, 0.0, false, true);
+            let bare = run_mark(1.0, 0.0, true, true);
+            assert!(
+                marked[0] > marked[1] + 15 && bare[1] > marked[1] + 15,
+                "deferred decals should tint the lit G-buffer: marked {marked:?}, bare {bare:?}"
+            );
+        }
+    }
+
     /// The 3D starter's floor with no sun and no ambient light, plus a small
     /// still lamp above the middle of it, which batching merges.
     fn dark_room(lamp: bool) -> blockloom_core::project::Project {

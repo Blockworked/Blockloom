@@ -311,6 +311,8 @@ impl Host for Recorder {
             | Act::SetFogDensity { .. }
             | Act::SetAurora { .. }
             | Act::StrikeLightning { .. }
+            | Act::SpawnDecal { .. }
+            | Act::FadeDecals { .. }
             | Act::SetLightningRate { .. }
             | Act::SetWind { .. }
             | Act::SetCloudDrift { .. }
@@ -1013,6 +1015,8 @@ fn line_of(act: &Act) -> String {
         Act::SetFogDensity { density } => format!("SetFogDensity {density:?}"),
         Act::SetAurora { kp } => format!("SetAurora {kp:?}"),
         Act::StrikeLightning { at } => format!("StrikeLightning {at:?}"),
+        Act::SpawnDecal { preset, values } => format!("SpawnDecal {preset} {values:?}"),
+        Act::FadeDecals { values } => format!("FadeDecals {values:?}"),
         Act::SetLightningRate { rate } => format!("SetLightningRate {rate:?}"),
         Act::SetWind { property, value } => format!("SetWind {property} {value:?}"),
         Act::SetCloudDrift { drift } => format!("SetCloudDrift {drift:?}"),
@@ -1276,6 +1280,26 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetFogDensity { density } => format!("|SetFogDensity {density:?}"),
         Effect::SetAurora { kp } => format!("|SetAurora {kp:?}"),
         Effect::StrikeLightning { at } => format!("|StrikeLightning {at:?}"),
+        Effect::SpawnDecal(s) => format!(
+            "|SpawnDecal {:?} {:?}",
+            s.preset,
+            [
+                s.at[0],
+                s.at[1],
+                s.at[2],
+                s.normal[0],
+                s.normal[1],
+                s.normal[2],
+                s.size,
+                s.lifetime,
+                s.fade
+            ]
+        ),
+        Effect::FadeDecals {
+            at,
+            radius,
+            seconds,
+        } => format!("|FadeDecals {:?}", [at[0], at[1], at[2], *radius, *seconds]),
         Effect::SetLightningRate { rate } => format!("|SetLightningRate {rate:?}"),
         Effect::SetWind { property, value } => {
             format!("|SetWind {} {value:?}", property.name())
@@ -1882,6 +1906,25 @@ fn arithmetic_lands_on_the_same_numbers() {
                 x: number(12.0),
                 y: op("Sub", vec![number(0.0), number(1.0)]),
                 z: op("Mul", vec![number(-4.0), number(2.5)]),
+            },
+            K::SpawnDecal {
+                preset: blockloom_core::decals::DecalPreset::FreshScorch,
+                x: number(1.0),
+                y: number(2.0),
+                z: op("Mul", vec![number(-4.0), number(2.5)]),
+                nx: number(0.0),
+                ny: number(1.0),
+                nz: number(0.0),
+                size: op("Add", vec![number(1.0), number(0.5)]),
+                lifetime: number(12.0),
+                fade: number(3.0),
+            },
+            K::FadeDecals {
+                x: number(1.0),
+                y: number(2.0),
+                z: number(-10.0),
+                radius: number(5.0),
+                seconds: Value::text("now"),
             },
             K::SetLightningRate {
                 rate: op("Mul", vec![number(3.0), number(4.0)]),

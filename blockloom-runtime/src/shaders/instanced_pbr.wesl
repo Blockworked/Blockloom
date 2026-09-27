@@ -1,3 +1,4 @@
+import bevy_pbr::decal::clustered::apply_decals;
 import bevy_pbr::render::{
     mesh_functions::get_tag,
     pbr_fragment::pbr_input_from_standard_material,
@@ -41,6 +42,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
     var pbr = pbr_input_from_standard_material(local, is_front);
     pbr.material.base_color *= data.tint;
+    apply_decals(&pbr);
     pbr.material.base_color = alpha_discard(pbr.material.flags, pbr.material.alpha_cutoff, pbr.material.base_color);
     @if(PREPASS_PIPELINE) {
         return deferred_output(in, pbr);
