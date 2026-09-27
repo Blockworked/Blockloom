@@ -382,6 +382,7 @@ pub fn build(
     let atlas = bake_sprite_atlas(project, project_dir, &game)?;
     let sky = bake_sky(project, project_dir, &game)?;
     copy_probes(project, project_dir, &game)?;
+    copy_terrain(project, project_dir, &game)?;
     let scripts = copy_scripts(project, project_dir, &game, target)?;
     let compiled = if fast {
         copy_logic(project_dir, &game, target)?;
@@ -443,6 +444,7 @@ fn build_web(
     let atlas = bake_sprite_atlas(project, project_dir, &game)?;
     let sky = bake_sky(project, project_dir, &game)?;
     copy_probes(project, project_dir, &game)?;
+    copy_terrain(project, project_dir, &game)?;
     let scripts = copy_scripts(project, project_dir, &game, target)?;
 
     let mut paths = Vec::new();
@@ -838,6 +840,49 @@ fn copy_probes(project: &Project, project_dir: &Path, game: &Path) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// Copies the terrain grids the document names, so a built game stands on
+/// the same ground the editor sculpted. Without them the runtime loads
+/// nothing and falls back to flat.
+fn copy_terrain(project: &Project, project_dir: &Path, game: &Path) -> Result<usize, String> {
+    use crate::terrain::store;
+    use std::collections::HashSet;
+    let names = store::project_names(project);
+    if names.is_empty() {
+        return Ok(0);
+    }
+    let from = store::dir(project_dir);
+    if !from.is_dir() {
+        return Ok(0);
+    }
+    let to = store::dir(game);
+    let mut copied: HashSet<String> = HashSet::new();
+    let mut count = 0;
+    for name in &names {
+        let Ok(manifest) = store::read_manifest(project_dir, name) else {
+            continue;
+        };
+        let files = [format!("{name}.json")]
+            .into_iter()
+            .chain(manifest.tiles.iter().map(|tile| format!("{tile}.tile")));
+        for file in files {
+            if !copied.insert(file.clone()) {
+                continue;
+            }
+            let src = from.join(&file);
+            if !src.is_file() {
+                continue;
+            }
+            if count == 0 {
+                std::fs::create_dir_all(&to).map_err(|e| format!("{}: {e}", to.display()))?;
+            }
+            std::fs::copy(&src, to.join(&file))
+                .map_err(|e| format!("{} -> {}: {e}", src.display(), to.join(&file).display()))?;
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 /// Copies each scripted actor's library for this platform to where the
@@ -1266,6 +1311,45 @@ mod tests {
         assert!(
             codegen::library_path(&pack::game_dir(&built.dir)).is_file(),
             "the player must find native logic in its normal build folder"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_build_carries_the_terrain_it_stands_on() {
+        use crate::terrain::{Heightfield, store};
+        let root = temp("terrain");
+        let (mut project, project_dir, player) = a_project(&root);
+        let mut field = Heightfield::flat(129, 0.0);
+        field.samples[64 * 129 + 64] = 1.0;
+        let grid = store::Grid::from_heights(&field);
+        let name = store::save(&project_dir, &grid).unwrap();
+        let mut spec = crate::terrain::TerrainSpec::default();
+        spec.resolution = 129;
+        spec.heights = name.clone();
+        project.actors[0]
+            .components
+            .insert(crate::components::ActorComponent::Terrain { terrain: spec });
+
+        let built = build(
+            &project,
+            &project_dir,
+            a_target(),
+            &player,
+            &root.join("out"),
+            BuildOptions::default(),
+        )
+        .unwrap();
+
+        let game = pack::game_dir(&built.dir);
+        assert!(
+            store::dir(&game).join(format!("{name}.json")).is_file(),
+            "the built game must ship the heights manifest"
+        );
+        let back = store::heights_for(Some(&game), project.actors[0].components.terrain().unwrap());
+        assert!(
+            back.samples.iter().any(|s| *s > 0.5),
+            "the shipped heights must still hold the sculpted hill"
         );
         let _ = std::fs::remove_dir_all(root);
     }

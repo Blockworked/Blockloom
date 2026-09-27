@@ -366,6 +366,38 @@ extern "C" fn read(
                     needed,
                 );
             }
+            // `random` and `current time` are core operators, not extension
+            // ones, but the emitter routes them through the host like any
+            // other sensing reporter so one run has one source of each.
+            // Without them every `rnd` pitch in a built game reads as
+            // missing (silently zero) and clamps to 0.125, three octaves
+            // down, while fixed-pitch music plays on untouched.
+            if name == "Random" {
+                let values: Vec<Evaluated> = args.iter().map(value_from_abi).collect();
+                let get = |i: usize| {
+                    values
+                        .get(i)
+                        .cloned()
+                        .unwrap_or(Evaluated::Number(0.0))
+                        .as_number()
+                };
+                let answer = match (get(0), get(1)) {
+                    (Ok(l), Ok(r)) => {
+                        Value::op(Op::Random, vec![Value::number(l), Value::number(r)]).eval()
+                    }
+                    (Err(message), _) | (_, Err(message)) => Err(message),
+                };
+                return write_answer(answer, out, text, capacity, needed);
+            }
+            if name == "CurrentTime" {
+                let values: Vec<Evaluated> = args.iter().map(value_from_abi).collect();
+                let arg = values
+                    .first()
+                    .cloned()
+                    .unwrap_or(Evaluated::Text(String::new()));
+                let answer = Value::op(Op::CurrentTime, vec![arg.into_value()]).eval();
+                return write_answer(answer, out, text, capacity, needed);
+            }
             let Some(operator) = ext_operator(name) else {
                 return ABI_MISSING;
             };

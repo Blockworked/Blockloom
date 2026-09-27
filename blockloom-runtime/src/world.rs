@@ -2503,37 +2503,43 @@ pub fn apply_component_effects(
                 }
             }
             Effect::SetCameraView { actor, view } => {
-                let Some(entity) = engine.entities.get(actor).copied() else {
+                // A settings menu drives the camera from an actor that does
+                // not hold it, so fall back to whoever does.
+                if let Some(entity) = engine.entities.get(actor).copied()
+                    && let Ok(mut rig) = rigs.get_mut(entity)
+                {
+                    rig.0.view = *view;
                     continue;
-                };
-                // Only an actor holding the camera has a view to change.
-                let Some(mut rig) = camera_of(&engine, actor) else {
-                    continue;
-                };
-                rig.view = *view;
-                commands.entity(entity).insert(CameraRig(rig));
+                }
+                if let Some(mut rig) = rigs.iter_mut().next() {
+                    rig.0.view = *view;
+                }
             }
             Effect::SetCameraPitch { actor, degrees } => {
-                let Some(entity) = engine.entities.get(actor).copied() else {
+                if let Some(entity) = engine.entities.get(actor).copied()
+                    && let Ok(mut rig) = rigs.get_mut(entity)
+                {
+                    // Just short of vertical either way: at the pole the view
+                    // flips over instead of stopping.
+                    rig.0.pitch = degrees.clamp(-89.0, 89.0);
                     continue;
-                };
+                }
                 // The live rig, not the authored one, so a pitch a view
                 // change just reset can be set again straight after.
-                let Ok(mut rig) = rigs.get_mut(entity) else {
-                    continue;
-                };
-                // Just short of vertical either way: at the pole the view
-                // flips over instead of stopping.
-                rig.0.pitch = degrees.clamp(-89.0, 89.0);
+                if let Some(mut rig) = rigs.iter_mut().next() {
+                    rig.0.pitch = degrees.clamp(-89.0, 89.0);
+                }
             }
             Effect::SetCameraFov { actor, fov } => {
-                let Some(entity) = engine.entities.get(actor).copied() else {
+                if let Some(entity) = engine.entities.get(actor).copied()
+                    && let Ok(mut rig) = rigs.get_mut(entity)
+                {
+                    rig.0.fov = fov.clamp(30.0, 110.0);
                     continue;
-                };
-                let Ok(mut rig) = rigs.get_mut(entity) else {
-                    continue;
-                };
-                rig.0.fov = fov.clamp(30.0, 110.0);
+                }
+                if let Some(mut rig) = rigs.iter_mut().next() {
+                    rig.0.fov = fov.clamp(30.0, 110.0);
+                }
             }
             _ => {}
         }
@@ -4284,6 +4290,63 @@ mod tests {
             !app.world()
                 .non_send::<Engine>()
                 .has_component("player", "Body")
+        );
+    }
+
+    #[test]
+    fn a_camera_tweak_from_an_actor_without_one_drives_the_holder() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::ThreeD);
+        engine.running = true;
+        engine.paused = true;
+        engine.vm.set_paused(true);
+
+        let mut app = App::new();
+        app.insert_resource(PendingEffects(vec![
+            Effect::SetCameraFov {
+                actor: "director".to_string(),
+                fov: 95.0,
+            },
+            Effect::SetCameraPitch {
+                actor: "director".to_string(),
+                degrees: 20.0,
+            },
+            Effect::SetCameraView {
+                actor: "director".to_string(),
+                view: blockloom_core::components::CameraView::FirstPerson,
+            },
+        ]));
+        app.insert_non_send(engine);
+        let player = app
+            .world_mut()
+            .spawn((
+                ActorId("player".to_string()),
+                CameraRig(blockloom_core::components::CameraAttach {
+                    fov: 80.0,
+                    pitch: 0.0,
+                    view: blockloom_core::components::CameraView::ThirdPerson,
+                    ..Default::default()
+                }),
+            ))
+            .id();
+        let director = app
+            .world_mut()
+            .spawn((ActorId("director".to_string()),))
+            .id();
+        {
+            let mut engine = app.world_mut().non_send_mut::<Engine>();
+            engine.entities.insert("player".to_string(), player);
+            engine.entities.insert("director".to_string(), director);
+        }
+        app.add_systems(Update, apply_component_effects);
+        app.update();
+
+        let rig = app.world().entity(player).get::<CameraRig>().unwrap();
+        assert_eq!(rig.0.fov, 95.0);
+        assert_eq!(rig.0.pitch, 20.0);
+        assert_eq!(
+            rig.0.view,
+            blockloom_core::components::CameraView::FirstPerson
         );
     }
 

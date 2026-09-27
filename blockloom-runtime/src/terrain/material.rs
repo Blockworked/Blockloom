@@ -247,7 +247,8 @@ pub fn grid_image(side: u32, data: Vec<u8>) -> Image {
 fn layer_array(size: u32, layers: &[Vec<u8>; MAX_LAYERS], srgb: bool) -> Image {
     let mips = size.max(1).ilog2() + 1;
     let data: Vec<u8> = layers.iter().flatten().copied().collect();
-    let has_mips = data.len() > (size * size * 4) as usize;
+    // Every layer carries the same chain, so one layer's length says whether it has mips.
+    let has_mips = layers[0].len() > (size * size * 4) as usize;
     let mut image = Image::new_uninit(
         Extent3d {
             width: size,
@@ -427,4 +428,20 @@ pub fn grass_material(
             globals,
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Mip count has to match the bytes, or wgpu reads past the end on upload.
+    #[test]
+    fn a_layer_array_counts_mips_from_one_layer() {
+        let plain = layer_array(4, &std::array::from_fn(|_| vec![0; 64]), false);
+        assert_eq!(plain.texture_descriptor.mip_level_count, 1);
+        let chained: [Vec<u8>; MAX_LAYERS] =
+            std::array::from_fn(|_| layer_mips(None, 4, [1, 2, 3, 4]));
+        let mipped = layer_array(4, &chained, false);
+        assert_eq!(mipped.texture_descriptor.mip_level_count, 3);
+    }
 }

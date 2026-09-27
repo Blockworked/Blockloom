@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import com.blockworked.Blockstitch 1.0
 
 // World-space texturing rows for a Material or a Terrain: texture bombing,
 // macro variation, a detail normal map and the slope/height/cavity/snow/wetness
