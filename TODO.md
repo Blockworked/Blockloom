@@ -92,6 +92,25 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         other reporters so VM and codegen agree.
   Implementation and usage: [Interface guide](docs/interface.md).
 - [ ] Save slots/profiles plus localization: builds on save system we have.
+- [ ] Multiple scenes plus loading between scenes (menu, level 1, level 2):
+  - [ ] Document: `Project` holds a scene list (each with its own actors and
+        `World` settings); one active scene; old single-scene docs migrate as
+        scene one; scene add/rename/duplicate/delete with undo.
+  - [ ] Mode: v1 supports mixed 2D/3D scenes; `Mode` lives per scene and a
+        scene switch across dimensions rebuilds the dim2/dim3 pipeline plus
+        rapier backend the way a project dimension switch does today.
+  - [ ] Blocks and scripts: `switch scene to _` (plus `with transition _`),
+        reporters `current scene`, `scene names`, events `when scene
+        starts/ends`; globals plus save data cross scenes, actor locals do
+        not; opt-in survivors later; fixed-tick sampling so VM and codegen
+        agree, with parity cases in `tests/codegen.rs`.
+  - [ ] Runtime: unload the current world, load the scene doc the way
+        `EditorMessage::Load` does now, rebuild and warm up before the green
+        flag continues; transitions run on the wall clock like UI strands;
+        rooms stay intra-scene camera zones, not scenes.
+  - [ ] Editor and tooling: scene picker plus per-scene actor list/canvas and
+        World settings; project folder, pack, build and web carry all scenes;
+        shell/MCP commands (`add-scene`, `switch-scene`, ...).
 
 ### Phase 3 - Dev productivity, before API surface explodes
 - [x] Script toolchain: ship rustc or graceful degrade plus highlight plus inline errors plus rust-analyzer Cargo project.
