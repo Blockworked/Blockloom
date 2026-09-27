@@ -357,11 +357,12 @@ pub fn names(spec: &super::TerrainSpec) -> impl Iterator<Item = &str> {
     .filter(|name| !name.is_empty())
 }
 
-/// The store names every terrain in a project points at.
+/// The store names every terrain in a project points at, across all scenes.
 pub fn project_names(project: &crate::project::Project) -> HashSet<String> {
     project
-        .actors
+        .scenes
         .iter()
+        .flat_map(|scene| scene.actors.iter())
         .filter_map(|actor| actor.components.terrain())
         .flat_map(|spec| names(spec).map(str::to_string).collect::<Vec<_>>())
         .collect()

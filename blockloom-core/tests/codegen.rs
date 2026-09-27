@@ -1554,15 +1554,21 @@ fn project_with_headers(
         });
     }
 
-    Project {
-        id: "p".to_string(),
-        name: "differential".to_string(),
-        icon: String::new(),
+    let scene = blockloom_core::project::Scene {
+        id: "s1".to_string(),
+        name: "Scene 1".to_string(),
         world: blockloom_core::scene::World {
             mode: Mode::TwoD,
             ..Default::default()
         },
         actors: vec![actor],
+    };
+    Project {
+        id: "p".to_string(),
+        name: "differential".to_string(),
+        icon: String::new(),
+        scenes: vec![scene],
+        active_scene: "s1".to_string(),
         globals: globals
             .iter()
             .map(|(name, value)| VariableDef {

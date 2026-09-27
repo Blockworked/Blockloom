@@ -249,10 +249,79 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "set-mode",
         cmd: "set_mode",
         aliases: &["set_mode"],
-        summary: "Switch the project between 2D and 3D.",
+        summary: "Switch the active scene between 2D and 3D.",
         args: &[ArgSpec {
             name: "mode",
             ty: "TwoD|ThreeD",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "add-scene",
+        cmd: "add_scene",
+        aliases: &["add_scene"],
+        summary: "Add an empty scene (active scene's dimension unless mode is given) and make it active.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "mode",
+                ty: "TwoD|ThreeD",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "duplicate-scene",
+        cmd: "duplicate_scene",
+        aliases: &["duplicate_scene"],
+        summary: "Copy a scene with fresh ids and make the copy active.",
+        args: &[ArgSpec {
+            name: "sceneId",
+            ty: "id",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "rename-scene",
+        cmd: "rename_scene",
+        aliases: &["rename_scene"],
+        summary: "Rename a scene, keeping names unique.",
+        args: &[
+            ArgSpec {
+                name: "sceneId",
+                ty: "id",
+                required: true,
+            },
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-scene",
+        cmd: "remove_scene",
+        aliases: &["remove_scene"],
+        summary: "Delete a scene. The last one stays.",
+        args: &[ArgSpec {
+            name: "sceneId",
+            ty: "id",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-active-scene",
+        cmd: "set_active_scene",
+        aliases: &["set_active_scene", "switch-scene"],
+        summary: "Make a scene the edited one. A switch across dimensions rebuilds the runtime like set-mode.",
+        args: &[ArgSpec {
+            name: "sceneId",
+            ty: "id",
             required: true,
         }],
     },

@@ -735,6 +735,160 @@ pub(crate) fn set_mode(
     restart_error.map_or(Ok(()), Err)
 }
 
+// ─── Scenes ────────────────────────────────────────────────────────────────
+// Each scene has its own actors and `World` settings (including dimension),
+// so v1 supports mixed 2D/3D scenes. All five are one undo step each; the
+// whole project snapshot is what `push_undo` checkpoints.
+
+pub(crate) fn add_scene(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+    mode: Option<Mode>,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let Some(project) = s.project_mut() else {
+        return Err("No project is open".to_string());
+    };
+    let id = project.add_scene(&name, mode);
+    s.selected_actor = None;
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(id)
+}
+
+pub(crate) fn duplicate_scene(
+    state: &SharedState,
+    app: &AppHandle,
+    scene_id: String,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let Some(project) = s.project_mut() else {
+        return Err("No project is open".to_string());
+    };
+    let id = project.duplicate_scene(&scene_id)?;
+    s.selected_actor = None;
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(id)
+}
+
+pub(crate) fn rename_scene(
+    state: &SharedState,
+    app: &AppHandle,
+    scene_id: String,
+    name: String,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let Some(project) = s.project_mut() else {
+        return Err("No project is open".to_string());
+    };
+    let renamed = project.rename_scene(&scene_id, &name)?;
+    auto_save(&s);
+    emit(app, &s);
+    Ok(renamed)
+}
+
+pub(crate) fn remove_scene(
+    state: &SharedState,
+    app: &AppHandle,
+    scene_id: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let Some(project) = s.project_mut() else {
+        return Err("No project is open".to_string());
+    };
+    project.remove_scene(&scene_id)?;
+    s.selected_actor = None;
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Makes `scene_id` the edited scene. Actor selection is per scene, so it
+/// clears. A switch across dimensions rebuilds the dim2/dim3 pipeline plus
+/// rapier backend the way `set_mode` does.
+pub(crate) fn set_active_scene(
+    backend: &Backend,
+    state: &SharedState,
+    app: &AppHandle,
+    scene_id: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let old_mode = s.project().map(|p| p.world.mode);
+    if s.project().is_some_and(|p| p.active_scene == scene_id) {
+        return Ok(());
+    }
+    push_undo(&mut s);
+    let runtime_was_open = s.runtime.is_some();
+    let was_running = s.running;
+    let was_paused = s.paused;
+    let new_mode = {
+        let Some(project) = s.project_mut() else {
+            return Ok(());
+        };
+        project.set_active_scene(&scene_id)?;
+        project.world.mode
+    };
+    s.selected_actor = None;
+    auto_save(&s);
+
+    let mut restart_error = None;
+    if runtime_was_open && old_mode != Some(new_mode) {
+        s.runtime = None;
+        s.status = None;
+        let project = s.project().cloned().expect("checked above");
+        let dir = s
+            .project_dir()
+            .map(|dir| dir.to_string_lossy().into_owned());
+        match RuntimeHandle::spawn(new_mode, backend.clone(), s.embedded.clone()) {
+            Ok(mut runtime) => {
+                let loaded = runtime.send(&blockloom_protocol::EditorMessage::Load {
+                    project: Box::new(project),
+                    dir: dir.clone(),
+                });
+                let started = !was_running
+                    || (runtime.send(&blockloom_protocol::EditorMessage::Start)
+                        && (!was_paused
+                            || runtime
+                                .send(&blockloom_protocol::EditorMessage::Pause { paused: true })));
+                if loaded && started {
+                    s.runtime = Some(runtime);
+                    greet(&mut s);
+                    if s.preview_enabled {
+                        let headless = s.preview_headless;
+                        let shown = s.runtime.as_mut().is_some_and(|runtime| {
+                            runtime.send(&blockloom_protocol::EditorMessage::Preview {
+                                enabled: true,
+                                headless,
+                            })
+                        });
+                        if !shown {
+                            s.preview_port = None;
+                        }
+                    }
+                } else {
+                    restart_error = Some("Lost the connection to the game runtime".to_string());
+                }
+            }
+            Err(error) => restart_error = Some(error),
+        }
+        s.running = runtime_was_open && was_running && s.runtime.is_some();
+        s.paused = s.running && was_paused;
+    } else {
+        sync_runtime(&mut s);
+    }
+    emit(app, &s);
+    restart_error.map_or(Ok(()), Err)
+}
+
 pub(crate) fn set_background(
     state: &SharedState,
     app: &AppHandle,

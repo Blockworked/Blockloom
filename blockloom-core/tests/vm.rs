@@ -5,7 +5,7 @@ use blockloom_core::blocks::{
     BlockDef, BlockPiece, BlockShape, DictDef, DictEntry, DictItem, Instruction, InstructionKind,
     ListDef, ListItem, Strand,
 };
-use blockloom_core::project::{Actor, Project};
+use blockloom_core::project::{Actor, Project, Scene};
 use blockloom_core::scene::{Axis, Mode, Visual};
 use blockloom_core::sense::Sensors;
 use blockloom_core::sound::SoundBus;
@@ -23,15 +23,21 @@ fn rect() -> Visual {
 fn project_with(strands: Vec<Strand>) -> Project {
     let mut actor = Actor::new("Player", rect());
     actor.graph.strands = strands;
-    Project {
-        id: "p".to_string(),
-        name: "test".to_string(),
-        icon: String::new(),
+    let scene = Scene {
+        id: "s1".to_string(),
+        name: "Scene 1".to_string(),
         world: blockloom_core::scene::World {
             mode: Mode::TwoD,
             ..Default::default()
         },
         actors: vec![actor],
+    };
+    Project {
+        id: "p".to_string(),
+        name: "test".to_string(),
+        icon: String::new(),
+        scenes: vec![scene],
+        active_scene: "s1".to_string(),
         globals: Vec::new(),
         global_lists: Vec::new(),
         global_dicts: Vec::new(),
@@ -637,15 +643,21 @@ fn project_with_two(first: Vec<Strand>, second: Vec<Strand>) -> Project {
     let mut friend = Actor::new("Friend", rect());
     friend.id = "a2".to_string();
     friend.graph.strands = second;
-    Project {
-        id: "p".to_string(),
-        name: "test".to_string(),
-        icon: String::new(),
+    let scene = Scene {
+        id: "s1".to_string(),
+        name: "Scene 1".to_string(),
         world: blockloom_core::scene::World {
             mode: Mode::TwoD,
             ..Default::default()
         },
         actors: vec![player, friend],
+    };
+    Project {
+        id: "p".to_string(),
+        name: "test".to_string(),
+        icon: String::new(),
+        scenes: vec![scene],
+        active_scene: "s1".to_string(),
         globals: Vec::new(),
         global_lists: Vec::new(),
         global_dicts: Vec::new(),

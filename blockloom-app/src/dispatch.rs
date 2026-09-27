@@ -102,6 +102,30 @@ impl Backend {
                 let mode: Mode = arg(&args, "mode")?;
                 to_json(commands::set_mode(self, state, app, mode)?)
             }
+            "add_scene" => to_json(commands::add_scene(
+                state,
+                app,
+                arg(&args, "name").unwrap_or_default(),
+                arg(&args, "mode").ok(),
+            )?),
+            "duplicate_scene" => to_json(commands::duplicate_scene(
+                state,
+                app,
+                arg(&args, "sceneId")?,
+            )?),
+            "rename_scene" => to_json(commands::rename_scene(
+                state,
+                app,
+                arg(&args, "sceneId")?,
+                arg(&args, "name")?,
+            )?),
+            "remove_scene" => to_json(commands::remove_scene(state, app, arg(&args, "sceneId")?)?),
+            "set_active_scene" => to_json(commands::set_active_scene(
+                self,
+                state,
+                app,
+                arg(&args, "sceneId")?,
+            )?),
             "set_background" => {
                 to_json(commands::set_background(state, app, arg(&args, "color")?)?)
             }

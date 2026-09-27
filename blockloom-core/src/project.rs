@@ -15,7 +15,8 @@ use crate::blocks::{ActorGraph, BlockKind, DictDef, InstructionKind, ListDef, Va
 use crate::components::{ActorComponent, CameraAttach, CameraView, Components};
 use crate::scene::{Mode, Physics, Placement, Visual, World};
 use crate::value::Evaluated;
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
@@ -203,103 +204,50 @@ impl Actor {
     }
 }
 
-/// A whole project: what the editor edits, what the runtime is handed, and
-/// what a `.blockloom` file holds.
+/// One scene: its own world settings and its own actors. A project holds a
+/// list of these; the editor shows one at a time and the runtime loads one.
+/// Each scene carries its own `World` (including `mode`), so v1 supports
+/// mixed 2D/3D scenes - a scene switch across dimensions rebuilds the
+/// dim2/dim3 pipeline the way a project dimension switch does today.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Project {
+pub struct Scene {
     #[serde(default = "new_id")]
     pub id: String,
+    #[serde(default = "default_scene_name")]
     pub name: String,
-    /// An image asset used to brand packaged builds. Empty uses Blockloom's
-    /// bundled icon.
-    #[serde(default)]
-    pub icon: String,
     #[serde(default)]
     pub world: World,
     #[serde(default)]
     pub actors: Vec<Actor>,
-    /// Variables every actor can read and write - see the module docs.
-    #[serde(default)]
-    pub globals: Vec<VariableDef>,
-    /// Lists every actor can read and change - the shared half of the list
-    /// model, parallel to [`Project::globals`]. An actor's own list of the
-    /// same name shadows this one for that actor.
-    #[serde(default)]
-    pub global_lists: Vec<ListDef>,
-    /// Dicts every actor can read and change - the shared half of the dict
-    /// model, parallel to [`Project::global_lists`]. An actor's own dict of
-    /// the same name shadows this one for that actor.
-    #[serde(default)]
-    pub global_dicts: Vec<DictDef>,
 }
 
-impl Project {
-    /// A fresh project: one actor to move and one static floor to land on,
-    /// so gravity means something the moment Play is pressed.
-    pub fn starter(name: impl Into<String>, mode: crate::scene::Mode) -> Self {
+fn default_scene_name() -> String {
+    "Scene 1".to_string()
+}
+
+impl Scene {
+    pub fn new(name: impl Into<String>, mode: Mode) -> Self {
         let mut world = World {
             mode,
             gravity: World::default_gravity(mode),
-            input: crate::input::InputConfig::starter(),
             ..World::default()
         };
-        let (player, ground) = if mode.is_3d() {
+        if mode.is_3d() {
             world.camera = crate::scene::Camera::default();
-            (
-                Visual::Sphere {
-                    color: "#4C97FF".to_string(),
-                    radius: 0.5,
-                },
-                Visual::Plane {
-                    color: "#3E4A5B".to_string(),
-                    size: [20.0, 20.0],
-                },
-            )
-        } else {
-            (
-                Visual::Rect {
-                    color: "#4C97FF".to_string(),
-                    size: [60.0, 60.0],
-                },
-                Visual::Rect {
-                    color: "#3E4A5B".to_string(),
-                    size: [800.0, 40.0],
-                },
-            )
-        };
-
-        let mut player = Actor::new("Player", player);
-        player.components.placement_mut().position = if mode.is_3d() {
-            [0.0, 3.0, 0.0]
-        } else {
-            [0.0, 160.0, 0.0]
-        };
-        player.components.set_physics(Physics {
-            body: crate::scene::BodyKind::Dynamic,
-            lock_rotation: true,
-            ..Physics::default()
-        });
-
-        let mut ground = Actor::new("Ground", ground);
-        ground.components.placement_mut().position = if mode.is_3d() {
-            [0.0, 0.0, 0.0]
-        } else {
-            [0.0, -220.0, 0.0]
-        };
-        ground.components.set_physics(Physics {
-            body: crate::scene::BodyKind::Static,
-            ..Physics::default()
-        });
-
+        }
         Self {
             id: new_id(),
-            name: name.into(),
-            icon: String::new(),
+            name: {
+                let name = name.into();
+                let trimmed = name.trim();
+                if trimmed.is_empty() {
+                    default_scene_name()
+                } else {
+                    trimmed.to_string()
+                }
+            },
             world,
-            actors: vec![player, ground],
-            globals: Vec::new(),
-            global_lists: Vec::new(),
-            global_dicts: Vec::new(),
+            actors: Vec::new(),
         }
     }
 
@@ -516,233 +464,23 @@ impl Project {
         Ok(trimmed)
     }
 
-    /// Declares a project-wide variable starting at `0`.
-    pub fn create_global(&mut self, name: &str) -> Result<String, String> {
-        let trimmed = name.trim().to_string();
-        if trimmed.is_empty() {
-            return Err("Variable name can't be empty".to_string());
-        }
-        // `~` opens a runtime slot (`~t0` holds a reporter's value while it
-        // suspends), so no project variable may start with one.
-        if trimmed.starts_with('~') {
-            return Err("Variable name can't start with \"~\"".to_string());
-        }
-        if self.globals.iter().any(|v| v.name == trimmed) {
-            return Err(format!("A variable named \"{trimmed}\" already exists"));
-        }
-        self.globals.push(VariableDef {
-            name: trimmed.clone(),
-            value: Evaluated::Number(0.0),
-        });
-        Ok(trimmed)
+    /// The actor the camera is attached to, if any.
+    pub fn camera_actor(&self) -> Option<&Actor> {
+        self.actors.iter().find(|actor| actor.camera().is_some())
     }
 
-    /// Renames a project-wide variable and every read of it, in every actor.
-    pub fn rename_global(&mut self, old: &str, new: &str) -> Result<String, String> {
-        let trimmed = new.trim().to_string();
-        if trimmed.is_empty() {
-            return Err("Variable name can't be empty".to_string());
-        }
-        if trimmed.starts_with('~') {
-            return Err("Variable name can't start with \"~\"".to_string());
-        }
-        if trimmed != old && self.globals.iter().any(|v| v.name == trimmed) {
-            return Err(format!("A variable named \"{trimmed}\" already exists"));
-        }
-        let Some(variable) = self.globals.iter_mut().find(|v| v.name == old) else {
-            return Err("Variable not found".to_string());
-        };
-        if trimmed == old {
-            return Ok(trimmed);
-        }
-        variable.name = trimmed.clone();
+    /// Leaves `actor_id` the only actor with a camera component. There is one
+    /// camera, so attaching it somewhere takes it off wherever it was.
+    pub fn claim_camera(&mut self, actor_id: &str) {
         for actor in &mut self.actors {
-            // An actor with its own variable of that name shadows the global,
-            // so its reads are about that one and must stay put.
-            if actor.graph.variables.iter().any(|v| v.name == old) {
-                continue;
-            }
-            for strand in &mut actor.graph.strands {
-                for instruction in &mut strand.instructions {
-                    instruction.rename_var(old, &trimmed);
-                }
-            }
-            for floating in &mut actor.graph.floating_values {
-                floating.value.rename_var(old, &trimmed);
+            if actor.id != actor_id {
+                actor.components.remove("Camera");
             }
         }
-        Ok(trimmed)
     }
 
-    /// Drops a project-wide variable. Reads of it are left alone and default
-    /// to `0`, the same as an actor's own removed variable.
-    pub fn remove_global(&mut self, name: &str) {
-        self.globals.retain(|v| v.name != name);
-    }
-
-    /// The starting variable environment for `actor`: the project's globals,
-    /// then the actor's own, which shadow them on a name collision.
-    pub fn env_for(&self, actor_id: &str) -> HashMap<String, Evaluated> {
-        let mut env: HashMap<String, Evaluated> = self
-            .globals
-            .iter()
-            .map(|v| (v.name.clone(), v.value.clone()))
-            .collect();
-        if let Some(actor) = self.actor(actor_id) {
-            env.extend(actor.graph.variable_values());
-        }
-        env
-    }
-
-    /// True if `name` is a global rather than one of `actor_id`'s own - which
-    /// list a `set`/`change` block writes back to.
-    pub fn is_global(&self, actor_id: &str, name: &str) -> bool {
-        let actor_owns = self
-            .actor(actor_id)
-            .is_some_and(|actor| actor.graph.variables.iter().any(|v| v.name == name));
-        !actor_owns && self.globals.iter().any(|v| v.name == name)
-    }
-
-    /// Declares a project-wide list starting empty.
-    pub fn create_global_list(&mut self, name: &str) -> Result<String, String> {
-        let trimmed = name.trim().to_string();
-        if trimmed.is_empty() {
-            return Err("List name can't be empty".to_string());
-        }
-        if self.global_lists.iter().any(|list| list.name == trimmed) {
-            return Err(format!("A list named \"{trimmed}\" already exists"));
-        }
-        self.global_lists.push(ListDef {
-            name: trimmed.clone(),
-            items: Vec::new(),
-            editor_visible: false,
-            editor_x: 0,
-            editor_y: 0,
-        });
-        Ok(trimmed)
-    }
-
-    /// Renames a project-wide list and every read of it, in every actor that
-    /// doesn't shadow it with its own list of that name.
-    pub fn rename_global_list(&mut self, old: &str, new: &str) -> Result<String, String> {
-        let trimmed = new.trim().to_string();
-        if trimmed.is_empty() {
-            return Err("List name can't be empty".to_string());
-        }
-        if trimmed != old && self.global_lists.iter().any(|list| list.name == trimmed) {
-            return Err(format!("A list named \"{trimmed}\" already exists"));
-        }
-        let Some(list) = self.global_lists.iter_mut().find(|list| list.name == old) else {
-            return Err("List not found".to_string());
-        };
-        if trimmed == old {
-            return Ok(trimmed);
-        }
-        list.name = trimmed.clone();
-        for actor in &mut self.actors {
-            // An actor with its own list of that name reads its own, so its
-            // references must stay put.
-            if actor.graph.lists.iter().any(|list| list.name == old) {
-                continue;
-            }
-            for strand in &mut actor.graph.strands {
-                for instruction in &mut strand.instructions {
-                    instruction.rename_list(old, &trimmed);
-                }
-            }
-            for floating in &mut actor.graph.floating_values {
-                blockstitch_core::graph::rename_list_in_value(&mut floating.value, old, &trimmed);
-            }
-        }
-        Ok(trimmed)
-    }
-
-    /// Drops a project-wide list. Reads of it are left alone and default to
-    /// empty, the same as an actor's own removed list.
-    pub fn remove_global_list(&mut self, name: &str) {
-        self.global_lists.retain(|list| list.name != name);
-    }
-
-    /// True if `name` is a shared list rather than one of `actor_id`'s own.
-    pub fn is_global_list(&self, actor_id: &str, name: &str) -> bool {
-        let actor_owns = self
-            .actor(actor_id)
-            .is_some_and(|actor| actor.graph.lists.iter().any(|list| list.name == name));
-        !actor_owns && self.global_lists.iter().any(|list| list.name == name)
-    }
-
-    /// Declares a project-wide dict starting empty.
-    pub fn create_global_dict(&mut self, name: &str) -> Result<String, String> {
-        let trimmed = name.trim().to_string();
-        if trimmed.is_empty() {
-            return Err("Dict name can't be empty".to_string());
-        }
-        if self.global_dicts.iter().any(|dict| dict.name == trimmed) {
-            return Err(format!("A dict named \"{trimmed}\" already exists"));
-        }
-        self.global_dicts.push(DictDef {
-            name: trimmed.clone(),
-            entries: Vec::new(),
-            editor_visible: false,
-            editor_x: 0,
-            editor_y: 0,
-        });
-        Ok(trimmed)
-    }
-
-    /// Renames a project-wide dict and every read of it, in every actor that
-    /// doesn't shadow it with its own dict of that name.
-    pub fn rename_global_dict(&mut self, old: &str, new: &str) -> Result<String, String> {
-        let trimmed = new.trim().to_string();
-        if trimmed.is_empty() {
-            return Err("Dict name can't be empty".to_string());
-        }
-        if trimmed != old && self.global_dicts.iter().any(|dict| dict.name == trimmed) {
-            return Err(format!("A dict named \"{trimmed}\" already exists"));
-        }
-        let Some(dict) = self.global_dicts.iter_mut().find(|dict| dict.name == old) else {
-            return Err("Dict not found".to_string());
-        };
-        if trimmed == old {
-            return Ok(trimmed);
-        }
-        dict.name = trimmed.clone();
-        for actor in &mut self.actors {
-            // An actor with its own dict of that name reads its own, so its
-            // references must stay put.
-            if actor.graph.dicts.iter().any(|dict| dict.name == old) {
-                continue;
-            }
-            for strand in &mut actor.graph.strands {
-                for instruction in &mut strand.instructions {
-                    instruction.rename_dict(old, &trimmed);
-                }
-            }
-            for floating in &mut actor.graph.floating_values {
-                blockstitch_core::graph::rename_dict_in_value(&mut floating.value, old, &trimmed);
-            }
-        }
-        Ok(trimmed)
-    }
-
-    /// Drops a project-wide dict. Reads of it are left alone and default to
-    /// empty, the same as an actor's own removed dict.
-    pub fn remove_global_dict(&mut self, name: &str) {
-        self.global_dicts.retain(|dict| dict.name != name);
-    }
-
-    /// True if `name` is a shared dict rather than one of `actor_id`'s own.
-    pub fn is_global_dict(&self, actor_id: &str, name: &str) -> bool {
-        let actor_owns = self
-            .actor(actor_id)
-            .is_some_and(|actor| actor.graph.dicts.iter().any(|dict| dict.name == name));
-        !actor_owns && self.global_dicts.iter().any(|dict| dict.name == name)
-    }
-
-    /// Repairs and canonicalizes a just-loaded document, once.
-    pub fn normalize(&mut self) {
+    fn normalize_scene(&mut self) {
         self.migrate_camera_follow();
-        self.migrate_sky();
         self.prune_parents();
         let known: std::collections::HashSet<String> =
             self.actors.iter().map(|a| a.id.clone()).collect();
@@ -800,27 +538,6 @@ impl Project {
         }
     }
 
-    /// An HDR sky used to be a path on the lighting. It is an HDRI sky now,
-    /// at the same brightness.
-    fn migrate_sky(&mut self) {
-        let lighting = &mut self.world.lighting;
-        let path = std::mem::take(&mut lighting.sky);
-        if !path.is_empty() {
-            let sky = &mut self.world.sky;
-            sky.kind = crate::sky::SkyKind::Hdri;
-            sky.hdri.path = path;
-            sky.hdri.brightness = lighting.sky_brightness;
-        }
-        self.world.sky.normalize();
-        self.world.fog.normalize();
-        self.world.clouds.normalize();
-        crate::cloud_layers::normalize(&mut self.world.cloud_layers);
-        self.world.lightning.normalize();
-        self.world.wind.normalize();
-        self.world.surface.normalize();
-        self.world.vfx.normalize();
-    }
-
     /// Pre-component projects named the followed actor on the world camera.
     /// That is a camera component on the actor now, so move it there once.
     fn migrate_camera_follow(&mut self) {
@@ -861,71 +578,713 @@ impl Project {
             }
         }
     }
+}
 
-    /// The actor the camera is attached to, if any.
-    pub fn camera_actor(&self) -> Option<&Actor> {
-        self.actors.iter().find(|actor| actor.camera().is_some())
+/// A whole project: what the editor edits, what the runtime is handed, and
+/// what a `.blockloom` file holds. The project holds the scene list; each
+/// scene has its own actors and `World` settings, and one scene is active.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Project {
+    pub id: String,
+    pub name: String,
+    /// An image asset used to brand packaged builds. Empty uses Blockloom's
+    /// bundled icon.
+    pub icon: String,
+    pub scenes: Vec<Scene>,
+    pub active_scene: String,
+    /// Variables every actor can read and write - see the module docs.
+    pub globals: Vec<VariableDef>,
+    /// Lists every actor can read and change - the shared half of the list
+    /// model, parallel to [`Project::globals`]. An actor's own list of the
+    /// same name shadows this one for that actor.
+    pub global_lists: Vec<ListDef>,
+    /// Dicts every actor can read and change - the shared half of the dict
+    /// model, parallel to [`Project::global_lists`]. An actor's own dict of
+    /// the same name shadows this one for that actor.
+    pub global_dicts: Vec<DictDef>,
+}
+
+// ─── Scene-backed project ────────────────────────────────────────────────
+
+impl Deref for Project {
+    type Target = Scene;
+    fn deref(&self) -> &Scene {
+        self.active_scene_ref()
     }
+}
 
-    /// Leaves `actor_id` the only actor with a camera component. There is one
-    /// camera, so attaching it somewhere takes it off wherever it was.
-    pub fn claim_camera(&mut self, actor_id: &str) {
-        for actor in &mut self.actors {
-            if actor.id != actor_id {
-                actor.components.remove("Camera");
-            }
+impl DerefMut for Project {
+    fn deref_mut(&mut self) -> &mut Scene {
+        self.active_scene_mut()
+    }
+}
+
+impl Serialize for Project {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let active = self.active_scene_ref();
+        let mut s = serializer.serialize_struct("Project", 8)?;
+        s.serialize_field("id", &self.id)?;
+        s.serialize_field("name", &self.name)?;
+        s.serialize_field("icon", &self.icon)?;
+        s.serialize_field("scenes", &self.scenes)?;
+        s.serialize_field("active_scene", &self.active_scene)?;
+        // Compat: the active scene flattened, so older readers and the
+        // current QML (`project.world`, `project.actors`) keep working.
+        s.serialize_field("world", &active.world)?;
+        s.serialize_field("actors", &active.actors)?;
+        s.serialize_field("globals", &self.globals)?;
+        s.serialize_field("global_lists", &self.global_lists)?;
+        s.serialize_field("global_dicts", &self.global_dicts)?;
+        s.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Project {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct ProjectDe {
+            #[serde(default = "new_id")]
+            id: String,
+            #[serde(default)]
+            name: String,
+            #[serde(default)]
+            icon: String,
+            #[serde(default)]
+            scenes: Option<Vec<Scene>>,
+            #[serde(default)]
+            active_scene: Option<String>,
+            #[serde(default)]
+            world: Option<World>,
+            #[serde(default)]
+            actors: Option<Vec<Actor>>,
+            #[serde(default)]
+            globals: Vec<VariableDef>,
+            #[serde(default)]
+            global_lists: Vec<ListDef>,
+            #[serde(default)]
+            global_dicts: Vec<DictDef>,
+        }
+        let de = ProjectDe::deserialize(deserializer)?;
+        let mut scenes = de.scenes.unwrap_or_default();
+        if scenes.is_empty() {
+            // Old single-scene document: migrate as scene one.
+            scenes.push(Scene {
+                id: new_id(),
+                name: default_scene_name(),
+                world: de.world.unwrap_or_default(),
+                actors: de.actors.unwrap_or_default(),
+            });
+        }
+        let active_scene = de.active_scene.unwrap_or_default();
+        let active_scene = if scenes.iter().any(|s| s.id == active_scene) {
+            active_scene
+        } else {
+            scenes[0].id.clone()
+        };
+        let mut project = Self {
+            id: if de.id.is_empty() { new_id() } else { de.id },
+            name: de.name,
+            icon: de.icon,
+            scenes,
+            active_scene,
+            globals: de.globals,
+            global_lists: de.global_lists,
+            global_dicts: de.global_dicts,
+        };
+        project.ensure_scene_invariants();
+        Ok(project)
+    }
+}
+
+impl Project {
+    /// A fresh project: one scene with one actor to move and one static
+    /// floor to land on, so gravity means something the moment Play is pressed.
+    pub fn starter(name: impl Into<String>, mode: crate::scene::Mode) -> Self {
+        let mut world = World {
+            mode,
+            gravity: World::default_gravity(mode),
+            input: crate::input::InputConfig::starter(),
+            ..World::default()
+        };
+        let (player, ground) = if mode.is_3d() {
+            world.camera = crate::scene::Camera::default();
+            (
+                Visual::Sphere {
+                    color: "#4C97FF".to_string(),
+                    radius: 0.5,
+                },
+                Visual::Plane {
+                    color: "#3E4A5B".to_string(),
+                    size: [20.0, 20.0],
+                },
+            )
+        } else {
+            (
+                Visual::Rect {
+                    color: "#4C97FF".to_string(),
+                    size: [60.0, 60.0],
+                },
+                Visual::Rect {
+                    color: "#3E4A5B".to_string(),
+                    size: [800.0, 40.0],
+                },
+            )
+        };
+
+        let mut player = Actor::new("Player", player);
+        player.components.placement_mut().position = if mode.is_3d() {
+            [0.0, 3.0, 0.0]
+        } else {
+            [0.0, 160.0, 0.0]
+        };
+        player.components.set_physics(Physics {
+            body: crate::scene::BodyKind::Dynamic,
+            lock_rotation: true,
+            ..Physics::default()
+        });
+
+        let mut ground = Actor::new("Ground", ground);
+        ground.components.placement_mut().position = if mode.is_3d() {
+            [0.0, 0.0, 0.0]
+        } else {
+            [0.0, -220.0, 0.0]
+        };
+        ground.components.set_physics(Physics {
+            body: crate::scene::BodyKind::Static,
+            ..Physics::default()
+        });
+
+        let scene = Scene {
+            id: new_id(),
+            name: default_scene_name(),
+            world,
+            actors: vec![player, ground],
+        };
+        let active_scene = scene.id.clone();
+        Self {
+            id: new_id(),
+            name: name.into(),
+            icon: String::new(),
+            scenes: vec![scene],
+            active_scene,
+            globals: Vec::new(),
+            global_lists: Vec::new(),
+            global_dicts: Vec::new(),
         }
     }
 
-    /// Declares a named input action with no bindings.
+    fn active_scene_ref(&self) -> &Scene {
+        if let Some(scene) = self.scenes.iter().find(|s| s.id == self.active_scene) {
+            return scene;
+        }
+        &self.scenes[0]
+    }
+
+    /// The scene the editor shows and the runtime loads.
+    pub fn active_scene(&self) -> &Scene {
+        self.active_scene_ref()
+    }
+
+    pub fn active_scene_mut(&mut self) -> &mut Scene {
+        self.ensure_scene_invariants();
+        let active = self.active_scene.clone();
+        if let Some(i) = self.scenes.iter().position(|s| s.id == active) {
+            return &mut self.scenes[i];
+        }
+        &mut self.scenes[0]
+    }
+
+    pub fn scene(&self, id: &str) -> Option<&Scene> {
+        self.scenes.iter().find(|s| s.id == id)
+    }
+
+    pub fn scene_mut(&mut self, id: &str) -> Option<&mut Scene> {
+        self.scenes.iter_mut().find(|s| s.id == id)
+    }
+
+    fn ensure_scene_invariants(&mut self) {
+        if self.scenes.is_empty() {
+            self.scenes
+                .push(Scene::new(default_scene_name(), Mode::TwoD));
+        }
+        if !self.scenes.iter().any(|s| s.id == self.active_scene) {
+            self.active_scene = self.scenes[0].id.clone();
+        }
+        // Scene names stay unique; a hand-edited file could repeat one.
+        let mut seen = std::collections::HashSet::new();
+        for scene in &mut self.scenes {
+            let base = if scene.name.trim().is_empty() {
+                default_scene_name()
+            } else {
+                scene.name.clone()
+            };
+            let mut candidate = base.clone();
+            let mut n = 2;
+            while !seen.insert(candidate.clone()) {
+                candidate = format!("{base} {n}");
+                n += 1;
+            }
+            scene.name = candidate;
+        }
+    }
+
+    /// An unused scene name based on `base`.
+    pub fn unique_scene_name(&self, base: &str) -> String {
+        let base = base.trim();
+        let base = if base.is_empty() { "Scene" } else { base };
+        if !self.scenes.iter().any(|s| s.name == base) {
+            return base.to_string();
+        }
+        (2..)
+            .map(|n| format!("{base} {n}"))
+            .find(|c| !self.scenes.iter().any(|s| &s.name == c))
+            .expect("an unused scene name always exists")
+    }
+
+    /// Adds an empty scene of `mode` (active scene's mode when omitted) and
+    /// makes it active. Answers its id.
+    pub fn add_scene(&mut self, name: &str, mode: Option<Mode>) -> String {
+        let mode = mode.unwrap_or_else(|| self.active_scene_ref().world.mode);
+        let mut scene = Scene::new(self.unique_scene_name(name), mode);
+        // A fresh input config per scene; starter bindings when empty so a
+        // new scene plays like the first one.
+        if scene.world.input.actions.is_empty() {
+            scene.world.input = crate::input::InputConfig::starter();
+        }
+        let id = scene.id.clone();
+        self.scenes.push(scene);
+        self.active_scene = id.clone();
+        id
+    }
+
+    /// Copies `id` under a fresh name and id, with its own actor ids so the
+    /// two scenes never share one. The copy becomes active.
+    pub fn duplicate_scene(&mut self, id: &str) -> Result<String, String> {
+        let Some(from) = self.scene(id).cloned() else {
+            return Err("Scene not found".to_string());
+        };
+        let mut copy = from;
+        copy.id = new_id();
+        copy.name = self.unique_scene_name(&format!("{} copy", copy.name));
+        // Actor ids only need to be unique within a run, but fresh ones keep
+        // cross-scene references from leaking between the two.
+        let mut remap = HashMap::new();
+        for actor in &mut copy.actors {
+            let next = new_id();
+            remap.insert(actor.id.clone(), next.clone());
+            actor.id = next;
+        }
+        for actor in &mut copy.actors {
+            if let Some(parent) = actor.parent() {
+                if let Some(next) = remap.get(parent) {
+                    actor.components.set_parent(next);
+                }
+            }
+            if let Some(joint) = actor.components.joint() {
+                if let Some(next) = remap.get(&joint.target) {
+                    let mut joint = joint.clone();
+                    joint.target = next.clone();
+                    actor.components.insert(ActorComponent::Joint { joint });
+                }
+            }
+        }
+        let new_id = copy.id.clone();
+        self.scenes.push(copy);
+        self.active_scene = new_id.clone();
+        Ok(new_id)
+    }
+
+    pub fn rename_scene(&mut self, id: &str, name: &str) -> Result<String, String> {
+        let trimmed = name.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("A scene needs a name".to_string());
+        }
+        if self.scenes.iter().any(|s| s.id != id && s.name == trimmed) {
+            return Err(format!("A scene named \"{trimmed}\" already exists"));
+        }
+        let Some(scene) = self.scene_mut(id) else {
+            return Err("Scene not found".to_string());
+        };
+        scene.name = trimmed.clone();
+        Ok(trimmed)
+    }
+
+    /// Removes a scene. The last one stays; the active one falls back to the
+    /// first remaining scene.
+    pub fn remove_scene(&mut self, id: &str) -> Result<(), String> {
+        if self.scenes.len() <= 1 {
+            return Err("A project needs at least one scene".to_string());
+        }
+        let Some(index) = self.scenes.iter().position(|s| s.id == id) else {
+            return Err("Scene not found".to_string());
+        };
+        self.scenes.remove(index);
+        if self.active_scene == id {
+            self.active_scene = self.scenes[0].id.clone();
+        }
+        Ok(())
+    }
+
+    /// Makes `id` the edited scene. Actor selection is per scene in the
+    /// editor, so switching scenes clears it there.
+    pub fn set_active_scene(&mut self, id: &str) -> Result<(), String> {
+        if !self.scenes.iter().any(|s| s.id == id) {
+            return Err("Scene not found".to_string());
+        }
+        self.active_scene = id.to_string();
+        Ok(())
+    }
+
+    /// Finds an actor in any scene, active first. The runtime only runs the
+    /// active scene, but project-wide renames need every scene.
+    pub fn find_actor(&self, id: &str) -> Option<&Actor> {
+        if let Some(actor) = self.active_scene_ref().actor(id) {
+            return Some(actor);
+        }
+        self.scenes.iter().filter_map(|s| s.actor(id)).next()
+    }
+
+    /// Declares a project-wide variable starting at `0`.
+    pub fn create_global(&mut self, name: &str) -> Result<String, String> {
+        let trimmed = name.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("Variable name can't be empty".to_string());
+        }
+        // `~` opens a runtime slot (`~t0` holds a reporter's value while it
+        // suspends), so no project variable may start with one.
+        if trimmed.starts_with('~') {
+            return Err("Variable name can't start with \"~\"".to_string());
+        }
+        if self.globals.iter().any(|v| v.name == trimmed) {
+            return Err(format!("A variable named \"{trimmed}\" already exists"));
+        }
+        self.globals.push(VariableDef {
+            name: trimmed.clone(),
+            value: Evaluated::Number(0.0),
+        });
+        Ok(trimmed)
+    }
+
+    /// Renames a project-wide variable and every read of it, in every actor.
+    pub fn rename_global(&mut self, old: &str, new: &str) -> Result<String, String> {
+        let trimmed = new.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("Variable name can't be empty".to_string());
+        }
+        if trimmed.starts_with('~') {
+            return Err("Variable name can't start with \"~\"".to_string());
+        }
+        if trimmed != old && self.globals.iter().any(|v| v.name == trimmed) {
+            return Err(format!("A variable named \"{trimmed}\" already exists"));
+        }
+        let Some(variable) = self.globals.iter_mut().find(|v| v.name == old) else {
+            return Err("Variable not found".to_string());
+        };
+        if trimmed == old {
+            return Ok(trimmed);
+        }
+        variable.name = trimmed.clone();
+        for scene in &mut self.scenes {
+            for actor in &mut scene.actors {
+                // An actor with its own variable of that name shadows the global,
+                // so its reads are about that one and must stay put.
+                if actor.graph.variables.iter().any(|v| v.name == old) {
+                    continue;
+                }
+                for strand in &mut actor.graph.strands {
+                    for instruction in &mut strand.instructions {
+                        instruction.rename_var(old, &trimmed);
+                    }
+                }
+                for floating in &mut actor.graph.floating_values {
+                    floating.value.rename_var(old, &trimmed);
+                }
+            }
+        }
+        Ok(trimmed)
+    }
+
+    /// Drops a project-wide variable. Reads of it are left alone and default
+    /// to `0`, the same as an actor's own removed variable.
+    pub fn remove_global(&mut self, name: &str) {
+        self.globals.retain(|v| v.name != name);
+    }
+
+    /// The starting variable environment for `actor`: the project's globals,
+    /// then the actor's own, which shadow them on a name collision.
+    pub fn env_for(&self, actor_id: &str) -> HashMap<String, Evaluated> {
+        let mut env: HashMap<String, Evaluated> = self
+            .globals
+            .iter()
+            .map(|v| (v.name.clone(), v.value.clone()))
+            .collect();
+        if let Some(actor) = self.find_actor(actor_id) {
+            env.extend(actor.graph.variable_values());
+        }
+        env
+    }
+
+    /// True if `name` is a global rather than one of `actor_id`'s own - which
+    /// list a `set`/`change` block writes back to.
+    pub fn is_global(&self, actor_id: &str, name: &str) -> bool {
+        let actor_owns = self
+            .find_actor(actor_id)
+            .is_some_and(|actor| actor.graph.variables.iter().any(|v| v.name == name));
+        !actor_owns && self.globals.iter().any(|v| v.name == name)
+    }
+
+    /// Declares a project-wide list starting empty.
+    pub fn create_global_list(&mut self, name: &str) -> Result<String, String> {
+        let trimmed = name.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("List name can't be empty".to_string());
+        }
+        if self.global_lists.iter().any(|list| list.name == trimmed) {
+            return Err(format!("A list named \"{trimmed}\" already exists"));
+        }
+        self.global_lists.push(ListDef {
+            name: trimmed.clone(),
+            items: Vec::new(),
+            editor_visible: false,
+            editor_x: 0,
+            editor_y: 0,
+        });
+        Ok(trimmed)
+    }
+
+    /// Renames a project-wide list and every read of it, in every actor that
+    /// doesn't shadow it with its own list of that name.
+    pub fn rename_global_list(&mut self, old: &str, new: &str) -> Result<String, String> {
+        let trimmed = new.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("List name can't be empty".to_string());
+        }
+        if trimmed != old && self.global_lists.iter().any(|list| list.name == trimmed) {
+            return Err(format!("A list named \"{trimmed}\" already exists"));
+        }
+        let Some(list) = self.global_lists.iter_mut().find(|list| list.name == old) else {
+            return Err("List not found".to_string());
+        };
+        if trimmed == old {
+            return Ok(trimmed);
+        }
+        list.name = trimmed.clone();
+        for scene in &mut self.scenes {
+            for actor in &mut scene.actors {
+                // An actor with its own list of that name reads its own, so its
+                // references must stay put.
+                if actor.graph.lists.iter().any(|list| list.name == old) {
+                    continue;
+                }
+                for strand in &mut actor.graph.strands {
+                    for instruction in &mut strand.instructions {
+                        instruction.rename_list(old, &trimmed);
+                    }
+                }
+                for floating in &mut actor.graph.floating_values {
+                    blockstitch_core::graph::rename_list_in_value(
+                        &mut floating.value,
+                        old,
+                        &trimmed,
+                    );
+                }
+            }
+        }
+        Ok(trimmed)
+    }
+
+    /// Drops a project-wide list. Reads of it are left alone and default to
+    /// empty, the same as an actor's own removed list.
+    pub fn remove_global_list(&mut self, name: &str) {
+        self.global_lists.retain(|list| list.name != name);
+    }
+
+    /// True if `name` is a shared list rather than one of `actor_id`'s own.
+    pub fn is_global_list(&self, actor_id: &str, name: &str) -> bool {
+        let actor_owns = self
+            .find_actor(actor_id)
+            .is_some_and(|actor| actor.graph.lists.iter().any(|list| list.name == name));
+        !actor_owns && self.global_lists.iter().any(|list| list.name == name)
+    }
+
+    /// Declares a project-wide dict starting empty.
+    pub fn create_global_dict(&mut self, name: &str) -> Result<String, String> {
+        let trimmed = name.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("Dict name can't be empty".to_string());
+        }
+        if self.global_dicts.iter().any(|dict| dict.name == trimmed) {
+            return Err(format!("A dict named \"{trimmed}\" already exists"));
+        }
+        self.global_dicts.push(DictDef {
+            name: trimmed.clone(),
+            entries: Vec::new(),
+            editor_visible: false,
+            editor_x: 0,
+            editor_y: 0,
+        });
+        Ok(trimmed)
+    }
+
+    /// Renames a project-wide dict and every read of it, in every actor that
+    /// doesn't shadow it with its own dict of that name.
+    pub fn rename_global_dict(&mut self, old: &str, new: &str) -> Result<String, String> {
+        let trimmed = new.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("Dict name can't be empty".to_string());
+        }
+        if trimmed != old && self.global_dicts.iter().any(|dict| dict.name == trimmed) {
+            return Err(format!("A dict named \"{trimmed}\" already exists"));
+        }
+        let Some(dict) = self.global_dicts.iter_mut().find(|dict| dict.name == old) else {
+            return Err("Dict not found".to_string());
+        };
+        if trimmed == old {
+            return Ok(trimmed);
+        }
+        dict.name = trimmed.clone();
+        for scene in &mut self.scenes {
+            for actor in &mut scene.actors {
+                // An actor with its own dict of that name reads its own, so its
+                // references must stay put.
+                if actor.graph.dicts.iter().any(|dict| dict.name == old) {
+                    continue;
+                }
+                for strand in &mut actor.graph.strands {
+                    for instruction in &mut strand.instructions {
+                        instruction.rename_dict(old, &trimmed);
+                    }
+                }
+                for floating in &mut actor.graph.floating_values {
+                    blockstitch_core::graph::rename_dict_in_value(
+                        &mut floating.value,
+                        old,
+                        &trimmed,
+                    );
+                }
+            }
+        }
+        Ok(trimmed)
+    }
+
+    /// Drops a project-wide dict. Reads of it are left alone and default to
+    /// empty, the same as an actor's own removed dict.
+    pub fn remove_global_dict(&mut self, name: &str) {
+        self.global_dicts.retain(|dict| dict.name != name);
+    }
+
+    /// True if `name` is a shared dict rather than one of `actor_id`'s own.
+    pub fn is_global_dict(&self, actor_id: &str, name: &str) -> bool {
+        let actor_owns = self
+            .find_actor(actor_id)
+            .is_some_and(|actor| actor.graph.dicts.iter().any(|dict| dict.name == name));
+        !actor_owns && self.global_dicts.iter().any(|dict| dict.name == name)
+    }
+
+    /// Repairs and canonicalizes a just-loaded document, once. Runs per
+    /// scene since each scene has its own world and actors.
+    pub fn normalize(&mut self) {
+        self.ensure_scene_invariants();
+        self.migrate_sky();
+        for scene in &mut self.scenes {
+            scene.normalize_scene();
+        }
+    }
+
+    /// An HDR sky used to be a path on the lighting. It is an HDRI sky now,
+    /// at the same brightness. Runs per scene since each scene has its own
+    /// world settings.
+    fn migrate_sky(&mut self) {
+        for scene in &mut self.scenes {
+            let world = &mut scene.world;
+            let path = std::mem::take(&mut world.lighting.sky);
+            if !path.is_empty() {
+                let brightness = world.lighting.sky_brightness;
+                world.sky.kind = crate::sky::SkyKind::Hdri;
+                world.sky.hdri.path = path;
+                world.sky.hdri.brightness = brightness;
+            }
+            world.sky.normalize();
+            world.fog.normalize();
+            world.clouds.normalize();
+            crate::cloud_layers::normalize(&mut world.cloud_layers);
+            world.lightning.normalize();
+            world.wind.normalize();
+            world.surface.normalize();
+            world.vfx.normalize();
+        }
+    }
+
+    /// Declares a named input action with no bindings. Input lives per
+    /// scene (each scene has its own `World`), so a new action is added to
+    /// every scene to keep them in sync.
     pub fn create_input_action(&mut self, name: &str) -> Result<String, String> {
-        self.world.input.add_action(name)
+        let renamed = self.active_scene_mut().world.input.add_action(name)?;
+        for scene in &mut self.scenes {
+            if scene.world.input.find(&renamed).is_none() {
+                let _ = scene.world.input.add_action(&renamed);
+            }
+        }
+        Ok(renamed)
     }
 
     /// Renames an input action and every block that names it: the
     /// `when action pressed` header, the `bind`/`clear` slots holding plain
-    /// text, and the action reporter args.
+    /// text, and the action reporter args. Renames in every scene.
     pub fn rename_input_action(&mut self, old: &str, new: &str) -> Result<String, String> {
-        let renamed = self.world.input.rename_action(old, new)?;
-        for actor in &mut self.actors {
-            actor.graph.walk_instructions_mut(&mut |ins| {
-                match &mut ins.kind {
-                    InstructionKind::WhenActionPressed { action }
-                        if action.eq_ignore_ascii_case(old) =>
-                    {
-                        *action = renamed.clone();
-                    }
-                    InstructionKind::BindAction { action, .. } => {
-                        if let crate::value::Value::Text { value: text } = action
-                            && text.eq_ignore_ascii_case(old)
+        let renamed = self
+            .active_scene_mut()
+            .world
+            .input
+            .rename_action(old, new)?;
+        for scene in &mut self.scenes {
+            let _ = scene.world.input.rename_action(old, &renamed);
+        }
+        for scene in &mut self.scenes {
+            for actor in &mut scene.actors {
+                actor.graph.walk_instructions_mut(&mut |ins| {
+                    match &mut ins.kind {
+                        InstructionKind::WhenActionPressed { action }
+                            if action.eq_ignore_ascii_case(old) =>
                         {
-                            *text = renamed.clone();
+                            *action = renamed.clone();
                         }
-                    }
-                    InstructionKind::ClearActionBindings { action } => {
-                        if let crate::value::Value::Text { value: text } = action
-                            && text.eq_ignore_ascii_case(old)
-                        {
-                            *text = renamed.clone();
+                        InstructionKind::BindAction { action, .. } => {
+                            if let crate::value::Value::Text { value: text } = action
+                                && text.eq_ignore_ascii_case(old)
+                            {
+                                *text = renamed.clone();
+                            }
                         }
+                        InstructionKind::ClearActionBindings { action } => {
+                            if let crate::value::Value::Text { value: text } = action
+                                && text.eq_ignore_ascii_case(old)
+                            {
+                                *text = renamed.clone();
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                }
-                ins.kind.visit_values_mut(&mut |value, _| {
-                    rename_action_in_value(value, old, &renamed);
+                    ins.kind.visit_values_mut(&mut |value, _| {
+                        rename_action_in_value(value, old, &renamed);
+                    });
                 });
-            });
-            for floating in &mut actor.graph.floating_values {
-                rename_action_in_value(&mut floating.value, old, &renamed);
+                for floating in &mut actor.graph.floating_values {
+                    rename_action_in_value(&mut floating.value, old, &renamed);
+                }
             }
         }
         Ok(renamed)
     }
 
     /// Drops an input action. Blocks naming it are left alone and read as
-    /// unheld, the same as an unknown key.
+    /// unheld, the same as an unknown key. Removes from every scene.
     pub fn remove_input_action(&mut self, name: &str) -> bool {
-        self.world.input.remove_action(name)
+        let mut removed = false;
+        for scene in &mut self.scenes {
+            removed |= scene.world.input.remove_action(name);
+        }
+        removed
     }
 
     /// Points every asset path that named `from` at `to` instead, so renaming
@@ -940,73 +1299,71 @@ impl Project {
                 changed = true;
             }
         };
-        for style in self.world.interface.styles.values_mut() {
-            for paint in [
-                &mut style.normal,
-                &mut style.hover,
-                &mut style.pressed,
-                &mut style.disabled,
-                &mut style.focused,
-            ] {
-                for font in &mut paint.fonts {
-                    repoint(font);
-                }
-            }
-        }
-        for path in &mut self.world.interface.stylesheets {
-            repoint(path);
-        }
-        for widget in self
-            .world
-            .interface
-            .widgets
-            .iter_mut()
-            .chain(self.world.interface.prefabs.values_mut().flatten())
-        {
-            if widget.element.kind == crate::ui::UiKind::Image {
-                repoint(&mut widget.element.content);
-            }
-            for paint in [
-                &mut widget.style.normal,
-                &mut widget.style.hover,
-                &mut widget.style.pressed,
-                &mut widget.style.disabled,
-                &mut widget.style.focused,
-            ] {
-                for font in &mut paint.fonts {
-                    repoint(font);
-                }
-            }
-        }
         repoint(&mut self.icon);
-        repoint(&mut self.world.sky.hdri.path);
-        repoint(&mut self.world.sky.stars.milky_way);
-        repoint(&mut self.world.lightning.thunder_sound);
-        repoint(&mut self.world.clouds.shape_volume);
-        repoint(&mut self.world.clouds.detail_volume);
-        for layer in &mut self.world.cloud_layers {
-            repoint(&mut layer.coverage_texture);
-            repoint(&mut layer.flow_map);
-        }
-        if let Some(font) = self.world.speech_bubble.font_asset.as_mut() {
-            repoint(font);
-        }
-        for actor in &mut self.actors {
-            for component in actor.components.iter_mut() {
-                match component {
-                    ActorComponent::Look {
-                        visual: Visual::Image { path, .. } | Visual::Model { path, .. },
-                    } => repoint(path),
-                    ActorComponent::Look {
-                        visual: Visual::Tilemap { tilemap },
-                    } => repoint(&mut tilemap.tileset),
-                    ActorComponent::Material { material } => {
-                        repoint(&mut material.albedo_texture);
-                        repoint(&mut material.normal_texture);
-                        repoint(&mut material.roughness_texture);
+        for scene in &mut self.scenes {
+            let world = &mut scene.world;
+            for style in world.interface.styles.values_mut() {
+                for paint in [
+                    &mut style.normal,
+                    &mut style.hover,
+                    &mut style.pressed,
+                    &mut style.disabled,
+                    &mut style.focused,
+                ] {
+                    for font in &mut paint.fonts {
+                        repoint(font);
                     }
-                    ActorComponent::Script { path } => repoint(path),
-                    _ => {}
+                }
+            }
+            for path in &mut world.interface.stylesheets {
+                repoint(path);
+            }
+            let (widgets, prefabs) = (&mut world.interface.widgets, &mut world.interface.prefabs);
+            for widget in widgets.iter_mut().chain(prefabs.values_mut().flatten()) {
+                if widget.element.kind == crate::ui::UiKind::Image {
+                    repoint(&mut widget.element.content);
+                }
+                for paint in [
+                    &mut widget.style.normal,
+                    &mut widget.style.hover,
+                    &mut widget.style.pressed,
+                    &mut widget.style.disabled,
+                    &mut widget.style.focused,
+                ] {
+                    for font in &mut paint.fonts {
+                        repoint(font);
+                    }
+                }
+            }
+            repoint(&mut world.sky.hdri.path);
+            repoint(&mut world.sky.stars.milky_way);
+            repoint(&mut world.lightning.thunder_sound);
+            repoint(&mut world.clouds.shape_volume);
+            repoint(&mut world.clouds.detail_volume);
+            for layer in &mut world.cloud_layers {
+                repoint(&mut layer.coverage_texture);
+                repoint(&mut layer.flow_map);
+            }
+            if let Some(font) = world.speech_bubble.font_asset.as_mut() {
+                repoint(font);
+            }
+            for actor in &mut scene.actors {
+                for component in actor.components.iter_mut() {
+                    match component {
+                        ActorComponent::Look {
+                            visual: Visual::Image { path, .. } | Visual::Model { path, .. },
+                        } => repoint(path),
+                        ActorComponent::Look {
+                            visual: Visual::Tilemap { tilemap },
+                        } => repoint(&mut tilemap.tileset),
+                        ActorComponent::Material { material } => {
+                            repoint(&mut material.albedo_texture);
+                            repoint(&mut material.normal_texture);
+                            repoint(&mut material.roughness_texture);
+                        }
+                        ActorComponent::Script { path } => repoint(path),
+                        _ => {}
+                    }
                 }
             }
         }
@@ -1676,6 +2033,10 @@ mod tests {
     fn an_old_lighting_sky_becomes_an_hdri_sky() {
         let mut project = Project::starter("Sky", Mode::ThreeD);
         let mut json = serde_json::to_value(&project).unwrap();
+        // New documents carry both `scenes` (canonical) and a compat `world`.
+        // A legacy edit touches the scene copy; keep both in sync here.
+        json["scenes"][0]["world"]["lighting"]["sky"] = "assets/sky.hdr".into();
+        json["scenes"][0]["world"]["lighting"]["sky_brightness"] = 2500.0.into();
         json["world"]["lighting"]["sky"] = "assets/sky.hdr".into();
         json["world"]["lighting"]["sky_brightness"] = 2500.0.into();
         project = serde_json::from_value(json).unwrap();
@@ -1689,6 +2050,102 @@ mod tests {
         let json = serde_json::to_value(&project).unwrap();
         assert!(json["world"]["lighting"].get("sky").is_none());
         assert_eq!(json["world"]["sky"]["hdri"]["path"], "assets/sky.hdr");
+        // Old single-scene files without `scenes` still migrate as scene one.
+        let mut old = serde_json::to_value(&project).unwrap();
+        old.as_object_mut().unwrap().remove("scenes");
+        old.as_object_mut().unwrap().remove("active_scene");
+        let migrated: Project = serde_json::from_value(old).unwrap();
+        assert_eq!(migrated.scenes.len(), 1);
+        assert_eq!(migrated.scenes[0].name, "Scene 1");
+    }
+
+    #[test]
+    fn scenes_hold_their_own_actors_world_and_mode() {
+        let mut project = Project::starter("Scenes", Mode::TwoD);
+        assert_eq!(project.scenes.len(), 1);
+        assert_eq!(project.active_scene().name, "Scene 1");
+        assert_eq!(project.world.mode, Mode::TwoD);
+        assert_eq!(project.actors.len(), 2);
+
+        // A new scene starts empty in the active scene's dimension.
+        let second = project.add_scene("Level 2", None);
+        assert_eq!(project.scenes.len(), 2);
+        assert_eq!(project.active_scene, second);
+        assert!(project.actors.is_empty());
+        assert_eq!(project.world.mode, Mode::TwoD);
+
+        // Mixed dimensions: the second scene converts on its own.
+        project.switch_mode(Mode::ThreeD);
+        assert_eq!(project.world.mode, Mode::ThreeD);
+        project
+            .set_active_scene(&project.scenes[0].id.clone())
+            .unwrap();
+        assert_eq!(project.world.mode, Mode::TwoD);
+
+        // Rename refuses duplicates and blanks.
+        let first = project.scenes[0].id.clone();
+        assert!(project.rename_scene(&first, "Level 2").is_err());
+        assert!(project.rename_scene(&first, "  ").is_err());
+        assert_eq!(project.rename_scene(&first, "Menu").unwrap(), "Menu");
+
+        // Duplicate copies actors with fresh ids and becomes active.
+        let copy = project.duplicate_scene(&first).unwrap();
+        assert_eq!(project.scenes.len(), 3);
+        assert_eq!(project.active_scene, copy);
+        assert_eq!(project.actors.len(), 2);
+        assert_ne!(
+            project.actors[0].id,
+            project.scene(&first).unwrap().actors[0].id
+        );
+
+        // Removing the active scene falls back to the first one; the last stays.
+        project.remove_scene(&copy).unwrap();
+        assert_eq!(project.active_scene, project.scenes[0].id);
+        let last = project
+            .scenes
+            .iter()
+            .map(|s| s.id.clone())
+            .collect::<Vec<_>>();
+        for id in &last[1..] {
+            project.remove_scene(id).unwrap();
+        }
+        assert_eq!(project.scenes.len(), 1);
+        assert!(project.remove_scene(&project.scenes[0].id.clone()).is_err());
+    }
+
+    #[test]
+    fn scene_actor_names_stay_within_their_scene() {
+        let mut project = Project::starter("Names", Mode::TwoD);
+        let second = project.add_scene("Second", None);
+        // Both scenes can hold a "Player": uniqueness is per scene.
+        let id = project.add_actor(Actor::new("Player", default_visual()));
+        assert_eq!(
+            project.scene(&second).unwrap().actor(&id).unwrap().name,
+            "Player"
+        );
+        let dup = project.add_actor(Actor::new("Player", default_visual()));
+        assert_eq!(
+            project.scene(&second).unwrap().actor(&dup).unwrap().name,
+            "Player 2"
+        );
+        project
+            .set_active_scene(&project.scenes[0].id.clone())
+            .unwrap();
+        assert!(project.actor(&id).is_none());
+        assert!(project.find_actor(&id).is_some());
+    }
+
+    #[test]
+    fn switching_scenes_keeps_globals_but_not_actors() {
+        let mut project = Project::starter("Globals", Mode::TwoD);
+        project.create_global("score").unwrap();
+        let first_actor = project.actors[0].id.clone();
+        project.add_scene("Other", None);
+        // Globals cross scenes; actor locals do not.
+        assert!(project.globals.iter().any(|v| v.name == "score"));
+        assert!(project.find_actor(&first_actor).is_some());
+        assert!(project.actor(&first_actor).is_none());
+        assert!(project.is_global("nobody", "score"));
     }
 
     #[test]

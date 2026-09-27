@@ -93,12 +93,23 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   Implementation and usage: [Interface guide](docs/interface.md).
 - [ ] Save slots/profiles plus localization: builds on save system we have.
 - [ ] Multiple scenes plus loading between scenes (menu, level 1, level 2):
-  - [ ] Document: `Project` holds a scene list (each with its own actors and
+  - [x] Document: `Project` holds a scene list (each with its own actors and
         `World` settings); one active scene; old single-scene docs migrate as
         scene one; scene add/rename/duplicate/delete with undo.
-  - [ ] Mode: v1 supports mixed 2D/3D scenes; `Mode` lives per scene and a
+        Done: `Scene { id, name, world, actors }` in `project.rs`, `Project`
+        holds `scenes` plus `active_scene` with compat `world`/`actors` in the
+        JSON so old files and the current QML keep working. `Deref` to the
+        active scene keeps existing `project.world`/`project.actors` code
+        compiling; globals, input actions, repoint and normalize run across
+        all scenes.
+  - [x] Mode: v1 supports mixed 2D/3D scenes; `Mode` lives per scene and a
         scene switch across dimensions rebuilds the dim2/dim3 pipeline plus
         rapier backend the way a project dimension switch does today.
+        Done: each scene has its own `World` (including `mode`), `Scene` and
+        active-scene `switch_mode` convert units and visuals, and
+        `set_active_scene` respawns the runtime when the mode changes, like
+        `set_mode`. Builds bake skies, atlases, probes, scripts and terrain
+        from all scenes.
   - [ ] Blocks and scripts: `switch scene to _` (plus `with transition _`),
         reporters `current scene`, `scene names`, events `when scene
         starts/ends`; globals plus save data cross scenes, actor locals do
@@ -111,6 +122,12 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [ ] Editor and tooling: scene picker plus per-scene actor list/canvas and
         World settings; project folder, pack, build and web carry all scenes;
         shell/MCP commands (`add-scene`, `switch-scene`, ...).
+        Partial: pack, build and web already carry all scenes (the `Project`
+        JSON holds them, builds collect assets from every scene), and the
+        shell/MCP has `add-scene`, `duplicate-scene`, `rename-scene`,
+        `remove-scene` and `set-active-scene` (`switch-scene` alias). The QML
+        scene picker and per-scene actor list/canvas are still open; the
+        current UI edits the active scene through the compat fields.
 
 ### Phase 3 - Dev productivity, before API surface explodes
 - [x] Script toolchain: ship rustc or graceful degrade plus highlight plus inline errors plus rust-analyzer Cargo project.

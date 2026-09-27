@@ -507,24 +507,38 @@ fn file_size(path: &Path) -> u64 {
 /// first frame, so a file that won't compile has to stop the build here
 /// rather than reach a player's screen.
 pub fn check_shaders(project: &Project, project_dir: &Path) -> Result<usize, String> {
-    let mut sources: Vec<&str> = project
-        .actors
-        .iter()
-        .filter_map(|actor| actor.components.material()?.shader.as_ref())
-        .map(|effect| effect.source.trim())
-        .filter(|source| !source.is_empty())
-        .collect();
+    // Per scene, since a 2D scene and a 3D scene check against different heads.
+    let mut sources: Vec<(&str, bool)> = Vec::new();
+    for scene in &project.scenes {
+        let dim3 = scene.world.mode.is_3d();
+        for actor in &scene.actors {
+            let Some(material) = actor.components.material() else {
+                continue;
+            };
+            let Some(shader) = material.shader.as_ref() else {
+                continue;
+            };
+            let source = shader.source.trim();
+            if source.is_empty()
+                || sources
+                    .iter()
+                    .any(|(known, d)| *known == source && *d == dim3)
+            {
+                continue;
+            }
+            sources.push((source, dim3));
+        }
+    }
     sources.sort_unstable();
     sources.dedup();
-    let dim3 = project.world.mode.is_3d();
     let mut errors = Vec::new();
-    for source in &sources {
+    for (source, dim3) in &sources {
         let verdict = crate::assets::resolve(project_dir, source)
             .ok_or_else(|| "isn't a path in this project".to_string())
             .and_then(|full| {
                 std::fs::read_to_string(&full).map_err(|error| format!("couldn't be read: {error}"))
             })
-            .and_then(|text| crate::material::check_surface_wesl(&text, dim3));
+            .and_then(|text| crate::material::check_surface_wesl(&text, *dim3));
         if let Err(error) = verdict {
             errors.push(format!("{source}: {error}"));
         }
@@ -734,27 +748,29 @@ fn copy_assets(project_dir: &Path, game: &Path) -> Result<usize, String> {
 fn bake_sprite_atlas(project: &Project, project_dir: &Path, game: &Path) -> Result<usize, String> {
     use crate::pipeline;
     let mut sprites: Vec<(String, u64)> = Vec::new();
-    for actor in &project.actors {
-        let Some(crate::scene::Visual::Image { path, .. }) = actor.visual() else {
-            continue;
-        };
-        let Some(relative) = crate::assets::normalize(path) else {
-            continue;
-        };
-        if sprites.iter().any(|(known, _)| *known == relative) {
-            continue;
+    for scene in &project.scenes {
+        for actor in &scene.actors {
+            let Some(crate::scene::Visual::Image { path, .. }) = actor.visual() else {
+                continue;
+            };
+            let Some(relative) = crate::assets::normalize(path) else {
+                continue;
+            };
+            if sprites.iter().any(|(known, _)| *known == relative) {
+                continue;
+            }
+            // A file that won't decode is left to fail the way it does in Play.
+            let Some(full) = crate::assets::resolve(project_dir, &relative) else {
+                continue;
+            };
+            let Ok((width, height)) = image::image_dimensions(&full) else {
+                continue;
+            };
+            if width.max(height) > pipeline::ATLAS_SPRITE_MAX {
+                continue;
+            }
+            sprites.push((relative, width as u64 * height as u64));
         }
-        // A file that won't decode is left to fail the way it does in Play.
-        let Some(full) = crate::assets::resolve(project_dir, &relative) else {
-            continue;
-        };
-        let Ok((width, height)) = image::image_dimensions(&full) else {
-            continue;
-        };
-        if width.max(height) > pipeline::ATLAS_SPRITE_MAX {
-            continue;
-        }
-        sprites.push((relative, width as u64 * height as u64));
     }
     // Smallest first, so dropping from the end drops the biggest.
     sprites.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
@@ -783,60 +799,75 @@ fn bake_sprite_atlas(project: &Project, project_dir: &Path, game: &Path) -> Resu
 /// and fails the way it does in Play.
 fn bake_sky(project: &Project, project_dir: &Path, game: &Path) -> Result<bool, String> {
     use crate::pipeline::{self, bc6h, hdr};
-    let sky = &project.world.sky;
-    if project.world.mode != crate::scene::Mode::ThreeD
-        || sky.active_kind() != crate::sky::SkyKind::Hdri
-    {
-        return Ok(false);
+    // Every 3D scene with an HDRI sky bakes its own cube; scenes sharing one
+    // file bake it once.
+    let mut baked_any = false;
+    let mut done: Vec<String> = Vec::new();
+    for scene in &project.scenes {
+        if scene.world.mode != crate::scene::Mode::ThreeD {
+            continue;
+        }
+        let sky = &scene.world.sky;
+        if sky.active_kind() != crate::sky::SkyKind::Hdri {
+            continue;
+        }
+        let Some(relative) = crate::assets::normalize(&sky.hdri.path) else {
+            continue;
+        };
+        if done.iter().any(|known| *known == relative) {
+            baked_any = true;
+            continue;
+        }
+        done.push(relative.clone());
+        let Ok(mut image) = hdr::load_hdr(project_dir, &relative) else {
+            continue;
+        };
+        let manifest = pipeline::load_manifest(project_dir);
+        image.bias(manifest.bias_of(&relative));
+        image.fix_seam(sky.hdri.seam_fix);
+        let cube = hdr::HdrCube::from_image(&image, (manifest.settings.hdr_max / 2).max(64));
+        let out = game.join(pipeline::baked_sky_path(&relative));
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        std::fs::write(&out, bc6h::write_dds_cube_levels(&cube.mip_chain(4)))
+            .map_err(|e| format!("{}: {e}", out.display()))?;
+        if let Some(copied) = crate::assets::resolve(game, &relative) {
+            let _ = std::fs::remove_file(copied);
+        }
+        baked_any = true;
     }
-    let Some(relative) = crate::assets::normalize(&sky.hdri.path) else {
-        return Ok(false);
-    };
-    let Ok(mut image) = hdr::load_hdr(project_dir, &relative) else {
-        return Ok(false);
-    };
-    let manifest = pipeline::load_manifest(project_dir);
-    image.bias(manifest.bias_of(&relative));
-    image.fix_seam(sky.hdri.seam_fix);
-    let cube = hdr::HdrCube::from_image(&image, (manifest.settings.hdr_max / 2).max(64));
-    let out = game.join(pipeline::baked_sky_path(&relative));
-    if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
-    std::fs::write(&out, bc6h::write_dds_cube_levels(&cube.mip_chain(4)))
-        .map_err(|e| format!("{}: {e}", out.display()))?;
-    if let Some(copied) = crate::assets::resolve(game, &relative) {
-        let _ = std::fs::remove_file(copied);
-    }
-    Ok(true)
+    Ok(baked_any)
 }
 
 /// Copies the light probes' bakes, so a built game lights the way the
 /// editor did. A probe that was never baked ships dark, as it plays.
 fn copy_probes(project: &Project, project_dir: &Path, game: &Path) -> Result<(), String> {
     use crate::probe;
-    for actor in &project.actors {
-        if actor.components.probe().is_none() {
-            continue;
-        }
-        for path in [
-            probe::info_path(project_dir, &actor.id),
-            probe::cube_path(project_dir, &actor.id),
-            probe::grid_path(project_dir, &actor.id),
-        ] {
-            let Ok(relative) = path.strip_prefix(project_dir) else {
-                continue;
-            };
-            if !path.is_file() {
+    for scene in &project.scenes {
+        for actor in &scene.actors {
+            if actor.components.probe().is_none() {
                 continue;
             }
-            let to = game.join(relative);
-            if let Some(parent) = to.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| format!("{}: {e}", parent.display()))?;
+            for path in [
+                probe::info_path(project_dir, &actor.id),
+                probe::cube_path(project_dir, &actor.id),
+                probe::grid_path(project_dir, &actor.id),
+            ] {
+                let Ok(relative) = path.strip_prefix(project_dir) else {
+                    continue;
+                };
+                if !path.is_file() {
+                    continue;
+                }
+                let to = game.join(relative);
+                if let Some(parent) = to.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| format!("{}: {e}", parent.display()))?;
+                }
+                std::fs::copy(&path, &to)
+                    .map_err(|e| format!("{} -> {}: {e}", path.display(), to.display()))?;
             }
-            std::fs::copy(&path, &to)
-                .map_err(|e| format!("{} -> {}: {e}", path.display(), to.display()))?;
         }
     }
     Ok(())
@@ -895,8 +926,9 @@ fn copy_scripts(
     target: &Target,
 ) -> Result<usize, String> {
     let mut paths: Vec<&str> = project
-        .actors
+        .scenes
         .iter()
+        .flat_map(|scene| scene.actors.iter())
         .filter_map(|actor| actor.components.script())
         .collect();
     paths.sort_unstable();
