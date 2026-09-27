@@ -1861,9 +1861,7 @@ impl Vm {
             Action::Broadcast(name) => self.pending.push(Event::Message(name.trim().to_string())),
             Action::SwitchScene { scene, transition } => {
                 let scene = self.eval(scene, actor, params, temps, out).as_text();
-                let transition = self
-                    .eval(transition, actor, params, temps, out)
-                    .as_text();
+                let transition = self.eval(transition, actor, params, temps, out).as_text();
                 out.push(Effect::SwitchScene {
                     actor: actor.to_string(),
                     scene: scene.trim().to_string(),

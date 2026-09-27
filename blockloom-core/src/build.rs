@@ -728,15 +728,18 @@ fn clear_build_dir(dir: &Path) -> Result<(), String> {
 }
 
 /// Copies the project's `assets/` into the build, minus the script sources -
-/// what a built game runs is the library beside them, not the `.rs`.
+/// what a built game runs is the library beside them, not the `.rs` - and
+/// minus the scene assets, which the pack already carries embedded.
 fn copy_assets(project_dir: &Path, game: &Path) -> Result<usize, String> {
     let from = project_dir.join(project::ASSETS_DIR);
     if !from.is_dir() {
         return Ok(0);
     }
     let scripts = script::scripts_dir(project_dir);
+    let scenes = project_dir.join(project::SCENES_DIR);
     copy_tree(&from, &game.join(project::ASSETS_DIR), &|path| {
         !(path.starts_with(&scripts) && path.extension().is_some_and(|ext| ext == "rs"))
+            && !path.starts_with(&scenes)
     })
 }
 

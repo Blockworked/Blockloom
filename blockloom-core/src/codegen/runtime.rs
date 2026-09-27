@@ -2218,9 +2218,14 @@ impl Host for AbiHost {
             Act::LoadJsonIntoList { name, json } => {
                 self.act_wire(actor, ACT_JSON_TO_LIST, name, "", [0.0; 3], &json)
             }
-            Act::SwitchScene { scene, transition } => {
-                self.act_wire(actor, ACT_SWITCH_SCENE, &scene, &transition, [0.0; 3], &zero)
-            }
+            Act::SwitchScene { scene, transition } => self.act_wire(
+                actor,
+                ACT_SWITCH_SCENE,
+                &scene,
+                &transition,
+                [0.0; 3],
+                &zero,
+            ),
         }
     }
 

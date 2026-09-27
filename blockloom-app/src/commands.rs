@@ -27,6 +27,7 @@ use blockloom_core::project::{self, Actor, Project};
 use blockloom_core::scene::{
     Camera, DisplayOutput, Lighting, Mode, Physics, Placement, PostProcess, Visual,
 };
+use blockloom_core::scene_components::{SceneComponent, SceneComponents};
 use blockloom_core::script;
 use blockloom_core::sky::{Sky, SkyKind};
 use blockloom_core::sound::SoundMixer;
@@ -806,6 +807,14 @@ pub(crate) fn remove_scene(
     };
     project.remove_scene(&scene_id)?;
     s.selected_actor = None;
+    // The scene asset goes with it; anything else under `assets/scenes/` is
+    // left alone, so a staged import never vanishes on save.
+    if let Some(dir) = s.project_dir().map(Path::to_path_buf) {
+        let file = dir.join(project::scene_asset_path(&scene_id));
+        if file.is_file() {
+            std::fs::remove_file(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+        }
+    }
     auto_save(&s);
     sync_runtime(&mut s);
     emit(app, &s);
@@ -887,6 +896,232 @@ pub(crate) fn set_active_scene(
     }
     emit(app, &s);
     restart_error.map_or(Ok(()), Err)
+}
+
+// ─── Scene assets and components ─────────────────────────────────────────
+// A scene is its own `.blockscene` asset; its settings are components on the
+// scene the way `Place` is a component on an actor. The `set_*` world
+// commands above keep editing the active scene field by field; these speak
+// components, so the inspector can show lighting, sky, fog, wind, post and
+// physics the way it shows an actor's parts.
+
+/// Lists a scene's settings as components, active scene when `scene_id` is
+/// empty. What the inspector draws for the scene itself.
+pub(crate) fn scene_components(
+    state: &SharedState,
+    scene_id: Option<String>,
+) -> Result<Vec<SceneComponent>, String> {
+    let s = lock(state)?;
+    let Some(project) = s.project() else {
+        return Err("No project is open".to_string());
+    };
+    let scene = match scene_id.as_deref().filter(|id| !id.is_empty()) {
+        Some(id) => project.scene(id).ok_or("Scene not found".to_string())?,
+        None => project.active_scene(),
+    };
+    Ok(SceneComponents::from_world(&scene.world).0)
+}
+
+/// Sets one scene component, replacing the one of the same name. Answers its
+/// name. A `Dimension` that moves the active scene across dimensions rebuilds
+/// the runtime the way `set_mode` does.
+pub(crate) fn set_scene_component(
+    backend: &Backend,
+    state: &SharedState,
+    app: &AppHandle,
+    scene_id: Option<String>,
+    component: SceneComponent,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    let target = {
+        let project = s.project().ok_or("No project is open".to_string())?;
+        match scene_id.clone().filter(|id| !id.is_empty()) {
+            Some(id) => {
+                if project.scene(&id).is_none() {
+                    return Err("Scene not found".to_string());
+                }
+                id
+            }
+            None => project.active_scene.clone(),
+        }
+    };
+    let old_mode = s.project().map(|p| p.world.mode);
+    let is_active = s.project().is_some_and(|p| p.active_scene == target);
+    push_undo(&mut s);
+    let name = component.name().to_string();
+    let new_mode = {
+        let Some(project) = s.project_mut() else {
+            return Err("No project is open".to_string());
+        };
+        let Some(scene) = project.scene_mut(&target) else {
+            return Err("Scene not found".to_string());
+        };
+        SceneComponents(vec![component]).apply_to_world(&mut scene.world);
+        scene.world.mode
+    };
+    if is_active {
+        s.selected_actor = None;
+    }
+    auto_save(&s);
+
+    // Across dimensions the world needs a new process, not just a reload.
+    if is_active && old_mode != Some(new_mode) && s.runtime.is_some() {
+        let runtime_was_open = true;
+        let was_running = s.running;
+        let was_paused = s.paused;
+        s.runtime = None;
+        s.status = None;
+        let project = s.project().cloned().expect("checked above");
+        let dir = s
+            .project_dir()
+            .map(|dir| dir.to_string_lossy().into_owned());
+        match RuntimeHandle::spawn(new_mode, backend.clone(), s.embedded.clone()) {
+            Ok(mut runtime) => {
+                let loaded = runtime.send(&blockloom_protocol::EditorMessage::Load {
+                    project: Box::new(project),
+                    dir: dir.clone(),
+                });
+                let started = !was_running
+                    || (runtime.send(&blockloom_protocol::EditorMessage::Start)
+                        && (!was_paused
+                            || runtime
+                                .send(&blockloom_protocol::EditorMessage::Pause { paused: true })));
+                if loaded && started {
+                    s.runtime = Some(runtime);
+                    greet(&mut s);
+                } else {
+                    s.runtime = None;
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Couldn't restart the runtime: {e}");
+                s.runtime = None;
+            }
+        }
+        s.running = runtime_was_open && was_running && s.runtime.is_some();
+        s.paused = s.running && was_paused;
+    } else {
+        sync_runtime(&mut s);
+    }
+    emit(app, &s);
+    Ok(name)
+}
+
+/// Drops one scene component; reads of it fall back to its default. Removing
+/// `Dimension` returns the scene to 2D, rebuilding the runtime when it is
+/// the active scene.
+pub(crate) fn remove_scene_component(
+    state: &SharedState,
+    app: &AppHandle,
+    scene_id: Option<String>,
+    name: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let target = {
+        let project = s.project().ok_or("No project is open".to_string())?;
+        match scene_id.clone().filter(|id| !id.is_empty()) {
+            Some(id) => {
+                if project.scene(&id).is_none() {
+                    return Err("Scene not found".to_string());
+                }
+                id
+            }
+            None => project.active_scene.clone(),
+        }
+    };
+    let old_mode = s.project().map(|p| p.world.mode);
+    let is_active = s.project().is_some_and(|p| p.active_scene == target);
+    push_undo(&mut s);
+    let new_mode = {
+        let Some(project) = s.project_mut() else {
+            return Err("No project is open".to_string());
+        };
+        let Some(scene) = project.scene_mut(&target) else {
+            return Err("Scene not found".to_string());
+        };
+        let mut components = SceneComponents::from_world(&scene.world);
+        if !components.remove(&name) {
+            return Err(format!("This scene has no \"{name}\" component"));
+        }
+        scene.world = components.to_world();
+        scene.world.mode
+    };
+    auto_save(&s);
+    if is_active && old_mode != Some(new_mode) && s.runtime.is_some() {
+        s.runtime = None;
+        s.status = None;
+        s.running = false;
+        s.paused = false;
+        sync_runtime(&mut s);
+    } else {
+        sync_runtime(&mut s);
+    }
+    emit(app, &s);
+    Ok(())
+}
+
+/// Brings a `.blockscene` file from anywhere on disk into this project: it is
+/// read, given a fresh id when one collides, and made active - the next save
+/// writes it under `assets/scenes/`. `path` may be absolute or
+/// project-relative, so a file staged in `assets/scenes/` imports by naming
+/// it. What sharing a scene as a file means.
+pub(crate) fn import_scene(
+    state: &SharedState,
+    app: &AppHandle,
+    path: String,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    let dir = project_dir(&s)?;
+    // Project-relative first, so a staged file imports by its tray path.
+    let source: std::path::PathBuf = blockloom_core::assets::normalize(&path)
+        .and_then(|relative| blockloom_core::assets::resolve(&dir, &relative))
+        .filter(|full| full.is_file())
+        .unwrap_or_else(|| Path::new(&path).to_path_buf());
+    let mut scene =
+        project::read_scene_file(&source).map_err(|e| format!("{}: {e}", source.display()))?;
+    push_undo(&mut s);
+    let Some(project) = s.project_mut() else {
+        return Err("No project is open".to_string());
+    };
+    // Fresh ids keep cross-scene references from leaking between the copy
+    // and whatever project it came from.
+    if project.scene(&scene.id).is_some() {
+        use std::collections::HashMap;
+        scene.id = uuid::Uuid::new_v4().simple().to_string();
+        let mut remap = HashMap::new();
+        for actor in &mut scene.actors {
+            let next = uuid::Uuid::new_v4().simple().to_string();
+            remap.insert(actor.id.clone(), next.clone());
+            actor.id = next;
+        }
+        for actor in &mut scene.actors {
+            if let Some(parent) = actor.parent()
+                && let Some(next) = remap.get(parent).cloned()
+            {
+                actor.components.set_parent(&next);
+            }
+        }
+    }
+    scene.name = project.unique_scene_name(&scene.name);
+    let id = scene.id.clone();
+    let dest_relative = project::scene_asset_path(&id);
+    project.scenes.push(scene);
+    project.active_scene = id.clone();
+    s.selected_actor = None;
+    // A staged file under a different name served its turn; the save below
+    // writes the id-named asset, so remove the staging copy.
+    if let Ok(relative) = source
+        .strip_prefix(&dir)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        && relative != dest_relative
+        && source.is_file()
+    {
+        let _ = std::fs::remove_file(&source);
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(id)
 }
 
 pub(crate) fn set_background(
@@ -2412,6 +2647,7 @@ pub(crate) fn rename_asset(
     name: String,
 ) -> Result<String, String> {
     let mut s = lock(state)?;
+    refuse_managed_scene_asset(&s, &path)?;
     let dir = project_dir(&s)?;
     let moved = assets::rename(&dir, &path, &name)?;
     pipeline::note_moved(&dir, &path, &moved);
@@ -2429,6 +2665,7 @@ pub(crate) fn move_asset(
     parent: String,
 ) -> Result<String, String> {
     let mut s = lock(state)?;
+    refuse_managed_scene_asset(&s, &path)?;
     let dir = project_dir(&s)?;
     let moved = assets::move_to(&dir, &path, &parent)?;
     pipeline::note_moved(&dir, &path, &moved);
@@ -2441,11 +2678,35 @@ pub(crate) fn move_asset(
 
 pub(crate) fn delete_asset(state: &SharedState, path: String) -> Result<(), String> {
     let s = lock(state)?;
+    refuse_managed_scene_asset(&s, &path)?;
     let dir = project_dir(&s)?;
     assets::delete(&dir, &path)?;
     pipeline::note_removed(&dir, &path);
     if touches_scripts(&path) {
         sync_ide(&dir);
+    }
+    Ok(())
+}
+
+/// Scene assets in the index are managed through the scene commands, not the
+/// tray: renaming one would orphan the index entry, and deleting one would
+/// drop the scene without its undo step. The scenes folder itself stays put
+/// for the same reason; use `import-scene` to bring a file in.
+fn refuse_managed_scene_asset(s: &AppState, relative: &str) -> Result<(), String> {
+    let normalized = relative.replace('\\', "/");
+    if normalized == project::SCENES_DIR {
+        return Err(
+            "The scenes folder is managed by Blockloom - use the scene commands".to_string(),
+        );
+    }
+    let managed = s
+        .project()
+        .is_some_and(|project| project.scene_for_asset(&normalized).is_some());
+    if managed {
+        return Err(
+            "That file is a scene asset - use duplicate-scene, rename-scene or remove-scene"
+                .to_string(),
+        );
     }
     Ok(())
 }

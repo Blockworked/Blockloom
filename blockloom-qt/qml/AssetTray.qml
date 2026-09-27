@@ -33,7 +33,7 @@ Rectangle {
     property string previewing: ""
     property var dropTarget: null  // A folder path while an asset drag hovers one, else null - null rather than "" so the project root ("") stays hoverable without reading as hovered.
 
-    readonly property var icons: ({ folder: "folder", image: "image", audio: "music", font: "file-type", model: "box", script: "file-code", shader: "sparkles", text: "file-text", hdr: "sun", volume: "layers", light: "zap", height: "trending-up", other: "file" })
+    readonly property var icons: ({ folder: "folder", image: "image", audio: "music", font: "file-type", model: "box", script: "file-code", shader: "sparkles", text: "file-text", hdr: "sun", volume: "layers", light: "zap", height: "trending-up", scene: "map", other: "file" })
     function parentOf(p) { const cut = p.lastIndexOf("/"); return cut === -1 ? "" : p.slice(0, cut); }
     readonly property var crumbs: { const parts = path.split("/").filter(p => p.length); return parts.map((name, i) => ({ name: name, path: parts.slice(0, i + 1).join("/") })); }
     function fileSize(bytes) {

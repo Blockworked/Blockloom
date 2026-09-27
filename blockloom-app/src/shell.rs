@@ -326,6 +326,64 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "scene-components",
+        cmd: "scene_components",
+        aliases: &["scene_components"],
+        summary: "List a scene's settings as components (active scene by default).",
+        args: &[ArgSpec {
+            name: "sceneId",
+            ty: "id",
+            required: false,
+        }],
+    },
+    CommandSpec {
+        name: "set-scene-component",
+        cmd: "set_scene_component",
+        aliases: &["set_scene_component"],
+        summary: "Set one scene component (lighting, sky, fog, wind, post, physics and the rest).",
+        args: &[
+            ArgSpec {
+                name: "sceneId",
+                ty: "id",
+                required: false,
+            },
+            ArgSpec {
+                name: "component",
+                ty: "object",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-scene-component",
+        cmd: "remove_scene_component",
+        aliases: &["remove_scene_component"],
+        summary: "Drop one scene component; reads of it fall back to its default.",
+        args: &[
+            ArgSpec {
+                name: "sceneId",
+                ty: "id",
+                required: false,
+            },
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "import-scene",
+        cmd: "import_scene",
+        aliases: &["import_scene"],
+        summary: "Bring a .blockscene file into this project (absolute or project-relative) and make it active.",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "file path",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-background",
         cmd: "set_background",
         aliases: &["set_background"],

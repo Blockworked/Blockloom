@@ -152,13 +152,14 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         Partial: pack, build and web already carry all scenes (the `Project`
         JSON holds them, builds collect assets from every scene), and the
         shell/MCP has `add-scene`, `duplicate-scene`, `rename-scene`,
-        `remove-scene` and `set-active-scene` (`switch-scene` alias). The
-        block palette (`Blocks.qml` rows, `vocabulary.rs` specs) now carries
-        `switch scene to`, `when scene starts/ends`, `current scene` and
-        `scene names`. The QML scene picker and per-scene actor list/canvas
-        are still open; the current UI edits the active scene through the
-        compat fields.
-  - [ ] Scene assets (Unity-style): each scene becomes its own asset file
+        `remove-scene` and `set-active-scene` (`switch-scene` alias) plus
+        `scene-components`, `set-scene-component`, `remove-scene-component`
+        and `import-scene`. The block palette (`Blocks.qml` rows,
+        `vocabulary.rs` specs) now carries `switch scene to`, `when scene
+        starts/ends`, `current scene` and `scene names`. The actor list has a
+        minimal scene picker (switch/add); per-scene canvas routing and World
+        settings editing still go through the active scene's compat fields.
+  - [x] Scene assets (Unity-style): each scene becomes its own asset file
         under the project folder (one file per scene, referenced by the
         project), so scenes can be shared, duplicated and versioned like any
         other asset. Each scene asset carries its settings as components on
@@ -167,6 +168,19 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         with the inspector editing the scene's components the way it edits
         an actor's. Loading a scene loads its asset; the in-document scene
         list becomes an index over scene assets with migration for old files.
+        Done: `assets/scenes/<id>.blockscene` per scene
+        (`SCENE_EXTENSION`, `SCENES_DIR`), `project.blockloom` as a
+        `ProjectFile` index over `SceneRef`s with old embedded folders
+        migrating on load; `SceneFile` carries `SceneComponents`
+        (Dimension, Background, Physics, Camera, SpeechBubble, Lighting,
+        Sound, Input, Post, Display, Navigation, Sky, Fog, Clouds,
+        CloudLayers, Lightning, Wind, Surface, Vfx, Interface) with
+        `from_world`/`to_world`, the world staying the runtime's in-memory
+        shape; `scene-components`, `set-scene-component`,
+        `remove-scene-component` and `import-scene` in shell/MCP/dispatch;
+        tray refuses renames/moves/deletes of indexed scenes and the scenes
+        folder; builds skip scene assets (the pack embeds); `AssetKind::Scene`
+        plus a minimal scene picker in `ActorList.qml`.
 
 ### Phase 3 - Dev productivity, before API surface explodes
 - [x] Script toolchain: ship rustc or graceful degrade plus highlight plus inline errors plus rust-analyzer Cargo project.

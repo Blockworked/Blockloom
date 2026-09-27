@@ -39,6 +39,8 @@ pub enum AssetKind {
     Light,
     /// Headerless height samples (`.r16`, `.r32`, `.raw`).
     Height,
+    /// A scene asset (`.blockscene`): actors plus its settings as components.
+    Scene,
     Other,
 }
 
@@ -147,6 +149,7 @@ pub fn kind_of(name: &str) -> AssetKind {
         "cube" => AssetKind::Volume,
         "ies" => AssetKind::Light,
         "r16" | "r32" | "raw" => AssetKind::Height,
+        "blockscene" => AssetKind::Scene,
         _ => AssetKind::Other,
     }
 }

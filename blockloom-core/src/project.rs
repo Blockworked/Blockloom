@@ -31,6 +31,18 @@ pub const PROJECT_FILE: &str = "project.blockloom";
 /// Where a project folder keeps its assets.
 pub const ASSETS_DIR: &str = "assets";
 
+/// File extension of a saved scene asset. Each scene lives as its own file
+/// under [`SCENES_DIR`], Unity-style, so scenes can be shared, duplicated
+/// and versioned like any other asset.
+pub const SCENE_EXTENSION: &str = "blockscene";
+
+/// Where a project folder keeps its scene assets, relative to the folder.
+/// Under `assets/` so the asset tray lists them beside everything else.
+pub const SCENES_DIR: &str = "assets/scenes";
+
+/// The scene file shape [`SceneFile`] writes. Bumped when it changes.
+pub const SCENE_FORMAT: u32 = 1;
+
 fn new_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
@@ -580,6 +592,154 @@ impl Scene {
     }
 }
 
+// ─── Scene assets ──────────────────────────────────────────────────────────
+// A scene is a Unity-style asset: one `.blockscene` file per scene under
+// `assets/scenes/`, carrying its settings as components on the scene itself.
+// The project file is an index over those assets; the runtime, packs and
+// exports still carry full scenes in memory.
+
+/// One entry in the project file's scene index.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SceneRef {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    /// Project-relative path to the scene asset, e.g.
+    /// `assets/scenes/<id>.blockscene`.
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub mode: Mode,
+}
+
+/// The project file on disk: an index over scene assets plus everything that
+/// isn't per-scene. Scene files hold the actors and the world settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectFile {
+    #[serde(default = "new_id")]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub active_scene: String,
+    #[serde(default)]
+    pub scenes: Vec<SceneRef>,
+    #[serde(default)]
+    pub globals: Vec<VariableDef>,
+    #[serde(default)]
+    pub global_lists: Vec<ListDef>,
+    #[serde(default)]
+    pub global_dicts: Vec<DictDef>,
+}
+
+/// A scene asset file: its settings as components plus its actors. Older
+/// scene documents kept a fixed `world`; those still load - a file naming
+/// `components` wins, otherwise `world` is used, otherwise the default.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SceneFile {
+    #[serde(default = "new_id")]
+    pub id: String,
+    #[serde(default = "default_scene_name")]
+    pub name: String,
+    #[serde(default = "scene_format_default")]
+    pub format: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub components: Option<crate::scene_components::SceneComponents>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world: Option<World>,
+    #[serde(default)]
+    pub actors: Vec<Actor>,
+}
+
+fn scene_format_default() -> u32 {
+    SCENE_FORMAT
+}
+
+impl Scene {
+    /// The project-relative asset path for this scene. Stable across renames
+    /// since it names the scene's id, not its title.
+    pub fn asset_path(&self) -> String {
+        scene_asset_path(&self.id)
+    }
+
+    /// This scene as a file: its world as components plus its actors.
+    pub fn to_file(&self) -> SceneFile {
+        SceneFile {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            format: SCENE_FORMAT,
+            components: Some(crate::scene_components::SceneComponents::from_world(
+                &self.world,
+            )),
+            world: None,
+            actors: self.actors.clone(),
+        }
+    }
+
+    /// A file back into a scene. Prefers `components`; falls back to a fixed
+    /// `world` for hand-written or older files.
+    pub fn from_file(file: SceneFile) -> Self {
+        let world = match file.components {
+            Some(components) if !components.0.is_empty() => components.to_world(),
+            _ => file.world.unwrap_or_default(),
+        };
+        Self {
+            id: if file.id.is_empty() {
+                new_id()
+            } else {
+                file.id
+            },
+            name: if file.name.trim().is_empty() {
+                default_scene_name()
+            } else {
+                file.name
+            },
+            world,
+            actors: file.actors,
+        }
+    }
+}
+
+/// The project-relative asset path for the scene with `scene_id`.
+pub fn scene_asset_path(scene_id: &str) -> String {
+    format!("{SCENES_DIR}/{scene_id}.{SCENE_EXTENSION}")
+}
+
+/// The folder inside a project dir that holds scene assets.
+pub fn scenes_dir(dir: &Path) -> PathBuf {
+    dir.join(SCENES_DIR)
+}
+
+/// Whether `relative` (project-relative) is a scene asset file.
+pub fn is_scene_asset(relative: &str) -> bool {
+    let normalized = relative.replace('\\', "/");
+    normalized.starts_with(&format!("{SCENES_DIR}/"))
+        && normalized.ends_with(&format!(".{SCENE_EXTENSION}"))
+}
+
+/// Reads one scene asset file.
+pub fn read_scene_file(path: &Path) -> Result<Scene, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let file: SceneFile =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(Scene::from_file(file))
+}
+
+/// Writes one scene asset file, making the scenes dir as needed. Answers its
+/// project-relative path.
+pub fn save_scene_file(dir: &Path, scene: &Scene) -> Result<String, String> {
+    let relative = scene.asset_path();
+    let full = dir.join(&relative);
+    if let Some(parent) = full.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    let json = serde_json::to_string_pretty(&scene.to_file()).map_err(|e| e.to_string())?;
+    std::fs::write(&full, json).map_err(|e| format!("{}: {e}", full.display()))?;
+    Ok(relative)
+}
+
 /// A whole project: what the editor edits, what the runtime is handed, and
 /// what a `.blockloom` file holds. The project holds the scene list; each
 /// scene has its own actors and `World` settings, and one scene is active.
@@ -800,6 +960,16 @@ impl Project {
 
     pub fn scene_mut(&mut self, id: &str) -> Option<&mut Scene> {
         self.scenes.iter_mut().find(|s| s.id == id)
+    }
+
+    /// The scene whose asset lives at `relative` (project-relative), if any.
+    /// Scene assets are id-named, so this is how the asset tray knows a file
+    /// is managed through the scene commands rather than its own.
+    pub fn scene_for_asset(&self, relative: &str) -> Option<&Scene> {
+        let normalized = relative.replace('\\', "/");
+        self.scenes
+            .iter()
+            .find(|scene| scene.asset_path() == normalized)
     }
 
     fn ensure_scene_invariants(&mut self) {
@@ -1607,7 +1777,9 @@ pub fn create_project(project: &Project, parent: &Path) -> Result<PathBuf, Strin
     Ok(dir)
 }
 
-/// Reads one project file.
+/// Reads one project file: a full embedded document, as Export writes and
+/// old project folders held. New project folders hold an index instead -
+/// see [`read_project_dir`].
 pub fn read_project(path: &Path) -> Result<Project, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut project: Project =
@@ -1616,7 +1788,9 @@ pub fn read_project(path: &Path) -> Result<Project, String> {
     Ok(project)
 }
 
-/// Reads the project a folder holds.
+/// Reads the project a folder holds: its index plus one scene asset per
+/// entry. Folders written before scene assets carry embedded scenes instead
+/// and still load - the next save rewrites them as assets.
 pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
     let path = project_file(dir);
     if !path.is_file() {
@@ -1625,16 +1799,95 @@ pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
             dir.display()
         ));
     }
-    read_project(&path)
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let is_index = value
+        .get("scenes")
+        .and_then(|scenes| scenes.as_array())
+        .is_some_and(|scenes| scenes.is_empty() || scenes.iter().all(|s| s.get("path").is_some()));
+    if !is_index {
+        // Old folder: embedded scenes (or a single scene). Load it whole;
+        // the next save splits it into assets.
+        let mut project: Project =
+            serde_json::from_value(value).map_err(|e| format!("{}: {e}", path.display()))?;
+        project.normalize();
+        return Ok(project);
+    }
+    let file: ProjectFile =
+        serde_json::from_value(value).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut scenes = Vec::with_capacity(file.scenes.len());
+    for scene_ref in &file.scenes {
+        let relative = if scene_ref.path.is_empty() {
+            scene_asset_path(&scene_ref.id)
+        } else {
+            scene_ref.path.clone()
+        };
+        let full = dir.join(&relative);
+        let mut scene = read_scene_file(&full)
+            .map_err(|e| format!("scene \"{}\" ({}): {e}", scene_ref.name, full.display()))?;
+        // The index wins on identity; the file wins on content.
+        scene.id = scene_ref.id.clone();
+        if !scene_ref.name.trim().is_empty() {
+            scene.name = scene_ref.name.clone();
+        }
+        scenes.push(scene);
+    }
+    let mut project = Project {
+        id: if file.id.is_empty() {
+            new_id()
+        } else {
+            file.id
+        },
+        name: file.name,
+        icon: file.icon,
+        scenes,
+        active_scene: file.active_scene,
+        globals: file.globals,
+        global_lists: file.global_lists,
+        global_dicts: file.global_dicts,
+    };
+    project.normalize();
+    Ok(project)
 }
 
-/// Writes `project` into its folder, making the folder and its `assets` if
-/// they aren't there. Answers the new revision: every save bumps the folder's
-/// counter, so an idle backend can tell its in-memory copy went stale.
+/// The index over `project`'s scene assets.
+pub fn project_to_file(project: &Project) -> ProjectFile {
+    ProjectFile {
+        id: project.id.clone(),
+        name: project.name.clone(),
+        icon: project.icon.clone(),
+        active_scene: project.active_scene.clone(),
+        scenes: project
+            .scenes
+            .iter()
+            .map(|scene| SceneRef {
+                id: scene.id.clone(),
+                name: scene.name.clone(),
+                path: scene.asset_path(),
+                mode: scene.world.mode,
+            })
+            .collect(),
+        globals: project.globals.clone(),
+        global_lists: project.global_lists.clone(),
+        global_dicts: project.global_dicts.clone(),
+    }
+}
+
+/// Writes `project` into its folder as an index plus one scene asset per
+/// scene, making the folders as needed. Answers the new revision: every save
+/// bumps the folder's counter, so an idle backend can tell its in-memory
+/// copy went stale. Export stays a single embedded file - see
+/// [`export_project`].
 pub fn save_project(project: &Project, dir: &Path) -> Result<u64, String> {
     std::fs::create_dir_all(assets_dir(dir)).map_err(|e| format!("{}: {e}", dir.display()))?;
+    std::fs::create_dir_all(scenes_dir(dir)).map_err(|e| format!("{}: {e}", dir.display()))?;
+    for scene in &project.scenes {
+        save_scene_file(dir, scene)?;
+    }
     let path = project_file(dir);
-    let json = serde_json::to_string_pretty(project).map_err(|e| e.to_string())?;
+    let json =
+        serde_json::to_string_pretty(&project_to_file(project)).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(crate::sync::bump_revision(dir))
 }
@@ -1741,6 +1994,66 @@ mod tests {
         save_project(&project, &dir).unwrap();
 
         assert_eq!(read_project_dir(&dir).unwrap(), project);
+    }
+
+    #[test]
+    fn scenes_save_as_one_asset_each_plus_an_index() {
+        let temp = TempDir::new();
+        let mut project = Project::starter("Scenes", Mode::TwoD);
+        project.add_scene("Level 2", None);
+        let dir = create_project(&project, &temp.0).unwrap();
+
+        // One file per scene, under assets/scenes.
+        for scene in &project.scenes {
+            let full = dir.join(scene.asset_path());
+            assert!(full.is_file(), "{}", full.display());
+            let file: SceneFile =
+                serde_json::from_str(&std::fs::read_to_string(&full).unwrap()).unwrap();
+            assert_eq!(file.id, scene.id);
+            assert!(file.components.is_some());
+            assert!(file.world.is_none());
+        }
+        // The project file is an index, not embedded scenes.
+        let index: ProjectFile =
+            serde_json::from_str(&std::fs::read_to_string(project_file(&dir)).unwrap()).unwrap();
+        assert_eq!(index.scenes.len(), 2);
+        assert!(index.scenes.iter().all(|s| !s.path.is_empty()));
+        assert_eq!(read_project_dir(&dir).unwrap(), project);
+    }
+
+    #[test]
+    fn an_old_folder_with_embedded_scenes_still_loads() {
+        let temp = TempDir::new();
+        let project = Project::starter("Old", Mode::TwoD);
+        let dir = create_project(&project, &temp.0).unwrap();
+        // Rewrite the index as a full embedded document, the pre-asset shape.
+        let json = serde_json::to_string_pretty(&project).unwrap();
+        std::fs::write(project_file(&dir), json).unwrap();
+
+        let loaded = read_project_dir(&dir).unwrap();
+        assert_eq!(loaded.scenes.len(), 1);
+        assert_eq!(loaded.actors.len(), 2);
+        // The next save splits it into assets.
+        save_project(&loaded, &dir).unwrap();
+        let index: ProjectFile =
+            serde_json::from_str(&std::fs::read_to_string(project_file(&dir)).unwrap()).unwrap();
+        assert_eq!(index.scenes.len(), 1);
+        assert!(dir.join(&index.scenes[0].path).is_file());
+    }
+
+    #[test]
+    fn a_scene_with_a_fixed_world_loads_through_its_asset() {
+        let mut scene = Scene::new("Legacy", Mode::TwoD);
+        scene.world.background = "#102030".to_string();
+        let file = SceneFile {
+            id: scene.id.clone(),
+            name: scene.name.clone(),
+            format: SCENE_FORMAT,
+            components: None,
+            world: Some(scene.world.clone()),
+            actors: scene.actors.clone(),
+        };
+        assert_eq!(Scene::from_file(file).world.background, "#102030");
     }
 
     #[test]

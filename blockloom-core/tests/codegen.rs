@@ -2690,7 +2690,8 @@ fn sounds_ask_for_the_same_things() {
 }
 
 #[test]
-fn every_actor_is_in_the_name_table_whether_it_has_blocks_or_not() {    // `delete` and `create a clone of` name an actor the way a block does, so
+fn every_actor_is_in_the_name_table_whether_it_has_blocks_or_not() {
+    // `delete` and `create a clone of` name an actor the way a block does, so
     // one with an empty canvas still has to be findable by name.
     let mut project = project_with_blocks(
         vec![vec![K::DeleteActor {

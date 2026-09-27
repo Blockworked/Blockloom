@@ -1774,12 +1774,10 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         })),
         K::DeleteActor { target } => steps.push(Step::Action(Action::DeleteActor(target.clone()))),
         K::Broadcast { name } => steps.push(Step::Action(Action::Broadcast(name.clone()))),
-        K::SwitchScene { scene, transition } => {
-            steps.push(Step::Action(Action::SwitchScene {
-                scene: scene.clone(),
-                transition: transition.clone(),
-            }))
-        }
+        K::SwitchScene { scene, transition } => steps.push(Step::Action(Action::SwitchScene {
+            scene: scene.clone(),
+            transition: transition.clone(),
+        })),
         K::SetMouseLocked { locked } => steps.push(Step::Action(Action::SetMouseLocked(*locked))),
         K::RumbleGamepad { strength, duration } => {
             steps.push(Step::Action(Action::RumbleGamepad {

@@ -116,6 +116,35 @@ Rectangle {
         visible: root.open
         RowLayout {
             Layout.fillWidth: true; Layout.margins: 8; spacing: 4
+            BwComboBox {
+                id: sceneBox
+                Layout.fillWidth: true; implicitHeight: 28; font.pixelSize: 12
+                readonly property var scenes: root.appState.project ? root.appState.project.scenes : []
+                readonly property string active: root.appState.project ? root.appState.project.active_scene : ""
+                model: scenes
+                textRole: "name"
+                currentIndex: {
+                    const at = scenes.findIndex(s => s.id === active);
+                    return at >= 0 ? at : -1;
+                }
+                displayText: {
+                    const s = scenes.find(s => s.id === active);
+                    return s ? s.name : "Scene";
+                }
+                onActivated: index => {
+                    const s = scenes[index];
+                    if (s && s.id !== active) root.app.invoke("set_active_scene", { sceneId: s.id });
+                    currentIndex = Qt.binding(() => {
+                        const at = sceneBox.scenes.findIndex(s => s.id === sceneBox.active);
+                        return at >= 0 ? at : -1;
+                    });
+                }
+                ToolTip.text: "Scene asset - one .blockscene file each"
+            }
+            IconButton { iconName: "plus"; tip: "Add scene"; implicitWidth: 26; implicitHeight: 26; onClicked: root.app.invoke("add_scene", { name: "" }) }
+        }
+        RowLayout {
+            Layout.fillWidth: true; Layout.margins: 8; spacing: 4
             SectionLabel { label: "Actors"; topPadding: 0; Layout.fillWidth: true }
             BwComboBox {
                 id: addBox

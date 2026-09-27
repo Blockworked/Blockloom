@@ -126,6 +126,24 @@ impl Backend {
                 app,
                 arg(&args, "sceneId")?,
             )?),
+            "scene_components" => to_json(commands::scene_components(
+                state,
+                arg(&args, "sceneId").ok(),
+            )?),
+            "set_scene_component" => to_json(commands::set_scene_component(
+                self,
+                state,
+                app,
+                arg(&args, "sceneId").ok(),
+                arg(&args, "component")?,
+            )?),
+            "remove_scene_component" => to_json(commands::remove_scene_component(
+                state,
+                app,
+                arg(&args, "sceneId").ok(),
+                arg(&args, "name")?,
+            )?),
+            "import_scene" => to_json(commands::import_scene(state, app, arg(&args, "path")?)?),
             "set_background" => {
                 to_json(commands::set_background(state, app, arg(&args, "color")?)?)
             }

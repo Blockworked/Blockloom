@@ -874,7 +874,11 @@ pub fn step_scripts(
                 actor: actor.clone(),
                 message: message.clone(),
             }),
-            Effect::SwitchScene { actor, scene, transition } => {
+            Effect::SwitchScene {
+                actor,
+                scene,
+                transition,
+            } => {
                 if switch_request.is_none() && engine.pending_scene.is_none() {
                     switch_request = Some((scene.clone(), transition.clone()));
                     // A script's ask names who asked only for the log line;
@@ -1311,7 +1315,12 @@ pub fn publish_sensors(
         // `tiles::publish_level` fills it straight after.
         level: Default::default(),
         current_scene: engine.project.active_scene().name.clone(),
-        scene_names: engine.project.scenes.iter().map(|s| s.name.clone()).collect(),
+        scene_names: engine
+            .project
+            .scenes
+            .iter()
+            .map(|s| s.name.clone())
+            .collect(),
     });
 
     // No world event queues while paused, so resuming never bursts.

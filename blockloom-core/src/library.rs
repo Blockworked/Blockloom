@@ -39,10 +39,27 @@ struct Remembered {
 }
 
 /// Just enough of a project file to list it, so opening the Dashboard doesn't
-/// build every document in the library.
+/// build every document in the library. New folders hold an index over scene
+/// assets; old ones hold embedded scenes - both read here.
 #[derive(Deserialize)]
 struct Meta {
     name: String,
+    #[serde(default)]
+    world: MetaWorld,
+    #[serde(default)]
+    scenes: Vec<MetaScene>,
+    #[serde(default)]
+    active_scene: String,
+}
+
+#[derive(Default, Deserialize)]
+struct MetaScene {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    mode: Mode,
     #[serde(default)]
     world: MetaWorld,
 }
@@ -93,14 +110,37 @@ fn write_registry(registry: &Registry) {
 }
 
 /// The name and dimension of the project in `dir`, without building the whole
-/// document.
+/// document. New folders read the active scene's mode off the index; old ones
+/// read the embedded world.
 fn read_meta(dir: &Path) -> Option<(String, Mode)> {
     let path = project::project_file(dir);
     let text = std::fs::read_to_string(&path).ok()?;
     let meta: Meta = serde_json::from_str(&text)
         .map_err(|e| tracing::warn!("Skipping an unreadable project ({}): {e}", path.display()))
         .ok()?;
-    Some((meta.name, meta.world.mode))
+    if meta.scenes.is_empty() {
+        return Some((meta.name, meta.world.mode));
+    }
+    // Index format: entries carry their mode, so the Dashboard needs no scene
+    // file. Old embedded scenes carry a world each instead.
+    if meta.scenes.iter().any(|s| !s.path.is_empty()) {
+        let mode = meta
+            .scenes
+            .iter()
+            .find(|s| s.id == meta.active_scene)
+            .or(meta.scenes.first())
+            .map(|s| s.mode)
+            .unwrap_or_default();
+        return Some((meta.name, mode));
+    }
+    let mode = meta
+        .scenes
+        .iter()
+        .find(|s| s.id == meta.active_scene)
+        .or(meta.scenes.first())
+        .map(|s| s.world.mode)
+        .unwrap_or(meta.world.mode);
+    Some((meta.name, mode))
 }
 
 /// Every remembered project, most recently opened first. Folders that are

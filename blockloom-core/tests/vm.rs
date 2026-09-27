@@ -335,10 +335,7 @@ fn scene_events_start_their_strands() {
         Strand::with_instructions(
             0,
             0,
-            vec![
-                ins(InstructionKind::WhenSceneStarts),
-                ins(say("begun")),
-            ],
+            vec![ins(InstructionKind::WhenSceneStarts), ins(say("begun"))],
         ),
         Strand::with_instructions(
             0,
@@ -348,10 +345,16 @@ fn scene_events_start_their_strands() {
     ]);
     let mut vm = Harness::new(&project);
     vm.vm.fire(Event::SceneStarted);
-    assert_eq!(vm.run(1).iter().filter_map(|effect| match effect {
-        Effect::Say { text, .. } => Some(text.clone()),
-        _ => None,
-    }).collect::<Vec<_>>(), vec!["begun".to_string()]);
+    assert_eq!(
+        vm.run(1)
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Say { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        vec!["begun".to_string()]
+    );
     vm.vm.fire(Event::SceneEnded);
     assert_eq!(says(&vm.run(1)), vec!["ended".to_string()]);
 }
