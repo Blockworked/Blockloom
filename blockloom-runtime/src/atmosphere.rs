@@ -219,6 +219,7 @@ mod tests {
                 average: 0.5,
                 peak: 1.0,
                 measured: true,
+                ..default()
             });
         app.world_mut().resource_mut::<Environment>().exposure = 0.0;
         app.update();

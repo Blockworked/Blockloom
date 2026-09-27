@@ -7,7 +7,7 @@
 use blockloom_core::blocks::{
     BlockDef, BlockPiece, BlockShape, Instruction, InstructionKind, ListDef, ListItem, Strand,
 };
-use blockloom_core::project::{Actor, Project};
+use blockloom_core::project::{Actor, Project, Scene};
 use blockloom_core::scene::{Axis, Mode, Visual, World};
 use blockloom_core::sense::{self, Sensors};
 use blockloom_core::value::{Op, Value};
@@ -86,15 +86,23 @@ fn body_of(block_id: &str, body: Vec<Instruction>) -> Strand {
 }
 
 fn project(actor: impl Fn(usize) -> Actor) -> Project {
-    Project {
-        id: "bench".to_string(),
-        name: "bench".to_string(),
-        icon: String::new(),
+    let scene = Scene {
+        id: "s1".to_string(),
+        name: "Scene 1".to_string(),
+        path: "assets/scenes/Scene 1.blockscene".to_string(),
         world: World {
             mode: Mode::TwoD,
             ..Default::default()
         },
         actors: (0..ACTORS).map(actor).collect(),
+    };
+    Project {
+        id: "bench".to_string(),
+        name: "bench".to_string(),
+        icon: String::new(),
+        scenes: vec![scene],
+        active_scene: "s1".to_string(),
+        default_scene: "s1".to_string(),
         globals: Vec::new(),
         global_lists: Vec::new(),
         global_dicts: Vec::new(),

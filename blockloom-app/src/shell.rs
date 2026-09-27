@@ -615,7 +615,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "set-post-process",
         cmd: "set_post_process",
         aliases: &["set_post_process"],
-        summary: "Set the camera's post: exposure, tonemapping, bloom and vignette.",
+        summary: "Set the camera's post chain: exposure_ev and auto_exposure, tonemapping and tone (toe, shoulder), bloom (threshold, knee, scatter, dirt), grading (white balance, lift/gamma/gain, saturation, contrast, lut), vignette, depth_of_field, motion_blur, ao (radius, intensity), ssr, chromatic_aberration, grain and sharpen.",
         args: &[ArgSpec {
             name: "post",
             ty: "object",

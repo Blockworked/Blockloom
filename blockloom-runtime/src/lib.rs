@@ -60,6 +60,7 @@ mod passes;
 mod pbr_patch;
 mod performance;
 pub mod player;
+mod post;
 mod preview;
 mod probes;
 mod ray_tracing;
@@ -214,6 +215,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     passes::register(app);
     hdr::register(app);
     luminance::register(app);
+    post::register(app);
     capture::register(app);
     // Ray tracing is 3D only, but registers always so a live switch into
     // 3D finds it; its systems no-op in 2D.
@@ -413,9 +415,11 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 (
                     world::rebuild_world.run_if(rebuild_ready),
                     volumes::gather_volumes,
+                    post::auto_expose,
                     environment::blend_environment,
                     hdr::resolve_frame,
                     environment::apply_environment,
+                    (post::apply_post, post::focus_depth_of_field.run_if(is_3d)),
                     (
                         lights::sync_lights,
                         shadows::apply_shadows,

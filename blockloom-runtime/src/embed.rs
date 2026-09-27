@@ -1570,6 +1570,106 @@ mod tests {
         );
     }
 
+    /// The red world with its post-process changed by `edit`.
+    fn graded_red(
+        mode: Mode,
+        edit: impl FnOnce(&mut blockloom_core::scene::PostProcess),
+    ) -> blockloom_core::project::Project {
+        let mut red = red_world(mode);
+        edit(&mut red.world.post);
+        red
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn grading_to_no_saturation_turns_red_grey() {
+        let grey = |[r, g, b]: [u8; 3]| r > 20 && r.abs_diff(g) < 8 && r.abs_diff(b) < 8;
+        for mode in [Mode::TwoD, Mode::ThreeD] {
+            let project = graded_red(mode, |post| post.grading.saturation = 0.0);
+            let (set, index, errors) = run_world(project, |_| {}, game_camera(), 600, grey);
+            let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
+            assert!(errors.is_empty(), "{errors:?}");
+            let pixel = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+            assert!(grey(pixel), "{mode:?}: expected grey, read {pixel:?}");
+        }
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn the_bloom_chain_shows_each_level() {
+        let project = graded_red(Mode::TwoD, |post| {
+            post.bloom_enabled = true;
+            post.bloom_threshold = 0.0;
+        });
+        for mip in [0, 4] {
+            let view = SceneView {
+                debug_view: blockloom_protocol::DebugView::BloomMip,
+                bloom_mip: mip,
+                ..game_camera()
+            };
+            let (set, index, errors) = run_world(project.clone(), |_| {}, view, 600, is_red);
+            let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
+            assert!(errors.is_empty(), "{errors:?}");
+            let pixel = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+            assert!(
+                is_red(pixel),
+                "level {mip}: expected red bloom, read {pixel:?}"
+            );
+        }
+    }
+
+    /// Also shows the SSAO and depth of field shader patches apply: a patch
+    /// that no longer matches Bevy reports an error.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn ao_and_blur_size_debug_views_draw_in_3d() {
+        let mut project = graded_red(Mode::ThreeD, |post| {
+            post.depth_of_field.enabled = true;
+            post.depth_of_field.focus_distance = 0.1;
+            post.depth_of_field.f_stops = 0.5;
+        });
+        project.world.lighting.ao_enabled = true;
+        let grey = |[r, g, b]: [u8; 3]| r > 60 && r.abs_diff(g) < 8 && r.abs_diff(b) < 8;
+        let view = SceneView {
+            debug_view: blockloom_protocol::DebugView::AmbientOcclusion,
+            ..game_camera()
+        };
+        let (set, index, errors) = run_world(project.clone(), |_| {}, view, 600, grey);
+        let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
+        assert!(errors.is_empty(), "{errors:?}");
+        let pixel = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        assert!(grey(pixel), "expected AO in grey, read {pixel:?}");
+
+        // Everything past a 10 cm focus at f/0.5 is far: blue.
+        let blue = |[r, g, b]: [u8; 3]| b > 150 && b > g && g > r;
+        let view = SceneView {
+            debug_view: blockloom_protocol::DebugView::CircleOfConfusion,
+            ..game_camera()
+        };
+        let (set, index, errors) = run_world(project, |_| {}, view, 600, blue);
+        let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
+        assert!(errors.is_empty(), "{errors:?}");
+        let pixel = middle_pixel(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        assert!(blue(pixel), "expected far blur in blue, read {pixel:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn film_grain_breaks_up_a_flat_color() {
+        let project = graded_red(Mode::TwoD, |post| post.grain.intensity = 1.0);
+        let (set, index, errors) = run_world(project, |_| {}, game_camera(), 600, |_| false);
+        let set = set.unwrap_or_else(|| panic!("no frame arrived: {errors:?}"));
+        assert!(errors.is_empty(), "{errors:?}");
+        let frame = frame_pixels(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+        let row = &frame[(SIZE.y as usize / 2) * SIZE.x as usize..][..SIZE.x as usize];
+        let reds: std::collections::HashSet<u8> = row.iter().map(|p| p[0]).collect();
+        assert!(
+            reds.len() > 8,
+            "a grained row should vary, read {} reds",
+            reds.len()
+        );
+    }
+
     #[test]
     #[ignore = "needs a GPU"]
     fn a_light_component_lights_the_ground_after_batching() {

@@ -2492,7 +2492,7 @@ mod tests {
     #[test]
     fn a_scene_file_moved_outside_the_editor_is_followed() {
         let temp = TempDir::new();
-        let mut project = Project::starter("Scenes", Mode::TwoD);
+        let project = Project::starter("Scenes", Mode::TwoD);
         let dir = create_project(&project, &temp.0).unwrap();
         let id = project.scenes[0].id.clone();
         // Rename the file the way an OS file manager would.

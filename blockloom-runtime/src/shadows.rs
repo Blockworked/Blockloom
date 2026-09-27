@@ -61,9 +61,9 @@ pub fn apply_shadows(
         cookie_size: lighting.sun_cookie_size.max(0.01),
     };
     if let Some(mut patches) = patches {
-        patches.set_if_neq(PbrPatches {
-            shadow_fade: now.settings.fade,
-        });
+        if patches.shadow_fade != now.settings.fade {
+            patches.shadow_fade = now.settings.fade;
+        }
     }
     let fresh = suns.iter().any(|(_, sun, ..)| sun.is_added())
         || cameras.iter().any(|(_, camera)| camera.is_added());

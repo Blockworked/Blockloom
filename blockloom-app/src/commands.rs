@@ -1385,8 +1385,8 @@ pub(crate) fn set_vfx(
     Ok(())
 }
 
-/// Sets the post-process on the world camera: exposure, tonemapping, bloom
-/// and vignette. What the project settings dialog edits; the runtime seeds
+/// Sets the post-process on the world camera: the whole chain from exposure
+/// to grain. What the project settings dialog edits; the runtime seeds
 /// its camera components from it on every rebuild.
 pub(crate) fn set_post_process(
     state: &SharedState,

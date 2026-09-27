@@ -4513,7 +4513,7 @@ mod tests {
         );
         carrier.components.insert(ActorComponent::Persist);
         let carrier_id = carrier.id.clone();
-        let mut passer = blockloom_core::project::Actor::new(
+        let passer = blockloom_core::project::Actor::new(
             "Passer",
             blockloom_core::scene::Visual::Rect {
                 color: "#FFFFFF".to_string(),

@@ -113,11 +113,24 @@ Rectangle {
         const w = appState.project ? appState.project.world : {};
         const l = Object.assign({ light_direction: [8, 16, 8], light_color: "#FFFFFF", illuminance: 10000, ambient_color: "#FFFFFF", ambient_brightness: 80, ao_enabled: false }, w.lighting || {});
         const f = w.fog || { height: {}, volumetric: {}, aerial: {} };
-        const p = Object.assign({ exposure_ev: 9.7, tonemapping: "TonyMcMapface", bloom_enabled: false, bloom_threshold: 1, bloom_intensity: 0.15, vignette_strength: 0 }, w.post || {});
+        const p = Object.assign({ exposure_ev: 9.7, tonemapping: "TonyMcMapface", bloom_enabled: false, bloom_threshold: 1, bloom_intensity: 0.15, bloom_knee: 0.5, bloom_scatter: 0.7, bloom_dirt_intensity: 0,
+                                  vignette_strength: 0, chromatic_aberration: 0, sharpen: 0 }, w.post || {});
+        const ae = Object.assign({ enabled: false, min_ev: 2, max_ev: 16, compensation: 0 }, p.auto_exposure || {});
+        const g = Object.assign({ temperature: 0, tint: 0, lift: [0, 0, 0], gamma: [1, 1, 1], gain: [1, 1, 1], saturation: 1, contrast: 1, lut_contribution: 1 }, p.grading || {});
+        const dof = Object.assign({ enabled: false, focus_distance: 10, f_stops: 2.8 }, p.depth_of_field || {});
+        const mb = Object.assign({ enabled: false, shutter_angle: 180 }, p.motion_blur || {});
+        const ssr = Object.assign({ enabled: false, roughness_cutoff: 0.4 }, p.ssr || {});
         return ({ background: w.background || "#1B2431", sun_direction: l.light_direction, sun_color: l.light_color, illuminance: l.illuminance,
                   ambient_color: l.ambient_color, ambient_brightness: l.ambient_brightness, ao: l.ao_enabled, exposure: p.exposure_ev,
                   tonemapping: p.tonemapping, bloom: p.bloom_enabled, bloom_threshold: p.bloom_threshold, bloom_intensity: p.bloom_intensity,
                   vignette: p.vignette_strength, reflections: 1, indirect: 1,
+                  auto_exposure: ae.enabled, auto_exposure_min: ae.min_ev, auto_exposure_max: ae.max_ev, exposure_compensation: ae.compensation,
+                  bloom_knee: p.bloom_knee, bloom_scatter: p.bloom_scatter, bloom_dirt_intensity: p.bloom_dirt_intensity,
+                  tone_toe: (p.tone || {}).toe || 0, tone_shoulder: (p.tone || {}).shoulder || 0,
+                  temperature: g.temperature, tint: g.tint, lift: g.lift, gamma: g.gamma, gain: g.gain, saturation: g.saturation, contrast: g.contrast, lut_contribution: g.lut_contribution,
+                  depth_of_field: dof.enabled, focus_distance: dof.focus_distance, f_stops: dof.f_stops, motion_blur: mb.enabled, shutter_angle: mb.shutter_angle,
+                  ao_radius: (p.ao || {}).radius || 0.7285, ssr: ssr.enabled, ssr_roughness: ssr.roughness_cutoff,
+                  chromatic_aberration: p.chromatic_aberration, grain: (p.grain || {}).intensity || 0, sharpen: p.sharpen,
                   sky_exposure: w.sky ? w.sky.exposure : 0, ambient_dimmer: w.sky ? w.sky.ambient_dimmer : 1,
                   cloud_coverage: (w.clouds || {}).coverage || 0, cloud_density: (w.clouds || {}).density || 0, cloud_type: (w.clouds || {}).cloud_type || 0,
                   fog_density: 3 / (f.height.distance || 400), fog_color: f.height.day_color || "#C2CAD2", fog_height: f.height.base_height || 0,
@@ -139,6 +152,34 @@ Rectangle {
         { key: "bloom_threshold", label: "Bloom from", kind: "number" },
         { key: "bloom_intensity", label: "Bloom ×", kind: "number" },
         { key: "vignette", label: "Vignette", kind: "number" },
+        { key: "auto_exposure", label: "Auto exposure", kind: "bool", only3d: true },
+        { key: "auto_exposure_min", label: "Auto EV min", kind: "number", only3d: true },
+        { key: "auto_exposure_max", label: "Auto EV max", kind: "number", only3d: true },
+        { key: "exposure_compensation", label: "Auto EV +", kind: "number", only3d: true },
+        { key: "bloom_knee", label: "Bloom knee", kind: "number" },
+        { key: "bloom_scatter", label: "Bloom spread", kind: "number" },
+        { key: "bloom_dirt_intensity", label: "Lens dirt ×", kind: "number" },
+        { key: "tone_toe", label: "Toe", kind: "number" },
+        { key: "tone_shoulder", label: "Shoulder", kind: "number" },
+        { key: "temperature", label: "Warmth", kind: "number" },
+        { key: "tint", label: "Tint", kind: "number" },
+        { key: "lift", label: "Lift RGB", kind: "vec3" },
+        { key: "gamma", label: "Gamma RGB", kind: "vec3" },
+        { key: "gain", label: "Gain RGB", kind: "vec3" },
+        { key: "saturation", label: "Saturation", kind: "number" },
+        { key: "contrast", label: "Contrast", kind: "number" },
+        { key: "lut_contribution", label: "LUT amount", kind: "number" },
+        { key: "depth_of_field", label: "Depth of field", kind: "bool", only3d: true },
+        { key: "focus_distance", label: "Focus m", kind: "number", only3d: true },
+        { key: "f_stops", label: "f-stop", kind: "number", only3d: true },
+        { key: "motion_blur", label: "Motion blur", kind: "bool", only3d: true },
+        { key: "shutter_angle", label: "Shutter °", kind: "number", only3d: true },
+        { key: "ao_radius", label: "AO reach m", kind: "number", only3d: true },
+        { key: "ssr", label: "SSR", kind: "bool", only3d: true },
+        { key: "ssr_roughness", label: "SSR rough cutoff", kind: "number", only3d: true },
+        { key: "chromatic_aberration", label: "Color fringes", kind: "number" },
+        { key: "grain", label: "Film grain", kind: "number" },
+        { key: "sharpen", label: "Sharpen", kind: "number" },
         { key: "reflections", label: "Reflections ×", kind: "number", only3d: true },
         { key: "indirect", label: "Indirect ×", kind: "number", only3d: true },
         { key: "sky_exposure", label: "Sky EV", kind: "number", only3d: true },
@@ -1567,7 +1608,7 @@ Rectangle {
                     }
                 } }
             Component { id: overrideTonemap
-                ChoiceField { options: Blocks.opts(["TonyMcMapface","None","Reinhard","ReinhardLuminance","AcesFitted","Filmic"]); value: parent.o.value
+                ChoiceField { options: Blocks.opts(["TonyMcMapface","None","Reinhard","ReinhardLuminance","AcesFitted","Filmic","AgX","Neutral"]); value: parent.o.value
                     onChosen: t => root.writeOverride(vo.c, parent.key, { value: t, on: true }) } }
         }
     }

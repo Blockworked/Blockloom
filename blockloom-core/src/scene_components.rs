@@ -69,7 +69,7 @@ pub enum SceneComponent {
     Sound { mixer: SoundMixer },
     /// Named input actions and their bindings.
     Input { config: InputConfig },
-    /// Exposure, tonemapping, bloom and vignette.
+    /// The post chain, exposure to grain.
     Post { post: PostProcess },
     /// The output signal, peak brightness and paper white.
     Display { display: DisplayOutput },

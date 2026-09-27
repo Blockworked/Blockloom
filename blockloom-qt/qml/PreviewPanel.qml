@@ -42,6 +42,7 @@ Rectangle {
         property real scaleStep: 0.1
         property bool showGrid: true
         property string debugView: "lit"
+        property int bloomMip: 0
         property bool volumeBounds: true
         property bool volumeHeatmap: false
         property bool volumePanel: false
@@ -77,7 +78,7 @@ Rectangle {
     readonly property var sceneView: ({
         enabled: scene.enabled, tool: scene.tool, local: scene.local, snap: scene.snap,
         grid: is3d ? scene.grid3d : scene.grid2d, angle: scene.angle, scale: scene.scaleStep, show_grid: scene.showGrid,
-        debug_view: scene.debugView,
+        debug_view: scene.debugView, bloom_mip: scene.bloomMip,
         volumes: { bounds: scene.volumeBounds, heatmap: scene.volumeHeatmap, freeze: root.volumeFreeze },
         path_tracer: { enabled: root.pathTracing && is3d, samples: scene.pathSamples, seconds: scene.pathSeconds },
         brush: { op: scene.brushOp, target: brushTarget(scene.brushTarget), radius: scene.brushRadius, strength: scene.brushStrength,
@@ -237,7 +238,9 @@ Rectangle {
                 options: [{ value: "lit", label: "Lit" }, { value: "false_color", label: "False color" }, { value: "clipping", label: "Clipping" },
                           { value: "histogram", label: "Histogram" }, { value: "waveform", label: "Waveform" },
                           { value: "calibration", label: "Calibration" }, { value: "hdr_preview", label: "HDR preview" }]
-                          .concat(root.is3d ? [{ value: "surface_blend", label: "Surface blend" }] : [])
+                          .concat([{ value: "bloom_mip", label: "Bloom level" }])
+                          .concat(root.is3d ? [{ value: "surface_blend", label: "Surface blend" }, { value: "circle_of_confusion", label: "Blur size (CoC)" },
+                                               { value: "ambient_occlusion", label: "AO only" }] : [])
                 value: scene.debugView
                 onChosen: v => scene.debugView = v
                 ToolTip.visible: hovered; ToolTip.delay: 500
@@ -245,7 +248,14 @@ Rectangle {
                     + "Clipping stripes whatever the display can't show. Histogram and waveform plot luminance in stops.\n"
                     + "Calibration shows patches at black, paper white and peak brightness.\n"
                     + "HDR preview shows the HDR output at paper white, clipping what only an HDR display could show.\n"
-                    + "Surface blend paints terrain layers red, green, blue and yellow, rule masks magenta, snow white and wetness cyan."
+                    + "Surface blend paints terrain layers red, green, blue and yellow, rule masks magenta, snow white and wetness cyan.\n"
+                    + "Bloom level shows one level of the glow chain; blur size paints depth of field's blur, near orange and far blue; AO only shows ambient occlusion."
+            }
+            NumberField {
+                visible: scene.debugView === "bloom_mip"
+                Layout.preferredWidth: 44; value: scene.bloomMip; fallback: 0
+                onCommitted: n => scene.bloomMip = Math.min(4, Math.max(0, Math.round(n)))
+                ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: "Bloom level, 0 the sharpest to 4 the widest"
             }
             IconButton {
                 iconName: "layers"; tip: "Environment volumes: bounds, heat map, the blend and its lerp"

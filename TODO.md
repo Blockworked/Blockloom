@@ -914,7 +914,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         a billboard plane, not a 3D simulation. The surface target is a fixed
         256-unit square at the origin, 64x64 cells; graph shaders, model-part
         standard materials and the reference tracer do not sample it.
-  - [ ] Post volumes (full HDR chain, volume-blended): exposure (auto spot-meter
+  - [x] Post volumes (full HDR chain, volume-blended): exposure (auto spot-meter
         with min/max and speed writes `Environment.exposure` when enabled, else the
         manual EV stands; both lose to the director track per precedence), bloom (threshold/knee, 5-mip scatter chain,
         dirt texture), tonemap (ACES/Neutral/AgX select, toe/shoulder), white balance
@@ -923,6 +923,28 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         motion blur (shutter angle, per-object toggle), SSAO (HBAO, radius/intensity),
         SSR toggle with roughness cutoff, chromatic aberration, film grain, sharpen.
         Order fixed HDR-first; debug splits (bloom mip, CoC, AO only).
+        Shipped: spot, center-weighted or average auto-exposure claiming
+        `ExposureClaims::auto` between the director and the manual EV, with
+        min/max, per-direction speed and compensation; Blockloom's own
+        five-level bloom (soft-knee threshold, Karis prefilter, scatter,
+        lens dirt image); AgX and Khronos Neutral beside the old tonemappers
+        plus a toe/shoulder shape ahead of them; white balance, lift/gamma/
+        gain, saturation and contrast in linear light; a `.cube` or strip
+        LUT after the tonemapper; film grain with size and highlight
+        response; Bevy's vignette, chromatic aberration, CAS sharpening,
+        depth of field (fixed distance or an actor's depth, six-bladed or
+        circular bokeh, near toggle, far limit, widest blur), motion blur
+        (shutter angle, samples), SSAO (radius, intensity) and SSR (roughness
+        cutoff, thickness; draws opaque surfaces deferred). Volumes blend
+        every numeric and switch property; the Game view shows bloom levels,
+        blur size and AO alone. Embed tests cover grading, bloom levels,
+        grain and both 3D debug views on lavapipe.
+        Limits: SSAO is Bevy's GTAO rather than HBAO, and its intensity is
+        the project's (baked into the shader), not a volume property; bokeh
+        is Bevy's hexagon or Gaussian, not a blade count; motion blur has no
+        per-object toggle (Bevy's motion vectors have no per-mesh switch);
+        auto-exposure, depth of field, motion blur, SSAO and SSR are 3D; the
+        LUT is skipped under HDR output.
   - [ ] Performance and scalability (whole-frame budgets for the stack above):
         - Draw policy (numbers on the Phase 4 mechanisms, no new machinery):
           which meshes instance (vegetation, props, debris, decals) and at what
