@@ -69,6 +69,7 @@ mod space;
 mod sprites;
 mod streaming;
 mod terrain;
+mod tiles;
 #[cfg(feature = "ray_tracing")]
 mod traced;
 mod ui;
@@ -353,7 +354,50 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .after(world::drive_camera)
                     .before(overlay::update_speech_bubbles),
             )
-            .add_systems(First, sprites::clear_sort_depth)
+            // The level: painted tiles, regions and rooms on the fixed tick;
+            // parallax, room cameras, streaming and the Tiles tool per frame.
+            .init_resource::<tiles::Level>()
+            .add_systems(
+                FixedUpdate,
+                (
+                    tiles::apply_level_effects,
+                    tiles::redraw_maps,
+                    tiles::apply_regions,
+                    tiles::track_rooms,
+                )
+                    .chain()
+                    .in_set(world::SimulationSet)
+                    .after(dim2::apply_effects)
+                    .before(world::clear_effects),
+            )
+            .add_systems(
+                Update,
+                (
+                    tiles::paint_tiles
+                        .after(edit::interact)
+                        .before(edit::report),
+                    tiles::redraw_maps
+                        .after(tiles::paint_tiles)
+                        .after(world::rebuild_world),
+                    tiles::publish_level.after(world::publish_sensors),
+                    tiles::confine_camera
+                        .after(world::drive_camera)
+                        .before(edit::apply_view),
+                    (streaming::update_streaming_cells_2d, tiles::stream_rooms)
+                        .chain()
+                        .after(world::drive_camera)
+                        .after(world::rebuild_world),
+                    tiles::draw_overlays.after(edit::draw),
+                ),
+            )
+            .add_systems(First, (sprites::clear_sort_depth, tiles::clear_parallax))
+            .add_systems(
+                PostUpdate,
+                (tiles::apply_parallax, tiles::sync_parallax_copies)
+                    .chain()
+                    .after(sprites::apply_sort_depth)
+                    .before(bevy::transform::TransformSystems::Propagate),
+            )
             .add_systems(
                 PostUpdate,
                 sprites::apply_sort_depth.before(bevy::transform::TransformSystems::Propagate),
@@ -447,6 +491,52 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .chain()
                     .after(bevy::transform::TransformSystems::Propagate),
             );
+            // The level: painted tiles, regions and rooms on the fixed tick;
+            // parallax, room cameras, streaming and the Tiles tool per frame.
+            app.init_resource::<tiles::Level>()
+                .add_systems(
+                    FixedUpdate,
+                    (
+                        tiles::apply_level_effects,
+                        tiles::redraw_maps_3d,
+                        tiles::apply_regions_3d,
+                        tiles::track_rooms,
+                    )
+                        .chain()
+                        .in_set(world::SimulationSet)
+                        .after(dim3::apply_effects)
+                        .before(world::clear_effects),
+                )
+                .add_systems(
+                    Update,
+                    (
+                        tiles::paint_tiles
+                            .after(edit::interact)
+                            .before(edit::report),
+                        tiles::redraw_maps_3d
+                            .after(tiles::paint_tiles)
+                            .after(world::rebuild_world),
+                        tiles::publish_level.after(world::publish_sensors),
+                        tiles::confine_camera
+                            .after(world::drive_camera)
+                            .before(edit::apply_view),
+                        tiles::stream_rooms_3d
+                            .after(streaming::update_streaming_cells)
+                            .after(world::rebuild_world),
+                        tiles::draw_overlays.after(edit::draw),
+                    ),
+                )
+                .add_systems(
+                    First,
+                    (tiles::clear_parallax, tiles::clear_parallax_3d).chain(),
+                )
+                .add_systems(
+                    PostUpdate,
+                    (tiles::apply_parallax_3d, tiles::sync_parallax_copies_3d)
+                        .chain()
+                        .before(batching::upload_instances)
+                        .before(bevy::transform::TransformSystems::Propagate),
+                );
             app.insert_resource(bevy_rapier3d::prelude::TimestepMode::Fixed {
                 dt: 1.0 / 60.0,
                 substeps: 1,

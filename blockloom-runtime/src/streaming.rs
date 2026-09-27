@@ -183,6 +183,34 @@ pub fn update_streaming_cells(
     entered.write_batch(cells.entered.drain(..).map(CellEntered));
 }
 
+/// World pixels one cell unit stands for in 2D, so a 2D cell is 1024
+/// pixels across and admits a screen or two around the camera.
+pub const PIXELS_PER_CELL_UNIT: f32 = 16.0;
+
+/// [`update_streaming_cells`] for a 2D world: the same cells laid over XY,
+/// scaled by [`PIXELS_PER_CELL_UNIT`].
+pub fn update_streaming_cells_2d(
+    camera: Query<&Transform, With<crate::world::WorldCamera>>,
+    mut cells: ResMut<StreamingCells>,
+    mut entered: MessageWriter<CellEntered>,
+    mut left: MessageWriter<CellLeft>,
+) {
+    if let Ok(camera) = camera.single() {
+        let at = camera.translation / PIXELS_PER_CELL_UNIT;
+        cells.update(Vec3::new(at.x, 0.0, at.y));
+    }
+    let cells = &mut *cells;
+    left.write_batch(cells.left.drain(..).map(CellLeft));
+    entered.write_batch(cells.entered.drain(..).map(CellEntered));
+}
+
+/// A 2D cell's corners in world pixels.
+pub fn cell_rect_2d(cell: Cell) -> (Vec2, Vec2) {
+    let side = StreamingCells::SIZE * PIXELS_PER_CELL_UNIT;
+    let min = Vec2::new(cell.0 as f32, cell.1 as f32) * side;
+    (min, min + Vec2::splat(side))
+}
+
 /// Background work keyed by whatever a payload keys its pieces by, each
 /// piece belonging to one cell. The cell counts as loading until the task
 /// lands or is dropped; spawning over a running key cancels the old task.

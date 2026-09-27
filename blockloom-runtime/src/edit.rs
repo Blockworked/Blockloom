@@ -113,6 +113,8 @@ struct Drag {
     actor: String,
     handle: Handle,
     start: Transform,
+    /// Where parallax showed it at the press, off `start`.
+    shown: Vec3,
     press: Vec2,
     axes: [Vec3; 3],
     /// Where the pointer first met the line or plane being dragged along.
@@ -161,6 +163,9 @@ pub struct SceneEditor {
     pub brushing: bool,
     /// Where the pointer looks into the world, for the terrain brush.
     pub pointer_ray: Option<Ray3d>,
+    /// How far parallax drew each layer from its pose last frame, so a
+    /// layer is picked and handled where it shows.
+    pub parallax: HashMap<String, Vec3>,
 }
 
 impl Default for SceneEditor {
@@ -191,11 +196,17 @@ impl Default for SceneEditor {
             outbox: Vec::new(),
             brushing: false,
             pointer_ray: None,
+            parallax: HashMap::new(),
         }
     }
 }
 
 impl SceneEditor {
+    /// Where parallax shows an actor, off its pose.
+    fn shown(&self, id: &str) -> Vec3 {
+        self.parallax.get(id).copied().unwrap_or(Vec3::ZERO)
+    }
+
     fn held(&self, names: &[&str]) -> bool {
         names.iter().any(|name| self.keys.contains(*name))
     }
@@ -510,12 +521,28 @@ fn press(
         {
             editor.brushing = true;
         }
+        // The Tiles tool on a tilemap paints rather than picks.
+        0 if editor.view.tool == SceneTool::Tiles
+            && editor
+                .selected
+                .as_deref()
+                .and_then(|id| engine.actor(id))
+                .is_some_and(|actor| {
+                    matches!(
+                        actor.visual(),
+                        Some(blockloom_core::scene::Visual::Tilemap { .. })
+                    )
+                }) =>
+        {
+            editor.brushing = true;
+        }
         0 => {
             if let Some(handle) = hovered(engine, editor, lens, at, px_scale, posed) {
                 start_drag(engine, editor, lens, handle, at, posed);
                 return;
             }
-            let Some(actor) = pick(engine, lens, at, actors, posed, terrains) else {
+            let Some(actor) = pick(engine, lens, at, actors, posed, terrains, &editor.parallax)
+            else {
                 return;
             };
             if editor.selected.as_deref() != Some(actor.as_str()) {
@@ -642,7 +669,13 @@ fn frame_selected(
             fly.focus = radius * 3.0;
             fly.position = transform.translation - fly.forward() * fly.focus;
         }
-        Mode::TwoD => editor.flat.center = transform.translation.truncate(),
+        Mode::TwoD => {
+            let shown = editor
+                .selected
+                .as_deref()
+                .map_or(Vec3::ZERO, |id| editor.shown(id));
+            editor.flat.center = (transform.translation + shown).truncate();
+        }
     }
 }
 
@@ -666,6 +699,7 @@ fn pick(
     actors: &Query<(&ActorId, &Visibility)>,
     posed: &Query<(&mut Transform, &mut PhysicsPose, &mut PrevPose)>,
     terrains: Option<&crate::terrain::TerrainIndex>,
+    parallax: &HashMap<String, Vec3>,
 ) -> Option<String> {
     let ray = lens.ray(at)?;
     let mut best: Option<(f32, String)> = None;
@@ -679,12 +713,14 @@ fn pick(
         let Ok((_, pose, _)) = posed.get(*entity) else {
             continue;
         };
+        let mut pose = pose.0;
+        pose.translation += parallax.get(&id.0).copied().unwrap_or(Vec3::ZERO);
         let visual = engine.actor(&id.0).and_then(|actor| actor.visual());
         let ground = terrains.and_then(|t| t.terrains.get(&id.0));
         let hit = match (lens, ground) {
             (Lens::Deep { .. }, Some((_, built))) => {
                 // A terrain is picked where the ray meets its ground.
-                let inverse = pose.0.compute_affine().inverse();
+                let inverse = pose.compute_affine().inverse();
                 let origin = inverse.transform_point3(ray.origin);
                 let direction = inverse
                     .transform_vector3(*ray.direction)
@@ -697,12 +733,12 @@ fn pick(
                     direction,
                     20_000.0,
                 )
-                .map(|p| (pose.0.compute_affine().transform_point3(p) - ray.origin).length())
+                .map(|p| (pose.compute_affine().transform_point3(p) - ray.origin).length())
             }
             _ => match lens {
-                Lens::Flat { scale, .. } => hit_2d(visual, &pose.0, ray.origin.truncate(), *scale)
-                    .map(|_| -pose.0.translation.z),
-                Lens::Deep { .. } => hit_3d(visual, &pose.0, ray),
+                Lens::Flat { scale, .. } => hit_2d(visual, &pose, ray.origin.truncate(), *scale)
+                    .map(|_| -pose.translation.z),
+                Lens::Deep { .. } => hit_3d(visual, &pose, ray),
             },
         };
         if let Some(distance) = hit
@@ -797,7 +833,7 @@ fn gizmo_frame(
     } else {
         Quat::IDENTITY
     };
-    let origin = transform.translation;
+    let origin = transform.translation + editor.shown(editor.selected.as_deref()?);
     Some(Frame {
         origin,
         axes: [rotation * Vec3::X, rotation * Vec3::Y, rotation * Vec3::Z],
@@ -903,7 +939,7 @@ fn gizmo_hovered(
                 }
             }
         }
-        SceneTool::Brush => return None,
+        SceneTool::Brush | SceneTool::Tiles => return None,
         SceneTool::Rotate => {
             for &axis in offered(lens, false) {
                 let points: Option<Vec<Vec2>> = ring_points(&frame, axis)
@@ -1098,6 +1134,7 @@ fn start_drag(
     let stretch = engine.stretch_of(&actor);
     let size = crate::world::size_of(&start, stretch);
     let mut drag = Drag {
+        shown: editor.shown(&actor),
         actor,
         handle,
         start,
@@ -1131,7 +1168,7 @@ fn start_drag(
     if let Some(ray) = lens.ray(at) {
         drag.anchor = anchor_for(&drag, lens, ray).unwrap_or(start.translation);
     }
-    if let Some(center) = lens.screen(start.translation) {
+    if let Some(center) = lens.screen(start.translation + drag.shown) {
         let d = at - center;
         drag.last_angle = d.y.atan2(d.x);
     }
@@ -1232,7 +1269,7 @@ fn update_drag(
     }
     match (view.tool, drag.handle) {
         (SceneTool::Rotate, Handle::Ring(axis)) => {
-            let Some(center) = lens.screen(drag.start.translation) else {
+            let Some(center) = lens.screen(drag.start.translation + drag.shown) else {
                 return;
             };
             let d = at - center;
@@ -1259,8 +1296,8 @@ fn update_drag(
         (SceneTool::Scale, Handle::Axis(axis)) => {
             // How far along the handle's own screen direction the pointer went.
             let (Some(center), Some(tip)) = (
-                lens.screen(drag.start.translation),
-                lens.screen(drag.start.translation + drag.axes[axis]),
+                lens.screen(drag.start.translation + drag.shown),
+                lens.screen(drag.start.translation + drag.shown + drag.axes[axis]),
             ) else {
                 return;
             };
@@ -1580,7 +1617,9 @@ pub fn draw(
             );
         }
         if selected {
-            outline(&mut handles, visual, &pose.0, mode, &lens, px_scale);
+            let mut shown = pose.0;
+            shown.translation += editor.shown(&id.0);
+            outline(&mut handles, visual, &shown, mode, &lens, px_scale);
         }
     }
 
@@ -1633,7 +1672,7 @@ pub fn draw(
                 tint(Handle::Free, Color::WHITE),
             );
         }
-        SceneTool::Brush => {}
+        SceneTool::Brush | SceneTool::Tiles => {}
         SceneTool::Rotate => {
             for &axis in offered(&lens, false) {
                 handles.linestrip(
@@ -2081,6 +2120,31 @@ mod tests {
         assert_eq!(actor, &parent);
         assert!(Vec3::from(placement.position).abs_diff_eq(Vec3::new(120.0, 20.0, 0.0), 1e-3));
         assert_eq!(*offset, None);
+    }
+
+    #[test]
+    fn a_parallax_layer_is_picked_where_it_shows() {
+        let (mut app, parent, _) = scene();
+        // Parallax drew the square 300 left of its pose, at x = -200.
+        app.world_mut()
+            .resource_mut::<SceneEditor>()
+            .parallax
+            .insert(parent.clone(), Vec3::new(-300.0, 0.0, 0.0));
+        app.world_mut().non_send_mut::<Engine>().preview_inputs = vec![
+            button(0, true, 580.0, 360.0),
+            button(0, false, 580.0, 360.0),
+        ];
+        app.update();
+        assert_eq!(app.world().resource::<SceneEditor>().selected, None);
+        app.world_mut().non_send_mut::<Engine>().preview_inputs = vec![
+            button(0, true, 280.0, 360.0),
+            button(0, false, 280.0, 360.0),
+        ];
+        app.update();
+        let editor = app.world().resource::<SceneEditor>();
+        assert_eq!(editor.selected.as_deref(), Some(parent.as_str()));
+        // A click is not a move.
+        assert!(pose_of(&app, &parent).abs_diff_eq(Vec3::new(100.0, 0.0, 0.0), 1e-3));
     }
 
     #[test]

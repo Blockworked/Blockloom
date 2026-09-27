@@ -1260,6 +1260,75 @@ impl Actor {
         );
     }
 
+    /// Paints one tilemap cell at a world point for the rest of the run: a
+    /// sheet index, or -1 to erase. `map` names the tilemap actor; empty
+    /// means this actor if it is one, else whichever map covers the point.
+    pub fn paint_tile(&self, map: &str, tile: i32, x: f32, y: f32) {
+        self.act(
+            ACT_PAINT_TILE,
+            Str::borrow(map),
+            Str::EMPTY,
+            Str::EMPTY,
+            tile as f64,
+            x as f64,
+            y as f64,
+        );
+    }
+
+    /// [`Self::paint_tile`] at a 3D point, read on the map's own face.
+    pub fn paint_tile_at(&self, map: &str, tile: i32, x: f32, y: f32, z: f32) {
+        self.act_many(
+            ACT_PAINT_TILE,
+            Str::borrow(map),
+            Str::EMPTY,
+            Str::EMPTY,
+            &[tile as f64, x as f64, y as f64, z as f64],
+        );
+    }
+
+    /// [`Self::tile_at`] at a 3D point, read on each map's own face.
+    pub fn tile_at_xyz(&self, map: &str, x: f32, y: f32, z: f32) -> Option<i32> {
+        let at = format!("{x} {y} {z}");
+        self.number(READ_TILE_AT, Str::borrow(&at), Str::borrow(map), 0.0)
+            .map(|tile| tile as i32)
+    }
+
+    /// The sheet index at a world point, -1 for an empty cell or no map
+    /// there. `map` names one tilemap, or empty for any; `None` when no map
+    /// answers to that name.
+    pub fn tile_at(&self, map: &str, x: f32, y: f32) -> Option<i32> {
+        let at = format!("{x} {y}");
+        self.number(READ_TILE_AT, Str::borrow(&at), Str::borrow(map), 0.0)
+            .map(|tile| tile as i32)
+    }
+
+    /// A parallax layer's scroll factor (0-2) for the rest of the run, on
+    /// `"both"` axes, `"x"` or `"y"`.
+    pub fn set_parallax(&self, layer: &str, axis: &str, value: f32) {
+        self.act(
+            ACT_SET_PARALLAX,
+            Str::borrow(layer),
+            Str::borrow(axis),
+            Str::EMPTY,
+            value as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// The name of the smallest room an actor stands in, or `None` outside
+    /// every room. Empty names this one.
+    pub fn room_containing(&self, actor: &str) -> Option<String> {
+        self.text(TEXT_ROOM, Str::borrow(actor), Str::EMPTY)
+    }
+
+    /// The room this actor walked into on the last tick, or `None`: what
+    /// [`Event::EnteredRoom`] also says, for a script that polls from `tick`.
+    /// Starting a run inside one isn't entering.
+    pub fn entered_room(&self) -> Option<String> {
+        self.text(TEXT_ENTERED_ROOM, Str::EMPTY, Str::EMPTY)
+    }
+
     /// The water surface over (x, z) as of this fixed tick (z means nothing
     /// in 2D), or `None` over dry land. The highest where bodies overlap.
     pub fn water_at(&self, x: f32, z: f32) -> Option<WaterSample> {
@@ -2248,6 +2317,8 @@ pub enum Event {
     UiChanged { element: String, value: String },
     /// Any other interface event: the element and the event.
     Ui { element: String, event: String },
+    /// This actor walked into a room, by the room's name.
+    EnteredRoom(String),
 }
 
 /// Which particle event an [`Event::Particles`] is.
@@ -2299,6 +2370,7 @@ impl Event {
                 element: subject,
                 event: word("detail"),
             },
+            EVENT_ENTERED_ROOM => Event::EnteredRoom(subject),
             _ => return None,
         })
     }

@@ -822,15 +822,34 @@ fn collider_shapes(eye: Vec3) -> (Vec<[f32; 8]>, Vec<String>) {
             .actors
             .iter()
             .filter(|(_, actor)| actor.has_body)
-            .filter_map(|(id, actor)| {
+            .flat_map(|(id, actor)| {
                 let [x, y, z] = actor.position;
-                let lanes = match actor.shape {
-                    ColliderShape::None => return None,
-                    ColliderShape::Box { half } => [x, y, z, 1.0, half[0], half[1], half[2], 0.0],
-                    ColliderShape::Ball { radius } => [x, y, z, 2.0, radius, 0.0, 0.0, 0.0],
+                let lanes = match &actor.shape {
+                    ColliderShape::None => Vec::new(),
+                    ColliderShape::Box { half } => {
+                        vec![[x, y, z, 1.0, half[0], half[1], half[2], 0.0]]
+                    }
+                    ColliderShape::Ball { radius } => vec![[x, y, z, 2.0, *radius, 0.0, 0.0, 0.0]],
+                    // A tilemap's solid runs, each its own box, placed with
+                    // the map's turn (the boxes themselves stay upright).
+                    ColliderShape::Parts(parts) => {
+                        let [rx, ry, rz] = actor.rotation.map(f32::to_radians);
+                        let turn = Quat::from_euler(EulerRot::XYZ, rx, ry, rz);
+                        parts
+                            .iter()
+                            .map(|part| {
+                                let at = Vec3::from_array(actor.position)
+                                    + turn * Vec3::from_array(part.offset);
+                                let h = part.half;
+                                [at.x, at.y, at.z, 1.0, h[0], h[1], h[2], 0.0]
+                            })
+                            .collect()
+                    }
                 };
-                let far = Vec3::from_array(actor.position).distance_squared(eye);
-                Some((far, id.clone(), lanes))
+                lanes.into_iter().map(|lanes| {
+                    let far = Vec3::new(lanes[0], lanes[1], lanes[2]).distance_squared(eye);
+                    (far, id.clone(), lanes)
+                })
             })
             .collect()
     });

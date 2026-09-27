@@ -53,6 +53,8 @@ Rectangle {
     }
     // A 2D pool is in pixels; the backend fills in whatever a spec leaves out.
     function waterOf(c) { return c.water || {}; }
+    function parallaxOf(c) { return Object.assign({ scroll: [0.5, 0.5], wrap: [false, false], dim: 0 }, c.parallax || {}); }
+    function roomOf(c) { return Object.assign(is3d ? { size: [20, 10], depth: 20 } : { size: [1280, 720], depth: 720 }, { camera: true, blend: 0.4, stream: false }, c.room || {}); }
     function buoyancyOf(c) { return Object.assign({ density: 0.5, drag: 1, angular_drag: 1, points: 4, splash: true }, c.buoyancy || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
@@ -154,7 +156,7 @@ Rectangle {
     ]
     function brainOf(c) { return Object.assign({ target: "", speed: 4, sight: 12, fov: 120, separation: 1, tree: { node: "Selector", children: [{ node: "Sequence", children: [{ node: "CanSeeTarget" }, { node: "NavigateToTarget" }] }, { node: "Idle" }] } }, c.brain || {}); }
     function tilemapOf(v) {
-        return Object.assign({ tileset: "", tile_size: [32, 32], width: 8, height: 8, sheet_columns: 4, sheet_rows: 4, tiles: [], solid: false, passable: [], animations: [] }, v && v.tilemap ? v.tilemap : {});
+        return Object.assign({ tileset: "", tile_size: [32, 32], width: 8, height: 8, sheet_columns: 4, sheet_rows: 4, tiles: [], solid: false, passable: [], animations: [], autotiles: [], regions: [] }, v && v.tilemap ? v.tilemap : {});
     }
     // "3, 7 12" -> [3, 7, 12]: sheet indices typed as a list.
     function tileList(text) { return text.split(/[\s,]+/).filter(t => t !== "").map(Number).filter(n => Number.isInteger(n) && n >= 0); }
@@ -191,6 +193,21 @@ Rectangle {
     }
     function writeWater(c, next) { write("Water", { component: "Water", water: merged(waterOf(c), next) }); }
     function writeWaterPart(c, part, next) { const change = {}; change[part] = merged(waterOf(c)[part] || {}, next); writeWater(c, change); }
+    function writeParallax(c, next) { write("Parallax", { component: "Parallax", parallax: merged(parallaxOf(c), next) }); }
+    function writeRoom(c, next) { write("Room", { component: "Room", room: merged(roomOf(c), next) }); }
+    function writeRegion(c, index, next) {
+        const list = copy(tilemapOf(c.visual).regions);
+        if (next === null) list.splice(index, 1); else list[index] = Object.assign(list[index], next);
+        writeTilemap(c, { regions: list });
+    }
+    // The selected tilemap's make-up, fetched whenever its look changes.
+    property var tileStats: null
+    function refreshTileStats() {
+        const look = actor ? actor.components.find(x => x.component === "Look") : null;
+        if (!look || !look.visual || look.visual.shape !== "Tilemap") { tileStats = null; return; }
+        app.invoke("tilemap_stats", { actorId: actor.id }, r => tileStats = r, () => tileStats = null);
+    }
+    onActorChanged: Qt.callLater(refreshTileStats)
     function writeBuoyancy(c, next) { write("Buoyancy", { component: "Buoyancy", buoyancy: merged(buoyancyOf(c), next) }); }
     function writeVolume(c, next) { write("Volume", { component: "Volume", volume: merged(volumeOf(c), next) }); }
     function writeOverride(c, key, next) {
@@ -263,7 +280,7 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Water","Buoyancy","Custom"]
+        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Water","Buoyancy","Parallax","Room","Custom"]
             .filter(n => n !== "Sprite" || !is3d)
             .filter(n => n === "Custom" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }));
     }
@@ -289,6 +306,8 @@ Rectangle {
             waves: { amplitude: 6, wavelength: 220, direction: 90, spread: 20 }, detail: { scale: 60 }, look: { absorption: 220 },
             foam: { shore: 12, scale: 40 }, underwater: { distance: 600, caustics_scale: 60 }, splash: { min_speed: 60 }, ripples: { speed: 120, extent: 1600 } } };
         case "Buoyancy": return { component: "Buoyancy", buoyancy: buoyancyOf({}) };
+        case "Parallax": return { component: "Parallax", parallax: parallaxOf({}) };
+        case "Room": return { component: "Room", room: roomOf({}) };
         case "Custom": return { component: "Custom", name: "Component", fields: [{ name: "value", value: { kind: "Number", value: 0 } }] };
         default: return null;
         }
@@ -342,7 +361,7 @@ Rectangle {
                             Layout.fillWidth: true
                             readonly property var c: card.c
                             sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Water: waterCard, Buoyancy: buoyancyCard })[card.c.component] || null
+                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard })[card.c.component] || null
                         }
                     }
                 }
@@ -465,6 +484,61 @@ Rectangle {
                         root.writeTilemap(look.c, { animations: list });
                     }
                 }
+                Text { visible: !!root.tileStats; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                    text: root.tileStats ? root.tileStats.tiles + " tiles, " + root.tileStats.draw_batches + " draw batch" + (root.tileStats.draw_batches === 1 ? "" : "es")
+                        + ", " + root.tileStats.colliding_rects + " colliding rects" + (root.tileStats.animated ? ", " + root.tileStats.animated + " animated" : "")
+                        + (root.tileStats.region_tiles ? ", " + root.tileStats.region_tiles + " in regions" : "") : "" }
+                InspectorRow { label: "Import Tiled"; Layout.fillWidth: true
+                    AssetField { app: root.app; value: ""; placeholderText: "Drag a .tsj tileset here"
+                        onCommitted: p => { if (p.trim() === "") return;
+                            root.app.invoke("import_tileset", { actorId: root.actor.id, path: p.trim() },
+                                skipped => { text = ""; if (skipped && skipped.length) root.app.invoke("push_log", { kind: "warning", text: "Tileset import skipped: " + skipped.join("; ") }); },
+                                e => root.app.invoke("push_log", { kind: "error", text: String(e) })); } } }
+                // Autotile sets: one row each, and a row to add a strip.
+                Repeater {
+                    model: look.t.autotiles.length
+                    delegate: InspectorRow {
+                        required property int index
+                        readonly property var set: look.t.autotiles[index] || { name: "", mode: "Edge", rules: [] }
+                        label: "Autotile"; Layout.fillWidth: true
+                        Text { Layout.fillWidth: true; text: set.name + "  (" + set.mode + ", " + set.rules.length + " cases)"; color: Theme.text; font.pixelSize: 12; elide: Text.ElideRight }
+                        IconButton { iconName: "x"; tip: "Remove this autotile set"; implicitWidth: 24; implicitHeight: 24
+                            onClicked: { const list = root.copy(look.t.autotiles); list.splice(index, 1); root.writeTilemap(look.c, { autotiles: list }); } }
+                    }
+                }
+                InspectorRow { id: autotileRow; label: "Add autotile"; Layout.fillWidth: true
+                    property string mode: "Edge"
+                    BwTextField { id: autotileName; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Name, e.g. ground" }
+                    ChoiceField { Layout.maximumWidth: 70; options: [{ value: "Edge", label: "16" }, { value: "Blob", label: "47" }]; value: autotileRow.mode; onChosen: v => autotileRow.mode = v
+                        ToolTip.visible: hovered; ToolTip.text: "16 edge cases, or 47 blob cases with corners" }
+                    NumberField { id: autotileFirst; Layout.maximumWidth: 48; value: 0; fallback: 0; ToolTip.visible: hovered; ToolTip.text: "The strip's first sheet tile" }
+                    IconButton { iconName: "plus"; tip: "Add the set: consecutive sheet tiles from the first"; implicitWidth: 24; implicitHeight: 24
+                        onClicked: root.app.invoke("add_autotile", { actorId: root.actor.id, name: autotileName.text, mode: autotileRow.mode, first: Math.max(0, Math.round(autotileFirst.value)) },
+                            () => autotileName.text = "", e => root.app.invoke("push_log", { kind: "error", text: String(e) })) }
+                }
+                // Region tiles: spawn, checkpoint, kill, ladder, water.
+                Repeater {
+                    model: look.t.regions.length
+                    delegate: InspectorRow {
+                        required property int index
+                        readonly property var region: look.t.regions[index] || { tile: 0, kind: "Spawn" }
+                        label: "Region"; Layout.fillWidth: true
+                        NumberField { Layout.maximumWidth: 48; value: region.tile; fallback: 0; ToolTip.visible: hovered; ToolTip.text: "The sheet tile that marks it"
+                            onCommitted: n => root.writeRegion(look.c, index, { tile: Math.max(0, Math.round(n)) }) }
+                        ChoiceField { options: Blocks.opts(["Spawn", "Checkpoint", "Kill", "Ladder", "Water"]); value: region.kind; onChosen: v => root.writeRegion(look.c, index, { kind: v }) }
+                        IconButton { iconName: "x"; tip: "Stop marking this tile"; implicitWidth: 24; implicitHeight: 24; onClicked: root.writeRegion(look.c, index, null) }
+                    }
+                }
+                BwButton {
+                    iconName: "plus"; text: "Mark a region tile"; implicitHeight: 28; font.pixelSize: 12
+                    onClicked: {
+                        const list = root.copy(look.t.regions);
+                        list.push({ tile: Math.max(0, root.paintTile), kind: "Kill" });
+                        root.writeTilemap(look.c, { regions: list });
+                    }
+                }
+                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                    text: "Paint in the Game view with the Tiles tool (T). Moving bodies respawn at their last checkpoint (or the spawn) on a kill tile, lose gravity on a ladder, and float and drag in water." }
                 InspectorRow { label: "Paint"; Layout.fillWidth: true
                     NumberField { value: root.paintTile; onCommitted: n => root.paintTile = Math.round(n) }
                     Text { text: "-1 erases"; color: Theme.textDim; font.pixelSize: 11 } }
@@ -1289,6 +1363,47 @@ Rectangle {
                 SwitchField { value: bu.b.splash; onToggled: on => root.writeBuoyancy(bu.c, { splash: on }) } Item { Layout.fillWidth: true } }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Needs a dynamic Body. Density 0.5 floats half under, 1 hangs in the water, above 1 sinks." }
+        }
+    }
+    Component {
+        id: parallaxCard
+        ColumnLayout {
+            id: px
+            readonly property var c: parent.c
+            readonly property var p: root.parallaxOf(c)
+            spacing: 6
+            InspectorRow { label: "Scroll x, y"; Layout.fillWidth: true
+                NumberField { value: px.p.scroll[0]; fallback: 0.5; onCommitted: n => root.writeParallax(px.c, { scroll: [Math.min(2, Math.max(0, n)), px.p.scroll[1]] }) }
+                NumberField { value: px.p.scroll[1]; fallback: 0.5; onCommitted: n => root.writeParallax(px.c, { scroll: [px.p.scroll[0], Math.min(2, Math.max(0, n))] }) } }
+            InspectorRow { label: "Wrap x, y"; Layout.fillWidth: true
+                SwitchField { value: px.p.wrap[0]; onToggled: on => root.writeParallax(px.c, { wrap: [on, px.p.wrap[1]] }) }
+                SwitchField { value: px.p.wrap[1]; onToggled: on => root.writeParallax(px.c, { wrap: [px.p.wrap[0], on] }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Distance dim"; Layout.fillWidth: true
+                NumberField { value: px.p.dim; fallback: 0; onCommitted: n => root.writeParallax(px.c, { dim: Math.min(1, Math.max(0, n)) }) } }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "0 rides the camera like a sky, 1 moves with the actors, up to 2 sweeps past as foreground. Where it stands is where it shows with the camera " + (root.is3d ? "where it starts; it scrolls against the camera's x and y." : "at the origin.") + (root.is3d ? " Its depth puts it behind or in front of actors" : " The Render layer puts it behind or in front of actors") + "; a wrapped layer repeats, so make it at least a screen wide." }
+        }
+    }
+    Component {
+        id: roomCard
+        ColumnLayout {
+            id: rm
+            readonly property var c: parent.c
+            readonly property var r: root.roomOf(c)
+            spacing: 6
+            InspectorRow { label: "Size"; Layout.fillWidth: true
+                NumberField { value: rm.r.size[0]; fallback: 1280; onCommitted: n => root.writeRoom(rm.c, { size: [Math.max(1, n), rm.r.size[1]] }) }
+                NumberField { value: rm.r.size[1]; fallback: 720; onCommitted: n => root.writeRoom(rm.c, { size: [rm.r.size[0], Math.max(1, n)] }) } }
+            InspectorRow { visible: root.is3d; label: "Depth"; Layout.fillWidth: true
+                NumberField { value: rm.r.depth; fallback: 20; onCommitted: n => root.writeRoom(rm.c, { depth: Math.max(0.01, n) }) } }
+            InspectorRow { label: "Holds camera"; Layout.fillWidth: true
+                SwitchField { value: rm.r.camera; onToggled: on => root.writeRoom(rm.c, { camera: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { visible: rm.r.camera; label: "Handoff s"; Layout.fillWidth: true
+                NumberField { value: rm.r.blend; fallback: 0.4; onCommitted: n => root.writeRoom(rm.c, { blend: Math.min(5, Math.max(0, n)) }) } }
+            InspectorRow { label: "Stream maps"; Layout.fillWidth: true
+                SwitchField { value: rm.r.stream; onToggled: on => root.writeRoom(rm.c, { stream: on }) } Item { Layout.fillWidth: true } }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: root.is3d ? "A box centred on this actor. The camera stays inside the room its target stands in, a little off the walls, sliding over when it moves on; `when I enter room` fires with this actor's name. Streamed rooms draw the tilemaps inside them only while the camera is near." : "Centred on this actor. The camera stays inside the room its target stands in, sliding over when it moves on; `when I enter room` fires with this actor's name. Streamed rooms build the tilemaps inside them only while the camera is near." }
         }
     }
     Component {

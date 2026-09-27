@@ -1081,6 +1081,70 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[],
     },
     CommandSpec {
+        name: "paint-tiles",
+        cmd: "paint_tiles",
+        aliases: &["paint_tiles", "tile-stroke"],
+        summary: "Run one tile brush stroke on a tilemap, as one undo step. brush is {\"tool\": paint, erase, fill, line, rect or scatter, \"tiles\": [sheet indices], \"autotile\": set name, \"size\", \"density\", \"jitter\", \"seed\"}; segments are [x0, y0, x1, y1] grid cells (y down from the top-left), run in order. Answers how many cells changed.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "brush",
+                ty: "object {\"tool\", \"tiles\", ...}",
+                required: true,
+            },
+            ArgSpec {
+                name: "segments",
+                ty: "[[x0, y0, x1, y1]]",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "import-tileset",
+        cmd: "import_tileset",
+        aliases: &["import_tileset"],
+        summary: "Take a Tiled JSON tileset (.tsj/.json asset) onto a tilemap: image, tile size, collision and passable tiles, animations, `region` tiles and edge or mixed wang sets as autotiles. Painted cells stay. Answers what didn't come across.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "tilemap-stats",
+        cmd: "tilemap_stats",
+        aliases: &["tilemap_stats"],
+        summary: "A tilemap's tiles, draw batches, colliding rectangles, animated and region tiles.",
+        args: &[A],
+    },
+    CommandSpec {
+        name: "add-autotile",
+        cmd: "add_autotile",
+        aliases: &["add_autotile"],
+        summary: "Add (or replace) a tilemap's autotile set laid out as consecutive sheet cells from `first`: 16 for Edge (mask N=1 E=2 S=4 W=8 added to first), 47 for Blob (edges and corners, ascending mask order).",
+        args: &[
+            A,
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "mode",
+                ty: "Edge|Blob",
+                required: true,
+            },
+            ArgSpec {
+                name: "first",
+                ty: "number",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
         name: "paint-terrain",
         cmd: "paint_terrain",
         aliases: &["paint_terrain", "sculpt-terrain"],

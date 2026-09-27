@@ -70,10 +70,9 @@ pub struct ActorSense {
     pub particles: crate::vfx::ParticleSense,
 }
 
-/// What shape an actor collides (and raycasts) with, in world units and
-/// axis-aligned. Rotation is ignored on purpose: a spun actor still queries
-/// against its unrotated box, which is what a platformer's ground check wants.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+/// What shape an actor collides (and raycasts) with, in world units, in the
+/// actor's own frame: queries turn it by the actor's rotation.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum ColliderShape {
     /// Nothing to hit: no body, or a visual with no collider in this mode.
     #[default]
@@ -82,6 +81,15 @@ pub enum ColliderShape {
     Box { half: [f32; 3] },
     /// A disc (2D) or ball (3D).
     Ball { radius: f32 },
+    /// Several boxes, each offset from the actor: a solid tilemap's cells.
+    Parts(std::sync::Arc<[ShapePart]>),
+}
+
+/// One box of a [`ColliderShape::Parts`], offset from the actor's position.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShapePart {
+    pub offset: [f32; 3],
+    pub half: [f32; 3],
 }
 
 /// One touch point, as the touch reporters see it: where it is in world
@@ -158,6 +166,9 @@ pub struct Sensors {
     pub atmosphere: AtmosphereSense,
     /// Every water body, sampled with the atmosphere on the fixed tick.
     pub water: crate::water::WaterSense,
+    /// Live tilemaps and room bounds, which `tile at` and `room containing`
+    /// read.
+    pub level: crate::tilemap::LevelSense,
 }
 
 /// The shape of [`AtmosphereSense`]. Bumped when a field changes meaning or
@@ -444,6 +455,27 @@ pub fn publish_atmosphere(atmosphere: AtmosphereSense) {
 /// Samples the water at the head of each fixed tick, beside the atmosphere.
 pub fn publish_water(water: crate::water::WaterSense) {
     SENSORS.with(|slot| slot.borrow_mut().water = water);
+}
+
+/// The live tilemaps and rooms, published each frame after the rest.
+pub fn publish_level(level: crate::tilemap::LevelSense) {
+    SENSORS.with(|slot| slot.borrow_mut().level = level);
+}
+
+/// Replaces a bodied actor's query shape: a painted tilemap's live cells.
+pub fn publish_shape(id: &str, shape: ColliderShape) {
+    SENSORS.with(|slot| {
+        if let Some(actor) = slot.borrow_mut().actors.get_mut(id)
+            && actor.has_body
+        {
+            actor.shape = shape;
+        }
+    });
+}
+
+/// Who entered which room this fixed tick, for a script's `entered_room`.
+pub fn publish_entered(entered: HashMap<String, String>) {
+    SENSORS.with(|slot| slot.borrow_mut().level.entered = entered);
 }
 
 /// Reads the published snapshot. `f` sees a default-empty one before the

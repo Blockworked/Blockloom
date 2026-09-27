@@ -282,6 +282,29 @@ impl Backend {
                     });
                 }
             }
+            RuntimeMessage::TileStroke {
+                actor,
+                brush,
+                segments,
+            } => {
+                if let Err(message) =
+                    crate::commands::tile_stroke(&mut s, &actor, &brush, &segments)
+                {
+                    s.push_log(LogLine {
+                        kind: "error".to_string(),
+                        actor: "Blockloom".to_string(),
+                        text: message,
+                    });
+                }
+            }
+            RuntimeMessage::TilePicked { actor, tile } => {
+                let serial = s.picked_tile.as_ref().map_or(1, |pick| pick.serial + 1);
+                s.picked_tile = Some(crate::state::PickedTile {
+                    actor,
+                    tile,
+                    serial,
+                });
+            }
             RuntimeMessage::Fatal { message } => {
                 s.running = false;
                 s.push_log(LogLine {

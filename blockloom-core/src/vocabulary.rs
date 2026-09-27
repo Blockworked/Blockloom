@@ -92,6 +92,7 @@ const SOUND_BUSES: &[&str] = &["Master", "Music", "Sfx"];
 const WIND_PROPERTIES: &[&str] = &["Direction", "Speed", "Gust", "Storm"];
 const CLOUD_PROPERTIES: &[&str] = &["Coverage", "Density", "Type"];
 const WATER_PROPERTIES: &[&str] = &["Level", "Chop", "Foam"];
+const PARALLAX_AXES: &[&str] = &["Both", "X", "Y"];
 const CLOUD_LAYER_PROPERTIES: &[&str] = &["Coverage", "Opacity", "Contrast", "Altitude", "Spin"];
 const UI_ANCHORS: &[&str] = &[
     "TopLeft",
@@ -328,6 +329,18 @@ pub const BLOCKS: &[BlockSpec] = &[
         slots: NO_SLOTS,
         dropdowns: NO_DROPDOWNS,
         strings: &["marker"],
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "WhenEnterRoom",
+        category: "Events",
+        purpose: "Runs in this actor each time it walks into a room (an actor with a Room component), named by the room actor's name. Empty matches any room. Checked every fixed tick against the smallest room holding the actor's position; an actor that starts inside a room hasn't entered it.",
+        header: true,
+        three_d: false,
+        slots: NO_SLOTS,
+        dropdowns: NO_DROPDOWNS,
+        strings: &["room"],
         bools: NO_BOOLS,
         bodies: NO_BODIES,
     },
@@ -1331,6 +1344,70 @@ pub const BLOCKS: &[BlockSpec] = &[
         dropdowns: &[Dropdown {
             field: "property",
             options: WATER_PROPERTIES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "PaintTile",
+        category: "Looks",
+        purpose: "Paints one tilemap cell at a world point (x, y, z; z only matters in 3D) for the rest of the run: the sheet index, or -1 to erase. The point is read on the map's own face, turned with it. `map` names the tilemap actor; empty means this actor if it is a tilemap, else the first map covering the point. Collision, animation and `tile at` follow on the next tick.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "map",
+                id: "TileMap",
+                value: "Any",
+            },
+            Slot {
+                field: "tile",
+                id: "TileIndex",
+                value: "Any",
+            },
+            Slot {
+                field: "x",
+                id: "TileX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "TileY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "TileZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetParallax",
+        category: "Looks",
+        purpose: "Sets a parallax layer's scroll factor (0-2) for the rest of the run: 0 rides the camera like a sky, 1 moves with the actors, above 1 sweeps past as foreground. `layer` names an actor with a Parallax component.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "layer",
+                id: "ParallaxLayer",
+                value: "Any",
+            },
+            Slot {
+                field: "value",
+                id: "ParallaxValue",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "axis",
+            options: PARALLAX_AXES,
         }],
         strings: NO_STRINGS,
         bools: NO_BOOLS,

@@ -662,6 +662,10 @@ pub fn rebuild_world(
     // once, before anything is spawned from these placements.
     place_authored_children(&mut project);
     let dir = engine.project_dir.clone();
+    // The level's live maps, parallax and rooms start from the document.
+    let level = crate::tiles::Level::seed(&project);
+    let streamed = level.streamed_maps();
+    commands.insert_resource(level);
     match dimension.0 {
         Mode::TwoD => {
             // Exposure, tonemapping and post come from the blended
@@ -687,6 +691,7 @@ pub fn rebuild_world(
                     &mut meshes,
                     &mut stores.graph_2d,
                     &mut stores.tiles,
+                    streamed.contains(&actor.id),
                 )
                 .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::TwoD));
                 attach_camera(&mut commands, actor, entity);
@@ -1276,6 +1281,8 @@ pub fn publish_sensors(
         // reads what the schedulers read.
         atmosphere: atmosphere.map(|air| air.0.clone()).unwrap_or_default(),
         water: water.map(|water| water.0.clone()).unwrap_or_default(),
+        // `tiles::publish_level` fills it straight after.
+        level: Default::default(),
     });
 
     // No world event queues while paused, so resuming never bursts.
@@ -1714,8 +1721,8 @@ pub(crate) fn half_extents3(visual: &Visual) -> Vec3 {
 }
 
 /// What a physics query sees: the actor's collider in world units, or
-/// nothing for an actor with no body. Scale is folded in; rotation is not,
-/// so a spun actor still queries against its unrotated box.
+/// nothing for an actor with no body. Scale is folded in; the query turns it
+/// by the actor's rotation.
 fn collider_shape(
     engine: &Engine,
     id: &str,
@@ -1782,15 +1789,8 @@ fn collider_shape(
             ];
             (half[0] > 0.0 && half[1] > 0.0 && half[2] > 0.0).then_some(ColliderShape::Box { half })
         }
-        (Visual::Tilemap { tilemap }, Mode::TwoD) if tilemap.solid => {
-            let size = tilemap.size();
-            let half = [
-                size[0] / 2.0 * scale.x.max(0.0),
-                size[1] / 2.0 * scale.y.max(0.0),
-                0.0,
-            ];
-            (half[0] > 0.0 && half[1] > 0.0).then_some(ColliderShape::Box { half })
-        }
+        // `tiles::publish_level` gives a solid map its cells.
+        (Visual::Tilemap { .. }, _) => None,
         _ => None,
     }
     .unwrap_or(ColliderShape::None)
@@ -2304,7 +2304,7 @@ pub fn step_tweens(
     }
 }
 
-fn mix_color(from: Color, to: Color, t: f32) -> Color {
+pub(crate) fn mix_color(from: Color, to: Color, t: f32) -> Color {
     let from = from.to_srgba();
     let to = to.to_srgba();
     Color::srgba(
@@ -2931,6 +2931,7 @@ fn spawn_runtime_actor(
             meshes,
             graph_materials_2d,
             tile_materials,
+            false,
         ),
         Mode::ThreeD => dim3::spawn_actor(
             commands,
@@ -3766,6 +3767,9 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetClouds { .. }
         | Effect::SetCloudLayer { .. }
         | Effect::SetWater { .. }
+        // The level's, applied by `tiles`.
+        | Effect::PaintTile { .. }
+        | Effect::SetParallax { .. }
         | Effect::SetBusVolume { .. }
         | Effect::RumbleGamepad { .. }
         | Effect::Stopped

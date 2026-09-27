@@ -1678,6 +1678,14 @@ pub struct Tilemap {
     /// Animated tiles: water, torches, conveyor belts.
     #[serde(default)]
     pub animations: Vec<TileAnimation>,
+    /// Autotile rule sets: which sheet cell a painted cell shows given its
+    /// neighbours (see [`crate::tilemap::AutotileSet`]).
+    #[serde(default)]
+    pub autotiles: Vec<crate::tilemap::AutotileSet>,
+    /// Sheet cells that mark a level region: spawn, checkpoint, kill zone,
+    /// ladder or water.
+    #[serde(default)]
+    pub regions: Vec<crate::tilemap::TileRegion>,
 }
 
 /// One animated tile. Every cell painted `tile` shows `frames` in turn, at
@@ -1738,6 +1746,8 @@ impl Default for Tilemap {
             solid: false,
             passable: Vec::new(),
             animations: Vec::new(),
+            autotiles: Vec::new(),
+            regions: Vec::new(),
         }
     }
 }
@@ -1812,6 +1822,13 @@ impl Tilemap {
             animation.fps = animation.fps.clamp(0.1, 60.0);
             in_sheet(&animation.tile) && !animation.frames.is_empty() && seen.insert(animation.tile)
         });
+        for set in &mut self.autotiles {
+            set.rules.retain(|rule| in_sheet(&rule.tile));
+        }
+        self.autotiles.retain(|set| !set.rules.is_empty());
+        let mut marked = std::collections::HashSet::new();
+        self.regions
+            .retain(|region| in_sheet(&region.tile) && marked.insert(region.tile));
     }
 
     /// Whether any tile animates, which is what asks the runtime to keep
@@ -1851,8 +1868,15 @@ impl Tilemap {
         if !self.solid {
             return Vec::new();
         }
+        self.merged_rects(|tile| self.collides(tile))
+    }
+
+    /// Every cell whose tile passes `keep`, merged into rectangles the way
+    /// [`Tilemap::solid_rects`] merges collision, in the actor's own frame.
+    pub fn merged_rects(&self, keep: impl Fn(i32) -> bool) -> Vec<TileRect> {
         let [tw, th] = self.tile_size;
         let [w, h] = self.size();
+        let hit = |gx: u32, gy: u32| keep(self.tile_at(gx, gy).unwrap_or(-1));
         // (x0, x1) span -> (first row, last row) of the rectangle growing down.
         let mut open: std::collections::HashMap<(u32, u32), (u32, u32)> =
             std::collections::HashMap::new();
@@ -1861,12 +1885,12 @@ impl Tilemap {
             let mut row = Vec::new();
             let mut gx = 0;
             while gx < self.width {
-                if !self.collides(self.tile_at(gx, gy).unwrap_or(-1)) {
+                if !hit(gx, gy) {
                     gx += 1;
                     continue;
                 }
                 let start = gx;
-                while gx < self.width && self.collides(self.tile_at(gx, gy).unwrap_or(-1)) {
+                while gx < self.width && hit(gx, gy) {
                     gx += 1;
                 }
                 row.push((start, gx));

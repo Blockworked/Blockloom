@@ -39,6 +39,10 @@ pub enum Trigger {
     AnimationMarker {
         marker: String,
     },
+    /// The actor walked into a room. Empty matches any room.
+    EnteredRoom {
+        room: String,
+    },
     /// The named input action went down.
     ActionPressed(String),
     /// A finger touched the screen.
@@ -181,6 +185,18 @@ pub enum Action {
     },
     SetWater {
         property: crate::water::WaterProperty,
+        value: Value,
+    },
+    PaintTile {
+        map: Value,
+        tile: Value,
+        x: Value,
+        y: Value,
+        z: Value,
+    },
+    SetParallax {
+        layer: Value,
+        axis: crate::tilemap::ParallaxAxis,
         value: Value,
     },
     SetCloudLayer {
@@ -502,6 +518,9 @@ pub fn compile(graph: &ActorGraph) -> Program {
             InstructionKind::WhenAnimationMarker { marker } => Some(Trigger::AnimationMarker {
                 marker: marker.trim().to_string(),
             }),
+            InstructionKind::WhenEnterRoom { room } => Some(Trigger::EnteredRoom {
+                room: room.trim().to_string(),
+            }),
             InstructionKind::WhenActionPressed { action } => Some(Trigger::ActionPressed(
                 crate::input::normalize_action(action).to_lowercase(),
             )),
@@ -704,6 +723,8 @@ fn action_values(action: &Action) -> Vec<&Value> {
         Action::EnableVolume { volume, .. } => vec![volume],
         Action::SetVolumeWeight { volume, weight } => vec![volume, weight],
         Action::SetCloudLayer { layer, value, .. } => vec![layer, value],
+        Action::PaintTile { map, tile, x, y, z } => vec![map, tile, x, y, z],
+        Action::SetParallax { layer, value, .. } => vec![layer, value],
         Action::PlaySound {
             sound,
             volume,
@@ -973,6 +994,18 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         } => Action::SetCloudLayer {
             layer: lift_one(layer, ctx),
             property,
+            value: lift_one(value, ctx),
+        },
+        Action::PaintTile { map, tile, x, y, z } => Action::PaintTile {
+            map: lift_one(map, ctx),
+            tile: lift_one(tile, ctx),
+            x: lift_one(x, ctx),
+            y: lift_one(y, ctx),
+            z: lift_one(z, ctx),
+        },
+        Action::SetParallax { layer, axis, value } => Action::SetParallax {
+            layer: lift_one(layer, ctx),
+            axis,
             value: lift_one(value, ctx),
         },
         Action::ApplyImpulse(mut t) => {
@@ -1386,6 +1419,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenAnimationEnds { .. }
         | K::WhenParticles { .. }
         | K::WhenAnimationMarker { .. }
+        | K::WhenEnterRoom { .. }
         | K::WhenUiEvent { .. }
         | K::WhenUiClicked { .. }
         | K::WhenUiChanged { .. }
@@ -1552,6 +1586,18 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         } => steps.push(Step::Action(Action::SetCloudLayer {
             layer: layer.clone(),
             property: *property,
+            value: value.clone(),
+        })),
+        K::PaintTile { map, tile, x, y, z } => steps.push(Step::Action(Action::PaintTile {
+            map: map.clone(),
+            tile: tile.clone(),
+            x: x.clone(),
+            y: y.clone(),
+            z: z.clone(),
+        })),
+        K::SetParallax { layer, axis, value } => steps.push(Step::Action(Action::SetParallax {
+            layer: layer.clone(),
+            axis: *axis,
             value: value.clone(),
         })),
         K::SetCloudDrift { x, y, z } => steps.push(Step::Action(Action::SetCloudDrift([

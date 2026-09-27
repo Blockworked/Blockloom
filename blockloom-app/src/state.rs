@@ -101,6 +101,17 @@ pub(crate) struct AppState {
     pub(crate) embedded: Option<Arc<dyn crate::runtime::EmbeddedRuntime>>,
     /// How the scene view edits, re-sent to every world that comes up.
     pub(crate) scene_view: blockloom_protocol::SceneView,
+    /// What the Tiles tool's pick last read, for the tile palette to take up.
+    pub(crate) picked_tile: Option<PickedTile>,
+}
+
+/// One pick of the Tiles tool. `serial` counts picks, so picking the same
+/// tile twice still reads as news.
+#[derive(Serialize, Clone)]
+pub(crate) struct PickedTile {
+    pub(crate) actor: String,
+    pub(crate) tile: i32,
+    pub(crate) serial: u64,
 }
 
 impl AppState {
@@ -204,6 +215,8 @@ pub(crate) struct StateDto {
     /// How this copy relates to the project folder on disk, for agents and
     /// the editor to tell a stale copy from a live one.
     pub(crate) sync: SyncDto,
+    /// The Tiles tool's last pick.
+    pub(crate) picked_tile: Option<PickedTile>,
 }
 
 /// Where the open project stands against its folder: revisions, lock owner,
@@ -301,6 +314,7 @@ pub(crate) fn state_dto(s: &AppState) -> StateDto {
         pointer_locked: s.pointer_locked && s.running && s.runtime.is_some(),
         ray_tracing: s.runtime.as_ref().and(s.ray_tracing.clone()),
         sync: sync_dto(s),
+        picked_tile: s.picked_tile.clone(),
     }
 }
 

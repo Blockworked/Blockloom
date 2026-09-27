@@ -3,8 +3,8 @@
 //! The sensing operators in [`crate::value`] are plain functions with no
 //! physics world handle, so raycasts and overlap checks run here against the
 //! shapes `publish_sensors` stored on each [`ActorSense`]: an axis-aligned
-//! box or a ball, in world units. Rotation is ignored, which is what a
-//! platformer's ground check wants.
+//! box, a ball or a set of boxes, in world units and the actor's own frame,
+//! so a turned actor is hit where it is turned to.
 
 use crate::sense::{ActorSense, ColliderShape, Sensors};
 
@@ -108,6 +108,23 @@ impl ActorSense {
     }
 }
 
+/// A world point in the actor's frame: moved to its position, turned back
+/// by its rotation. The shape's own extents already carry its scale.
+fn to_local(actor: &ActorSense, point: [f32; 3]) -> [f32; 3] {
+    let offset = glam::Vec3::from(point) - glam::Vec3::from(actor.position);
+    (turn_of(actor).inverse() * offset).to_array()
+}
+
+fn turn_of(actor: &ActorSense) -> glam::Quat {
+    let [rx, ry, rz] = actor.rotation.map(f32::to_radians);
+    glam::Quat::from_euler(glam::EulerRot::XYZ, rx, ry, rz)
+}
+
+/// A direction in the actor's frame, turned out into the world.
+fn to_world(actor: &ActorSense, direction: [f32; 3]) -> [f32; 3] {
+    (turn_of(actor) * glam::Vec3::from(direction)).to_array()
+}
+
 /// Where a segment first enters any body's shape, and the outward normal
 /// there, skipping `skip`. A segment that starts inside a shape doesn't hit
 /// it, so what was born inside a body can leave. The CPU particle pool's
@@ -123,12 +140,18 @@ pub fn segment_contact(
         if !actor.has_body || skip.is_some_and(|skip| skip == id) {
             continue;
         }
-        let hit = match actor.shape {
+        // In the actor's frame, then the normal turned back out.
+        let (a, b) = (to_local(actor, from), to_local(actor, to));
+        let hit = match &actor.shape {
             ColliderShape::None => None,
-            ColliderShape::Box { half } => enter_box(from, to, actor.position, half),
-            ColliderShape::Ball { radius } => enter_ball(from, to, actor.position, radius),
+            ColliderShape::Box { half } => enter_box(a, b, [0.0; 3], *half),
+            ColliderShape::Ball { radius } => enter_ball(a, b, [0.0; 3], *radius),
+            ColliderShape::Parts(parts) => parts
+                .iter()
+                .filter_map(|part| enter_box(a, b, part.offset, part.half))
+                .min_by(|x, y| x.0.total_cmp(&y.0)),
         };
-        if let Some((t, normal)) = hit
+        if let Some((t, normal)) = hit.map(|(t, normal)| (t, to_world(actor, normal)))
             && best.is_none_or(|(held, _)| t < held)
         {
             best = Some((t, normal));
@@ -215,51 +238,57 @@ fn enter_ball(
 }
 
 fn segment_hit(from: [f32; 3], to: [f32; 3], actor: &ActorSense) -> Option<f32> {
-    match actor.shape {
+    // Turning preserves length, so distances in the actor's frame are world ones.
+    let (from, to) = (to_local(actor, from), to_local(actor, to));
+    match &actor.shape {
         ColliderShape::None => None,
-        ColliderShape::Box { half } => segment_box(from, to, actor.position, half),
-        ColliderShape::Ball { radius } => segment_ball(from, to, actor.position, radius),
+        ColliderShape::Box { half } => segment_box(from, to, [0.0; 3], *half),
+        ColliderShape::Ball { radius } => segment_ball(from, to, [0.0; 3], *radius),
+        ColliderShape::Parts(parts) => parts
+            .iter()
+            .filter_map(|part| segment_box(from, to, part.offset, part.half))
+            .min_by(f32::total_cmp),
     }
+}
+
+fn in_box(point: [f32; 3], center: [f32; 3], half: [f32; 3]) -> bool {
+    (point[0] - center[0]).abs() <= half[0]
+        && (point[1] - center[1]).abs() <= half[1]
+        && (point[2] - center[2]).abs() <= half[2]
 }
 
 fn contains(actor: &ActorSense, point: [f32; 3]) -> bool {
-    match actor.shape {
+    let point = to_local(actor, point);
+    match &actor.shape {
         ColliderShape::None => false,
-        ColliderShape::Box { half } => {
-            (point[0] - actor.position[0]).abs() <= half[0]
-                && (point[1] - actor.position[1]).abs() <= half[1]
-                && (point[2] - actor.position[2]).abs() <= half[2]
-        }
+        ColliderShape::Box { half } => in_box(point, [0.0; 3], *half),
+        ColliderShape::Parts(parts) => parts
+            .iter()
+            .any(|part| in_box(point, part.offset, part.half)),
         ColliderShape::Ball { radius } => {
-            let dx = point[0] - actor.position[0];
-            let dy = point[1] - actor.position[1];
-            let dz = point[2] - actor.position[2];
-            dx * dx + dy * dy + dz * dz <= radius * radius
+            point[0] * point[0] + point[1] * point[1] + point[2] * point[2] <= radius * radius
         }
     }
 }
 
+fn box_touches_ball(at: [f32; 3], half: [f32; 3], center: [f32; 3], radius: f32) -> bool {
+    // Distance from the ball's centre to the box, zero inside it.
+    let out = |axis: usize| ((center[axis] - at[axis]).abs() - half[axis]).max(0.0);
+    let (dx, dy, dz) = (out(0), out(1), out(2));
+    dx * dx + dy * dy + dz * dz <= radius * radius
+}
+
 fn touches_ball(actor: &ActorSense, center: [f32; 3], radius: f32) -> bool {
-    match actor.shape {
+    let center = to_local(actor, center);
+    match &actor.shape {
         ColliderShape::None => false,
-        ColliderShape::Box { half } => {
-            let dx = (center[0] - actor.position[0]).abs().max(0.0) - half[0];
-            let dy = (center[1] - actor.position[1]).abs().max(0.0) - half[1];
-            let dz = (center[2] - actor.position[2]).abs().max(0.0) - half[2];
-            let outside = [dx.max(0.0), dy.max(0.0), dz.max(0.0)];
-            let inside = dx.min(dy.min(dz)).min(0.0);
-            outside[0] * outside[0]
-                + outside[1] * outside[1]
-                + outside[2] * outside[2]
-                + inside * inside
-                <= radius * radius
-        }
+        ColliderShape::Box { half } => box_touches_ball([0.0; 3], *half, center, radius),
+        ColliderShape::Parts(parts) => parts
+            .iter()
+            .any(|part| box_touches_ball(part.offset, part.half, center, radius)),
         ColliderShape::Ball { radius: other } => {
-            let dx = center[0] - actor.position[0];
-            let dy = center[1] - actor.position[1];
-            let dz = center[2] - actor.position[2];
             let sum = radius + other;
-            dx * dx + dy * dy + dz * dz <= sum * sum
+            center[0] * center[0] + center[1] * center[1] + center[2] * center[2] <= sum * sum
         }
     }
 }
@@ -349,6 +378,7 @@ fn segment_ball(from: [f32; 3], to: [f32; 3], center: [f32; 3], radius: f32) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sense::ShapePart;
 
     #[test]
     fn a_segment_into_a_box_reports_the_face_it_crossed() {
@@ -477,5 +507,66 @@ mod tests {
         let hits = overlap_circle(&sensors, [0.0, 0.0, 0.0], 2.0, None, 0xFF);
         assert_eq!(hits, vec!["near".to_string(), "far".to_string()]);
         assert!(overlap_circle(&sensors, [50.0, 50.0, 0.0], 1.0, None, 0xFF).is_empty());
+    }
+
+    #[test]
+    fn a_tilemap_is_queried_cell_by_cell() {
+        let parts: std::sync::Arc<[ShapePart]> = vec![
+            ShapePart {
+                offset: [-40.0, 0.0, 0.0],
+                half: [10.0, 10.0, 0.0],
+            },
+            ShapePart {
+                offset: [40.0, 0.0, 0.0],
+                half: [10.0, 10.0, 0.0],
+            },
+        ]
+        .into();
+        let sensors = world(vec![(
+            "map".to_string(),
+            ActorSense {
+                name: "map".into(),
+                has_body: true,
+                shape: ColliderShape::Parts(parts),
+                ..Default::default()
+            },
+        )]);
+        // The gap between the two solid runs is empty.
+        assert!(overlap_point(&sensors, [0.0, 0.0, 0.0], 0xFF).is_empty());
+        assert_eq!(overlap_point(&sensors, [42.0, 3.0, 0.0], 0xFF), vec!["map"]);
+        // A ray down the gap misses; one across hits the near run's face.
+        assert!(ray_hit(&sensors, [0.0, 50.0, 0.0], [0.0, -50.0, 0.0], None, 0xFF).is_none());
+        let hit = ray_hit(&sensors, [0.0, 0.0, 0.0], [100.0, 0.0, 0.0], None, 0xFF);
+        assert!(hit.is_some_and(|(_, d)| (d - 30.0).abs() < 1e-3));
+        assert!(overlap_circle(&sensors, [0.0, 0.0, 0.0], 5.0, None, 0xFF).is_empty());
+        assert_eq!(
+            overlap_circle(&sensors, [0.0, 0.0, 0.0], 35.0, None, 0xFF).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_small_ball_inside_a_big_box_touches_it() {
+        let sensors = world(vec![boxed("hall", [0.0; 3], [100.0, 100.0, 100.0], 1)]);
+        assert_eq!(
+            overlap_circle(&sensors, [10.0, 0.0, 0.0], 1.0, None, 0xFF).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_turned_box_is_hit_where_it_is_turned_to() {
+        let (id, mut plank) = boxed("plank", [0.0; 3], [10.0, 1.0, 1.0], 1);
+        // A quarter turn about z stands the plank upright.
+        plank.rotation = [0.0, 0.0, 90.0];
+        let sensors = world(vec![(id, plank)]);
+        assert!(overlap_point(&sensors, [8.0, 0.0, 0.0], 0xFF).is_empty());
+        assert_eq!(
+            overlap_point(&sensors, [0.0, 8.0, 0.0], 0xFF),
+            vec!["plank"]
+        );
+        let hit = ray_hit(&sensors, [0.0, 20.0, 0.0], [0.0, -20.0, 0.0], None, 0xFF);
+        assert!(hit.is_some_and(|(_, d)| (d - 10.0).abs() < 1e-3));
+        assert!(overlap_circle(&sensors, [5.0, 0.0, 0.0], 3.0, None, 0xFF).is_empty());
     }
 }

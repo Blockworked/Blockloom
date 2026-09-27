@@ -224,6 +224,26 @@ pub enum Effect {
         property: crate::water::WaterProperty,
         value: f32,
     },
+    /// Paints one tilemap cell at a world point for the rest of the run
+    /// (z only matters in 3D). `map` is as the block spelled it: empty for
+    /// `actor` itself if it is a tilemap, else whichever map covers the
+    /// point. `tile` -1 erases.
+    PaintTile {
+        actor: String,
+        map: String,
+        tile: i32,
+        x: f32,
+        y: f32,
+        z: f32,
+    },
+    /// A parallax layer's scroll factor for the rest of the run. `layer`
+    /// names the layer actor as the block spelled it.
+    SetParallax {
+        actor: String,
+        layer: String,
+        axis: crate::tilemap::ParallaxAxis,
+        value: f32,
+    },
     /// One cloud layer's dial, for the rest of the run. `layer` counts from
     /// 1 and is checked where it lands. Window-global.
     SetCloudLayer {

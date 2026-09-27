@@ -3963,6 +3963,159 @@ pub(crate) fn load_interface_asset(
     set_interface(state, app, document)
 }
 
+// ─── Tilemaps ──────────────────────────────────────────────────────────────
+
+fn tilemap_of(s: &AppState, actor_id: &str) -> Result<blockloom_core::material::Tilemap, String> {
+    match s
+        .project()
+        .ok_or("No project is open")?
+        .actor(actor_id)
+        .ok_or("Actor not found")?
+        .visual()
+    {
+        Some(Visual::Tilemap { tilemap }) => Ok(tilemap.clone()),
+        _ => Err("That actor's look isn't a tilemap".to_string()),
+    }
+}
+
+fn store_tilemap(s: &mut AppState, actor_id: &str, mut tilemap: blockloom_core::material::Tilemap) {
+    tilemap.normalize();
+    push_undo(s);
+    if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(actor_id)) {
+        actor.components.set_visual(Visual::Tilemap { tilemap });
+    }
+    auto_save(s);
+    sync_runtime(s);
+}
+
+/// Runs a tile stroke's segments on a map's saved cells, as one undo step.
+/// The scene view has already drawn it, from the same brush code.
+pub(crate) fn tile_stroke(
+    s: &mut AppState,
+    actor_id: &str,
+    brush: &blockloom_core::tilemap::TileBrush,
+    segments: &[[i32; 4]],
+) -> Result<usize, String> {
+    if s.running {
+        return Err("Stop the game to paint tiles".to_string());
+    }
+    let mut map = tilemap_of(s, actor_id)?;
+    let mut changed = std::collections::HashSet::new();
+    for segment in segments {
+        changed.extend(map.apply_brush(brush, (segment[0], segment[1]), (segment[2], segment[3])));
+    }
+    if !changed.is_empty() {
+        store_tilemap(s, actor_id, map);
+    }
+    Ok(changed.len())
+}
+
+/// [`tile_stroke`] for the shell and the frontend: how many cells changed.
+pub(crate) fn paint_tiles(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    brush: blockloom_core::tilemap::TileBrush,
+    segments: Vec<[i32; 4]>,
+) -> Result<usize, String> {
+    let mut s = lock(state)?;
+    let changed = tile_stroke(&mut s, &actor_id, &brush, &segments)?;
+    emit(app, &s);
+    Ok(changed)
+}
+
+/// A path relative to `base` (a folder in the project), `..` allowed as
+/// long as it stays inside the project.
+fn join_in_project(base: &str, relative: &str) -> Option<String> {
+    let mut parts: Vec<&str> = base.split('/').filter(|p| !p.is_empty()).collect();
+    for part in relative.split(['/', '\\']) {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            part => parts.push(part),
+        }
+    }
+    assets::normalize(&parts.join("/"))
+}
+
+/// Takes a Tiled JSON tileset (`.tsj`/`.json`) onto a tilemap: its image,
+/// tile size, collision and passable tiles, animations, region tiles and
+/// edge or mixed wang sets. Answers what didn't come across.
+pub(crate) fn import_tileset(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    path: String,
+) -> Result<Vec<String>, String> {
+    let mut s = lock(state)?;
+    let dir = project_dir(&s)?;
+    let full = assets::resolve(&dir, &path).ok_or("Invalid tileset path")?;
+    let text = std::fs::read_to_string(&full).map_err(|e| format!("Couldn't read {path}: {e}"))?;
+    let mut import = blockloom_core::tilemap::import_tiled_tileset(&text)?;
+    let folder = assets::normalize(&path)
+        .and_then(|p| p.rsplit_once('/').map(|(folder, _)| folder.to_string()))
+        .unwrap_or_default();
+    import.image = join_in_project(&folder, &import.image).ok_or_else(|| {
+        format!(
+            "The tileset's image \"{}\" is outside the project",
+            import.image
+        )
+    })?;
+    let mut map = tilemap_of(&s, &actor_id)?;
+    map.apply_import(&import);
+    store_tilemap(&mut s, &actor_id, map);
+    emit(app, &s);
+    Ok(import.skipped)
+}
+
+/// What a tilemap is made of, for the inspector's stats line.
+pub(crate) fn tilemap_stats(
+    state: &SharedState,
+    actor_id: String,
+) -> Result<blockloom_core::tilemap::TileStats, String> {
+    let s = lock(state)?;
+    Ok(tilemap_of(&s, &actor_id)?.stats())
+}
+
+/// Adds an autotile set laid out as a strip of consecutive sheet cells from
+/// `first`: 16 for an edge set, 47 for a blob set.
+pub(crate) fn add_autotile(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    name: String,
+    mode: blockloom_core::tilemap::AutotileMode,
+    first: i32,
+) -> Result<(), String> {
+    use blockloom_core::tilemap::{AutotileMode, AutotileSet};
+    let mut s = lock(state)?;
+    let mut map = tilemap_of(&s, &actor_id)?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("An autotile set needs a name".to_string());
+    }
+    let set = match mode {
+        AutotileMode::Edge => AutotileSet::edge_strip(name, first.max(0)),
+        AutotileMode::Blob => AutotileSet::blob_strip(name, first.max(0)),
+    };
+    let cells = (map.sheet_columns * map.sheet_rows) as i32;
+    let last = set.rules.iter().map(|rule| rule.tile).max().unwrap_or(0);
+    if last >= cells {
+        return Err(format!(
+            "That set needs tiles {} to {last}, but the sheet only has {cells}",
+            first.max(0)
+        ));
+    }
+    map.autotiles
+        .retain(|other| !other.name.eq_ignore_ascii_case(name));
+    map.autotiles.push(set);
+    store_tilemap(&mut s, &actor_id, map);
+    emit(app, &s);
+    Ok(())
+}
+
 // ─── Terrain ───────────────────────────────────────────────────────────────
 
 fn terrain_of(

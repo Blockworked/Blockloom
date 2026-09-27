@@ -246,6 +246,10 @@ impl ScriptEvent {
                 None,
                 ScriptEvent::new(abi::EVENT_UI, id).detail(event.clone()),
             ),
+            Event::EnteredRoom { actor, room } => (
+                Some(actor.clone()),
+                ScriptEvent::new(abi::EVENT_ENTERED_ROOM, room),
+            ),
         })
     }
 }
@@ -531,6 +535,12 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
             };
             bool_as(sense::read(|sensors| sensors.water.underwater(position)))
         }
+        abi::READ_TILE_AT => {
+            let mut at = a.split_whitespace().map(|n| n.parse::<f32>().ok());
+            let (x, y) = (at.next()??, at.next()??);
+            let z = at.next().flatten().unwrap_or(0.0);
+            sense::read(|sensors| sensors.level.tile_at([x, y, z], b).ok()).map(f64::from)
+        }
         abi::READ_PARTICLES => {
             let me = me(actor)?;
             let what = a.trim().to_ascii_lowercase();
@@ -661,6 +671,20 @@ fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
         abi::TEXT_NEW_ACTOR => me(actor)
             .map(|me| me.last_created)
             .filter(|id| !id.is_empty()),
+        abi::TEXT_ENTERED_ROOM => sense::read(|sensors| sensors.level.entered.get(actor).cloned()),
+        abi::TEXT_ROOM => {
+            let position = if a.trim().is_empty() {
+                me(actor)?.position
+            } else {
+                sense::read(|sensors| sensors.find(a.trim()).map(|found| found.position))?
+            };
+            sense::read(|sensors| {
+                sensors
+                    .level
+                    .room_at(position)
+                    .map(|room| room.name.clone())
+            })
+        }
         abi::TEXT_UI_VALUE => sense::read(|sensors| {
             sensors
                 .ui
@@ -1153,6 +1177,26 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
                 message: format!("there's no cloud dial called \"{a}\""),
             },
         },
+        abi::ACT_PAINT_TILE => Effect::PaintTile {
+            actor,
+            map: a.trim().to_string(),
+            tile: (n0.floor() as i32).max(-1),
+            x: n1 as f32,
+            y: n2 as f32,
+            z: at(3) as f32,
+        },
+        abi::ACT_SET_PARALLAX => match blockloom_core::tilemap::ParallaxAxis::parse(b) {
+            Some(axis) => Effect::SetParallax {
+                actor,
+                layer: a.trim().to_string(),
+                axis,
+                value: n0 as f32,
+            },
+            None => Effect::Error {
+                actor,
+                message: format!("there's no parallax axis called \"{b}\""),
+            },
+        },
         abi::ACT_SET_WATER => match blockloom_core::water::WaterProperty::parse(a) {
             Some(property) => Effect::SetWater {
                 actor,
@@ -1562,6 +1606,7 @@ fn event(me: &Actor, event: &Event) {
             me.say(&format!("{count} hit at {} {}", at.0, at.1))
         }
         Event::Collision { with, id } => me.say(&format!("touched {with} ({id})")),
+        Event::EnteredRoom(room) => me.say(&format!("entered {room}")),
         _ => {}
     }
 }
@@ -1608,6 +1653,10 @@ blockloom::export!(event = event);
                 actor: "a1".to_string(),
                 with: "b2".to_string(),
             },
+            Event::EnteredRoom {
+                actor: "a1".to_string(),
+                room: "Cave".to_string(),
+            },
         ] {
             let (to, heard) = ScriptEvent::of(&event, names).expect("a script event");
             assert!(to.is_none_or(|to| to == "a1"));
@@ -1621,7 +1670,15 @@ blockloom::export!(event = event);
                 _ => None,
             })
             .collect();
-        assert_eq!(said, ["heard go", "3 hit at 1.5 2", "touched Wall (b2)"]);
+        assert_eq!(
+            said,
+            [
+                "heard go",
+                "3 hit at 1.5 2",
+                "touched Wall (b2)",
+                "entered Cave"
+            ]
+        );
     }
 
     #[test]

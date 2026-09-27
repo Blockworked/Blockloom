@@ -103,6 +103,7 @@ impl Backend {
             ray_tracing: None,
             embedded,
             scene_view: Default::default(),
+            picked_tile: None,
         };
         Backend {
             state: Arc::new(Mutex::new(state)),

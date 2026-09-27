@@ -246,6 +246,11 @@ pub enum Event {
         actor: String,
         marker: String,
     },
+    /// `actor` walked into the room actor named `room`.
+    EnteredRoom {
+        actor: String,
+        room: String,
+    },
     /// The named input action went down, in lowercase action spelling.
     Action(String),
     /// A finger touched the screen.
@@ -656,6 +661,13 @@ impl Vm {
                     marker,
                 },
             ) => reached == actor && (want.is_empty() || want.eq_ignore_ascii_case(marker)),
+            (
+                Trigger::EnteredRoom { room: want },
+                Event::EnteredRoom {
+                    actor: entered,
+                    room,
+                },
+            ) => entered == actor && (want.is_empty() || want.eq_ignore_ascii_case(room)),
             (Trigger::ActionPressed(want), Event::Action(got)) => want == got,
             (Trigger::Touched, Event::Touched) => true,
             (
@@ -1440,6 +1452,31 @@ impl Vm {
                 out.push(Effect::SetWater {
                     actor: actor.to_string(),
                     property: *property,
+                    value,
+                });
+            }
+            Action::PaintTile { map, tile, x, y, z } => {
+                let map = self.eval(map, actor, params, temps, out).as_text();
+                let tile = self.eval_f32(tile, actor, params, temps, out);
+                let x = self.eval_f32(x, actor, params, temps, out);
+                let y = self.eval_f32(y, actor, params, temps, out);
+                let z = self.eval_f32(z, actor, params, temps, out);
+                out.push(Effect::PaintTile {
+                    actor: actor.to_string(),
+                    map: map.trim().to_string(),
+                    tile: (tile.floor() as i32).max(-1),
+                    x,
+                    y,
+                    z,
+                });
+            }
+            Action::SetParallax { layer, axis, value } => {
+                let layer = self.eval(layer, actor, params, temps, out).as_text();
+                let value = self.eval_f32(value, actor, params, temps, out);
+                out.push(Effect::SetParallax {
+                    actor: actor.to_string(),
+                    layer: layer.trim().to_string(),
+                    axis: *axis,
                     value,
                 });
             }
