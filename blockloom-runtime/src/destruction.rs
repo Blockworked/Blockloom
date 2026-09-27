@@ -317,7 +317,9 @@ fn fracture_hull(visual: &Visual) -> Vec<model::Face> {
         .map(|i| i.iter().collect())
         .unwrap_or_else(|| (0..positions.len()).collect());
     indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .filter_map(|tri| {
             let mut vertices: Vec<_> = tri
                 .iter()
@@ -570,7 +572,7 @@ fn simulate(
                             collider,
                             rp::Velocity {
                                 linear: linear + angular.cross(offset),
-                                angular: angular,
+                                angular,
                             },
                             rp::Restitution::coefficient(actor.physics().restitution),
                             rp::Friction::coefficient(actor.physics().friction),
@@ -845,7 +847,8 @@ fn upload_surface(
             bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT;
         texture.image = Some(images.add(image));
     } else if pixels != texture.pixels
-        && let Some(mut image) = images.get_mut(texture.image.as_ref().unwrap())
+        && let Some(handle) = texture.image.as_ref()
+        && let Some(mut image) = images.get_mut(handle)
     {
         image.data = Some(pixels.clone());
     }

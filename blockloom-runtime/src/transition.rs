@@ -122,11 +122,7 @@ impl SceneVeil {
     /// The fixed step may swap scenes once cover is complete - or at once
     /// when no transition runs.
     pub fn ready_to_switch(&self) -> bool {
-        match self.phase {
-            VeilPhase::Idle => true,
-            VeilPhase::Covered => true,
-            _ => false,
-        }
+        matches!(self.phase, VeilPhase::Idle | VeilPhase::Covered)
     }
 
     /// Opens the reveal after the swap. A `none` switch never covered, so
@@ -275,17 +271,19 @@ fn drive_circle(
         }
         None
     } else {
-        let mut node = Node::default();
-        node.position_type = PositionType::Absolute;
-        node.left = Val::Percent(0.0);
-        node.right = Val::Percent(0.0);
-        node.top = Val::Percent(0.0);
-        node.bottom = Val::Percent(0.0);
-        node.width = Val::Percent(100.0);
-        node.height = Val::Percent(100.0);
-        node.display = Display::Flex;
-        node.justify_content = JustifyContent::Center;
-        node.align_items = AlignItems::Center;
+        let node = Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent(0.0),
+            right: Val::Percent(0.0),
+            top: Val::Percent(0.0),
+            bottom: Val::Percent(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            display: Display::Flex,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        };
         Some(
             commands
                 .spawn((
@@ -309,10 +307,12 @@ fn drive_circle(
             commands.entity(entity).despawn();
         }
     } else {
-        let mut node = Node::default();
-        node.width = diameter;
-        node.height = diameter;
-        node.border_radius = BorderRadius::all(Val::Percent(50.0));
+        let node = Node {
+            width: diameter,
+            height: diameter,
+            border_radius: BorderRadius::all(Val::Percent(50.0)),
+            ..default()
+        };
         let disc = commands
             .spawn((
                 Name::new("scene-veil-disc"),
@@ -429,7 +429,7 @@ mod tests {
         assert!(veil.advance_in(IN_SECS));
         assert_eq!(veil.phase, VeilPhase::Idle);
         // The disc covers the diagonal: even ultrawide corners hide.
-        assert!(CIRCLE_COVER_VMIN >= 300.0);
+        const { assert!(CIRCLE_COVER_VMIN >= 300.0) };
     }
 
     #[test]

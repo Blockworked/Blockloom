@@ -1277,17 +1277,17 @@ impl Project {
             actor.id = next;
         }
         for actor in &mut copy.actors {
-            if let Some(parent) = actor.parent() {
-                if let Some(next) = remap.get(parent) {
-                    actor.components.set_parent(next);
-                }
+            if let Some(parent) = actor.parent()
+                && let Some(next) = remap.get(parent)
+            {
+                actor.components.set_parent(next);
             }
-            if let Some(joint) = actor.components.joint() {
-                if let Some(next) = remap.get(&joint.target) {
-                    let mut joint = joint.clone();
-                    joint.target = next.clone();
-                    actor.components.insert(ActorComponent::Joint { joint });
-                }
+            if let Some(joint) = actor.components.joint()
+                && let Some(next) = remap.get(&joint.target)
+            {
+                let mut joint = joint.clone();
+                joint.target = next.clone();
+                actor.components.insert(ActorComponent::Joint { joint });
             }
         }
         let new_id = copy.id.clone();

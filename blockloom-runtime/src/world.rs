@@ -1005,13 +1005,11 @@ pub fn step_scripts(
                 actor,
                 scene,
                 transition,
-            } => {
-                if switch_request.is_none() && engine.pending_scene.is_none() {
-                    switch_request = Some((scene.clone(), transition.clone()));
-                    // A script's ask names who asked only for the log line;
-                    // the switch itself is window-global.
-                    let _ = actor;
-                }
+            } if switch_request.is_none() && engine.pending_scene.is_none() => {
+                switch_request = Some((scene.clone(), transition.clone()));
+                // A script's ask names who asked only for the log line;
+                // the switch itself is window-global.
+                let _ = actor;
             }
             _ => {}
         }
@@ -2054,10 +2052,8 @@ pub fn step_vm(
                 actor,
                 scene,
                 transition,
-            } => {
-                if switch_request.is_none() && engine.pending_scene.is_none() {
-                    switch_request = Some((actor.clone(), scene.clone(), transition.clone()));
-                }
+            } if switch_request.is_none() && engine.pending_scene.is_none() => {
+                switch_request = Some((actor.clone(), scene.clone(), transition.clone()));
             }
             _ => {}
         }

@@ -93,7 +93,9 @@ pub enum LoopKind {
 }
 
 /// A leaf instruction: it changes the world and never affects control flow.
+// Boxing would add a pointer chase to every step the VM runs.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Action {
     Move(Value),
     GoTo([Value; 3]),
@@ -417,6 +419,7 @@ pub struct ShowElement {
 
 /// One step of a compiled program.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Step {
     Action(Action),
     /// Falls through when `condition` holds, jumps to `to` when it doesn't.

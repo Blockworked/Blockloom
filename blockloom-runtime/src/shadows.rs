@@ -60,10 +60,10 @@ pub fn apply_shadows(
         cookie: blockloom_core::assets::normalize(&lighting.sun_cookie).unwrap_or_default(),
         cookie_size: lighting.sun_cookie_size.max(0.01),
     };
-    if let Some(mut patches) = patches {
-        if patches.shadow_fade != now.settings.fade {
-            patches.shadow_fade = now.settings.fade;
-        }
+    if let Some(mut patches) = patches
+        && patches.shadow_fade != now.settings.fade
+    {
+        patches.shadow_fade = now.settings.fade;
     }
     let fresh = suns.iter().any(|(_, sun, ..)| sun.is_added())
         || cameras.iter().any(|(_, camera)| camera.is_added());

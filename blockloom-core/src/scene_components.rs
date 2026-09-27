@@ -52,6 +52,7 @@ pub const BUILT_IN_SCENE_NAMES: &[&str] = &[
 /// components use.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "component")]
+#[allow(clippy::large_enum_variant)]
 pub enum SceneComponent {
     /// Which dimension the scene runs in.
     Dimension { mode: Mode },
@@ -153,9 +154,7 @@ impl SceneComponents {
             SceneComponent::Lighting {
                 lighting: world.lighting.clone(),
             },
-            SceneComponent::Sound {
-                mixer: world.sound.clone(),
-            },
+            SceneComponent::Sound { mixer: world.sound },
             SceneComponent::Input {
                 config: world.input.clone(),
             },
@@ -187,7 +186,7 @@ impl SceneComponents {
                 wind: world.wind.clone(),
             },
             SceneComponent::Surface {
-                surface: world.surface.clone(),
+                surface: world.surface,
             },
             SceneComponent::Vfx {
                 settings: world.vfx.clone(),
@@ -284,9 +283,11 @@ mod tests {
 
     #[test]
     fn a_world_round_trips_through_components() {
-        let mut world = World::default();
-        world.background = "#102030".to_string();
-        world.fixed_rate = 120.0;
+        let world = World {
+            background: "#102030".to_string(),
+            fixed_rate: 120.0,
+            ..World::default()
+        };
         let components = SceneComponents::from_world(&world);
         assert_eq!(components.0.len(), BUILT_IN_SCENE_NAMES.len());
         assert_eq!(components.to_world(), world);
