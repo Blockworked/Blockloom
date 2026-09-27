@@ -114,7 +114,10 @@ impl Launch {
         let mode = self.mode();
         match self {
             Self::Editor { .. } => Engine::new(bridge::listen(), mode),
-            Self::Player { pack, dir } => {
+            Self::Player { mut pack, dir } => {
+                // A built game boots into its default scene, not wherever the
+                // editor was looking at build time.
+                pack.project.active_scene = pack.project.boot_scene_id();
                 let (tx, rx) = std::sync::mpsc::channel();
                 let _ = tx.send(EditorMessage::Load {
                     project: Box::new(pack.project),
@@ -127,7 +130,8 @@ impl Launch {
             }
             // The game folder is the page's mounted files, reached through
             // relative paths; the green flag is the same.
-            Self::Web { pack } => {
+            Self::Web { mut pack } => {
+                pack.project.active_scene = pack.project.boot_scene_id();
                 let (tx, rx) = std::sync::mpsc::channel();
                 let _ = tx.send(EditorMessage::Load {
                     project: Box::new(pack.project),

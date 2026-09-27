@@ -126,6 +126,11 @@ impl Backend {
                 app,
                 arg(&args, "sceneId")?,
             )?),
+            "set_default_scene" => to_json(commands::set_default_scene(
+                state,
+                app,
+                arg(&args, "sceneId")?,
+            )?),
             "scene_components" => to_json(commands::scene_components(
                 state,
                 arg(&args, "sceneId").ok(),
@@ -294,11 +299,13 @@ impl Backend {
             )?),
             "create_asset" => to_json(commands::create_asset(
                 state,
+                app,
                 arg(&args, "parent").unwrap_or_default(),
                 arg(&args, "name")?,
             )?),
             "import_assets" => to_json(commands::import_assets(
                 state,
+                app,
                 arg(&args, "parent").unwrap_or_default(),
                 arg(&args, "paths")?,
             )?),
@@ -314,7 +321,7 @@ impl Backend {
                 arg(&args, "path")?,
                 arg(&args, "parent").unwrap_or_default(),
             )?),
-            "delete_asset" => to_json(commands::delete_asset(state, arg(&args, "path")?)?),
+            "delete_asset" => to_json(commands::delete_asset(state, app, arg(&args, "path")?)?),
             "read_asset" => to_json(commands::read_asset(state, arg(&args, "path")?)?),
             "open_asset_location" => {
                 to_json(commands::open_asset_location(state, arg(&args, "path")?)?)

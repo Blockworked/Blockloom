@@ -166,7 +166,10 @@ fn draw(
         &cache.get_bind_group_layout(&pipelines.copy_layout),
         &BindGroupEntries::single(&target.scratch.default_view),
     );
-    if !*seen { eprintln!("drawing deferred decals"); *seen = true; }
+    if !*seen {
+        eprintln!("drawing deferred decals");
+        *seen = true;
+    }
     {
         let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
             label: Some("decal_gbuffer"),

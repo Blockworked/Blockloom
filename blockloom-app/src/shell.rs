@@ -326,6 +326,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-default-scene",
+        cmd: "set_default_scene",
+        aliases: &["set_default_scene"],
+        summary: "Set which scene a fresh open - and a built game - boots into.",
+        args: &[ArgSpec {
+            name: "sceneId",
+            ty: "id",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "scene-components",
         cmd: "scene_components",
         aliases: &["scene_components"],
@@ -833,7 +844,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "create-asset",
         cmd: "create_asset",
         aliases: &["create_asset"],
-        summary: "Make an empty asset (a text file, or a starter script).",
+        summary: "Make an empty asset (a text file, a starter script, or a scene with .blockscene).",
         args: &[
             ArgSpec {
                 name: "parent",

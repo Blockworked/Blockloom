@@ -282,7 +282,10 @@ pub(crate) fn open_project(
     force: bool,
 ) -> Result<OpenReport, String> {
     let dir = std::path::PathBuf::from(path);
-    let project = project::read_project_dir(&dir)?;
+    let mut project = project::read_project_dir(&dir)?;
+    // Booting a project loads its default scene, not wherever the last
+    // editor left off.
+    project.active_scene = project.boot_scene_id();
     let disk_revision = sync::read_revision(&dir);
     let mut s = lock(state)?;
     let session = s.session_id.clone();
@@ -789,7 +792,30 @@ pub(crate) fn rename_scene(
     let Some(project) = s.project_mut() else {
         return Err("No project is open".to_string());
     };
+    let old_path = project
+        .scene(&scene_id)
+        .map(|scene| scene.asset_path())
+        .ok_or("Scene not found".to_string())?;
     let renamed = project.rename_scene(&scene_id, &name)?;
+    let new_path = project
+        .scene(&scene_id)
+        .map(|scene| scene.asset_path())
+        .unwrap_or(old_path.clone());
+    // The file follows the name, so the tray never shows a stale twin.
+    if new_path != old_path
+        && let Some(dir) = s.project_dir().map(Path::to_path_buf)
+    {
+        let from = dir.join(&old_path);
+        let to = dir.join(&new_path);
+        if from.is_file() {
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("{}: {e}", parent.display()))?;
+            }
+            std::fs::rename(&from, &to)
+                .map_err(|e| format!("{} -> {}: {e}", from.display(), to.display()))?;
+        }
+    }
     auto_save(&s);
     emit(app, &s);
     Ok(renamed)
@@ -802,21 +828,46 @@ pub(crate) fn remove_scene(
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     push_undo(&mut s);
-    let Some(project) = s.project_mut() else {
-        return Err("No project is open".to_string());
+    let path = {
+        let Some(project) = s.project_mut() else {
+            return Err("No project is open".to_string());
+        };
+        let path = project
+            .scene(&scene_id)
+            .map(|scene| scene.asset_path())
+            .ok_or("Scene not found".to_string())?;
+        project.remove_scene(&scene_id)?;
+        path
     };
-    project.remove_scene(&scene_id)?;
     s.selected_actor = None;
-    // The scene asset goes with it; anything else under `assets/scenes/` is
-    // left alone, so a staged import never vanishes on save.
+    // The scene asset goes with it; anything else on disk is left alone, so
+    // a staged import never vanishes on save.
     if let Some(dir) = s.project_dir().map(Path::to_path_buf) {
-        let file = dir.join(project::scene_asset_path(&scene_id));
+        let file = dir.join(&path);
         if file.is_file() {
             std::fs::remove_file(&file).map_err(|e| format!("{}: {e}", file.display()))?;
         }
     }
     auto_save(&s);
     sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Sets the boot scene: what a fresh open - and a built game - loads. The
+/// editor keeps editing wherever it is.
+pub(crate) fn set_default_scene(
+    state: &SharedState,
+    app: &AppHandle,
+    scene_id: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let Some(project) = s.project_mut() else {
+        return Err("No project is open".to_string());
+    };
+    project.set_default_scene(&scene_id)?;
+    auto_save(&s);
     emit(app, &s);
     Ok(())
 }
@@ -1103,13 +1154,14 @@ pub(crate) fn import_scene(
         }
     }
     scene.name = project.unique_scene_name(&scene.name);
+    scene.path = project.unused_scene_path(&scene.name);
     let id = scene.id.clone();
-    let dest_relative = project::scene_asset_path(&id);
+    let dest_relative = scene.asset_path();
     project.scenes.push(scene);
     project.active_scene = id.clone();
     s.selected_actor = None;
     // A staged file under a different name served its turn; the save below
-    // writes the id-named asset, so remove the staging copy.
+    // writes the name-based asset, so remove the staging copy.
     if let Ok(relative) = source
         .strip_prefix(&dir)
         .map(|p| p.to_string_lossy().replace('\\', "/"))
@@ -2601,12 +2653,42 @@ pub(crate) fn create_asset_folder(
     assets::create_folder(&project_dir(&s)?, &parent, &name)
 }
 
-/// Makes an empty asset - a text file, or a script with the starter template.
+/// Makes an asset - a text file, a script with the starter template, or a
+/// scene when the name ends in `.blockscene`. A scene is a normal tray file:
+/// its filename is the scene name, and making one loads it.
 pub(crate) fn create_asset(
     state: &SharedState,
+    app: &AppHandle,
     parent: String,
     name: String,
 ) -> Result<String, String> {
+    let trimmed = name.trim().to_string();
+    if project::is_scene_asset(&trimmed) {
+        let mut s = lock(state)?;
+        let dir = project_dir(&s)?;
+        // The tray dedupes like any other file; the scene follows the file.
+        let file = if trimmed.to_lowercase().ends_with(".blockscene") {
+            trimmed.clone()
+        } else {
+            format!("{trimmed}.blockscene")
+        };
+        let made = assets::create_file(&dir, &parent, &file, "")?;
+        // `create_file` wrote a placeholder; the save below writes the real
+        // scene over it.
+        push_undo(&mut s);
+        let id = {
+            let Some(project) = s.project_mut() else {
+                return Err("No project is open".to_string());
+            };
+            project.add_scene_at(&made, None)?
+        };
+        s.selected_actor = None;
+        auto_save(&s);
+        sync_runtime(&mut s);
+        emit(app, &s);
+        let _ = id;
+        return Ok(made);
+    }
     let s = lock(state)?;
     let dir = project_dir(&s)?;
     let made = assets::create_file(&dir, &parent, &name, &asset_template(&name))?;
@@ -2616,13 +2698,15 @@ pub(crate) fn create_asset(
     Ok(made)
 }
 
-/// Copies files from anywhere on the machine into the project folder.
+/// Copies files from anywhere on the machine into the project folder. A
+/// `.blockscene` among them becomes a scene, named for its filename.
 pub(crate) fn import_assets(
     state: &SharedState,
+    app: &AppHandle,
     parent: String,
     paths: Vec<String>,
 ) -> Result<Vec<String>, String> {
-    let s = lock(state)?;
+    let mut s = lock(state)?;
     let dir = project_dir(&s)?;
     let sources: Vec<std::path::PathBuf> =
         paths.into_iter().map(std::path::PathBuf::from).collect();
@@ -2637,7 +2721,76 @@ pub(crate) fn import_assets(
     if made.iter().any(|path| touches_scripts(path)) {
         sync_ide(&dir);
     }
+    // Scenes register by filename; a file that won't parse becomes a fresh
+    // scene under that name rather than failing the whole import.
+    let scenes: Vec<String> = made
+        .iter()
+        .filter(|path| project::is_scene_asset(path))
+        .cloned()
+        .collect();
+    if !scenes.is_empty() {
+        push_undo(&mut s);
+        for relative in &scenes {
+            if let Err(e) = register_scene_file(&mut s, &dir, relative) {
+                tracing::warn!("Couldn't register scene {relative}: {e}");
+            }
+        }
+        s.selected_actor = None;
+        auto_save(&s);
+        sync_runtime(&mut s);
+        emit(app, &s);
+    }
     Ok(made)
+}
+
+/// Registers the `.blockscene` file at `relative` as a scene, named for its
+/// filename. A file that won't parse starts a fresh scene there instead, so
+/// a tray rename onto `.blockscene` never fails the edit.
+fn register_scene_file(
+    s: &mut AppState,
+    dir: &std::path::Path,
+    relative: &str,
+) -> Result<String, String> {
+    let full = dir.join(relative);
+    let mut scene = project::read_scene_file(&full).unwrap_or_else(|_| {
+        let stem = project::scene_name_for_path(relative);
+        let mode = s
+            .project()
+            .map(|p| p.world.mode)
+            .unwrap_or(blockloom_core::scene::Mode::TwoD);
+        let mut fresh = blockloom_core::project::Scene::new(
+            if stem.is_empty() { "Scene" } else { &stem },
+            mode,
+        );
+        if fresh.world.input.actions.is_empty() {
+            fresh.world.input = blockloom_core::input::InputConfig::starter();
+        }
+        fresh
+    });
+    let project = s.project_mut().ok_or("No project is open".to_string())?;
+    if project.scene(&scene.id).is_some() || scene.id.trim().is_empty() {
+        scene.id = uuid::Uuid::new_v4().simple().to_string();
+        let mut remap = std::collections::HashMap::new();
+        for actor in &mut scene.actors {
+            let next = uuid::Uuid::new_v4().simple().to_string();
+            remap.insert(actor.id.clone(), next.clone());
+            actor.id = next;
+        }
+        for actor in &mut scene.actors {
+            if let Some(parent) = actor.parent()
+                && let Some(next) = remap.get(parent).cloned()
+            {
+                actor.components.set_parent(&next);
+            }
+        }
+    }
+    let stem = project::scene_name_for_path(relative);
+    scene.name = project.unique_scene_name(if stem.is_empty() { &scene.name } else { &stem });
+    scene.path = relative.to_string();
+    let id = scene.id.clone();
+    project.scenes.push(scene);
+    project.active_scene = id.clone();
+    Ok(id)
 }
 
 pub(crate) fn rename_asset(
@@ -2647,12 +2800,79 @@ pub(crate) fn rename_asset(
     name: String,
 ) -> Result<String, String> {
     let mut s = lock(state)?;
-    refuse_managed_scene_asset(&s, &path)?;
+    let was_scene = s
+        .project()
+        .is_some_and(|project| project.scene_for_asset(&path).is_some());
     let dir = project_dir(&s)?;
     let moved = assets::rename(&dir, &path, &name)?;
     pipeline::note_moved(&dir, &path, &moved);
     if touches_scripts(&path) || touches_scripts(&moved) {
         sync_ide(&dir);
+    }
+    if was_scene {
+        // The filename is the scene name: a rename renames the scene, and
+        // dropping the extension un-scenes the file.
+        push_undo(&mut s);
+        if project::is_scene_asset(&moved) {
+            let stem = project::scene_name_for_path(&moved);
+            let id = s
+                .project()
+                .and_then(|p| p.scene_for_asset(&path))
+                .map(|scene| scene.id.clone())
+                .ok_or("Scene not found".to_string())?;
+            if let Some(scene) = s.project_mut().and_then(|p| p.scene_mut(&id)) {
+                scene.path = moved.clone();
+            }
+            let _renamed = {
+                let Some(project) = s.project_mut() else {
+                    return Err("No project is open".to_string());
+                };
+                project.rename_scene_to_stem(&id, &stem)?
+            };
+            // `rename_scene_to_stem` recomputes a name-based path in the old
+            // folder; the file already moved, so keep its real path.
+            if let Some(scene) = s.project_mut().and_then(|p| p.scene_mut(&id)) {
+                scene.path = moved.clone();
+            }
+        } else {
+            let id = s
+                .project()
+                .and_then(|p| p.scene_for_asset(&path))
+                .map(|scene| scene.id.clone());
+            if let Some(id) = id {
+                let Some(project) = s.project_mut() else {
+                    return Err("No project is open".to_string());
+                };
+                if project.scenes.len() <= 1 {
+                    return Err("A project needs at least one scene".to_string());
+                }
+                project.remove_scene(&id)?;
+                if s.selected_actor.is_some() {
+                    s.selected_actor = None;
+                }
+            }
+        }
+        auto_save(&s);
+        sync_runtime(&mut s);
+        emit(app, &s);
+        return Ok(moved);
+    }
+    // A plain file renamed onto `.blockscene` becomes a scene.
+    if !was_scene && project::is_scene_asset(&moved) && s.project().is_some() {
+        push_undo(&mut s);
+        let dir = project_dir(&s)?;
+        match register_scene_file(&mut s, &dir, &moved) {
+            Ok(_) => {
+                s.selected_actor = None;
+                auto_save(&s);
+                sync_runtime(&mut s);
+                emit(app, &s);
+            }
+            Err(e) => {
+                tracing::warn!("Couldn't register scene {moved}: {e}");
+            }
+        }
+        return Ok(moved);
     }
     repoint_assets(&mut s, app, &path, &moved);
     Ok(moved)
@@ -2665,48 +2885,106 @@ pub(crate) fn move_asset(
     parent: String,
 ) -> Result<String, String> {
     let mut s = lock(state)?;
-    refuse_managed_scene_asset(&s, &path)?;
+    // Scenes under the moved file or folder follow it, keeping the index in
+    // step with the tray.
+    let affected: Vec<String> = s
+        .project()
+        .map(|project| {
+            project
+                .scenes
+                .iter()
+                .filter(|scene| {
+                    let at = scene.asset_path();
+                    at == path || at.starts_with(&format!("{path}/"))
+                })
+                .map(|scene| scene.id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    if !affected.is_empty() {
+        push_undo(&mut s);
+    }
     let dir = project_dir(&s)?;
     let moved = assets::move_to(&dir, &path, &parent)?;
     pipeline::note_moved(&dir, &path, &moved);
     if touches_scripts(&path) || touches_scripts(&moved) {
         sync_ide(&dir);
     }
+    if !affected.is_empty() {
+        for id in &affected {
+            let old = s
+                .project()
+                .and_then(|p| p.scene(id))
+                .map(|scene| scene.asset_path())
+                .unwrap_or_default();
+            let new = if old == path {
+                moved.clone()
+            } else {
+                moved.clone() + &old[path.len()..]
+            };
+            if let Some(scene) = s.project_mut().and_then(|p| p.scene_mut(id)) {
+                scene.path = new;
+            }
+        }
+        auto_save(&s);
+        sync_runtime(&mut s);
+        emit(app, &s);
+        return Ok(moved);
+    }
     repoint_assets(&mut s, app, &path, &moved);
     Ok(moved)
 }
 
-pub(crate) fn delete_asset(state: &SharedState, path: String) -> Result<(), String> {
-    let s = lock(state)?;
-    refuse_managed_scene_asset(&s, &path)?;
+pub(crate) fn delete_asset(
+    state: &SharedState,
+    app: &AppHandle,
+    path: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    // Deleting a scene file deletes its scene; a folder takes the scenes
+    // under it. The last scene stays.
+    let condemned: Vec<String> = s
+        .project()
+        .map(|project| {
+            project
+                .scenes
+                .iter()
+                .filter(|scene| {
+                    let at = scene.asset_path();
+                    at == path || at.starts_with(&format!("{path}/"))
+                })
+                .map(|scene| scene.id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    if !condemned.is_empty() {
+        let remaining = s
+            .project()
+            .map(|p| p.scenes.len().saturating_sub(condemned.len()))
+            .unwrap_or(0);
+        if remaining == 0 {
+            return Err("A project needs at least one scene".to_string());
+        }
+        push_undo(&mut s);
+        if let Some(project) = s.project_mut() {
+            for id in &condemned {
+                let _ = project.remove_scene(id);
+            }
+        }
+        s.selected_actor = None;
+        let dir = project_dir(&s)?;
+        assets::delete(&dir, &path)?;
+        pipeline::note_removed(&dir, &path);
+        auto_save(&s);
+        sync_runtime(&mut s);
+        emit(app, &s);
+        return Ok(());
+    }
     let dir = project_dir(&s)?;
     assets::delete(&dir, &path)?;
     pipeline::note_removed(&dir, &path);
     if touches_scripts(&path) {
         sync_ide(&dir);
-    }
-    Ok(())
-}
-
-/// Scene assets in the index are managed through the scene commands, not the
-/// tray: renaming one would orphan the index entry, and deleting one would
-/// drop the scene without its undo step. The scenes folder itself stays put
-/// for the same reason; use `import-scene` to bring a file in.
-fn refuse_managed_scene_asset(s: &AppState, relative: &str) -> Result<(), String> {
-    let normalized = relative.replace('\\', "/");
-    if normalized == project::SCENES_DIR {
-        return Err(
-            "The scenes folder is managed by Blockloom - use the scene commands".to_string(),
-        );
-    }
-    let managed = s
-        .project()
-        .is_some_and(|project| project.scene_for_asset(&normalized).is_some());
-    if managed {
-        return Err(
-            "That file is a scene asset - use duplicate-scene, rename-scene or remove-scene"
-                .to_string(),
-        );
     }
     Ok(())
 }

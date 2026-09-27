@@ -736,10 +736,12 @@ fn copy_assets(project_dir: &Path, game: &Path) -> Result<usize, String> {
         return Ok(0);
     }
     let scripts = script::scripts_dir(project_dir);
-    let scenes = project_dir.join(project::SCENES_DIR);
     copy_tree(&from, &game.join(project::ASSETS_DIR), &|path| {
         !(path.starts_with(&scripts) && path.extension().is_some_and(|ext| ext == "rs"))
-            && !path.starts_with(&scenes)
+            // Scene assets ride in the pack, wherever the tray keeps them.
+            && !path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case(project::SCENE_EXTENSION))
     })
 }
 

@@ -61,7 +61,10 @@ Rectangle {
     property var lastProject: null
     Component.onCompleted: { lastProject = appState.project_path; refresh(); }
 
-    function startDraft(mode) { draft = { mode: mode, path: "", name: mode === "folder" ? "New folder" : "notes.txt" }; }
+    function startDraft(mode) {
+        const name = mode === "folder" ? "New folder" : mode === "scene" ? "New Scene" : "notes.txt";
+        draft = { mode: mode, path: "", name: name };
+    }
     function startRename(entry) { if (!entry.protected) draft = { mode: "rename", path: entry.path, name: entry.name }; }
     function commitDraft(name) {
         const d = draft;
@@ -69,9 +72,26 @@ Rectangle {
         if (!d || !name.trim().length) return;
         if (d.mode === "folder") run("create_asset_folder", { parent: path, name: name });
         else if (d.mode === "file") run("create_asset", { parent: path, name: name });
+        else if (d.mode === "scene") {
+            let file = name.trim();
+            if (!/\.blockscene$/i.test(file)) file += ".blockscene";
+            run("create_asset", { parent: path, name: file });
+        }
         else if (name !== d.name) run("rename_asset", { path: d.path, name: name });
     }
     function report(entry) { return reports[entry.path] || null; }
+    // Double-clicking a scene file opens it; its filename is the scene name.
+    function openSceneAsset(entry) {
+        const scenes = root.appState.project ? root.appState.project.scenes : [];
+        const active = root.appState.project ? root.appState.project.active_scene : "";
+        let found = scenes.find(s => s.path === entry.path);
+        if (!found) {
+            const stem = entry.name.replace(/\.blockscene$/i, "");
+            found = scenes.find(s => s.name === stem);
+        }
+        if (found && found.id !== active) root.app.invoke("set_active_scene", { sceneId: found.id });
+        else if (!found) root.app.invoke("import_scene", { path: entry.path });
+    }
     // An image can be re-roled; offer every role it isn't already.
     function canRole(role) {
         if (!menuEntry || menuEntry.kind !== "image") return false;
@@ -210,7 +230,7 @@ Rectangle {
                     }
                     Tile {
                         visible: !!root.draft && root.draft.mode !== "rename"
-                        LucideIcon { anchors.horizontalCenter: parent.horizontalCenter; y: 10; name: root.draft && root.draft.mode === "folder" ? "folder" : "file"; width: 28; height: 28; color: Theme.textDim }
+                        LucideIcon { anchors.horizontalCenter: parent.horizontalCenter; y: 10; name: root.draft && root.draft.mode === "folder" ? "folder" : root.draft && root.draft.mode === "scene" ? "map" : "file"; width: 28; height: 28; color: Theme.textDim }
                         BwTextField {
                             id: draftField
                             anchors.left: parent.left; anchors.right: parent.right; y: 50; implicitHeight: 26; font.pixelSize: 11
@@ -285,7 +305,10 @@ Rectangle {
                                     root.endDrag(tile.modelData, p.x, p.y);
                                 }
                                 onCanceled: { dragging = false; ghost.entry = null; root.app.assetDrag = null; root.dropTarget = null; }
-                                onDoubleClicked: if (tile.modelData.kind === "folder") root.goTo(tile.modelData.path)
+                                onDoubleClicked: {
+                                    if (tile.modelData.kind === "folder") root.goTo(tile.modelData.path);
+                                    else if (tile.modelData.kind === "scene") root.openSceneAsset(tile.modelData);
+                                }
                             }
                             BwButton {
                                 visible: tile.modelData.kind === "audio"
@@ -311,6 +334,7 @@ Rectangle {
         BwMenuItem { iconName: "external-link"; text: "Open File Location"; onTriggered: root.app.invoke("open_asset_location", { path: root.menuEntry ? root.menuEntry.path : root.path }) }
         BwMenuItem { visible: !root.menuEntry; iconName: "folder-plus"; text: "New folder"; onTriggered: root.startDraft("folder") }
         BwMenuItem { visible: !root.menuEntry; iconName: "file-plus"; text: "New file"; onTriggered: root.startDraft("file") }
+        BwMenuItem { visible: !root.menuEntry; iconName: "map"; text: "New scene"; onTriggered: root.startDraft("scene") }
         BwMenuItem { visible: !root.menuEntry; iconName: "download"; text: "Import files here"; onTriggered: importDialog.open() }
         BwMenuItem { visible: !root.menuEntry; iconName: "refresh-cw"; text: "Re-read this folder"; onTriggered: root.refresh() }
         BwMenuItem {
@@ -326,6 +350,7 @@ Rectangle {
         BwMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "hdr"; iconName: "sun"; text: "Exposure bias…"
             onTriggered: { biasDialog.entry = root.menuEntry; const r = root.report(root.menuEntry); biasDialog.ev = r && r.exposure_bias ? r.exposure_bias : 0; biasDialog.open(); } }
         BwMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "folder"; iconName: "folder"; text: "Open"; onTriggered: root.goTo(root.menuEntry.path) }
+        BwMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "scene"; iconName: "map"; text: "Open scene"; onTriggered: root.openSceneAsset(root.menuEntry) }
         BwMenuItem { visible: !!root.menuEntry; iconName: "pencil"; text: "Rename"; onTriggered: root.startRename(root.menuEntry) }
         BwMenuItem { visible: !!root.menuEntry && root.path.length > 0; iconName: "upload"; text: "Move up one folder"; onTriggered: root.run("move_asset", { path: root.menuEntry.path, parent: root.parentOf(root.parentOf(root.menuEntry.path)) }) }
         BwMenuItem { visible: !!root.menuEntry; iconName: "trash-2"; danger: true; text: root.menuEntry ? "Delete “" + root.menuEntry.name + "”" : ""; onTriggered: { deleteDialog.entry = root.menuEntry; deleteDialog.open(); } }

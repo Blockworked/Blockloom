@@ -1668,7 +1668,12 @@ Asset paths are relative to the project folder with forward slashes
 `Project::repoint_asset` follows a renamed or moved file through the document
 so the actor using it doesn't end up pointing at nothing. The listing is not
 part of the state snapshot - a folder changes for reasons the editor never
-hears about - so the tray re-lists after each of its own changes.
+hears about - so the tray re-lists after each of its own changes. Scenes are
+tray files too: one `.blockscene` per scene, made from the tray's New scene
+item, renamed like any other file (the filename is the scene name), and opened
+with a double-click (or the Open scene menu item). Project settings names the
+default scene, which is what a fresh open - and a built game - boots into;
+the actor list's scene box only shows which scene is open.
 
 A project is a folder, not a file: `<name>/project.blockloom` beside an
 `assets/`. The folder sits wherever the New Project dialog was pointed

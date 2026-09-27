@@ -1567,6 +1567,7 @@ fn project_with_headers(
     let scene = blockloom_core::project::Scene {
         id: "s1".to_string(),
         name: "Scene 1".to_string(),
+        path: "assets/scenes/Scene 1.blockscene".to_string(),
         world: blockloom_core::scene::World {
             mode: Mode::TwoD,
             ..Default::default()
@@ -1579,6 +1580,7 @@ fn project_with_headers(
         icon: String::new(),
         scenes: vec![scene],
         active_scene: "s1".to_string(),
+        default_scene: "s1".to_string(),
         globals: globals
             .iter()
             .map(|(name, value)| VariableDef {

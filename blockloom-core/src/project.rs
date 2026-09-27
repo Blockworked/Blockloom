@@ -227,6 +227,11 @@ pub struct Scene {
     pub id: String,
     #[serde(default = "default_scene_name")]
     pub name: String,
+    /// Project-relative asset path of this scene's `.blockscene` file, e.g.
+    /// `assets/scenes/Level 1.blockscene`. Empty in memory means the legacy
+    /// id-named file; [`Scene::asset_path`] falls back to that.
+    #[serde(default)]
+    pub path: String,
     #[serde(default)]
     pub world: World,
     #[serde(default)]
@@ -247,17 +252,20 @@ impl Scene {
         if mode.is_3d() {
             world.camera = crate::scene::Camera::default();
         }
+        let name = {
+            let name = name.into();
+            let trimmed = name.trim();
+            if trimmed.is_empty() {
+                default_scene_name()
+            } else {
+                trimmed.to_string()
+            }
+        };
+        let path = scene_path_for_name(&name);
         Self {
             id: new_id(),
-            name: {
-                let name = name.into();
-                let trimmed = name.trim();
-                if trimmed.is_empty() {
-                    default_scene_name()
-                } else {
-                    trimmed.to_string()
-                }
-            },
+            name,
+            path,
             world,
             actors: Vec::new(),
         }
@@ -605,7 +613,7 @@ pub struct SceneRef {
     #[serde(default)]
     pub name: String,
     /// Project-relative path to the scene asset, e.g.
-    /// `assets/scenes/<id>.blockscene`.
+    /// `assets/scenes/Level 1.blockscene`.
     #[serde(default)]
     pub path: String,
     #[serde(default)]
@@ -624,6 +632,10 @@ pub struct ProjectFile {
     pub icon: String,
     #[serde(default)]
     pub active_scene: String,
+    /// Which scene a fresh open - and a built game - boots into. Empty in
+    /// older files means the active scene.
+    #[serde(default)]
+    pub default_scene: String,
     #[serde(default)]
     pub scenes: Vec<SceneRef>,
     #[serde(default)]
@@ -658,10 +670,15 @@ fn scene_format_default() -> u32 {
 }
 
 impl Scene {
-    /// The project-relative asset path for this scene. Stable across renames
-    /// since it names the scene's id, not its title.
+    /// The project-relative asset path for this scene. New scenes are
+    /// name-based (`assets/scenes/<name>.blockscene`) so the tray filename is
+    /// the scene name; older id-named files keep working through the fallback.
     pub fn asset_path(&self) -> String {
-        scene_asset_path(&self.id)
+        if self.path.is_empty() {
+            scene_asset_path(&self.id)
+        } else {
+            self.path.clone()
+        }
     }
 
     /// This scene as a file: its world as components plus its actors.
@@ -696,15 +713,61 @@ impl Scene {
             } else {
                 file.name
             },
+            // The index sets the real file on load; elsewhere the caller
+            // does (see `import_scene`).
+            path: String::new(),
             world,
             actors: file.actors,
         }
     }
 }
 
-/// The project-relative asset path for the scene with `scene_id`.
+/// The project-relative asset path for the scene with `scene_id`. Legacy
+/// shape; new scenes are name-based - see [`scene_path_for_name`].
 pub fn scene_asset_path(scene_id: &str) -> String {
     format!("{SCENES_DIR}/{scene_id}.{SCENE_EXTENSION}")
+}
+
+/// The asset path a scene called `name` lives at: the scenes folder, the
+/// scene name as the filename, so renaming the file renames the scene and
+/// back. Characters no file can carry become `_`.
+pub fn scene_path_for_name(name: &str) -> String {
+    let mut stem: String = name
+        .trim()
+        .chars()
+        .map(|c| {
+            if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .trim()
+        .trim_matches('.')
+        .trim()
+        .to_string();
+    if stem.is_empty() {
+        stem = "Scene".to_string();
+    }
+    // Keep the `.blockscene` extension intact: a trailing dot would merge.
+    if stem.ends_with('.') {
+        stem.pop();
+    }
+    format!("{SCENES_DIR}/{stem}.{SCENE_EXTENSION}")
+}
+
+/// What a scene file at `relative` (project-relative) calls its scene: the
+/// filename without its extension. Empty when the path has no stem.
+pub fn scene_name_for_path(relative: &str) -> String {
+    let normalized = relative.replace('\\', "/");
+    let file = normalized.rsplit('/').next().unwrap_or(&normalized);
+    let stem = file
+        .strip_suffix(&format!(".{SCENE_EXTENSION}"))
+        .or_else(|| file.strip_suffix(&format!(".{}", SCENE_EXTENSION.to_uppercase())))
+        .unwrap_or(file);
+    // A case-only mismatch still counts; compare lowercased at the call site.
+    stem.trim().to_string()
 }
 
 /// The folder inside a project dir that holds scene assets.
@@ -712,11 +775,17 @@ pub fn scenes_dir(dir: &Path) -> PathBuf {
     dir.join(SCENES_DIR)
 }
 
-/// Whether `relative` (project-relative) is a scene asset file.
+/// Whether `relative` (project-relative) is a scene asset file: anything
+/// ending in `.blockscene`, wherever it lives. Scenes are normal tray files.
 pub fn is_scene_asset(relative: &str) -> bool {
     let normalized = relative.replace('\\', "/");
-    normalized.starts_with(&format!("{SCENES_DIR}/"))
-        && normalized.ends_with(&format!(".{SCENE_EXTENSION}"))
+    let lower = normalized.to_lowercase();
+    lower.ends_with(&format!(".{SCENE_EXTENSION}"))
+        && !lower.ends_with(&format!("/{SCENE_EXTENSION}"))
+        && normalized
+            .rsplit('/')
+            .next()
+            .is_some_and(|file| file.len() > SCENE_EXTENSION.len() + 1)
 }
 
 /// Reads one scene asset file.
@@ -725,6 +794,52 @@ pub fn read_scene_file(path: &Path) -> Result<Scene, String> {
     let file: SceneFile =
         serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(Scene::from_file(file))
+}
+
+/// Finds a scene asset by the scene id it carries, wherever the tray keeps
+/// it. What lets an open follow a file renamed or moved outside the editor.
+fn find_scene_file(dir: &Path, scene_id: &str) -> Option<String> {
+    fn visit(dir: &Path, base: &Path, scene_id: &str, out: &mut Option<String>) {
+        if out.is_some() {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut entries: Vec<_> = entries.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            if out.is_some() {
+                return;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let path = entry.path();
+            if path.is_dir() {
+                visit(&path, base, scene_id, out);
+            } else if name
+                .to_lowercase()
+                .ends_with(&format!(".{SCENE_EXTENSION}"))
+            {
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let Ok(file): Result<SceneFile, _> = serde_json::from_str(&text) else {
+                    continue;
+                };
+                if file.id == scene_id
+                    && let Ok(relative) = path.strip_prefix(base)
+                {
+                    *out = Some(relative.to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+    }
+    let mut out = None;
+    visit(dir, dir, scene_id, &mut out);
+    out
 }
 
 /// Writes one scene asset file, making the scenes dir as needed. Answers its
@@ -752,6 +867,9 @@ pub struct Project {
     pub icon: String,
     pub scenes: Vec<Scene>,
     pub active_scene: String,
+    /// Which scene a fresh open - and a built game - boots into. The editor
+    /// keeps editing wherever it is; opening the project loads this one.
+    pub default_scene: String,
     /// Variables every actor can read and write - see the module docs.
     pub globals: Vec<VariableDef>,
     /// Lists every actor can read and change - the shared half of the list
@@ -782,12 +900,13 @@ impl DerefMut for Project {
 impl Serialize for Project {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let active = self.active_scene_ref();
-        let mut s = serializer.serialize_struct("Project", 8)?;
+        let mut s = serializer.serialize_struct("Project", 9)?;
         s.serialize_field("id", &self.id)?;
         s.serialize_field("name", &self.name)?;
         s.serialize_field("icon", &self.icon)?;
         s.serialize_field("scenes", &self.scenes)?;
         s.serialize_field("active_scene", &self.active_scene)?;
+        s.serialize_field("default_scene", &self.default_scene)?;
         // Compat: the active scene flattened, so older readers and the
         // current QML (`project.world`, `project.actors`) keep working.
         s.serialize_field("world", &active.world)?;
@@ -814,6 +933,8 @@ impl<'de> Deserialize<'de> for Project {
             #[serde(default)]
             active_scene: Option<String>,
             #[serde(default)]
+            default_scene: Option<String>,
+            #[serde(default)]
             world: Option<World>,
             #[serde(default)]
             actors: Option<Vec<Actor>>,
@@ -828,9 +949,11 @@ impl<'de> Deserialize<'de> for Project {
         let mut scenes = de.scenes.unwrap_or_default();
         if scenes.is_empty() {
             // Old single-scene document: migrate as scene one.
+            let name = default_scene_name();
             scenes.push(Scene {
                 id: new_id(),
-                name: default_scene_name(),
+                path: scene_path_for_name(&name),
+                name,
                 world: de.world.unwrap_or_default(),
                 actors: de.actors.unwrap_or_default(),
             });
@@ -841,12 +964,19 @@ impl<'de> Deserialize<'de> for Project {
         } else {
             scenes[0].id.clone()
         };
+        let default_scene = de.default_scene.unwrap_or_default();
+        let default_scene = if scenes.iter().any(|s| s.id == default_scene) {
+            default_scene
+        } else {
+            active_scene.clone()
+        };
         let mut project = Self {
             id: if de.id.is_empty() { new_id() } else { de.id },
             name: de.name,
             icon: de.icon,
             scenes,
             active_scene,
+            default_scene,
             globals: de.globals,
             global_lists: de.global_lists,
             global_dicts: de.global_dicts,
@@ -916,6 +1046,7 @@ impl Project {
 
         let scene = Scene {
             id: new_id(),
+            path: scene_path_for_name(&default_scene_name()),
             name: default_scene_name(),
             world,
             actors: vec![player, ground],
@@ -926,7 +1057,8 @@ impl Project {
             name: name.into(),
             icon: String::new(),
             scenes: vec![scene],
-            active_scene,
+            active_scene: active_scene.clone(),
+            default_scene: active_scene,
             globals: Vec::new(),
             global_lists: Vec::new(),
             global_dicts: Vec::new(),
@@ -963,13 +1095,49 @@ impl Project {
     }
 
     /// The scene whose asset lives at `relative` (project-relative), if any.
-    /// Scene assets are id-named, so this is how the asset tray knows a file
-    /// is managed through the scene commands rather than its own.
+    /// Scene files are normal tray files; this is how the tray maps one back
+    /// to its scene.
     pub fn scene_for_asset(&self, relative: &str) -> Option<&Scene> {
         let normalized = relative.replace('\\', "/");
         self.scenes
             .iter()
             .find(|scene| scene.asset_path() == normalized)
+    }
+
+    /// The same, mutable.
+    pub fn scene_for_asset_mut(&mut self, relative: &str) -> Option<&mut Scene> {
+        let normalized = relative.replace('\\', "/");
+        self.scenes
+            .iter_mut()
+            .find(|scene| scene.asset_path() == normalized)
+    }
+
+    /// The scene whose file stem names it, if any. How a double-click finds
+    /// its scene when the file was renamed outside the editor.
+    pub fn scene_for_stem(&self, stem: &str) -> Option<&Scene> {
+        self.scenes.iter().find(|scene| {
+            scene.name == stem
+                || scene_name_for_path(&scene.asset_path()).to_lowercase() == stem.to_lowercase()
+        })
+    }
+
+    /// Which scene a fresh open - and a built game - boots into: the default
+    /// while it names a scene, else the active one.
+    pub fn boot_scene_id(&self) -> String {
+        if self.scenes.iter().any(|s| s.id == self.default_scene) {
+            self.default_scene.clone()
+        } else {
+            self.active_scene.clone()
+        }
+    }
+
+    /// Makes `id` the boot scene: what a fresh open and a built game load.
+    pub fn set_default_scene(&mut self, id: &str) -> Result<(), String> {
+        if !self.scenes.iter().any(|s| s.id == id) {
+            return Err("Scene not found".to_string());
+        }
+        self.default_scene = id.to_string();
+        Ok(())
     }
 
     fn ensure_scene_invariants(&mut self) {
@@ -979,6 +1147,15 @@ impl Project {
         }
         if !self.scenes.iter().any(|s| s.id == self.active_scene) {
             self.active_scene = self.scenes[0].id.clone();
+        }
+        if !self.scenes.iter().any(|s| s.id == self.default_scene) {
+            self.default_scene = self.active_scene.clone();
+        }
+        // Every scene knows its own file; legacy id-named ones keep working.
+        for scene in &mut self.scenes {
+            if scene.path.is_empty() {
+                scene.path = scene_asset_path(&scene.id);
+            }
         }
         // Scene names stay unique; a hand-edited file could repeat one.
         let mut seen = std::collections::HashSet::new();
@@ -1012,7 +1189,8 @@ impl Project {
     }
 
     /// Adds an empty scene of `mode` (active scene's mode when omitted) and
-    /// makes it active. Answers its id.
+    /// makes it active. Answers its id. The file is name-based, so the tray
+    /// filename is the scene name.
     pub fn add_scene(&mut self, name: &str, mode: Option<Mode>) -> String {
         let mode = mode.unwrap_or_else(|| self.active_scene_ref().world.mode);
         let mut scene = Scene::new(self.unique_scene_name(name), mode);
@@ -1021,10 +1199,57 @@ impl Project {
         if scene.world.input.actions.is_empty() {
             scene.world.input = crate::input::InputConfig::starter();
         }
+        scene.path = self.unused_scene_path(&scene.name);
         let id = scene.id.clone();
         self.scenes.push(scene);
         self.active_scene = id.clone();
         id
+    }
+
+    /// Adds an empty scene at `path` (project-relative), for the tray's New
+    /// scene: the filename is the scene name. Answers the new scene's id.
+    pub fn add_scene_at(&mut self, path: &str, mode: Option<Mode>) -> Result<String, String> {
+        let normalized = path.replace('\\', "/");
+        if !is_scene_asset(&normalized) {
+            return Err("A scene file ends in .blockscene".to_string());
+        }
+        if self.scene_for_asset(&normalized).is_some() {
+            return Err("That file is already a scene".to_string());
+        }
+        let stem = scene_name_for_path(&normalized);
+        if stem.is_empty() {
+            return Err("A scene needs a name".to_string());
+        }
+        let mode = mode.unwrap_or_else(|| self.active_scene_ref().world.mode);
+        let mut scene = Scene::new(self.unique_scene_name(&stem), mode);
+        if scene.world.input.actions.is_empty() {
+            scene.world.input = crate::input::InputConfig::starter();
+        }
+        // The tray dedupes the filename; the scene name follows the actual
+        // file, with a numeric tail when the name was taken.
+        scene.path = normalized.clone();
+        // A duplicate scene name from another folder gets its tail here.
+        if self.scenes.iter().any(|s| s.name == scene.name) {
+            scene.name = self.unique_scene_name(&scene.name);
+        }
+        let id = scene.id.clone();
+        self.scenes.push(scene);
+        self.active_scene = id.clone();
+        Ok(id)
+    }
+
+    /// A scene path nothing names yet, near `wanted`: name-based, with a
+    /// numeric tail when the file is taken.
+    pub fn unused_scene_path(&self, name: &str) -> String {
+        let wanted = scene_path_for_name(name);
+        if !self.scenes.iter().any(|s| s.asset_path() == wanted) {
+            return wanted;
+        }
+        let stem = scene_name_for_path(&wanted);
+        (2..)
+            .map(|n| scene_path_for_name(&format!("{stem} {n}")))
+            .find(|candidate| !self.scenes.iter().any(|s| s.asset_path() == *candidate))
+            .expect("an unused scene path always exists")
     }
 
     /// Copies `id` under a fresh name and id, with its own actor ids so the
@@ -1036,6 +1261,7 @@ impl Project {
         let mut copy = from;
         copy.id = new_id();
         copy.name = self.unique_scene_name(&format!("{} copy", copy.name));
+        copy.path = self.unused_scene_path(&copy.name);
         // Actor ids only need to be unique within a run, but fresh ones keep
         // cross-scene references from leaking between the two.
         let mut remap = HashMap::new();
@@ -1069,18 +1295,81 @@ impl Project {
         if trimmed.is_empty() {
             return Err("A scene needs a name".to_string());
         }
+        if trimmed.contains('/') || trimmed.contains('\\') {
+            return Err("A scene name can't contain a slash".to_string());
+        }
         if self.scenes.iter().any(|s| s.id != id && s.name == trimmed) {
             return Err(format!("A scene named \"{trimmed}\" already exists"));
+        }
+        let current = self
+            .scene(id)
+            .map(|s| s.asset_path())
+            .ok_or("Scene not found".to_string())?;
+        // The file follows the name, keeping its folder.
+        let parent = current
+            .rfind('/')
+            .map(|cut| current[..cut].to_string())
+            .unwrap_or_default();
+        let stem: String = trimmed
+            .chars()
+            .map(|c| {
+                if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+                    || c.is_control()
+                {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let wanted = if parent.is_empty() {
+            format!("{stem}.{SCENE_EXTENSION}")
+        } else {
+            format!("{parent}/{stem}.{SCENE_EXTENSION}")
+        };
+        // Names stay unique project-wide, so paths only clash on
+        // sanitization; a tail keeps the file intact then.
+        let mut candidate = wanted.clone();
+        let mut n = 2;
+        while self
+            .scenes
+            .iter()
+            .any(|s| s.id != id && s.asset_path() == candidate)
+        {
+            candidate = if parent.is_empty() {
+                format!("{stem} {n}.{SCENE_EXTENSION}")
+            } else {
+                format!("{parent}/{stem} {n}.{SCENE_EXTENSION}")
+            };
+            n += 1;
         }
         let Some(scene) = self.scene_mut(id) else {
             return Err("Scene not found".to_string());
         };
         scene.name = trimmed.clone();
+        if candidate != current {
+            scene.path = candidate;
+        }
         Ok(trimmed)
     }
 
+    /// Renames a scene to its file's stem: what the tray's rename means.
+    /// Answers the new name.
+    pub fn rename_scene_to_stem(&mut self, id: &str, stem: &str) -> Result<String, String> {
+        let trimmed = stem.trim().to_string();
+        if trimmed.is_empty() {
+            return Err("A scene needs a name".to_string());
+        }
+        let unique = if self.scenes.iter().any(|s| s.id != id && s.name == trimmed) {
+            self.unique_scene_name(&trimmed)
+        } else {
+            trimmed
+        };
+        self.rename_scene(id, &unique)
+    }
+
     /// Removes a scene. The last one stays; the active one falls back to the
-    /// first remaining scene.
+    /// first remaining scene, as does the default.
     pub fn remove_scene(&mut self, id: &str) -> Result<(), String> {
         if self.scenes.len() <= 1 {
             return Err("A project needs at least one scene".to_string());
@@ -1091,6 +1380,9 @@ impl Project {
         self.scenes.remove(index);
         if self.active_scene == id {
             self.active_scene = self.scenes[0].id.clone();
+        }
+        if self.default_scene == id {
+            self.default_scene = self.active_scene.clone();
         }
         Ok(())
     }
@@ -1818,17 +2110,39 @@ pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
         serde_json::from_value(value).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut scenes = Vec::with_capacity(file.scenes.len());
     for scene_ref in &file.scenes {
-        let relative = if scene_ref.path.is_empty() {
+        let mut relative = if scene_ref.path.is_empty() {
             scene_asset_path(&scene_ref.id)
         } else {
             scene_ref.path.clone()
         };
-        let full = dir.join(&relative);
+        let mut full = dir.join(&relative);
+        if !full.is_file() {
+            // The file moved outside the editor - a tray rename in the OS
+            // file manager, say. Follow the scene id to its new home rather
+            // than failing the open.
+            if let Some(found) = find_scene_file(dir, &scene_ref.id) {
+                relative = found;
+                full = dir.join(&relative);
+            }
+        }
         let mut scene = read_scene_file(&full)
             .map_err(|e| format!("scene \"{}\" ({}): {e}", scene_ref.name, full.display()))?;
-        // The index wins on identity; the file wins on content.
+        // The index wins on identity; the file wins on content. The tray
+        // filename is the scene name, so a file renamed outside the editor
+        // renames its scene - except legacy id-named files, whose stem is
+        // the id rather than a title.
         scene.id = scene_ref.id.clone();
-        if !scene_ref.name.trim().is_empty() {
+        scene.path = relative.clone();
+        let stem = scene_name_for_path(&relative);
+        if !stem.is_empty() && stem != scene_ref.id {
+            if scene_ref.name.trim().is_empty() || stem != scene_ref.name {
+                // Prefer the filename when it disagrees with the index: it
+                // is what the tray shows. The index catches up on next save.
+                scene.name = stem;
+            } else {
+                scene.name = scene_ref.name.clone();
+            }
+        } else if !scene_ref.name.trim().is_empty() {
             scene.name = scene_ref.name.clone();
         }
         scenes.push(scene);
@@ -1843,6 +2157,7 @@ pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
         icon: file.icon,
         scenes,
         active_scene: file.active_scene,
+        default_scene: file.default_scene,
         globals: file.globals,
         global_lists: file.global_lists,
         global_dicts: file.global_dicts,
@@ -1858,6 +2173,7 @@ pub fn project_to_file(project: &Project) -> ProjectFile {
         name: project.name.clone(),
         icon: project.icon.clone(),
         active_scene: project.active_scene.clone(),
+        default_scene: project.default_scene.clone(),
         scenes: project
             .scenes
             .iter()
@@ -1885,6 +2201,9 @@ pub fn save_project(project: &Project, dir: &Path) -> Result<u64, String> {
     for scene in &project.scenes {
         save_scene_file(dir, scene)?;
     }
+    // Renames move their file in the command that asked (see
+    // `commands::rename_scene`); anything else under the scenes folder is
+    // left alone, so a staged import never vanishes on save.
     let path = project_file(dir);
     let json =
         serde_json::to_string_pretty(&project_to_file(project)).map_err(|e| e.to_string())?;
@@ -2039,6 +2358,86 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(project_file(&dir)).unwrap()).unwrap();
         assert_eq!(index.scenes.len(), 1);
         assert!(dir.join(&index.scenes[0].path).is_file());
+    }
+
+    #[test]
+    fn a_scene_file_is_named_for_its_scene_and_renames_with_it() {
+        let mut project = Project::starter("Scenes", Mode::TwoD);
+        assert_eq!(
+            project.active_scene().asset_path(),
+            "assets/scenes/Scene 1.blockscene"
+        );
+        let id = project.add_scene("Level 2", None);
+        assert_eq!(
+            project.scene(&id).unwrap().asset_path(),
+            "assets/scenes/Level 2.blockscene"
+        );
+        // Renaming the scene moves its file, keeping the folder.
+        project.rename_scene(&id, "Boss").unwrap();
+        assert_eq!(
+            project.scene(&id).unwrap().asset_path(),
+            "assets/scenes/Boss.blockscene"
+        );
+        // A tray rename is the same thing by stem.
+        project.rename_scene_to_stem(&id, "Final Boss").unwrap();
+        assert_eq!(project.scene(&id).unwrap().name, "Final Boss");
+        assert_eq!(
+            project.scene(&id).unwrap().asset_path(),
+            "assets/scenes/Final Boss.blockscene"
+        );
+        // Slashes never reach the file.
+        assert!(project.rename_scene(&id, "a/b").is_err());
+    }
+
+    #[test]
+    fn any_blockscene_file_reads_as_a_scene_asset() {
+        assert!(is_scene_asset("assets/scenes/Level 1.blockscene"));
+        assert!(is_scene_asset("stages/Boss.BLOCKSCENE"));
+        assert!(!is_scene_asset("assets/sprites/player.png"));
+        assert!(!is_scene_asset("assets/scenes"));
+        assert_eq!(
+            scene_name_for_path("assets/scenes/Level 1.blockscene"),
+            "Level 1"
+        );
+        assert_eq!(
+            scene_path_for_name("Level 1"),
+            "assets/scenes/Level 1.blockscene"
+        );
+    }
+
+    #[test]
+    fn the_default_scene_round_trips_and_boots() {
+        let temp = TempDir::new();
+        let mut project = Project::starter("Scenes", Mode::TwoD);
+        let second = project.add_scene("Level 2", None);
+        project.set_default_scene(&second).unwrap();
+        assert_eq!(project.boot_scene_id(), second);
+        let dir = create_project(&project, &temp.0).unwrap();
+        let loaded = read_project_dir(&dir).unwrap();
+        assert_eq!(loaded.default_scene, second);
+        // The file the scene lives at is the filename, not the id.
+        let index: ProjectFile =
+            serde_json::from_str(&std::fs::read_to_string(project_file(&dir)).unwrap()).unwrap();
+        let entry = index.scenes.iter().find(|s| s.id == second).unwrap();
+        assert_eq!(entry.path, "assets/scenes/Level 2.blockscene");
+    }
+
+    #[test]
+    fn a_scene_file_moved_outside_the_editor_is_followed() {
+        let temp = TempDir::new();
+        let mut project = Project::starter("Scenes", Mode::TwoD);
+        let dir = create_project(&project, &temp.0).unwrap();
+        let id = project.scenes[0].id.clone();
+        // Rename the file the way an OS file manager would.
+        std::fs::rename(
+            dir.join("assets/scenes/Scene 1.blockscene"),
+            dir.join("assets/scenes/Opened.blockscene"),
+        )
+        .unwrap();
+        let loaded = read_project_dir(&dir).unwrap();
+        let scene = loaded.scene(&id).unwrap();
+        assert_eq!(scene.name, "Opened");
+        assert_eq!(scene.asset_path(), "assets/scenes/Opened.blockscene");
     }
 
     #[test]

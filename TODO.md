@@ -163,13 +163,19 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         Partial: pack, build and web already carry all scenes (the `Project`
         JSON holds them, builds collect assets from every scene), and the
         shell/MCP has `add-scene`, `duplicate-scene`, `rename-scene`,
-        `remove-scene` and `set-active-scene` (`switch-scene` alias) plus
-        `scene-components`, `set-scene-component`, `remove-scene-component`
-        and `import-scene`. The block palette (`Blocks.qml` rows,
-        `vocabulary.rs` specs) now carries `switch scene to`, `when scene
-        starts/ends`, `current scene` and `scene names`. The actor list has a
-        minimal scene picker (switch/add); per-scene canvas routing and World
-        settings editing still go through the active scene's compat fields.
+        `remove-scene`, `set-active-scene` (`switch-scene` alias),
+        `set-default-scene` plus `scene-components`, `set-scene-component`,
+        `remove-scene-component` and `import-scene`. The block palette
+        (`Blocks.qml` rows, `vocabulary.rs` specs) now carries `switch scene
+        to`, `when scene starts/ends`, `current scene` and `scene names`.
+        Scenes live in the asset tray like normal files: the tray's New scene
+        item makes one where listed, the filename is the scene name (renaming
+        the file renames the scene, deleting it deletes the scene with undo),
+        double-click or Open scene loads it, and project settings names the
+        default scene a fresh open - and a built game - boots into. The actor
+        list keeps a scene box showing which scene is open (no add button);
+        per-scene canvas routing and World settings editing still go through
+        the active scene's compat fields.
   - [x] Scene assets (Unity-style): each scene becomes its own asset file
         under the project folder (one file per scene, referenced by the
         project), so scenes can be shared, duplicated and versioned like any
@@ -179,19 +185,23 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         with the inspector editing the scene's components the way it edits
         an actor's. Loading a scene loads its asset; the in-document scene
         list becomes an index over scene assets with migration for old files.
-        Done: `assets/scenes/<id>.blockscene` per scene
-        (`SCENE_EXTENSION`, `SCENES_DIR`), `project.blockloom` as a
-        `ProjectFile` index over `SceneRef`s with old embedded folders
-        migrating on load; `SceneFile` carries `SceneComponents`
+        Done: name-based scene files (`assets/scenes/<name>.blockscene`,
+        `SCENE_EXTENSION`, `SCENES_DIR`), `project.blockloom` as a
+        `ProjectFile` index over `SceneRef`s with old embedded folders and
+        id-named files migrating on load; `Project.default_scene` naming the
+        boot scene (fresh opens and built players start there); `SceneFile`
+        carries `SceneComponents`
         (Dimension, Background, Physics, Camera, SpeechBubble, Lighting,
         Sound, Input, Post, Display, Navigation, Sky, Fog, Clouds,
         CloudLayers, Lightning, Wind, Surface, Vfx, Interface) with
         `from_world`/`to_world`, the world staying the runtime's in-memory
         shape; `scene-components`, `set-scene-component`,
-        `remove-scene-component` and `import-scene` in shell/MCP/dispatch;
-        tray refuses renames/moves/deletes of indexed scenes and the scenes
-        folder; builds skip scene assets (the pack embeds); `AssetKind::Scene`
-        plus a minimal scene picker in `ActorList.qml`.
+        `remove-scene-component`, `import-scene` and `set-default-scene` in
+        shell/MCP/dispatch; the tray owns scene files outright (New scene,
+        rename-to-rename, delete-with-undo, double-click to open, external
+        moves followed by id on load); builds skip `.blockscene` anywhere
+        (the pack embeds); `AssetKind::Scene` plus the actor list's scene box
+        (no add button) and the settings default-scene row.
 
 ### Phase 3 - Dev productivity, before API surface explodes
 - [x] Script toolchain: ship rustc or graceful degrade plus highlight plus inline errors plus rust-analyzer Cargo project.

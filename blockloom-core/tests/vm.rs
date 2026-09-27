@@ -26,6 +26,7 @@ fn project_with(strands: Vec<Strand>) -> Project {
     let scene = Scene {
         id: "s1".to_string(),
         name: "Scene 1".to_string(),
+        path: "assets/scenes/Scene 1.blockscene".to_string(),
         world: blockloom_core::scene::World {
             mode: Mode::TwoD,
             ..Default::default()
@@ -38,6 +39,7 @@ fn project_with(strands: Vec<Strand>) -> Project {
         icon: String::new(),
         scenes: vec![scene],
         active_scene: "s1".to_string(),
+        default_scene: "s1".to_string(),
         globals: Vec::new(),
         global_lists: Vec::new(),
         global_dicts: Vec::new(),
@@ -409,6 +411,7 @@ fn loading_a_scene_keeps_globals_but_resets_actor_locals() {
     project.scenes.push(Scene {
         id: "s2".to_string(),
         name: "Scene 2".to_string(),
+        path: "assets/scenes/Scene 2.blockscene".to_string(),
         world: blockloom_core::scene::World {
             mode: Mode::TwoD,
             ..Default::default()
@@ -788,6 +791,7 @@ fn project_with_two(first: Vec<Strand>, second: Vec<Strand>) -> Project {
     let scene = Scene {
         id: "s1".to_string(),
         name: "Scene 1".to_string(),
+        path: "assets/scenes/Scene 1.blockscene".to_string(),
         world: blockloom_core::scene::World {
             mode: Mode::TwoD,
             ..Default::default()
@@ -800,6 +804,7 @@ fn project_with_two(first: Vec<Strand>, second: Vec<Strand>) -> Project {
         icon: String::new(),
         scenes: vec![scene],
         active_scene: "s1".to_string(),
+        default_scene: "s1".to_string(),
         globals: Vec::new(),
         global_lists: Vec::new(),
         global_dicts: Vec::new(),

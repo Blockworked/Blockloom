@@ -139,9 +139,8 @@ Rectangle {
                         return at >= 0 ? at : -1;
                     });
                 }
-                ToolTip.text: "Scene asset - one .blockscene file each"
+                ToolTip.text: "The open scene - double-click a scene file in the Assets tray to open another"
             }
-            IconButton { iconName: "plus"; tip: "Add scene"; implicitWidth: 26; implicitHeight: 26; onClicked: root.app.invoke("add_scene", { name: "" }) }
         }
         RowLayout {
             Layout.fillWidth: true; Layout.margins: 8; spacing: 4

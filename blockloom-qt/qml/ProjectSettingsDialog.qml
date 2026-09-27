@@ -102,6 +102,15 @@ BwDialog {
                     IconButton { iconName: "folder-open"; tip: "Choose an image"; onClicked: iconFile.open() }
                     IconButton { iconName: "x"; tip: "Use the Blockloom default"; enabled: !!(root.project && root.project.icon); onClicked: root.invoke("set_project_icon", { path: "" }) } }
                 Note { text: "Used for the packaged executable or platform launcher. Square PNG images work best." }
+                InspectorRow { label: "Default scene"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField {
+                        Layout.fillWidth: true
+                        options: (root.project && root.project.scenes ? root.project.scenes : []).map(s => ({ value: s.id, label: s.name }))
+                        value: root.project ? (root.project.default_scene || root.project.active_scene) : ""
+                        placeholder: "Scene"
+                        onChosen: v => root.invoke("set_default_scene", { sceneId: v })
+                    } }
+                Note { text: "Which scene loads when the project boots, and where a built game starts." }
             }
             Section {
                 heading: "World"; visible: !!root.world
