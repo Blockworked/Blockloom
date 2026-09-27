@@ -247,14 +247,14 @@ pub fn grid_image(side: u32, data: Vec<u8>) -> Image {
 fn layer_array(size: u32, layers: &[Vec<u8>; MAX_LAYERS], srgb: bool) -> Image {
     let mips = size.max(1).ilog2() + 1;
     let data: Vec<u8> = layers.iter().flatten().copied().collect();
-    let mut image = Image::new(
+    let has_mips = data.len() > (size * size * 4) as usize;
+    let mut image = Image::new_uninit(
         Extent3d {
             width: size,
             height: size,
             depth_or_array_layers: MAX_LAYERS as u32,
         },
         TextureDimension::D2,
-        Vec::new(),
         if srgb {
             TextureFormat::Rgba8UnormSrgb
         } else {
@@ -263,11 +263,7 @@ fn layer_array(size: u32, layers: &[Vec<u8>; MAX_LAYERS], srgb: bool) -> Image {
         RenderAssetUsages::RENDER_WORLD,
     );
     image.data = Some(data);
-    image.texture_descriptor.mip_level_count = if layers[0].len() > (size * size * 4) as usize {
-        mips
-    } else {
-        1
-    };
+    image.texture_descriptor.mip_level_count = if has_mips { mips } else { 1 };
     image.texture_view_descriptor = Some(TextureViewDescriptor {
         dimension: Some(TextureViewDimension::D2Array),
         ..default()
