@@ -32,10 +32,11 @@ struct FlatLook {
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> waves: WaterWaves;
 @group(constants::MATERIAL_BIND_GROUP) @binding(1) var<uniform> look: FlatLook;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var ripple_field: texture_2d<f32>;
 
 // The surface's height over x, at the rest point under it.
 fn surface_at(x: f32) -> f32 {
-    return waves.flow.z + displace(waves, vec2<f32>(x, 0.0)).y + ripple(waves, vec2<f32>(x, 0.0)).y;
+    return waves.flow.z + displace(waves, vec2<f32>(x, 0.0)).y + ripple(ripple_field, waves, vec2<f32>(x, 0.0)).y;
 }
 
 @vertex
@@ -51,7 +52,8 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     if (uv.y < 0.5) {
         let q = vec2<f32>(world.x, 0.0);
         let moved = displace(waves, q);
-        world = vec4<f32>(world.x + moved.x, waves.flow.z + moved.y + ripple(waves, q).y, world.z, 1.0);
+        let over = vec2<f32>(world.x + moved.x, 0.0);
+        world = vec4<f32>(over.x, waves.flow.z + moved.y + ripple(ripple_field, waves, over).y, world.z, 1.0);
     }
     var out: VertexOutput;
     out.world_position = world;

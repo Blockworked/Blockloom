@@ -69,6 +69,7 @@ pub mod tilemap;
 pub mod ui;
 pub mod value;
 pub mod vfs;
+pub mod vfx;
 pub mod vm;
 pub mod vocabulary;
 pub mod volume;

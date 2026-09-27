@@ -39,7 +39,7 @@ use bevy::render::render_resource::binding_types::{
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::texture::GpuImage;
-use bevy::render::view::{ExtractedView, Msaa, ViewTarget};
+use bevy::render::view::{ExtractedView, Msaa, ViewDepthStencilTexture, ViewTarget};
 use bevy::render::{GpuResourceAppExt, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::Shader;
 use blockloom_core::components::LightKind;
@@ -813,6 +813,7 @@ fn draw_fog(
         Option<&ViewPrepassTextures>,
         Option<&ViewLightsUniformOffset>,
         Option<&ViewShadowBindings>,
+        Option<&ViewDepthStencilTexture>,
     )>,
     froxel: Option<Res<FogPipelines>>,
     composite: Option<Res<FogComposite>>,
@@ -824,14 +825,28 @@ fn draw_fog(
     images: Res<RenderAssets<GpuImage>>,
     mut ctx: RenderContext,
 ) {
-    let (target, view_fog, grid, prepass, lights_offset, shadows) = view.into_inner();
+    let (target, view_fog, grid, prepass, lights_offset, shadows, main_depth) = view.into_inner();
     let (Some(froxel), Some(composite)) = (froxel, composite) else {
         return;
     };
+    // The main depth has what drew after the prepass (water) in it, when the
+    // camera lets it be read.
+    let scene_depth = main_depth
+        .map(ViewDepthStencilTexture::texture)
+        .filter(|texture| texture.usage().contains(TextureUsages::TEXTURE_BINDING))
+        .map(|texture| {
+            texture.create_view(&TextureViewDescriptor {
+                label: Some("fog_scene_depth"),
+                aspect: TextureAspect::DepthOnly,
+                ..default()
+            })
+        });
     let (Some(pipeline), Some(uniforms), Some(depth)) = (
         cache.get_render_pipeline(view_fog.pipeline),
         buffer.0.binding(),
-        prepass.and_then(ViewPrepassTextures::depth_only_view),
+        scene_depth
+            .as_ref()
+            .or_else(|| prepass.and_then(ViewPrepassTextures::depth_only_view)),
     ) else {
         return;
     };

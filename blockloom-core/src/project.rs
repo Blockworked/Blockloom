@@ -818,6 +818,7 @@ impl Project {
         self.world.lightning.normalize();
         self.world.wind.normalize();
         self.world.surface.normalize();
+        self.world.vfx.normalize();
     }
 
     /// Pre-component projects named the followed actor on the world camera.
@@ -1161,6 +1162,26 @@ pub fn default_projects_dir() -> PathBuf {
         .join("projects")
 }
 
+/// Where the Export dialog points: `~/Blockloom/exports`, so a `.blockloom`
+/// file doesn't land among the project folders.
+pub fn default_exports_dir() -> PathBuf {
+    sibling_dir("exports")
+}
+
+/// Where the Build dialog puts games: `~/Blockloom/builds`, for the same
+/// reason - build output stays out of the project library.
+pub fn default_builds_dir() -> PathBuf {
+    sibling_dir("builds")
+}
+
+fn sibling_dir(name: &str) -> PathBuf {
+    let projects = default_projects_dir();
+    match projects.parent() {
+        Some(parent) => parent.join(name),
+        None => PathBuf::from(name),
+    }
+}
+
 /// Where flat `<id>.blockloom` files used to live, before projects became
 /// folders. Read once at startup and migrated.
 pub fn legacy_projects_dir() -> PathBuf {
@@ -1263,6 +1284,11 @@ pub fn save_project(project: &Project, dir: &Path) -> Result<u64, String> {
 
 /// Writes a project to an arbitrary path, for "Export".
 pub fn export_project(project: &Project, path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
     let json = serde_json::to_string_pretty(project).map_err(|e| e.to_string())?;
     std::fs::write(path, json).map_err(|e| format!("{}: {e}", path.display()))
 }

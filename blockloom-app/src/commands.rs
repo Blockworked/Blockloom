@@ -1063,6 +1063,25 @@ pub(crate) fn set_wind(state: &SharedState, app: &AppHandle, wind: Wind) -> Resu
     Ok(())
 }
 
+/// Sets the project's particle budget and whether emitters stay on the CPU.
+pub(crate) fn set_vfx(
+    state: &SharedState,
+    app: &AppHandle,
+    vfx: blockloom_core::vfx::VfxSettings,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut vfx = vfx;
+    vfx.normalize();
+    if let Some(project) = s.project_mut() {
+        project.world.vfx = vfx;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
 /// Sets the post-process on the world camera: exposure, tonemapping, bloom
 /// and vignette. What the project settings dialog edits; the runtime seeds
 /// its camera components from it on every rebuild.

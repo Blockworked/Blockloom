@@ -153,10 +153,14 @@ pub const READ_WATER: u32 = 45;
 /// `a` = actor name, empty for this actor. Whether it is below a water
 /// surface and above that body's bottom.
 pub const READ_UNDERWATER: u32 = 46;
+/// `a` = what to read of this actor's particles: `alive`, a count of this
+/// frame's `spawn`, `die` or `collide` events, or where the last one was
+/// (`collide x`, `spawn z`, ...; this actor's position before any).
+pub const READ_PARTICLES: u32 = 47;
 /// `a` = "x y" or "x y z" (world), `b` = tilemap name, empty for any. The
 /// sheet index there, -1 for an empty cell or no map; [`MISSING`] for an
 /// unknown map.
-pub const READ_TILE_AT: u32 = 47;
+pub const READ_TILE_AT: u32 = 48;
 
 // ─── What a script can read as text ────────────────────────────────────────
 
@@ -186,12 +190,16 @@ pub const TEXT_CURRENT_CLIP: u32 = 11;
 /// The environment volumes showing at the camera, as a JSON list of names
 /// in blend order. What `active volumes` reports.
 pub const TEXT_ACTIVE_VOLUMES: u32 = 12;
+/// Only answers inside the event entry point. `a` empty = the event's
+/// subject (a message, key, actor, clip, element ...), `a` = `detail` = its
+/// second word where it has one (the other actor's id, a changed value).
+pub const TEXT_EVENT: u32 = 13;
 /// `a` = actor name, empty for this actor. The smallest room it stands in,
 /// by name, or [`MISSING`] for none.
-pub const TEXT_ROOM: u32 = 13;
+pub const TEXT_ROOM: u32 = 14;
 /// The room this actor entered on the last fixed tick, by name, or
 /// [`MISSING`]. What `when I enter room` would have started on.
-pub const TEXT_ENTERED_ROOM: u32 = 14;
+pub const TEXT_ENTERED_ROOM: u32 = 15;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -374,12 +382,19 @@ pub const ACT_SET_IK_TARGET: u32 = 81;
 /// `a` = sprite dial (`FlipX`, `FlipY`, `Order`, `YSort`, `Palette`,
 /// `OutlineWidth`); `n0` = value.
 pub const ACT_SET_SPRITE_DIAL: u32 = 82;
+/// `n0` = how many particles this actor's emitter bursts out now.
+pub const ACT_BURST_PARTICLES: u32 = 83;
+/// `a` = emitter dial (`rate`, `lifetime`, `speed`, `spread`, `gravity`,
+/// `size start`, `size end` or `max`), `n0` = value, for the run.
+pub const ACT_SET_EMITTER_DIAL: u32 = 84;
+/// `n0` = nonzero to keep emitting, zero to stop (live particles finish).
+pub const ACT_SET_EMITTER_PLAYING: u32 = 85;
 /// `a` = tilemap actor (empty for this actor, or whichever map covers the
 /// point); `n0` = tile (-1 erases), `n1`, `n2`, `n3` = world x, y, z.
-pub const ACT_PAINT_TILE: u32 = 83;
+pub const ACT_PAINT_TILE: u32 = 86;
 /// `a` = parallax layer actor, `b` = axis (`both`, `x` or `y`); `n0` = scroll
 /// factor 0-2.
-pub const ACT_SET_PARALLAX: u32 = 84;
+pub const ACT_SET_PARALLAX: u32 = 87;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per
@@ -405,6 +420,40 @@ pub struct HostApi {
 pub const SYM_ABI: &[u8] = b"blockloom_script_abi";
 pub const SYM_START: &[u8] = b"blockloom_script_start";
 pub const SYM_TICK: &[u8] = b"blockloom_script_tick";
+/// `(ctx, api, kind, n0, n1, n2, n3)`: one [`EVENT_MESSAGE`]-style kind, its
+/// numbers, and its words through [`TEXT_EVENT`].
+pub const SYM_EVENT: &[u8] = b"blockloom_script_event";
+
+// ─── What the event entry point is called with ─────────────────────────────
+// Global events reach every script; the rest only the actor they name.
+
+/// A broadcast. Subject: the message.
+pub const EVENT_MESSAGE: u32 = 1;
+/// A key went down. Subject: the key, as `key down?` spells it.
+pub const EVENT_KEY: u32 = 2;
+/// An input action went down. Subject: the action.
+pub const EVENT_ACTION: u32 = 3;
+/// This actor was clicked.
+pub const EVENT_CLICKED: u32 = 4;
+/// A finger touched the screen.
+pub const EVENT_TOUCHED: u32 = 5;
+/// This actor started touching another. Subject: its name; detail: its id.
+pub const EVENT_COLLISION: u32 = 6;
+/// This actor's particles spawned, died or collided this frame. Subject:
+/// `spawn`, `die` or `collide`; `n0` = how many, `n1..n3` = where the last was.
+pub const EVENT_PARTICLES: u32 = 7;
+/// A `Once` clip ended on this actor. Subject: the clip.
+pub const EVENT_ANIMATION_ENDED: u32 = 8;
+/// This actor's clip reached a marker. Subject: the marker.
+pub const EVENT_ANIMATION_MARKER: u32 = 9;
+/// An interface element was clicked. Subject: its id.
+pub const EVENT_UI_CLICKED: u32 = 10;
+/// An input element changed. Subject: its id; detail: its value as text.
+pub const EVENT_UI_CHANGED: u32 = 11;
+/// Any other interface event. Subject: the element's id; detail: the event.
+pub const EVENT_UI: u32 = 12;
+/// This actor walked into a room. Subject: the room's name.
+pub const EVENT_ENTERED_ROOM: u32 = 13;
 
 // ─── The same three calls in a browser ─────────────────────────────────────
 // A web build loads each script as its own wasm module, and one module can't

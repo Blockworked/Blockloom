@@ -4,9 +4,12 @@
 //! `OCEAN_REACH`. Each body also gets a floor at its depth, which is what
 //! the depth buffer and every pass after the water see where the surface is
 //! (the surface itself draws in Bevy's transmissive pass, after the depth
-//! prepass), and a probe at the surface for reflections.
+//! prepass), and a probe or a mirror camera for reflections. The world
+//! camera's depth becomes bindable while water exists, so the fog pass can
+//! measure to the surface rather than the floor under it.
 
-use super::{LiveBody, Ripple, WaterState, rgb};
+use super::mirror::{Mirrors, Want};
+use super::{LiveBody, WaterState, rgb};
 use crate::engine::Engine;
 use crate::environment::Environment;
 use crate::probes::{ProbeId, ProbeRequest, ProbeService};
@@ -17,10 +20,10 @@ use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, ScreenSpaceTransmission};
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::render::render_resource::{AsBindGroup, ShaderType, TextureUsages};
 use bevy::shader::ShaderRef;
 use blockloom_core::material::{SurfaceMaterial, TextureSampler};
-use blockloom_core::water::{DETAIL_WAVES, MAX_RIPPLES, MAX_WAVES, OCEAN_REACH, WaterKind};
+use blockloom_core::water::{DETAIL_WAVES, MAX_WAVES, OCEAN_REACH, WaterKind};
 use std::collections::HashMap;
 
 pub type WaterMaterial = ExtendedMaterial<StandardMaterial, WaterExtension>;
@@ -28,9 +31,11 @@ pub type WaterMaterial = ExtendedMaterial<StandardMaterial, WaterExtension>;
 pub fn register(app: &mut App) {
     app.add_plugins(MaterialPlugin::<WaterMaterial>::default())
         .init_resource::<Surfaces>()
+        .init_resource::<Mirrors>()
         .add_systems(
             Update,
-            sync_surfaces
+            (drive_mirrors, sync_surfaces)
+                .chain()
                 .after(crate::world::drive_camera)
                 .after(crate::edit::apply_view),
         );
@@ -48,14 +53,15 @@ pub struct WavesUniform {
     pub size: [Vec4; MAX_WAVES],
     pub detail_shape: [Vec4; DETAIL_WAVES],
     pub detail_size: [Vec4; DETAIL_WAVES],
-    pub ripples: [Vec4; MAX_RIPPLES],
     pub counts: Vec4,
     pub flow: Vec4,
+    pub field: Vec4,
 }
 
 impl WavesUniform {
-    /// A body's waves and ripples at render time `time`.
-    pub fn of(live: &LiveBody, ripples: &[Ripple], time: f32) -> Self {
+    /// A body's waves at render time `time`, its ripples `between` their
+    /// last two ticks.
+    pub fn of(live: &LiveBody, time: f32, between: f32) -> Self {
         let body = &live.body;
         let mut out = WavesUniform::default();
         for (k, wave) in body.waves.iter().take(MAX_WAVES).enumerate() {
@@ -66,23 +72,16 @@ impl WavesUniform {
             out.detail_shape[k] = Vec4::new(wave.dir[0], wave.dir[1], wave.k, wave.omega);
             out.detail_size[k] = Vec4::new(wave.phase, wave.slope, 0.0, 0.0);
         }
-        let mut count = 0;
-        for ripple in ripples
-            .iter()
-            .filter(|r| r.body == body.id)
-            .take(MAX_RIPPLES)
-        {
-            out.ripples[count] = Vec4::new(ripple.at[0], ripple.at[1], ripple.age, ripple.strength);
-            count += 1;
-        }
         out.counts = Vec4::new(
             body.waves.len().min(MAX_WAVES) as f32,
-            count as f32,
+            if body.ripples.is_some() { 1.0 } else { 0.0 },
             time,
             if body.flat { 1.0 } else { 0.0 },
         );
-        let ripple_speed = if body.flat { 120.0 } else { 2.0 };
-        out.flow = Vec4::new(body.flow[0], body.flow[1], body.center[1], ripple_speed);
+        out.flow = Vec4::new(body.flow[0], body.flow[1], body.center[1], 0.0);
+        if let Some(field) = &body.ripples {
+            out.field = Vec4::new(field.origin[0], field.origin[1], field.cell, between);
+        }
         out
     }
 }
@@ -99,10 +98,17 @@ pub struct LookUniform {
     pub probe: Vec4,
     pub sky: Vec4,
     pub under: Vec4,
+    pub mirror: Vec4,
 }
 
 impl LookUniform {
-    pub fn of(live: &LiveBody, env: &Environment, probe: Option<Vec3>, caustics: bool) -> Self {
+    pub fn of(
+        live: &LiveBody,
+        env: &Environment,
+        probe: Option<Vec3>,
+        caustics: bool,
+        mirror: bool,
+    ) -> Self {
         let spec = &live.spec;
         let look = &spec.look;
         let foam = &spec.foam;
@@ -135,6 +141,13 @@ impl LookUniform {
             sky: sky.extend(spec.waves.wavelength * 4.0),
             under: (rgb(&spec.underwater.fog) * super::under::water_light(env))
                 .extend(spec.underwater.distance),
+            mirror: Vec4::new(
+                if mirror { 1.0 } else { 0.0 },
+                // Rough water smears its reflection.
+                look.roughness * look.roughness * 0.25,
+                0.0,
+                0.0,
+            ),
         }
     }
 }
@@ -161,6 +174,11 @@ pub struct WaterExtension {
     #[texture(109)]
     #[sampler(110)]
     pub caustics: Option<Handle<Image>>,
+    #[texture(111, filterable = false)]
+    pub ripples: Option<Handle<Image>>,
+    #[texture(112)]
+    #[sampler(113)]
+    pub mirror: Option<Handle<Image>>,
 }
 
 impl MaterialExtension for WaterExtension {
@@ -187,6 +205,50 @@ impl MaterialExtension for WaterExtension {
 #[derive(Resource, Default)]
 pub struct Surfaces(HashMap<String, Surface>);
 
+/// Keeps a mirror camera for every body that reflects with one.
+#[allow(clippy::type_complexity)]
+fn drive_mirrors(
+    mut commands: Commands,
+    state: Res<WaterState>,
+    surfaces: Res<Surfaces>,
+    mut mirrors: ResMut<Mirrors>,
+    environment: Res<Environment>,
+    mut images: ResMut<Assets<Image>>,
+    world: Query<(&Camera, &Transform, &Projection, Has<crate::sky::SkyView>), With<WorldCamera>>,
+    mut cameras: Query<
+        (
+            &mut Camera,
+            &mut Transform,
+            &mut Projection,
+            &mut bevy::camera::Exposure,
+        ),
+        Without<WorldCamera>,
+    >,
+) {
+    let wants = state
+        .bodies
+        .iter()
+        .filter(|live| live.spec.reflections.mode.planar())
+        .filter_map(|live| {
+            Some(Want {
+                id: live.body.id.clone(),
+                level: live.body.center[1],
+                scale: live.spec.reflections.planar_scale,
+                hide: surfaces.0.get(&live.body.id)?.entity,
+            })
+        })
+        .collect();
+    super::mirror::sync_mirrors(
+        &mut commands,
+        &mut mirrors,
+        wants,
+        world.iter().next(),
+        &environment,
+        &mut images,
+        &mut cameras,
+    );
+}
+
 struct Surface {
     entity: Entity,
     floor: Entity,
@@ -195,6 +257,7 @@ struct Surface {
     shape: Shape,
     probe: Option<(ProbeId, ProbeRequest)>,
     caustics: (String, Option<Handle<Image>>),
+    ripples: Option<(u64, Handle<Image>)>,
 }
 
 /// What a body's mesh was built for.
@@ -341,27 +404,48 @@ fn sync_surfaces(
     state: Res<WaterState>,
     (fixed, time): (Res<Time<Fixed>>, Res<Time>),
     environment: Res<Environment>,
-    cameras: Query<(Entity, &GlobalTransform, Has<ScreenSpaceTransmission>), With<WorldCamera>>,
-    mut surfaces: ResMut<Surfaces>,
+    mut cameras: Query<
+        (
+            Entity,
+            &GlobalTransform,
+            Has<ScreenSpaceTransmission>,
+            &mut Camera3d,
+        ),
+        With<WorldCamera>,
+    >,
+    (mut surfaces, mirrors): (ResMut<Surfaces>, Res<Mirrors>),
     mut transforms: Query<&mut Transform, With<WaterSurface>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<WaterMaterial>>,
-    mut plain: ResMut<Assets<StandardMaterial>>,
+    (mut materials, mut plain, mut images): (
+        ResMut<Assets<WaterMaterial>>,
+        ResMut<Assets<StandardMaterial>>,
+        ResMut<Assets<Image>>,
+    ),
     mut probes: Option<ResMut<ProbeService>>,
     assets: Res<AssetServer>,
 ) {
     let eye = cameras
         .iter()
         .next()
-        .map_or(Vec3::ZERO, |(_, camera, _)| camera.translation());
+        .map_or(Vec3::ZERO, |(_, camera, ..)| camera.translation());
     let any = !state.bodies.is_empty();
-    for (camera, _, has) in &cameras {
+    for (camera, _, has, mut camera3d) in &mut cameras {
         if any && !has {
             commands
                 .entity(camera)
                 .insert(ScreenSpaceTransmission::default());
         } else if !any && has {
             commands.entity(camera).remove::<ScreenSpaceTransmission>();
+        }
+        // The fog pass reads this depth, which has the surface in it.
+        let usages = TextureUsages::from(camera3d.depth_texture_usages);
+        let wanted = if any {
+            usages | TextureUsages::TEXTURE_BINDING
+        } else {
+            usages - TextureUsages::TEXTURE_BINDING
+        };
+        if wanted != usages {
+            camera3d.depth_texture_usages = wanted.into();
         }
     }
     let now = render_time(&engine, &state, &fixed, &time);
@@ -412,6 +496,7 @@ fn sync_surfaces(
                 shape,
                 probe: None,
                 caustics: (String::new(), None),
+                ripples: None,
             }
         });
         if surface.shape != shape {
@@ -489,17 +574,29 @@ fn sync_surfaces(
             surface.caustics = (path.to_string(), handle);
         }
         let caustics = surface.caustics.1.clone();
+        let ripples = super::sync_ripple_image(&mut surface.ripples, live, state.tick, &mut images);
+        let mirror = (live.spec.reflections.mode.planar()
+            && super::mirror::showing(&mirrors, &body.id, eye, level))
+        .then(|| mirrors.image(&body.id))
+        .flatten();
         let Some(mut material) = materials.get_mut(&surface.material) else {
             continue;
         };
         let extension = &mut material.extension;
-        extension.waves = WavesUniform::of(live, &state.ripples, now);
+        extension.waves = WavesUniform::of(live, now, super::between_ticks(&engine, &fixed));
         extension.look = LookUniform::of(
             live,
             &environment,
             faces.as_ref().map(|_| spot),
             caustics.is_some(),
+            mirror.is_some(),
         );
+        if extension.ripples != ripples {
+            extension.ripples = ripples;
+        }
+        if extension.mirror != mirror {
+            extension.mirror = mirror;
+        }
         let [px, nx, py, ny, pz, nz] = faces.map_or(Default::default(), |faces| faces.map(Some));
         extension.face_px = px;
         extension.face_nx = nx;
@@ -542,6 +639,8 @@ fn new_material() -> WaterMaterial {
             face_pz: None,
             face_nz: None,
             caustics: None,
+            ripples: None,
+            mirror: None,
         },
     }
 }
@@ -588,9 +687,9 @@ mod tests {
     fn water_uniforms_match_the_wesl_layout() {
         assert_eq!(
             WavesUniform::min_size().get() as usize,
-            (2 * MAX_WAVES + 2 * DETAIL_WAVES + MAX_RIPPLES + 2) * 16
+            (2 * MAX_WAVES + 2 * DETAIL_WAVES + 3) * 16
         );
-        assert_eq!(LookUniform::min_size().get(), 9 * 16);
+        assert_eq!(LookUniform::min_size().get(), 10 * 16);
     }
 
     // Enough of Bevy's modules for naga to check the surface shader.

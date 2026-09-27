@@ -58,6 +58,28 @@ pub enum EmitterDial {
     Max,
 }
 
+impl EmitterDial {
+    /// A dial by the name a script spells it, any case, spaces or not.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name
+            .trim()
+            .to_ascii_lowercase()
+            .replace([' ', '_'], "")
+            .as_str()
+        {
+            "rate" => Some(Self::Rate),
+            "lifetime" => Some(Self::Lifetime),
+            "speed" => Some(Self::Speed),
+            "spread" => Some(Self::Spread),
+            "gravity" => Some(Self::Gravity),
+            "sizestart" => Some(Self::SizeStart),
+            "sizeend" => Some(Self::SizeEnd),
+            "max" => Some(Self::Max),
+            _ => None,
+        }
+    }
+}
+
 pub use blockstitch_core::graph::{
     BlockDef, BlockGraph, BlockKind, BlockPiece, BlockShape, Comment, DictDef, DictEntry, DictItem,
     FloatingValue, InputValueType, ListDef, ListItem, VariableDef, default_block_color,
@@ -114,6 +136,12 @@ pub enum InstructionKind {
     /// wants when it doesn't care which state just left.
     WhenAnimationEnds {
         clip: String,
+    },
+    /// Runs in the emitting actor when its particles spawn, die or hit
+    /// something: at most once a frame per event, however many there were.
+    WhenParticles {
+        #[serde(default)]
+        event: crate::vfx::ParticleEvent,
     },
     /// Runs each time the playing clip reaches the named frame marker (or a
     /// rig animation's event). Empty matches any marker.
@@ -461,6 +489,11 @@ pub enum InstructionKind {
     /// Starts or stops recording snapshots for this run.
     SetTrailEnabled {
         enabled: bool,
+    },
+    /// Starts or stops the emitter spawning. Live particles fly on either
+    /// way; starting again restarts the burst clock.
+    SetEmitterPlaying {
+        playing: bool,
     },
 
     // ─── Sound ──────────────────────────────────────────────────────────────
@@ -1249,6 +1282,7 @@ impl BlockKind for InstructionKind {
             | K::WhenMessage { .. }
             | K::WhenCloned
             | K::WhenAnimationEnds { .. }
+            | K::WhenParticles { .. }
             | K::WhenAnimationMarker { .. }
             | K::WhenEnterRoom { .. }
             | K::BlockHeader { .. }
@@ -1261,6 +1295,7 @@ impl BlockKind for InstructionKind {
             | K::DetachComponent { .. }
             | K::SetVisible { .. }
             | K::SetTrailEnabled { .. }
+            | K::SetEmitterPlaying { .. }
             | K::CaptureProbes
             | K::SetLightShadows { .. }
             | K::SetRayTracing { .. }
@@ -1301,6 +1336,7 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenMessage { .. }
                 | InstructionKind::WhenCloned
                 | InstructionKind::WhenAnimationEnds { .. }
+                | InstructionKind::WhenParticles { .. }
                 | InstructionKind::WhenAnimationMarker { .. }
                 | InstructionKind::WhenEnterRoom { .. }
                 | InstructionKind::WhenUiEvent { .. }

@@ -31,6 +31,8 @@ type StartFn = unsafe extern "C" fn(*mut c_void, *const HostApi);
 #[cfg(not(target_arch = "wasm32"))]
 type TickFn = unsafe extern "C" fn(*mut c_void, *const HostApi, f32);
 #[cfg(not(target_arch = "wasm32"))]
+type EventFn = unsafe extern "C" fn(*mut c_void, *const HostApi, u32, f64, f64, f64, f64);
+#[cfg(not(target_arch = "wasm32"))]
 type AbiFn = unsafe extern "C" fn() -> u32;
 
 /// One actor's script, open and ready to call. The library is kept alive
@@ -48,6 +50,8 @@ pub struct LoadedScript {
     start: StartFn,
     #[cfg(not(target_arch = "wasm32"))]
     tick: TickFn,
+    #[cfg(not(target_arch = "wasm32"))]
+    event: EventFn,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -87,10 +91,14 @@ impl LoadedScript {
             let tick = *library
                 .get::<TickFn>(abi::SYM_TICK)
                 .map_err(|_| missing_export(relative))?;
+            let event = *library
+                .get::<EventFn>(abi::SYM_EVENT)
+                .map_err(|_| missing_export(relative))?;
             Ok(LoadedScript {
                 library,
                 start,
                 tick,
+                event,
             })
         }
     }
@@ -104,6 +112,15 @@ impl LoadedScript {
     pub fn tick(&self, actor: &str, asked: &mut Asked, dt: f32) {
         self.call(actor, asked, |entry, ctx| unsafe {
             (self.tick)(ctx, entry, dt);
+        });
+    }
+
+    pub fn event(&self, actor: &str, asked: &mut Asked, event: &ScriptEvent) {
+        let [n0, n1, n2, n3] = event.numbers;
+        with_event_words(event, || {
+            self.call(actor, asked, |entry, ctx| unsafe {
+                (self.event)(ctx, entry, event.kind, n0, n1, n2, n3);
+            })
         });
     }
 
@@ -137,12 +154,116 @@ impl LoadedScript {
     }
 
     pub fn start(&self, actor: &str, asked: &mut Asked) {
-        self.instance.call(actor, asked, None);
+        self.instance.call(actor, asked, browser::Entry::Start);
     }
 
     pub fn tick(&self, actor: &str, asked: &mut Asked, dt: f32) {
-        self.instance.call(actor, asked, Some(dt));
+        self.instance.call(actor, asked, browser::Entry::Tick(dt));
     }
+
+    pub fn event(&self, actor: &str, asked: &mut Asked, event: &ScriptEvent) {
+        with_event_words(event, || {
+            self.instance
+                .call(actor, asked, browser::Entry::Event(event))
+        });
+    }
+}
+
+/// One event on its way to a script's `event` entry point.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScriptEvent {
+    /// One of `abi::EVENT_*`.
+    pub kind: u32,
+    /// What `TEXT_EVENT` answers.
+    pub subject: String,
+    pub detail: String,
+    pub numbers: [f64; 4],
+}
+
+impl ScriptEvent {
+    fn new(kind: u32, subject: impl Into<String>) -> ScriptEvent {
+        ScriptEvent {
+            kind,
+            subject: subject.into(),
+            detail: String::new(),
+            numbers: [0.0; 4],
+        }
+    }
+
+    fn detail(mut self, detail: impl Into<String>) -> ScriptEvent {
+        self.detail = detail.into();
+        self
+    }
+
+    /// What a script hears of a VM event, and whose script: `None` for every
+    /// script, `Some(actor)` for that actor's alone. `name_of` turns an
+    /// actor id into its name. Starts and clones are what `start` is for.
+    pub fn of(
+        event: &blockloom_core::vm::Event,
+        name_of: impl Fn(&str) -> String,
+    ) -> Option<(Option<String>, ScriptEvent)> {
+        use blockloom_core::vm::Event;
+        Some(match event {
+            Event::Started | Event::Cloned { .. } => return None,
+            Event::Message(message) => (None, ScriptEvent::new(abi::EVENT_MESSAGE, message)),
+            Event::Key(key) => (None, ScriptEvent::new(abi::EVENT_KEY, key)),
+            Event::Action(action) => (None, ScriptEvent::new(abi::EVENT_ACTION, action)),
+            Event::Touched => (None, ScriptEvent::new(abi::EVENT_TOUCHED, "")),
+            Event::Click { actor } => (
+                Some(actor.clone()),
+                ScriptEvent::new(abi::EVENT_CLICKED, ""),
+            ),
+            Event::Collision { actor, with } => (
+                Some(actor.clone()),
+                ScriptEvent::new(abi::EVENT_COLLISION, name_of(with)).detail(with.clone()),
+            ),
+            Event::Particles { actor, event } => {
+                let particles = me(actor).map(|me| (me.particles, me.position));
+                let (count, at) = particles.map_or((0, [0.0; 3]), |(particles, position)| {
+                    (
+                        particles.count(*event),
+                        particles.at(*event).unwrap_or(position),
+                    )
+                });
+                let mut out = ScriptEvent::new(abi::EVENT_PARTICLES, event.name().to_lowercase());
+                out.numbers = [count as f64, at[0] as f64, at[1] as f64, at[2] as f64];
+                (Some(actor.clone()), out)
+            }
+            Event::AnimationEnded { actor, clip } => (
+                Some(actor.clone()),
+                ScriptEvent::new(abi::EVENT_ANIMATION_ENDED, clip),
+            ),
+            Event::AnimationMarker { actor, marker } => (
+                Some(actor.clone()),
+                ScriptEvent::new(abi::EVENT_ANIMATION_MARKER, marker),
+            ),
+            Event::UiClicked { id } => (None, ScriptEvent::new(abi::EVENT_UI_CLICKED, id)),
+            Event::UiChanged { id, value } => (
+                None,
+                ScriptEvent::new(abi::EVENT_UI_CHANGED, id).detail(value.as_text()),
+            ),
+            Event::UiEvent { id, event } => (
+                None,
+                ScriptEvent::new(abi::EVENT_UI, id).detail(event.clone()),
+            ),
+            Event::EnteredRoom { actor, room } => (
+                Some(actor.clone()),
+                ScriptEvent::new(abi::EVENT_ENTERED_ROOM, room),
+            ),
+        })
+    }
+}
+
+thread_local! {
+    /// The words of the event a script is being called with, for `TEXT_EVENT`.
+    static EVENT_WORDS: std::cell::RefCell<Option<(String, String)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn with_event_words(event: &ScriptEvent, f: impl FnOnce()) {
+    EVENT_WORDS.with(|words| words.replace(Some((event.subject.clone(), event.detail.clone()))));
+    f();
+    EVENT_WORDS.with(|words| words.replace(None));
 }
 
 /// What one run of a script asked the world for. Effects are applied by the
@@ -420,6 +541,26 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
             let z = at.next().flatten().unwrap_or(0.0);
             sense::read(|sensors| sensors.level.tile_at([x, y, z], b).ok()).map(f64::from)
         }
+        abi::READ_PARTICLES => {
+            let me = me(actor)?;
+            let what = a.trim().to_ascii_lowercase();
+            if what == "alive" {
+                return Some(me.particles.alive as f64);
+            }
+            let (event, axis) = what.split_once(' ').unwrap_or((&what, ""));
+            let event = blockloom_core::vfx::ParticleEvent::parse(event)?;
+            if axis.is_empty() {
+                return Some(me.particles.count(event) as f64);
+            }
+            let at = me.particles.at(event).unwrap_or(me.position);
+            let index = match axis.trim() {
+                "x" => 0,
+                "y" => 1,
+                "z" => 2,
+                _ => return None,
+            };
+            Some(at[index] as f64)
+        }
         abi::READ_IS_TWEENING => bool_as(me(actor)?.tweening),
         abi::READ_ANIM_FRAME => Some(me(actor)?.anim_frame as f64),
         abi::READ_ANIM_PLAYING => bool_as(me(actor)?.anim_playing),
@@ -594,6 +735,18 @@ fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
         abi::TEXT_ACTIVE_VOLUMES => {
             serde_json::to_string(&sense::read(|s| s.atmosphere.volumes.clone())).ok()
         }
+        abi::TEXT_EVENT => EVENT_WORDS.with(|words| {
+            let words = words.borrow();
+            let (subject, detail) = words.as_ref()?;
+            Some(
+                if a.trim() == "detail" {
+                    detail
+                } else {
+                    subject
+                }
+                .clone(),
+            )
+        }),
         _ => None,
     }
 }
@@ -932,6 +1085,25 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
             x: n0 as f32,
             y: n1 as f32,
         },
+        abi::ACT_BURST_PARTICLES => Effect::BurstParticles {
+            actor,
+            count: (n0 as i64).clamp(0, 512) as u32,
+        },
+        abi::ACT_SET_EMITTER_DIAL => match blockloom_core::blocks::EmitterDial::parse(a) {
+            Some(dial) => Effect::SetEmitterDial {
+                actor,
+                dial,
+                value: n0 as f32,
+            },
+            None => Effect::Error {
+                actor,
+                message: format!("there's no emitter dial called \"{a}\""),
+            },
+        },
+        abi::ACT_SET_EMITTER_PLAYING => Effect::SetEmitterPlaying {
+            actor,
+            playing: n0 != 0.0,
+        },
         abi::ACT_SET_SPRITE_DIAL => match blockloom_core::blocks::SpriteDial::parse(a) {
             Some(dial) => Effect::SetSpriteDial {
                 actor,
@@ -1101,6 +1273,7 @@ mod browser {
         relative: String,
         start: Function,
         tick: Function,
+        event: Function,
         /// Set once the script traps: a wasm trap leaves its stack and heap
         /// wherever they were, so calling back in isn't safe.
         stopped: Cell<bool>,
@@ -1224,6 +1397,7 @@ mod browser {
         }
         let start = export(abi::SYM_START)?;
         let tick = export(abi::SYM_TICK)?;
+        let event = export(abi::SYM_EVENT)?;
         let own_memory = Reflect::get(&exports, &JsValue::from_str("memory"))
             .ok()
             .and_then(|value| value.dyn_into::<WebAssembly::Memory>().ok())
@@ -1233,6 +1407,7 @@ mod browser {
             relative: relative.to_string(),
             start,
             tick,
+            event,
             stopped: Cell::new(false),
             last_log,
             _imports: imports,
@@ -1287,11 +1462,18 @@ mod browser {
         view.subarray(at, end as u32).copy_from(data);
     }
 
+    /// Which entry point a call runs.
+    pub enum Entry<'a> {
+        Start,
+        Tick(f32),
+        Event(&'a super::ScriptEvent),
+    }
+
     impl Instance {
-        /// Runs `start` (no `dt`) or `tick`, inside the actor's sensing
+        /// Runs `start`, `tick` or `event`, inside the actor's sensing
         /// scope as natively. A trap stops the script for the rest of the
         /// game, with the panic's own message where it left one.
-        pub fn call(&self, actor: &str, asked: &mut Asked, dt: Option<f32>) {
+        pub fn call(&self, actor: &str, asked: &mut Asked, entry: Entry) {
             if self.stopped.get() {
                 return;
             }
@@ -1299,11 +1481,19 @@ mod browser {
             let pointer = JsValue::from((&raw mut ctx) as usize as u32);
             // The script sees a null `HostApi` and uses its imports instead.
             let host = JsValue::from(0u32);
-            let result = sense::with_actor(actor, || match dt {
-                None => self.start.call2(&JsValue::NULL, &pointer, &host),
-                Some(dt) => self
-                    .tick
-                    .call3(&JsValue::NULL, &pointer, &host, &JsValue::from(dt)),
+            let result = sense::with_actor(actor, || match entry {
+                Entry::Start => self.start.call2(&JsValue::NULL, &pointer, &host),
+                Entry::Tick(dt) => {
+                    self.tick
+                        .call3(&JsValue::NULL, &pointer, &host, &JsValue::from(dt))
+                }
+                Entry::Event(event) => {
+                    let args = js_sys::Array::of3(&pointer, &host, &JsValue::from(event.kind));
+                    for n in event.numbers {
+                        args.push(&JsValue::from(n));
+                    }
+                    self.event.apply(&JsValue::NULL, &args)
+                }
             });
             if let Err(error) = result {
                 self.stopped.set(true);
@@ -1397,6 +1587,114 @@ mod tests {
             },
         );
         sense::publish(sensors);
+    }
+
+    #[test]
+    fn a_script_hears_events_through_its_event_entry_point() {
+        use blockloom_core::vfx::{ParticleEvent, ParticleSense};
+        use blockloom_core::vm::Event;
+        let project = TempProject::new("events");
+        // Only `event`: the other two entry points are filled in empty.
+        let Some(script) = project.build(
+            r#"
+use blockloom::*;
+
+fn event(me: &Actor, event: &Event) {
+    match event {
+        Event::Message(message) => me.say(&format!("heard {message}")),
+        Event::Particles { kind: ParticleKind::Collide, count, at } => {
+            me.say(&format!("{count} hit at {} {}", at.0, at.1))
+        }
+        Event::Collision { with, id } => me.say(&format!("touched {with} ({id})")),
+        Event::EnteredRoom(room) => me.say(&format!("entered {room}")),
+        _ => {}
+    }
+}
+
+blockloom::export!(event = event);
+"#,
+        ) else {
+            return;
+        };
+
+        let mut sensors = Sensors::default();
+        let particles = ParticleSense {
+            collided: 3,
+            collide_at: Some([1.5, 2.0, 0.0]),
+            ..Default::default()
+        };
+        sensors.actors.insert(
+            "a1".to_string(),
+            ActorSense {
+                name: "Hose".to_string(),
+                particles,
+                ..Default::default()
+            },
+        );
+        sense::publish(sensors);
+
+        let names = |id: &str| {
+            if id == "b2" {
+                "Wall".to_string()
+            } else {
+                String::new()
+            }
+        };
+        let mut asked = Asked::default();
+        script.start("a1", &mut asked);
+        script.tick("a1", &mut asked, 0.1);
+        for event in [
+            Event::Message("go".to_string()),
+            Event::Particles {
+                actor: "a1".to_string(),
+                event: ParticleEvent::Collide,
+            },
+            Event::Collision {
+                actor: "a1".to_string(),
+                with: "b2".to_string(),
+            },
+            Event::EnteredRoom {
+                actor: "a1".to_string(),
+                room: "Cave".to_string(),
+            },
+        ] {
+            let (to, heard) = ScriptEvent::of(&event, names).expect("a script event");
+            assert!(to.is_none_or(|to| to == "a1"));
+            script.event("a1", &mut asked, &heard);
+        }
+        let said: Vec<_> = asked
+            .effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Say { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "heard go",
+                "3 hit at 1.5 2",
+                "touched Wall (b2)",
+                "entered Cave"
+            ]
+        );
+    }
+
+    #[test]
+    fn only_the_actor_an_event_names_hears_it() {
+        use blockloom_core::vm::Event;
+        let names = |_: &str| String::new();
+        let (to, _) = ScriptEvent::of(&Event::Key("space".to_string()), names).unwrap();
+        assert_eq!(to, None);
+        let click = Event::Click {
+            actor: "a1".to_string(),
+        };
+        let (to, heard) = ScriptEvent::of(&click, names).unwrap();
+        assert_eq!(to.as_deref(), Some("a1"));
+        assert_eq!(heard.kind, abi::EVENT_CLICKED);
+        // `start` already covers these.
+        assert!(ScriptEvent::of(&Event::Started, names).is_none());
     }
 
     #[test]

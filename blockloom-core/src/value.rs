@@ -318,6 +318,43 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |_| Ok(Evaluated::Bool(me()?.anim_playing)),
     },
     ExtOperator {
+        kind: "ParticleCount",
+        op: "ParticleCount",
+        arity: 0,
+        default_args: Vec::new,
+        // My emitter's live particles, as of the last frame drawn.
+        eval: |_| Ok(Evaluated::Number(me()?.particles.alive as f64)),
+    },
+    ExtOperator {
+        kind: "ParticleEventCount",
+        op: "ParticleEventCount",
+        arity: 1,
+        default_args: || vec![text("Die")],
+        // How many of my particles spawned, died or collided this frame:
+        // what a `when my particles` hat fired for.
+        eval: |args| {
+            let event = crate::vfx::ParticleEvent::parse(&args[0].as_text())
+                .ok_or_else(|| format!("particles can't \"{}\"", args[0].as_text()))?;
+            Ok(Evaluated::Number(me()?.particles.count(event) as f64))
+        },
+    },
+    ExtOperator {
+        kind: "ParticleEventPosition",
+        op: "ParticleEventPosition",
+        arity: 2,
+        default_args: || vec![text("Collide"), text("X")],
+        // Where the last of my particles spawned, died or collided. Before
+        // any has, where I stand: that is where they come from.
+        eval: |args| {
+            let event = crate::vfx::ParticleEvent::parse(&args[0].as_text())
+                .ok_or_else(|| format!("particles can't \"{}\"", args[0].as_text()))?;
+            let axis = axis_of(args.get(1));
+            let me = me()?;
+            let at = me.particles.at(event).unwrap_or(me.position);
+            Ok(Evaluated::Number(at[axis.index()] as f64))
+        },
+    },
+    ExtOperator {
         kind: "Timer",
         op: "Timer",
         arity: 0,
@@ -1213,6 +1250,8 @@ mod tests {
                 flow: [0.0, 0.0],
                 waves: Vec::new(),
                 flat: false,
+                calm: [0.0; 3],
+                ripples: None,
             }],
             time: 0.0,
         };

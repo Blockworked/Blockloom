@@ -171,6 +171,10 @@ pub(crate) struct StateDto {
     pub(crate) library: Vec<ProjectEntryDto>,
     /// Where the New Project dialog points by default.
     pub(crate) default_project_location: String,
+    /// Where the Export dialog points by default.
+    pub(crate) default_export_location: String,
+    /// Where the Build dialog puts games by default.
+    pub(crate) default_build_location: String,
     /// The open project's folder, for the editor's title and Reveal.
     pub(crate) project_path: Option<String>,
     /// The open project, with every instruction flattened into the shape
@@ -272,6 +276,12 @@ pub(crate) fn state_dto(s: &AppState) -> StateDto {
             })
             .collect(),
         default_project_location: blockloom_core::project::default_projects_dir()
+            .to_string_lossy()
+            .into_owned(),
+        default_export_location: blockloom_core::project::default_exports_dir()
+            .to_string_lossy()
+            .into_owned(),
+        default_build_location: blockloom_core::project::default_builds_dir()
             .to_string_lossy()
             .into_owned(),
         project_path: s

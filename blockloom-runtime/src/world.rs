@@ -628,6 +628,7 @@ pub fn rebuild_world(
     // the libraries, and the old ones must be closed before the new ones open.
     engine.scripts.clear();
     engine.scripts_started.clear();
+    engine.script_events.clear();
     engine.attached = engine
         .project
         .actors
@@ -821,6 +822,20 @@ pub fn step_scripts(
         .cloned()
         .collect();
 
+    // What happened since the last step, as each script will hear it.
+    let fired = std::mem::take(&mut engine.script_events);
+    let heard: Vec<_> = fired
+        .iter()
+        .filter_map(|event| {
+            crate::script::ScriptEvent::of(event, |id| {
+                engine
+                    .actor(id)
+                    .map(|actor| actor.name.clone())
+                    .unwrap_or_default()
+            })
+        })
+        .collect();
+
     let mut asked = crate::script::Asked::default();
     for actor in &actors {
         let Some(script) = engine.scripts.get(actor) else {
@@ -828,6 +843,11 @@ pub fn step_scripts(
         };
         if fresh.contains(actor) {
             script.start(actor, &mut asked);
+        }
+        for (to, event) in &heard {
+            if to.as_ref().is_none_or(|to| to == actor) {
+                script.event(actor, &mut asked, event);
+            }
         }
         script.tick(actor, &mut asked, dt);
     }
@@ -1000,9 +1020,10 @@ pub fn publish_sensors(
         Option<&AnimationPlayer>,
     )>,
     sound: Res<crate::sound::SoundState>,
-    (atmosphere, water): (
+    (atmosphere, water, particles): (
         Option<Res<crate::atmosphere::Atmosphere>>,
         Option<Res<crate::water::WaterSample>>,
+        Option<Res<crate::vfx::ParticleSenses>>,
     ),
     preview_pointer: Option<ResMut<crate::preview::PreviewPointer>>,
 ) {
@@ -1107,6 +1128,10 @@ pub fn publish_sensors(
                 layer,
                 mask,
                 shape,
+                particles: particles
+                    .as_ref()
+                    .and_then(|particles| particles.0.get(&id.0).cloned())
+                    .unwrap_or_default(),
             },
         );
     }
@@ -3271,6 +3296,7 @@ pub fn report_status(
     gpu: crate::gpu::GpuReport,
     volumes: Option<Res<crate::volumes::VolumeBlend>>,
     terrain: Option<Res<crate::terrain::TerrainStats>>,
+    vfx: Option<Res<crate::vfx::VfxStats>>,
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
     let now = time.elapsed_secs() as f64;
@@ -3371,6 +3397,15 @@ pub fn report_status(
                 name: name.into(),
                 value: value as f64,
                 unit: "count".into(),
+            });
+        }
+    }
+    if let Some(vfx) = vfx.filter(|vfx| vfx.emitters > 0) {
+        for (name, value, unit) in vfx.metrics() {
+            render_metrics.push(RenderMetric {
+                name: name.into(),
+                value,
+                unit: unit.into(),
             });
         }
     }
@@ -3668,6 +3703,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::BurstParticles { actor, .. }
         | Effect::SetEmitterDial { actor, .. }
         | Effect::SetTrailEnabled { actor, .. }
+        | Effect::SetEmitterPlaying { actor, .. }
         | Effect::SetLightShadows { actor, .. }
         | Effect::ChangePosition { actor, .. }
         | Effect::Glide { actor, .. }

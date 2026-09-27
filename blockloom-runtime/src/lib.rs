@@ -74,6 +74,7 @@ mod tiles;
 mod traced;
 mod ui;
 mod ui_systems;
+mod vfx;
 mod volume_heat;
 mod volumes;
 mod water;
@@ -188,6 +189,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     ray_tracing::register(app, mode);
     lightning::register(app);
     wind::register(app);
+    vfx::register(app, mode);
     water::register(app, mode);
     edit::configure(app);
     // Both of these only exist to talk to an editor, and a built game has
@@ -435,7 +437,6 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             .add_systems(
                 Update,
                 (
-                    fx::emit_particles,
                     fx::step_particles,
                     fx::snapshot_trails,
                     fx::step_ghosts,
@@ -679,8 +680,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 .add_systems(
                     Update,
                     (
-                        fx::emit_particles,
-                        fx::step_particles,
+                            fx::step_particles,
                         fx::snapshot_trails,
                         fx::step_ghosts,
                         materials::tick_graph_time,
