@@ -7,7 +7,7 @@ import bevy_pbr::render::{
 import bevy_pbr::render::mesh_view_bindings::view;
 import blockloom::texturing::{
     SurfaceGlobals, MaskUniforms, DetailUniforms, sample_uv, triplanar, triplanar_normal,
-    triplanar_weights, slope_degrees, macro_noise, macro_tint, blend_detail, apply_masks,
+    triplanar_weights, slope_degrees, macro_noise, macro_tint, blend_detail, apply_masks_with_state, lasting_state,
     blend_debug,
 };
 
@@ -57,6 +57,8 @@ fn box_sample(
         + sample_uv(t, s, projected_uv(pos.xz), projected_grad(gx.xz), projected_grad(gy.xz), stochastic, contrast) * w.y
         + sample_uv(t, s, projected_uv(pos.xy), projected_grad(gx.xy), projected_grad(gy.xy), stochastic, contrast) * w.z;
 }
+
+@group(constants::MATERIAL_BIND_GROUP) @binding(116) var lasting_texture: texture_2d<f32>;
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -124,7 +126,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         pbr.N = blend_detail(pbr.N, d, n, detail.detail.x, distance, detail.detail.z);
     }
 
-    let masked = apply_masks(
+    let masked = apply_masks_with_state(
         pbr.material.base_color.rgb,
         pbr.material.perceptual_roughness,
         slope_degrees(n),
@@ -132,6 +134,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         0.0,
         masks,
         globals,
+        lasting_state(world,globals.surface_frame,lasting_texture),
     );
     pbr.material.base_color = vec4<f32>(masked.albedo, pbr.material.base_color.a);
     pbr.material.perceptual_roughness = masked.roughness;

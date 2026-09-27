@@ -173,6 +173,11 @@ fn maybe_splash(
     if splash.ripples && spec.ripples.enabled {
         state.disturb(&water, [point.x, point.z], size, -size * 0.25 * hard, false);
     }
+    splasher.effects.0.push(Effect::Splash {
+        at: point.to_array(),
+        radius: size,
+        strength: 0.0,
+    });
     if !splash.sound.is_empty() {
         splasher.effects.0.push(Effect::PlaySound {
             actor: water,

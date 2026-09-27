@@ -183,6 +183,9 @@ pub enum Action {
         values: [Value; 9],
     },
     FadeDecals([Value; 5]),
+    Fracture(Value),
+    Splash([Value; 5]),
+    PuffSmoke([Value; 5]),
     SetLightningRate(Value),
     SetWind {
         property: crate::wind::WindProperty,
@@ -717,7 +720,10 @@ fn action_values(action: &Action) -> Vec<&Value> {
         | Action::StrikeLightning(target)
         | Action::SetCloudDrift(target) => target.iter().collect(),
         Action::SpawnDecal { values, .. } => values.iter().collect(),
-        Action::FadeDecals(values) => values.iter().collect(),
+        Action::FadeDecals(values) | Action::Splash(values) | Action::PuffSmoke(values) => {
+            values.iter().collect()
+        }
+        Action::Fracture(value) => vec![value],
         Action::NavigateTo { target, speed } => {
             let mut values: Vec<&Value> = target.iter().collect();
             values.push(speed);
@@ -980,6 +986,9 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
             values: values.map(|v| lift_one(v, ctx)),
         },
         Action::FadeDecals(values) => Action::FadeDecals(values.map(|v| lift_one(v, ctx))),
+        Action::Splash(values) => Action::Splash(values.map(|v| lift_one(v, ctx))),
+        Action::PuffSmoke(values) => Action::PuffSmoke(values.map(|v| lift_one(v, ctx))),
+        Action::Fracture(value) => Action::Fracture(lift_one(value, ctx)),
         Action::StrikeLightning(mut t) => {
             for v in &mut t {
                 *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
@@ -1590,6 +1599,25 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             steps.push(Step::Action(Action::SetFogDensity(density.clone())))
         }
         K::SetAurora { kp } => steps.push(Step::Action(Action::SetAurora(kp.clone()))),
+        K::Fracture { target } => steps.push(Step::Action(Action::Fracture(target.clone()))),
+        K::Splash {
+            x,
+            y,
+            z,
+            radius,
+            strength,
+        } => steps.push(Step::Action(Action::Splash(
+            [x, y, z, radius, strength].map(Clone::clone),
+        ))),
+        K::PuffSmoke {
+            x,
+            y,
+            z,
+            radius,
+            strength,
+        } => steps.push(Step::Action(Action::PuffSmoke(
+            [x, y, z, radius, strength].map(Clone::clone),
+        ))),
         K::SpawnDecal {
             preset,
             x,

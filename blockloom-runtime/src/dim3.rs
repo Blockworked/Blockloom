@@ -370,7 +370,7 @@ pub(crate) fn insert_body_with(
     entity.insert((
         body,
         collider,
-        rp::ActiveEvents::COLLISION_EVENTS,
+        rp::ActiveEvents::COLLISION_EVENTS | rp::ActiveEvents::CONTACT_FORCE_EVENTS,
         rp::Velocity::zero(),
         rp::ExternalImpulse::default(),
         rp::GravityScale(physics.gravity_scale),
@@ -703,7 +703,8 @@ pub fn apply_effects(
                         entity.insert((
                             rigid_body,
                             collider,
-                            rp::ActiveEvents::COLLISION_EVENTS,
+                            rp::ActiveEvents::COLLISION_EVENTS
+                                | rp::ActiveEvents::CONTACT_FORCE_EVENTS,
                             collision,
                             solver,
                         ));

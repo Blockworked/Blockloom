@@ -32,6 +32,7 @@ mod clouds;
 mod culling;
 mod decals;
 mod decals_deferred;
+mod destruction;
 mod dim2;
 mod dim3;
 mod display;
@@ -219,6 +220,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     ray_tracing::register(app, Mode::ThreeD);
     lightning::register(app);
     decals::register(app);
+    destruction::register(app);
     wind::register(app);
     vfx::register(app, mode);
     water::register(app, mode);

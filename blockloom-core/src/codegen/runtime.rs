@@ -206,6 +206,15 @@ pub enum Act {
     StrikeLightning {
         at: [f32; 3],
     },
+    Fracture {
+        target: String,
+    },
+    Splash {
+        values: [f32; 5],
+    },
+    PuffSmoke {
+        values: [f32; 5],
+    },
     SpawnDecal {
         preset: &'static str,
         values: [f32; 9],
@@ -1155,7 +1164,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 29;
+pub const LOGIC_ABI_VERSION: u32 = 30;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1361,6 +1370,9 @@ pub const ACT_SET_PARALLAX: u32 = 103;
 pub const ACT_SPAWN_DECAL: u32 = 104;
 /// Numbers = centre x/y/z, radius, fade seconds. Window-global.
 pub const ACT_FADE_DECALS: u32 = 105;
+pub const ACT_FRACTURE: u32 = 107;
+pub const ACT_SPLASH: u32 = 108;
+pub const ACT_PUFF_SMOKE: u32 = 109;
 /// `a` = scene name, `b` = transition (`none`, `fade`, `wipe`, `circle`).
 pub const ACT_SWITCH_SCENE: u32 = 106;
 
@@ -1852,6 +1864,21 @@ impl Host for AbiHost {
             Act::SetAurora { kp } => {
                 self.act_wire(actor, ACT_SET_AURORA, "", "", [kp as f64, 0.0, 0.0], &zero)
             }
+            Act::Fracture { target } => {
+                self.act_wire(actor, ACT_FRACTURE, &target, "", [0.0; 3], &zero)
+            }
+            Act::Splash { values } => {
+                self.act_many(actor, ACT_SPLASH, "", "", "", &values.map(f64::from), &zero)
+            }
+            Act::PuffSmoke { values } => self.act_many(
+                actor,
+                ACT_PUFF_SMOKE,
+                "",
+                "",
+                "",
+                &values.map(f64::from),
+                &zero,
+            ),
             Act::SpawnDecal { preset, values } => {
                 self.act_many(
                     actor,

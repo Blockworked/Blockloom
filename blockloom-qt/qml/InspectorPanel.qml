@@ -280,8 +280,9 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Water","Buoyancy","Parallax","Room","Persist","Custom"]
+        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
             .filter(n => n !== "Sprite" || !is3d)
+            .filter(n => n !== "Fracture" || is3d)
             .filter(n => n === "Custom" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }));
     }
     function blank(name) {
@@ -302,6 +303,7 @@ Rectangle {
         case "Volume": return { component: "Volume", volume: volumeOf({}) };
         case "Probe": return { component: "Probe", probe: probeOf({}) };
         case "Terrain": return { component: "Terrain", terrain: terrainOf({}) };
+        case "Fracture": return { component:"Fracture", fracture: { cells:16,seed:1,interior:{},impulse_threshold:8,lifetime:20,sleep_seconds:2,pool_cap:256,bounce_sound:"" } };
         case "Water": return { component: "Water", water: is3d ? {} : { size: [800, 300], depth: 300,
             waves: { amplitude: 6, wavelength: 220, direction: 90, spread: 20 }, detail: { scale: 60 }, look: { absorption: 220 },
             foam: { shore: 12, scale: 40 }, underwater: { distance: 600, caustics_scale: 60 }, splash: { min_speed: 60 }, ripples: { speed: 120, extent: 1600 } } };
@@ -362,7 +364,7 @@ Rectangle {
                             Layout.fillWidth: true
                             readonly property var c: card.c
                             sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard })[card.c.component] || null
+                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard })[card.c.component] || null
                         }
                     }
                 }
@@ -383,6 +385,41 @@ Rectangle {
     }
 
     // ─── One card per component kind. `parent.c` is the component. ─────────
+    Component {
+        id: fractureCard
+        ColumnLayout {
+            id: fr
+            readonly property var c: parent.c
+            readonly property var f: Object.assign({ cells:16,seed:1,interior:{},impulse_threshold:8,lifetime:20,sleep_seconds:2,pool_cap:256,bounce_sound:"" }, c.fracture || {})
+            function write(next) { root.write("Fracture", { component:"Fracture", fracture:root.merged(f,next) }); }
+            function interior(next) { write({ interior:root.merged(f.interior,next) }); }
+            spacing: 6
+            InspectorRow { label:"Voronoi cells"; Layout.fillWidth:true
+                NumberField { value:fr.f.cells; onCommitted:n => fr.write({cells:Math.round(Math.max(2,Math.min(64,n)))}) } }
+            InspectorRow { label:"Seed"; Layout.fillWidth:true
+                NumberField { value:fr.f.seed; onCommitted:n => fr.write({seed:Math.round(Math.max(0,n))}) } }
+            InspectorRow { label:"Hit impulse"; Layout.fillWidth:true
+                NumberField { value:fr.f.impulse_threshold; onCommitted:n => fr.write({impulse_threshold:Math.max(0,n)}) } }
+            InspectorRow { label:"Lifetime s"; Layout.fillWidth:true
+                NumberField { value:fr.f.lifetime; onCommitted:n => fr.write({lifetime:Math.max(0.1,n)}) } }
+            InspectorRow { label:"Sleep retire s"; Layout.fillWidth:true
+                NumberField { value:fr.f.sleep_seconds; onCommitted:n => fr.write({sleep_seconds:Math.max(0.1,n)}) } }
+            InspectorRow { label:"Pool cap"; Layout.fillWidth:true
+                NumberField { value:fr.f.pool_cap; onCommitted:n => fr.write({pool_cap:Math.round(Math.max(1,Math.min(256,n)))}) } }
+            InspectorRow { label:"Cap roughness"; Layout.fillWidth:true
+                NumberField { value:fr.f.interior.roughness === undefined ? 0.5 : fr.f.interior.roughness; onCommitted:n => fr.interior({roughness:Math.max(0,Math.min(1,n))}) } }
+            InspectorRow { label:"Cap metallic"; Layout.fillWidth:true
+                NumberField { value:fr.f.interior.metallic || 0; onCommitted:n => fr.interior({metallic:Math.max(0,Math.min(1,n))}) } }
+            InspectorRow { label:"Cap albedo"; Layout.fillWidth:true
+                AssetField { app:root.app; accept:["image"]; value:fr.f.interior.albedo_texture || ""; onCommitted:p => fr.interior({albedo_texture:p}) } }
+            InspectorRow { label:"Cap normal"; Layout.fillWidth:true
+                AssetField { app:root.app; accept:["image"]; value:fr.f.interior.normal_texture || ""; onCommitted:p => fr.interior({normal_texture:p}) } }
+            InspectorRow { label:"Bounce sound"; Layout.fillWidth:true
+                AssetField { app:root.app; accept:["audio"]; value:fr.f.bounce_sound; onCommitted:p => fr.write({bounce_sound:p}) } }
+            Text { Layout.fillWidth:true; wrapMode:Text.WordWrap; color:Theme.textDim; font.pixelSize:11
+                text:"Convex 3D primitives break on a hard hit or the fracture block. Debris inherits motion and retires on sleep or timeout. The authored actor returns on Play." }
+        }
+    }
     Component {
         id: placeCard
         ColumnLayout {

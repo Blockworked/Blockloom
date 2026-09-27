@@ -152,6 +152,8 @@ pub struct BoxProjection {
     pub detail_map: Option<Handle<Image>>,
     #[storage(114, read_only)]
     pub globals: Handle<ShaderBuffer>,
+    #[texture(116)]
+    pub surface_state: Option<Handle<Image>>,
 }
 
 impl MaterialExtension for BoxProjection {
@@ -257,6 +259,7 @@ pub struct SurfaceGlobalsData {
     pub weather: Vec4,
     /// Wind velocity x/z at the camera, its speed, gusts per second.
     pub wind: Vec4,
+    pub surface_frame: Vec4,
 }
 
 /// The one buffer [`SurfaceGlobalsData`] lives in, shared by every material
@@ -283,6 +286,7 @@ pub fn update_surface_globals(
     environment: Option<Res<crate::environment::Environment>>,
     debug: Option<Res<crate::hdr::HdrDebug>>,
     wind: Option<Res<crate::wind::WindField>>,
+    destruction: Option<Res<crate::destruction::Destruction>>,
     mut globals: ResMut<SurfaceGlobals>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
@@ -296,9 +300,18 @@ pub fn update_surface_globals(
     let data = SurfaceGlobalsData {
         weather: Vec4::new(snow, wetness, f32::from(blend), 0.0),
         wind: Vec4::new(air.x, air.z, air.length(), gusts),
+        surface_frame: destruction.map_or(Vec4::ZERO, |state| {
+            Vec4::new(
+                state.map.origin[0],
+                state.map.origin[1],
+                state.map.extent,
+                0.0,
+            )
+        }),
     };
     if (data.weather - globals.data.weather).abs().max_element() < 1e-3
         && (data.wind - globals.data.wind).abs().max_element() < 0.05
+        && data.surface_frame == globals.data.surface_frame
     {
         return;
     }
@@ -361,6 +374,7 @@ pub fn box_material(
             detail_map,
             // Filled in from `SurfaceGlobals` where the material is stored.
             globals: Handle::default(),
+            surface_state: None,
         },
     }
 }

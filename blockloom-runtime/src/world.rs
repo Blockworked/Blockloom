@@ -3383,7 +3383,7 @@ fn open_script_for(engine: &mut Engine, actor: &Actor) {
 
 /// Takes an actor out of the world for the rest of the run. An authored one
 /// comes back on the next Play: the document was never touched.
-fn delete_actor(commands: &mut Commands, engine: &mut Engine, actor: &str) {
+pub(crate) fn delete_actor(commands: &mut Commands, engine: &mut Engine, actor: &str) {
     let Some(entity) = engine.entities.remove(actor) else {
         return;
     };
@@ -3668,9 +3668,10 @@ pub fn report_status(
     gpu: crate::gpu::GpuReport,
     volumes: Option<Res<crate::volumes::VolumeBlend>>,
     terrain: Option<Res<crate::terrain::TerrainStats>>,
-    (vfx, decals): (
+    (vfx, decals, destruction): (
         Option<Res<crate::vfx::VfxStats>>,
         Option<Res<crate::decals::Decals>>,
+        Option<Res<crate::destruction::Destruction>>,
     ),
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
@@ -3771,6 +3772,15 @@ pub fn report_status(
             render_metrics.push(RenderMetric {
                 name: name.into(),
                 value: value as f64,
+                unit: "count".into(),
+            });
+        }
+    }
+    if let Some(state) = destruction {
+        for (name, value) in state.metrics() {
+            render_metrics.push(RenderMetric {
+                name: name.into(),
+                value,
                 unit: "count".into(),
             });
         }
@@ -4149,6 +4159,9 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetFogDensity { .. }
         | Effect::SetAurora { .. }
         | Effect::StrikeLightning { .. }
+        | Effect::Fracture { .. }
+        | Effect::Splash { .. }
+        | Effect::PuffSmoke { .. }
         | Effect::SpawnDecal(_)
         | Effect::FadeDecals { .. }
         | Effect::SetLightningRate { .. }

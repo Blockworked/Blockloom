@@ -203,6 +203,19 @@ pub enum Effect {
     StrikeLightning {
         at: [f32; 3],
     },
+    Fracture {
+        actor: String,
+    },
+    Splash {
+        at: [f32; 3],
+        radius: f32,
+        strength: f32,
+    },
+    PuffSmoke {
+        at: [f32; 3],
+        radius: f32,
+        strength: f32,
+    },
     SpawnDecal(crate::decals::Spawn),
     FadeDecals {
         at: [f32; 3],

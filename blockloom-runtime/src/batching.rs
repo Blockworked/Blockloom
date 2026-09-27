@@ -48,6 +48,10 @@ pub fn register(app: &mut App) {
 pub struct InstanceData {
     #[storage(100, read_only)]
     pub instances: Handle<ShaderBuffer>,
+    #[storage(101, read_only)]
+    pub globals: Handle<ShaderBuffer>,
+    #[texture(102)]
+    pub surface_state: Option<Handle<Image>>,
 }
 
 impl MaterialExtension for InstanceData {
@@ -258,6 +262,10 @@ pub fn attach_instanced(
     let Some(buffer) = instance_buffer(world) else {
         return;
     };
+    let globals = world
+        .resource::<crate::materials::SurfaceGlobals>()
+        .buffer
+        .clone();
     let Some(handle) =
         world.resource_scope(|world, mut cache: Mut<crate::performance::RenderCache>| {
             let mut materials = world.get_resource_mut::<Assets<InstancedMaterial>>()?;
@@ -265,7 +273,11 @@ pub fn attach_instanced(
                 key,
                 || InstancedMaterial {
                     base: base.unwrap_or_default(),
-                    extension: InstanceData { instances: buffer },
+                    extension: InstanceData {
+                        instances: buffer,
+                        globals,
+                        surface_state: None,
+                    },
                 },
                 &mut materials,
             ))

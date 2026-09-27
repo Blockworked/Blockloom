@@ -12,6 +12,7 @@ struct SurfaceGlobals {
     weather: vec4<f32>,
     // Wind heading (x, z), speed in m/s, gust 0-1.
     wind: vec4<f32>,
+    surface_frame: vec4<f32>,
 }
 
 // A material's mask stack. A rule with strength 0 is off.
@@ -311,7 +312,38 @@ fn snow_weight(slope: f32, height: f32, cover: f32, snow: vec4<f32>) -> f32 {
 
 // The mask stack in order: slope, height and cavity tint and roughen, snow
 // settles, wetness darkens and glosses. `cavity` is 0-1, hollows high.
+// Bilinear world-space scorch/wetness, outside the map remains clean.
+fn lasting_state(world: vec3<f32>, frame: vec4<f32>, map: texture_2d<f32>) -> vec2<f32> {
+    if (frame.z <= 0.0) { return vec2<f32>(0.0); }
+    let uv = (world.xz - frame.xy) / frame.z;
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) { return vec2<f32>(0.0); }
+    let size = vec2<i32>(textureDimensions(map));
+    let p = uv * vec2<f32>(size) - vec2<f32>(0.5);
+    let low = vec2<i32>(floor(p));
+    let f = fract(p);
+    let a = textureLoad(map, clamp(low, vec2<i32>(0), size-vec2<i32>(1)), 0).rg;
+    let b = textureLoad(map, clamp(low+vec2<i32>(1,0), vec2<i32>(0), size-vec2<i32>(1)), 0).rg;
+    let c = textureLoad(map, clamp(low+vec2<i32>(0,1), vec2<i32>(0), size-vec2<i32>(1)), 0).rg;
+    let d = textureLoad(map, clamp(low+vec2<i32>(1,1), vec2<i32>(0), size-vec2<i32>(1)), 0).rg;
+    return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);
+}
+
+fn apply_lasting(albedo: vec3<f32>, roughness: f32, state: vec2<f32>) -> Masked {
+    var out: Masked;
+    out.albedo = albedo * (1.0-state.x*0.8) * (1.0-state.y*0.35);
+    out.roughness = mix(roughness, 0.08, state.y);
+    out.coverage = vec4<f32>(0.0,0.0,state.y,state.x);
+    return out;
+}
+
 fn apply_masks(
+    albedo: vec3<f32>, roughness: f32, slope: f32, height: f32,
+    cavity: f32, masks: MaskUniforms, globals: SurfaceGlobals,
+) -> Masked {
+    return apply_masks_with_state(albedo,roughness,slope,height,cavity,masks,globals,vec2<f32>(0.0));
+}
+
+fn apply_masks_with_state(
     albedo: vec3<f32>,
     roughness: f32,
     slope: f32,
@@ -319,6 +351,7 @@ fn apply_masks(
     cavity: f32,
     masks: MaskUniforms,
     globals: SurfaceGlobals,
+    lasting: vec2<f32>,
 ) -> Masked {
     var out: Masked;
     out.albedo = albedo;
@@ -344,7 +377,10 @@ fn apply_masks(
         out.albedo *= 1.0 - masks.wetness.y * wet;
         out.roughness = mix(out.roughness, masks.wetness.z, wet);
     }
-    out.coverage = vec4<f32>(max(max(a, b), c), snow, wet, 0.0);
+    let stained = apply_lasting(out.albedo, out.roughness, lasting);
+    out.albedo = stained.albedo;
+    out.roughness = stained.roughness;
+    out.coverage = vec4<f32>(max(max(a, b), c), snow, max(wet,lasting.y), lasting.x);
     return out;
 }
 

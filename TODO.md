@@ -890,7 +890,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         feeds deferred and ray-traced lighting. Marks pause with the run and
         clear on rebuild. Native texture binding arrays are required; WebGPU,
         unlit graph surfaces and the reference path tracer are not supported.
-  - [ ] Destruction and fluids lite: fracture-on-hit (Voronoi cell count, interior
+  - [x] Destruction and fluids lite: fracture-on-hit (Voronoi cell count, interior
         cap material, impulse threshold, shard lifetime/sleep/pool cap), debris
         impulse inheritance plus bounce sounds, 2D shallow-water ripple grid for
         puddles/ponds (rain rings, footstep rings, shore reflect), smoke advection
@@ -898,6 +898,22 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         scorch/wetness map (world-space RT, dries over time, darkens albedo and
         raises specular): the sole owner of lasting surface state, read by the
         material mask stack. Blocks: `fracture _`, `splash at`, `puff smoke at`.
+        Shipped: deterministic 2-64-cell Voronoi fracture for convex 3D
+        primitives, authored cap PBR material, contact-impulse threshold,
+        inherited linear/angular motion, sleep/timeout retirement and a shared
+        256-shard pool. Bounce sounds use the existing capped voice mixer.
+        Splash, rain and moving feet disturb the existing shallow-water grid;
+        ponds retain the water system's shore/planar reflection path. Smoke
+        uses up to 16 vertical 64x64 advected density grids, buoyancy and decay.
+        One scene/player surface map owns lasting scorch and wetness, mirrored
+        into a world-space RG render target and saved to player data (browser
+        localStorage on web). Lightning scorches, splashes/rain wet, and water
+        dries during simulation. Terrain/projected mask stacks and instanced
+        surfaces sample it. All three blocks have QML, VM and compiled parity.
+        Limits: fracture does not cut models, terrain or 2D sprites; smoke is
+        a billboard plane, not a 3D simulation. The surface target is a fixed
+        256-unit square at the origin, 64x64 cells; graph shaders, model-part
+        standard materials and the reference tracer do not sample it.
   - [ ] Post volumes (full HDR chain, volume-blended): exposure (auto spot-meter
         with min/max and speed writes `Environment.exposure` when enabled, else the
         manual EV stands; both lose to the director track per precedence), bloom (threshold/knee, 5-mip scatter chain,

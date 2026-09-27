@@ -52,6 +52,12 @@ pub enum FieldId {
     FogDensity,
     AuroraKp,
     LightningX,
+    FxX,
+    FxY,
+    FxZ,
+    FxRadius,
+    FxStrength,
+    FractureTarget,
     DecalX,
     DecalY,
     DecalZ,
@@ -178,6 +184,7 @@ impl FieldId {
                 | FieldId::SoundTarget
                 | FieldId::ParentTarget
                 | FieldId::NewActorName
+                | FieldId::FractureTarget
                 | FieldId::DeleteTarget
                 | FieldId::VolumeTarget
                 | FieldId::ActionName
@@ -251,6 +258,12 @@ impl std::fmt::Display for FieldId {
             FieldId::FogDensity => write!(f, "FogDensity"),
             FieldId::AuroraKp => write!(f, "AuroraKp"),
             FieldId::LightningX => write!(f, "LightningX"),
+            FieldId::FxX => write!(f, "FxX"),
+            FieldId::FxY => write!(f, "FxY"),
+            FieldId::FxZ => write!(f, "FxZ"),
+            FieldId::FxRadius => write!(f, "FxRadius"),
+            FieldId::FxStrength => write!(f, "FxStrength"),
+            FieldId::FractureTarget => write!(f, "FractureTarget"),
             FieldId::DecalX => write!(f, "DecalX"),
             FieldId::DecalY => write!(f, "DecalY"),
             FieldId::DecalZ => write!(f, "DecalZ"),
@@ -402,6 +415,12 @@ impl FromStr for FieldId {
             "FogDensity" => FieldId::FogDensity,
             "AuroraKp" => FieldId::AuroraKp,
             "LightningX" => FieldId::LightningX,
+            "FxX" => FieldId::FxX,
+            "FxY" => FieldId::FxY,
+            "FxZ" => FieldId::FxZ,
+            "FxRadius" => FieldId::FxRadius,
+            "FxStrength" => FieldId::FxStrength,
+            "FractureTarget" => FieldId::FractureTarget,
             "DecalX" => FieldId::DecalX,
             "DecalY" => FieldId::DecalY,
             "DecalZ" => FieldId::DecalZ,
@@ -554,6 +573,14 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::SetFogDensity { density }, F::FogDensity) => Some(density),
         (K::SetAurora { kp }, F::AuroraKp) => Some(kp),
         (K::StrikeLightning { x, .. }, F::LightningX) => Some(x),
+        (K::Splash { x, .. } | K::PuffSmoke { x, .. }, F::FxX) => Some(x),
+        (K::Splash { y, .. } | K::PuffSmoke { y, .. }, F::FxY) => Some(y),
+        (K::Splash { z, .. } | K::PuffSmoke { z, .. }, F::FxZ) => Some(z),
+        (K::Splash { radius, .. } | K::PuffSmoke { radius, .. }, F::FxRadius) => Some(radius),
+        (K::Splash { strength, .. } | K::PuffSmoke { strength, .. }, F::FxStrength) => {
+            Some(strength)
+        }
+        (K::Fracture { target }, F::FractureTarget) => Some(target),
         (K::SpawnDecal { x, .. }, F::DecalX) => Some(x),
         (K::SpawnDecal { y, .. }, F::DecalY) => Some(y),
         (K::SpawnDecal { z, .. }, F::DecalZ) => Some(z),

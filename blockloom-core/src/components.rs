@@ -49,6 +49,7 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Probe",
     "Terrain",
     "Sprite",
+    "Fracture",
     "Water",
     "Buoyancy",
     "Parallax",
@@ -344,6 +345,9 @@ pub enum ActorComponent {
     /// What the surface is made of: PBR properties and optional custom
     /// shader effect. Absent means flat color or plain image.
     Material { material: SurfaceMaterial },
+    Fracture {
+        fracture: crate::destruction::FractureSpec,
+    },
     /// A particle emitter: sparks, smoke, splash. Runs while attached, so
     /// `detach` doubles as the stop button for a burst.
     Emitter { emitter: ParticleSpec },
@@ -405,6 +409,7 @@ impl ActorComponent {
             ActorComponent::Probe { .. } => "Probe",
             ActorComponent::Terrain { .. } => "Terrain",
             ActorComponent::Sprite { .. } => "Sprite",
+            ActorComponent::Fracture { .. } => "Fracture",
             ActorComponent::Water { .. } => "Water",
             ActorComponent::Buoyancy { .. } => "Buoyancy",
             ActorComponent::Parallax { .. } => "Parallax",

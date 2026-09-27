@@ -1,3 +1,5 @@
+import blockloom::texturing::{SurfaceGlobals, lasting_state, apply_lasting};
+
 import bevy_pbr::decal::clustered::apply_decals;
 import bevy_pbr::render::{
     mesh_functions::get_tag,
@@ -30,6 +32,9 @@ struct Instance {
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<storage, read> instances: array<Instance>;
 
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var<storage,read> globals: SurfaceGlobals;
+@group(constants::MATERIAL_BIND_GROUP) @binding(102) var lasting_texture: texture_2d<f32>;
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     let data = instances[get_tag(in.instance_index)];
@@ -42,6 +47,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
     var pbr = pbr_input_from_standard_material(local, is_front);
     pbr.material.base_color *= data.tint;
+    let stain = apply_lasting(pbr.material.base_color.rgb,pbr.material.perceptual_roughness,lasting_state(in.world_position.xyz,globals.surface_frame,lasting_texture));
+    pbr.material.base_color = vec4<f32>(stain.albedo,pbr.material.base_color.a);
+    pbr.material.perceptual_roughness = stain.roughness;
     @if(!PREPASS_PIPELINE) {
         apply_decals(&pbr);
     }

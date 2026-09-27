@@ -361,6 +361,26 @@ pub enum InstructionKind {
     SetAurora {
         kp: Value,
     },
+    /// Break an actor carrying Fracture into physical debris.
+    Fracture {
+        target: Value,
+    },
+    /// Disturb nearby water and wet the surface map.
+    Splash {
+        x: Value,
+        y: Value,
+        z: Value,
+        radius: Value,
+        strength: Value,
+    },
+    /// Inject a puff into a bounded smoke advection grid.
+    PuffSmoke {
+        x: Value,
+        y: Value,
+        z: Value,
+        radius: Value,
+        strength: Value,
+    },
     /// A temporary 3D surface mark, with its outward normal and lifetime.
     SpawnDecal {
         preset: crate::decals::DecalPreset,
@@ -1021,6 +1041,7 @@ impl BlockKind for InstructionKind {
             | K::Return { value: v }
             | K::SetComponentField { value: v, .. }
             | K::SetParent { parent: v }
+            | K::Fracture { target: v }
             | K::DeleteActor { target: v }
             | K::StopSound { sound: v }
             | K::SetBusVolume { volume: v, .. }
@@ -1034,6 +1055,24 @@ impl BlockKind for InstructionKind {
                 f(x, InputValueType::Any);
                 f(y, InputValueType::Any);
                 f(z, InputValueType::Any);
+            }
+            K::Splash {
+                x,
+                y,
+                z,
+                radius,
+                strength,
+            }
+            | K::PuffSmoke {
+                x,
+                y,
+                z,
+                radius,
+                strength,
+            } => {
+                for v in [x, y, z, radius, strength] {
+                    f(v, InputValueType::Any);
+                }
             }
             K::SpawnDecal {
                 x,

@@ -132,7 +132,7 @@ QtObject {
     function dictD() { return dd("name", () => opts(dictNames()), { placeholder: "dict" }); }
 
     readonly property var icons: ({
-        SpawnDecal:"stamp", FadeDecals:"eraser",
+        Fracture:"hammer", Splash:"droplets", PuffSmoke:"cloud", SpawnDecal:"stamp", FadeDecals:"eraser",
         WhenStarted:"flag", WhenKeyPressed:"keyboard", WhenActionPressed:"gamepad-2", WhenTouched:"pointer", WhenClicked:"mouse-pointer-click",
         WhenCollision:"crosshair", WhenMessage:"radio", WhenCloned:"copy", WhenParticles:"sparkles", WhenAnimationMarker:"flag", WhenEnterRoom:"square-dashed", WhenUiEvent:"square-mouse-pointer", WhenUiClicked:"square-mouse-pointer", WhenUiChanged:"sliders-horizontal",
         BlockHeader:"blocks", Move:"arrow-right", GoTo:"move", NavigateTo:"navigation", ChangePosition:"move-3d", Glide:"wind", TweenScale:"maximize", TweenRotation:"rotate-cw", TweenColor:"palette", StopTweens:"square", PlayAnimation:"play", StopAnimation:"square", SetAnimationSpeed:"gauge", FireAnimationTrigger:"zap", SetRigSlot:"git-branch", SetSlotTint:"palette", SetIkTarget:"crosshair", SetSpriteDial:"sliders-horizontal", Turn:"rotate-cw",
@@ -223,6 +223,9 @@ QtObject {
             SetFogDensity: row([lb("set fog density to"), slot("FogDensity", "density"), lb("per m")]),
             SetAurora: row([lb("set aurora to KP"), slot("AuroraKp", "kp")]),
             StrikeLightning: row(vector("strike lightning at", ["LightningX","LightningY","LightningZ"], ["x","y","z"])),
+            Fracture: row([lb("fracture"), slot("FractureTarget", "target")]),
+            Splash: row(vector("splash at", ["FxX","FxY","FxZ"], ["x","y","z"]).concat([lb("radius"), slot("FxRadius", "radius"), lb("strength"), slot("FxStrength", "strength")])),
+            PuffSmoke: row(vector("puff smoke at", ["FxX","FxY","FxZ"], ["x","y","z"]).concat([lb("radius"), slot("FxRadius", "radius"), lb("density"), slot("FxStrength", "strength")])),
             SpawnDecal: row([lb("spawn decal"), dd("preset", () => opts(["Blood","Footprint","FreshScorch"]))].concat(
                 vector("at", ["DecalX","DecalY","DecalZ"], ["x","y","z"]),
                 vector("normal", ["DecalNormalX","DecalNormalY","DecalNormalZ"], ["nx","ny","nz"]),
@@ -393,6 +396,9 @@ QtObject {
         case "SetFogDensity": return { density: num(0.01) };
         case "SetAurora": return { kp: num(5) };
         case "StrikeLightning": return { x: num(0), y: num(0), z: num(0) };
+        case "Fracture": return { target: txt("myself") };
+        case "Splash": return { x:num(0),y:num(0),z:num(0),radius:num(1),strength:num(0.2) };
+        case "PuffSmoke": return { x:num(0),y:num(0),z:num(0),radius:num(2),strength:num(1) };
         case "SpawnDecal": return { preset: "Blood", x: num(0), y: num(0), z: num(0), nx: num(0), ny: num(1), nz: num(0), size: num(1), lifetime: num(20), fade: num(3) };
         case "FadeDecals": return { x: num(0), y: num(0), z: num(0), radius: num(5), seconds: num(1) };
         case "SetLightningRate": return { rate: num(6) };
@@ -581,7 +587,7 @@ QtObject {
         { label: "Events", types: ["WhenStarted","WhenSceneStarts","WhenSceneEnds","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenParticles","WhenAnimationEnds","WhenAnimationMarker","WhenEnterRoom","WhenUiEvent","WhenUiClicked","WhenUiChanged","Broadcast"] },
         { label: "Motion", types: ["Move","GoTo","NavigateTo","ChangePosition","Glide","TweenScale","TweenRotation","TweenColor","StopTweens","Turn","SetRotation","PointTowards","SetScale"] },
         { label: "Physics", types: ["SetBody","ApplyImpulse","SetVelocity","SetGravity","SetDensity","SetMass","SetTrigger","SetCollisionLayer","SetCollisionMask"] },
-        { label: "Looks", types: ["Say","SetVisible","SetColor","SetExposure","SetLightIntensity","SetEmissiveStrength","SetHdrOutput","SetPeakBrightness","EnableVolume","SetVolumeWeight","CaptureProbes","SetShadowDistance","SetLightShadows","SetRayTracing","SetGiBounces","SetGiSamples","SetFogDensity","SetAurora","StrikeLightning","SetLightningRate","SetWind","SetCloudDrift","SetClouds","SetCloudLayer","SetWater","SpawnDecal","FadeDecals","PaintTile","SetParallax","BurstParticles","SetEmitterDial","SetTrailEnabled","SetEmitterPlaying","PlayAnimation","StopAnimation","SetAnimationSpeed","FireAnimationTrigger","SetRigSlot","SetSlotTint","SetIkTarget","SetSpriteDial"] },
+        { label: "Looks", types: ["Say","SetVisible","SetColor","SetExposure","SetLightIntensity","SetEmissiveStrength","SetHdrOutput","SetPeakBrightness","EnableVolume","SetVolumeWeight","CaptureProbes","SetShadowDistance","SetLightShadows","SetRayTracing","SetGiBounces","SetGiSamples","SetFogDensity","SetAurora","StrikeLightning","SetLightningRate","SetWind","SetCloudDrift","SetClouds","SetCloudLayer","SetWater","Fracture","Splash","PuffSmoke","SpawnDecal","FadeDecals","PaintTile","SetParallax","BurstParticles","SetEmitterDial","SetTrailEnabled","SetEmitterPlaying","PlayAnimation","StopAnimation","SetAnimationSpeed","FireAnimationTrigger","SetRigSlot","SetSlotTint","SetIkTarget","SetSpriteDial"] },
         { label: "Sound", types: ["PlaySound","PlaySoundAt","StopSound","SetSoundVolume","SetSoundPitch","SetBusVolume"] },
         { label: "Components", types: ["SetComponentField","SetCameraView","SetCameraPitch","SetCameraFov","AttachComponent","DetachComponent","SetParent"] },
         { label: "Actors", types: ["CreateClone","CreateActor","DeleteActor"] },
@@ -625,7 +631,7 @@ QtObject {
 
     // What the Details dialog says about a block.
     readonly property var labels: ({
-        SpawnDecal:"spawn a transient surface decal", FadeDecals:"fade decals in a radius",
+        Fracture:"fracture an actor into debris", Splash:"make a water ripple", PuffSmoke:"puff advected smoke", SpawnDecal:"spawn a transient surface decal", FadeDecals:"fade decals in a radius",
         WhenStarted:"when the project starts", WhenKeyPressed:"when a key is pressed", WhenActionPressed:"when an input action is pressed",
         WhenTouched:"when the screen is touched", WhenClicked:"when I am clicked", WhenCollision:"when I touch", WhenMessage:"when I get a message", WhenAnimationEnds:"when an animation ends", WhenAnimationMarker:"when an animation reaches a marker", WhenEnterRoom:"when I enter a room",
         WhenUiEvent:"when an interface event occurs", WhenCloned:"when I start as a clone", WhenParticles:"when my particles spawn, die or collide", WhenUiClicked:"when an element is clicked", WhenUiChanged:"when an input is changed",

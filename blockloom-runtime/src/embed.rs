@@ -3578,6 +3578,87 @@ mod tests {
 
     /// The 3D starter's floor with no sun and no ambient light, plus a small
     /// still lamp above the middle of it, which batching merges.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn destruction_and_fluids_draw_through_the_runtime() {
+        use blockloom_core::blocks::{Instruction, InstructionKind as K, Strand};
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::destruction::FractureSpec;
+        use blockloom_core::value::Value;
+        let mut room = dark_room(true);
+        let mut cube = blockloom_core::project::Actor::new(
+            "Crate",
+            blockloom_core::scene::Visual::Cuboid {
+                color: "#FFFFFF".into(),
+                size: [2.0; 3],
+            },
+        );
+        cube.components.placement_mut().position = [-2.0, 2.0, 0.0];
+        cube.components.insert(ActorComponent::Fracture {
+            fracture: FractureSpec {
+                cells: 8,
+                lifetime: 30.0,
+                ..Default::default()
+            },
+        });
+        room.actors.push(cube);
+        room.actors[0].graph.strands.push(Strand::with_instructions(
+            0,
+            0,
+            vec![
+                Instruction::new(K::WhenStarted),
+                Instruction::new(K::Fracture {
+                    target: Value::text("Crate"),
+                }),
+                Instruction::new(K::Splash {
+                    x: Value::number(0.0),
+                    y: Value::number(0.0),
+                    z: Value::number(0.0),
+                    radius: Value::number(12.0),
+                    strength: Value::number(0.2),
+                }),
+                Instruction::new(K::PuffSmoke {
+                    x: Value::number(2.0),
+                    y: Value::number(1.0),
+                    z: Value::number(0.0),
+                    radius: Value::number(1.0),
+                    strength: Value::number(1.0),
+                }),
+            ],
+        ));
+        let (set, _, reports) = run_world_reporting(
+            room,
+            |_| {},
+            game_camera(),
+            180,
+            |_| false,
+            vec![EditorMessage::Start],
+        );
+        let errors: Vec<_> = reports
+            .iter()
+            .filter(|r| {
+                matches!(
+                    r,
+                    RuntimeMessage::Error { .. } | RuntimeMessage::Fatal { .. }
+                )
+            })
+            .collect();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(set.is_some(), "no rendered frame");
+        for name in ["destruction/shards", "fluids/smoke_grids"] {
+            assert!(
+                reports.iter().any(|r| match r {
+                    RuntimeMessage::Status(status) => status
+                        .render_metrics
+                        .iter()
+                        .any(|m| m.name == name && m.value > 0.0),
+                    _ => false,
+                }),
+                "{name} never became active"
+            );
+        }
+    }
+
     fn dark_room(lamp: bool) -> blockloom_core::project::Project {
         use blockloom_core::components::{ActorComponent, LightSpec};
         use blockloom_core::scene::Visual;

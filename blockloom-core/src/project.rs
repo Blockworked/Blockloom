@@ -1829,6 +1829,12 @@ impl Project {
                             repoint(&mut material.normal_texture);
                             repoint(&mut material.roughness_texture);
                         }
+                        ActorComponent::Fracture { fracture } => {
+                            repoint(&mut fracture.bounce_sound);
+                            repoint(&mut fracture.interior.albedo_texture);
+                            repoint(&mut fracture.interior.normal_texture);
+                            repoint(&mut fracture.interior.roughness_texture);
+                        }
                         ActorComponent::Script { path } => repoint(path),
                         _ => {}
                     }

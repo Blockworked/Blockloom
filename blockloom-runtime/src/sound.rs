@@ -45,8 +45,9 @@ struct Voice {
     bus: SoundBus,
     volume: f32,
     pitch: f32,
-    /// The actor a positional voice follows, by id. `None` is global.
+    /// The actor a positional voice follows, if any.
     at: Option<String>,
+    position: Option<Vec3>,
     entity: Entity,
 }
 
@@ -65,6 +66,52 @@ pub struct SoundState {
 }
 
 impl SoundState {
+    pub(crate) fn bounce(
+        &mut self,
+        commands: &mut Commands,
+        assets: &AssetServer,
+        dir: Option<&std::path::Path>,
+        path: &str,
+        position: Vec3,
+    ) {
+        self.make_room(commands, path);
+        let handle = self
+            .cache
+            .entry(path.to_string())
+            .or_insert_with(|| assets.load(crate::world::asset_path(dir, path)))
+            .clone();
+        let id = self.next;
+        self.next += 1;
+        let entity = commands
+            .spawn((
+                AudioPlayer(handle),
+                PlaybackSettings {
+                    spatial: true,
+                    volume: Volume::Linear(
+                        self.mixer.master_volume * self.mixer.gain(SoundBus::Sfx),
+                    ),
+                    ..PlaybackSettings::ONCE
+                },
+                Transform::from_translation(position),
+                VoiceTag(id),
+            ))
+            .id();
+        self.order.push_back(id);
+        self.voices.insert(
+            id,
+            Voice {
+                owner: "debris".into(),
+                asset: path.into(),
+                bus: SoundBus::Sfx,
+                volume: 1.0,
+                pitch: 1.0,
+                at: None,
+                position: Some(position),
+                entity,
+            },
+        );
+    }
+
     /// Forgets every voice and reseeds the mix from the document. A rebuild
     /// starts from silence at the saved levels.
     pub fn reset(&mut self, mixer: SoundMixer) {
@@ -223,6 +270,7 @@ pub fn apply_sound_effects(
                         volume: clamp_gain(*volume),
                         pitch,
                         at: follows,
+                        position: None,
                         entity,
                     },
                 );
@@ -330,6 +378,11 @@ pub fn maintain_voices(
             continue;
         }
         let mut gain = sound.effective(voice);
+        if let Some(position) = voice.position
+            && let Some(ear) = listener
+        {
+            gain *= distance_gain(position.distance(ear), is_3d);
+        }
         if let Some(target) = &voice.at {
             let (emitter, ear) = match (
                 engine

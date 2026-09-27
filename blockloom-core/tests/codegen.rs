@@ -313,6 +313,8 @@ impl Host for Recorder {
             | Act::SetFogDensity { .. }
             | Act::SetAurora { .. }
             | Act::StrikeLightning { .. }
+            | Act::Splash { .. }
+            | Act::PuffSmoke { .. }
             | Act::SpawnDecal { .. }
             | Act::FadeDecals { .. }
             | Act::SetLightningRate { .. }
@@ -1019,6 +1021,9 @@ fn line_of(act: &Act) -> String {
         Act::SetFogDensity { density } => format!("SetFogDensity {density:?}"),
         Act::SetAurora { kp } => format!("SetAurora {kp:?}"),
         Act::StrikeLightning { at } => format!("StrikeLightning {at:?}"),
+        Act::Fracture { target } => format!("Fracture {target}"),
+        Act::Splash { values } => format!("Splash {values:?}"),
+        Act::PuffSmoke { values } => format!("PuffSmoke {values:?}"),
         Act::SpawnDecal { preset, values } => format!("SpawnDecal {preset} {values:?}"),
         Act::FadeDecals { values } => format!("FadeDecals {values:?}"),
         Act::SetLightningRate { rate } => format!("SetLightningRate {rate:?}"),
@@ -1285,6 +1290,17 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetFogDensity { density } => format!("|SetFogDensity {density:?}"),
         Effect::SetAurora { kp } => format!("|SetAurora {kp:?}"),
         Effect::StrikeLightning { at } => format!("|StrikeLightning {at:?}"),
+        Effect::Fracture { actor } => format!("{ACTOR}|Fracture {actor}"),
+        Effect::Splash {
+            at,
+            radius,
+            strength,
+        } => format!("|Splash {:?}", [at[0], at[1], at[2], *radius, *strength]),
+        Effect::PuffSmoke {
+            at,
+            radius,
+            strength,
+        } => format!("|PuffSmoke {:?}", [at[0], at[1], at[2], *radius, *strength]),
         Effect::SpawnDecal(s) => format!(
             "|SpawnDecal {:?} {:?}",
             s.preset,
@@ -1924,6 +1940,26 @@ fn arithmetic_lands_on_the_same_numbers() {
                 x: number(12.0),
                 y: op("Sub", vec![number(0.0), number(1.0)]),
                 z: op("Mul", vec![number(-4.0), number(2.5)]),
+            },
+            K::Fracture {
+                target: Value::text("myself"),
+            },
+            K::Fracture {
+                target: Value::text("missing"),
+            },
+            K::Splash {
+                x: number(1.0),
+                y: number(2.0),
+                z: number(3.0),
+                radius: number(4.0),
+                strength: Value::text("strong"),
+            },
+            K::PuffSmoke {
+                x: number(4.0),
+                y: number(5.0),
+                z: number(6.0),
+                radius: number(2.0),
+                strength: number(0.8),
             },
             K::SpawnDecal {
                 preset: blockloom_core::decals::DecalPreset::FreshScorch,

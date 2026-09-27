@@ -1532,6 +1532,33 @@ impl Vm {
                 let kp = self.eval_f32(kp, actor, params, temps, out);
                 out.push(Effect::SetAurora { kp });
             }
+            Action::Fracture(target) => {
+                let wanted = self.eval(target, actor, params, temps, out).as_text();
+                match self.find_actor(actor, &wanted) {
+                    Some(actor) => out.push(Effect::Fracture { actor }),
+                    None => out.push(Effect::Error {
+                        actor: actor.to_string(),
+                        message: format!("there's no actor named \"{wanted}\" to fracture"),
+                    }),
+                }
+            }
+            Action::Splash(values) | Action::PuffSmoke(values) => {
+                let [x, y, z, radius, strength] =
+                    std::array::from_fn(|i| self.eval_f32(&values[i], actor, params, temps, out));
+                out.push(if matches!(action, Action::Splash(_)) {
+                    Effect::Splash {
+                        at: [x, y, z],
+                        radius,
+                        strength,
+                    }
+                } else {
+                    Effect::PuffSmoke {
+                        at: [x, y, z],
+                        radius,
+                        strength,
+                    }
+                });
+            }
             Action::SpawnDecal { preset, values } => {
                 let [x, y, z, nx, ny, nz, size, lifetime, fade] =
                     std::array::from_fn(|i| self.eval_f32(&values[i], actor, params, temps, out));
