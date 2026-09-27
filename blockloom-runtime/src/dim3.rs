@@ -942,17 +942,21 @@ pub fn apply_effects(
 pub fn relay_collisions(
     mut messages: MessageReader<rp::CollisionEvent>,
     mut engine: NonSendMut<Engine>,
+    ground: Query<&ChildOf, With<crate::terrain::TerrainCollider>>,
 ) {
     if !engine.running || engine.paused {
         messages.clear();
         return;
     }
+    // A terrain's collider hangs off its actor, so a touch on it is a touch
+    // on the terrain actor.
+    let owner = |entity: Entity| ground.get(entity).map_or(entity, ChildOf::parent);
     for message in messages.read() {
         let (a, b, started) = match message {
             rp::CollisionEvent::Started(a, b, _) => (*a, *b, true),
             rp::CollisionEvent::Stopped(a, b, _) => (*a, *b, false),
         };
-        crate::world::note_contact(&mut engine, a, b, started);
+        crate::world::note_contact(&mut engine, owner(a), owner(b), started);
     }
 }
 
