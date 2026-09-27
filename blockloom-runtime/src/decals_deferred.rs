@@ -118,7 +118,6 @@ fn prepare(
             let fragment = descriptor.fragment.as_mut().unwrap();
             fragment.shader = pipelines.shader.clone();
             fragment.targets = vec![Some(DEFERRED_PREPASS_FORMAT.into())];
-            eprintln!("decal pipeline {:?}", fragment.shader_defs);
             let id = cache.queue_render_pipeline(descriptor);
             pipelines.apply.insert(key, id);
             id
@@ -146,7 +145,6 @@ fn draw(
     pipelines: Res<Pipelines>,
     cache: Res<PipelineCache>,
     mut ctx: RenderContext,
-    mut seen: Local<bool>,
 ) {
     if !active.0 {
         return;
@@ -166,10 +164,6 @@ fn draw(
         &cache.get_bind_group_layout(&pipelines.copy_layout),
         &BindGroupEntries::single(&target.scratch.default_view),
     );
-    if !*seen {
-        eprintln!("drawing deferred decals");
-        *seen = true;
-    }
     {
         let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
             label: Some("decal_gbuffer"),

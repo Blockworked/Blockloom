@@ -877,12 +877,19 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         collisions see bodies as boxes and balls only (no capsules, meshes
         or terrain unless on screen). Scripts hear particle events (and every
         other hat block's event) through their `event` entry point.
-  - [ ] Decals (transient marks only; lasting stains live in the destruction map
+  - [x] Decals (transient marks only; lasting stains live in the destruction map
         below): deferred projected (albedo/normal/roughness/emissive, atlas pages,
         angle fade, depth reject to avoid floating edges), pool with LRU steal plus
         per-decal lifetime/fade, blood/footprint/fresh-scorch presets. Blocks:
         `spawn decal _ at`, `fade decals in radius`. No persist toggle: anything
         that must survive reload goes through the scorch/wetness map instead.
+        Shipped: blood, footprint and fresh-scorch atlas presets, a 256-mark
+        visibility-aware LRU pool, lifetime/radius fades, and spawn/fade blocks
+        in QML, the VM and compiled logic. Projectors blend albedo, normal,
+        roughness and emission with angle/depth rejection; a G-buffer pass
+        feeds deferred and ray-traced lighting. Marks pause with the run and
+        clear on rebuild. Native texture binding arrays are required; WebGPU,
+        unlit graph surfaces and the reference path tracer are not supported.
   - [ ] Destruction and fluids lite: fracture-on-hit (Voronoi cell count, interior
         cap material, impulse threshold, shard lifetime/sleep/pool cap), debris
         impulse inheritance plus bounce sounds, 2D shallow-water ripple grid for

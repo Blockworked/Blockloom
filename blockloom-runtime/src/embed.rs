@@ -3504,7 +3504,7 @@ mod tests {
                 room,
                 |_| {},
                 game_camera(),
-                300,
+                90,
                 |_| false,
                 vec![EditorMessage::Start],
             );
@@ -3521,10 +3521,14 @@ mod tests {
                 Some(if remove { 0.0 } else { 1.0 }),
                 "decal block did not run"
             );
-            let tracing_available = !reports.iter().any(|report| {
-                matches!(report,
-                RuntimeMessage::Say { text, .. } if text.starts_with("Ray tracing is off:"))
-            });
+            let tracing_available = reports
+                .iter()
+                .rev()
+                .find_map(|report| match report {
+                    RuntimeMessage::RayTracing(status) => Some(status.available && status.active),
+                    _ => None,
+                })
+                .unwrap_or(false);
             let errors = reports
                 .into_iter()
                 .filter(|report| {
@@ -3742,6 +3746,7 @@ mod tests {
         let started = std::time::Instant::now();
         let mut seen = None;
         let mut frames_seen = 0;
+        let mut last_frame = None;
         while started.elapsed() < Duration::from_secs(20) {
             if exchange.slots().is_some() {
                 starting = None;
@@ -3749,7 +3754,9 @@ mod tests {
             if let (Some(set), Some((generation, index))) = (exchange.slots(), exchange.latest())
                 && set.width == size.x
                 && set.generation == generation
+                && last_frame != Some((generation, index))
             {
+                last_frame = Some((generation, index));
                 // Keep the world off this slot while it is read.
                 exchange.hold(generation, index);
                 exchange.presented();
