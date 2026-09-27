@@ -122,13 +122,17 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         reporters (names as a JSON list, like `active volumes`) sampled from
         `Sensors::current_scene`/`scene_names`; scripts get `switch_scene`,
         `current_scene`, `scene_names` plus `SceneStarted`/`SceneEnded`
-        events (ABI 32, LOGIC_ABI 28); `Vm::load_scene` plus
+        events (ABI 32, LOGIC_ABI 29); `Vm::load_scene` plus
         `Variables`/`Lists`/`Dicts::load_scene` keep globals and shared
         collections while resetting actor locals; parity cases in
         `tests/codegen.rs` (`switch-scene`, reporter rows) and `tests/vm.rs`.
-        Native logic covers one scene, so `codegen::compile` refuses a
-        multi-scene project (the Build dialog falls back to the VM) until
-        the generated program carries every scene.
+        Native logic carries every scene: `compile` emits one function per
+        actor numbered across scenes plus a `NAMES_n`/`ENTRIES_n` table per
+        scene under one `SCENES` index, and `Runner` runs the active table -
+        `new(SCENES, ACTIVE_SCENE)`, `load_scene(id)` swapping the way
+        `Vm::load_scene` does (ABI 29, `blockloom_logic_scene`). The host
+        switches the program instead of dropping it, falling back to the VM
+        for a stale build only.
         Not covered: opt-in survivor actors across scenes.
   - [ ] Runtime: unload the current world, load the scene doc the way
         `EditorMessage::Load` does now, rebuild and warm up before the green
@@ -141,11 +145,18 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         firing `SceneEnded` two ticks earlier so ended strands run first;
         unknown scenes report, the requesting strand ends, and the first ask
         per tick wins (blocks and scripts share the path). Rooms reseed per
-        scene and stay intra-scene.
-        Not covered: transitions are immediate (the name is validated and
-        carried, no wall-clock fade/wipe/circle yet); cross-dimension
-        switches report and stay put instead of rebuilding the dim2/dim3
-        pipeline and rapier backend live.
+        scene and stay intra-scene. Named transitions run on the wall clock:
+        `Engine.veil` covers the outgoing scene first (`transition.rs` - a
+        fullscreen veil over the interface, fade as an alpha wash, wipe as a
+        left-to-right panel, circle as a fade until it gets its own mask),
+        the swap waits for cover, and the reveal holds until the rebuild's
+        warmup window closes. `none` (and typos) keep the immediate cut, and
+        a cross-dimension ask never covers first so its refusal flashes
+        nothing.
+        Not covered: cross-dimension switches report and stay put instead of
+        rebuilding the dim2/dim3 pipeline and rapier backend live (which
+        needs a fresh process, so only the editor's scene picker can do it
+        today).
   - [ ] Editor and tooling: scene picker plus per-scene actor list/canvas and
         World settings; project folder, pack, build and web carry all scenes;
         shell/MCP commands (`add-scene`, `switch-scene`, ...).

@@ -1134,26 +1134,26 @@ fn main() {
     // The program's own scheduler, which is what a built game runs on: one
     // slice per strand per fixed tick, clones started at the top of the tick
     // after they were made, and deleted actors dropped at the end of one.
-    let mut runner = Runner::new(NAMES);
-    runner.fire(ENTRIES, "Started", "", "", "");
-    runner.fire(ENTRIES, "UiClicked", "", "resume", "");
-    runner.fire(ENTRIES, "UiEvent", "", "hover\nresume", "");
+    let mut runner = Runner::new(SCENES, ACTIVE_SCENE);
+    runner.fire("Started", "", "", "");
+    runner.fire("UiClicked", "", "resume", "");
+    runner.fire("UiEvent", "", "hover\nresume", "");
     // A Walk clip ending on the harness player, beside the green flag: a
     // case with a `when animation ends` strand gets one, and nothing else
     // sees it.
-    runner.fire(ENTRIES, "AnimationEnded", "a1", "Walk", "");
+    runner.fire("AnimationEnded", "a1", "Walk", "");
     // The harness player's particles dying, likewise.
-    runner.fire(ENTRIES, "Particles", "a1", "Die", "");
-    runner.fire(ENTRIES, "AnimationMarker", "a1", "Step", "");
-    runner.fire(ENTRIES, "EnteredRoom", "a1", "Cave", "");
+    runner.fire("Particles", "a1", "Die", "");
+    runner.fire("AnimationMarker", "a1", "Step", "");
+    runner.fire("EnteredRoom", "a1", "Cave", "");
 
     for tick in 0..TICKS {
         recorder.tick = tick;
         // Escape mid-run, matching the VM side tick for tick.
         if tick == 3 {
-            runner.fire(ENTRIES, "Key", "", "escape", "");
+            runner.fire("Key", "", "escape", "");
         }
-        if runner.tick(ENTRIES, &mut recorder, tick as f64 * DT) {
+        if runner.tick(&mut recorder, tick as f64 * DT) {
             // Everything after this one in the tick is gone too, as the VM
             // has it: `stop all` empties the list where it stands.
             recorder.out.push(format!("{tick} |Stopped"));

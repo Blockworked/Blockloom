@@ -561,3 +561,116 @@ fn a_delete_ends_the_strand_that_asked_where_it_stands() {
     let source = compile(&quiet).expect("a say compiles");
     assert!(!source.contains("if actors.is_gone(&me) {"), "{source}");
 }
+
+/// Two scenes with one actor each: the program carries both, numbers their
+/// functions across scenes, and indexes them under one `SCENES` table.
+fn two_scenes() -> Project {
+    let mut project = started(vec![Instruction::new(K::Say {
+        text: Value::text("one"),
+    })]);
+    project.actors[0].id = "a1".to_string();
+    let second = project.add_scene("Level 2", None);
+    let mut actor = Actor::new(
+        "Enemy",
+        crate::scene::Visual::Circle {
+            color: "#fff".to_string(),
+            radius: 5.0,
+        },
+    );
+    actor.id = "b1".to_string();
+    actor.graph.strands.push(Strand::with_instructions(
+        0,
+        0,
+        vec![
+            Instruction::new(K::WhenSceneStarts),
+            Instruction::new(K::Say {
+                text: Value::text("two"),
+            }),
+        ],
+    ));
+    project
+        .scene_mut(&second)
+        .expect("added above")
+        .actors
+        .push(actor);
+    project
+}
+
+#[test]
+fn a_multi_scene_project_compiles_with_one_table_per_scene() {
+    let project = two_scenes();
+    let source = compile(&project).expect("two scenes compile");
+
+    // Functions are numbered across scenes, so no two actors share one.
+    assert!(source.contains("fn actor_0("), "{source}");
+    assert!(source.contains("fn actor_1("), "{source}");
+    // Each scene has its own names and entries; one index covers both.
+    assert!(source.contains("pub static NAMES_0:"), "{source}");
+    assert!(source.contains("pub static ENTRIES_0:"), "{source}");
+    assert!(source.contains("pub static NAMES_1:"), "{source}");
+    assert!(source.contains("pub static ENTRIES_1:"), "{source}");
+    assert!(
+        source.contains("pub static SCENES: &[SceneTable]"),
+        "{source}"
+    );
+    assert!(
+        source.contains("pub static ACTIVE_SCENE: usize"),
+        "{source}"
+    );
+    // The second scene's strand answers to its own scene's start.
+    assert!(source.contains("trigger: \"SceneStarted\""), "{source}");
+}
+
+#[test]
+fn loading_a_scene_swaps_which_program_runs() {
+    fn nop(_h: &mut dyn Host, s: &mut State, _a: &mut Actors) {
+        s.finish();
+    }
+    static NAMES_ONE: &[(&str, &str)] = &[("a1", "Player")];
+    static NAMES_TWO: &[(&str, &str)] = &[("b1", "Enemy")];
+    static ENTRIES_ONE: &[Entry] = &[Entry {
+        actor: "a1",
+        strand: "s1",
+        trigger: "Started",
+        detail: "",
+        start: 0,
+        counters: 0,
+        run: nop,
+    }];
+    static ENTRIES_TWO: &[Entry] = &[Entry {
+        actor: "b1",
+        strand: "s2",
+        trigger: "SceneStarted",
+        detail: "",
+        start: 0,
+        counters: 0,
+        run: nop,
+    }];
+    static SCENES: &[SceneTable] = &[
+        SceneTable {
+            id: "one",
+            name: "One",
+            names: NAMES_ONE,
+            entries: ENTRIES_ONE,
+        },
+        SceneTable {
+            id: "two",
+            name: "Two",
+            names: NAMES_TWO,
+            entries: ENTRIES_TWO,
+        },
+    ];
+    let mut runner = Runner::new(SCENES, 0);
+    runner.fire("Started", "", "", "");
+    assert!(runner.is_running());
+    // Nothing by that id: the runner keeps running the old scene.
+    assert!(!runner.load_scene("three"));
+    assert!(runner.is_running());
+    // The swap drops live strands; the old scene's triggers start nothing.
+    assert!(runner.load_scene("two"));
+    assert!(!runner.is_running());
+    runner.fire("Started", "", "", "");
+    assert!(!runner.is_running());
+    runner.fire("SceneStarted", "", "", "");
+    assert!(runner.is_running());
+}

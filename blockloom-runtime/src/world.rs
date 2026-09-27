@@ -267,6 +267,7 @@ pub fn pump_editor(
                 open_logic(&mut engine);
                 engine.speech.clear();
                 engine.pending_scene = None;
+                engine.veil.reset();
                 // The interface goes with the world it belonged to. Cleared
                 // here rather than in `rebuild_world`, which runs after the
                 // fixed step that builds this run's interface.
@@ -290,6 +291,7 @@ pub fn pump_editor(
                 engine.touching.clear();
                 engine.speech.clear();
                 engine.pending_scene = None;
+                engine.veil.reset();
                 let document = match engine.project_dir.as_deref() {
                     Some(dir) => engine.project.world.interface.with_stylesheets(dir),
                     None => Ok(engine.project.world.interface.clone()),
@@ -414,6 +416,7 @@ pub fn end_run(engine: &mut Engine, manager: &mut crate::ui::UiManager) {
     engine.stop_program();
     engine.speech.clear();
     engine.pending_scene = None;
+    engine.veil.reset();
     manager.clear();
     engine.running = false;
     engine.starting = false;
@@ -898,8 +901,11 @@ pub fn step_scripts(
                 message: format!("there's no scene named \"{scene}\""),
             }),
             Some(target) if target == engine.project.active_scene => {}
-            Some(_) => {
+            Some(target) => {
                 engine.fire(Event::SceneEnded);
+                if scene_mode(&engine, &target) == Some(engine.project.active_scene().world.mode) {
+                    engine.veil.start(&transition);
+                }
                 engine.pending_scene = Some((scene, transition, 2));
             }
         }
@@ -1864,12 +1870,19 @@ pub fn step_vm(
     // A scene switch the blocks asked for earlier: count down so the
     // outgoing scene's `when scene ends` strands run first, then unload and
     // load. Two ticks: one for the ended strands to start, one for them to
-    // run before the world goes away.
-    if let Some((_, _, ticks)) = engine.pending_scene.as_mut() {
-        if *ticks > 0 {
+    // run before the world goes away. A named transition also covers the
+    // outgoing scene on the wall clock first, so the swap waits for cover.
+    if engine.pending_scene.is_some() {
+        if let Some((_, _, ticks)) = engine.pending_scene.as_mut()
+            && *ticks > 0
+        {
             *ticks -= 1;
         }
-        if *ticks == 0 {
+        let due = engine
+            .pending_scene
+            .as_ref()
+            .is_some_and(|(_, _, ticks)| *ticks == 0);
+        if due && engine.veil.ready_to_switch() {
             let (scene, transition, _) = engine.pending_scene.take().expect("checked above");
             perform_scene_switch(&mut engine, &scene, &transition);
         }
@@ -1935,8 +1948,13 @@ pub fn step_vm(
                 message: format!("there's no scene named \"{scene}\""),
             }),
             Some(target) if target == engine.project.active_scene => {}
-            Some(_) => {
+            Some(target) => {
                 engine.fire(Event::SceneEnded);
+                // A cross-dimension ask is refused at the swap with an
+                // error, so it never covers first and flashes nothing.
+                if scene_mode(&engine, &target) == Some(engine.project.active_scene().world.mode) {
+                    engine.veil.start(&transition);
+                }
                 engine.pending_scene = Some((scene, transition, 2));
             }
         }
@@ -1971,18 +1989,17 @@ fn resolve_scene(engine: &Engine, wanted: &str) -> Option<String> {
 fn perform_scene_switch(engine: &mut Engine, wanted: &str, transition: &str) {
     let _ = transition;
     let Some(target) = resolve_scene(engine, wanted) else {
+        engine.veil.reset();
         return;
     };
     if target == engine.project.active_scene {
+        engine.veil.reset();
         return;
     }
     let mode_now = engine.project.active_scene().world.mode;
-    let mode_next = engine
-        .project
-        .scene(&target)
-        .map(|scene| scene.world.mode)
-        .unwrap_or(mode_now);
+    let mode_next = scene_mode(engine, &target).unwrap_or(mode_now);
     if mode_next != mode_now {
+        engine.veil.reset();
         bridge::send(&RuntimeMessage::Error {
             actor: String::new(),
             message: format!(
@@ -1993,7 +2010,7 @@ fn perform_scene_switch(engine: &mut Engine, wanted: &str, transition: &str) {
         });
         return;
     }
-    engine.project.active_scene = target;
+    engine.project.active_scene = target.clone();
     // Run-made actors die with the scene they were made in; a clone's
     // template lives in the new scene's document or not at all.
     engine.spawned.clear();
@@ -2003,15 +2020,24 @@ fn perform_scene_switch(engine: &mut Engine, wanted: &str, transition: &str) {
     engine.touching.clear();
     engine.driven.clear();
     let project = engine.project.clone();
-    if engine.logic.is_some() {
-        // Multi-scene projects run on the VM (native logic covers one
-        // scene), so reaching here with logic means a single-scene build
-        // asking for another scene it was never compiled with.
-        engine.logic = None;
+    if let Some(logic) = &mut engine.logic {
+        // The generated program carries every scene, so it switches the way
+        // the VM does below. A stale build that never saw this scene - or one
+        // from before multi-scene logic - falls back to the VM instead.
+        if !logic.load_scene(&target) {
+            engine.logic = None;
+        }
     }
     engine.vm.load_scene(&project);
     engine.rebuild = true;
     engine.fire(Event::SceneStarted);
+    // The swap lands under cover; the reveal waits out the rebuild's warmup.
+    engine.veil.begin_reveal();
+}
+
+/// The dimension of the scene `id` names, for switch validation.
+fn scene_mode(engine: &Engine, id: &str) -> Option<Mode> {
+    engine.project.scene(id).map(|scene| scene.world.mode)
 }
 
 fn mode_name(mode: Mode) -> &'static str {

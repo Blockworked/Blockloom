@@ -35,7 +35,7 @@ use blockloom_core::codegen::{
 #[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::codegen::{
     self, SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE,
-    SYM_LOGIC_RESET, SYM_LOGIC_TICK,
+    SYM_LOGIC_RESET, SYM_LOGIC_SCENE, SYM_LOGIC_TICK,
 };
 use blockloom_core::components::CameraView;
 use blockloom_core::project::Project;
@@ -57,6 +57,7 @@ type ResetFn = unsafe extern "C" fn(*mut c_void);
 type FireFn = unsafe extern "C" fn(*mut c_void, AbiStr, AbiStr, AbiStr, AbiStr);
 type TickFn = unsafe extern "C" fn(*mut c_void, *mut c_void, *const LogicHostApi, f64, f64) -> u32;
 type PauseFn = unsafe extern "C" fn(*mut c_void, u32);
+type SceneFn = unsafe extern "C" fn(*mut c_void, AbiStr) -> u32;
 
 /// One generated program and its suspended strands.
 ///
@@ -73,6 +74,9 @@ pub struct LoadedLogic {
     /// A program built before this export existed simply has none, and the
     /// editor's Pause then reaches it the long way, through `SetPaused`.
     pause: Option<PauseFn>,
+    /// A program built before multi-scene logic simply has none, and a
+    /// scene switch then falls back to the VM the way it used to.
+    scene: Option<SceneFn>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -116,6 +120,7 @@ impl LoadedLogic {
                 .get::<TickFn>(SYM_LOGIC_TICK)
                 .map_err(|_| missing_export())?;
             let pause = library.get::<PauseFn>(SYM_LOGIC_PAUSE).ok().map(|f| *f);
+            let scene = library.get::<SceneFn>(SYM_LOGIC_SCENE).ok().map(|f| *f);
             let state = new();
             if state.is_null() {
                 return Err("the compiled block program could not start".to_string());
@@ -128,6 +133,7 @@ impl LoadedLogic {
                 fire,
                 tick,
                 pause,
+                scene,
             })
         }
     }
@@ -199,6 +205,17 @@ impl LoadedLogic {
             // comes through `cloned` below instead.
             Event::Cloned { .. } => {}
         }
+    }
+
+    /// Switches the program to the scene `scene_id` names, the way
+    /// `Vm::load_scene` does. Answers false when the program has no such
+    /// scene - a stale build, or one from before multi-scene logic - and
+    /// the host falls back to the VM.
+    pub fn load_scene(&mut self, scene_id: &str) -> bool {
+        let Some(scene) = self.scene else {
+            return false;
+        };
+        unsafe { scene(self.state, AbiStr::borrow(scene_id)) == ABI_OK }
     }
 
     /// Hands over a clone something outside the program made - a script's -

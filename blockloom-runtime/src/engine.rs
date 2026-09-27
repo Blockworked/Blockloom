@@ -284,9 +284,13 @@ pub struct Engine {
     /// A `switch scene to` waiting to unload the current scene and load the
     /// next: `(scene name as the block spelled it, transition, ticks left)`.
     /// Set when the effect lands, drained after the outgoing scene's `when
-    /// scene ends` strands have had a tick to run. Transitions are
-    /// immediate in v1; the name is validated and carried for later.
+    /// scene ends` strands have had a tick to run. A named transition covers
+    /// the outgoing scene on the wall clock first (see `transition`); the
+    /// swap waits for cover.
     pub pending_scene: Option<(String, String, u8)>,
+    /// The wall-clock veil over a scene switch. Started by the fixed step
+    /// alongside `pending_scene`, drawn by `transition::drive_veil`.
+    pub veil: crate::transition::SceneVeil,
 }
 
 impl Engine {
@@ -355,6 +359,7 @@ impl Engine {
             preview_inputs: Vec::new(),
             pause_after_tick: false,
             pending_scene: None,
+            veil: crate::transition::SceneVeil::default(),
         }
     }
 

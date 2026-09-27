@@ -73,6 +73,7 @@ mod terrain;
 mod tiles;
 #[cfg(feature = "ray_tracing")]
 mod traced;
+mod transition;
 mod ui;
 mod ui_systems;
 mod vfx;
@@ -338,6 +339,9 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 )
                     .chain(),
             )
+            // Outside the chained tuple above (already at Bevy's tuple
+            // cap): the veil owns its own node, so order is irrelevant.
+            .add_systems(Update, transition::drive_veil)
             .configure_sets(
                 FixedUpdate,
                 world::SimulationSet.before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend),
@@ -645,6 +649,9 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     world::SimulationSet
                         .before(bevy_rapier3d::prelude::PhysicsSet::SyncBackend),
                 )
+                // Outside the chained Update tuple (already at Bevy's tuple
+                // cap): the veil owns its own node, so order is irrelevant.
+                .add_systems(Update, transition::drive_veil)
                 .add_systems(
                     FixedUpdate,
                     water::float_bodies_3d

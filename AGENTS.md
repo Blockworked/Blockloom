@@ -1549,9 +1549,12 @@ and for the same reason - `delete` and `create a clone of` name an actor the
 way every block does, and both have to be answerable before the host has done
 anything about them. So the program mints the id, copies the scheduling and
 queues the copy's `when I start as a clone` strands for the top of the next
-tick, and the host is left with the entity. `NAMES` lists every actor the
-document has, blocks or none, because an empty canvas still answers to its
-name. A clone or a deletion from outside the program - a script's - comes in
+tick, and the host is left with the entity. Each scene gets its own names
+and entries tables (`NAMES_n`/`ENTRIES_n`) under one `SCENES` index, because
+an empty canvas still answers to its name. The runner runs the active
+table and `load_scene` swaps it the way `Vm::load_scene` does, so a
+compiled game switches scenes without falling back to the VM. A clone or a
+deletion from outside the program - a script's - comes in
 through `fire` as a `Cloned`, `Created` or `Deleted` kind instead.
 
 What it won't compile is a custom block that can reach itself through

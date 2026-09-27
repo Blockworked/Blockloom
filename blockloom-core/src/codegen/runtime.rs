@@ -683,25 +683,59 @@ impl Actors {
     }
 }
 
-/// The scheduler held inside a compiled logic library.
+/// One scene's compiled program: its actors' names and its strands' entries.
+/// A generated program carries one of these per scene, so native logic runs
+/// a multi-scene project the way the VM does.
+pub struct SceneTable {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub names: &'static [(&'static str, &'static str)],
+    pub entries: &'static [Entry],
+}
+
+/// The scheduler held inside a compiled logic library. It carries every
+/// scene's program and runs the active one; [`Runner::load_scene`] swaps the
+/// way `Vm::load_scene` does - live strands go, actor ids restart, and the
+/// host's variables, lists and dicts carry over untouched.
 pub struct Runner {
     live: Vec<Live>,
     actors: Actors,
-    names: &'static [(&'static str, &'static str)],
+    scenes: &'static [SceneTable],
+    active: usize,
 }
 
 impl Runner {
-    pub fn new(names: &'static [(&'static str, &'static str)]) -> Self {
+    pub fn new(scenes: &'static [SceneTable], active: usize) -> Self {
+        let active = active.min(scenes.len().saturating_sub(1));
         Self {
             live: Vec::new(),
-            actors: Actors::new(names),
-            names,
+            actors: Actors::new(scenes.get(active).map(|scene| scene.names).unwrap_or(&[])),
+            scenes,
+            active,
         }
+    }
+
+    fn table(&self) -> &'static SceneTable {
+        &self.scenes[self.active]
     }
 
     pub fn reset(&mut self) {
         self.live.clear();
-        self.actors = Actors::new(self.names);
+        self.actors = Actors::new(self.table().names);
+    }
+
+    /// Switches to the scene `scene_id` names: live strands stop, the actor
+    /// table restarts from that scene's document, and runtime ids mint from
+    /// `~1` again, exactly like `Vm::load_scene`. Answers false for nothing
+    /// by that id, and the runner keeps running the old scene.
+    pub fn load_scene(&mut self, scene_id: &str) -> bool {
+        let Some(index) = self.scenes.iter().position(|scene| scene.id == scene_id) else {
+            return false;
+        };
+        self.active = index;
+        self.live.clear();
+        self.actors = Actors::new(self.table().names);
+        true
     }
 
     /// True while any strand is still live.
@@ -717,14 +751,7 @@ impl Runner {
     /// `create_clone` - `Created` an actor it conjured, and `Deleted` one it
     /// took out of the run. The program's own clones, creations and deletions
     /// go straight into [`Actors`] as they happen.
-    pub fn fire(
-        &mut self,
-        entries: &[Entry],
-        kind: &str,
-        actor: &str,
-        detail: &str,
-        other_name: &str,
-    ) {
+    pub fn fire(&mut self, kind: &str, actor: &str, detail: &str, other_name: &str) {
         match kind {
             "Cloned" => {
                 self.actors.adopt(actor, detail);
@@ -741,6 +768,7 @@ impl Runner {
             }
             _ => {}
         }
+        let entries: &'static [Entry] = self.table().entries;
         // A clone answers to its template's entries, so what an event means
         // is worked out against the actor those entries were written for.
         let template = self.actors.template_of(actor);
@@ -785,14 +813,15 @@ impl Runner {
                 _ => self.actors.copies_of(entry.actor),
             };
             for id in running {
-                self.begin(entries, index, id);
+                self.begin(index, id);
             }
         }
     }
 
     /// Starts one entry under one actor, replacing that actor's own run of
     /// the same strand.
-    fn begin(&mut self, entries: &[Entry], index: usize, actor: Rc<str>) {
+    fn begin(&mut self, index: usize, actor: Rc<str>) {
+        let entries: &'static [Entry] = self.table().entries;
         // A deleted actor has no strands to start: the VM drops its program,
         // so nothing of its matches an event any more.
         if !self.actors.is_live(&actor) {
@@ -830,20 +859,21 @@ impl Runner {
     }
 
     /// Gives every live strand one slice. True means `stop all` ended the run.
-    pub fn tick(&mut self, entries: &[Entry], host: &mut dyn Host, now: f64) -> bool {
-        self.tick_at(entries, host, now, now)
+    pub fn tick(&mut self, host: &mut dyn Host, now: f64) -> bool {
+        self.tick_at(host, now, now)
     }
 
     /// The same, with the world's clock and the wall's told apart. A strand
     /// the interface started runs on `wall`, so a `wait` on a pause menu
     /// finishes while the world stands still.
-    pub fn tick_at(&mut self, entries: &[Entry], host: &mut dyn Host, now: f64, wall: f64) -> bool {
+    pub fn tick_at(&mut self, host: &mut dyn Host, now: f64, wall: f64) -> bool {
+        let entries: &'static [Entry] = self.table().entries;
         // A clone made last tick starts its own strands now, by which time
         // the host has built the actor those blocks read through.
         for (clone, template) in std::mem::take(&mut self.actors.fresh) {
             for (index, entry) in entries.iter().enumerate() {
                 if entry.trigger == "Cloned" && entry.actor == &*template {
-                    self.begin(entries, index, Rc::clone(&clone));
+                    self.begin(index, Rc::clone(&clone));
                 }
             }
         }
@@ -1125,7 +1155,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 28;
+pub const LOGIC_ABI_VERSION: u32 = 29;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -2263,6 +2293,7 @@ pub const SYM_LOGIC_RESET: &[u8] = b"blockloom_logic_reset";
 pub const SYM_LOGIC_FIRE: &[u8] = b"blockloom_logic_fire";
 pub const SYM_LOGIC_TICK: &[u8] = b"blockloom_logic_tick";
 pub const SYM_LOGIC_PAUSE: &[u8] = b"blockloom_logic_pause";
+pub const SYM_LOGIC_SCENE: &[u8] = b"blockloom_logic_scene";
 
 // ─── Reading a value at an instruction's slot ───────────────────────────────
 // The VM reports a bad slot once and stands a zero in its place; a slot that

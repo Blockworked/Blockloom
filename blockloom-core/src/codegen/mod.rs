@@ -82,8 +82,8 @@ pub use runtime::{
     ACT_TURN, ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, Act, Actors,
     Entry, Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner,
     SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
-    SYM_LOGIC_TICK, State, Status, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
-    Val,
+    SYM_LOGIC_SCENE, SYM_LOGIC_TICK, SceneTable, State, Status, TICK_STOPPED, VALUE_BOOL,
+    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
 };
 
 use crate::project::Project;
@@ -107,7 +107,7 @@ pub extern "C" fn blockloom_logic_abi() -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn blockloom_logic_new() -> *mut std::ffi::c_void {
-    Box::into_raw(Box::new(Runner::new(NAMES))).cast()
+    Box::into_raw(Box::new(Runner::new(SCENES, ACTIVE_SCENE))).cast()
 }
 
 #[unsafe(no_mangle)]
@@ -136,7 +136,6 @@ pub unsafe extern "C" fn blockloom_logic_fire(
         return;
     };
     runner.fire(
-        ENTRIES,
         unsafe { kind.as_str() },
         unsafe { actor.as_str() },
         unsafe { detail.as_str() },
@@ -170,11 +169,26 @@ pub unsafe extern "C" fn blockloom_logic_tick(
     }
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut host = unsafe { AbiHost::new(ctx, api) };
-        runner.tick_at(ENTRIES, &mut host, now, wall)
+        runner.tick_at(&mut host, now, wall)
     })) {
         Ok(true) => TICK_STOPPED,
         Ok(false) => ABI_OK,
         Err(_) => ABI_PANIC,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn blockloom_logic_scene(
+    state: *mut std::ffi::c_void,
+    scene: AbiStr,
+) -> u32 {
+    let Some(runner) = (unsafe { state.cast::<Runner>().as_mut() }) else {
+        return ABI_PANIC;
+    };
+    if runner.load_scene(unsafe { scene.as_str() }) {
+        ABI_OK
+    } else {
+        ABI_MISSING
     }
 }
 "#;
@@ -273,79 +287,106 @@ pub fn compile_for(
     Ok(library)
 }
 
-/// Compiles every actor's canvas into one Rust source file, or names the
-/// first thing that stopped it.
+/// Compiles every scene's actors into one Rust source file, or names the
+/// first thing that stopped it. One emitted function covers an authored
+/// actor and every clone of it, numbered across scenes, and each scene gets
+/// its own names and entries tables under one `SCENES` index - so the
+/// generated program switches scenes the way the VM does.
 pub fn compile(project: &Project) -> Emit<String> {
-    // Native logic covers one scene: the VM stays the scheduler for a
-    // multi-scene project until the generated program carries every scene.
-    if project.scenes.len() > 1 {
-        return Err(Unsupported::new("a multi-scene project"));
-    }
-    let mut entries = Vec::new();
     let mut bodies = String::new();
-
-    let programs: Vec<Program> = project
-        .actors
-        .iter()
-        .map(|actor| compile_program(&actor.graph))
-        .collect();
+    let mut tables = String::new();
+    let mut scene_rows = Vec::new();
+    // One function number across scenes, so no two actors share one.
+    let mut counter = 0usize;
     // The VM ends a strand the moment the actor running it has been deleted,
     // whoever deleted it, and it checks after every act. That costs a read
     // per act, so it is only emitted for a project that can delete at all -
     // where nothing deletes, the check could never have held.
-    let deletes = programs.iter().any(|program| {
-        program
-            .steps
+    let mut deletes = false;
+    let mut programs_per_scene = Vec::new();
+    for scene in &project.scenes {
+        let programs: Vec<Program> = scene
+            .actors
             .iter()
-            .any(|step| matches!(step, Step::Action(Action::DeleteActor(_))))
-    });
-
-    for (index, actor) in project.actors.iter().enumerate() {
-        let program = &programs[index];
-        if program.steps.is_empty() {
-            continue;
-        }
-        let canvas = Canvas::of(index, program, &actor.graph, deletes)?;
-
-        bodies.push_str(&Pass::new(&canvas, false).emit()?);
-        // A reporter runs on a state of its own, so its mode is only worth
-        // emitting for an actor that has a custom block to call.
-        if !program.blocks.is_empty() {
-            bodies.push_str(&Pass::new(&canvas, true).emit()?);
-        }
-
-        let counters = canvas.plan.counters.len();
-        for entry in &program.entries {
-            entries.push(format!(
-                "    Entry {{ actor: {}, strand: {}, trigger: {}, detail: {}, \
-                 start: {}, counters: {counters}, run: actor_{index} }},",
-                literal(&actor.id),
-                literal(&entry.strand_id),
-                literal(trigger_name(&entry.trigger)),
-                literal(&trigger_detail(&entry.trigger)),
-                entry.pc,
-            ));
-        }
+            .map(|actor| compile_program(&actor.graph))
+            .collect();
+        deletes |= programs.iter().any(|program| {
+            program
+                .steps
+                .iter()
+                .any(|step| matches!(step, Step::Action(Action::DeleteActor(_))))
+        });
+        programs_per_scene.push(programs);
     }
 
-    // Every actor the document has, blocks or none: `delete` and `create a
-    // clone of` name one the way a block does, and an actor with nothing on
-    // its canvas still answers to its name.
-    let names: Vec<String> = project
-        .actors
+    for (scene_index, scene) in project.scenes.iter().enumerate() {
+        let programs = &programs_per_scene[scene_index];
+        let mut entries = Vec::new();
+        for (actor_index, actor) in scene.actors.iter().enumerate() {
+            let index = counter;
+            counter += 1;
+            let program = &programs[actor_index];
+            if program.steps.is_empty() {
+                continue;
+            }
+            let canvas = Canvas::of(index, program, &actor.graph, deletes)?;
+
+            bodies.push_str(&Pass::new(&canvas, false).emit()?);
+            // A reporter runs on a state of its own, so its mode is only worth
+            // emitting for an actor that has a custom block to call.
+            if !program.blocks.is_empty() {
+                bodies.push_str(&Pass::new(&canvas, true).emit()?);
+            }
+
+            let counters = canvas.plan.counters.len();
+            for entry in &program.entries {
+                entries.push(format!(
+                    "    Entry {{ actor: {}, strand: {}, trigger: {}, detail: {}, \
+                     start: {}, counters: {counters}, run: actor_{index} }},",
+                    literal(&actor.id),
+                    literal(&entry.strand_id),
+                    literal(trigger_name(&entry.trigger)),
+                    literal(&trigger_detail(&entry.trigger)),
+                    entry.pc,
+                ));
+            }
+        }
+
+        // Every actor the scene has, blocks or none: `delete` and `create a
+        // clone of` name one the way a block does, and an actor with nothing
+        // on its canvas still answers to its name.
+        let names: Vec<String> = scene
+            .actors
+            .iter()
+            .map(|actor| format!("    ({}, {}),", literal(&actor.id), literal(&actor.name)))
+            .collect();
+        tables.push_str(&format!(
+            "pub static NAMES_{scene_index}: &[(&str, &str)] = &[\n{}\n];\n\n\
+             pub static ENTRIES_{scene_index}: &[Entry] = &[\n{}\n];\n\n",
+            names.join("\n"),
+            entries.join("\n")
+        ));
+        scene_rows.push(format!(
+            "    SceneTable {{ id: {}, name: {}, names: NAMES_{scene_index}, entries: ENTRIES_{scene_index} }},",
+            literal(&scene.id),
+            literal(&scene.name),
+        ));
+    }
+    let active = project
+        .scenes
         .iter()
-        .map(|actor| format!("    ({}, {}),", literal(&actor.id), literal(&actor.name)))
-        .collect();
+        .position(|scene| scene.id == project.active_scene)
+        .unwrap_or(0);
 
     Ok(format!(
         "// Generated by Blockloom from {}. Rebuilt on every build; don't edit.\n\
          #![allow(unused, clippy::all)]\n\n\
          {RUNTIME_SOURCE}\n\
-         pub static NAMES: &[(&str, &str)] = &[\n{}\n];\n\n\
-         pub static ENTRIES: &[Entry] = &[\n{}\n];\n\n{bodies}\n{EXPORT_SOURCE}",
+         {tables}\
+         pub static SCENES: &[SceneTable] = &[\n{}\n];\n\n\
+         pub static ACTIVE_SCENE: usize = {active};\n\n{bodies}\n{EXPORT_SOURCE}",
         literal(&project.name),
-        names.join("\n"),
-        entries.join("\n")
+        scene_rows.join("\n"),
     ))
 }
 
