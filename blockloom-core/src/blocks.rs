@@ -153,6 +153,12 @@ pub enum InstructionKind {
     WhenEnterRoom {
         room: String,
     },
+    /// Runs in the newly loaded scene's actors after a `switch scene to`
+    /// finishes loading it, and once at the start of the first scene.
+    WhenSceneStarts,
+    /// Runs in the outgoing scene's actors before a `switch scene to`
+    /// unloads it.
+    WhenSceneEnds,
     /// Runs when the interface element named `element` is clicked.
     ///
     /// Spelled `element` rather than `id` because a flattened instruction
@@ -804,6 +810,15 @@ pub enum InstructionKind {
     },
 
     // ─── Control ────────────────────────────────────────────────────────────
+    /// Loads another scene by name and continues the run there: the current
+    /// world's actors stop, globals and save data carry over, and the new
+    /// scene's `when scene starts` strands run once it is warm. `transition`
+    /// is `none`, `fade`, `wipe` or `circle`; unknown spellings read as
+    /// `none`. The strand that asked stops where it stands.
+    SwitchScene {
+        scene: Value,
+        transition: Value,
+    },
     /// Suspends this script for `duration` seconds.
     Wait {
         duration: Value,
@@ -1121,6 +1136,10 @@ impl BlockKind for InstructionKind {
                 f(y, InputValueType::Any);
                 f(z, InputValueType::Any);
             }
+            K::SwitchScene { scene, transition } => {
+                f(scene, InputValueType::Any);
+                f(transition, InputValueType::Any);
+            }
             K::PlaySound {
                 sound,
                 volume,
@@ -1333,6 +1352,8 @@ impl BlockKind for InstructionKind {
             | K::WhenParticles { .. }
             | K::WhenAnimationMarker { .. }
             | K::WhenEnterRoom { .. }
+            | K::WhenSceneStarts
+            | K::WhenSceneEnds
             | K::BlockHeader { .. }
             | K::CreateClone { .. }
             | K::PointTowards { .. }
@@ -1387,6 +1408,8 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenParticles { .. }
                 | InstructionKind::WhenAnimationMarker { .. }
                 | InstructionKind::WhenEnterRoom { .. }
+                | InstructionKind::WhenSceneStarts
+                | InstructionKind::WhenSceneEnds
                 | InstructionKind::WhenUiEvent { .. }
                 | InstructionKind::WhenUiClicked { .. }
                 | InstructionKind::WhenUiChanged { .. }

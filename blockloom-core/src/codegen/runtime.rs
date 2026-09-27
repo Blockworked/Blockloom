@@ -370,6 +370,12 @@ pub enum Act {
     Broadcast {
         name: &'static str,
     },
+    /// Loads another scene by name; `transition` is `none`, `fade`, `wipe`
+    /// or `circle`. The strand that asked ends where it stands.
+    SwitchScene {
+        scene: String,
+        transition: String,
+    },
     /// Grabs or frees the pointer; window-global, like gravity.
     SetMouseLocked {
         locked: bool,
@@ -740,7 +746,9 @@ impl Runner {
         let template = self.actors.template_of(actor);
         for (index, entry) in entries.iter().enumerate() {
             let matches = match (entry.trigger, kind) {
-                ("Started", "Started") => true,
+                ("Started", "Started")
+                | ("SceneStarted", "SceneStarted")
+                | ("SceneEnded", "SceneEnded") => true,
                 ("Key", "Key") | ("Message", "Message") => entry.detail == detail,
                 ("Action", "Action") => entry.detail == detail,
                 ("Touched", "Touched") => true,
@@ -1117,7 +1125,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 27;
+pub const LOGIC_ABI_VERSION: u32 = 28;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1323,6 +1331,8 @@ pub const ACT_SET_PARALLAX: u32 = 103;
 pub const ACT_SPAWN_DECAL: u32 = 104;
 /// Numbers = centre x/y/z, radius, fade seconds. Window-global.
 pub const ACT_FADE_DECALS: u32 = 105;
+/// `a` = scene name, `b` = transition (`none`, `fade`, `wipe`, `circle`).
+pub const ACT_SWITCH_SCENE: u32 = 106;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2208,6 +2218,9 @@ impl Host for AbiHost {
             Act::LoadJsonIntoList { name, json } => {
                 self.act_wire(actor, ACT_JSON_TO_LIST, name, "", [0.0; 3], &json)
             }
+            Act::SwitchScene { scene, transition } => {
+                self.act_wire(actor, ACT_SWITCH_SCENE, &scene, &transition, [0.0; 3], &zero)
+            }
         }
     }
 
@@ -2334,6 +2347,26 @@ pub fn sound_pitch(pitch: f32) -> f32 {
         return 1.0;
     }
     pitch.clamp(0.125, 4.0)
+}
+
+/// A scene transition by the name a block spells it. Unknown spellings read
+/// as `none`, the same rule the VM keeps in `vm::normalize_transition`.
+pub fn normalize_transition(name: &str) -> String {
+    let mut key = String::with_capacity(name.len());
+    for c in name.chars() {
+        if c.is_whitespace() || c == '_' || c == '-' {
+            continue;
+        }
+        for l in c.to_lowercase() {
+            key.push(l);
+        }
+    }
+    match key.as_str() {
+        "fade" => "fade".to_string(),
+        "wipe" => "wipe".to_string(),
+        "circle" => "circle".to_string(),
+        _ => "none".to_string(),
+    }
 }
 
 /// A condition slot: an `if`, a `while`, a `wait until`. A bad one reports

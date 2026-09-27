@@ -1329,6 +1329,31 @@ impl Actor {
         self.text(TEXT_ENTERED_ROOM, Str::EMPTY, Str::EMPTY)
     }
 
+    /// Loads another scene by name and continues the run there: globals and
+    /// save data carry over, actor locals do not. `transition` is `none`,
+    /// `fade`, `wipe` or `circle`; anything else reads as `none`.
+    pub fn switch_scene(&self, scene: &str, transition: &str) {
+        self.act(
+            ACT_SWITCH_SCENE,
+            Str::borrow(scene),
+            Str::borrow(transition),
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// The scene running right now, by name. What `current scene` reports.
+    pub fn current_scene(&self) -> Option<String> {
+        self.text(TEXT_CURRENT_SCENE, Str::EMPTY, Str::EMPTY)
+    }
+
+    /// Every scene's name, in project order. What `scene names` reports.
+    pub fn scene_names(&self) -> Option<String> {
+        self.text(TEXT_SCENE_NAMES, Str::EMPTY, Str::EMPTY)
+    }
+
     /// The water surface over (x, z) as of this fixed tick (z means nothing
     /// in 2D), or `None` over dry land. The highest where bodies overlap.
     pub fn water_at(&self, x: f32, z: f32) -> Option<WaterSample> {
@@ -2319,6 +2344,10 @@ pub enum Event {
     Ui { element: String, event: String },
     /// This actor walked into a room, by the room's name.
     EnteredRoom(String),
+    /// The newly loaded scene finished warming up.
+    SceneStarted,
+    /// The outgoing scene is about to unload.
+    SceneEnded,
 }
 
 /// Which particle event an [`Event::Particles`] is.
@@ -2371,6 +2400,8 @@ impl Event {
                 event: word("detail"),
             },
             EVENT_ENTERED_ROOM => Event::EnteredRoom(subject),
+            EVENT_SCENE_STARTED => Event::SceneStarted,
+            EVENT_SCENE_ENDED => Event::SceneEnded,
             _ => return None,
         })
     }

@@ -932,6 +932,28 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "CurrentScene",
+        op: "CurrentScene",
+        arity: 0,
+        default_args: Vec::new,
+        // The scene running right now, by name. Sampled on the fixed tick.
+        eval: |_| Ok(Evaluated::Text(sense::read(|s| s.current_scene.clone()))),
+    },
+    ExtOperator {
+        kind: "SceneNames",
+        op: "SceneNames",
+        arity: 0,
+        default_args: Vec::new,
+        // Every scene's name as a JSON list, so `load json into list` takes
+        // it. Sampled on the fixed tick like `active volumes`.
+        eval: |_| {
+            let names = sense::read(|s| s.scene_names.clone());
+            Ok(Evaluated::Text(
+                serde_json::to_string(&names).unwrap_or_else(|_| "[]".to_string()),
+            ))
+        },
+    },
+    ExtOperator {
         kind: "CircleHit",
         op: "CircleHit",
         arity: 4,

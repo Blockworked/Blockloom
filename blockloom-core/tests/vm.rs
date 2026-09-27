@@ -283,6 +283,145 @@ fn a_broadcast_starts_every_listening_strand_on_the_next_frame() {
 }
 
 #[test]
+fn switch_scene_asks_for_the_named_scene_and_ends_its_strand() {
+    let project = project_with(vec![started(vec![
+        InstructionKind::SwitchScene {
+            scene: Value::text("Scene 2"),
+            transition: Value::text("fade"),
+        },
+        say("unreached"),
+    ])]);
+    let mut vm = Harness::started(&project);
+    let mut effects = Vec::new();
+    vm.vm.tick(0.1, &mut effects);
+    let switch = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::SwitchScene {
+                scene, transition, ..
+            } => Some((scene.clone(), transition.clone())),
+            _ => None,
+        })
+        .expect("a switch effect");
+    assert_eq!(switch, ("Scene 2".to_string(), "fade".to_string()));
+    // The strand that asked stopped where it stood.
+    assert!(says(&effects).is_empty());
+}
+
+#[test]
+fn switch_scene_normalizes_an_unknown_transition_to_none() {
+    let project = project_with(vec![started(vec![InstructionKind::SwitchScene {
+        scene: Value::text("  Scene 2  "),
+        transition: Value::text("curtain"),
+    }])]);
+    let mut vm = Harness::started(&project);
+    let mut effects = Vec::new();
+    vm.vm.tick(0.1, &mut effects);
+    let switch = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::SwitchScene {
+                scene, transition, ..
+            } => Some((scene.clone(), transition.clone())),
+            _ => None,
+        })
+        .expect("a switch effect");
+    assert_eq!(switch, ("Scene 2".to_string(), "none".to_string()));
+}
+
+#[test]
+fn scene_events_start_their_strands() {
+    let project = project_with(vec![
+        Strand::with_instructions(
+            0,
+            0,
+            vec![
+                ins(InstructionKind::WhenSceneStarts),
+                ins(say("begun")),
+            ],
+        ),
+        Strand::with_instructions(
+            0,
+            0,
+            vec![ins(InstructionKind::WhenSceneEnds), ins(say("ended"))],
+        ),
+    ]);
+    let mut vm = Harness::new(&project);
+    vm.vm.fire(Event::SceneStarted);
+    assert_eq!(vm.run(1).iter().filter_map(|effect| match effect {
+        Effect::Say { text, .. } => Some(text.clone()),
+        _ => None,
+    }).collect::<Vec<_>>(), vec!["begun".to_string()]);
+    vm.vm.fire(Event::SceneEnded);
+    assert_eq!(says(&vm.run(1)), vec!["ended".to_string()]);
+}
+
+#[test]
+fn scene_reporters_read_the_published_snapshot() {
+    blockloom_core::init();
+    blockloom_core::sense::publish(Sensors {
+        current_scene: "Menu".to_string(),
+        scene_names: vec!["Menu".to_string(), "Level 1".to_string()],
+        ..Default::default()
+    });
+    let current = Value::op(Op::from_name("CurrentScene"), vec![]);
+    assert_eq!(current.eval(), Ok(Evaluated::Text("Menu".to_string())));
+    let names = Value::op(Op::from_name("SceneNames"), vec![]);
+    assert_eq!(
+        names.eval(),
+        Ok(Evaluated::Text("[\"Menu\",\"Level 1\"]".to_string()))
+    );
+}
+
+#[test]
+fn loading_a_scene_keeps_globals_but_resets_actor_locals() {
+    use blockloom_core::blocks::VariableDef;
+    use blockloom_core::vm::Variables;
+    let mut project = project_with(vec![started(vec![])]);
+    project.globals.push(VariableDef {
+        name: "score".to_string(),
+        value: Evaluated::Number(0.0),
+    });
+    project.scenes[0].actors[0]
+        .graph
+        .variables
+        .push(VariableDef {
+            name: "local".to_string(),
+            value: Evaluated::Number(1.0),
+        });
+    let variables = Variables::default();
+    variables.load(&project);
+    let actor = project.scenes[0].actors[0].id.clone();
+    // A run's writes: a global and an actor-local.
+    variables.write(&actor, "score", Evaluated::Number(7.0));
+    variables.write(&actor, "local", Evaluated::Number(2.0));
+    assert_eq!(variables.read(&actor, "score"), Evaluated::Number(7.0));
+    // A second scene with its own actor and its own default for `local`.
+    let mut other = Actor::new("Other", rect());
+    other.graph.variables.push(VariableDef {
+        name: "local".to_string(),
+        value: Evaluated::Number(9.0),
+    });
+    let other_id = other.id.clone();
+    project.scenes.push(Scene {
+        id: "s2".to_string(),
+        name: "Scene 2".to_string(),
+        world: blockloom_core::scene::World {
+            mode: Mode::TwoD,
+            ..Default::default()
+        },
+        actors: vec![other],
+    });
+    project.active_scene = "s2".to_string();
+    variables.load_scene(&project);
+    // Globals keep what the run wrote; the new scene's actor starts as
+    // authored, and the old actor's scope is gone.
+    assert_eq!(variables.read(&other_id, "score"), Evaluated::Number(7.0));
+    assert_eq!(variables.read(&other_id, "local"), Evaluated::Number(9.0));
+    assert_eq!(variables.read(&actor, "score"), Evaluated::Number(7.0));
+}
+
+#[test]
 fn a_reporter_block_returns_a_value_into_the_slot_that_called_it() {
     // `double (n)` returns n * 2; `say (double (21))` says 42.
     let block = BlockDef {

@@ -43,6 +43,10 @@ pub enum Trigger {
     EnteredRoom {
         room: String,
     },
+    /// The newly loaded scene finished warming up and its actors started.
+    SceneStarted,
+    /// The outgoing scene is about to unload for a `switch scene to`.
+    SceneEnded,
     /// The named input action went down.
     ActionPressed(String),
     /// A finger touched the screen.
@@ -282,6 +286,12 @@ pub enum Action {
     /// An empty target deletes the running actor.
     DeleteActor(Value),
     Broadcast(String),
+    /// Loads another scene by name; `transition` is `none`, `fade`, `wipe`
+    /// or `circle`. The strand that asked ends where it stands.
+    SwitchScene {
+        scene: Value,
+        transition: Value,
+    },
     /// Grabs or frees the pointer; window-global, like gravity.
     SetMouseLocked(bool),
     /// Rumbles connected gamepads: 0-100 strength for seconds.
@@ -526,6 +536,8 @@ pub fn compile(graph: &ActorGraph) -> Program {
             InstructionKind::WhenEnterRoom { room } => Some(Trigger::EnteredRoom {
                 room: room.trim().to_string(),
             }),
+            InstructionKind::WhenSceneStarts => Some(Trigger::SceneStarted),
+            InstructionKind::WhenSceneEnds => Some(Trigger::SceneEnded),
             InstructionKind::WhenActionPressed { action } => Some(Trigger::ActionPressed(
                 crate::input::normalize_action(action).to_lowercase(),
             )),
@@ -774,6 +786,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
         }
         Action::RumbleGamepad { strength, duration } => vec![strength, duration],
         Action::BindAction { action, binding } => vec![action, binding],
+        Action::SwitchScene { scene, transition } => vec![scene, transition],
         Action::SetVariable { value, .. } | Action::ChangeVariable { value, .. } => vec![value],
         Action::AddToList { value, .. } => vec![value],
         Action::DeleteOfList { index, .. } => vec![index],
@@ -1173,6 +1186,10 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
             action: lift_one(action, ctx),
             binding: lift_one(binding, ctx),
         },
+        Action::SwitchScene { scene, transition } => Action::SwitchScene {
+            scene: lift_one(scene, ctx),
+            transition: lift_one(transition, ctx),
+        },
         Action::ShowElement(mut spec) => {
             spec.id = lift_one(std::mem::replace(&mut spec.id, Value::Bool), ctx);
             spec.content = lift_one(std::mem::replace(&mut spec.content, Value::Bool), ctx);
@@ -1432,6 +1449,8 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenParticles { .. }
         | K::WhenAnimationMarker { .. }
         | K::WhenEnterRoom { .. }
+        | K::WhenSceneStarts
+        | K::WhenSceneEnds
         | K::WhenUiEvent { .. }
         | K::WhenUiClicked { .. }
         | K::WhenUiChanged { .. }
@@ -1755,6 +1774,12 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         })),
         K::DeleteActor { target } => steps.push(Step::Action(Action::DeleteActor(target.clone()))),
         K::Broadcast { name } => steps.push(Step::Action(Action::Broadcast(name.clone()))),
+        K::SwitchScene { scene, transition } => {
+            steps.push(Step::Action(Action::SwitchScene {
+                scene: scene.clone(),
+                transition: transition.clone(),
+            }))
+        }
         K::SetMouseLocked { locked } => steps.push(Step::Action(Action::SetMouseLocked(*locked))),
         K::RumbleGamepad { strength, duration } => {
             steps.push(Step::Action(Action::RumbleGamepad {

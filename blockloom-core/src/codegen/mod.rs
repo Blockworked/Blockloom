@@ -78,7 +78,8 @@ pub use runtime::{
     ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_SPRITE_DIAL, ACT_SET_TRAIL_ENABLED,
     ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE,
     ACT_SET_VOLUME_WEIGHT, ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT, ACT_SPAWN_DECAL,
-    ACT_STOP_ANIMATION, ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_TURN,
+    ACT_STOP_ANIMATION, ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_SWITCH_SCENE,
+    ACT_TURN,
     ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, Act, Actors, Entry,
     Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI,
     SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
@@ -276,6 +277,11 @@ pub fn compile_for(
 /// Compiles every actor's canvas into one Rust source file, or names the
 /// first thing that stopped it.
 pub fn compile(project: &Project) -> Emit<String> {
+    // Native logic covers one scene: the VM stays the scheduler for a
+    // multi-scene project until the generated program carries every scene.
+    if project.scenes.len() > 1 {
+        return Err(Unsupported::new("a multi-scene project"));
+    }
     let mut entries = Vec::new();
     let mut bodies = String::new();
 
@@ -349,6 +355,8 @@ fn trigger_name(trigger: &crate::vm::Trigger) -> &'static str {
     use crate::vm::Trigger;
     match trigger {
         Trigger::Started => "Started",
+        Trigger::SceneStarted => "SceneStarted",
+        Trigger::SceneEnded => "SceneEnded",
         Trigger::KeyPressed(_) => "Key",
         Trigger::Clicked => "Clicked",
         Trigger::Collision { .. } => "Collision",
@@ -379,7 +387,12 @@ fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
         Trigger::UiEvent { id, event } => format!("{event}\n{id}"),
         Trigger::UiClicked(id) | Trigger::UiChanged(id) => id.clone(),
         Trigger::ActionPressed(action) => action.clone(),
-        Trigger::Started | Trigger::Clicked | Trigger::Cloned | Trigger::Touched => String::new(),
+        Trigger::Started
+        | Trigger::SceneStarted
+        | Trigger::SceneEnded
+        | Trigger::Clicked
+        | Trigger::Cloned
+        | Trigger::Touched => String::new(),
     }
 }
 
@@ -1355,6 +1368,20 @@ impl<'a> Pass<'a> {
                 "Act::Broadcast {{ name: {} }}",
                 literal(name.trim())
             )),
+            Action::SwitchScene { scene, transition } => {
+                let scene = self.text(scene)?;
+                let transition = self.text(transition)?;
+                let act = format!(
+                    "    let scene = {scene}.trim().to_string();\n    \
+                     let transition = {transition};\n    \
+                     h.act(&me, Act::SwitchScene {{ scene, transition: normalize_transition(&transition) }});\n"
+                );
+                if self.immediate {
+                    format!("{act}    return Val::Num(0.0);\n")
+                } else {
+                    format!("{act}    s.finish();\n    return;\n")
+                }
+            }
             Action::SetMouseLocked(locked) => {
                 act(format!("Act::SetMouseLocked {{ locked: {locked} }}"))
             }

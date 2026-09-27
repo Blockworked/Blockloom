@@ -266,6 +266,7 @@ pub fn pump_editor(
                 load_saved_data(&mut engine);
                 open_logic(&mut engine);
                 engine.speech.clear();
+                engine.pending_scene = None;
                 // The interface goes with the world it belonged to. Cleared
                 // here rather than in `rebuild_world`, which runs after the
                 // fixed step that builds this run's interface.
@@ -288,6 +289,7 @@ pub fn pump_editor(
                 }
                 engine.touching.clear();
                 engine.speech.clear();
+                engine.pending_scene = None;
                 let document = match engine.project_dir.as_deref() {
                     Some(dir) => engine.project.world.interface.with_stylesheets(dir),
                     None => Ok(engine.project.world.interface.clone()),
@@ -411,6 +413,7 @@ pub fn pump_editor(
 pub fn end_run(engine: &mut Engine, manager: &mut crate::ui::UiManager) {
     engine.stop_program();
     engine.speech.clear();
+    engine.pending_scene = None;
     manager.clear();
     engine.running = false;
     engine.starting = false;
@@ -856,6 +859,7 @@ pub fn step_scripts(
         engine.fire(Event::Message(message));
     }
     script_lifetimes(&mut engine, &mut asked);
+    let mut switch_request: Option<(String, String)> = None;
     for effect in &asked.effects {
         // Says and errors go to the editor the same way the VM's do.
         match effect {
@@ -870,7 +874,30 @@ pub fn step_scripts(
                 actor: actor.clone(),
                 message: message.clone(),
             }),
+            Effect::SwitchScene { actor, scene, transition } => {
+                if switch_request.is_none() && engine.pending_scene.is_none() {
+                    switch_request = Some((scene.clone(), transition.clone()));
+                    // A script's ask names who asked only for the log line;
+                    // the switch itself is window-global.
+                    let _ = actor;
+                }
+            }
             _ => {}
+        }
+    }
+    if let Some((scene, transition)) = switch_request {
+        // Scripts report through the same validation as blocks: a typo
+        // reports on the tick it was asked.
+        match resolve_scene(&engine, &scene) {
+            None => bridge::send(&RuntimeMessage::Error {
+                actor: String::new(),
+                message: format!("there's no scene named \"{scene}\""),
+            }),
+            Some(target) if target == engine.project.active_scene => {}
+            Some(_) => {
+                engine.fire(Event::SceneEnded);
+                engine.pending_scene = Some((scene, transition, 2));
+            }
         }
     }
     effects.0.append(&mut asked.effects);
@@ -1283,6 +1310,8 @@ pub fn publish_sensors(
         water: water.map(|water| water.0.clone()).unwrap_or_default(),
         // `tiles::publish_level` fills it straight after.
         level: Default::default(),
+        current_scene: engine.project.active_scene().name.clone(),
+        scene_names: engine.project.scenes.iter().map(|s| s.name.clone()).collect(),
     });
 
     // No world event queues while paused, so resuming never bursts.
@@ -1823,6 +1852,19 @@ pub fn step_vm(
     if !engine.running {
         return;
     }
+    // A scene switch the blocks asked for earlier: count down so the
+    // outgoing scene's `when scene ends` strands run first, then unload and
+    // load. Two ticks: one for the ended strands to start, one for them to
+    // run before the world goes away.
+    if let Some((_, _, ticks)) = engine.pending_scene.as_mut() {
+        if *ticks > 0 {
+            *ticks -= 1;
+        }
+        if *ticks == 0 {
+            let (scene, transition, _) = engine.pending_scene.take().expect("checked above");
+            perform_scene_switch(&mut engine, &scene, &transition);
+        }
+    }
     let elapsed = time.elapsed_secs() as f64;
     let now = engine.run_time(elapsed);
     let wall = (elapsed - engine.started_at).max(0.0);
@@ -1847,6 +1889,9 @@ pub fn step_vm(
     for message in messages {
         engine.fire(Event::Message(message));
     }
+    // The first `switch scene to` of the tick wins; the rest are dropped,
+    // the way a second `stop all` is meaningless after the first.
+    let mut switch_request: Option<(String, String, String)> = None;
     for effect in &produced {
         match effect {
             Effect::Say { actor, text } => {
@@ -1860,13 +1905,111 @@ pub fn step_vm(
                 actor: actor.clone(),
                 message: message.clone(),
             }),
+            Effect::SwitchScene {
+                actor,
+                scene,
+                transition,
+            } => {
+                if switch_request.is_none() && engine.pending_scene.is_none() {
+                    switch_request = Some((actor.clone(), scene.clone(), transition.clone()));
+                }
+            }
             _ => {}
+        }
+    }
+    if let Some((actor, scene, transition)) = switch_request {
+        // Validate now so a typo reports on the tick it was asked, not two
+        // ticks later when the switch would land.
+        match resolve_scene(&engine, &scene) {
+            None => bridge::send(&RuntimeMessage::Error {
+                actor,
+                message: format!("there's no scene named \"{scene}\""),
+            }),
+            Some(target) if target == engine.project.active_scene => {}
+            Some(_) => {
+                engine.fire(Event::SceneEnded);
+                engine.pending_scene = Some((scene, transition, 2));
+            }
         }
     }
     effects.0.extend(produced);
 
     // An idle VM is still a live play session. It must keep accepting key,
     // click, collision, and broadcast events until Stop or `stop all` ends it.
+}
+
+/// A scene name as the blocks spell it into the scene id it names, or `None`
+/// for nothing by that name. Empty names no scene, the way an empty actor
+/// slot means "myself" rather than a scene.
+fn resolve_scene(engine: &Engine, wanted: &str) -> Option<String> {
+    let wanted = wanted.trim();
+    if wanted.is_empty() {
+        return None;
+    }
+    engine
+        .project
+        .scenes
+        .iter()
+        .find(|scene| scene.name.eq_ignore_ascii_case(wanted))
+        .map(|scene| scene.id.clone())
+}
+
+/// Unloads the current scene and loads `wanted` (a scene name as the block
+/// spelled it): globals and save data carry over, actor locals start fresh,
+/// and the new scene rebuilds and warms up like a fresh Play before its
+/// `when scene starts` strands run. Same-dimension switches only for now; a
+/// cross-dimension ask reports and stays put.
+fn perform_scene_switch(engine: &mut Engine, wanted: &str, transition: &str) {
+    let _ = transition;
+    let Some(target) = resolve_scene(engine, wanted) else {
+        return;
+    };
+    if target == engine.project.active_scene {
+        return;
+    }
+    let mode_now = engine.project.active_scene().world.mode;
+    let mode_next = engine
+        .project
+        .scene(&target)
+        .map(|scene| scene.world.mode)
+        .unwrap_or(mode_now);
+    if mode_next != mode_now {
+        bridge::send(&RuntimeMessage::Error {
+            actor: String::new(),
+            message: format!(
+                "can't switch from a {} scene to a {} one mid-run yet",
+                mode_name(mode_now),
+                mode_name(mode_next)
+            ),
+        });
+        return;
+    }
+    engine.project.active_scene = target;
+    // Run-made actors die with the scene they were made in; a clone's
+    // template lives in the new scene's document or not at all.
+    engine.spawned.clear();
+    engine.clones.clear();
+    engine.last_created.clear();
+    engine.speech.clear();
+    engine.touching.clear();
+    engine.driven.clear();
+    let project = engine.project.clone();
+    if engine.logic.is_some() {
+        // Multi-scene projects run on the VM (native logic covers one
+        // scene), so reaching here with logic means a single-scene build
+        // asking for another scene it was never compiled with.
+        engine.logic = None;
+    }
+    engine.vm.load_scene(&project);
+    engine.rebuild = true;
+    engine.fire(Event::SceneStarted);
+}
+
+fn mode_name(mode: Mode) -> &'static str {
+    match mode {
+        Mode::TwoD => "2D",
+        Mode::ThreeD => "3D",
+    }
 }
 
 /// The dimension-agnostic effects: anything that's a transform, a scale or a
@@ -3815,7 +3958,8 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetParent { .. }
         | Effect::CreateClone { .. }
         | Effect::CreateActor { .. }
-        | Effect::DeleteActor { .. } => None,
+        | Effect::DeleteActor { .. }
+        | Effect::SwitchScene { .. } => None,
     }
 }
 

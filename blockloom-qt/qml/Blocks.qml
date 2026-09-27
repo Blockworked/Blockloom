@@ -143,6 +143,7 @@ QtObject {
         SetCameraView:"camera", SetCameraPitch:"video", SetCameraFov:"video", AttachComponent:"plus", DetachComponent:"x", SetParent:"link",
         CreateClone:"copy", CreateActor:"sparkles", DeleteActor:"trash-2", Wait:"clock", WaitUntil:"hand", If:"git-branch", IfElse:"git-fork",
         Repeat:"repeat", Forever:"infinity", While:"repeat", EscapeLoop:"log-out", ContinueLoop:"skip-forward", Broadcast:"radio", StopAll:"octagon",
+        SwitchScene:"layers", WhenSceneStarts:"play", WhenSceneEnds:"square",
         SetMouseLocked:"lock", RumbleGamepad:"vibrate", BindAction:"keyboard", ClearActionBindings:"eraser", ShowPanel:"layout-panel-top",
         ShowLabel:"type", ShowButton:"square-mouse-pointer", ShowImage:"image", ShowInput:"text-cursor-input", ShowSlider:"sliders-horizontal",
         ShowWidget:"layout-grid", ShowToggle:"toggle-left", ShowList:"list-checks", SetUiTheme:"palette", BindUi:"list-checks", SetUiItems:"list-checks", ScrollUi:"list-checks", SetElementTheme:"list-checks", SetUiProp:"list-checks", HideElement:"eye", HideAllUi:"eye",
@@ -174,7 +175,10 @@ QtObject {
             WhenAnimationEnds: header([lb("when animation"), field("clip", "clip name (empty for any)"), lb("ends")]),
             WhenAnimationMarker: header([lb("when animation reaches marker"), field("marker", "marker (empty for any)")]),
             WhenEnterRoom: header([lb("when I enter room"), field("room", "room (empty for any)")]),
+            WhenSceneStarts: header([lb("when scene starts")]),
+            WhenSceneEnds: header([lb("when scene ends")]),
             Broadcast: row([lb("broadcast"), field("name", "message")]),
+            SwitchScene: row([lb("switch scene to"), slot("SceneName", "scene"), lb("with transition"), slot("SceneTransition", "none")]),
             // Motion
             Move: row([lb("move"), slot("MoveSteps", "steps"), lb("steps")]),
             GoTo: row(vector("go to", ["GoToX","GoToY","GoToZ"], ["x","y","z"])),
@@ -404,6 +408,7 @@ QtObject {
         case "SetTrailEnabled": return { enabled: true };
         case "SetEmitterPlaying": return { playing: true };
         case "WhenParticles": return { event: "Spawn" };
+        case "SwitchScene": return { scene: txt("Scene 2"), transition: txt("none") };
         case "PlaySound": return { sound: txt("assets/sounds/sound.wav"), volume: num(100), pitch: num(1), loop: false, bus: "Sfx" };
         case "PlaySoundAt": return { sound: txt("assets/sounds/sound.wav"), volume: num(100), pitch: num(1), loop: false, bus: "Sfx", target: txt("") };
         case "StopSound": return { sound: txt("") };
@@ -538,6 +543,8 @@ QtObject {
         IsHdrDisplay: { prefix: "HDR display?", result: "bool", arity: 0 },
         PeakBrightness: { prefix: "peak brightness", result: "number", arity: 0 },
         ActiveVolumes: { prefix: "active volumes", result: "text", arity: 0 },
+        CurrentScene: { prefix: "current scene", result: "text", arity: 0 },
+        SceneNames: { prefix: "scene names", result: "text", arity: 0 },
         CastsShadows: { prefix: "does", suffix: "cast shadows?", result: "bool", arity: 1, args: ["text"] },
         IsRayTracing: { prefix: "ray tracing on?", result: "bool", arity: 0 },
         RayTracingAvailable: { prefix: "ray tracing available?", result: "bool", arity: 0 },
@@ -561,7 +568,7 @@ QtObject {
     })
     // Palette groups, the way the sidebar shows them.
     readonly property var operatorGroups: [
-        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","ActorPosition","ActorLocalPosition","ComponentField","SoundPlaying","BusVolume","IsTweening","CurrentClip","CurrentFrame","AnimationPlaying","Atmosphere","SceneLuminance","IsHdrDisplay","PeakBrightness","ActiveVolumes","CastsShadows","IsRayTracing","RayTracingAvailable","WaterHeight","Underwater","TileAt","RoomContaining","ParticleCount","ParticleEventCount","ParticleEventPosition"] },
+        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","ActorPosition","ActorLocalPosition","ComponentField","SoundPlaying","BusVolume","IsTweening","CurrentClip","CurrentFrame","AnimationPlaying","Atmosphere","SceneLuminance","IsHdrDisplay","PeakBrightness","ActiveVolumes","CurrentScene","SceneNames","CastsShadows","IsRayTracing","RayTracingAvailable","WaterHeight","Underwater","TileAt","RoomContaining","ParticleCount","ParticleEventCount","ParticleEventPosition"] },
         { label: "Interface", kinds: ["UiSelectedIndex","UiValue","UiText","UiShown","UiExists","UiFocus","GamePaused"] },
         { label: "Actors", kinds: ["IsClone","MyParent","NewActor","ActorCount"] },
         { label: "Maths", kinds: ["Add","Sub","Mul","Div","Mod","Round","Math","Random"] },
@@ -571,7 +578,7 @@ QtObject {
     readonly property var listOperatorKinds: ["ListItem","ListItemNumber","ListAmount","ListLength","ListContains","ListItemExists","ListIsEmpty","ListAsJson"]
     readonly property var dictOperatorKinds: ["DictValue","DictHasKey","DictSize","DictKeys","DictAsJson","DictIsEmpty"]
     readonly property var blockGroups: [
-        { label: "Events", types: ["WhenStarted","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenParticles","WhenAnimationEnds","WhenAnimationMarker","WhenEnterRoom","WhenUiEvent","WhenUiClicked","WhenUiChanged","Broadcast"] },
+        { label: "Events", types: ["WhenStarted","WhenSceneStarts","WhenSceneEnds","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenParticles","WhenAnimationEnds","WhenAnimationMarker","WhenEnterRoom","WhenUiEvent","WhenUiClicked","WhenUiChanged","Broadcast"] },
         { label: "Motion", types: ["Move","GoTo","NavigateTo","ChangePosition","Glide","TweenScale","TweenRotation","TweenColor","StopTweens","Turn","SetRotation","PointTowards","SetScale"] },
         { label: "Physics", types: ["SetBody","ApplyImpulse","SetVelocity","SetGravity","SetDensity","SetMass","SetTrigger","SetCollisionLayer","SetCollisionMask"] },
         { label: "Looks", types: ["Say","SetVisible","SetColor","SetExposure","SetLightIntensity","SetEmissiveStrength","SetHdrOutput","SetPeakBrightness","EnableVolume","SetVolumeWeight","CaptureProbes","SetShadowDistance","SetLightShadows","SetRayTracing","SetGiBounces","SetGiSamples","SetFogDensity","SetAurora","StrikeLightning","SetLightningRate","SetWind","SetCloudDrift","SetClouds","SetCloudLayer","SetWater","SpawnDecal","FadeDecals","PaintTile","SetParallax","BurstParticles","SetEmitterDial","SetTrailEnabled","SetEmitterPlaying","PlayAnimation","StopAnimation","SetAnimationSpeed","FireAnimationTrigger","SetRigSlot","SetSlotTint","SetIkTarget","SetSpriteDial"] },
@@ -579,7 +586,7 @@ QtObject {
         { label: "Components", types: ["SetComponentField","SetCameraView","SetCameraPitch","SetCameraFov","AttachComponent","DetachComponent","SetParent"] },
         { label: "Actors", types: ["CreateClone","CreateActor","DeleteActor"] },
         { label: "Interface", types: ["ShowWidget","ShowPanel","ShowLabel","ShowButton","ShowImage","ShowInput","ShowSlider","ShowToggle","ShowList","SetUiTheme","BindUi","SetUiItems","ScrollUi","SetElementTheme","SetUiProp","HideElement","HideAllUi","DeleteElement","FocusElement","ClearFocus","PauseGame","ResumeGame"] },
-        { label: "Control", types: ["Wait","WaitUntil","If","IfElse","Repeat","Forever","While","EscapeLoop","ContinueLoop","StopAll","SetMouseLocked"] },
+        { label: "Control", types: ["Wait","WaitUntil","If","IfElse","Repeat","Forever","While","EscapeLoop","ContinueLoop","StopAll","SwitchScene","SetMouseLocked"] },
         { label: "Input", types: ["RumbleGamepad","BindAction","ClearActionBindings"] }
     ]
     readonly property var variableCommandTypes: ["SetVariable","ChangeVariable","SaveVariable","ClearSavedVariable"]
@@ -622,6 +629,7 @@ QtObject {
         WhenStarted:"when the project starts", WhenKeyPressed:"when a key is pressed", WhenActionPressed:"when an input action is pressed",
         WhenTouched:"when the screen is touched", WhenClicked:"when I am clicked", WhenCollision:"when I touch", WhenMessage:"when I get a message", WhenAnimationEnds:"when an animation ends", WhenAnimationMarker:"when an animation reaches a marker", WhenEnterRoom:"when I enter a room",
         WhenUiEvent:"when an interface event occurs", WhenCloned:"when I start as a clone", WhenParticles:"when my particles spawn, die or collide", WhenUiClicked:"when an element is clicked", WhenUiChanged:"when an input is changed",
+        WhenSceneStarts:"when scene starts", WhenSceneEnds:"when scene ends", SwitchScene:"switch scene to",
         BlockHeader:"block definition", Move:"move forward", GoTo:"go to", NavigateTo:"navigate to", ChangePosition:"change position",
         Glide:"glide to", TweenScale:"tween size", TweenRotation:"tween rotation", TweenColor:"tween color", StopTweens:"stop my tweens", PlayAnimation:"play animation", StopAnimation:"stop my animation", SetAnimationSpeed:"set animation speed", FireAnimationTrigger:"fire an animation trigger", SetRigSlot:"swap a rig slot", SetSlotTint:"tint a rig slot", SetIkTarget:"point a rig IK chain", SetSpriteDial:"set a sprite dial", Turn:"turn", SetRotation:"point in direction", PointTowards:"point towards", SetScale:"set size", SetBody:"set body",
         SetTrigger:"make me solid or a trigger", SetCollisionLayer:"set my collision layer", SetCollisionMask:"set my collision mask",

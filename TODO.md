@@ -110,24 +110,63 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         `set_active_scene` respawns the runtime when the mode changes, like
         `set_mode`. Builds bake skies, atlases, probes, scripts and terrain
         from all scenes.
-  - [ ] Blocks and scripts: `switch scene to _` (plus `with transition _`),
+  - [x] Blocks and scripts: `switch scene to _` (plus `with transition _`),
         reporters `current scene`, `scene names`, events `when scene
         starts/ends`; globals plus save data cross scenes, actor locals do
         not; opt-in survivors later; fixed-tick sampling so VM and codegen
         agree, with parity cases in `tests/codegen.rs`.
+        Done: `SwitchScene { scene, transition }` (`none`/`fade`/`wipe`/
+        `circle`, unknown reads as `none`) ends its strand like `delete
+        myself`; `WhenSceneStarts`/`WhenSceneEnds` headers with matching
+        `Trigger`/`Event` pairs; `CurrentScene`/`SceneNames` sensing
+        reporters (names as a JSON list, like `active volumes`) sampled from
+        `Sensors::current_scene`/`scene_names`; scripts get `switch_scene`,
+        `current_scene`, `scene_names` plus `SceneStarted`/`SceneEnded`
+        events (ABI 32, LOGIC_ABI 28); `Vm::load_scene` plus
+        `Variables`/`Lists`/`Dicts::load_scene` keep globals and shared
+        collections while resetting actor locals; parity cases in
+        `tests/codegen.rs` (`switch-scene`, reporter rows) and `tests/vm.rs`.
+        Native logic covers one scene, so `codegen::compile` refuses a
+        multi-scene project (the Build dialog falls back to the VM) until
+        the generated program carries every scene.
+        Not covered: opt-in survivor actors across scenes.
   - [ ] Runtime: unload the current world, load the scene doc the way
         `EditorMessage::Load` does now, rebuild and warm up before the green
         flag continues; transitions run on the wall clock like UI strands;
         rooms stay intra-scene camera zones, not scenes.
+        Partial: same-dimension switches unload (spawned actors, clones,
+        speech, touches), set the new active scene, reload the VM with
+        globals kept, flag a rebuild (which reopens scripts, reseeds the
+        level and reopens the warmup window) and fire `SceneStarted` after
+        firing `SceneEnded` two ticks earlier so ended strands run first;
+        unknown scenes report, the requesting strand ends, and the first ask
+        per tick wins (blocks and scripts share the path). Rooms reseed per
+        scene and stay intra-scene.
+        Not covered: transitions are immediate (the name is validated and
+        carried, no wall-clock fade/wipe/circle yet); cross-dimension
+        switches report and stay put instead of rebuilding the dim2/dim3
+        pipeline and rapier backend live.
   - [ ] Editor and tooling: scene picker plus per-scene actor list/canvas and
         World settings; project folder, pack, build and web carry all scenes;
         shell/MCP commands (`add-scene`, `switch-scene`, ...).
         Partial: pack, build and web already carry all scenes (the `Project`
         JSON holds them, builds collect assets from every scene), and the
         shell/MCP has `add-scene`, `duplicate-scene`, `rename-scene`,
-        `remove-scene` and `set-active-scene` (`switch-scene` alias). The QML
-        scene picker and per-scene actor list/canvas are still open; the
-        current UI edits the active scene through the compat fields.
+        `remove-scene` and `set-active-scene` (`switch-scene` alias). The
+        block palette (`Blocks.qml` rows, `vocabulary.rs` specs) now carries
+        `switch scene to`, `when scene starts/ends`, `current scene` and
+        `scene names`. The QML scene picker and per-scene actor list/canvas
+        are still open; the current UI edits the active scene through the
+        compat fields.
+  - [ ] Scene assets (Unity-style): each scene becomes its own asset file
+        under the project folder (one file per scene, referenced by the
+        project), so scenes can be shared, duplicated and versioned like any
+        other asset. Each scene asset carries its settings as components on
+        the scene itself - lighting, sky, fog, wind, water, post and physics
+        settings become component records rather than fixed `World` fields -
+        with the inspector editing the scene's components the way it edits
+        an actor's. Loading a scene loads its asset; the in-document scene
+        list becomes an index over scene assets with migration for old files.
 
 ### Phase 3 - Dev productivity, before API surface explodes
 - [x] Script toolchain: ship rustc or graceful degrade plus highlight plus inline errors plus rust-analyzer Cargo project.

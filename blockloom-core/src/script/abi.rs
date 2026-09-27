@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 31;
+pub const ABI_VERSION: u32 = 32;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -200,6 +200,11 @@ pub const TEXT_ROOM: u32 = 14;
 /// The room this actor entered on the last fixed tick, by name, or
 /// [`MISSING`]. What `when I enter room` would have started on.
 pub const TEXT_ENTERED_ROOM: u32 = 15;
+/// The scene running right now, by name. What `current scene` reports.
+pub const TEXT_CURRENT_SCENE: u32 = 16;
+/// Every scene's name as a JSON list, in project order. What `scene names`
+/// reports.
+pub const TEXT_SCENE_NAMES: u32 = 17;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -395,6 +400,9 @@ pub const ACT_PAINT_TILE: u32 = 86;
 /// `a` = parallax layer actor, `b` = axis (`both`, `x` or `y`); `n0` = scroll
 /// factor 0-2.
 pub const ACT_SET_PARALLAX: u32 = 87;
+/// `a` = scene name, `b` = transition (`none`, `fade`, `wipe` or `circle`).
+/// Loads another scene and continues the run there.
+pub const ACT_SWITCH_SCENE: u32 = 88;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per
@@ -454,6 +462,10 @@ pub const EVENT_UI_CHANGED: u32 = 11;
 pub const EVENT_UI: u32 = 12;
 /// This actor walked into a room. Subject: the room's name.
 pub const EVENT_ENTERED_ROOM: u32 = 13;
+/// The newly loaded scene finished warming up.
+pub const EVENT_SCENE_STARTED: u32 = 14;
+/// The outgoing scene is about to unload.
+pub const EVENT_SCENE_ENDED: u32 = 15;
 
 // ─── The same three calls in a browser ─────────────────────────────────────
 // A web build loads each script as its own wasm module, and one module can't

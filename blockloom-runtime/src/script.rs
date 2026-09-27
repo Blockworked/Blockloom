@@ -205,6 +205,8 @@ impl ScriptEvent {
         use blockloom_core::vm::Event;
         Some(match event {
             Event::Started | Event::Cloned { .. } => return None,
+            Event::SceneStarted => (None, ScriptEvent::new(abi::EVENT_SCENE_STARTED, "")),
+            Event::SceneEnded => (None, ScriptEvent::new(abi::EVENT_SCENE_ENDED, "")),
             Event::Message(message) => (None, ScriptEvent::new(abi::EVENT_MESSAGE, message)),
             Event::Key(key) => (None, ScriptEvent::new(abi::EVENT_KEY, key)),
             Event::Action(action) => (None, ScriptEvent::new(abi::EVENT_ACTION, action)),
@@ -321,6 +323,22 @@ fn axis_of(value: f64) -> Axis {
         1 => Axis::Y,
         2 => Axis::Z,
         _ => Axis::X,
+    }
+}
+
+/// A scene transition by the name a script spells it. Unknown spellings read
+/// as `none`, the same rule the blocks keep.
+fn normalize_scene_transition(name: &str) -> String {
+    let key: String = name
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '_' && *c != '-')
+        .flat_map(char::to_lowercase)
+        .collect();
+    match key.as_str() {
+        "fade" => "fade".to_string(),
+        "wipe" => "wipe".to_string(),
+        "circle" => "circle".to_string(),
+        _ => "none".to_string(),
     }
 }
 
@@ -732,6 +750,12 @@ fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
         abi::TEXT_CURRENT_CLIP => me(actor)
             .map(|me| me.anim_clip)
             .filter(|clip| !clip.is_empty()),
+        abi::TEXT_CURRENT_SCENE => sense::read(|sensors| {
+            Some(sensors.current_scene.clone()).filter(|name| !name.is_empty())
+        }),
+        abi::TEXT_SCENE_NAMES => {
+            serde_json::to_string(&sense::read(|s| s.scene_names.clone())).ok()
+        }
         abi::TEXT_ACTIVE_VOLUMES => {
             serde_json::to_string(&sense::read(|s| s.atmosphere.volumes.clone())).ok()
         }
@@ -1196,6 +1220,11 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
                 actor,
                 message: format!("there's no parallax axis called \"{b}\""),
             },
+        },
+        abi::ACT_SWITCH_SCENE => Effect::SwitchScene {
+            actor,
+            scene: a.trim().to_string(),
+            transition: normalize_scene_transition(b),
         },
         abi::ACT_SET_WATER => match blockloom_core::water::WaterProperty::parse(a) {
             Some(property) => Effect::SetWater {

@@ -428,6 +428,14 @@ pub enum Effect {
     DeleteActor {
         actor: String,
     },
+    /// Loads another scene by name and continues the run there. `transition`
+    /// is `none`, `fade`, `wipe` or `circle`. The strand that asked ends
+    /// where it stands, like a `delete myself`.
+    SwitchScene {
+        actor: String,
+        scene: String,
+        transition: String,
+    },
     /// Every script stopped, by a `stop all` block.
     Stopped,
     /// Grabs the pointer for first-person play, or frees it. Window-global,

@@ -147,6 +147,8 @@ pub enum FieldId {
     RumbleDuration,
     ActionName,
     ActionBinding,
+    SceneName,
+    SceneTransition,
     ReturnValue,
     CallArg(usize),
 }
@@ -191,6 +193,8 @@ impl FieldId {
                 | FieldId::IkConstraint
                 | FieldId::TileMap
                 | FieldId::ParallaxLayer
+                | FieldId::SceneName
+                | FieldId::SceneTransition
         )
     }
 
@@ -338,6 +342,8 @@ impl std::fmt::Display for FieldId {
             FieldId::RumbleDuration => write!(f, "RumbleDuration"),
             FieldId::ActionName => write!(f, "ActionName"),
             FieldId::ActionBinding => write!(f, "ActionBinding"),
+            FieldId::SceneName => write!(f, "SceneName"),
+            FieldId::SceneTransition => write!(f, "SceneTransition"),
             FieldId::ReturnValue => write!(f, "ReturnValue"),
             FieldId::CallArg(i) => write!(f, "CallArg:{i}"),
         }
@@ -487,6 +493,8 @@ impl FromStr for FieldId {
             "RumbleDuration" => FieldId::RumbleDuration,
             "ActionName" => FieldId::ActionName,
             "ActionBinding" => FieldId::ActionBinding,
+            "SceneName" => FieldId::SceneName,
+            "SceneTransition" => FieldId::SceneTransition,
             "ReturnValue" => FieldId::ReturnValue,
             _ => return Err(()),
         })
@@ -724,6 +732,8 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::LoadJsonIntoList { json, .. }, F::LoadJsonIntoListText) => Some(json),
         (K::RumbleGamepad { strength, .. }, F::RumbleStrength) => Some(strength),
         (K::RumbleGamepad { duration, .. }, F::RumbleDuration) => Some(duration),
+        (K::SwitchScene { scene, .. }, F::SceneName) => Some(scene),
+        (K::SwitchScene { transition, .. }, F::SceneTransition) => Some(transition),
         (K::BindAction { action, .. }, F::ActionName)
         | (K::ClearActionBindings { action }, F::ActionName) => Some(action),
         (K::BindAction { binding, .. }, F::ActionBinding) => Some(binding),

@@ -169,6 +169,12 @@ pub struct Sensors {
     /// Live tilemaps and room bounds, which `tile at` and `room containing`
     /// read.
     pub level: crate::tilemap::LevelSense,
+    /// The scene running right now, by name. What `current scene` reads;
+    /// sampled on the fixed tick so VM and compiled logic agree.
+    pub current_scene: String,
+    /// Every scene's name, in project order. What `scene names` reports as
+    /// a JSON list, so `load json into list` takes it.
+    pub scene_names: Vec<String>,
 }
 
 /// The shape of [`AtmosphereSense`]. Bumped when a field changes meaning or

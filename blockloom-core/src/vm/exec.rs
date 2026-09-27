@@ -25,6 +25,22 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// A scene transition by the name a block spells it. Unknown spellings read
+/// as `none`, so a typo fades nothing rather than erroring mid-run.
+pub fn normalize_transition(name: &str) -> String {
+    let key: String = name
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '_' && *c != '-')
+        .flat_map(char::to_lowercase)
+        .collect();
+    match key.as_str() {
+        "fade" => "fade".to_string(),
+        "wipe" => "wipe".to_string(),
+        "circle" => "circle".to_string(),
+        _ => "none".to_string(),
+    }
+}
+
 /// One scope's lists, by name.
 pub type ListValues = HashMap<String, Vec<ListItem>>;
 /// Every actor's own lists, by actor id.
@@ -50,6 +66,19 @@ impl Lists {
             .iter()
             .map(|list| (list.name.clone(), list.items.clone()))
             .collect();
+        state.actors = project
+            .actors
+            .iter()
+            .map(|actor| (actor.id.clone(), actor.graph.list_values()))
+            .collect();
+    }
+
+    /// Reloads one scene's actors without touching the shared lists: globals
+    /// keep what the run has written, actor locals start as authored. What a
+    /// `switch scene to` calls, so a score carries over and a clone's bag
+    /// does not.
+    pub fn load_scene(&self, project: &Project) {
+        let mut state = self.0.borrow_mut();
         state.actors = project
             .actors
             .iter()
@@ -147,6 +176,17 @@ impl Dicts {
             .collect();
     }
 
+    /// Reloads one scene's actors without touching the shared dicts, the way
+    /// [`Lists::load_scene`] does for lists.
+    pub fn load_scene(&self, project: &Project) {
+        let mut state = self.0.borrow_mut();
+        state.actors = project
+            .actors
+            .iter()
+            .map(|actor| (actor.id.clone(), actor.graph.dict_values()))
+            .collect();
+    }
+
     /// What `actor` reads: its own dicts over the shared ones.
     pub fn snapshot_for(&self, actor: &str) -> DictValues {
         let state = self.0.borrow();
@@ -215,6 +255,12 @@ pub const MAX_REPORTER_DEPTH: usize = 32;
 pub enum Event {
     /// The green flag: every `when the project starts` strand.
     Started,
+    /// The newly loaded scene finished warming up: every `when scene
+    /// starts` strand in it.
+    SceneStarted,
+    /// The outgoing scene is about to unload: every `when scene ends`
+    /// strand in it.
+    SceneEnded,
     /// A key went down, in [`sense::normalize_key`]'s spelling.
     Key(String),
     Click {
@@ -471,6 +517,42 @@ impl Vm {
         }
     }
 
+    /// Loads another scene mid-run: the new scene's actors compile fresh,
+    /// actor locals start as authored, and globals plus shared lists and
+    /// dicts keep what the run has written. Pending events from the old
+    /// scene are dropped; the caller fires `SceneStarted` after.
+    pub fn load_scene(&mut self, project: &Project) {
+        self.programs.clear();
+        self.names.clear();
+        self.clones.clear();
+        self.deleted.clear();
+        self.scripts.clear();
+        self.pending.clear();
+        self.stopping = false;
+        self.made = 0;
+        self.variables.load_scene(project);
+        self.lists.load_scene(project);
+        self.dicts.load_scene(project);
+        for actor in &project.actors {
+            self.names.insert(actor.id.clone(), actor.name.clone());
+            let inputs = actor
+                .graph
+                .block_defs
+                .iter()
+                .map(|def| {
+                    (
+                        def.id.clone(),
+                        def.input_names()
+                            .map(str::to_string)
+                            .collect::<Rc<[String]>>(),
+                    )
+                })
+                .collect();
+            let program = Loaded::new(compile(&actor.graph), inputs);
+            self.programs.insert(actor.id.clone(), Rc::new(program));
+        }
+    }
+
     /// Queues an event. Its scripts start at the beginning of the next tick.
     pub fn fire(&mut self, event: Event) {
         self.pending.push(event);
@@ -628,6 +710,8 @@ impl Vm {
     fn entry_matches(&self, actor: &str, trigger: &Trigger, event: &Event) -> bool {
         match (trigger, event) {
             (Trigger::Started, Event::Started) => true,
+            (Trigger::SceneStarted, Event::SceneStarted) => true,
+            (Trigger::SceneEnded, Event::SceneEnded) => true,
             (Trigger::KeyPressed(want), Event::Key(got)) => want == got,
             (Trigger::Clicked, Event::Click { actor: clicked }) => clicked == actor,
             (
@@ -764,6 +848,12 @@ impl Vm {
                     // `delete myself` ends the strand that ran it where it
                     // stands, as `stop all` ends everything.
                     if self.deleted.iter().any(|gone| gone == &script.actor) {
+                        script.status = Status::Done;
+                        return None;
+                    }
+                    // `switch scene to` ends the strand that ran it where it
+                    // stands: the world it stood in is going away.
+                    if matches!(action, Action::SwitchScene { .. }) {
                         script.status = Status::Done;
                         return None;
                     }
@@ -1769,6 +1859,17 @@ impl Vm {
                 }
             }
             Action::Broadcast(name) => self.pending.push(Event::Message(name.trim().to_string())),
+            Action::SwitchScene { scene, transition } => {
+                let scene = self.eval(scene, actor, params, temps, out).as_text();
+                let transition = self
+                    .eval(transition, actor, params, temps, out)
+                    .as_text();
+                out.push(Effect::SwitchScene {
+                    actor: actor.to_string(),
+                    scene: scene.trim().to_string(),
+                    transition: normalize_transition(&transition),
+                });
+            }
             // The interface. Every slot is read here, left to right, exactly
             // as the row is written - a compiled program reads them in the
             // same order, and a bad one complains in the same place.

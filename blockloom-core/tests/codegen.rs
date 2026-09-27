@@ -143,6 +143,8 @@ fn publish_world() {
     sensors.atmosphere.ray_tracing = true;
     sensors.atmosphere.ray_tracing_available = true;
     sensors.atmosphere.volumes = vec!["Cave".to_string()];
+    sensors.current_scene = "Scene 1".to_string();
+    sensors.scene_names = vec!["Scene 1".to_string(), "Scene 2".to_string()];
     blockloom_core::sense::publish(sensors);
 }
 
@@ -391,6 +393,8 @@ impl Host for Recorder {
             "IsRayTracing" => Ok(Val::Bool(true)),
             "RayTracingAvailable" => Ok(Val::Bool(true)),
             "ActiveVolumes" => Ok(Val::Text("[\"Cave\"]".into())),
+            "CurrentScene" => Ok(Val::Text("Scene 1".into())),
+            "SceneNames" => Ok(Val::Text("[\"Scene 1\",\"Scene 2\"]".into())),
             "Atmosphere" => match args[0].as_text().as_str() {
                 "wind speed" => Ok(Val::Num(3.0)),
                 other => Err(format!("the atmosphere has no \"{other}\" reading")),
@@ -1048,6 +1052,7 @@ fn line_of(act: &Act) -> String {
             format!("CreateActor {id} {name} {position:?}")
         }
         Act::DeleteActor { .. } => "DeleteActor".to_string(),
+        Act::SwitchScene { scene, transition } => format!("SwitchScene {scene} {transition}"),
         Act::SetBody { body } => format!("SetBody {body}"),
         Act::SetTrigger { trigger } => format!("SetTrigger {trigger}"),
         Act::SetCollisionLayer { layer } => format!("SetCollisionLayer {layer}"),
@@ -1358,6 +1363,11 @@ fn line_of(effect: &Effect) -> Option<String> {
         // Against the actor it takes out of the run, which is the one thing
         // both halves say about it.
         Effect::DeleteActor { actor } => format!("{actor}|DeleteActor"),
+        Effect::SwitchScene {
+            actor,
+            scene,
+            transition,
+        } => format!("{actor}|SwitchScene {scene} {transition}"),
         Effect::SetBody { actor, body } => format!("{actor}|SetBody {body:?}"),
         Effect::SetTrigger { actor, trigger } => format!("{actor}|SetTrigger {trigger}"),
         Effect::SetCollisionLayer { actor, layer } => format!("{actor}|SetCollisionLayer {layer}"),
@@ -2159,6 +2169,12 @@ fn sensing_reads_the_same_world() {
                 text: op("ActiveVolumes", vec![]),
             },
             K::Say {
+                text: op("CurrentScene", vec![]),
+            },
+            K::Say {
+                text: op("SceneNames", vec![]),
+            },
+            K::Say {
                 text: op("CastsShadows", vec![Value::text("Player")]),
             },
             K::Say {
@@ -2674,8 +2690,7 @@ fn sounds_ask_for_the_same_things() {
 }
 
 #[test]
-fn every_actor_is_in_the_name_table_whether_it_has_blocks_or_not() {
-    // `delete` and `create a clone of` name an actor the way a block does, so
+fn every_actor_is_in_the_name_table_whether_it_has_blocks_or_not() {    // `delete` and `create a clone of` name an actor the way a block does, so
     // one with an empty canvas still has to be findable by name.
     let mut project = project_with_blocks(
         vec![vec![K::DeleteActor {
@@ -2698,6 +2713,36 @@ fn every_actor_is_in_the_name_table_whether_it_has_blocks_or_not() {
     assert!(source.contains("(\"a2\", \"Scenery\")"), "{source}");
     // And nothing was emitted for it: an actor with no steps has no strands.
     assert!(!source.contains("fn actor_1("), "{source}");
+}
+
+#[test]
+fn switching_scenes_asks_for_the_same_scene_in_the_same_order() {
+    // Both halves read the scene slot first and the transition second, trim
+    // the scene, normalize the transition, and end the strand where it
+    // stands - so what follows never runs on either side.
+    assert_same_strands(
+        "switch-scene",
+        vec![
+            vec![
+                K::SwitchScene {
+                    scene: Value::text("Scene 2"),
+                    transition: Value::text("fade"),
+                },
+                K::Say {
+                    text: Value::text("unreached"),
+                },
+            ],
+            vec![K::SwitchScene {
+                scene: op("Join", vec![Value::text("Scene "), Value::number(2.0)]),
+                transition: Value::text("WIPE"),
+            }],
+            vec![K::SwitchScene {
+                scene: Value::text("Scene 2"),
+                transition: Value::text("curtain"),
+            }],
+        ],
+        &[],
+    );
 }
 
 fn body(kinds: Vec<K>) -> Vec<Instruction> {

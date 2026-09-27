@@ -281,6 +281,12 @@ pub struct Engine {
     /// A single fixed tick to run while paused, then re-pause. What the
     /// editor's step button asks for.
     pub pause_after_tick: bool,
+    /// A `switch scene to` waiting to unload the current scene and load the
+    /// next: `(scene name as the block spelled it, transition, ticks left)`.
+    /// Set when the effect lands, drained after the outgoing scene's `when
+    /// scene ends` strands have had a tick to run. Transitions are
+    /// immediate in v1; the name is validated and carried for later.
+    pub pending_scene: Option<(String, String, u8)>,
 }
 
 impl Engine {
@@ -348,6 +354,7 @@ impl Engine {
             prev_action_held: HashMap::new(),
             preview_inputs: Vec::new(),
             pause_after_tick: false,
+            pending_scene: None,
         }
     }
 

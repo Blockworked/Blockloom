@@ -26,7 +26,7 @@ use blockloom_core::codegen::{
     ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_SPRITE_DIAL, ACT_SET_TRAIL_ENABLED,
     ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE,
     ACT_SET_VOLUME_WEIGHT, ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT, ACT_SPAWN_DECAL,
-    ACT_STOP_ANIMATION, ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_TURN,
+    ACT_STOP_ANIMATION, ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_SWITCH_SCENE, ACT_TURN,
     ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, LOGIC_ABI_VERSION,
     LogicHostApi, READ_SENSE, READ_VARIABLE, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER,
     VALUE_TEXT,
@@ -163,6 +163,8 @@ impl LoadedLogic {
     pub fn fire(&mut self, event: Event, project: &Project) {
         match event {
             Event::Started => self.fire_raw("Started", "", "", ""),
+            Event::SceneStarted => self.fire_raw("SceneStarted", "", "", ""),
+            Event::SceneEnded => self.fire_raw("SceneEnded", "", "", ""),
             Event::Key(key) => self.fire_raw("Key", "", &key, ""),
             Event::Click { actor } => self.fire_raw("Clicked", &actor, "", ""),
             Event::Message(message) => self.fire_raw("Message", "", &message, ""),
@@ -860,6 +862,11 @@ extern "C" fn act(
             context.messages.push(a.to_string());
             return;
         }
+        ACT_SWITCH_SCENE => Effect::SwitchScene {
+            actor,
+            scene: a.trim().to_string(),
+            transition: b.trim().to_string(),
+        },
         ACT_SET_MOUSE_LOCKED => Effect::SetMouseLocked { locked: n0 != 0.0 },
         ACT_SET_CAMERA_PITCH => Effect::SetCameraPitch {
             actor,

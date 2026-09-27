@@ -160,6 +160,22 @@ impl Variables {
         }
     }
 
+    /// Reloads one scene's actors without touching the shared variables:
+    /// globals keep what the run has written, actor locals start as
+    /// authored. What a `switch scene to` calls.
+    pub fn load_scene(&self, project: &Project) {
+        let mut state = self.0.borrow_mut();
+        state.scope_ids.clear();
+        state.scopes.clear();
+        for actor in &project.actors {
+            let slots = state.values(actor.graph.variable_values());
+            let scope = state.scope_or_new(&actor.id);
+            if let Some(own) = state.slots_mut(scope) {
+                *own = slots;
+            }
+        }
+    }
+
     pub fn read(&self, actor: &str, name: &str) -> Evaluated {
         let state = self.0.borrow();
         let Some(&var) = state.ids.get(name) else {
