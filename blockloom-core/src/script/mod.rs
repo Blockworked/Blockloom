@@ -60,7 +60,14 @@ fn tick(me: &Actor, dt: f32) {{
     }}
 }}
 
-blockloom::export!(start = start, tick = tick);
+// What the hat blocks start on: messages, keys, clicks, touches, particles...
+fn event(me: &Actor, event: &Event) {{
+    if let Event::Message(message) = event {{
+        me.say(message);
+    }}
+}}
+
+blockloom::export!(start = start, tick = tick, event = event);
 "#
     )
 }
@@ -468,6 +475,7 @@ mod tests {
         assert!(has(abi::WASM_MODULE.as_bytes()));
         assert!(has(abi::WASM_READ_NUMBER.as_bytes()));
         assert!(has(abi::SYM_TICK));
+        assert!(has(abi::SYM_EVENT));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

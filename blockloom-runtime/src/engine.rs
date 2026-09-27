@@ -198,6 +198,8 @@ pub struct Engine {
     /// than one flag for the run, since a clone made half way through still
     /// needs its own.
     pub scripts_started: HashSet<String>,
+    /// Events fired since scripts last ran, for their `event` entry points.
+    pub script_events: Vec<blockloom_core::vm::Event>,
     /// Which components each actor is carrying right now. Seeded from the
     /// project on every rebuild and moved by `attach`/`detach`, so it - not
     /// the document - is what a mid-run question about a component answers.
@@ -314,6 +316,7 @@ impl Engine {
             project_dir: None,
             scripts: HashMap::new(),
             scripts_started: HashSet::new(),
+            script_events: Vec::new(),
             attached: HashMap::new(),
             spawned: HashMap::new(),
             clones: HashMap::new(),
@@ -473,6 +476,10 @@ impl Engine {
     }
 
     pub fn fire(&mut self, event: blockloom_core::vm::Event) {
+        // Scripts don't run while paused, so they don't hear what happens then.
+        if self.running && !self.paused && !self.scripts.is_empty() {
+            self.script_events.push(event.clone());
+        }
         if let Some(logic) = &mut self.logic {
             logic.fire(event, &self.project);
         } else {

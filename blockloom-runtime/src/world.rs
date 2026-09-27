@@ -628,6 +628,7 @@ pub fn rebuild_world(
     // the libraries, and the old ones must be closed before the new ones open.
     engine.scripts.clear();
     engine.scripts_started.clear();
+    engine.script_events.clear();
     engine.attached = engine
         .project
         .actors
@@ -816,6 +817,20 @@ pub fn step_scripts(
         .cloned()
         .collect();
 
+    // What happened since the last step, as each script will hear it.
+    let fired = std::mem::take(&mut engine.script_events);
+    let heard: Vec<_> = fired
+        .iter()
+        .filter_map(|event| {
+            crate::script::ScriptEvent::of(event, |id| {
+                engine
+                    .actor(id)
+                    .map(|actor| actor.name.clone())
+                    .unwrap_or_default()
+            })
+        })
+        .collect();
+
     let mut asked = crate::script::Asked::default();
     for actor in &actors {
         let Some(script) = engine.scripts.get(actor) else {
@@ -823,6 +838,11 @@ pub fn step_scripts(
         };
         if fresh.contains(actor) {
             script.start(actor, &mut asked);
+        }
+        for (to, event) in &heard {
+            if to.as_ref().is_none_or(|to| to == actor) {
+                script.event(actor, &mut asked, event);
+            }
         }
         script.tick(actor, &mut asked, dt);
     }
