@@ -247,6 +247,25 @@ fn unavailable(device: Option<&RenderDevice>, mode: Mode) -> Option<String> {
     None
 }
 
+/// The per-camera tracing components `apply_ray_tracing` reconciles. Under
+/// the `dlss` feature it also watches for ray reconstruction, which
+/// denoises Solari's output itself so the SVGF pass stands down.
+#[cfg(all(feature = "ray_tracing", feature = "dlss"))]
+type TraceComponents<'a> = (
+    Option<&'a SolariLighting>,
+    Option<&'a TracedPaths>,
+    Has<TracedDenoiser>,
+    Has<Pathtracer>,
+    Has<bevy::anti_alias::dlss::Dlss<bevy::anti_alias::dlss::DlssRayReconstructionFeature>>,
+);
+#[cfg(all(feature = "ray_tracing", not(feature = "dlss")))]
+type TraceComponents<'a> = (
+    Option<&'a SolariLighting>,
+    Option<&'a TracedPaths>,
+    Has<TracedDenoiser>,
+    Has<Pathtracer>,
+);
+
 /// Probes the GPU once, then puts tracing on the world camera or takes it off
 /// to match what the project, the run and the scene view ask for.
 #[allow(clippy::type_complexity)]
@@ -267,12 +286,7 @@ pub fn apply_ray_tracing(
     #[cfg(feature = "ray_tracing")] cameras: Query<
         (
             Entity,
-            (
-                Option<&SolariLighting>,
-                Option<&TracedPaths>,
-                Has<TracedDenoiser>,
-                Has<Pathtracer>,
-            ),
+            TraceComponents<'_>,
             &Msaa,
             Has<Hdr>,
             Option<&CameraMainTextureUsages>,
@@ -341,11 +355,20 @@ pub fn apply_ray_tracing(
     }
 
     #[cfg(feature = "ray_tracing")]
-    for (entity, (solari, paths, has_denoiser, has_pathtracer), msaa, has_hdr, usages) in &cameras {
+    for (entity, trace, msaa, has_hdr, usages) in &cameras {
+        #[cfg(feature = "dlss")]
+        let (solari, paths, has_denoiser, has_pathtracer, reconstructing) = trace;
+        #[cfg(not(feature = "dlss"))]
+        let (solari, paths, has_denoiser, has_pathtracer) = trace;
+        #[cfg(not(feature = "dlss"))]
+        let reconstructing = false;
         let mut camera = commands.entity(entity);
         let hybrid = active && settings.mode == TracingMode::Hybrid;
         let path_traced = active && settings.mode == TracingMode::PathTraced;
-        let filtered = active && settings.denoiser.filters();
+        // Ray reconstruction denoises Solari's output itself; the SVGF
+        // pass would only soften it twice, so it stands down while the
+        // reconstruction component is on the camera.
+        let filtered = active && settings.denoiser.filters() && !reconstructing;
         if active || path_tracing {
             if *msaa != Msaa::Off {
                 camera.insert(Msaa::Off);

@@ -3942,6 +3942,16 @@ pub fn report_status(
                 "count",
             ),
             (
+                "quality/instanced_draws",
+                scaling.instanced_draws as f64,
+                "count",
+            ),
+            (
+                "quality/batched_instances",
+                scaling.batched_instances as f64,
+                "count",
+            ),
+            (
                 "quality/visible_mesh_triangles",
                 scaling.triangles as f64,
                 "count",

@@ -236,9 +236,98 @@ pub fn pause_rigs(engine: NonSend<Engine>, mut players: Query<&mut AnimationPlay
     }
 }
 
+/// A LOD-culled placeholder hides nothing by itself: the loaded glTF scene
+/// hangs off `ModelChild` as its own entities with their own visibility.
+/// Propagate the group's verdict onto the child, so a distant model sheds
+/// its draws exactly like a culled box does. Loaded scenes carry no
+/// decimated meshes, so this is a cull-only level: the whole scene shows
+/// or none of it does.
+pub fn sync_model_lod(
+    actors: Query<(&crate::culling::LodGroup, &ModelChild)>,
+    mut visibility: Query<&mut Visibility>,
+) {
+    for (group, child) in &actors {
+        let Ok(mut shown) = visibility.get_mut(child.0) else {
+            continue;
+        };
+        let hidden = group.is_culled();
+        let want = if hidden {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+        if *shown != want {
+            *shown = want;
+        }
+    }
+}
+
 fn report(actor: &str, message: String) {
     crate::bridge::send(&RuntimeMessage::Error {
         actor: actor.to_string(),
         message,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn perspective_camera(app: &mut App) {
+        app.world_mut().spawn((
+            crate::world::WorldCamera,
+            Camera::default(),
+            GlobalTransform::default(),
+            Projection::Perspective(PerspectiveProjection {
+                fov: std::f32::consts::FRAC_PI_2,
+                ..default()
+            }),
+        ));
+    }
+
+    #[test]
+    fn culled_placeholders_hide_the_loaded_scene() {
+        let mut app = App::new();
+        app.init_resource::<crate::culling::LodPolicy>()
+            .init_resource::<crate::culling::Culling>()
+            .init_resource::<crate::quality::Scaling>()
+            .add_systems(Update, (crate::culling::select_lod, sync_model_lod).chain());
+        perspective_camera(&mut app);
+        let child = app.world_mut().spawn(Visibility::Inherited).id();
+        // A 2 m box bounds a 1.73 m sphere: visible at 5 m, gone at 200 m.
+        let group = crate::culling::LodGroup::new(1.732).level(0.01, None);
+        let actor = app
+            .world_mut()
+            .spawn((
+                GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -5.0)),
+                group,
+                ModelChild(child),
+            ))
+            .id();
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(child).unwrap(),
+            Visibility::Inherited
+        );
+        *app.world_mut().get_mut::<GlobalTransform>(actor).unwrap() =
+            GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -200.0));
+        app.update();
+        assert!(
+            app.world()
+                .get::<crate::culling::LodGroup>(actor)
+                .unwrap()
+                .is_culled()
+        );
+        assert_eq!(
+            *app.world().get::<Visibility>(child).unwrap(),
+            Visibility::Hidden
+        );
+        *app.world_mut().get_mut::<GlobalTransform>(actor).unwrap() =
+            GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -5.0));
+        app.update();
+        assert_eq!(
+            *app.world().get::<Visibility>(child).unwrap(),
+            Visibility::Inherited
+        );
+    }
 }

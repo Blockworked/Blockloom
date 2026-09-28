@@ -26,6 +26,12 @@ pub struct Scaling {
     dropped: bool,
     pub draw_calls: u32,
     pub triangles: u64,
+    /// Groups serving more than one visible mesh: one GPU draw covers a
+    /// whole instanced or merged batch. `batched_instances` is the extra
+    /// meshes those draws absorb, so `draw_calls + batched_instances` is
+    /// the visible mesh count the estimate started from.
+    pub instanced_draws: u32,
+    pub batched_instances: u32,
     pub costs: [DrawCost; 6],
     /// True once the renderer reports `DlssSuperResolutionSupported` under
     /// the `dlss` cargo feature. Without that feature this stays false and
@@ -49,6 +55,8 @@ impl Default for Scaling {
             dropped: false,
             draw_calls: 0,
             triangles: 0,
+            instanced_draws: 0,
+            batched_instances: 0,
             costs: [DrawCost::default(); 6],
             dlss_available: false,
             dlss_reason: String::new(),
@@ -323,12 +331,84 @@ fn dlss_perf_mode(
 ) -> bevy::anti_alias::dlss::DlssPerfQualityMode {
     use bevy::anti_alias::dlss::DlssPerfQualityMode as Bevy;
     match mode {
+        blockloom_core::quality::DlssMode::Auto => Bevy::Auto,
         blockloom_core::quality::DlssMode::Dlaa => Bevy::Dlaa,
         blockloom_core::quality::DlssMode::Quality => Bevy::Quality,
         blockloom_core::quality::DlssMode::Balanced => Bevy::Balanced,
         blockloom_core::quality::DlssMode::Performance => Bevy::Performance,
         blockloom_core::quality::DlssMode::UltraPerformance => Bevy::UltraPerformance,
     }
+}
+
+/// Rank of a manual DLSS mode, cheapest last. `Auto` has no rank: the SDK
+/// decides, and the dynamic-resolution signal steps aside.
+#[cfg_attr(not(feature = "dlss"), allow(dead_code))]
+fn dlss_rank(mode: blockloom_core::quality::DlssMode) -> u8 {
+    use blockloom_core::quality::DlssMode as M;
+    match mode {
+        M::Auto => 0,
+        M::Dlaa => 0,
+        M::Quality => 1,
+        M::Balanced => 2,
+        M::Performance => 3,
+        M::UltraPerformance => 4,
+    }
+}
+
+#[cfg_attr(not(feature = "dlss"), allow(dead_code))]
+fn dlss_unrank(rank: u8) -> blockloom_core::quality::DlssMode {
+    use blockloom_core::quality::DlssMode as M;
+    match rank {
+        0 => M::Dlaa,
+        1 => M::Quality,
+        2 => M::Balanced,
+        3 => M::Performance,
+        _ => M::UltraPerformance,
+    }
+}
+
+/// The mode the `Dlss` component actually carries: the project's, stepped
+/// down by the dynamic-resolution signal while it asks for less pixels.
+/// Each 0.05 of scale below the ceiling is one step towards Performance,
+/// floored at UltraPerformance; `Auto` stays `Auto` since the SDK is
+/// already deciding, and without dynamic resolution the ask is the answer.
+#[cfg_attr(not(feature = "dlss"), allow(dead_code))]
+fn dlss_effective_mode(settings: &Settings, scale: f32) -> blockloom_core::quality::DlssMode {
+    use blockloom_core::quality::{DlssMode as M, Upscaler};
+    let selected = settings.dlss_mode;
+    if settings.upscaler != Upscaler::Dlss
+        || selected == M::Auto
+        || !settings.dynamic_resolution
+        || !scale.is_finite()
+    {
+        return selected;
+    }
+    let span = (settings.resolution_scale - settings.min_scale).max(0.05);
+    let drop = (settings.resolution_scale - scale).clamp(0.0, span);
+    let steps = (drop / 0.05).round() as u8;
+    dlss_unrank(dlss_rank(selected).saturating_add(steps).min(4))
+}
+
+/// Whether the world wants ray reconstruction rather than plain super
+/// resolution: the DLSS ask, both SDK probes, Hybrid Solari actually
+/// lighting the view (which is what provides the reconstruction inputs),
+/// HDR and a perspective projection.
+#[cfg_attr(not(feature = "dlss"), allow(dead_code))]
+fn wants_dlss_rr(
+    upscaler: Upscaler,
+    available: bool,
+    rr_supported: bool,
+    hybrid: bool,
+    hdr: bool,
+    perspective: bool,
+) -> bool {
+    upscaler == Upscaler::Dlss
+        && available
+        && rr_supported
+        && hybrid
+        && hdr
+        && perspective
+        && DLSS_BUILD
 }
 
 /// Probes DLSS capability once the renderer is up, and says why once when
@@ -411,21 +491,28 @@ fn warn_if_dlss_off(engine: &Engine, scaling: &Scaling, warned: &mut bool) {
     }
 }
 
-/// Real DLSS path: inserts `Dlss` with the project's perf mode while the
-/// probe says it is supported, HDR and perspective allow it, and falls back
-/// to TAA plus spatial otherwise. DLSS drives its own render resolution
-/// through `MainPassResolutionOverride`, so the spatial `scale_views` stands
-/// down while it is on (see below).
+/// Real DLSS path: ray reconstruction while Hybrid Solari lights the view
+/// (it denoises Solari's output where Bevy exposes it), plain super
+/// resolution otherwise, and TAA plus spatial when neither can run. The
+/// mode rides the dynamic-resolution signal; DLSS drives its own render
+/// resolution through `MainPassResolutionOverride`, so the spatial
+/// `scale_views` stands down while it is on (see below).
 #[cfg(feature = "dlss")]
 fn configure_cameras(
     mut commands: Commands,
+    engine: NonSend<Engine>,
     scaling: Res<Scaling>,
+    tracing: Option<Res<crate::ray_tracing::RayTracingState>>,
+    rr_supported: Option<Res<bevy::anti_alias::dlss::DlssRayReconstructionSupported>>,
     environment: Res<crate::environment::Environment>,
     cameras: Query<
         (
             Entity,
             Option<&TemporalAntiAliasing>,
             Option<&bevy::anti_alias::dlss::Dlss>,
+            Option<
+                &bevy::anti_alias::dlss::Dlss<bevy::anti_alias::dlss::DlssRayReconstructionFeature>,
+            >,
             &mut Msaa,
             Has<bevy::camera::Hdr>,
             Option<&Projection>,
@@ -433,36 +520,84 @@ fn configure_cameras(
         (With<WorldCamera>, With<Camera3d>),
     >,
 ) {
-    use bevy::anti_alias::dlss::{Dlss, DlssSuperResolutionFeature};
-    for (entity, taa, dlss, mut msaa, hdr, projection) in cameras {
+    use bevy::anti_alias::dlss::{Dlss, DlssRayReconstructionFeature, DlssSuperResolutionFeature};
+    let hybrid = tracing.as_ref().is_some_and(|state| state.active)
+        && engine.project.world.lighting.ray_tracing.enabled
+        && engine.project.world.lighting.ray_tracing.mode
+            == blockloom_core::scene::TracingMode::Hybrid;
+    let rr = rr_supported.is_some();
+    let mode = dlss_perf_mode(dlss_effective_mode(
+        &scaling.settings,
+        scaling.controller.scale,
+    ));
+    for (entity, taa, sr, reconstruction, mut msaa, hdr, projection) in cameras {
         let perspective = projection.is_none_or(|p| matches!(p, Projection::Perspective(_)));
-        if wants_dlss(
+        let reconstruct = wants_dlss_rr(
             scaling.settings.upscaler,
             scaling.dlss_available,
+            rr,
+            hybrid,
             hdr,
             perspective,
-        ) {
+        );
+        let upscale = !reconstruct
+            && wants_dlss(
+                scaling.settings.upscaler,
+                scaling.dlss_available,
+                hdr,
+                perspective,
+            );
+        if reconstruct || upscale {
             *msaa = Msaa::Off;
-            let wanted = dlss_perf_mode(scaling.settings.dlss_mode);
             // `Dlss` requires jitter, mip bias, depth and motion-vector
             // prepasses plus HDR; its `#[require]` adds what is missing.
-            let stale = dlss.is_none_or(|live| live.perf_quality_mode != wanted);
             if taa.is_some() {
                 commands.entity(entity).remove::<TemporalAntiAliasing>();
             }
+        }
+        if reconstruct {
+            if sr.is_some() {
+                commands
+                    .entity(entity)
+                    .remove::<Dlss<DlssSuperResolutionFeature>>();
+            }
+            let stale = reconstruction.is_none_or(|live| live.perf_quality_mode != mode);
             if stale {
                 commands
                     .entity(entity)
-                    .insert(Dlss::<DlssSuperResolutionFeature> {
-                        perf_quality_mode: wanted,
+                    .insert(Dlss::<DlssRayReconstructionFeature> {
+                        perf_quality_mode: mode,
                         reset: false,
                         ..default()
                     });
             }
             continue;
         }
-        if dlss.is_some() {
+        if upscale {
+            if reconstruction.is_some() {
+                commands
+                    .entity(entity)
+                    .remove::<Dlss<DlssRayReconstructionFeature>>();
+            }
+            let stale = sr.is_none_or(|live| live.perf_quality_mode != mode);
+            if stale {
+                commands
+                    .entity(entity)
+                    .insert(Dlss::<DlssSuperResolutionFeature> {
+                        perf_quality_mode: mode,
+                        reset: false,
+                        ..default()
+                    });
+            }
+            continue;
+        }
+        if sr.is_some() {
             commands.entity(entity).remove::<Dlss>();
+        }
+        if reconstruction.is_some() {
+            commands
+                .entity(entity)
+                .remove::<Dlss<DlssRayReconstructionFeature>>();
         }
         let temporal = temporal_for(scaling.settings.upscaler, dlss_spatial_only());
         if temporal {
@@ -625,8 +760,9 @@ pub(crate) fn measure_draws(
     if *every != 1 {
         return;
     }
-    let mut groups = std::collections::HashSet::new();
+    let mut groups = std::collections::HashMap::new();
     let mut triangles = 0;
+    let mut meshes_seen = 0u32;
     let mut costs = [DrawCost::default(); 6];
     let visible = cameras
         .iter()
@@ -685,11 +821,16 @@ pub(crate) fn measure_draws(
         } else {
             (mesh.0.id(), None, Some(entity))
         };
-        if groups.insert((system, key)) {
+        let entry = groups.entry((system, key)).or_insert(0u32);
+        if *entry == 0 {
             costs[system].draws += 1;
         }
+        *entry += 1;
+        meshes_seen += 1;
     }
     scaling.draw_calls = groups.len() as u32;
+    scaling.instanced_draws = groups.values().filter(|&&n| n > 1).count() as u32;
+    scaling.batched_instances = meshes_seen.saturating_sub(groups.len() as u32);
     scaling.triangles = triangles;
     scaling.costs = costs;
 }
@@ -714,6 +855,8 @@ fn reset(engine: NonSend<Engine>, mut scaling: ResMut<Scaling>) {
         scaling.costs = [DrawCost::default(); 6];
         scaling.draw_calls = 0;
         scaling.triangles = 0;
+        scaling.instanced_draws = 0;
+        scaling.batched_instances = 0;
     }
 }
 
@@ -886,6 +1029,7 @@ mod tests {
     fn dlss_modes_map_one_to_one() {
         use bevy::anti_alias::dlss::DlssPerfQualityMode as Bevy;
         use blockloom_core::quality::DlssMode;
+        assert!(matches!(dlss_perf_mode(DlssMode::Auto), Bevy::Auto));
         assert!(matches!(dlss_perf_mode(DlssMode::Dlaa), Bevy::Dlaa));
         assert!(matches!(dlss_perf_mode(DlssMode::Quality), Bevy::Quality));
         assert!(matches!(dlss_perf_mode(DlssMode::Balanced), Bevy::Balanced));
@@ -897,6 +1041,98 @@ mod tests {
             dlss_perf_mode(DlssMode::UltraPerformance),
             Bevy::UltraPerformance
         ));
+    }
+
+    #[test]
+    fn dlss_effective_mode_steps_down_with_the_signal() {
+        use blockloom_core::quality::{DlssMode as M, Settings, Upscaler};
+        let mut settings = Settings::default();
+        // Not a DLSS ask, or no signal: the ask is the answer.
+        assert_eq!(dlss_effective_mode(&settings, 0.5), M::Auto);
+        settings.upscaler = Upscaler::Dlss;
+        assert_eq!(dlss_effective_mode(&settings, 0.5), M::Auto);
+        settings.dlss_mode = M::Quality;
+        assert_eq!(dlss_effective_mode(&settings, 1.0), M::Quality);
+        // Dynamic resolution off: the ask is the answer at any scale.
+        assert_eq!(dlss_effective_mode(&settings, 0.5), M::Quality);
+        settings.dynamic_resolution = true;
+        // Each 0.05 below the 1.0 ceiling is one step down.
+        assert_eq!(dlss_effective_mode(&settings, 1.0), M::Quality);
+        assert_eq!(dlss_effective_mode(&settings, 0.95), M::Balanced);
+        assert_eq!(dlss_effective_mode(&settings, 0.9), M::Performance);
+        assert_eq!(dlss_effective_mode(&settings, 0.85), M::UltraPerformance);
+        // Floored at the cheapest, and clamped to the span.
+        assert_eq!(dlss_effective_mode(&settings, 0.5), M::UltraPerformance);
+        assert_eq!(dlss_effective_mode(&settings, 0.25), M::UltraPerformance);
+        settings.dlss_mode = M::Dlaa;
+        assert_eq!(dlss_effective_mode(&settings, 1.0), M::Dlaa);
+        assert_eq!(dlss_effective_mode(&settings, 0.95), M::Quality);
+        // A lower ceiling steps from there: 0.75 at a 0.5 floor.
+        settings.dlss_mode = M::Balanced;
+        settings.resolution_scale = 0.75;
+        settings.min_scale = 0.5;
+        assert_eq!(dlss_effective_mode(&settings, 0.75), M::Balanced);
+        assert_eq!(dlss_effective_mode(&settings, 0.7), M::Performance);
+        assert_eq!(dlss_effective_mode(&settings, 0.65), M::UltraPerformance);
+    }
+
+    #[test]
+    fn dlss_reconstruction_wants_hybrid_and_both_probes() {
+        use blockloom_core::quality::Upscaler;
+        // Anything missing is plain super resolution at best.
+        assert!(!wants_dlss_rr(
+            Upscaler::Spatial,
+            true,
+            true,
+            true,
+            true,
+            true
+        ));
+        assert!(!wants_dlss_rr(
+            Upscaler::Dlss,
+            false,
+            true,
+            true,
+            true,
+            true
+        ));
+        assert!(!wants_dlss_rr(
+            Upscaler::Dlss,
+            true,
+            false,
+            true,
+            true,
+            true
+        ));
+        assert!(!wants_dlss_rr(
+            Upscaler::Dlss,
+            true,
+            true,
+            false,
+            true,
+            true
+        ));
+        assert!(!wants_dlss_rr(
+            Upscaler::Dlss,
+            true,
+            true,
+            true,
+            false,
+            true
+        ));
+        assert!(!wants_dlss_rr(
+            Upscaler::Dlss,
+            true,
+            true,
+            true,
+            true,
+            false
+        ));
+        // Everything lined up follows the build flag.
+        assert_eq!(
+            wants_dlss_rr(Upscaler::Dlss, true, true, true, true, true),
+            DLSS_BUILD
+        );
     }
 
     #[test]
@@ -921,8 +1157,13 @@ mod tests {
     #[test]
     fn dlss_selection_rides_taa_while_spatial_removes_it() {
         use blockloom_core::quality::Upscaler;
+        let (_, incoming) = std::sync::mpsc::channel();
+        let engine = Engine::new(incoming, blockloom_core::scene::Mode::ThreeD);
         let mut app = App::new();
-        app.init_resource::<Scaling>()
+        // The DLSS build reads the engine for its Hybrid check; without the
+        // feature this resource just sits unused.
+        app.insert_non_send(engine)
+            .init_resource::<Scaling>()
             .init_resource::<crate::environment::Environment>()
             .add_systems(Update, configure_cameras);
         app.world_mut().resource_mut::<Scaling>().settings.upscaler = Upscaler::Dlss;
@@ -935,6 +1176,88 @@ mod tests {
         app.world_mut().resource_mut::<Scaling>().settings.upscaler = Upscaler::Spatial;
         app.update();
         assert!(app.world().get::<TemporalAntiAliasing>(camera).is_none());
+    }
+
+    /// Ray reconstruction lands on a Hybrid-lit HDR camera while both SDK
+    /// probes agree, yields to plain super resolution when its probe goes,
+    /// and leaves entirely for the TAA fallback with any other upscaler.
+    #[cfg(feature = "dlss")]
+    #[test]
+    fn dlss_reconstruction_lands_on_a_hybrid_camera() {
+        use bevy::anti_alias::dlss::{
+            Dlss, DlssPerfQualityMode, DlssRayReconstructionFeature,
+            DlssRayReconstructionSupported, DlssSuperResolutionFeature,
+        };
+        use blockloom_core::quality::{DlssMode, Upscaler};
+        use blockloom_core::scene::TracingMode;
+        let (_, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, blockloom_core::scene::Mode::ThreeD);
+        engine.project.world.lighting.ray_tracing.enabled = true;
+        engine.project.world.lighting.ray_tracing.mode = TracingMode::Hybrid;
+        let mut app = App::new();
+        app.insert_non_send(engine)
+            .init_resource::<Scaling>()
+            .init_resource::<crate::environment::Environment>()
+            .init_resource::<crate::ray_tracing::RayTracingState>()
+            .insert_resource(DlssRayReconstructionSupported)
+            .add_systems(Update, configure_cameras);
+        app.world_mut()
+            .resource_mut::<crate::ray_tracing::RayTracingState>()
+            .active = true;
+        let mut scaling = app.world_mut().resource_mut::<Scaling>();
+        scaling.settings.upscaler = Upscaler::Dlss;
+        scaling.settings.dlss_mode = DlssMode::Quality;
+        scaling.dlss_available = true;
+        let camera = app
+            .world_mut()
+            .spawn((
+                WorldCamera,
+                Camera3d::default(),
+                Msaa::default(),
+                bevy::camera::Hdr,
+                bevy::camera::Projection::Perspective(
+                    bevy::camera::PerspectiveProjection::default(),
+                ),
+            ))
+            .id();
+        app.update();
+        let reconstruction = app
+            .world()
+            .get::<Dlss<DlssRayReconstructionFeature>>(camera)
+            .unwrap();
+        assert!(matches!(
+            reconstruction.perf_quality_mode,
+            DlssPerfQualityMode::Quality
+        ));
+        assert!(
+            app.world()
+                .get::<Dlss<DlssSuperResolutionFeature>>(camera)
+                .is_none()
+        );
+        assert!(app.world().get::<TemporalAntiAliasing>(camera).is_none());
+        // Without the reconstruction probe it yields to super resolution.
+        app.world_mut()
+            .remove_resource::<DlssRayReconstructionSupported>();
+        app.update();
+        assert!(
+            app.world()
+                .get::<Dlss<DlssRayReconstructionFeature>>(camera)
+                .is_none()
+        );
+        assert!(
+            app.world()
+                .get::<Dlss<DlssSuperResolutionFeature>>(camera)
+                .is_some()
+        );
+        // Any other upscaler leaves DLSS entirely for the TAA fallback.
+        app.world_mut().resource_mut::<Scaling>().settings.upscaler = Upscaler::Taa;
+        app.update();
+        assert!(
+            app.world()
+                .get::<Dlss<DlssSuperResolutionFeature>>(camera)
+                .is_none()
+        );
+        assert!(app.world().get::<TemporalAntiAliasing>(camera).is_some());
     }
 
     fn show_meshes(app: &mut App) {
@@ -1109,6 +1432,8 @@ mod tests {
             scaling.costs[2].draws = 10_000;
             scaling.draw_calls = 10_000;
             scaling.triangles = 100_000;
+            scaling.instanced_draws = 10;
+            scaling.batched_instances = 100;
         }
         app.update();
         let scaling = app.world().resource::<Scaling>();
@@ -1118,6 +1443,7 @@ mod tests {
         assert_eq!(scaling.geometry.factors, [1.0; 6]);
         assert_eq!(scaling.costs[2].draws, 0);
         assert_eq!((scaling.draw_calls, scaling.triangles), (0, 0));
+        assert_eq!((scaling.instanced_draws, scaling.batched_instances), (0, 0));
     }
 
     #[test]
@@ -1256,5 +1582,45 @@ mod tests {
 
         let _gpu_mesh = mesh.take_gpu_data().unwrap();
         assert_eq!(triangle_count(&mesh), None);
+    }
+
+    #[test]
+    fn shared_meshes_count_one_draw_with_saved_instances() {
+        let mut app = App::new();
+        app.init_resource::<Scaling>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_message::<AssetEvent<Mesh>>()
+            .add_systems(Update, measure_draws);
+        let mesh = app.world_mut().resource_mut::<Assets<Mesh>>().add(
+            Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::MAIN_WORLD,
+            )
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0; 3]; 6]),
+        );
+        let material = app
+            .world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial {
+                alpha_mode: AlphaMode::Opaque,
+                ..default()
+            });
+        for _ in 0..3 {
+            app.world_mut().spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(material.clone()),
+                ViewVisibility::VISIBLE,
+            ));
+        }
+        show_meshes(&mut app);
+        app.world_mut()
+            .write_message(AssetEvent::<Mesh>::Added { id: mesh.id() });
+        app.update();
+        let scaling = app.world().resource::<Scaling>();
+        assert_eq!((scaling.draw_calls, scaling.triangles), (1, 6));
+        assert_eq!((scaling.costs[2].draws, scaling.costs[2].triangles), (1, 6));
+        assert_eq!(scaling.instanced_draws, 1);
+        assert_eq!(scaling.batched_instances, 2);
     }
 }

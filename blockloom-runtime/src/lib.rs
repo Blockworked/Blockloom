@@ -339,6 +339,12 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .after(VisibilitySystems::VisibilityPropagate)
                     .before(VisibilitySystems::CalculateBounds)
                     .before(VisibilitySystems::CheckVisibility),
+                // A culled placeholder's loaded glTF scene hangs off
+                // `ModelChild` with its own visibility: hide it with the
+                // group so distant models shed draws like culled boxes.
+                model::sync_model_lod
+                    .after(culling::select_lod)
+                    .before(VisibilitySystems::CheckVisibility),
                 batching::upload_instances,
                 culling::configure_cameras,
                 culling::cull_views

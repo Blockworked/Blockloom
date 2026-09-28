@@ -74,7 +74,11 @@ pub fn register(app: &mut App) {
 }
 
 #[derive(Resource, Default)]
-struct TextureVariants(HashMap<AssetId<Image>, TextureVariant>);
+struct TextureVariants {
+    variants: HashMap<AssetId<Image>, TextureVariant>,
+    applied_bias: f32,
+    applied_aniso: u8,
+}
 
 struct TextureVariant {
     source: Handle<Image>,
@@ -87,7 +91,21 @@ fn sync_texture_variants(
     mut variants: ResMut<TextureVariants>,
     mut images: ResMut<Assets<Image>>,
     mut events: MessageReader<AssetEvent<Image>>,
+    scaling: Option<Res<crate::quality::Scaling>>,
 ) {
+    // One quality preset maps onto every streaming dial: the lod clamp
+    // pushes mip selection coarser and the anisotropy cap trims bandwidth.
+    // Baked data textures (cloud noise volumes, grading LUTs, lens dirt)
+    // never register here, so they keep full resolution.
+    let (bias, cap) = scaling.map_or((0.0, u8::MAX), |s| {
+        let q = s.controller.quality;
+        (q.texture_lod_bias(), q.anisotropy_cap())
+    });
+    let streaming_moved = bias != variants.applied_bias || cap != variants.applied_aniso;
+    if streaming_moved {
+        variants.applied_bias = bias;
+        variants.applied_aniso = cap;
+    }
     let changed: HashSet<_> = events
         .read()
         .filter_map(|event| match event {
@@ -95,8 +113,9 @@ fn sync_texture_variants(
             _ => None,
         })
         .collect();
-    for (id, request) in &mut variants.0 {
-        if images.get(*id).is_some() && !changed.contains(&request.source.id()) {
+    for (id, request) in &mut variants.variants {
+        if images.get(*id).is_some() && !streaming_moved && !changed.contains(&request.source.id())
+        {
             continue;
         }
         let Some(mut image) = images.get(&request.source).cloned() else {
@@ -110,7 +129,8 @@ fn sync_texture_variants(
         let mut descriptor = ImageSamplerDescriptor::linear();
         descriptor.address_mode_u = mode;
         descriptor.address_mode_v = mode;
-        descriptor.anisotropy_clamp = u16::from(request.anisotropy.max(1));
+        descriptor.anisotropy_clamp = u16::from(request.anisotropy.min(cap).max(1));
+        descriptor.lod_min_clamp = bias;
         image.sampler = ImageSampler::Descriptor(descriptor);
         image.texture_descriptor.format = if request.srgb {
             image.texture_descriptor.format.add_srgb_suffix()
@@ -770,7 +790,7 @@ pub fn load_surface_image(
     let anisotropy = material.anisotropy;
     commands.queue(move |world: &mut World| {
         world.init_resource::<TextureVariants>();
-        world.resource_mut::<TextureVariants>().0.insert(
+        world.resource_mut::<TextureVariants>().variants.insert(
             id,
             TextureVariant {
                 source,
@@ -993,6 +1013,7 @@ pub fn spawn_tilemap_3d(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use super::*;
     use blockloom_core::shader_lib;
 
     // Just enough of Bevy's PBR modules for naga to type-check a fragment.
@@ -1115,5 +1136,54 @@ fn position_world_to_clip(p: vec3<f32>) -> vec4<f32> { return vec4<f32>(p, 1.0);
             &defs,
         )
         .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    fn sampler_of(image: &Image) -> ImageSamplerDescriptor {
+        match &image.sampler {
+            ImageSampler::Descriptor(descriptor) => descriptor.clone(),
+            _ => ImageSamplerDescriptor::linear(),
+        }
+    }
+
+    #[test]
+    fn quality_streaming_clamps_mips_and_anisotropy() {
+        let mut app = App::new();
+        app.init_resource::<TextureVariants>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<crate::quality::Scaling>()
+            .add_message::<AssetEvent<Image>>()
+            .add_systems(Update, sync_texture_variants);
+        let source = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(Image::default());
+        let handle = Handle::<Image>::from(bevy::asset::uuid::Uuid::from_u64_pair(1, 2));
+        let id = handle.id();
+        app.world_mut()
+            .resource_mut::<TextureVariants>()
+            .variants
+            .insert(
+                id,
+                TextureVariant {
+                    source: source.clone(),
+                    sampler: TextureSampler::Repeat,
+                    anisotropy: 16,
+                    srgb: true,
+                },
+            );
+        app.update();
+        let images = app.world().resource::<Assets<Image>>();
+        let descriptor = images.get(id).map(sampler_of).unwrap();
+        assert_eq!(descriptor.lod_min_clamp, 0.0);
+        assert_eq!(descriptor.anisotropy_clamp, 8);
+        app.world_mut()
+            .resource_mut::<crate::quality::Scaling>()
+            .controller
+            .quality = blockloom_core::quality::Quality::Low;
+        app.update();
+        let images = app.world().resource::<Assets<Image>>();
+        let descriptor = images.get(id).map(sampler_of).unwrap();
+        assert_eq!(descriptor.lod_min_clamp, 2.0);
+        assert_eq!(descriptor.anisotropy_clamp, 2);
     }
 }

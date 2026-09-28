@@ -1007,12 +1007,30 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           on web. `player-dlss` stages the redistributable beside the player
           payload and each built game carries it (`Build.dlss`), with the
           Build log naming it; shippers add the section 9.5 license blurb as
-          DLSS_LICENSE.txt.
-        - Still open: DLSS ray reconstruction for Solari denoising;
-          distance-based general texture mip streaming and noise/LUT
+          DLSS_LICENSE.txt. Ray reconstruction replaces the SVGF denoiser
+          while Hybrid Solari lights the view (both SDK probes agreeing),
+          and the DLSS mode rides the dynamic-resolution signal - each 0.05
+          of scale below the ceiling steps a manual mode down towards
+          Performance, while `Auto` (the default) leaves the ratio to the SDK.
+          Texture streaming maps the preset onto surface samplers
+          (`Quality::texture_lod_bias`/`anisotropy_cap`, applied in
+          `sync_texture_variants` and re-applied on quality change): Low
+          starts two mips coarser with aniso 2, Medium one mip with aniso 4,
+          High/Ultra full with aniso 8/16. Baked data textures (cloud noise,
+          LUTs, lens dirt) never register as variants so they keep full
+          resolution. A culled LOD group now hides its loaded glTF scene too
+          (`model::sync_model_lod` runs after `select_lod`): the placeholder
+          cull verdict propagates onto the `ModelChild` subtree, so distant
+          models shed draws like culled boxes (still cull-only, no decimated
+          meshes). Draw accounting counts sharing exactly: groups serving
+          more than one visible mesh report as `quality/instanced_draws`
+          with the absorbed meshes in `quality/batched_instances`, so the
+          profiler tells one instanced draw covering ten props from ten
+          draws. Rebuilds clear the new counters with the rest.
+        - Still open: per-texture distance-based mip selection and noise/LUT
           atlases; native-resolution HDR UI compositing
-          during scene scaling; exact GPU indirect-draw accounting and simplified
-          levels for loaded model scenes.
+          during scene scaling; GPU-side indirect-draw counters and
+          decimated simplified meshes for loaded model scenes.
         - Draw policy (numbers on the Phase 4 mechanisms, no new machinery):
           which meshes instance (vegetation, props, debris, decals) and at what
           density, indirect-draw batch membership, per-system draw-call and
@@ -1030,15 +1048,16 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           spatial upscaler plus temporal anti-aliasing path, half-res volumetrics,
           fog and SSR with bilateral upsample, reflection and shadow resolution
           budgets per quality preset.
-        - DLSS (Bevy `dlss` path on NVIDIA RTX): configurable mode (DLAA, Quality,
-          Balanced, Performance, Ultra Performance) plus sharpness through the
-          existing CAS dial; while DLSS drives its own render resolution the
-          spatial scale stands down and the mode stays manual. Vendor the DLSS
+        - DLSS (Bevy `dlss` path on NVIDIA RTX): configurable mode (Auto, DLAA,
+          Quality, Balanced, Performance, Ultra Performance) plus sharpness
+          through the existing CAS dial; manual modes step down with the
+          dynamic-resolution signal while `Auto` leaves the ratio to the SDK.
+          Ray reconstruction denoises Hybrid Solari output where both SDK
+          probes agree, standing the SVGF pass down. Vendor the DLSS
           redistributable in player builds, probe capability at startup, fallback chain DLSS to TAA plus
           spatial to spatial-only, per-platform toggle (off on WASM and weak
           targets), editor override with a warning when unavailable. Shares the
-          jittered-camera and motion-vector plumbing with the TAA path; Solari
-          ray-reconstruction denoising is still open.
+          jittered-camera and motion-vector plumbing with the TAA path.
         - Memory: texture streaming with distance-based mip bias, BC/BC6H compression
           defaults, noise and LUT atlasing, pool caps for particles/decals/shards
           with LRU steal. One quality preset maps onto every dial above, plus an

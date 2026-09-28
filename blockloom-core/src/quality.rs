@@ -19,6 +19,28 @@ impl Quality {
         }
     }
 
+    /// Coarsest mip the preset's texture streaming starts from, as a
+    /// `lod_min_clamp` on surface samplers. Lower presets trade texture
+    /// sharpness for memory bandwidth before geometry throttles engage.
+    pub fn texture_lod_bias(self) -> f32 {
+        match self {
+            Self::Low => 2.0,
+            Self::Medium => 1.0,
+            Self::High | Self::Ultra => 0.0,
+        }
+    }
+
+    /// Anisotropy cap for streamed surface textures. Baked data textures
+    /// (cloud noise, LUTs, lens dirt) never pass through streaming.
+    pub fn anisotropy_cap(self) -> u8 {
+        match self {
+            Self::Low => 2,
+            Self::Medium => 4,
+            Self::High => 8,
+            Self::Ultra => 16,
+        }
+    }
+
     pub fn budget(self) -> Budget {
         let (density, distance, particles, decals, shards, shadow, reflection, captures) =
             match self {
@@ -129,8 +151,11 @@ pub enum Upscaler {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DlssMode {
-    Dlaa,
+    /// The SDK picks the ratio itself; the dynamic-resolution signal then
+    /// has nothing to step, and the mode stays where the SDK puts it.
     #[default]
+    Auto,
+    Dlaa,
     Quality,
     Balanced,
     Performance,
@@ -163,7 +188,7 @@ impl Default for Settings {
             auto_drop: false,
             over_budget_frames: 120,
             upscaler: Upscaler::Spatial,
-            dlss_mode: DlssMode::Quality,
+            dlss_mode: DlssMode::Auto,
             sharpness: 0.0,
         }
     }
@@ -260,6 +285,17 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn texture_streaming_tightens_with_preset() {
+        assert_eq!(Quality::Low.texture_lod_bias(), 2.0);
+        assert_eq!(Quality::Medium.texture_lod_bias(), 1.0);
+        assert_eq!(Quality::High.texture_lod_bias(), 0.0);
+        assert_eq!(Quality::Ultra.texture_lod_bias(), 0.0);
+        assert!(Quality::Low.anisotropy_cap() < Quality::Medium.anisotropy_cap());
+        assert!(Quality::Medium.anisotropy_cap() < Quality::High.anisotropy_cap());
+        assert!(Quality::High.anisotropy_cap() < Quality::Ultra.anisotropy_cap());
+    }
+
     #[test]
     fn local_geometry_pressure_is_sustained_and_isolated() {
         let settings = Settings {
@@ -366,6 +402,24 @@ mod tests {
             serde_json::from_str::<Settings>("{}").unwrap(),
             Settings::default()
         );
+    }
+    #[test]
+    fn dlss_mode_defaults_to_auto_and_parses_every_name() {
+        assert_eq!(Settings::default().dlss_mode, DlssMode::Auto);
+        for (name, mode) in [
+            ("Auto", DlssMode::Auto),
+            ("Dlaa", DlssMode::Dlaa),
+            ("Quality", DlssMode::Quality),
+            ("Balanced", DlssMode::Balanced),
+            ("Performance", DlssMode::Performance),
+            ("UltraPerformance", DlssMode::UltraPerformance),
+        ] {
+            let mut settings = Settings::default();
+            settings.set(Setting::DlssMode, name).unwrap();
+            assert_eq!(settings.dlss_mode, mode);
+        }
+        let mut settings = Settings::default();
+        assert!(settings.set(Setting::DlssMode, "Turbo").is_err());
     }
     #[test]
     fn sanitize_nonfinite_and_inverted_limits() {

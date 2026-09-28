@@ -485,9 +485,15 @@ Props have a local LOD-distance throttle too (`budget/props/distance_scale`),
 applied to every prop level. Spheres and capsules swap to coarser meshes and
 then leave the view far out; cuboids, planes and model placeholders carry a
 cull-only level, so visible ones still merge into batches while culled ones
-stay out of merges entirely. Loaded model scenes have no simplified levels,
-so only their placeholder thins out. If props stay over budget at the local
-floor, shared preset feedback takes over.
+stay out of merges entirely. Loaded model scenes have no decimated meshes,
+so a culled group hides the whole `ModelChild` subtree instead
+(`model::sync_model_lod`), which sheds the scene's draws without a
+simplified level. If props stay over budget at the local
+floor, shared preset feedback takes over. Draw groups serving more than one
+visible mesh count as `quality/instanced_draws`, with the absorbed meshes in
+`quality/batched_instances`. Texture streaming maps the preset onto surface
+samplers (a lod clamp plus an anisotropy cap, re-applied on quality change);
+baked noise, LUT and lens-dirt textures never register as variants.
 
 The main-world camera stays at native size for input. Extracted world-view targets
 scale before rendering and Bevy's spatial blit fills the output. Custom sub-viewports
@@ -496,9 +502,12 @@ with `--features dlss` (`just player-dlss`): `just dlss-sdk` fetches the pinned
 SDK once per clone (sparse, about 330MB under gitignored `third-party/dlss`;
 cloning it accepts NVIDIA's license), the justfile exports `DLSS_SDK`, and a
 Vulkan SDK plus clang complete the build (`VULKAN_SDK`, default `/usr` on
-Linux). The `Dlss` component carries the project's perf mode on perspective
+Linux). The `Dlss` component carries the effective perf mode - the project's,
+or ray reconstruction's while Hybrid Solari lights the view - on perspective
 HDR world cameras and drives its own render resolution while the spatial
-`scale_views` stands down. Otherwise - no SDK build, no RTX, no Vulkan,
+`scale_views` stands down. Manual modes step down with the dynamic-resolution
+signal; `Auto` (the default) leaves the ratio to the SDK. Otherwise - no SDK
+build, no RTX, no Vulkan,
 missing DLLs, 2D, or web - it rides TAA plus spatial in 3D and
 spatial in 2D and on web. The probe reads `DlssSuperResolutionSupported` where
 the feature exists and the adapter elsewhere, reports through the same
