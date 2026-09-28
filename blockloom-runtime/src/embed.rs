@@ -834,6 +834,18 @@ fn aim_plane(
     }
     let size = scratch.size();
     let caps = surface.get_capabilities(&adapter);
+    if !display::takes(&caps, format, color_space) {
+        // Caps claimed a space the device refuses (seen on some Wayland
+        // drivers); drop the plane and fall back to the 8-bit ring rather
+        // than failing the run on the configure below.
+        tracing::info!("game view: HDR surface refused {format:?} {color_space:?}");
+        plane.surface = None;
+        plane.formats = None;
+        plane.config = None;
+        plane.metadata = None;
+        offers.set(vec![OutputSpace::Sdr]);
+        return;
+    }
     let wanted = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format,

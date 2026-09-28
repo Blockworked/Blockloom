@@ -133,6 +133,11 @@ pub struct MoteMaterial {
     /// Dust only: rgb ambient radiance, w base height.
     #[uniform(5)]
     pub ambient: Vec4,
+    /// The entity's world matrix. Read from a uniform rather than Bevy's
+    /// mesh uniform: that lives in `mesh_bindings`, which Bevy only
+    /// registers late, after materials already compile on some platforms.
+    #[uniform(6)]
+    pub world_from_local: Mat4,
 }
 
 impl Material for MoteMaterial {
@@ -240,7 +245,7 @@ fn mote_range(spec: &LightSpec) -> f32 {
 }
 
 /// Motes lit by their own lamp: a small diffuse grain, `E / pi`.
-pub fn mote_material(spec: &LightSpec, fog: &VolumetricFog) -> MoteMaterial {
+pub fn mote_material(spec: &LightSpec, fog: &VolumetricFog, world_from_local: Mat4) -> MoteMaterial {
     let beam = normalized(&spec.beam);
     let motes = &beam.motes;
     let point = spec.kind == LightKind::Point;
@@ -262,11 +267,16 @@ pub fn mote_material(spec: &LightSpec, fog: &VolumetricFog) -> MoteMaterial {
         ),
         sun: Vec4::ZERO,
         ambient: Vec4::ZERO,
+        world_from_local,
     }
 }
 
 /// Height dust lit by the sun (through the fog's phase) and the ambient.
-pub fn dust_material(fog: &VolumetricFog, env: &Environment) -> MoteMaterial {
+pub fn dust_material(
+    fog: &VolumetricFog,
+    env: &Environment,
+    world_from_local: Mat4,
+) -> MoteMaterial {
     let mut motes = fog.dust.clone();
     motes.normalize();
     let albedo = linear(env.volumetric_albedo);
@@ -282,6 +292,7 @@ pub fn dust_material(fog: &VolumetricFog, env: &Environment) -> MoteMaterial {
             .direction
             .extend(fog.base_height + fog.dust_height.max(0.01)),
         ambient: (albedo * ambient).extend(fog.base_height),
+        world_from_local,
     }
 }
 
@@ -443,7 +454,7 @@ fn sync_beams(
             }
             Part::Motes => {
                 visibility.set_if_neq(Visibility::Inherited);
-                let next = mote_material(&lit.spec, fog);
+                let next = mote_material(&lit.spec, fog, at.to_matrix());
                 if let Some(handle) = mote
                     && motes.get(&handle.0) != Some(&next)
                     && let Some(mut material) = motes.get_mut(&handle.0)
@@ -486,10 +497,16 @@ fn sync_beams(
                     let salt = owner.index_u32();
                     let mesh =
                         motes_mesh(spec.beam.motes.count, salt, |seed| mote_start(seed, &spec));
+                    let world_from_local = transforms
+                        .get(lit.child)
+                        .map(|at| at.to_matrix())
+                        .unwrap_or(Mat4::IDENTITY);
                     commands.spawn((
                         common,
                         Mesh3d(meshes.add(mesh)),
-                        MeshMaterial3d(motes.add(mote_material(&lit.spec, fog))),
+                        MeshMaterial3d(
+                            motes.add(mote_material(&lit.spec, fog, world_from_local)),
+                        ),
                         // Motes wander past where they started.
                         NoFrustumCulling,
                     ));
@@ -526,7 +543,11 @@ fn sync_dust(
         .iter()
         .next()
         .map_or(Vec3::ZERO, GlobalTransform::translation);
-    let next = dust_material(fog, &environment);
+    let next = dust_material(
+        fog,
+        &environment,
+        Mat4::from_translation(camera),
+    );
     let mut kept = false;
     for (entity, field, handle, mut transform) in &mut dust {
         if !wanted || kept || field.motes != fog.dust {
@@ -646,7 +667,7 @@ mod tests {
             ..VolumetricFog::default()
         };
         let env = Environment::default();
-        let dust = dust_material(&fog, &env);
+        let dust = dust_material(&fog, &env, Mat4::IDENTITY);
         assert_eq!(dust.shape.w, 2.0);
         assert_eq!(dust.sun.w, 5.0);
         assert_eq!(dust.ambient.w, 2.0);
@@ -665,7 +686,6 @@ struct Vertex { @builtin(instance_index) instance_index: u32, @location(0) posit
 struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) world_position: vec4<f32>, \
 @location(1) world_normal: vec3<f32>, @location(2) uv: vec2<f32>, @location(5) color: vec4<f32> }\n\
 fn decompress_vertex(v: Vertex, i: u32) -> Vertex { return v; }\n\
-fn get_world_from_local(i: u32) -> mat4x4<f32> { return mat4x4<f32>(); }\n\
 fn position_world_to_clip(p: vec3<f32>) -> vec4<f32> { return vec4<f32>(p, 1.0); }\n";
 
     fn stubbed(source: &str) -> String {
@@ -684,5 +704,16 @@ fn position_world_to_clip(p: vec3<f32>) -> vec4<f32> { return vec4<f32>(p, 1.0);
         ] {
             shader_lib::validate(&stubbed(source), &[]).unwrap_or_else(|error| panic!("{error}"));
         }
+    }
+
+    #[test]
+    fn the_mote_shader_needs_no_late_bevy_module() {
+        // `mesh_bindings` only registers late in Bevy's startup, after
+        // materials already compile on some platforms, so the mote shader
+        // takes its world matrix as a uniform rather than importing
+        // `mesh_functions` for it. This guards that dependency.
+        let source = include_str!("shaders/beam_motes.wesl");
+        assert!(!source.contains("mesh_functions"));
+        assert!(!source.contains("mesh_bindings"));
     }
 }

@@ -5,7 +5,6 @@
 
 import bevy_pbr::render::{
     forward_io::{Vertex, VertexOutput, decompress_vertex},
-    mesh_functions::get_world_from_local,
     mesh_view_bindings::{view, globals},
     view_transformations::position_world_to_clip,
 };
@@ -29,6 +28,9 @@ import bevy_core_pipeline::tonemapping;
 @group(constants::MATERIAL_BIND_GROUP) @binding(4) var<uniform> sun: vec4<f32>;
 // Dust only: rgb ambient radiance, w base height.
 @group(constants::MATERIAL_BIND_GROUP) @binding(5) var<uniform> ambient: vec4<f32>;
+// The mote entity's world matrix, as a uniform rather than Bevy's mesh
+// uniform (see MoteMaterial).
+@group(constants::MATERIAL_BIND_GROUP) @binding(6) var<uniform> world_from_local: mat4x4<f32>;
 
 // HG normalized so isotropic is 1.
 fn phase(cos_theta: f32) -> f32 {
@@ -54,7 +56,6 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
         let edge = 1.0 - smoothstep(0.3 * beam.x, 0.5 * beam.x, length(centre - eye));
         light = (color.rgb * phase(dot(-view_dir, sun.xyz)) + ambient.rgb) * thin * edge;
     } else {
-        let world_from_local = get_world_from_local(vertex_in.instance_index);
         let tan_outer = select(beam.y, -1.0, mode == 1u);
         let local = mote_in_beam(seed, t, beam.x, tan_outer, beam.z, shape.z);
         centre = (world_from_local * vec4<f32>(local, 1.0)).xyz;

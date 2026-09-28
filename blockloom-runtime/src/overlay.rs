@@ -10,7 +10,8 @@ use crate::engine::{ActorId, Dimension, Engine, PendingEffects};
 use crate::ui::{UiElementText, UiManager, UiRoot, UiSliderFill, UiToggleLamp};
 use crate::world::{self, WorldCamera};
 use bevy::prelude::*;
-use blockloom_core::ui::UiKind;
+
+use blockloom_core::ui::{UiKind, UiPaint, UiTheme};
 use blockloom_core::vm::Effect;
 use blockloom_protocol::RuntimeMessage;
 use std::collections::HashSet;
@@ -286,7 +287,6 @@ pub fn apply_ui_effects(
 
 /// An element's own box, and what a `set` can do to it.
 type Styled<'a> = (&'a mut Node, &'a mut BackgroundColor);
-
 /// Which entities that means: the element itself, not the two pieces inside
 /// one that follow its value rather than its style.
 type OwnNode = (
@@ -586,7 +586,7 @@ pub fn draw_ui(
         let on = element.value.as_bool();
         for (owner, mut lamp) in &mut lamps {
             if owner.0 == id {
-                *lamp = BackgroundColor(crate::ui::toggle_color(theme, on));
+                *lamp = BackgroundColor(toggle_lamp_color(local_theme, &paint, on));
             }
         }
     }
@@ -603,6 +603,41 @@ fn slider_fraction(node: &crate::ui::UiNode) -> f32 {
         return 0.0;
     }
     ((node.value.as_number().unwrap_or(0.0) as f32 - low) / span).clamp(0.0, 1.0)
+}
+
+/// A bar's track follows its `background` style, defaulting to the theme's
+/// track. A bar's fill follows its `text_color` style, defaulting to the
+/// theme's accent - so a project can paint health, stamina and boss bars
+/// without new properties. A style set after spawn only takes on a rebuild.
+fn bar_track_color(theme: UiTheme, paint: &UiPaint) -> Color {
+    paint
+        .background
+        .as_ref()
+        .map(|hex| world::parse_color(hex))
+        .unwrap_or_else(|| crate::ui::track_background(theme))
+}
+
+/// A bar's fill. See [`bar_track_color`].
+fn bar_fill_color(theme: UiTheme, paint: &UiPaint) -> Color {
+    paint
+        .text_color
+        .as_ref()
+        .map(|hex| world::parse_color(hex))
+        .unwrap_or_else(|| crate::ui::accent(theme))
+}
+
+/// A toggle's lamp when on follows its `border_color` style, so the lamp can
+/// be tinted while the caption keeps its own text color. Falls back to the
+/// theme's toggle color.
+fn toggle_lamp_color(theme: UiTheme, paint: &UiPaint, on: bool) -> Color {
+    if !on {
+        return crate::ui::toggle_color(theme, false);
+    }
+    paint
+        .border_color
+        .as_ref()
+        .map(|hex| world::parse_color(hex))
+        .unwrap_or_else(|| crate::ui::toggle_color(theme, true))
 }
 
 fn spawn_element(
@@ -643,6 +678,9 @@ fn spawn_element(
         }
         UiKind::Slider | UiKind::Progress | UiKind::Scrollbar => {
             let value = id.clone();
+            let local = node.theme.unwrap_or(theme);
+            let track = bar_track_color(local, &node.styles.normal);
+            let fill = bar_fill_color(local, &node.styles.normal);
             entity.with_children(|parent| {
                 parent
                     .spawn((
@@ -654,7 +692,7 @@ fn spawn_element(
                             )),
                             ..default()
                         },
-                        BackgroundColor(crate::ui::track_background(theme)),
+                        BackgroundColor(track),
                     ))
                     .with_children(|track| {
                         track.spawn((
@@ -667,12 +705,14 @@ fn spawn_element(
                                 )),
                                 ..default()
                             },
-                            BackgroundColor(crate::ui::accent(theme)),
+                            BackgroundColor(fill),
                         ));
                     });
             });
         }
         UiKind::RadialProgress => {
+            let local = node.theme.unwrap_or(theme);
+            let fill = bar_fill_color(local, &node.styles.normal);
             entity.with_children(|parent| {
                 for i in 0..64 {
                     let angle = i as f32 * std::f32::consts::TAU / 64.;
@@ -687,7 +727,7 @@ fn spawn_element(
                             ..default()
                         },
                         UiTransform::from_rotation(Rot2::radians(angle)),
-                        BackgroundColor(crate::ui::accent(theme)),
+                        BackgroundColor(fill),
                     ));
                 }
             });
@@ -704,6 +744,8 @@ fn spawn_element(
         UiKind::Toggle => {
             let lamp = id.clone();
             let caption = id.clone();
+            let local = node.theme.unwrap_or(theme);
+            let lit = toggle_lamp_color(local, &node.styles.normal, node.value.as_bool());
             entity.with_children(|parent| {
                 parent.spawn((
                     UiToggleLamp(lamp),
@@ -713,7 +755,7 @@ fn spawn_element(
                         border_radius: BorderRadius::all(Val::Px(4.0)),
                         ..default()
                     },
-                    BackgroundColor(crate::ui::toggle_color(theme, false)),
+                    BackgroundColor(lit),
                 ));
                 parent.spawn((
                     UiElementText(caption),

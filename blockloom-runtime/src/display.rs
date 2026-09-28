@@ -137,6 +137,23 @@ impl Formats {
     }
 }
 
+/// Whether the device will take this pair. Adapter caps have claimed a
+/// space the configure then refuses on some drivers, which fails the run,
+/// so every HDR configure checks fresh caps first.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn takes(
+    caps: &wgpu::SurfaceCapabilities,
+    format: TextureFormat,
+    color_space: SurfaceColorSpace,
+) -> bool {
+    let flag = match color_space {
+        SurfaceColorSpace::ExtendedSrgbLinear => SurfaceColorSpaces::EXTENDED_SRGB_LINEAR,
+        SurfaceColorSpace::Bt2100Pq => SurfaceColorSpaces::BT2100_PQ,
+        _ => return true,
+    };
+    caps.color_spaces(format).contains(flag)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn present_mode(mode: PresentMode, caps: &wgpu::SurfaceCapabilities) -> wgpu::PresentMode {
     use wgpu::PresentMode as P;
@@ -205,13 +222,19 @@ fn adopt_window(
             continue;
         };
         let caps = surface.get_capabilities(&adapter);
-        let Some(formats) = Formats::of(&caps).filter(|f| f.scrgb || f.hdr10) else {
+        let Some(mut formats) = Formats::of(&caps).filter(|f| f.scrgb || f.hdr10) else {
             offers.set(vec![OutputSpace::Sdr]);
             commands.entity(entity).insert(SurfaceDeclined);
             continue;
         };
+        let (mut format, mut color_space) = formats.configure(frame.space);
+        if !takes(&caps, format, color_space) {
+            // Caps claimed a space the device refuses; stay SDR.
+            formats.scrgb = false;
+            formats.hdr10 = false;
+            (format, color_space) = formats.configure(frame.space);
+        }
         offers.set(formats.offers());
-        let (format, color_space) = formats.configure(frame.space);
         let view = view_format(format);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -258,6 +281,7 @@ fn acquire_frame(
     adapter: Res<RenderAdapter>,
     device: Res<RenderDevice>,
     frame: Res<HdrFrame>,
+    offers: Res<DisplayOffers>,
 ) {
     for (mut window, mut owned) in &mut windows {
         let (format, color_space) = owned.formats.configure(frame.space);
@@ -270,6 +294,16 @@ fn acquire_frame(
             drop(window.swap_chain_texture.take());
             drop(window.swap_chain_texture_view.take());
             let caps = owned.surface.get_capabilities(&adapter);
+            let (format, color_space) = if takes(&caps, format, color_space) {
+                (format, color_space)
+            } else {
+                // Caps claimed a space the device refuses; fall back to SDR
+                // for the rest of the run rather than failing it.
+                owned.formats.scrgb = false;
+                owned.formats.hdr10 = false;
+                offers.set(vec![OutputSpace::Sdr]);
+                owned.formats.configure(frame.space)
+            };
             let view = view_format(format);
             let config = &mut owned.config;
             config.format = format;
@@ -495,6 +529,36 @@ mod tests {
             view_format(TextureFormat::Rgba16Float),
             TextureFormat::Rgba16Float
         );
+    }
+
+    #[test]
+    fn a_configure_is_checked_against_what_the_device_takes() {
+        // Some drivers claim a space in caps that the configure then
+        // refuses; that pair must read as unsupported.
+        let lying = caps(&[(
+            TextureFormat::Rgba16Float,
+            SurfaceColorSpaces::SRGB,
+        )]);
+        assert!(!takes(
+            &lying,
+            TextureFormat::Rgba16Float,
+            SurfaceColorSpace::ExtendedSrgbLinear
+        ));
+        let honest = caps(&[(
+            TextureFormat::Rgba16Float,
+            SurfaceColorSpaces::EXTENDED_SRGB_LINEAR,
+        )]);
+        assert!(takes(
+            &honest,
+            TextureFormat::Rgba16Float,
+            SurfaceColorSpace::ExtendedSrgbLinear
+        ));
+        // SDR fallback pairs always pass.
+        assert!(takes(
+            &lying,
+            TextureFormat::Bgra8UnormSrgb,
+            SurfaceColorSpace::Auto
+        ));
     }
 
     #[test]
