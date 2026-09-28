@@ -981,10 +981,15 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           Draw estimates use the active world camera's visible mesh list, so
           LOD/occlusion removals and shadow-only meshes do not inflate feedback.
           Rebuilds clear sampled costs from the previous world.
+          SDR game UI and speech bubbles now composite at native resolution
+          after the scaled scene, in both 2D and 3D. Transparent areas preserve
+          the scene; the UI camera follows output-target changes and stands
+          down at native scene scale, for custom viewports or without UI.
+          HDR retains the existing linear UI blend before output encoding.
         - Still open: real DLSS SDK/redistributable integration and capability
           detection; distance-based general texture mip streaming and noise/LUT
-          atlases; half-resolution SSR; native-resolution UI compositing during
-          scene scaling; exact GPU indirect-draw accounting and per-system
+          atlases; half-resolution SSR; native-resolution HDR UI compositing
+          during scene scaling; exact GPU indirect-draw accounting and per-system
           LOD generation/streaming for general props without authored levels.
           DLSS selection currently reports unavailable and falls back to TAA/spatial.
         - Draw policy (numbers on the Phase 4 mechanisms, no new machinery):

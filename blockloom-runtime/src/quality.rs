@@ -2,13 +2,17 @@
 use crate::engine::Engine;
 use crate::world::WorldCamera;
 use bevy::anti_alias::taa::TemporalAntiAliasing;
+use bevy::camera::visibility::RenderLayers;
 use bevy::camera::visibility::VisibleEntities;
+use bevy::camera::{CameraOutputMode, CameraUpdateSystems, RenderTarget};
 use bevy::diagnostic::DiagnosticsStore;
 use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
+use bevy::render::render_resource::BlendState;
 use bevy::render::sync_world::RenderEntity;
 use bevy::render::view::{ExtractedView, Msaa};
 use bevy::render::{Extract, ExtractSchedule, RenderApp};
+use bevy::ui::IsDefaultUiCamera;
 pub use blockloom_core::quality::DrawCost;
 use blockloom_core::quality::{Budget, Controller, GeometryController, Settings, Upscaler};
 
@@ -24,6 +28,9 @@ pub struct Scaling {
     pub costs: [DrawCost; 6],
 }
 pub const SYSTEMS: [&str; 6] = ["terrain", "vegetation", "props", "vfx", "debris", "water"];
+
+#[derive(Component)]
+struct NativeUiCamera;
 
 impl Default for Scaling {
     fn default() -> Self {
@@ -84,7 +91,10 @@ pub fn register(app: &mut App) {
         )
         .add_systems(
             PostUpdate,
-            configure_cameras.after(crate::environment::apply_environment),
+            (
+                configure_cameras.after(crate::environment::apply_environment),
+                configure_ui_camera.before(CameraUpdateSystems),
+            ),
         )
         .add_systems(Last, measure_draws);
     if let Some(render) = app.get_sub_app_mut(RenderApp) {
@@ -92,6 +102,90 @@ pub fn register(app: &mut App) {
             ExtractSchedule,
             scale_views.after(bevy::render::camera::extract_cameras),
         );
+    }
+}
+
+/// Composite SDR UI after the scene's spatial blit. HDR keeps its linear UI
+/// blend before encoding until that chain has a native composition target.
+fn configure_ui_camera(
+    mut commands: Commands,
+    scaling: Res<Scaling>,
+    frame: Res<crate::hdr::HdrFrame>,
+    roots: Query<
+        (&Node, Has<crate::ui::UiRoot>, Option<&Children>),
+        (Without<ChildOf>, Without<crate::overlay::OverlayText>),
+    >,
+    worlds: Query<(Entity, &Camera, &RenderTarget, Has<IsDefaultUiCamera>), With<WorldCamera>>,
+    mut overlays: Query<
+        (
+            Entity,
+            &mut Camera,
+            &mut RenderTarget,
+            Has<IsDefaultUiCamera>,
+        ),
+        (With<NativeUiCamera>, Without<WorldCamera>),
+    >,
+) {
+    let world = worlds.iter().find(|(_, camera, ..)| camera.is_active);
+    let Some((world_entity, world_camera, target, world_ui)) = world else {
+        for (entity, ..) in &overlays {
+            commands.entity(entity).despawn();
+        }
+        return;
+    };
+    let native = scaling.controller.scale < 1.0
+        && world_camera.viewport.is_none()
+        && !frame.is_hdr()
+        && roots.iter().any(|(node, interface, children)| {
+            node.display != Display::None
+                && (!interface || children.is_some_and(|children| !children.is_empty()))
+        });
+    if world_ui == native {
+        if native {
+            commands.entity(world_entity).remove::<IsDefaultUiCamera>();
+        } else {
+            commands.entity(world_entity).insert(IsDefaultUiCamera);
+        }
+    }
+    if let Ok((entity, mut camera, mut overlay_target, ui)) = overlays.single_mut() {
+        if camera.is_active != native {
+            camera.is_active = native;
+        }
+        let order = world_camera.order.saturating_add(1);
+        if camera.order != order {
+            camera.order = order;
+        }
+        if overlay_target.normalize(Some(Entity::PLACEHOLDER))
+            != target.normalize(Some(Entity::PLACEHOLDER))
+        {
+            *overlay_target = target.clone();
+        }
+        if ui != native {
+            if native {
+                commands.entity(entity).insert(IsDefaultUiCamera);
+            } else {
+                commands.entity(entity).remove::<IsDefaultUiCamera>();
+            }
+        }
+    } else if native {
+        commands.spawn((
+            NativeUiCamera,
+            Camera2d,
+            Camera {
+                order: world_camera.order.saturating_add(1),
+                clear_color: ClearColorConfig::Custom(Color::NONE),
+                output_mode: CameraOutputMode::Write {
+                    blend_state: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    clear_color: ClearColorConfig::None,
+                },
+                ..default()
+            },
+            target.clone(),
+            RenderLayers::none(),
+            IsDefaultUiCamera,
+            Msaa::Off,
+            bevy::core_pipeline::tonemapping::Tonemapping::None,
+        ));
     }
 }
 
@@ -377,6 +471,109 @@ mod tests {
     use bevy::render::render_resource::PrimitiveTopology;
     use blockloom_core::quality::{Quality, Setting};
     use blockloom_core::vm::Effect;
+
+    #[test]
+    fn native_ui_tracks_output_and_returns_to_the_world_for_hdr_or_native_scale() {
+        for three_d in [false, true] {
+            let mut app = App::new();
+            app.init_resource::<Scaling>()
+                .init_resource::<crate::hdr::HdrFrame>()
+                .add_systems(Update, configure_ui_camera);
+            app.world_mut().resource_mut::<Scaling>().controller.scale = 0.5;
+            app.world_mut().spawn((Node::default(), crate::ui::UiRoot));
+            let world = app.world_mut().spawn(WorldCamera).id();
+            if three_d {
+                app.world_mut()
+                    .entity_mut(world)
+                    .insert(Camera3d::default());
+            } else {
+                app.world_mut().entity_mut(world).insert(Camera2d);
+            }
+            app.update();
+            assert_eq!(
+                app.world_mut()
+                    .query_filtered::<Entity, With<NativeUiCamera>>()
+                    .iter(app.world())
+                    .count(),
+                0
+            );
+            assert!(app.world().get::<IsDefaultUiCamera>(world).is_some());
+            let root = app.world_mut().spawn(Node::default()).id();
+            app.update();
+            let overlay = app
+                .world_mut()
+                .query_filtered::<Entity, With<NativeUiCamera>>()
+                .single(app.world())
+                .unwrap();
+            assert!(app.world().get::<IsDefaultUiCamera>(overlay).is_some());
+            assert!(app.world().get::<IsDefaultUiCamera>(world).is_none());
+            assert_eq!(
+                app.world().get::<RenderLayers>(overlay).unwrap(),
+                &RenderLayers::none()
+            );
+            let camera = app.world().get::<Camera>(overlay).unwrap();
+            assert!(matches!(
+                camera.output_mode,
+                CameraOutputMode::Write {
+                    blend_state: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    clear_color: ClearColorConfig::None,
+                }
+            ));
+
+            let target = RenderTarget::TextureView(bevy::camera::ManualTextureViewHandle(42));
+            app.world_mut().entity_mut(world).insert(target.clone());
+            app.world_mut().get_mut::<Camera>(world).unwrap().order = 10;
+            app.update();
+            assert_eq!(
+                app.world()
+                    .get::<RenderTarget>(overlay)
+                    .unwrap()
+                    .normalize(None),
+                target.normalize(None),
+            );
+            assert_eq!(app.world().get::<Camera>(overlay).unwrap().order, 11);
+            app.world_mut().get_mut::<Node>(root).unwrap().display = Display::None;
+            app.update();
+            assert!(!app.world().get::<Camera>(overlay).unwrap().is_active);
+            assert!(app.world().get::<IsDefaultUiCamera>(world).is_some());
+            app.world_mut().get_mut::<Node>(root).unwrap().display = Display::Flex;
+            app.update();
+            assert!(app.world().get::<Camera>(overlay).unwrap().is_active);
+
+            use blockloom_core::scene::{DisplayOutput, OutputSpace};
+            let hdr = DisplayOutput {
+                space: OutputSpace::Hdr10,
+                ..default()
+            };
+            app.insert_resource(crate::hdr::HdrFrame::resolve(
+                hdr,
+                Some(&[OutputSpace::Hdr10]),
+                crate::hdr::HdrPolicy::default(),
+            ));
+            app.update();
+            assert!(!app.world().get::<Camera>(overlay).unwrap().is_active);
+            assert!(app.world().get::<IsDefaultUiCamera>(overlay).is_none());
+            assert!(app.world().get::<IsDefaultUiCamera>(world).is_some());
+
+            app.insert_resource(crate::hdr::HdrFrame::default());
+            app.update();
+            assert!(app.world().get::<Camera>(overlay).unwrap().is_active);
+            app.world_mut().get_mut::<Camera>(world).unwrap().viewport =
+                Some(bevy::camera::Viewport::default());
+            app.update();
+            assert!(!app.world().get::<Camera>(overlay).unwrap().is_active);
+            assert!(app.world().get::<IsDefaultUiCamera>(world).is_some());
+            app.world_mut().get_mut::<Camera>(world).unwrap().viewport = None;
+            app.world_mut().resource_mut::<Scaling>().controller.scale = 1.0;
+            app.update();
+            assert!(!app.world().get::<Camera>(overlay).unwrap().is_active);
+            assert!(app.world().get::<IsDefaultUiCamera>(world).is_some());
+
+            app.world_mut().despawn(world);
+            app.update();
+            assert!(app.world().get_entity(overlay).is_err());
+        }
+    }
 
     fn show_meshes(app: &mut App) {
         let entities: Vec<Entity> = app

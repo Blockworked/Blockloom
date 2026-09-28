@@ -28,7 +28,7 @@ use bevy::render::renderer::{RenderAdapter, RenderDevice, RenderInstance, Render
 use bevy::render::texture::{ManualTextureView, ManualTextureViews, OutputColorAttachment};
 use bevy::render::view::{ViewTargetAttachments, clear_view_attachments, prepare_view_attachments};
 use bevy::render::{Render, RenderApp, RenderSystems};
-use bevy::ui::{IsDefaultUiCamera, UiScale};
+use bevy::ui::UiScale;
 use bevy::window::ExitCondition;
 use blockloom_core::scene::{Mode, OutputSpace};
 use blockloom_protocol::{EditorMessage, GAME_SIZE, RuntimeMessage};
@@ -526,18 +526,18 @@ fn add_surface(app: &mut App, exchange: Arc<FrameExchange>) {
     }
 }
 
-/// Points every world camera at the shared view, and makes it the one the
-/// interface draws over: with no window there is no default to fall back on.
+/// Points every world camera at the shared view. Quality scaling chooses
+/// whether the interface draws here or through its native overlay camera.
 fn target_cameras(
     mut commands: Commands,
-    cameras: Query<(Entity, &RenderTarget, Has<IsDefaultUiCamera>), With<WorldCamera>>,
+    cameras: Query<(Entity, &RenderTarget), With<WorldCamera>>,
 ) {
-    for (entity, target, ui) in &cameras {
+    for (entity, target) in &cameras {
         let aimed = matches!(target, RenderTarget::TextureView(handle) if *handle == VIEW);
-        if !aimed || !ui {
+        if !aimed {
             commands
                 .entity(entity)
-                .insert((RenderTarget::TextureView(VIEW), IsDefaultUiCamera));
+                .insert(RenderTarget::TextureView(VIEW));
         }
     }
 }
@@ -1584,6 +1584,73 @@ mod tests {
                     scaled[i]
                 );
             }
+        }
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn quality_scaling_keeps_ui_edges_at_native_resolution() {
+        use blockloom_core::blocks::{Instruction, InstructionKind as K, Strand};
+        use blockloom_core::ui::{UiAnchor, UiProp};
+        use blockloom_core::value::Value;
+
+        for mode in [Mode::TwoD, Mode::ThreeD] {
+            let mut project = red_world(mode);
+            project.world.quality.resolution_scale = 0.5;
+            project.actors[0]
+                .graph
+                .strands
+                .push(Strand::with_instructions(
+                    0,
+                    0,
+                    vec![
+                        Instruction::new(K::WhenStarted),
+                        Instruction::new(K::ShowPanel {
+                            element: Value::text("stripe"),
+                            title: Value::text(""),
+                            modal: false,
+                            anchor: UiAnchor::TopLeft,
+                            x: Value::number(31.0),
+                            y: Value::number(20.0),
+                            width: Value::number(1.0),
+                            height: Value::number(48.0),
+                            parent: Value::text(""),
+                        }),
+                        Instruction::new(K::SetUiProp {
+                            prop: UiProp::Background,
+                            element: Value::text("stripe"),
+                            value: Value::text("#ffffff"),
+                        }),
+                        Instruction::new(K::SetUiProp {
+                            prop: UiProp::Padding,
+                            element: Value::text("stripe"),
+                            value: Value::number(0.0),
+                        }),
+                        Instruction::new(K::SetUiProp {
+                            prop: UiProp::CornerRadius,
+                            element: Value::text("stripe"),
+                            value: Value::number(0.0),
+                        }),
+                    ],
+                ));
+            let (set, index, errors) = run_world_sending(
+                project,
+                |_| {},
+                game_camera(),
+                90,
+                |_| false,
+                vec![EditorMessage::Start],
+            );
+            assert!(errors.is_empty(), "{errors:?}");
+            let set = set.expect("scaled UI produced no frame");
+            let pixels = frame_pixels(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+            let white = pixels[(40 * SIZE.x + 31) as usize];
+            assert!(white.iter().all(|c| *c > 230), "{mode:?}: stripe {white:?}");
+            for x in [30, 32] {
+                let adjacent = pixels[(40 * SIZE.x + x) as usize];
+                assert!(is_red(adjacent), "{mode:?}: neighbour {x}: {adjacent:?}");
+            }
+            assert!(is_red(pixels[(SIZE.y / 2 * SIZE.x + SIZE.x / 2) as usize]));
         }
     }
 

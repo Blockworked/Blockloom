@@ -488,8 +488,12 @@ if they stay over budget at the local floor, shared preset feedback takes over.
 The main-world camera stays at native size for input. Extracted world-view targets
 scale before rendering and Bevy's spatial blit fills the output. Custom sub-viewports
 stay native. TAA is 3D only; a DLSS request currently uses that fallback and reports
-unavailable. DLSS modes persist for future SDK integration. UI currently shares the
-scene's internal resolution. Script rendering overrides end on a world rebuild.
+unavailable. DLSS modes persist for future SDK integration. With SDR scene scaling,
+a separate unlit UI camera composites at native resolution after the scene blit,
+using premultiplied alpha and no world render layers. It follows the world output
+and owns `IsDefaultUiCamera` while active. HDR UI still shares the scene's internal
+resolution so it blends in linear light before encoding. Script rendering overrides
+end on a world rebuild.
 
 `CellTasks` bounds concurrent work per payload type and admits nearest cells first.
 Global HDRI/noise jobs use `GLOBAL_CELL`, remain part of warmup accounting across
