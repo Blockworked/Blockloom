@@ -3946,7 +3946,11 @@ pub fn report_status(
                 scaling.triangles as f64,
                 "count",
             ),
-            ("quality/dlss_available", 0.0, "bool"),
+            (
+                "quality/dlss_available",
+                f64::from(u8::from(scaling.dlss_available)),
+                "bool",
+            ),
         ] {
             render_metrics.push(RenderMetric {
                 name: name.into(),

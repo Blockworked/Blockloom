@@ -491,8 +491,12 @@ floor, shared preset feedback takes over.
 
 The main-world camera stays at native size for input. Extracted world-view targets
 scale before rendering and Bevy's spatial blit fills the output. Custom sub-viewports
-stay native. TAA is 3D only; a DLSS request currently uses that fallback and reports
-unavailable. DLSS modes persist for future SDK integration. With SDR scene scaling,
+stay native. TAA is 3D only. A DLSS ask rides TAA plus spatial in 3D and
+spatial in 2D; on web it stays spatial-only. No build vendors the SDK, so
+the runtime probes the adapter once for the reason (web, non-NVIDIA, or
+missing SDK), reports unavailable through the same flag the reporters read,
+and says why once in the run log when a run asks for it. DLSS modes persist
+for future SDK integration. With SDR scene scaling,
 a separate unlit UI camera composites at native resolution after the scene blit,
 using premultiplied alpha and no world render layers. It follows the world output
 and owns `IsDefaultUiCamera` while active. HDR UI still shares the scene's internal

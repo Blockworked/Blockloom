@@ -995,12 +995,16 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           handles odd target sizes, and retains Bevy's full-resolution path
           while pipelines compile, for custom viewports or if the shader patch
           cannot apply. The profiler times the trace as ssr_half.
+          DLSS has an adapter-aware probe with a warn-once fallback: no build
+          carries the SDK, so it reports unavailable with the reason (web,
+          non-NVIDIA, or missing SDK) through `dlss_available` and the
+          profiler, rides TAA plus spatial in 3D and spatial in 2D, and stays
+          spatial-only on web where the cheap path wins.
         - Still open: real DLSS SDK/redistributable integration and capability
           detection; distance-based general texture mip streaming and noise/LUT
           atlases; native-resolution HDR UI compositing
           during scene scaling; exact GPU indirect-draw accounting and simplified
-          levels for loaded model scenes. DLSS selection currently reports
-          unavailable and falls back to TAA/spatial.
+          levels for loaded model scenes.
         - Draw policy (numbers on the Phase 4 mechanisms, no new machinery):
           which meshes instance (vegetation, props, debris, decals) and at what
           density, indirect-draw batch membership, per-system draw-call and
@@ -1197,9 +1201,139 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         rule (if frame over N ms for M frames, drop particle density one step).
         Build dialog lists which target keeps 2D lights/shadows and why.
 
+### Phase 6.5 - Android games from a desktop PC (player only, do between Phase 6 and Phase 7)
+
+- [ ] Goal: a project builds from Windows/Linux/macOS into an installable
+      Android APK and runs standalone on a phone or tablet. No Android editor:
+      Qt stays desktop-only (same rule as Phase 9), and Android is a Build
+      dialog row, never a Play path.
+- [ ] Scope: arm64-v8a devices first (`aarch64-linux-android`), the x86_64
+      emulator second (`x86_64-linux-android`) for the dev loop. No 32-bit
+      armeabi-v7a in v1. Flat only; Android XR is Phase 10's separate target.
+      APK in v1; AAB and store upload stay manual later items.
+- [ ] App Settings menu on the main menu (not Project settings):
+  - The Dashboard gains a Settings entry (gear button beside the version):
+        an App Settings dialog with an Android section - status rows for
+        cmdline-tools, platform, build-tools, NDK, platform-tools/adb, JDK
+        and Rust targets, plus install/update buttons, path overrides and
+        license state.
+  - Storage is a new app config file beside `projects.json` under the data
+        dir (`library.rs` neighborhood, honors `BLOCKLOOM_DATA_DIR`): SDK/NDK
+        paths, the license-accepted stamp, keystore choices (never passwords).
+        Per-project rows (applicationId, version, icons) stay in Project
+        settings.
+  - Backend commands (`commands.rs`/`dispatch.rs`, on the shell/MCP surface
+        too): `android-status`, `android-install-sdk`,
+        `android-accept-licenses`, `android-device-status`. `just
+        android-check` and `just android-sdk-install` are the headless
+        equivalents.
+- [ ] SDK install flow (the Settings button runs this; headless runs the
+      same code):
+  - Needs a JDK first (17 or newer): probe `java -version`, else point at a
+        download. Installing a JDK silently is not v1.
+  - Download Google's cmdline-tools into the data dir default
+        (`~/Blockloom/android-sdk`, or under `BLOCKLOOM_DATA_DIR`), then
+        `sdkmanager` installs one pinned platform (android-35), matching
+        build-tools, a pinned NDK (r27, bumped deliberately) and
+        platform-tools for adb. Honor `ANDROID_HOME`/`ANDROID_SDK_ROOT`/
+        `ANDROID_NDK_HOME` when set instead of downloading.
+  - Show the licenses, then accept on the user's click. Piping yes into
+        `sdkmanager --licenses` with no prompt is not allowed: record the
+        stamp in the app config. Offline or proxy failure reports what is
+        missing and keeps any existing SDK usable.
+- [ ] Rust toolchain for Android: `rustup target add aarch64-linux-android`
+      (plus `x86_64-linux-android` for the emulator), and NDK linker wiring
+      (`CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER` at the NDK clang wrapper
+      per host OS) written to env or a generated cargo snippet that merges
+      with - never overwrites - the `.cargo/config.toml` that
+      `blockstitch-local` uses. `script::target_installed` already covers the
+      std half; add an NDK-link probe beside it so `targets()` can say why
+      Android is unavailable. Texture compression needs the NDK C++ toolchain
+      for the target (same reason wasm leaves it out); until that links,
+      ship PNG/JPEG like web.
+- [ ] Build targets and dialog (`build.rs`):
+  - `TARGETS` gains `aarch64-linux-android` ("Android (arm64)") and
+        `x86_64-linux-android` ("Android Emulator (x64)"). Unlike desktop
+        triples these need no staged player under `players/<triple>/`: the
+        desktop cross-builds the runtime through the NDK, so `status()`
+        checks SDK plus NDK plus JDK plus Rust target instead, with the
+        reason attached like every other row. There is no `stage-player`
+        for Android; the NDK build replaces it.
+  - `hdr_default` is SDR on both with the weak-GPU note (same shape as the
+        ARM64 Linux and web rows). The per-platform quality rows already
+        planned list Android first: volumetrics off (layers-only fallback
+        like WASM), cloud Low, short shadows, small particle/decal pools.
+  - `build_android` beside `build_web`: the same game-folder staging (pack,
+        assets minus script sources, atlas, baked sky, probes, terrain), then
+        an APK assembly from a checked-in template
+        (`blockloom-core/src/android-template/`: manifest, activity
+        bootstrap, pinned Gradle wrapper) with applicationId,
+        versionCode/versionName, adaptive icons and the game files under
+        `assets/`, signed and zipaligned with the build-tools on the SDK
+        just installed. Scripts and native block logic cross-compile
+        (`script::compile_for`, `codegen::compile_for`) into `lib/` .so
+        files (see below), never the host's.
+- [ ] Runtime compat (`blockloom-runtime`, one `cfg(target_os =
+      "android")` pass like the wasm one, no behavior changes):
+  - `Launch::Android` like `Launch::Web`: pack and game files from the APK
+        (asset-reader path, never `std::fs` beside a binary), synthetic
+        `Load`/`Start`, no stdin bridge, no process exit, saves to the app
+        data dir, probe bakes ship pre-baked and are never written at
+        runtime, SDR only, no Solari, BC6H bakes decode where the GPU cannot
+        sample BC (already the web rule).
+  - Lifecycle through Bevy/winit suspend/resume: pause strands like `pause
+        game` (world freezes, UI strands keep the wall clock), handle
+        resize/orientation, route the back button through the UI first (a
+        modal swallows it, like clicks) and only then reach world blocks as
+        an event. The soft keyboard drives text inputs; safe-area insets feed
+        the Phase 2 UI layout.
+  - Touch and gamepad are Bevy's own mobile input (multitouch comes from
+        Phase 2 already); no second input stack.
+- [ ] Scripts and native logic on Android: each script compiles to
+      `libscript_<crate>.so` for the Android triple against the same ABI and
+      `export!` entry points (linker from the installed NDK, not the host's),
+      packaged under the APK's `lib/arm64-v8a/` (or `x86_64/`) since Android
+      only loads app lib dirs, and opened by name at world build. A script
+      that cannot build for the target fails the build with rustc's error,
+      the same as cross-desktop and wasm. Codegen logic ships as one more
+      .so on the same path with the VM as fallback.
+- [ ] Signing and the dev loop:
+  - A debug keystore is auto-created with `keytool` on the first Android
+        build (data dir, clearly debug-only); release signing takes a
+        keystore path plus alias in Project settings and asks for passwords
+        on each build (env or OS keyring, never written into the project or
+        the app config).
+  - The Build dialog gains Install on connected device (behind `adb
+        devices` from the installed platform-tools): `adb install -r` plus
+        `am start`, with logcat streaming the run log back into RunLog. An
+        emulator counts as a device on the x86_64 row.
+- [ ] Branding and manifest (`distribution.rs` neighborhood):
+  - Adaptive icons generated from the project icon (foreground plus
+        background plus monochrome, through the existing `Icons` pipeline),
+        app label from the project name, `applicationId` defaulting to
+        `com.blockloom.game.<sanitized id>` and overridable in Project
+        settings, versionCode/versionName rows, minSdk 29 with the targetSdk
+        pinned beside the NDK pin. No permissions in v1 (no INTERNET, no
+        VIBRATE): a game that needs none declares none.
+- [ ] Tooling and tests:
+  - `just android-check` (SDK/NDK/JDK/Rust-target probe, no device needed),
+        `just android-build <project> [out]` (through the shell like
+        `web-build`), `just android-install` (adb install plus launch). CI
+        runs `cargo check -p blockloom-runtime --target
+        aarch64-linux-android` once the NDK linker exists there, check-only
+        without linking until then.
+  - A smoke test beside `web-smoke`: install on an emulator or a connected
+        device, launch, watch logcat for the world-built marker and actor
+        movement, fail on Rust panics. Unit tests for manifest/template
+        substitution, applicationId sanitize, `targets()` Android notes, and
+        the app-config round trip.
+- [ ] Not in v1, by decision: no editor on the device; no AAB or store
+      upload automation (signed APK file only); no 32-bit targets; no ray
+      tracing, HDR output or EXR capture on Android.
+
 ### Phase 7 - Scale and ecosystem, do last
 - [ ] Multiplayer: headless server, replication, lobbies, rollback.
-- [ ] Deploy: Web/WASM (see Phase 8 player and Phase 9 editor), Android/iOS signing, console path, auto-updater/DLC/addressables.
+- [ ] Deploy: Web/WASM (see Phase 8 player and Phase 9 editor), Android signing (see Phase 6.5), iOS signing, console path, auto-updater/DLC/addressables.
 - [ ] Ecosystem: analytics/crash, achievements/IAP hooks, plugin API, asset store, collab/VCS, docs/LTS.
 
 ### Phase 8 - Web player via WebGPU (single-file build, do before Phase 9)

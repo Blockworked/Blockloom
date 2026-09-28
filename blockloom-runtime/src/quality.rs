@@ -9,6 +9,7 @@ use bevy::diagnostic::DiagnosticsStore;
 use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
 use bevy::render::render_resource::BlendState;
+use bevy::render::renderer::{RenderAdapter, RenderDevice};
 use bevy::render::sync_world::RenderEntity;
 use bevy::render::view::{ExtractedView, Msaa};
 use bevy::render::{Extract, ExtractSchedule, RenderApp};
@@ -26,6 +27,11 @@ pub struct Scaling {
     pub draw_calls: u32,
     pub triangles: u64,
     pub costs: [DrawCost; 6],
+    /// Stays false: no build vendors the DLSS SDK yet. The probe fills
+    /// `dlss_reason` instead, so the flag and the reporters flip with it
+    /// the day a build does.
+    pub dlss_available: bool,
+    pub dlss_reason: String,
 }
 pub const SYSTEMS: [&str; 6] = ["terrain", "vegetation", "props", "vfx", "debris", "water"];
 
@@ -44,6 +50,8 @@ impl Default for Scaling {
             draw_calls: 0,
             triangles: 0,
             costs: [DrawCost::default(); 6],
+            dlss_available: false,
+            dlss_reason: String::new(),
         }
     }
 }
@@ -53,7 +61,7 @@ impl Scaling {
             frame_ms: self.controller.frame_ms as f64,
             draw_calls: self.draw_calls,
             quality: self.controller.quality,
-            dlss_available: false,
+            dlss_available: self.dlss_available,
         }
     }
     pub fn particle_budget(&self, authored: u32) -> u32 {
@@ -93,6 +101,7 @@ pub fn register(app: &mut App) {
             PostUpdate,
             (
                 configure_cameras.after(crate::environment::apply_environment),
+                probe_dlss.after(configure_cameras),
                 configure_ui_camera.before(CameraUpdateSystems),
             ),
         )
@@ -239,6 +248,83 @@ fn feedback(
     }
 }
 
+/// PCI vendor id for NVIDIA adapters, the only DLSS target.
+const NVIDIA_VENDOR: u32 = 0x10DE;
+
+/// Whether a DLSS ask falls back to spatial-only instead of TAA plus
+/// spatial. Web builds keep the cheap path; native rides TAA in 3D.
+fn dlss_spatial_only() -> bool {
+    cfg!(target_arch = "wasm32")
+}
+
+fn temporal_for(upscaler: Upscaler, dlss_spatial_only: bool) -> bool {
+    match upscaler {
+        Upscaler::Spatial => false,
+        Upscaler::Taa => true,
+        // No build carries the SDK, so DLSS rides the TAA path in 3D -
+        // except where it falls back to spatial-only like 2D does.
+        Upscaler::Dlss => !dlss_spatial_only,
+    }
+}
+
+/// Why DLSS can't run here. No build carries the SDK yet, so this always
+/// finds a reason; the adapter only decides how specific it is.
+fn dlss_unavailable(wasm: bool, vendor: Option<u32>, name: &str) -> Option<String> {
+    if wasm {
+        return Some("DLSS is off on web builds".into());
+    }
+    match vendor {
+        Some(NVIDIA_VENDOR) => Some(format!(
+            "the {name} speaks DLSS, but no Blockloom build carries the DLSS SDK yet"
+        )),
+        Some(_) => Some(format!(
+            "the {name} has no DLSS driver support, and no Blockloom build carries the SDK either"
+        )),
+        None => Some("no Blockloom build carries the DLSS SDK yet".into()),
+    }
+}
+
+/// Probes DLSS capability once the renderer is up, and says why once when
+/// a run asks for it. Availability itself stays false until some build
+/// vendors the SDK; the probe only makes the reason adapter-aware.
+fn probe_dlss(
+    engine: NonSend<Engine>,
+    device: Option<Res<RenderDevice>>,
+    adapter: Option<Res<RenderAdapter>>,
+    mut scaling: ResMut<Scaling>,
+    mut warned: Local<bool>,
+) {
+    if scaling.dlss_reason.is_empty() {
+        if cfg!(target_arch = "wasm32") {
+            scaling.dlss_reason = dlss_unavailable(true, None, "").unwrap_or_default();
+        } else if let Some(adapter) = adapter.as_deref() {
+            let info = adapter.get_info();
+            scaling.dlss_reason =
+                dlss_unavailable(false, Some(info.vendor), &info.name).unwrap_or_default();
+        } else if device.is_some() {
+            scaling.dlss_reason = dlss_unavailable(false, None, "").unwrap_or_default();
+        } else {
+            return;
+        }
+    }
+    if engine.running
+        && scaling.settings.upscaler == Upscaler::Dlss
+        && !scaling.dlss_available
+        && !*warned
+    {
+        *warned = true;
+        let text = format!(
+            "DLSS is off: {}. The built-in upscaler carries on (TAA plus spatial in 3D, spatial in 2D and on web).",
+            scaling.dlss_reason
+        );
+        warn!("{text}");
+        crate::bridge::send(&blockloom_protocol::RuntimeMessage::Say {
+            actor: "Blockloom".into(),
+            text,
+        });
+    }
+}
+
 fn configure_cameras(
     mut commands: Commands,
     scaling: Res<Scaling>,
@@ -248,7 +334,7 @@ fn configure_cameras(
         (With<WorldCamera>, With<Camera3d>),
     >,
 ) {
-    let temporal = scaling.settings.upscaler != Upscaler::Spatial;
+    let temporal = temporal_for(scaling.settings.upscaler, dlss_spatial_only());
     for (entity, taa, mut msaa) in cameras {
         if temporal {
             *msaa = Msaa::Off;
@@ -573,6 +659,60 @@ mod tests {
             app.update();
             assert!(app.world().get_entity(overlay).is_err());
         }
+    }
+
+    #[test]
+    fn dlss_probe_names_the_adapter_and_never_claims_support() {
+        assert_eq!(
+            dlss_unavailable(true, None, "").as_deref(),
+            Some("DLSS is off on web builds")
+        );
+        let nvidia =
+            dlss_unavailable(false, Some(NVIDIA_VENDOR), "NVIDIA GeForce RTX 4070").unwrap();
+        assert!(nvidia.contains("NVIDIA GeForce RTX 4070"));
+        assert!(nvidia.contains("SDK"));
+        let other = dlss_unavailable(false, Some(0x8086), "Intel Arc A770").unwrap();
+        assert!(other.contains("Intel Arc A770"));
+        assert!(other.contains("no DLSS driver support"));
+        assert!(dlss_unavailable(false, None, "").unwrap().contains("SDK"));
+    }
+
+    #[test]
+    fn upscaler_fallback_keeps_taa_off_spatial_and_web_dlss() {
+        use blockloom_core::quality::Upscaler;
+        assert!(!temporal_for(Upscaler::Spatial, false));
+        assert!(!temporal_for(Upscaler::Spatial, true));
+        assert!(temporal_for(Upscaler::Taa, false));
+        assert!(temporal_for(Upscaler::Taa, true));
+        assert!(temporal_for(Upscaler::Dlss, false));
+        assert!(!temporal_for(Upscaler::Dlss, true));
+    }
+
+    #[test]
+    fn sampled_dlss_flag_follows_the_probed_state() {
+        let mut scaling = Scaling::default();
+        assert!(!scaling.sample().dlss_available);
+        scaling.dlss_available = true;
+        assert!(scaling.sample().dlss_available);
+    }
+
+    #[test]
+    fn dlss_selection_rides_taa_while_spatial_removes_it() {
+        use blockloom_core::quality::Upscaler;
+        let mut app = App::new();
+        app.init_resource::<Scaling>()
+            .init_resource::<crate::environment::Environment>()
+            .add_systems(Update, configure_cameras);
+        app.world_mut().resource_mut::<Scaling>().settings.upscaler = Upscaler::Dlss;
+        let camera = app
+            .world_mut()
+            .spawn((WorldCamera, Camera3d::default(), Msaa::default()))
+            .id();
+        app.update();
+        assert!(app.world().get::<TemporalAntiAliasing>(camera).is_some());
+        app.world_mut().resource_mut::<Scaling>().settings.upscaler = Upscaler::Spatial;
+        app.update();
+        assert!(app.world().get::<TemporalAntiAliasing>(camera).is_none());
     }
 
     fn show_meshes(app: &mut App) {
