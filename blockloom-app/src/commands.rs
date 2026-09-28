@@ -9,6 +9,7 @@ use crate::state::{
     ValueLocation, state_dto, sync_dto,
 };
 use crate::{AppHandle, Backend};
+use blockloom_core::android;
 use blockloom_core::assets;
 use blockloom_core::blocks::{
     ActorGraph, BlockPiece, BlockShape, DictEntry, Instruction, InstructionKind, ListItem,
@@ -2421,6 +2422,9 @@ pub(crate) fn build_game(
     };
     let player =
         build::player_for(target, &blockloom_protocol::runtime_path()).ok_or_else(|| {
+            if target.is_android() {
+                return "There is no Android toolchain ready yet. Run `android-status` to see what is missing.".to_string();
+            }
             format!(
                 "There is no player for {}. Stage one in players/{}/ beside Blockloom.",
                 target.label, target.triple
@@ -2474,7 +2478,7 @@ pub(crate) fn build_game(
         kind: "say".to_string(),
         actor: "Blockloom".to_string(),
         text: format!(
-            "Built {} for {}: {} asset(s), {} script(s), {} shader(s), {} blocks, {}{}, {} -> {} and {}",
+            "Built {} for {}: {} asset(s), {} script(s), {} shader(s), {} blocks, {}{}{}, {} -> {} and {}",
             project.name,
             target.label,
             built.assets,
@@ -2483,6 +2487,11 @@ pub(crate) fn build_game(
             if built.compiled { "native" } else { "VM" },
             if options.sdr_only { "SDR only" } else { "HDR" },
             if built.sky { ", sky baked to BC6H" } else { "" },
+            if built.dlss {
+                ", DLSS DLLs included"
+            } else {
+                ""
+            },
             build::size_text(built.size),
             built.dir.display(),
             built.archive.display()
@@ -2490,6 +2499,35 @@ pub(crate) fn build_game(
     });
     emit(app, &s);
     Ok(built)
+}
+
+// ─── Android ─────────────────────────────────────────────────────────────
+// Player-only target, so these need no open project: they report the
+// desktop toolchain (SDK/NDK/JDK/Rust targets) the APK build will use.
+
+/// The Android toolchain as it stands: SDK/NDK paths, license stamp, and
+/// one probe row per piece `just android-check` checks. Needs no device.
+pub(crate) fn android_status() -> Result<android::AndroidStatus, String> {
+    Ok(android::status())
+}
+
+/// What `adb devices` sees through the installed platform-tools, or why
+/// there is no adb to ask.
+pub(crate) fn android_device_status() -> Result<Vec<android::Device>, String> {
+    android::device_status()
+}
+
+/// Downloads the cmdline-tools bootstrap when the SDK row has none, then
+/// installs the pinned platform, build-tools, platform-tools and NDK.
+/// Licenses stay unaccepted; that is `android_accept_licenses`.
+pub(crate) fn android_install_sdk() -> Result<android::InstallReport, String> {
+    android::install_sdk()
+}
+
+/// Shows the SDK license texts, or accepts them when `accept` is true and
+/// records the stamp in the app config.
+pub(crate) fn android_accept_licenses(accept: bool) -> Result<android::LicenseReport, String> {
+    android::accept_licenses(accept)
 }
 
 // ─── Assets ────────────────────────────────────────────────────────────────

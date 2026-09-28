@@ -275,6 +275,7 @@ fn temporal_for(upscaler: Upscaler, dlss_spatial_only: bool) -> bool {
 /// Whether the world wants the real DLSS component rather than the TAA
 /// fallback: the ask, the build, the probe, HDR (which `Dlss` requires)
 /// and a perspective projection (which its extract requires).
+#[cfg_attr(not(feature = "dlss"), allow(dead_code))]
 fn wants_dlss(upscaler: Upscaler, available: bool, hdr: bool, perspective: bool) -> bool {
     upscaler == Upscaler::Dlss && available && hdr && perspective && DLSS_BUILD
 }
@@ -290,12 +291,7 @@ fn dlss_drives_resolution(upscaler: Upscaler, available: bool) -> bool {
 /// Why DLSS can't run here. With the `dlss` feature the adapter only decides
 /// how specific the driver/DLL half is; without it every branch names the
 /// missing SDK build instead.
-fn dlss_unavailable(
-    wasm: bool,
-    vendor: Option<u32>,
-    name: &str,
-    has_sdk: bool,
-) -> Option<String> {
+fn dlss_unavailable(wasm: bool, vendor: Option<u32>, name: &str, has_sdk: bool) -> Option<String> {
     if wasm {
         return Some("DLSS is off on web builds".into());
     }
@@ -307,16 +303,16 @@ fn dlss_unavailable(
             Some(_) => Some(format!(
                 "the {name} has no DLSS driver support, and this build leaves the SDK out either"
             )),
-            None => Some(
-                "this build leaves the DLSS SDK out (build with --features dlss)".into(),
-            ),
+            None => Some("this build leaves the DLSS SDK out (build with --features dlss)".into()),
         };
     }
     match vendor {
         Some(NVIDIA_VENDOR) => Some(format!(
             "the {name} refused DLSS: needs an RTX GPU, Vulkan, a new driver and nvngx_dlss beside the player"
         )),
-        Some(_) => Some(format!("the {name} has no DLSS driver support (needs NVIDIA RTX)")),
+        Some(_) => Some(format!(
+            "the {name} has no DLSS driver support (needs NVIDIA RTX)"
+        )),
         None => Some("DLSS found no usable adapter on this renderer".into()),
     }
 }
@@ -437,10 +433,15 @@ fn configure_cameras(
         (With<WorldCamera>, With<Camera3d>),
     >,
 ) {
-    use bevy::anti_alias::dlss::Dlss;
+    use bevy::anti_alias::dlss::{Dlss, DlssSuperResolutionFeature};
     for (entity, taa, dlss, mut msaa, hdr, projection) in cameras {
         let perspective = projection.is_none_or(|p| matches!(p, Projection::Perspective(_)));
-        if wants_dlss(scaling.settings.upscaler, scaling.dlss_available, hdr, perspective) {
+        if wants_dlss(
+            scaling.settings.upscaler,
+            scaling.dlss_available,
+            hdr,
+            perspective,
+        ) {
             *msaa = Msaa::Off;
             let wanted = dlss_perf_mode(scaling.settings.dlss_mode);
             // `Dlss` requires jitter, mip bias, depth and motion-vector
@@ -450,11 +451,13 @@ fn configure_cameras(
                 commands.entity(entity).remove::<TemporalAntiAliasing>();
             }
             if stale {
-                commands.entity(entity).insert(Dlss {
-                    perf_quality_mode: wanted,
-                    reset: false,
-                    ..default()
-                });
+                commands
+                    .entity(entity)
+                    .insert(Dlss::<DlssSuperResolutionFeature> {
+                        perf_quality_mode: wanted,
+                        reset: false,
+                        ..default()
+                    });
             }
             continue;
         }
@@ -844,7 +847,11 @@ mod tests {
         let other = dlss_unavailable(false, Some(0x8086), "Intel Arc A770", false).unwrap();
         assert!(other.contains("Intel Arc A770"));
         assert!(other.contains("no DLSS driver support"));
-        assert!(dlss_unavailable(false, None, "", false).unwrap().contains("SDK"));
+        assert!(
+            dlss_unavailable(false, None, "", false)
+                .unwrap()
+                .contains("SDK")
+        );
         // With the SDK the reason is the driver, DLL or adapter instead.
         let refused =
             dlss_unavailable(false, Some(NVIDIA_VENDOR), "NVIDIA GeForce RTX 4070", true).unwrap();
@@ -866,18 +873,12 @@ mod tests {
         assert!(!wants_dlss(Upscaler::Dlss, true, true, false));
         // With everything lined up the answer follows the build flag, so a
         // non-SDK build keeps the TAA fallback even on ideal hardware.
-        assert_eq!(
-            wants_dlss(Upscaler::Dlss, true, true, true),
-            DLSS_BUILD
-        );
+        assert_eq!(wants_dlss(Upscaler::Dlss, true, true, true), DLSS_BUILD);
         // Resolution follows the same flag: DLSS drives it, otherwise spatial.
         assert!(!dlss_drives_resolution(Upscaler::Spatial, true));
         assert!(!dlss_drives_resolution(Upscaler::Taa, true));
         assert!(!dlss_drives_resolution(Upscaler::Dlss, false));
-        assert_eq!(
-            dlss_drives_resolution(Upscaler::Dlss, true),
-            DLSS_BUILD
-        );
+        assert_eq!(dlss_drives_resolution(Upscaler::Dlss, true), DLSS_BUILD);
     }
 
     #[cfg(feature = "dlss")]

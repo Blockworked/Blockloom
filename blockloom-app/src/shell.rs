@@ -244,6 +244,38 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             },
         ],
     },
+    CommandSpec {
+        name: "android-status",
+        cmd: "android_status",
+        aliases: &["android_status", "android-check"],
+        summary: "The Android toolchain as it stands: SDK/NDK paths, license stamp, JDK and Rust target probes. No device needed.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "android-device-status",
+        cmd: "android_device_status",
+        aliases: &["android_device_status", "android-devices"],
+        summary: "What adb devices sees through the installed platform-tools, or why there is no adb to ask.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "android-install-sdk",
+        cmd: "android_install_sdk",
+        aliases: &["android_install_sdk", "android-sdk-install"],
+        summary: "Download the cmdline-tools bootstrap when missing and install the pinned platform, build-tools, platform-tools and NDK. Licenses stay unaccepted until android-accept-licenses.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "android-accept-licenses",
+        cmd: "android_accept_licenses",
+        aliases: &["android_accept_licenses"],
+        summary: "Show the SDK license texts, or accept them when accept is true and record the stamp in the app config.",
+        args: &[ArgSpec {
+            name: "accept",
+            ty: "bool",
+            required: false,
+        }],
+    },
     // ── The world ─────────────────────────────────────────────────────────
     CommandSpec {
         name: "set-mode",

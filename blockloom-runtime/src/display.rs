@@ -535,10 +535,7 @@ mod tests {
     fn a_configure_is_checked_against_what_the_device_takes() {
         // Some drivers claim a space in caps that the configure then
         // refuses; that pair must read as unsupported.
-        let lying = caps(&[(
-            TextureFormat::Rgba16Float,
-            SurfaceColorSpaces::SRGB,
-        )]);
+        let lying = caps(&[(TextureFormat::Rgba16Float, SurfaceColorSpaces::SRGB)]);
         assert!(!takes(
             &lying,
             TextureFormat::Rgba16Float,

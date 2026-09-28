@@ -840,10 +840,7 @@ mod tests {
             Some(0)
         );
         assert_eq!(app.world().get::<LodGroup>(far).unwrap().current(), None);
-        assert_eq!(
-            app.world().get::<LodGroup>(mid).unwrap().current(),
-            Some(0)
-        );
+        assert_eq!(app.world().get::<LodGroup>(mid).unwrap().current(), Some(0));
         app.world_mut()
             .resource_mut::<crate::quality::Scaling>()
             .geometry

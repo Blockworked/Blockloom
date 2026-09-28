@@ -995,13 +995,21 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           handles odd target sizes, and retains Bevy's full-resolution path
           while pipelines compile, for custom viewports or if the shader patch
           cannot apply. The profiler times the trace as ssr_half.
-          DLSS has an adapter-aware probe with a warn-once fallback: no build
-          carries the SDK, so it reports unavailable with the reason (web,
-          non-NVIDIA, or missing SDK) through `dlss_available` and the
-          profiler, rides TAA plus spatial in 3D and spatial in 2D, and stays
-          spatial-only on web where the cheap path wins.
-        - Still open: real DLSS SDK/redistributable integration and capability
-          detection; distance-based general texture mip streaming and noise/LUT
+          DLSS runs Bevy's `dlss` path behind the `dlss` cargo feature
+          (`just player-dlss`): `just dlss-sdk` fetches the pinned SDK
+          (v310.7.0, sparse into gitignored `third-party/dlss`) once per
+          clone, the justfile exports `DLSS_SDK`, and a Vulkan SDK plus clang
+          complete the build. `DlssProjectId` before `DefaultPlugins`, the
+          `Dlss` component with the project's perf mode on perspective HDR
+          world cameras, its own render resolution while spatial `scale_views`
+          stands down, and `DlssSuperResolutionSupported` as the probe with a
+          warn-once fallback to TAA plus spatial in 3D and spatial in 2D and
+          on web. `player-dlss` stages the redistributable beside the player
+          payload and each built game carries it (`Build.dlss`), with the
+          Build log naming it; shippers add the section 9.5 license blurb as
+          DLSS_LICENSE.txt.
+        - Still open: DLSS ray reconstruction for Solari denoising;
+          distance-based general texture mip streaming and noise/LUT
           atlases; native-resolution HDR UI compositing
           during scene scaling; exact GPU indirect-draw accounting and simplified
           levels for loaded model scenes.
@@ -1023,13 +1031,14 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           fog and SSR with bilateral upsample, reflection and shadow resolution
           budgets per quality preset.
         - DLSS (Bevy `dlss` path on NVIDIA RTX): configurable mode (DLAA, Quality,
-          Balanced, Performance, Ultra Performance) plus sharpness, driven by the
-          same dynamic-resolution signal. Vendor the DLSS redistributable in player
-          builds, probe capability at startup, fallback chain DLSS to TAA plus
+          Balanced, Performance, Ultra Performance) plus sharpness through the
+          existing CAS dial; while DLSS drives its own render resolution the
+          spatial scale stands down and the mode stays manual. Vendor the DLSS
+          redistributable in player builds, probe capability at startup, fallback chain DLSS to TAA plus
           spatial to spatial-only, per-platform toggle (off on WASM and weak
           targets), editor override with a warning when unavailable. Shares the
-          jittered-camera and motion-vector plumbing with the TAA path and denoises
-          Solari output where Bevy exposes ray reconstruction.
+          jittered-camera and motion-vector plumbing with the TAA path; Solari
+          ray-reconstruction denoising is still open.
         - Memory: texture streaming with distance-based mip bias, BC/BC6H compression
           defaults, noise and LUT atlasing, pool caps for particles/decals/shards
           with LRU steal. One quality preset maps onto every dial above, plus an

@@ -35,6 +35,16 @@ mkdir-players := if os() == "windows" { 'if not exist "' + players-dir + '" mkdi
 
 copy-player := if os() == "windows" { 'copy /Y target\dist\blockloom-runtime.exe "' + players-dir + '"' } else { 'cp target/dist/blockloom-runtime "' + players-dir + '/"' }
 
+# Pinned DLSS SDK (NVIDIA/DLSS tag) matching dlss_wgpu 5.0.0's version chart.
+# Fetched sparse by `just dlss-sdk` into gitignored `third-party/dlss`, so
+# every clone gets it with one command instead of carrying 750MB.
+dlss-version := "v310.7.0"
+dlss-sdk-dir := justfile_directory() + "/third-party/dlss"
+
+# Absolute, as dlss_wgpu's build script demands. Only consumed when the
+# `dlss` cargo feature builds, so plain builds ignore it, present or not.
+export DLSS_SDK := dlss-sdk-dir
+
 rm-cargo-cfg := if os() == "windows" { 'if exist .cargo\config.toml (del /F /Q .cargo\config.toml)' } else { 'rm -f .cargo/config.toml' }
 
 default: build
@@ -70,6 +80,61 @@ player:
     cargo build --profile dist -p blockloom-runtime
     {{mkdir-players}}
     {{copy-player}}
+
+# The DLSS SDK, fetched once per clone: a sparse checkout (headers, link
+# stubs, redistributable DLLs, programming guides - about 260MB, not the full
+# 750MB tree) pinned to `dlss-version`. Cloning it means accepting NVIDIA's
+# SDK license (see third-party/dlss/LICENSE.txt once fetched).
+dlss-sdk:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="{{ dlss-sdk-dir }}"
+    want="{{ dlss-version }}"
+    if [ -d "$dir/.git" ]; then
+        have="$(git -C "$dir" describe --tags 2>/dev/null || echo unknown)"
+        if [ "$have" = "$want" ]; then echo "DLSS SDK $want already at $dir"; exit 0; fi
+        echo "DLSS SDK is $have, want $want - re-fetching..."
+        rm -rf "$dir"
+    elif [ -e "$dir" ]; then
+        echo "$dir exists and is not a git checkout - remove it first"; exit 1
+    fi
+    mkdir -p "$(dirname "$dir")"
+    git -c advice.detachedHead=false clone --depth 1 --branch "$want" --filter=blob:none --sparse https://github.com/NVIDIA/DLSS.git "$dir"
+    git -C "$dir" sparse-checkout set --no-cone \
+        '/include/' '/LICENSE.txt' '/README.md' '/utils/' \
+        '/lib/Linux_x86_64/*.a' '/lib/Linux_x86_64/rel/' \
+        '/lib/Windows_x86_64/x64/' '/lib/Windows_x86_64/rel/' \
+        '/doc/DLSS_Programming_Guide_Release.pdf' '/doc/DLSS-RR Integration Guide.pdf'
+    du -sh "$dir"
+
+# The DLSS player: the same runtime with Bevy's `dlss` path linked in, for
+# NVIDIA RTX machines on Windows or Linux (macOS has no Vulkan DLSS path).
+# Needs the SDK (`just dlss-sdk`), a Vulkan SDK, clang, and agreement to
+# NVIDIA's SDK license. The redistributable DLLs are staged beside the
+# payload automatically; before shipping games, add the section 9.5 license
+# blurb from the programming guide (now at third-party/dlss/doc/) as
+# DLSS_LICENSE.txt beside the staged player - builds then carry it along.
+# A run without the DLLs falls back to TAA plus spatial. Never for web.
+[unix]
+player-dlss: dlss-sdk
+    @if [ "$(uname -s)" = "Darwin" ]; then echo "DLSS needs Windows or Linux (Vulkan RTX); macOS has no path."; exit 1; fi
+    @if [ ! -f "${VULKAN_SDK:-/usr}/include/vulkan/vulkan.h" ]; then echo "Need a Vulkan SDK with headers (VULKAN_SDK, default /usr on Linux)."; exit 1; fi
+    VULKAN_SDK="${VULKAN_SDK:-/usr}" cargo build --profile dist -p blockloom-runtime --features dlss
+    {{mkdir-players}}
+    {{copy-player}}
+    cp "{{ dlss-sdk-dir }}/lib/Linux_x86_64/rel/"*.so.* "{{players-dir}}/"
+    @echo 'Staged the DLSS player. Add DLSS_LICENSE.txt beside it in {{players-dir}} (section 9.5 blurb), or runs fall back to TAA.'
+
+[windows]
+player-dlss: dlss-sdk
+    @if "%VULKAN_SDK%"=="" (echo Set VULKAN_SDK to your Vulkan SDK - the Lunarg installer sets it system-wide. && exit 1)
+    @if not exist "%VULKAN_SDK%\Include\vulkan\vulkan.h" (echo VULKAN_SDK=%VULKAN_SDK% has no Vulkan headers. && exit 1)
+    cargo build --profile dist -p blockloom-runtime --features dlss
+    {{mkdir-players}}
+    {{copy-player}}
+    copy /Y "{{ replace(dlss-sdk-dir, '/', '\') }}\lib\Windows_x86_64\rel\nvngx_dlss.dll" "{{ replace(players-dir, '/', '\') }}\"
+    copy /Y "{{ replace(dlss-sdk-dir, '/', '\') }}\lib\Windows_x86_64\rel\nvngx_dlssd.dll" "{{ replace(players-dir, '/', '\') }}\"
+    @echo Staged the DLSS player. Add DLSS_LICENSE.txt beside it in {{players-dir}} (section 9.5 blurb), or runs fall back to TAA.
 
 # Put a player built on another machine where the exporter will find it.
 # Blockloom can't cross-build a Bevy binary, so this is how another platform's
@@ -130,6 +195,19 @@ web-serve dir="web-dist" port="8080":
 # Chromium; software Vulkan (lavapipe) is enough.
 web-smoke page *args:
     NODE_PATH="$(npm root -g)" node scripts/web-smoke.cjs "{{page}}" {{args}}
+
+# Android toolchain probe (Phase 6.5): SDK/NDK/JDK/Rust targets, no device
+# needed. Same code the App Settings dialog reports.
+android-check:
+    cargo build --release -p blockloom-app --bin blockloom-shell
+    "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-status' --no-state
+
+# Android SDK install (Phase 6.5): the bootstrap download plus the pinned
+# packages through sdkmanager. Same code the Settings button runs; licenses
+# stay unaccepted until `android-accept-licenses accept=true`.
+android-sdk-install:
+    cargo build --release -p blockloom-app --bin blockloom-shell
+    "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-install-sdk' --no-state
 
 test:
     cargo test --workspace

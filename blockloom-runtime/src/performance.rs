@@ -461,15 +461,17 @@ mod tests {
         assert_eq!(group.levels().len(), 3);
         assert!(group.swaps_meshes());
         assert!(group.levels().last().unwrap().min_screen > 0.0);
-        assert!(cache
-            .lod(
-                &Visual::Rect {
-                    color: "#fff".into(),
-                    size: [1.0, 1.0]
-                },
-                &high,
-                &mut meshes
-            )
-            .is_none());
+        assert!(
+            cache
+                .lod(
+                    &Visual::Rect {
+                        color: "#fff".into(),
+                        size: [1.0, 1.0]
+                    },
+                    &high,
+                    &mut meshes
+                )
+                .is_none()
+        );
     }
 }

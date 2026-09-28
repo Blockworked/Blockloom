@@ -35,6 +35,7 @@
 //!   blockstitch frontend speaks.
 
 pub mod ai;
+pub mod android;
 pub mod animation;
 pub mod assets;
 pub mod blocks;

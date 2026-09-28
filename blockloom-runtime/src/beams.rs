@@ -245,7 +245,11 @@ fn mote_range(spec: &LightSpec) -> f32 {
 }
 
 /// Motes lit by their own lamp: a small diffuse grain, `E / pi`.
-pub fn mote_material(spec: &LightSpec, fog: &VolumetricFog, world_from_local: Mat4) -> MoteMaterial {
+pub fn mote_material(
+    spec: &LightSpec,
+    fog: &VolumetricFog,
+    world_from_local: Mat4,
+) -> MoteMaterial {
     let beam = normalized(&spec.beam);
     let motes = &beam.motes;
     let point = spec.kind == LightKind::Point;
@@ -504,9 +508,7 @@ fn sync_beams(
                     commands.spawn((
                         common,
                         Mesh3d(meshes.add(mesh)),
-                        MeshMaterial3d(
-                            motes.add(mote_material(&lit.spec, fog, world_from_local)),
-                        ),
+                        MeshMaterial3d(motes.add(mote_material(&lit.spec, fog, world_from_local))),
                         // Motes wander past where they started.
                         NoFrustumCulling,
                     ));
@@ -543,11 +545,7 @@ fn sync_dust(
         .iter()
         .next()
         .map_or(Vec3::ZERO, GlobalTransform::translation);
-    let next = dust_material(
-        fog,
-        &environment,
-        Mat4::from_translation(camera),
-    );
+    let next = dust_material(fog, &environment, Mat4::from_translation(camera));
     let mut kept = false;
     for (entity, field, handle, mut transform) in &mut dust {
         if !wanted || kept || field.motes != fog.dust {

@@ -96,7 +96,12 @@ impl Backend {
                 arg(&args, "fast").ok().flatten(),
                 arg(&args, "hdr").ok().flatten(),
             )?),
-
+            "android_status" => to_json(commands::android_status()?),
+            "android_device_status" => to_json(commands::android_device_status()?),
+            "android_install_sdk" => to_json(commands::android_install_sdk()?),
+            "android_accept_licenses" => to_json(commands::android_accept_licenses(
+                arg(&args, "accept").unwrap_or_default(),
+            )?),
             // ── The world ──────────────────────────────────────────────────
             "set_mode" => {
                 let mode: Mode = arg(&args, "mode")?;

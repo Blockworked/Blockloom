@@ -14,6 +14,7 @@
 //! [`targets`] answers both questions at once, which is what the Build dialog
 //! shows.
 
+use crate::android;
 use crate::codegen;
 use crate::distribution;
 use crate::pack::{self, GamePack};
@@ -47,12 +48,24 @@ impl Target {
         script::is_web(self.triple)
     }
 
+    /// An installable APK cross-built through the NDK, never a staged
+    /// player binary.
+    pub fn is_android(self) -> bool {
+        android::is_android(self.triple)
+    }
+
     /// Whether a build for it renders HDR unless told otherwise, and why.
     /// ARM64 Linux is mostly single-board computers, where FP16 targets cost
-    /// more than they give and HDR displays are rare.
+    /// more than they give and HDR displays are rare. Android is SDR-only in
+    /// v1 like the web player: weak mobile GPUs with no HDR output.
     pub fn hdr_default(self) -> (bool, &'static str) {
         if self.is_web() {
             (false, "SDR only: browsers give a page no HDR output yet.")
+        } else if self.is_android() {
+            (
+                false,
+                "SDR only: Android v1 targets weak mobile GPUs with no HDR output.",
+            )
         } else if self.triple == "aarch64-unknown-linux-gnu" {
             (
                 false,
@@ -103,6 +116,16 @@ pub const TARGETS: &[Target] = &[
     Target {
         triple: "wasm32-unknown-unknown",
         label: "Web",
+        windows: false,
+    },
+    Target {
+        triple: "aarch64-linux-android",
+        label: "Android (arm64)",
+        windows: false,
+    },
+    Target {
+        triple: "x86_64-linux-android",
+        label: "Android Emulator (x64)",
         windows: false,
     },
 ];
@@ -177,6 +200,44 @@ pub fn targets(
     statuses
 }
 
+/// The Build dialog row for an Android target. Readiness is the toolchain
+/// probes, since there is no player payload to stage; native block logic
+/// ships as one more `.so` with the VM as fallback.
+fn android_status(
+    target: &Target,
+    host: bool,
+    ready: bool,
+    note: String,
+    fast_source: &Result<(), String>,
+) -> TargetStatus {
+    let (fast_ready, fast_note) = if !ready {
+        (
+            false,
+            "The platform is not available for a build.".to_string(),
+        )
+    } else if let Err(error) = fast_source {
+        (false, error.clone())
+    } else if let Err(error) = script::target_installed(target.triple) {
+        (false, error)
+    } else {
+        (
+            true,
+            "Blocks will be compiled to a native library in the APK.".to_string(),
+        )
+    };
+    TargetStatus {
+        triple: target.triple.to_string(),
+        label: target.label.to_string(),
+        host,
+        ready,
+        note,
+        fast_ready,
+        fast_note,
+        hdr: target.hdr_default().0,
+        hdr_note: target.hdr_default().1.to_string(),
+    }
+}
+
 fn status(
     target: &Target,
     has_scripts: bool,
@@ -184,6 +245,12 @@ fn status(
     fallback_player: &Path,
 ) -> TargetStatus {
     let host = is_host(target);
+    // Android has no staged player: the desktop NDK cross-builds the
+    // runtime, so readiness is SDK plus NDK plus JDK plus Rust target.
+    if target.is_android() {
+        let (ready, note) = android::readiness_for(target.triple);
+        return android_status(target, host, ready, note, fast_source);
+    }
     let (ready, note) = match player_for(target, fallback_player) {
         None => (
             false,
@@ -322,6 +389,11 @@ pub struct Build {
     pub shaders: usize,
     /// Whether the HDR sky was baked to BC6H.
     pub sky: bool,
+    /// Whether the DLSS redistributable rode along beside the player.
+    /// True when the staged player had its DLLs and they were copied;
+    /// a false here just means the game falls back to TAA plus spatial.
+    #[serde(default)]
+    pub dlss: bool,
     /// Bytes of what ships: the ZIP, or for the web the one `.html`.
     pub size: u64,
 }
@@ -351,6 +423,11 @@ pub fn build(
     if target.is_web() {
         return build_web(project, project_dir, target, player, parent);
     }
+    // APK assembly (template, manifest, signing) lands in a later step;
+    // refusing here beats shipping a desktop folder with an Android name.
+    if target.is_android() {
+        return Err("Android APK assembly isn't implemented yet, so the game wasn't built. `android-status` reports what the toolchain still needs.".to_string());
+    }
     let fast = options.fast;
     let shaders = check_shaders(project, project_dir)?;
     let dir = parent.join(build_name(project, target));
@@ -371,6 +448,9 @@ pub fn build(
     // Copying a file doesn't carry its mode everywhere, and a game nobody can
     // execute isn't one.
     make_executable(&layout.player)?;
+    // The DLSS redistributable, when the staged player carries it: the DLLs
+    // live beside the player payload, and ship beside the built one.
+    let dlss = copy_dlss_redistributable(player, &layout.player)?;
 
     let game = layout.game.clone();
     std::fs::create_dir_all(&game).map_err(|e| format!("{}: {e}", game.display()))?;
@@ -409,7 +489,77 @@ pub fn build(
         atlas,
         shaders,
         sky,
+        dlss,
     })
+}
+
+/// Copies the DLSS redistributable beside a built player, when the staged
+/// player carries it. The SDK is fetched per clone (`just dlss-sdk`), so a
+/// DLSS build stages its DLLs beside the player payload (`just player-dlss`
+/// copies them there); a build then carries them beside its own player, and
+/// the run-time probe picks them up. Answers whether anything rode along -
+/// missing DLLs are not an error, the game just falls back to TAA.
+///
+/// Windows carries `nvngx_dlss.dll` (plus `nvngx_dlssd.dll` for ray
+/// reconstruction); Linux carries `libnvidia-ngx-dlss.so.*` (plus the
+/// `dlssd` twin). Frame generation (`dlssg`) stays behind: nothing here
+/// uses it. A license blurb beside the player (`DLSS_LICENSE.txt`,
+/// the section 9.5 text the SDK license asks shippers to include) rides too.
+fn copy_dlss_redistributable(player: &Path, built: &Path) -> Result<bool, String> {
+    let Some(payload_dir) = player.parent() else {
+        return Ok(false);
+    };
+    let Some(built_dir) = built.parent() else {
+        return Ok(false);
+    };
+    let mut carried = false;
+    let mut entries: Vec<String> = Vec::new();
+    if let Ok(listing) = std::fs::read_dir(payload_dir) {
+        for entry in listing.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let lower = name.to_ascii_lowercase();
+            let dll = dlss_binary(&lower)
+                || lower == "dlss_license.txt"
+                || lower == "nvngx_license.txt"
+                || lower == "license.dlss.txt";
+            if dll {
+                entries.push(name);
+            }
+        }
+    }
+    entries.sort();
+    for name in entries {
+        let from = payload_dir.join(&name);
+        // Directories named like a DLL never ride; only files do.
+        if !from.is_file() {
+            continue;
+        }
+        let to = built_dir.join(&name);
+        // The player copy above already made the dir, but a macOS bundle
+        // lays the player two levels deep; make sure either way.
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        std::fs::copy(&from, &to)
+            .map_err(|e| format!("{} -> {}: {e}", from.display(), to.display()))?;
+        if dlss_binary(&name.to_ascii_lowercase()) {
+            carried = true;
+        }
+        // Linux players run through a wrapper that must stay executable,
+        // and the .so files need no such bit; DLLs never need it either.
+    }
+    Ok(carried)
+}
+
+/// A DLSS super-resolution or ray-reconstruction binary, lowercased:
+/// exactly what the probe can load, and nothing else (frame generation
+/// stays behind).
+fn dlss_binary(lower: &str) -> bool {
+    lower == "nvngx_dlss.dll"
+        || lower == "nvngx_dlssd.dll"
+        || (!lower.ends_with(".debug")
+            && (lower.starts_with("libnvidia-ngx-dlss.so")
+                || lower.starts_with("libnvidia-ngx-dlssd.so")))
 }
 
 /// A web build: one `.html` holding the player, the pack, the game files and
@@ -485,6 +635,8 @@ fn build_web(
         atlas,
         shaders,
         sky,
+        // No DLSS in a browser: WebGPU has no SDK path.
+        dlss: false,
     })
 }
 
@@ -1051,12 +1203,14 @@ mod tests {
     }
 
     #[test]
-    fn arm64_linux_builds_sdr_unless_told_otherwise() {
+    fn weak_targets_build_sdr_unless_told_otherwise() {
         for target in TARGETS {
             let (hdr, note) = target.hdr_default();
             assert_eq!(
                 hdr,
-                target.triple != "aarch64-unknown-linux-gnu" && !target.is_web(),
+                target.triple != "aarch64-unknown-linux-gnu"
+                    && !target.is_web()
+                    && !target.is_android(),
                 "{}",
                 target.triple
             );
@@ -1099,9 +1253,60 @@ mod tests {
         assert_eq!(built.assets, 1);
         // The source stays behind; a build runs the library, not the `.rs`.
         assert!(!game.join("assets/scripts/player.rs").exists());
+        // No DLSS DLLs staged, so none ride along - and that is fine.
+        assert!(!built.dlss);
 
         let pack = GamePack::read(&pack::pack_path(&game)).unwrap();
         assert_eq!(pack.title(), "Pond Game");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_build_carries_dlss_dlls_staged_beside_its_player() {
+        let root = temp("dlss");
+        let (project, project_dir, player) = a_project(&root);
+        // What `just player-dlss` stages beside the payload: the SDK DLLs
+        // plus the license blurb the SDK asks shippers to include.
+        let dll = if cfg!(windows) {
+            "nvngx_dlss.dll"
+        } else {
+            "libnvidia-ngx-dlss.so.310.9.1"
+        };
+        std::fs::write(player.parent().unwrap().join(dll), b"dlss").unwrap();
+        std::fs::write(
+            player.parent().unwrap().join("DLSS_LICENSE.txt"),
+            b"license",
+        )
+        .unwrap();
+        // Frame generation rides in the same SDK folder but stays behind:
+        // nothing here uses it.
+        let fg = if cfg!(windows) {
+            "nvngx_dlssg.dll"
+        } else {
+            "libnvidia-ngx-dlssg.so.310.9.1"
+        };
+        std::fs::write(player.parent().unwrap().join(fg), b"fg").unwrap();
+        let out = root.join("out");
+        let target = a_target();
+
+        let built = build(
+            &project,
+            &project_dir,
+            target,
+            &player,
+            &out,
+            BuildOptions::default(),
+        )
+        .unwrap();
+
+        assert!(built.dlss);
+        // The DLLs sit beside the built player - which for Linux is behind
+        // the wrapper, but in the same folder as the binary either way
+        // (and inside Contents/MacOS on macOS).
+        let player_dir = built.binary.parent().unwrap();
+        assert!(player_dir.join(dll).is_file());
+        assert!(player_dir.join("DLSS_LICENSE.txt").is_file());
+        assert!(!player_dir.join(fg).exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1501,11 +1706,55 @@ mod tests {
         // editor plays with is a player.
         assert!(host.host);
         assert!(host.ready);
-        // Nothing is staged in this test's folder, so no other platform is.
-        for status in statuses.iter().filter(|status| !status.host) {
+        // Nothing is staged in this test's folder, so no other desktop
+        // platform is. Android rows never mention a staged player: they
+        // report the toolchain instead (checked below).
+        for status in statuses
+            .iter()
+            .filter(|status| !status.host && !android::is_android(&status.triple))
+        {
             assert!(!status.ready, "{status:?}");
             assert!(status.note.contains("players/"), "{status:?}");
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn android_rows_report_the_toolchain_not_a_staged_player() {
+        let root = temp("android-targets");
+        let fallback = root.join("blockloom-runtime");
+        std::fs::write(&fallback, b"MZ").unwrap();
+
+        let statuses = targets(false, Ok(()), &fallback);
+        let android: Vec<_> = statuses
+            .iter()
+            .filter(|status| android::is_android(&status.triple))
+            .collect();
+        assert_eq!(android.len(), 2, "{statuses:?}");
+        for status in android {
+            assert!(!status.host);
+            assert!(!status.note.contains("players/"), "{status:?}");
+            assert!(!status.hdr, "{status:?}");
+            assert!(!status.hdr_note.is_empty());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_android_build_stops_with_a_clear_error_until_apk_assembly_lands() {
+        let root = temp("android-build");
+        let (project, project_dir, player) = a_project(&root);
+        let target = target(android::ARM64_TRIPLE).unwrap();
+        let error = build(
+            &project,
+            &project_dir,
+            target,
+            &player,
+            &root.join("out"),
+            BuildOptions::default(),
+        )
+        .unwrap_err();
+        assert!(error.contains("APK"), "{error}");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

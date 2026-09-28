@@ -23,6 +23,10 @@ flate2.workspace = true
 crc32fast.workspace = true
 half = "2"
 rustc-hash = "2"
+# SDK downloads (Android cmdline-tools) over HTTPS, and unzipping them.
+# Both are pure Rust so the wasm build keeps working.
+ureq = { version = "3.4", default-features = false, features = ["rustls"] }
+zip = { version = "7.2", default-features = false, features = ["deflate"] }
 
 # Web builds (`wasm32-unknown-unknown`) need the JS-backed RNG: getrandom
 # refuses the wasm target by default, and everything id generation and Bevy
@@ -36,7 +40,6 @@ uuid = { workspace = true, features = ["js"] }
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }
 
 [dev-dependencies]
-zip = { version = "7.2", default-features = false, features = ["deflate"] }
 
 [[bench]]
 name = "vm"
