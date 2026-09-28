@@ -1036,6 +1036,12 @@ mod tests {
                 .entity_mut(*entity)
                 .insert(ViewVisibility::VISIBLE);
         }
+        let mut visible = bevy::camera::visibility::VisibleEntities::default();
+        visible
+            .get_mut(std::any::TypeId::of::<Mesh3d>())
+            .extend(meshes.iter().copied());
+        app.world_mut()
+            .spawn((crate::world::WorldCamera, Camera::default(), visible));
         let kept = shards[0];
         app.world_mut()
             .entity_mut(kept)
