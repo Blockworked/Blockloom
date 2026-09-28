@@ -470,6 +470,10 @@ render-target scaling, and publishes `quality/*` and `budget/*` profiler rows.
 Geometry pressure drops density/distance without reducing pixel rate; frame-time
 pressure lowers resolution to its floor first. Draw counts estimate visible mesh
 and material groups, excluding shadow/post passes and 2D sprites.
+Terrain and vegetation have independent sustained auto-drop multipliers for LOD
+distance and grass density. They reach a local floor before geometry asks for a
+shared preset drop. These run-only reductions reset on setting changes or rebuilds,
+and the profiler reports them under `budget/<system>/distance_scale`.
 
 The main-world camera stays at native size for input. Extracted world-view targets
 scale before rendering and Bevy's spatial blit fills the output. Custom sub-viewports

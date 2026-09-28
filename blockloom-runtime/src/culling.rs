@@ -204,13 +204,21 @@ fn max_scale(transform: &GlobalTransform) -> f32 {
 pub fn select_lod(
     mut commands: Commands,
     policy: Res<LodPolicy>,
+    scaling: Option<Res<crate::quality::Scaling>>,
     mut culling: ResMut<Culling>,
     cameras: Query<(&GlobalTransform, &Projection, &Camera), With<WorldCamera>>,
-    mut groups: Query<(Entity, &GlobalTransform, &mut LodGroup, Option<&mut Mesh3d>)>,
+    mut groups: Query<(
+        Entity,
+        &GlobalTransform,
+        &mut LodGroup,
+        Option<&mut Mesh3d>,
+        Has<crate::terrain::TerrainChunk>,
+        Has<crate::terrain::vegetation::ScatterInstance>,
+    )>,
 ) {
     let camera = cameras.iter().find(|(.., camera)| camera.is_active);
     let mut stats = CullStats::default();
-    for (entity, transform, mut group, mesh) in &mut groups {
+    for (entity, transform, mut group, mesh, terrain, vegetation) in &mut groups {
         if group.levels.is_empty() {
             continue;
         }
@@ -219,7 +227,16 @@ pub fn select_lod(
             Some((eye, projection, _)) if policy.enabled => {
                 let distance = eye.translation().distance(transform.translation());
                 let radius = group.radius * max_scale(transform);
-                let screen = screen_size(projection, distance, radius) * policy.bias;
+                let local_bias = scaling.as_ref().map_or(1.0, |s| {
+                    if terrain {
+                        s.geometry.factors[0]
+                    } else if vegetation {
+                        s.geometry.factors[1]
+                    } else {
+                        1.0
+                    }
+                });
+                let screen = screen_size(projection, distance, radius) * policy.bias * local_bias;
                 next_level(&group.levels, group.current, screen, policy.hysteresis)
             }
             _ => Some(0),
@@ -651,6 +668,51 @@ mod tests {
                 mesh: None,
             })
             .collect()
+    }
+
+    #[test]
+    fn vegetation_throttle_changes_its_lod_without_changing_props() {
+        let mut app = App::new();
+        app.init_resource::<LodPolicy>()
+            .init_resource::<Culling>()
+            .init_resource::<crate::quality::Scaling>()
+            .add_systems(Update, select_lod);
+        app.world_mut()
+            .resource_mut::<crate::quality::Scaling>()
+            .geometry
+            .factors[1] = 0.5;
+        app.world_mut().spawn((
+            WorldCamera,
+            Camera::default(),
+            GlobalTransform::default(),
+            Projection::Perspective(PerspectiveProjection {
+                fov: std::f32::consts::FRAC_PI_2,
+                ..default()
+            }),
+        ));
+        let group = LodGroup::new(1.0).level(0.15, None).level(0.05, None);
+        let pose = GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -5.0));
+        let tree = app
+            .world_mut()
+            .spawn((
+                pose,
+                group.clone(),
+                crate::terrain::vegetation::ScatterInstance {
+                    levels: Vec::new(),
+                    parts: Vec::new(),
+                },
+            ))
+            .id();
+        let prop = app.world_mut().spawn((pose, group)).id();
+        app.update();
+        assert_eq!(
+            app.world().get::<LodGroup>(tree).unwrap().current(),
+            Some(1)
+        );
+        assert_eq!(
+            app.world().get::<LodGroup>(prop).unwrap().current(),
+            Some(0)
+        );
     }
 
     #[test]

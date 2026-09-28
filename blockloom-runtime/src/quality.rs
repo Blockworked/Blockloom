@@ -8,12 +8,14 @@ use bevy::render::camera::ExtractedCamera;
 use bevy::render::sync_world::RenderEntity;
 use bevy::render::view::{ExtractedView, Msaa};
 use bevy::render::{Extract, ExtractSchedule, RenderApp};
-use blockloom_core::quality::{Budget, Controller, Settings, Upscaler};
+pub use blockloom_core::quality::DrawCost;
+use blockloom_core::quality::{Budget, Controller, GeometryController, Settings, Upscaler};
 
 #[derive(Resource)]
 pub struct Scaling {
     pub settings: Settings,
     pub controller: Controller,
+    pub geometry: GeometryController,
     overrides: Vec<(blockloom_core::quality::Setting, String)>,
     dropped: bool,
     pub draw_calls: u32,
@@ -21,17 +23,13 @@ pub struct Scaling {
     pub costs: [DrawCost; 6],
 }
 pub const SYSTEMS: [&str; 6] = ["terrain", "vegetation", "props", "vfx", "debris", "water"];
-#[derive(Clone, Copy, Default)]
-pub struct DrawCost {
-    pub draws: u32,
-    pub triangles: u64,
-}
 
 impl Default for Scaling {
     fn default() -> Self {
         let settings = Settings::default();
         Self {
             controller: Controller::new(&settings),
+            geometry: GeometryController::default(),
             settings,
             overrides: Vec::new(),
             dropped: false,
@@ -107,6 +105,7 @@ fn feedback(
     settings.normalize();
     if settings != scaling.settings || engine.rebuild {
         scaling.controller = Controller::new(&settings);
+        scaling.geometry = GeometryController::default();
         scaling.settings = settings.clone();
     }
     if !engine.rebuild && !engine.paused && !warmup.is_some_and(|w| w.active()) {
@@ -118,10 +117,9 @@ fn feedback(
         // Work time excludes the embedded view's presentation wait.
         let cpu = pace.map_or(0.0, |p| p.update_ms.max(p.main_ms));
         let limits = scaling.budget();
-        let geometry_over =
-            scaling.costs.iter().enumerate().any(|(i, cost)| {
-                cost.draws > limits.draws[i] || cost.triangles > limits.triangles[i]
-            });
+        let costs = scaling.costs;
+        scaling.geometry.sample(&settings, &limits, &costs);
+        let geometry_over = scaling.geometry.needs_preset_drop(&limits, &costs);
         let dropped =
             scaling
                 .controller
@@ -210,6 +208,7 @@ fn apply_effects(mut scaling: ResMut<Scaling>, effects: Res<crate::engine::Pendi
             scaling.overrides.retain(|(key, _)| key != setting);
             scaling.overrides.push((*setting, value.clone()));
             scaling.controller = Controller::new(&settings);
+            scaling.geometry = GeometryController::default();
             scaling.settings = settings;
         }
     }
@@ -225,6 +224,8 @@ fn fire_drop(mut engine: NonSendMut<Engine>, mut scaling: ResMut<Scaling>) {
 /// and custom materials count separately because their ordering can split draws.
 fn measure_draws(
     mut every: Local<u32>,
+    mut triangles_by_mesh: Local<std::collections::HashMap<AssetId<Mesh>, u64>>,
+    mut mesh_events: MessageReader<AssetEvent<Mesh>>,
     mut scaling: ResMut<Scaling>,
     meshes: Res<Assets<Mesh>>,
     materials: Res<Assets<StandardMaterial>>,
@@ -241,7 +242,24 @@ fn measure_draws(
         Has<crate::destruction::Shard>,
         Has<crate::water::WaterSurface>,
     )>,
+    parents: Query<(&ChildOf, Has<crate::terrain::vegetation::ScatterInstance>)>,
 ) {
+    // Capture counts before extraction moves render-only vertex data to the GPU.
+    for event in mesh_events.read() {
+        match event {
+            AssetEvent::Added { id }
+            | AssetEvent::Modified { id }
+            | AssetEvent::LoadedWithDependencies { id } => {
+                if let Some(count) = meshes.get(*id).and_then(triangle_count) {
+                    triangles_by_mesh.insert(*id, count);
+                }
+            }
+            AssetEvent::Removed { id } => {
+                triangles_by_mesh.remove(id);
+            }
+            AssetEvent::Unused { .. } => {}
+        }
+    }
     *every = (*every + 1) % 30;
     if *every != 1 {
         return;
@@ -258,9 +276,15 @@ fn measure_draws(
         let Some(geometry) = meshes.get(&mesh.0) else {
             continue;
         };
+        let mut ancestor = entity;
+        let mut vegetation = grass || scatter;
+        while !vegetation && let Ok((parent, is_scatter)) = parents.get(ancestor) {
+            vegetation |= is_scatter;
+            ancestor = parent.parent();
+        }
         let system = if terrain {
             0
-        } else if grass || scatter {
+        } else if vegetation {
             1
         } else if vfx {
             3
@@ -271,9 +295,9 @@ fn measure_draws(
         } else {
             2
         };
-        // Render-only meshes leave a lightweight shell in `Assets<Mesh>` after
-        // extraction. Their CPU vertex data cannot be inspected from this world.
-        let mesh_triangles = triangle_count(geometry).unwrap_or(0);
+        let mesh_triangles = triangle_count(geometry)
+            .or_else(|| triangles_by_mesh.get(&mesh.0.id()).copied())
+            .unwrap_or(0);
         triangles += mesh_triangles;
         costs[system].triangles += mesh_triangles;
         let key = if let Some(material) = instanced {
@@ -309,6 +333,7 @@ fn reset(engine: NonSend<Engine>, mut scaling: ResMut<Scaling>) {
         let mut settings = engine.project.world.quality.clone();
         settings.normalize();
         scaling.controller = Controller::new(&settings);
+        scaling.geometry = GeometryController::default();
         scaling.settings = settings;
         scaling.overrides.clear();
         scaling.dropped = false;
@@ -325,6 +350,38 @@ mod tests {
     use blockloom_core::vm::Effect;
 
     #[test]
+    fn local_feedback_waits_while_paused_and_preserves_pixel_rate() {
+        let (_, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, blockloom_core::scene::Mode::ThreeD);
+        engine.rebuild = false;
+        engine.paused = true;
+        engine.project.world.quality.auto_drop = true;
+        engine.project.world.quality.dynamic_resolution = true;
+        engine.project.world.quality.over_budget_frames = 15;
+        let mut app = App::new();
+        app.insert_non_send(engine)
+            .init_resource::<Scaling>()
+            .init_resource::<crate::performance::LoopPace>()
+            .add_systems(Update, feedback);
+        app.world_mut()
+            .resource_mut::<crate::performance::LoopPace>()
+            .update_ms = 5.0;
+        app.world_mut().resource_mut::<Scaling>().costs[1].draws = 10_000;
+        for _ in 0..30 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<Scaling>().geometry.factors, [1.0; 2]);
+        app.world_mut().non_send_mut::<Engine>().paused = false;
+        for _ in 0..15 {
+            app.update();
+        }
+        let scaling = app.world().resource::<Scaling>();
+        assert_eq!(scaling.geometry.factors, [1.0, 0.9]);
+        assert_eq!(scaling.controller.quality, Quality::High);
+        assert_eq!(scaling.controller.scale, 1.0);
+    }
+
+    #[test]
     fn explicit_quality_restores_an_automatically_lowered_preset() {
         let mut app = App::new();
         app.init_resource::<Scaling>()
@@ -336,11 +393,13 @@ mod tests {
             ]))
             .add_systems(Update, apply_effects);
         app.world_mut().resource_mut::<Scaling>().controller.quality = Quality::Low;
+        app.world_mut().resource_mut::<Scaling>().geometry.factors = [0.25; 2];
         app.update();
         assert_eq!(
             app.world().resource::<Scaling>().controller.quality,
             Quality::High
         );
+        assert_eq!(app.world().resource::<Scaling>().geometry.factors, [1.0; 2]);
     }
 
     #[test]
@@ -356,6 +415,7 @@ mod tests {
             let mut scaling = app.world_mut().resource_mut::<Scaling>();
             scaling.overrides.push((Setting::Quality, "Low".into()));
             scaling.controller.quality = Quality::Low;
+            scaling.geometry.factors = [0.25; 2];
             scaling.dropped = true;
         }
         app.update();
@@ -363,6 +423,67 @@ mod tests {
         assert!(scaling.overrides.is_empty());
         assert!(!scaling.dropped);
         assert_eq!(scaling.controller.quality, Quality::High);
+        assert_eq!(scaling.geometry.factors, [1.0; 2]);
+    }
+
+    #[test]
+    fn scattered_model_parts_keep_vegetation_costs_after_upload() {
+        let mut app = App::new();
+        app.init_resource::<Scaling>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_message::<AssetEvent<Mesh>>()
+            .add_systems(Update, measure_draws);
+        let mesh = app.world_mut().resource_mut::<Assets<Mesh>>().add(
+            Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::RENDER_WORLD,
+            )
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0; 3]; 6]),
+        );
+        let root = app.world_mut().spawn_empty().id();
+        let holder = app
+            .world_mut()
+            .spawn((
+                crate::terrain::vegetation::ScatterInstance {
+                    levels: Vec::new(),
+                    parts: Vec::new(),
+                },
+                ChildOf(root),
+            ))
+            .id();
+        let nested = app.world_mut().spawn(ChildOf(holder)).id();
+        app.world_mut().spawn((
+            Mesh3d(mesh.clone()),
+            ViewVisibility::VISIBLE,
+            ChildOf(nested),
+        ));
+        app.world_mut()
+            .spawn((Mesh3d(mesh.clone()), ViewVisibility::VISIBLE, ChildOf(root)));
+        app.world_mut()
+            .write_message(AssetEvent::<Mesh>::Added { id: mesh.id() });
+        app.update();
+        let scaling = app.world().resource::<Scaling>();
+        assert_eq!(scaling.costs[1].draws, 1);
+        assert_eq!(scaling.costs[1].triangles, 2);
+        assert_eq!(scaling.costs[2].draws, 1);
+        assert_eq!(scaling.costs[2].triangles, 2);
+
+        let _gpu_mesh = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .get_mut(&mesh)
+            .unwrap()
+            .take_gpu_data()
+            .unwrap();
+        app.world_mut()
+            .write_message(AssetEvent::<Mesh>::Modified { id: mesh.id() });
+        for _ in 0..30 {
+            app.update();
+        }
+        let scaling = app.world().resource::<Scaling>();
+        assert_eq!(scaling.costs[1].triangles, 2);
+        assert_eq!(scaling.costs[2].triangles, 2);
     }
 
     #[test]

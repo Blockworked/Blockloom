@@ -73,7 +73,9 @@ pub fn stream_grass(
     let Ok(camera) = camera.single() else {
         return;
     };
-    let density = scaling.as_ref().map_or(1.0, |s| s.budget().density);
+    let density = scaling
+        .as_ref()
+        .map_or(1.0, |s| s.budget().density * s.geometry.factors[1].powi(2));
     let density_changed = last_density.is_some_and(|old| old != density);
     *last_density = Some(density);
     let eye = camera.translation();
@@ -90,8 +92,10 @@ pub fn stream_grass(
         let half = [shape.size[0] * 0.5, shape.size[1] * 0.5];
         let mut wanted = HashSet::new();
         for (layer, grass) in terrained.spec.grass.iter().enumerate() {
-            let distance =
-                grass.cull_distance * scaling.as_ref().map_or(1.0, |s| s.budget().distance);
+            let distance = grass.cull_distance
+                * scaling
+                    .as_ref()
+                    .map_or(1.0, |s| s.budget().distance * s.geometry.factors[1]);
             let reach = distance + GRASS_CELL * 0.75;
             let cell_of = |v: f32, h: f32| ((v + h) / GRASS_CELL).floor() as i32;
             let (x0, x1) = (

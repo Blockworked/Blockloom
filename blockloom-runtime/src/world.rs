@@ -3909,6 +3909,13 @@ pub fn report_status(
                     unit: "count".into(),
                 });
             }
+            if let Some(factor) = scaling.geometry.factors.get(index) {
+                render_metrics.push(RenderMetric {
+                    name: format!("budget/{system}/distance_scale"),
+                    value: *factor as f64,
+                    unit: "ratio".into(),
+                });
+            }
         }
         for (name, value, unit) in [
             (

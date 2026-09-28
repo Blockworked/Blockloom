@@ -63,6 +63,60 @@ pub struct Budget {
     pub captures: usize,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DrawCost {
+    pub draws: u32,
+    pub triangles: u64,
+}
+
+impl DrawCost {
+    pub fn exceeds(self, budget: &Budget, system: usize) -> bool {
+        self.draws > budget.draws[system] || self.triangles > budget.triangles[system]
+    }
+}
+
+/// Run-only terrain and vegetation throttles. Keep reductions until an explicit
+/// setting change or rebuild, so unloading content cannot cause a reload loop.
+#[derive(Clone, Debug)]
+pub struct GeometryController {
+    pub factors: [f32; 2],
+    over: [u32; 2],
+}
+
+impl Default for GeometryController {
+    fn default() -> Self {
+        Self {
+            factors: [1.0; 2],
+            over: [0; 2],
+        }
+    }
+}
+
+impl GeometryController {
+    pub fn sample(&mut self, settings: &Settings, budget: &Budget, costs: &[DrawCost; 6]) {
+        for (system, cost) in costs.iter().enumerate().take(2) {
+            self.over[system] = if settings.auto_drop && cost.exceeds(budget, system) {
+                self.over[system].saturating_add(1)
+            } else {
+                0
+            };
+            if self.over[system] >= settings.over_budget_frames {
+                self.factors[system] = (self.factors[system] - 0.1).max(0.25);
+                self.over[system] = 0;
+            }
+        }
+    }
+
+    /// Shared preset feedback handles systems with no local throttle and those
+    /// that still exceed their budget at the local floor.
+    pub fn needs_preset_drop(&self, budget: &Budget, costs: &[DrawCost; 6]) -> bool {
+        costs.iter().enumerate().any(|(system, cost)| {
+            cost.exceeds(budget, system)
+                && (system >= self.factors.len() || self.factors[system] <= 0.25)
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Upscaler {
     #[default]
@@ -204,6 +258,74 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_geometry_pressure_is_sustained_and_isolated() {
+        let settings = Settings {
+            auto_drop: true,
+            ..Default::default()
+        };
+        let budget = settings.preset.budget();
+        let mut costs = [DrawCost::default(); 6];
+        costs[1].triangles = budget.triangles[1] + 1;
+        let mut local = GeometryController::default();
+        for _ in 0..settings.over_budget_frames - 1 {
+            local.sample(&settings, &budget, &costs);
+        }
+        assert_eq!(local.factors, [1.0; 2]);
+        assert!(!local.needs_preset_drop(&budget, &costs));
+        local.sample(&settings, &budget, &costs);
+        assert_eq!(local.factors, [1.0, 0.9]);
+        for _ in 0..settings.over_budget_frames * 20 {
+            local.sample(&settings, &budget, &costs);
+        }
+        assert_eq!(local.factors, [1.0, 0.25]);
+        assert!(local.needs_preset_drop(&budget, &costs));
+    }
+
+    #[test]
+    fn brief_pressure_and_disabled_feedback_keep_local_detail() {
+        let mut settings = Settings {
+            auto_drop: true,
+            ..Default::default()
+        };
+        let budget = settings.preset.budget();
+        let mut costs = [DrawCost::default(); 6];
+        costs[0].draws = budget.draws[0] + 1;
+        let mut local = GeometryController::default();
+        for _ in 0..settings.over_budget_frames - 1 {
+            local.sample(&settings, &budget, &costs);
+        }
+        local.sample(&settings, &budget, &[DrawCost::default(); 6]);
+        local.sample(&settings, &budget, &costs);
+        assert_eq!(local.factors, [1.0; 2]);
+        settings.auto_drop = false;
+        for _ in 0..settings.over_budget_frames * 10 {
+            local.sample(&settings, &budget, &costs);
+        }
+        assert_eq!(local.factors, [1.0; 2]);
+    }
+
+    #[test]
+    fn unloading_does_not_restore_local_density_and_restart_loading() {
+        let settings = Settings {
+            auto_drop: true,
+            ..Default::default()
+        };
+        let budget = settings.preset.budget();
+        let mut costs = [DrawCost::default(); 6];
+        costs[0].draws = budget.draws[0] + 1;
+        let mut local = GeometryController::default();
+        for _ in 0..settings.over_budget_frames {
+            local.sample(&settings, &budget, &costs);
+        }
+        for _ in 0..1000 {
+            local.sample(&settings, &budget, &[DrawCost::default(); 6]);
+        }
+        assert_eq!(local.factors, [0.9, 1.0]);
+        costs[2].draws = budget.draws[2] + 1;
+        assert!(local.needs_preset_drop(&budget, &costs));
+    }
+
     #[test]
     fn old_settings_keep_native_resolution() {
         assert_eq!(

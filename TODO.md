@@ -956,11 +956,18 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           Terrain/noise/HDRI payloads share bounded nearest-first cell tasks;
           HDRI residency drops top mips with quality. Clouds adapt march counts
           to distance and weather density.
+          Terrain and vegetation now have independent sustained geometry-budget
+          throttles under auto-drop: terrain/scatter LOD distance and grass
+          density/distance reduce before geometry requests a shared preset drop.
+          Reductions persist until a setting change or rebuild to avoid reload
+          churn; profiler rows expose both distance multipliers. Scattered model
+          parts count toward vegetation rather than props, and mesh triangle
+          counts survive render-only uploads through an asset-event cache.
         - Still open: real DLSS SDK/redistributable integration and capability
           detection; distance-based general texture mip streaming and noise/LUT
           atlases; half-resolution SSR; native-resolution UI compositing during
           scene scaling; exact GPU indirect-draw accounting and per-system
-          adaptive thresholds beyond the shared preset policy. DLSS selection
+          adaptive thresholds for props, water, VFX and debris. DLSS selection
           currently reports unavailable and falls back to TAA/spatial.
         - Draw policy (numbers on the Phase 4 mechanisms, no new machinery):
           which meshes instance (vegetation, props, debris, decals) and at what
