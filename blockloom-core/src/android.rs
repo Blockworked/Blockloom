@@ -525,8 +525,12 @@ pub fn device_status() -> Result<Vec<Device>, String> {
 /// stale over time; sdkmanager updates itself once it runs.
 pub fn cmdline_tools_url(os: &str) -> &'static str {
     match os {
-        "macos" => "https://dl.google.com/android/repository/commandlinetools-mac-11076708_latest.zip",
-        "windows" => "https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip",
+        "macos" => {
+            "https://dl.google.com/android/repository/commandlinetools-mac-11076708_latest.zip"
+        }
+        "windows" => {
+            "https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip"
+        }
         _ => "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip",
     }
 }
@@ -556,6 +560,8 @@ fn run_sdkmanager(
 
 /// Streams `url` to `dest`, returning the byte count. Retries a few times:
 /// a 150 MB bootstrap plus storefront Wi-Fi means transient resets happen.
+/// Desktop only: the install flow never runs in a browser page.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn download(url: &str, dest: &Path) -> Result<u64, String> {
     let mut error = String::new();
     for attempt in 1..=3 {
@@ -570,26 +576,29 @@ pub fn download(url: &str, dest: &Path) -> Result<u64, String> {
     Err(error)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn download_once(url: &str, dest: &Path) -> Result<u64, String> {
     let response = ureq::get(url)
         .call()
         .map_err(|e| format!("Couldn't download {url}: {e}"))?;
     if !(200..300).contains(&response.status().as_u16()) {
-        return Err(format!("Couldn't download {url}: HTTP {}", response.status()));
+        return Err(format!(
+            "Couldn't download {url}: HTTP {}",
+            response.status()
+        ));
     }
     let mut reader = response.into_body().into_reader();
     let mut file = std::fs::File::create(dest)
         .map_err(|e| format!("Couldn't write {}: {e}", dest.display()))?;
-    std::io::copy(&mut reader, &mut file)
-        .map_err(|e| format!("Couldn't save {url}: {e}"))
+    std::io::copy(&mut reader, &mut file).map_err(|e| format!("Couldn't save {url}: {e}"))
 }
 
 /// Unpacks a cmdline-tools zip into the SDK row: Google's archive roots
 /// everything at `cmdline-tools/`, which becomes `latest` on disk.
 pub fn unzip_cmdline_tools(zip_path: &Path, sdk: &Path) -> Result<(), String> {
-    let file =
-        std::fs::File::open(zip_path).map_err(|e| format!("{}: {e}", zip_path.display()))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("{}: {e}", zip_path.display()))?;
+    let file = std::fs::File::open(zip_path).map_err(|e| format!("{}: {e}", zip_path.display()))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("{}: {e}", zip_path.display()))?;
     let latest = sdk.join("cmdline-tools/latest");
     for index in 0..archive.len() {
         let mut entry = archive
@@ -612,7 +621,8 @@ pub fn unzip_cmdline_tools(zip_path: &Path, sdk: &Path) -> Result<(), String> {
             std::fs::create_dir_all(&dest).map_err(|e| format!("{}: {e}", dest.display()))?;
         } else {
             if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("{}: {e}", parent.display()))?;
             }
             let mut out = std::fs::File::create(&dest)
                 .map_err(|e| format!("Couldn't write {}: {e}", dest.display()))?;
@@ -629,7 +639,8 @@ pub fn unzip_cmdline_tools(zip_path: &Path, sdk: &Path) -> Result<(), String> {
 }
 
 /// Makes sure `sdkmanager` exists, downloading the bootstrap when the row
-/// has none. Returns what it fetched, if anything.
+/// has none. Returns what it fetched, if anything. Desktop only.
+#[cfg(not(target_arch = "wasm32"))]
 fn ensure_cmdline_tools(config: &AppConfig) -> Result<Option<(String, u64)>, String> {
     if sdkmanager_path(config).is_some() {
         return Ok(None);
@@ -646,7 +657,10 @@ fn ensure_cmdline_tools(config: &AppConfig) -> Result<Option<(String, u64)>, Str
     }
     let _ = std::fs::remove_file(&dest);
     if sdkmanager_path(config).is_none() {
-        return Err("The download unpacked but holds no sdkmanager. Google may have moved the bootstrap.".to_string());
+        return Err(
+            "The download unpacked but holds no sdkmanager. Google may have moved the bootstrap."
+                .to_string(),
+        );
     }
     Ok(Some(fetched))
 }
@@ -659,7 +673,11 @@ pub fn available_ndk_revisions_from(listing: &str) -> Vec<String> {
         .filter_map(|line| line.split('|').next())
         .map(str::trim)
         .filter_map(|path| path.strip_prefix("ndk;"))
-        .filter(|rev| rev.split('.').next().is_some_and(|major| major == NDK_MAJOR))
+        .filter(|rev| {
+            rev.split('.')
+                .next()
+                .is_some_and(|major| major == NDK_MAJOR)
+        })
         .map(str::to_string)
         .collect();
     revisions.sort();
@@ -679,7 +697,9 @@ pub fn newest_ndk_package(manager: &Path) -> Result<String, String> {
     available_ndk_revisions_from(&listing)
         .pop()
         .map(|rev| format!("ndk;{rev}"))
-        .ok_or_else(|| "sdkmanager lists no NDK on major 27. Check the network or proxy.".to_string())
+        .ok_or_else(|| {
+            "sdkmanager lists no NDK on major 27. Check the network or proxy.".to_string()
+        })
 }
 
 /// Whether an sdkmanager package name is already on disk under `sdk`.
@@ -710,7 +730,8 @@ pub struct InstallReport {
 
 /// Downloads the bootstrap when needed and installs the pinned platform,
 /// build-tools, platform-tools and NDK. Offline or proxy failure reports
-/// what is missing and keeps any existing SDK usable.
+/// what is missing and keeps any existing SDK usable. Desktop only.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn install_sdk() -> Result<InstallReport, String> {
     let config = load();
     let fetched = ensure_cmdline_tools(&config)?;
@@ -768,7 +789,11 @@ pub fn install_sdk() -> Result<InstallReport, String> {
         installed.extend(missing.iter().map(|package| package.to_string()));
     }
     if let Some(package) = ndk_package {
-        let output = run_sdkmanager(&manager, &["--install", &package], std::process::Stdio::inherit())?;
+        let output = run_sdkmanager(
+            &manager,
+            &["--install", &package],
+            std::process::Stdio::inherit(),
+        )?;
         if !output.status.success() || !ndk_dir(&config).join("source.properties").is_file() {
             if !config.licenses_accepted {
                 return Err(format!(
@@ -787,7 +812,8 @@ pub fn install_sdk() -> Result<InstallReport, String> {
 
     let mut still_missing = Vec::new();
     if !config.licenses_accepted {
-        still_missing.push("SDK licenses: read them with android-accept-licenses, then accept.".to_string());
+        still_missing
+            .push("SDK licenses: read them with android-accept-licenses, then accept.".to_string());
     }
     let after = status_for(&load());
     for (label, ok) in [
@@ -821,9 +847,8 @@ pub struct LicenseReport {
 /// allowed, which is why showing is the default.
 pub fn accept_licenses(accept: bool) -> Result<LicenseReport, String> {
     let config = load();
-    let manager = sdkmanager_path(&config).ok_or_else(|| {
-        "No sdkmanager yet. Run android-install-sdk first.".to_string()
-    })?;
+    let manager = sdkmanager_path(&config)
+        .ok_or_else(|| "No sdkmanager yet. Run android-install-sdk first.".to_string())?;
     if !accept {
         let output = run_sdkmanager(&manager, &["--licenses"], std::process::Stdio::null())?;
         let text = format!(
@@ -981,10 +1006,8 @@ cmake;3.22.1 | 3.22.1 | CMake\n";
     }
 
     fn temp_root(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "blockloom-android-{name}-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("blockloom-android-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         root
@@ -1060,7 +1083,11 @@ cmake;3.22.1 | 3.22.1 | CMake\n";
 
         let ndk = sdk.join("ndk").join("27.2.12479018");
         std::fs::create_dir_all(&ndk).unwrap();
-        std::fs::write(ndk.join("source.properties"), b"Pkg.Revision = 27.2.12479018\n").unwrap();
+        std::fs::write(
+            ndk.join("source.properties"),
+            b"Pkg.Revision = 27.2.12479018\n",
+        )
+        .unwrap();
         // No prebuilt clang on this fake NDK, so the row names the linker.
         let row = ndk_status(&config);
         assert!(!row.ok, "{row:?}");

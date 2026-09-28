@@ -23,10 +23,15 @@ flate2.workspace = true
 crc32fast.workspace = true
 half = "2"
 rustc-hash = "2"
-# SDK downloads (Android cmdline-tools) over HTTPS, and unzipping them.
-# Both are pure Rust so the wasm build keeps working.
-ureq = { version = "3.4", default-features = false, features = ["rustls"] }
+# Unzipping the Android cmdline-tools bootstrap: pure Rust, fine on wasm.
 zip = { version = "7.2", default-features = false, features = ["deflate"] }
+
+# SDK downloads over HTTPS. This only ever runs on desktop (the
+# Settings/headless install flow), never in a browser page, so ureq stays
+# off wasm: its rustls/ring chain does not compile for
+# wasm32-unknown-unknown (see `just web-check`).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = { version = "3.4", default-features = false, features = ["rustls"] }
 
 # Web builds (`wasm32-unknown-unknown`) need the JS-backed RNG: getrandom
 # refuses the wasm target by default, and everything id generation and Bevy
