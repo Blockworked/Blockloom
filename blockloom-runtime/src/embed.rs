@@ -1596,43 +1596,43 @@ mod tests {
 
         for mode in [Mode::TwoD, Mode::ThreeD] {
             let mut project = red_world(mode);
+            for actor in &mut project.actors {
+                actor.components.remove("Look");
+                actor.components.remove("Body");
+            }
             project.world.quality.resolution_scale = 0.5;
+            let mut blocks = vec![Instruction::new(K::WhenStarted)];
+            for (id, x, width, color) in [
+                ("stripe", 31.0, 1.0, "#ffffff"),
+                ("tint", 80.0, 12.0, "#0000ff80"),
+            ] {
+                blocks.push(Instruction::new(K::ShowPanel {
+                    element: Value::text(id),
+                    title: Value::text(""),
+                    modal: false,
+                    anchor: UiAnchor::TopLeft,
+                    x: Value::number(x),
+                    y: Value::number(20.0),
+                    width: Value::number(width),
+                    height: Value::number(48.0),
+                    parent: Value::text(""),
+                }));
+                for (prop, value) in [
+                    (UiProp::Background, Value::text(color)),
+                    (UiProp::Padding, Value::number(0.0)),
+                    (UiProp::CornerRadius, Value::number(0.0)),
+                ] {
+                    blocks.push(Instruction::new(K::SetUiProp {
+                        prop,
+                        element: Value::text(id),
+                        value,
+                    }));
+                }
+            }
             project.actors[0]
                 .graph
                 .strands
-                .push(Strand::with_instructions(
-                    0,
-                    0,
-                    vec![
-                        Instruction::new(K::WhenStarted),
-                        Instruction::new(K::ShowPanel {
-                            element: Value::text("stripe"),
-                            title: Value::text(""),
-                            modal: false,
-                            anchor: UiAnchor::TopLeft,
-                            x: Value::number(31.0),
-                            y: Value::number(20.0),
-                            width: Value::number(1.0),
-                            height: Value::number(48.0),
-                            parent: Value::text(""),
-                        }),
-                        Instruction::new(K::SetUiProp {
-                            prop: UiProp::Background,
-                            element: Value::text("stripe"),
-                            value: Value::text("#ffffff"),
-                        }),
-                        Instruction::new(K::SetUiProp {
-                            prop: UiProp::Padding,
-                            element: Value::text("stripe"),
-                            value: Value::number(0.0),
-                        }),
-                        Instruction::new(K::SetUiProp {
-                            prop: UiProp::CornerRadius,
-                            element: Value::text("stripe"),
-                            value: Value::number(0.0),
-                        }),
-                    ],
-                ));
+                .push(Strand::with_instructions(0, 0, blocks));
             let (set, index, errors) = run_world_sending(
                 project,
                 |_| {},
@@ -1646,6 +1646,12 @@ mod tests {
             let pixels = frame_pixels(&set.images[index], SIZE.x as usize, SIZE.y as usize);
             let white = pixels[(40 * SIZE.x + 31) as usize];
             assert!(white.iter().all(|c| *c > 230), "{mode:?}: stripe {white:?}");
+            let [r, g, b] = pixels[(40 * SIZE.x + 85) as usize];
+            assert!(
+                r > 100 && r < 220 && g < 30 && b > 170 && b < 210,
+                "{mode:?}: translucent tint {:?}",
+                [r, g, b]
+            );
             for x in [30, 32] {
                 let adjacent = pixels[(40 * SIZE.x + x) as usize];
                 assert!(is_red(adjacent), "{mode:?}: neighbour {x}: {adjacent:?}");
