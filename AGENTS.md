@@ -468,8 +468,9 @@ the profiler as `culling/*`.
 feedback. `blockloom-runtime/src/quality.rs` applies run-only overrides, LOD and
 render-target scaling, and publishes `quality/*` and `budget/*` profiler rows.
 Geometry pressure drops density/distance without reducing pixel rate; frame-time
-pressure lowers resolution to its floor first. Draw counts estimate visible mesh
-and material groups, excluding shadow/post passes and 2D sprites.
+pressure lowers resolution to its floor first. Draw counts estimate mesh and
+material groups in the active world camera's visible list, excluding shadow/post
+passes and 2D sprites. Rebuilds clear the previous world's sampled costs.
 Terrain, vegetation, VFX and debris have independent sustained auto-drop
 multipliers for LOD distance, grass density and transient pool capacity. They
 reach a local floor before geometry asks for a shared preset drop. These run-only
@@ -480,6 +481,9 @@ Water has its own sustained tessellation throttle, reported as
 `budget/water/tessellation_scale`. Preset density and the local multiplier thin
 lake/river grids and ocean rings while keeping their full extent. Water floors
 count toward water costs and keep their meshes when only tessellation changes.
+Props have a local LOD-distance throttle too (`budget/props/distance_scale`),
+applied to existing sphere/capsule levels. Props without LODs keep their geometry;
+if they stay over budget at the local floor, shared preset feedback takes over.
 
 The main-world camera stays at native size for input. Extracted world-view targets
 scale before rendering and Bevy's spatial blit fills the output. Custom sub-viewports

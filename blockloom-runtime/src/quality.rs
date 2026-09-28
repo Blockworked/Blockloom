@@ -2,6 +2,7 @@
 use crate::engine::Engine;
 use crate::world::WorldCamera;
 use bevy::anti_alias::taa::TemporalAntiAliasing;
+use bevy::camera::visibility::VisibleEntities;
 use bevy::diagnostic::DiagnosticsStore;
 use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
@@ -238,10 +239,10 @@ pub(crate) fn measure_draws(
     mut scaling: ResMut<Scaling>,
     meshes: Res<Assets<Mesh>>,
     materials: Res<Assets<StandardMaterial>>,
+    cameras: Query<(&Camera, &VisibleEntities), With<WorldCamera>>,
     query: Query<(
         Entity,
         &Mesh3d,
-        &ViewVisibility,
         Option<&MeshMaterial3d<StandardMaterial>>,
         Option<&MeshMaterial3d<crate::batching::InstancedMaterial>>,
         Has<crate::terrain::TerrainChunk>,
@@ -279,12 +280,17 @@ pub(crate) fn measure_draws(
     let mut groups = std::collections::HashSet::new();
     let mut triangles = 0;
     let mut costs = [DrawCost::default(); 6];
-    for (entity, mesh, visible, standard, instanced, terrain, grass, scatter, vfx, debris, water) in
-        &query
-    {
-        if !visible.get() {
+    let visible = cameras
+        .iter()
+        .find(|(camera, _)| camera.is_active)
+        .map(|(_, visible)| visible.get(std::any::TypeId::of::<Mesh3d>()))
+        .unwrap_or(&[]);
+    for &entity in visible {
+        let Ok((entity, mesh, standard, instanced, terrain, grass, scatter, vfx, debris, water)) =
+            query.get(entity)
+        else {
             continue;
-        }
+        };
         let Some(geometry) = meshes.get(&mesh.0) else {
             continue;
         };
@@ -357,6 +363,9 @@ fn reset(engine: NonSend<Engine>, mut scaling: ResMut<Scaling>) {
         scaling.settings = settings;
         scaling.overrides.clear();
         scaling.dropped = false;
+        scaling.costs = [DrawCost::default(); 6];
+        scaling.draw_calls = 0;
+        scaling.triangles = 0;
     }
 }
 
@@ -369,9 +378,23 @@ mod tests {
     use blockloom_core::quality::{Quality, Setting};
     use blockloom_core::vm::Effect;
 
+    fn show_meshes(app: &mut App) {
+        let entities: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<Mesh3d>>()
+            .iter(app.world())
+            .collect();
+        let mut visible = VisibleEntities::default();
+        visible
+            .get_mut(std::any::TypeId::of::<Mesh3d>())
+            .extend(entities);
+        app.world_mut()
+            .spawn((WorldCamera, Camera::default(), visible));
+    }
+
     #[test]
     fn local_feedback_waits_while_paused_and_preserves_pixel_rate() {
-        for system in [1, 5] {
+        for system in [1, 2, 5] {
             let (_, incoming) = std::sync::mpsc::channel();
             let mut engine = Engine::new(incoming, blockloom_core::scene::Mode::ThreeD);
             engine.rebuild = false;
@@ -463,6 +486,7 @@ mod tests {
         ));
         app.world_mut()
             .spawn((Mesh3d(mesh.clone()), ViewVisibility::VISIBLE));
+        show_meshes(&mut app);
         app.world_mut()
             .write_message(AssetEvent::<Mesh>::Added { id: mesh.id() });
         app.update();
@@ -523,6 +547,9 @@ mod tests {
             scaling.controller.quality = Quality::Low;
             scaling.geometry.factors = [0.25; 6];
             scaling.dropped = true;
+            scaling.costs[2].draws = 10_000;
+            scaling.draw_calls = 10_000;
+            scaling.triangles = 100_000;
         }
         app.update();
         let scaling = app.world().resource::<Scaling>();
@@ -530,6 +557,8 @@ mod tests {
         assert!(!scaling.dropped);
         assert_eq!(scaling.controller.quality, Quality::High);
         assert_eq!(scaling.geometry.factors, [1.0; 6]);
+        assert_eq!(scaling.costs[2].draws, 0);
+        assert_eq!((scaling.draw_calls, scaling.triangles), (0, 0));
     }
 
     #[test]
@@ -566,6 +595,7 @@ mod tests {
         ));
         app.world_mut()
             .spawn((Mesh3d(mesh.clone()), ViewVisibility::VISIBLE, ChildOf(root)));
+        show_meshes(&mut app);
         app.world_mut()
             .write_message(AssetEvent::<Mesh>::Added { id: mesh.id() });
         app.update();
@@ -590,6 +620,69 @@ mod tests {
         let scaling = app.world().resource::<Scaling>();
         assert_eq!(scaling.costs[1].triangles, 2);
         assert_eq!(scaling.costs[2].triangles, 2);
+    }
+
+    #[test]
+    fn draw_feedback_uses_the_active_world_view_instead_of_shadow_visibility() {
+        let mut app = App::new();
+        app.init_resource::<Scaling>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_message::<AssetEvent<Mesh>>()
+            .add_systems(Update, measure_draws);
+        let mesh = app.world_mut().resource_mut::<Assets<Mesh>>().add(
+            Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::MAIN_WORLD,
+            )
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0; 3]; 6]),
+        );
+        let shown = app
+            .world_mut()
+            .spawn((Mesh3d(mesh.clone()), ViewVisibility::VISIBLE))
+            .id();
+        let shadow_only = app
+            .world_mut()
+            .spawn((Mesh3d(mesh), ViewVisibility::VISIBLE))
+            .id();
+        let mut inactive = VisibleEntities::default();
+        inactive
+            .get_mut(std::any::TypeId::of::<Mesh3d>())
+            .push(shadow_only);
+        app.world_mut().spawn((
+            WorldCamera,
+            Camera {
+                is_active: false,
+                ..default()
+            },
+            inactive,
+        ));
+        let mut visible = VisibleEntities::default();
+        visible
+            .get_mut(std::any::TypeId::of::<Mesh3d>())
+            .push(shown);
+        let camera = app
+            .world_mut()
+            .spawn((WorldCamera, Camera::default(), visible))
+            .id();
+        app.update();
+        let scaling = app.world().resource::<Scaling>();
+        assert_eq!((scaling.draw_calls, scaling.triangles), (1, 2));
+        assert_eq!((scaling.costs[2].draws, scaling.costs[2].triangles), (1, 2));
+
+        // A LOD/occlusion removal can leave ViewVisibility set by a shadow view.
+        app.world_mut()
+            .get_mut::<VisibleEntities>(camera)
+            .unwrap()
+            .get_mut(std::any::TypeId::of::<Mesh3d>())
+            .clear();
+        for _ in 0..30 {
+            app.update();
+        }
+        let scaling = app.world().resource::<Scaling>();
+        assert_eq!((scaling.draw_calls, scaling.triangles), (0, 0));
+        assert_eq!(scaling.costs[2].draws, 0);
+        assert!(app.world().get::<ViewVisibility>(shown).unwrap().get());
     }
 
     #[test]

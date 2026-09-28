@@ -974,12 +974,19 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           preserving body extent and ocean reach. Presets also cap water detail;
           floors count toward water budgets, and the profiler exposes the local
           tessellation multiplier. Floor meshes survive detail-only changes.
+          Props now have an independent sustained LOD-distance throttle, reported
+          as budget/props/distance_scale. Existing sphere/capsule LODs shed detail
+          before geometry asks for a shared preset drop; props without LOD levels
+          keep their geometry and can still force a preset drop at the local floor.
+          Draw estimates use the active world camera's visible mesh list, so
+          LOD/occlusion removals and shadow-only meshes do not inflate feedback.
+          Rebuilds clear sampled costs from the previous world.
         - Still open: real DLSS SDK/redistributable integration and capability
           detection; distance-based general texture mip streaming and noise/LUT
           atlases; half-resolution SSR; native-resolution UI compositing during
           scene scaling; exact GPU indirect-draw accounting and per-system
-          adaptive thresholds for props. DLSS selection currently
-          reports unavailable and falls back to TAA/spatial.
+          LOD generation/streaming for general props without authored levels.
+          DLSS selection currently reports unavailable and falls back to TAA/spatial.
         - Draw policy (numbers on the Phase 4 mechanisms, no new machinery):
           which meshes instance (vegetation, props, debris, decals) and at what
           density, indirect-draw batch membership, per-system draw-call and

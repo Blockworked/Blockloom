@@ -233,7 +233,7 @@ pub fn select_lod(
                     } else if vegetation {
                         s.geometry.factors[1]
                     } else {
-                        1.0
+                        s.geometry.factors[2]
                     }
                 });
                 let screen = screen_size(projection, distance, radius) * policy.bias * local_bias;
@@ -713,6 +713,78 @@ mod tests {
             app.world().get::<LodGroup>(prop).unwrap().current(),
             Some(0)
         );
+    }
+
+    #[test]
+    fn props_throttle_swaps_meshes_and_leaves_terrain_and_trees_alone() {
+        let mut app = App::new();
+        app.init_resource::<LodPolicy>()
+            .init_resource::<Culling>()
+            .init_resource::<crate::quality::Scaling>()
+            .init_resource::<Assets<Mesh>>()
+            .add_systems(Update, select_lod);
+        app.world_mut()
+            .resource_mut::<crate::quality::Scaling>()
+            .geometry
+            .factors[2] = 0.5;
+        app.world_mut().spawn((
+            WorldCamera,
+            Camera::default(),
+            GlobalTransform::default(),
+            Projection::Perspective(PerspectiveProjection {
+                fov: std::f32::consts::FRAC_PI_2,
+                ..default()
+            }),
+        ));
+        let high = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(Sphere::new(1.0).mesh().uv(24, 16));
+        let low = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(Sphere::new(1.0).mesh().uv(12, 8));
+        let group = LodGroup::new(1.0)
+            .level(0.15, Some(high.clone()))
+            .level(0.0, Some(low.clone()));
+        let pose = GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -5.0));
+        let prop = app
+            .world_mut()
+            .spawn((pose, group.clone(), Mesh3d(high.clone())))
+            .id();
+        let terrain = app
+            .world_mut()
+            .spawn((pose, group.clone(), crate::terrain::TerrainChunk))
+            .id();
+        let tree = app
+            .world_mut()
+            .spawn((
+                pose,
+                group,
+                crate::terrain::vegetation::ScatterInstance {
+                    levels: Vec::new(),
+                    parts: Vec::new(),
+                },
+            ))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<LodGroup>(prop).unwrap().current(),
+            Some(1)
+        );
+        assert_eq!(app.world().get::<Mesh3d>(prop).unwrap().0, low);
+        for entity in [terrain, tree] {
+            assert_eq!(
+                app.world().get::<LodGroup>(entity).unwrap().current(),
+                Some(0)
+            );
+        }
+
+        // Moving close still restores detail under a sustained throttle.
+        *app.world_mut().get_mut::<GlobalTransform>(prop).unwrap() =
+            GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -2.0));
+        app.update();
+        assert_eq!(app.world().get::<Mesh3d>(prop).unwrap().0, high);
     }
 
     #[test]

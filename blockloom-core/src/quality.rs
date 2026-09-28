@@ -93,7 +93,7 @@ impl Default for GeometryController {
 }
 
 impl GeometryController {
-    pub const LOCAL_SYSTEMS: [usize; 5] = [0, 1, 3, 4, 5];
+    pub const LOCAL_SYSTEMS: [usize; 6] = [0, 1, 2, 3, 4, 5];
 
     pub fn sample(&mut self, settings: &Settings, budget: &Budget, costs: &[DrawCost; 6]) {
         for system in Self::LOCAL_SYSTEMS {
@@ -110,8 +110,7 @@ impl GeometryController {
         }
     }
 
-    /// Shared preset feedback handles systems with no local throttle and those
-    /// that still exceed their budget at the local floor.
+    /// Shared preset feedback handles systems still over budget at their local floor.
     pub fn needs_preset_drop(&self, budget: &Budget, costs: &[DrawCost; 6]) -> bool {
         costs.iter().enumerate().any(|(system, cost)| {
             cost.exceeds(budget, system)
@@ -326,7 +325,7 @@ mod tests {
         }
         assert_eq!(local.factors, [0.9, 1.0, 1.0, 1.0, 1.0, 1.0]);
         costs[2].draws = budget.draws[2] + 1;
-        assert!(local.needs_preset_drop(&budget, &costs));
+        assert!(!local.needs_preset_drop(&budget, &costs));
     }
 
     #[test]
@@ -336,7 +335,7 @@ mod tests {
             ..Default::default()
         };
         let budget = settings.preset.budget();
-        for system in [3, 4, 5] {
+        for system in [2, 3, 4, 5] {
             let mut local = GeometryController::default();
             let mut costs = [DrawCost::default(); 6];
             costs[system].triangles = budget.triangles[system] + 1;

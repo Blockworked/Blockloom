@@ -3911,7 +3911,7 @@ pub fn report_status(
             }
             if blockloom_core::quality::GeometryController::LOCAL_SYSTEMS.contains(&index) {
                 let metric = match index {
-                    0 | 1 => "distance_scale",
+                    0..=2 => "distance_scale",
                     5 => "tessellation_scale",
                     _ => "density_scale",
                 };
