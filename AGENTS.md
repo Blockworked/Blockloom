@@ -495,6 +495,12 @@ and owns `IsDefaultUiCamera` while active. HDR UI still shares the scene's inter
 resolution so it blends in linear light before encoding. Script rendering overrides
 end on a world rebuild.
 
+`ssr.rs` traces only specular light into the shared half-size scratch target,
+then adds it to the scene with the depth-guided upsampler. Bevy still supplies
+SSR uniforms and view layouts; `pbr_patch` makes its shader emit just the light
+under `BLOCKLOOM_HALF_SSR`. Unpatched shaders, compiling pipelines and custom
+viewports keep Bevy's full-size pass. The trace timing is `ssr_half`.
+
 `CellTasks` bounds concurrent work per payload type and admits nearest cells first.
 Global HDRI/noise jobs use `GLOBAL_CELL`, remain part of warmup accounting across
 cell resets, and cancel when their content key changes. HDRI quality caps discard

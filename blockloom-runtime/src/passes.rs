@@ -234,6 +234,7 @@ impl UpsampleGuide {
 pub enum UpsampleBlend {
     Replace,
     Over,
+    Add,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -315,6 +316,18 @@ impl SpecializedRenderPipeline for BilateralUpsample {
                     blend: match key.blend {
                         UpsampleBlend::Replace => None,
                         UpsampleBlend::Over => Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        UpsampleBlend::Add => Some(BlendState {
+                            color: BlendComponent {
+                                src_factor: BlendFactor::One,
+                                dst_factor: BlendFactor::One,
+                                operation: BlendOperation::Add,
+                            },
+                            alpha: BlendComponent {
+                                src_factor: BlendFactor::Zero,
+                                dst_factor: BlendFactor::One,
+                                operation: BlendOperation::Add,
+                            },
+                        }),
                     },
                     write_mask: ColorWrites::ALL,
                 })],
@@ -333,6 +346,7 @@ pub struct ViewUpsample {
     pub guide: UpsampleGuide,
     pub to_working: CachedRenderPipelineId,
     pub over_view: CachedRenderPipelineId,
+    pub add_to_view: CachedRenderPipelineId,
 }
 
 fn prepare_upsample_pipelines(
@@ -361,10 +375,12 @@ fn prepare_upsample_pipelines(
         };
         let to_working = specialize(UpsampleBlend::Replace, WORKING_FORMAT);
         let over_view = specialize(UpsampleBlend::Over, view.target_format);
+        let add_to_view = specialize(UpsampleBlend::Add, view.target_format);
         commands.entity(entity).insert(ViewUpsample {
             guide,
             to_working,
             over_view,
+            add_to_view,
         });
     }
 }

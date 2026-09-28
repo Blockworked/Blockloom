@@ -986,9 +986,15 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           the scene; the UI camera follows output-target changes and stands
           down at native scene scale, for custom viewports or without UI.
           HDR retains the existing linear UI blend before output encoding.
+          SSR now traces specular light at half resolution and adds it through
+          the shared depth-guided bilateral upsampler, preserving scene detail
+          and environment/probe fallback light. It follows scene scaling,
+          handles odd target sizes, and retains Bevy's full-resolution path
+          while pipelines compile, for custom viewports or if the shader patch
+          cannot apply. The profiler times the trace as ssr_half.
         - Still open: real DLSS SDK/redistributable integration and capability
           detection; distance-based general texture mip streaming and noise/LUT
-          atlases; half-resolution SSR; native-resolution HDR UI compositing
+          atlases; native-resolution HDR UI compositing
           during scene scaling; exact GPU indirect-draw accounting and per-system
           LOD generation/streaming for general props without authored levels.
           DLSS selection currently reports unavailable and falls back to TAA/spatial.

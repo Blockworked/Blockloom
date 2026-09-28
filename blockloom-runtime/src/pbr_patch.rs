@@ -83,6 +83,11 @@ fn ao_key(config: &PbrPatches) -> u32 {
 
 const PATCHES: &[Patch] = &[
     Patch {
+        module: "bevy_pbr/ssr.wesl",
+        edit: crate::ssr::patch_shader,
+        key: no_key,
+    },
+    Patch {
         module: "bevy_pbr/decal/clustered.wesl",
         edit: crate::decals::patch_shader,
         key: no_key,

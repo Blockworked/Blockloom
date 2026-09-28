@@ -1704,6 +1704,59 @@ mod tests {
 
     #[test]
     #[ignore = "needs a GPU"]
+    fn half_size_ssr_keeps_environment_reflections_under_scene_scaling() {
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::material::SurfaceMaterial;
+        use blockloom_core::sky::SkyKind;
+        for scale in [1.0, 0.53] {
+            let mut room = dark_room(false);
+            room.world.quality.resolution_scale = scale;
+            room.world.post.ssr.enabled = true;
+            room.world.sky.kind = SkyKind::Gradient;
+            room.world.sky.lighting = false;
+            room.world.sky.reflections = true;
+            room.world.sky.gradient.top = "#FF0000".into();
+            room.world.sky.gradient.middle = "#FF0000".into();
+            room.world.sky.gradient.bottom = "#FF0000".into();
+            room.actors[0].components.insert(ActorComponent::Material {
+                material: SurfaceMaterial {
+                    metallic: 1.0,
+                    roughness: 0.2,
+                    ..Default::default()
+                },
+            });
+            let (set, index, reports) =
+                run_world_reporting(room, |_| {}, game_camera(), 180, |_| false, Vec::new());
+            assert!(
+                reports.iter().all(|r| !matches!(
+                    r,
+                    RuntimeMessage::Error { .. } | RuntimeMessage::Fatal { .. }
+                )),
+                "{reports:?}"
+            );
+            assert!(
+                reports.iter().any(|report| match report {
+                    RuntimeMessage::Status(status) => status
+                        .render_metrics
+                        .iter()
+                        .any(|metric| metric.name.contains("ssr_half")),
+                    _ => false,
+                }),
+                "half-size SSR never ran at scale {scale}"
+            );
+            let set = set.expect("SSR produced no frame");
+            let pixels = frame_pixels(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+            dump(&format!("ssr-half-{scale}"), &pixels);
+            let pixel = pixels[(SIZE.y / 2 * SIZE.x + SIZE.x / 2) as usize];
+            assert!(
+                is_red(pixel),
+                "environment reflection at scale {scale}: {pixel:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
     fn grading_to_no_saturation_turns_red_grey() {
         let grey = |[r, g, b]: [u8; 3]| r > 20 && r.abs_diff(g) < 8 && r.abs_diff(b) < 8;
         for mode in [Mode::TwoD, Mode::ThreeD] {

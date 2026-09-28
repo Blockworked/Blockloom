@@ -73,6 +73,7 @@ mod solari_patch;
 mod sound;
 mod space;
 mod sprites;
+mod ssr;
 mod streaming;
 mod terrain;
 mod tiles;
@@ -218,6 +219,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     hdr::register(app);
     luminance::register(app);
     post::register(app);
+    ssr::register(app);
     capture::register(app);
     // Ray tracing is 3D only, but registers always so a live switch into
     // 3D finds it; its systems no-op in 2D.
