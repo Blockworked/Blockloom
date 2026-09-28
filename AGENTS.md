@@ -462,6 +462,26 @@ reduced to a max-depth pyramid. Bevy's GPU `OcclusionCulling` and GPU frustum
 culling (`NoCpuCulling`) are camera toggles in `OcclusionPolicy`. Counts reach
 the profiler as `culling/*`.
 
+### Quality and scaling
+
+`blockloom-core/src/quality.rs` owns saved settings, preset budgets and frame-time
+feedback. `blockloom-runtime/src/quality.rs` applies run-only overrides, LOD and
+render-target scaling, and publishes `quality/*` and `budget/*` profiler rows.
+Geometry pressure drops density/distance without reducing pixel rate; frame-time
+pressure lowers resolution to its floor first. Draw counts estimate visible mesh
+and material groups, excluding shadow/post passes and 2D sprites.
+
+The main-world camera stays at native size for input. Extracted world-view targets
+scale before rendering and Bevy's spatial blit fills the output. Custom sub-viewports
+stay native. TAA is 3D only; a DLSS request currently uses that fallback and reports
+unavailable. DLSS modes persist for future SDK integration. UI currently shares the
+scene's internal resolution. Script rendering overrides end on a world rebuild.
+
+`CellTasks` bounds concurrent work per payload type and admits nearest cells first.
+Global HDRI/noise jobs use `GLOBAL_CELL`, remain part of warmup accounting across
+cell resets, and cancel when their content key changes. HDRI quality caps discard
+highest-resolution baked mips before GPU upload, retaining BC6H where supported.
+
 ### GPU measurement
 
 `blockloom-runtime/src/gpu.rs`. Bevy's `RenderDiagnosticsPlugin` times each

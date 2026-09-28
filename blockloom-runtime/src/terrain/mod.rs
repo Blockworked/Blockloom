@@ -258,12 +258,23 @@ fn full_key(dir: Option<&Path>, spec: &TerrainSpec) -> u64 {
 }
 
 /// Terrain builds in flight, by actor.
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct TerrainJobs {
     builds: CellTasks<String, (u64, Built)>,
     fine: CellTasks<(String, u32), Vec<(u32, TerrainMesh)>>,
     grass: CellTasks<vegetation::GrassKey, Option<(Mesh, usize, [f32; 3])>>,
     preview: CellTasks<String, Built>,
+}
+
+impl Default for TerrainJobs {
+    fn default() -> Self {
+        Self {
+            builds: CellTasks::with_limit(2),
+            fine: CellTasks::with_limit(4),
+            grass: CellTasks::with_limit(1),
+            preview: CellTasks::with_limit(1),
+        }
+    }
 }
 
 /// Lets the scene view find a terrain by actor: its data and root.

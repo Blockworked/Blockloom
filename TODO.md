@@ -946,6 +946,22 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         auto-exposure, depth of field, motion blur, SSAO and SSR are 3D; the
         LUT is skipped under HDR output.
   - [ ] Performance and scalability (whole-frame budgets for the stack above):
+        - Implemented: shared Low/Medium/High/Ultra settings and hysteretic
+          frame-time auto-drop, dynamic spatial scaling and 3D TAA fallback,
+          editor controls, blocks/scripts/reporters and quality-drop events.
+          Presets cap vegetation density/distance, LOD bias, cloud/fog quality,
+          shadow maps/distance, reflections and concurrent staggered probes.
+          Profiler exposes per-system estimated mesh draws/triangles and budgets.
+          Particle, decal and debris pools use bounded visibility-based eviction.
+          Terrain/noise/HDRI payloads share bounded nearest-first cell tasks;
+          HDRI residency drops top mips with quality. Clouds adapt march counts
+          to distance and weather density.
+        - Still open: real DLSS SDK/redistributable integration and capability
+          detection; distance-based general texture mip streaming and noise/LUT
+          atlases; half-resolution SSR; native-resolution UI compositing during
+          scene scaling; exact GPU indirect-draw accounting and per-system
+          adaptive thresholds beyond the shared preset policy. DLSS selection
+          currently reports unavailable and falls back to TAA/spatial.
         - Draw policy (numbers on the Phase 4 mechanisms, no new machinery):
           which meshes instance (vegetation, props, debris, decals) and at what
           density, indirect-draw batch membership, per-system draw-call and

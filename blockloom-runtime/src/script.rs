@@ -205,6 +205,7 @@ impl ScriptEvent {
         use blockloom_core::vm::Event;
         Some(match event {
             Event::Started | Event::Cloned { .. } => return None,
+            Event::QualityDropped => (None, ScriptEvent::new(abi::EVENT_QUALITY_DROPPED, "")),
             Event::SceneStarted => (None, ScriptEvent::new(abi::EVENT_SCENE_STARTED, "")),
             Event::SceneEnded => (None, ScriptEvent::new(abi::EVENT_SCENE_ENDED, "")),
             Event::Message(message) => (None, ScriptEvent::new(abi::EVENT_MESSAGE, message)),
@@ -538,6 +539,9 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
                     as f64,
             )
         }
+        abi::READ_FRAME_TIME => Some(sense::read(|s| s.performance.frame_ms)),
+        abi::READ_DRAW_CALLS => Some(sense::read(|s| s.performance.draw_calls) as f64),
+        abi::READ_DLSS_AVAILABLE => bool_as(sense::read(|s| s.performance.dlss_available)),
         abi::READ_ATMOSPHERE => sense::read(|sensors| sensors.atmosphere.field(a)),
         abi::READ_WATER => {
             let mut at = a.split_whitespace().map(|n| n.parse::<f32>().ok());
@@ -759,6 +763,7 @@ fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
         abi::TEXT_ACTIVE_VOLUMES => {
             serde_json::to_string(&sense::read(|s| s.atmosphere.volumes.clone())).ok()
         }
+        abi::TEXT_CURRENT_QUALITY => Some(format!("{:?}", sense::read(|s| s.performance.quality))),
         abi::TEXT_EVENT => EVENT_WORDS.with(|words| {
             let words = words.borrow();
             let (subject, detail) = words.as_ref()?;
@@ -1051,6 +1056,16 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
                 pitch: clamp_pitch(n0 as f32),
             }
         }
+        abi::ACT_SET_RENDER_SETTING => Effect::SetRenderSetting {
+            setting: match a {
+                "Quality" => blockloom_core::quality::Setting::Quality,
+                "ResolutionScale" => blockloom_core::quality::Setting::ResolutionScale,
+                "Upscaler" => blockloom_core::quality::Setting::Upscaler,
+                "DlssMode" => blockloom_core::quality::Setting::DlssMode,
+                _ => return,
+            },
+            value: b.to_string(),
+        },
         abi::ACT_SET_EXPOSURE => Effect::SetExposure { ev: n0 as f32 },
         abi::ACT_SET_LIGHT_INTENSITY => Effect::SetLightIntensity {
             actor,

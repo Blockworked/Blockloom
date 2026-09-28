@@ -612,6 +612,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-quality",
+        cmd: "set_quality",
+        aliases: &["set_quality"],
+        summary: "Set rendering quality: preset (Low, Medium, High, Ultra), resolution_scale, dynamic_resolution, min_scale, target_ms, auto_drop, over_budget_frames, upscaler (Spatial, Taa, Dlss), dlss_mode and sharpness.",
+        args: &[ArgSpec {
+            name: "quality",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-post-process",
         cmd: "set_post_process",
         aliases: &["set_post_process"],

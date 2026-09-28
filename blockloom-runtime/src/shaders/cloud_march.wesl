@@ -42,10 +42,13 @@ fn incident(p:vec3<f32>,ray:vec3<f32>,light:vec4<f32>,color:vec3<f32>,jitter:f32
     let a=(c.layer.x-c.camera.y)/ray.y; let b=(c.layer.y-c.camera.y)/ray.y;
     let start=max(min(a,b),0.0); let end=min(max(a,b),scene_distance);
     if end<=start || start>200000.0 { return out; }
-    let step=(min(end,200000.0)-start)/f32(c.steps.x);
+    // Distant, sparse weather needs fewer samples than a dense nearby bank.
+    let detail=mix(1.0,0.5,clamp(start/100000.0,0.0,1.0))*mix(0.5,1.0,clamp(c.shape.x*c.shape.y,0.0,1.0));
+    let count=max(8u,u32(f32(c.steps.x)*detail));
+    let step=(min(end,200000.0)-start)/f32(count);
     let jitter=blue_noise(vec2<u32>(full),u32(c.camera.w));
     var trans=1.0; var rgb=vec3<f32>(0.0); var weighted=0.0; var weight=0.0;
-    for(var i=0u;i<c.steps.x;i++) {
+    for(var i=0u;i<count;i++) {
         out.depths.z+=1.0;
         let distance=start+(f32(i)+jitter)*step; let p=c.camera.xyz+ray*distance;
         let sigma=medium(p);

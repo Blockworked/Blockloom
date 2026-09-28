@@ -133,6 +133,10 @@ pub enum Effect {
     },
     /// The camera's exposure in EV100 for the rest of the run. World-global,
     /// like gravity: no actor.
+    SetRenderSetting {
+        setting: crate::quality::Setting,
+        value: String,
+    },
     SetExposure {
         ev: f32,
     },

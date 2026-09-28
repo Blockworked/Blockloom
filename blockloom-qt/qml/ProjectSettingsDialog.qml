@@ -21,6 +21,8 @@ BwDialog {
     function invoke(command, args) { app.invoke(command, args); }
     function withIndex(array, index, value) { const next = array.slice(); next[index] = value; return next; }
     function clamp(n, lo, hi) { return Math.min(Math.max(n, lo), hi); }
+    function qualityOf() { return Object.assign({ preset: "High", resolution_scale: 1, dynamic_resolution: false, min_scale: 0.5, target_ms: 16.667, auto_drop: false, over_budget_frames: 120, upscaler: "Spatial", dlss_mode: "Quality", sharpness: 0 }, world ? world.quality || {} : {}); }
+    function writeQuality(next) { invoke("set_quality", { quality: Object.assign(qualityOf(), next) }); }
     function postOf() { return Object.assign({ exposure_ev: 9.7, tonemapping: "TonyMcMapface", bloom_enabled: false, bloom_threshold: 1, bloom_intensity: 0.15, bloom_knee: 0.5, bloom_scatter: 0.7, bloom_dirt: "", bloom_dirt_intensity: 0, vignette_strength: 0, chromatic_aberration: 0, sharpen: 0 }, world && world.post ? world.post : {}); }
     function soundOf() { return Object.assign({ master_volume: 1, music_volume: 1, sfx_volume: 1 }, world && world.sound ? world.sound : {}); }
     function navigationOf() { return Object.assign({ areas: [], links: [] }, world && world.navigation ? world.navigation : {}); }
@@ -87,6 +89,31 @@ BwDialog {
         contentWidth: availableWidth
         ColumnLayout {
             width: scroll.availableWidth - 12; spacing: 6
+            Section {
+                heading: "Performance and scaling"
+                InspectorRow { label: "Quality"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: ["Low", "Medium", "High", "Ultra"].map(v => ({ value: v, label: v })); value: root.qualityOf().preset; onChosen: v => root.writeQuality({ preset: v }) } }
+                InspectorRow { label: "Resolution scale"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.qualityOf().resolution_scale; onCommitted: v => root.writeQuality({ resolution_scale: v }) } }
+                InspectorRow { label: "Dynamic scale"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: root.qualityOf().dynamic_resolution; onToggled: on => root.writeQuality({ dynamic_resolution: on }) } }
+                InspectorRow { label: "Minimum scale"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.qualityOf().min_scale; onCommitted: v => root.writeQuality({ min_scale: v }) } }
+                InspectorRow { label: "Frame budget ms"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.qualityOf().target_ms; onCommitted: v => root.writeQuality({ target_ms: v }) } }
+                InspectorRow { label: "Auto-drop quality"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: root.qualityOf().auto_drop; onToggled: on => root.writeQuality({ auto_drop: on }) } }
+                InspectorRow { label: "Over-budget frames"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.qualityOf().over_budget_frames; onCommitted: v => root.writeQuality({ over_budget_frames: Math.round(v) }) } }
+                InspectorRow { label: "Upscaler"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: ["Spatial", "Taa", "Dlss"].map(v => ({ value: v, label: v === "Taa" ? "TAA + spatial" : v === "Dlss" ? "DLSS (fallback)" : "Spatial" })); value: root.qualityOf().upscaler; onChosen: v => root.writeQuality({ upscaler: v }) } }
+                InspectorRow { label: "DLSS mode"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: ["Dlaa", "Quality", "Balanced", "Performance", "UltraPerformance"].map(v => ({ value: v, label: v })); value: root.qualityOf().dlss_mode; onChosen: v => root.writeQuality({ dlss_mode: v }) } }
+                InspectorRow { label: "Sharpness"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: root.qualityOf().sharpness; onCommitted: v => root.writeQuality({ sharpness: v }) } }
+                Note { visible: root.qualityOf().upscaler === "Dlss"; text: "DLSS is unavailable in this player. Uses TAA + spatial in 3D, spatial in 2D." }
+                Note { text: "Scale is 0.25 to 1. Dynamic scaling lowers resolution before auto-drop reduces density and distance. Profiler quality rows show the live result. Custom sub-viewports retain native resolution." }
+            }
             Section {
                 heading: "Project"
                 InspectorRow { label: "Type"; labelWidth: 110; Layout.fillWidth: true

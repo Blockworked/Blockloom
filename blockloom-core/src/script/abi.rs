@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 32;
+pub const ABI_VERSION: u32 = 33;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -160,6 +160,10 @@ pub const READ_PARTICLES: u32 = 47;
 /// `a` = "x y" or "x y z" (world), `b` = tilemap name, empty for any. The
 /// sheet index there, -1 for an empty cell or no map; [`MISSING`] for an
 /// unknown map.
+pub const READ_FRAME_TIME: u32 = 49;
+pub const READ_DRAW_CALLS: u32 = 50;
+pub const READ_DLSS_AVAILABLE: u32 = 51;
+pub const TEXT_CURRENT_QUALITY: u32 = 18;
 pub const READ_TILE_AT: u32 = 48;
 
 // ─── What a script can read as text ────────────────────────────────────────
@@ -314,6 +318,7 @@ pub const ACT_BIND_ACTION: u32 = 47;
 pub const ACT_CLEAR_ACTION_BINDINGS: u32 = 48;
 /// `n0` = EV100, lower is brighter. Holds for the rest of the run and
 /// outranks auto-exposure.
+pub const ACT_SET_RENDER_SETTING: u32 = 110;
 pub const ACT_SET_EXPOSURE: u32 = 49;
 /// `n0` = lumens. Sets this actor's Light component.
 pub const ACT_SET_LIGHT_INTENSITY: u32 = 50;
@@ -463,6 +468,7 @@ pub const EVENT_UI: u32 = 12;
 /// This actor walked into a room. Subject: the room's name.
 pub const EVENT_ENTERED_ROOM: u32 = 13;
 /// The newly loaded scene finished warming up.
+pub const EVENT_QUALITY_DROPPED: u32 = 16;
 pub const EVENT_SCENE_STARTED: u32 = 14;
 /// The outgoing scene is about to unload.
 pub const EVENT_SCENE_ENDED: u32 = 15;

@@ -660,6 +660,47 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "FrameTime",
+        op: "FrameTime",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| Ok(Evaluated::Number(sense::read(|s| s.performance.frame_ms))),
+    },
+    ExtOperator {
+        kind: "DrawCalls",
+        op: "DrawCalls",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| {
+            Ok(Evaluated::Number(
+                sense::read(|s| s.performance.draw_calls) as f64
+            ))
+        },
+    },
+    ExtOperator {
+        kind: "CurrentQuality",
+        op: "CurrentQuality",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| {
+            Ok(Evaluated::Text(format!(
+                "{:?}",
+                sense::read(|s| s.performance.quality)
+            )))
+        },
+    },
+    ExtOperator {
+        kind: "DlssAvailable",
+        op: "DlssAvailable",
+        arity: 0,
+        default_args: Vec::new,
+        eval: |_| {
+            Ok(Evaluated::Bool(sense::read(|s| {
+                s.performance.dlss_available
+            })))
+        },
+    },
+    ExtOperator {
         kind: "SceneLuminance",
         op: "SceneLuminance",
         arity: 0,

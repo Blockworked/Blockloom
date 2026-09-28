@@ -106,6 +106,7 @@ pub enum InstructionKind {
     // ─── Events (headers) ───────────────────────────────────────────────────
     /// Runs when the project starts. The green flag.
     WhenStarted,
+    WhenQualityDrops,
     /// Runs every time `key` goes down.
     WhenKeyPressed {
         key: String,
@@ -295,6 +296,10 @@ pub enum InstructionKind {
     },
     /// Sets the camera's exposure in EV100 for the rest of the run: lower is
     /// brighter. Outranks auto-exposure and the project's own value.
+    SetRenderSetting {
+        setting: crate::quality::Setting,
+        value: Value,
+    },
     SetExposure {
         ev: Value,
     },
@@ -1009,6 +1014,7 @@ impl BlockKind for InstructionKind {
             | K::Turn { degrees: v, .. }
             | K::SetRotation { degrees: v, .. }
             | K::SetScale { factor: v }
+            | K::SetRenderSetting { value: v, .. }
             | K::SetExposure { ev: v }
             | K::SetLightIntensity { intensity: v }
             | K::SetEmissiveStrength { strength: v }
@@ -1380,6 +1386,7 @@ impl BlockKind for InstructionKind {
             }
             K::ClearActionBindings { action } => f(action, InputValueType::Any),
             K::WhenStarted
+            | K::WhenQualityDrops
             | K::WhenKeyPressed { .. }
             | K::WhenActionPressed { .. }
             | K::WhenTouched
@@ -1436,6 +1443,7 @@ impl BlockKind for InstructionKind {
         matches!(
             self,
             InstructionKind::WhenStarted
+                | InstructionKind::WhenQualityDrops
                 | InstructionKind::WhenKeyPressed { .. }
                 | InstructionKind::WhenActionPressed { .. }
                 | InstructionKind::WhenTouched

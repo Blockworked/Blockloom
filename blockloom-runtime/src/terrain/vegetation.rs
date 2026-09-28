@@ -62,6 +62,8 @@ pub fn grass_materials(world: &mut World, spec: &TerrainSpec) -> Vec<Handle<Gras
 /// Wants the grass cells within each layer's cull distance whose streaming
 /// cell is active, and drops the rest.
 pub fn stream_grass(
+    scaling: Option<Res<crate::quality::Scaling>>,
+    mut last_density: Local<Option<f32>>,
     mut commands: Commands,
     mut jobs: ResMut<TerrainJobs>,
     mut cells: ResMut<StreamingCells>,
@@ -71,6 +73,9 @@ pub fn stream_grass(
     let Ok(camera) = camera.single() else {
         return;
     };
+    let density = scaling.as_ref().map_or(1.0, |s| s.budget().density);
+    let density_changed = last_density.is_some_and(|old| old != density);
+    *last_density = Some(density);
     let eye = camera.translation();
     for (id, transform, mut terrained) in &mut roots {
         let Some(built) = terrained.built.clone() else {
@@ -85,7 +90,9 @@ pub fn stream_grass(
         let half = [shape.size[0] * 0.5, shape.size[1] * 0.5];
         let mut wanted = HashSet::new();
         for (layer, grass) in terrained.spec.grass.iter().enumerate() {
-            let reach = grass.cull_distance + GRASS_CELL * 0.75;
+            let distance =
+                grass.cull_distance * scaling.as_ref().map_or(1.0, |s| s.budget().distance);
+            let reach = distance + GRASS_CELL * 0.75;
             let cell_of = |v: f32, h: f32| ((v + h) / GRASS_CELL).floor() as i32;
             let (x0, x1) = (
                 cell_of(local_eye.x - reach, half[0]),
@@ -112,7 +119,7 @@ pub fn stream_grass(
                         local_eye.x.clamp(min[0], min[0] + GRASS_CELL),
                         local_eye.z.clamp(min[1], min[1] + GRASS_CELL),
                     );
-                    if near.distance(Vec2::new(local_eye.x, local_eye.z)) > grass.cull_distance {
+                    if near.distance(Vec2::new(local_eye.x, local_eye.z)) > distance {
                         continue;
                     }
                     let world_cell = StreamingCells::cell_at(affine.transform_point3(centre));
@@ -126,7 +133,7 @@ pub fn stream_grass(
         let stale: Vec<GrassKey> = terrained
             .grass_cells
             .keys()
-            .filter(|key| !wanted.contains(*key))
+            .filter(|key| density_changed || !wanted.contains(*key))
             .cloned()
             .collect();
         for key in stale {
@@ -141,7 +148,8 @@ pub fn stream_grass(
                 continue;
             }
             let (_, layer, gx, gz) = key.clone();
-            let grass = terrained.spec.grass[layer as usize].clone();
+            let mut grass = terrained.spec.grass[layer as usize].clone();
+            grass.density *= density;
             let built = built.clone();
             let min = [
                 -half[0] + gx as f32 * GRASS_CELL,

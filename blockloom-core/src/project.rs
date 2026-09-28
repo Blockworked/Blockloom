@@ -1680,6 +1680,7 @@ impl Project {
             world.wind.normalize();
             world.surface.normalize();
             world.vfx.normalize();
+            world.quality.normalize();
         }
     }
 

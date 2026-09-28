@@ -398,6 +398,7 @@ pub fn pick_fog_lights(mut lights: Vec<FogLight>, camera: Vec3) -> Vec<FogLight>
 /// carrying local fog and the lights that light it.
 #[allow(clippy::too_many_arguments)]
 fn resolve_fog(
+    scaling: Option<Res<crate::quality::Scaling>>,
     engine: NonSend<Engine>,
     environment: Res<Environment>,
     time: Res<Time>,
@@ -442,7 +443,19 @@ fn resolve_fog(
         time: time.elapsed_secs_wrapped(),
         wind_drift: wind.map_or(Vec3::ZERO, |wind| wind.drift),
     };
-    let uniforms = FogUniforms::resolve(&world.fog, &environment, &scene);
+    let mut fog = world.fog.clone();
+    if let Some(scaling) = scaling {
+        use blockloom_core::{fog::FogQuality, quality::Quality};
+        let cap = match scaling.controller.quality {
+            Quality::Low => FogQuality::Low,
+            Quality::Medium => FogQuality::Medium,
+            _ => FogQuality::High,
+        };
+        if fog.volumetric.quality.grid()[0] > cap.grid()[0] {
+            fog.volumetric.quality = cap;
+        }
+    }
+    let uniforms = FogUniforms::resolve(&fog, &environment, &scene);
     if let Some(sources) = sources.as_mut() {
         sources.fog_density = environment.fog_density;
         let [day, dusk, night] = color_weights(environment.sun.direction.y);

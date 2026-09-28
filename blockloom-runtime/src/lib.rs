@@ -63,6 +63,7 @@ pub mod player;
 mod post;
 mod preview;
 mod probes;
+mod quality;
 mod ray_tracing;
 mod script;
 mod shadows;
@@ -206,6 +207,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     volume_heat::register(app);
     streaming::register(app);
     gpu::register(app);
+    quality::register(app);
     // Custom shader materials plus the tilemap material. Every dimension
     // registers all three, so systems can take their asset stores
     // unconditionally; an unused plugin costs nothing at runtime.

@@ -768,6 +768,27 @@ impl Actor {
         );
     }
 
+    /// Overrides a rendering setting for the rest of this run.
+    pub fn set_render_setting(&self, setting: &str, value: &str) {
+        self.act(
+            ACT_SET_RENDER_SETTING,
+            Str::borrow(setting), Str::borrow(value), Str::EMPTY,
+            0.0, 0.0, 0.0,
+        );
+    }
+    pub fn set_quality(&self, quality: &str) {
+        self.set_render_setting("Quality", quality);
+    }
+    pub fn set_resolution_scale(&self, scale: f32) {
+        self.set_render_setting("ResolutionScale", &scale.to_string());
+    }
+    pub fn set_upscaler(&self, upscaler: &str) {
+        self.set_render_setting("Upscaler", upscaler);
+    }
+    pub fn set_dlss_mode(&self, mode: &str) {
+        self.set_render_setting("DlssMode", mode);
+    }
+
     /// The camera's exposure in EV100 for the rest of the run: lower is
     /// brighter. Outranks auto-exposure and the project's own value.
     pub fn set_exposure(&self, ev: f32) {
@@ -1635,6 +1656,21 @@ impl Actor {
     pub fn bus_volume(&self, bus: SoundBus) -> f64 {
         self.number(READ_BUS_VOLUME, Str::borrow(bus.name()), Str::EMPTY, 0.0)
             .unwrap_or(100.0)
+    }
+
+    /// Smoothed frame work time in milliseconds.
+    pub fn frame_time(&self) -> f64 {
+        self.number(READ_FRAME_TIME, Str::EMPTY, Str::EMPTY, 0.0).unwrap_or(0.0)
+    }
+    /// Estimated visible mesh draws, excluding shadows and post-processing.
+    pub fn draw_calls(&self) -> u32 {
+        self.number(READ_DRAW_CALLS, Str::EMPTY, Str::EMPTY, 0.0).unwrap_or(0.0) as u32
+    }
+    pub fn dlss_available(&self) -> bool {
+        self.number(READ_DLSS_AVAILABLE, Str::EMPTY, Str::EMPTY, 0.0).unwrap_or(0.0) != 0.0
+    }
+    pub fn current_quality(&self) -> Option<String> {
+        self.text(TEXT_CURRENT_QUALITY, Str::EMPTY, Str::EMPTY)
     }
 
     /// One reading of the air as of this fixed tick: `sun x`, `wind speed`,

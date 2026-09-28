@@ -18,6 +18,7 @@
 use crate::engine::Engine;
 use crate::environment::Environment;
 use crate::space::{SpaceParams, SpaceRender};
+use crate::streaming::{CellTasks, GLOBAL_CELL, StreamingCells};
 use crate::world::{WorldCamera, parse_color};
 use bevy::asset::RenderAssetUsages;
 use bevy::core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT;
@@ -39,7 +40,6 @@ use bevy::render::{
     Extract, ExtractSchedule, GpuResourceAppExt, Render, RenderApp, RenderStartup, RenderSystems,
 };
 use bevy::shader::Shader;
-use bevy::tasks::{AsyncComputeTaskPool, Task, futures::check_ready};
 use blockloom_core::pipeline::{self, bc6h, hdr};
 use blockloom_core::sky::{PhysicalSky, Sky, SkyKind};
 use blockloom_protocol::RuntimeMessage;
@@ -257,6 +257,7 @@ struct HdriKey {
     path: String,
     bias: f32,
     seam: f32,
+    max_side: u32,
 }
 
 impl HdriKey {
@@ -274,6 +275,7 @@ impl HdriKey {
             path,
             bias,
             seam: sky.hdri.seam_fix,
+            max_side: hdr::HdrCube::MAX_FACE,
         })
     }
 }
@@ -291,7 +293,7 @@ struct SkyCubes {
 #[derive(Resource, Default)]
 pub struct SkyState {
     key: Option<HdriKey>,
-    task: Option<Task<Result<Image, String>>>,
+    tasks: CellTasks<(), Result<Image, String>>,
     hdri: Option<Handle<Image>>,
     cubes: Option<SkyCubes>,
     generation: u64,
@@ -327,36 +329,37 @@ impl ExtractResource<RenderApp> for SkyRender {
 /// up when its task lands.
 fn load_hdri(
     engine: NonSend<Engine>,
+    scaling: Option<Res<crate::quality::Scaling>>,
     mut state: ResMut<SkyState>,
+    mut cells: ResMut<StreamingCells>,
     mut images: ResMut<Assets<Image>>,
     device: Option<Res<RenderDevice>>,
 ) {
-    let key = HdriKey::of(&engine);
+    let mut key = HdriKey::of(&engine);
+    if let (Some(key), Some(scaling)) = (&mut key, scaling) {
+        key.max_side = (scaling.budget().reflection * 4).min(hdr::HdrCube::MAX_FACE);
+    }
     if key != state.key {
         state.hdri = None;
-        state.task = key.clone().map(|key| {
-            let compressed = device.as_ref().is_some_and(|device| {
-                device
-                    .features()
-                    .contains(WgpuFeatures::TEXTURE_COMPRESSION_BC)
-            });
-            AsyncComputeTaskPool::get().spawn(async move { load(&key, compressed) })
-        });
+        state.tasks.cancel(&mut cells, &());
+        if let Some(key) = key.clone() {
+            let compressed = device
+                .as_ref()
+                .is_some_and(|d| d.features().contains(WgpuFeatures::TEXTURE_COMPRESSION_BC));
+            state
+                .tasks
+                .spawn(&mut cells, (), GLOBAL_CELL, move || load(&key, compressed));
+        }
         state.key = key;
     }
-    let Some(task) = state.task.as_mut() else {
-        return;
-    };
-    let Some(result) = check_ready(task) else {
-        return;
-    };
-    state.task = None;
-    match result {
-        Ok(image) => state.hdri = Some(images.add(image)),
-        Err(error) => crate::bridge::send(&RuntimeMessage::Error {
-            actor: "Blockloom".into(),
-            message: format!("The sky didn't load: {error}"),
-        }),
+    for (_, result) in state.tasks.poll(&mut cells) {
+        match result {
+            Ok(image) => state.hdri = Some(images.add(image)),
+            Err(error) => crate::bridge::send(&RuntimeMessage::Error {
+                actor: "Blockloom".into(),
+                message: format!("The sky didn't load: {error}"),
+            }),
+        }
     }
 }
 
@@ -583,42 +586,51 @@ fn load(key: &HdriKey, compressed: bool) -> Result<Image, String> {
     let baked = key.dir.join(pipeline::baked_sky_path(&key.path));
     if let Ok(bytes) = blockloom_core::vfs::read(&baked) {
         let cube = bc6h::read_dds_cube_levels(&bytes)?;
-        if compressed {
-            return Ok(cube_image(
-                cube.size,
-                cube.mips,
-                cube.blocks.to_vec(),
-                TextureFormat::Bc6hRgbUfloat,
-            ));
-        }
-        let mut texels = Vec::with_capacity(cube.blocks.len() * 8);
+        let first = (0..cube.mips)
+            .find(|&mip| cube.level_size(mip) <= key.max_side)
+            .unwrap_or(cube.mips - 1);
+        let mut texels = Vec::new();
         let mut at = 0;
         for _face in 0..6 {
             for mip in 0..cube.mips {
                 let bytes = cube.level_bytes(mip);
-                texels.extend(bc6h::decode_face(
-                    &cube.blocks[at..at + bytes],
-                    cube.level_size(mip),
-                )?);
+                if mip >= first {
+                    let level = &cube.blocks[at..at + bytes];
+                    if compressed {
+                        texels.extend_from_slice(level);
+                    } else {
+                        texels.extend(bc6h::decode_face(level, cube.level_size(mip))?);
+                    }
+                }
                 at += bytes;
             }
         }
         return Ok(cube_image(
-            cube.size,
-            cube.mips,
+            cube.level_size(first),
+            cube.mips - first,
             texels,
-            TextureFormat::Rgba16Float,
+            if compressed {
+                TextureFormat::Bc6hRgbUfloat
+            } else {
+                TextureFormat::Rgba16Float
+            },
         ));
     }
-    source_cube(&key.dir, &key.path, key.bias, key.seam)
+    source_cube(&key.dir, &key.path, key.bias, key.seam, key.max_side)
 }
 
 /// The file itself as an FP16 cube with its whole mip chain.
-fn source_cube(dir: &Path, path: &str, bias: f32, seam: f32) -> Result<Image, String> {
+fn source_cube(
+    dir: &Path,
+    path: &str,
+    bias: f32,
+    seam: f32,
+    max_side: u32,
+) -> Result<Image, String> {
     let mut image = hdr::load_hdr(dir, path)?;
     image.bias(bias);
     image.fix_seam(seam);
-    let levels = hdr::HdrCube::from_image(&image, hdr::HdrCube::MAX_FACE).mip_chain(1);
+    let levels = hdr::HdrCube::from_image(&image, max_side).mip_chain(1);
     let one = half::f16::ONE.to_le_bytes();
     let size = levels[0].size;
     let mut texels = Vec::with_capacity((size * size * 8 * 8) as usize);
@@ -1020,6 +1032,7 @@ mod tests {
             path: "assets/sky.hdr".into(),
             bias,
             seam: 0.0,
+            max_side: hdr::HdrCube::MAX_FACE,
         }
     }
 
@@ -1072,6 +1085,17 @@ mod tests {
             decoded.data.as_ref().unwrap().len(),
             (256 + 64 + 16) * 8 * 6
         );
+        let mut reduced = key(&dir, 0.0);
+        reduced.max_side = 8;
+        for compressed in [true, false] {
+            let image = load(&reduced, compressed).unwrap();
+            assert_eq!(image.texture_descriptor.size.width, 8);
+            assert_eq!(image.texture_descriptor.mip_level_count, 2);
+            assert_eq!(
+                image.data.unwrap().len(),
+                (64 + 16) * 6 * if compressed { 1 } else { 8 }
+            );
+        }
         std::fs::remove_dir_all(dir).ok();
     }
 

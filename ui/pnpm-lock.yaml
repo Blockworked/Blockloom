@@ -12,8 +12,8 @@ importers:
         specifier: ^2.0.0
         version: 2.11.1
       blockstitch:
-        specifier: github:Blockworked/blockstitch#686f82b3
-        version: https://codeload.github.com/Blockworked/blockstitch/tar.gz/686f82b3d210882094ace78c4e0b180576f14283(@lucide/vue@1.48.0(vue@3.5.43(typescript@5.9.3)))(vue@3.5.43(typescript@5.9.3))
+        specifier: github:Blockworked/blockstitch#fa100f5e
+        version: https://codeload.github.com/Blockworked/blockstitch/tar.gz/fa100f5e7cef469ed223839ebd6ccffe58254035(@lucide/vue@1.48.0(vue@3.5.43(typescript@5.9.3)))(vue@3.5.43(typescript@5.9.3))
       lucide-vue-next:
         specifier: ^0.469.0
         version: 0.469.0(vue@3.5.43(typescript@5.9.3))
@@ -439,8 +439,8 @@ packages:
   balanced-match@1.0.2:
     resolution: {integrity: sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==}
 
-  blockstitch@https://codeload.github.com/Blockworked/blockstitch/tar.gz/686f82b3d210882094ace78c4e0b180576f14283:
-    resolution: {gitHosted: true, integrity: sha512-+fdWft/NAY36zo3EVqFrt5eQnfTa15FtXluC7y4/r84TcWc8gv7S4Ut9l7ndj0XZBPNpGCaxgfg6hhUSneygiQ==, tarball: https://codeload.github.com/Blockworked/blockstitch/tar.gz/686f82b3d210882094ace78c4e0b180576f14283}
+  blockstitch@https://codeload.github.com/Blockworked/blockstitch/tar.gz/fa100f5e7cef469ed223839ebd6ccffe58254035:
+    resolution: {gitHosted: true, integrity: sha512-z7zXUNIA6h2iiZ/OxV94mydDx04awjN7o/NC4QTCI8RJ1LH8nxURDHlpbBjsnxAM3vkU7AWG7A3lQbeAuZrJ+A==, tarball: https://codeload.github.com/Blockworked/blockstitch/tar.gz/fa100f5e7cef469ed223839ebd6ccffe58254035}
     version: 0.1.0
     peerDependencies:
       '@lucide/vue': ^1.48.0
@@ -878,7 +878,7 @@ snapshots:
 
   balanced-match@1.0.2: {}
 
-  blockstitch@https://codeload.github.com/Blockworked/blockstitch/tar.gz/686f82b3d210882094ace78c4e0b180576f14283(@lucide/vue@1.48.0(vue@3.5.43(typescript@5.9.3)))(vue@3.5.43(typescript@5.9.3)):
+  blockstitch@https://codeload.github.com/Blockworked/blockstitch/tar.gz/fa100f5e7cef469ed223839ebd6ccffe58254035(@lucide/vue@1.48.0(vue@3.5.43(typescript@5.9.3)))(vue@3.5.43(typescript@5.9.3)):
     dependencies:
       '@lucide/vue': 1.48.0(vue@3.5.43(typescript@5.9.3))
       vue: 3.5.43(typescript@5.9.3)

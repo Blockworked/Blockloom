@@ -40,6 +40,7 @@ pub struct SunCookie {
 pub fn apply_shadows(
     mut commands: Commands,
     engine: NonSend<Engine>,
+    scaling: Option<Res<crate::quality::Scaling>>,
     mut images: ResMut<Assets<Image>>,
     mut applied: Local<Option<Applied>>,
     patches: Option<ResMut<PbrPatches>>,
@@ -55,7 +56,10 @@ pub fn apply_shadows(
     let lighting = &engine.project.world.lighting;
     let settings = lighting.shadows.clone().sanitized();
     let now = Applied {
-        distance: engine.shadow_distance.unwrap_or(settings.distance),
+        distance: engine.shadow_distance.unwrap_or(settings.distance)
+            * scaling
+                .as_ref()
+                .map_or(1.0, |s| s.budget().distance.min(1.0)),
         settings,
         cookie: blockloom_core::assets::normalize(&lighting.sun_cookie).unwrap_or_default(),
         cookie_size: lighting.sun_cookie_size.max(0.01),

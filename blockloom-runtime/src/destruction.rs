@@ -67,8 +67,9 @@ pub struct Destruction {
 }
 
 #[derive(Component)]
-struct Shard {
+pub(crate) struct Shard {
     age: f32,
+    last_visible: f32,
     lifetime: f32,
     asleep: f32,
     sleep_seconds: f32,
@@ -371,6 +372,7 @@ fn cell_mesh(cell: &model::Cell, interior: bool) -> Option<Mesh> {
 
 #[allow(clippy::too_many_arguments)]
 fn simulate(
+    scaling: Option<Res<crate::quality::Scaling>>,
     mut commands: Commands,
     mut engine: NonSendMut<Engine>,
     dimension: Res<Dimension>,
@@ -378,7 +380,7 @@ fn simulate(
     effects: Res<PendingEffects>,
     mut state: ResMut<Destruction>,
     actors: Query<(&Transform, Option<&rp::Velocity>), With<ActorId>>,
-    existing: Query<(), With<Shard>>,
+    mut existing: Query<(&mut Shard, Option<&ViewVisibility>)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     assets: Res<AssetServer>,
@@ -391,6 +393,23 @@ fn simulate(
     }
     let dt = time.delta_secs();
     state.shards.retain(|entity| existing.contains(*entity));
+    let now = time.elapsed_secs();
+    for (mut shard, visible) in &mut existing {
+        if visible.is_some_and(|v| v.get()) {
+            shard.last_visible = now;
+        }
+    }
+    state.shards.make_contiguous().sort_by(|a, b| {
+        let stamp = |entity| existing.get(entity).map_or(0.0, |(s, _)| s.last_visible);
+        stamp(*a).total_cmp(&stamp(*b)).then(a.cmp(b))
+    });
+    let cap = scaling.as_ref().map_or(SHARD_CAP, |s| s.budget().shards);
+    while state.shards.len() > cap {
+        if let Some(entity) = state.shards.pop_front() {
+            commands.entity(entity).try_despawn();
+            state.stolen += 1;
+        }
+    }
     let before = state.map.cells.clone();
     state.map.step(dt, atmosphere.rain);
     let pending = effects.0.clone();
@@ -509,7 +528,9 @@ fn simulate(
                 }
                 let linear = velocity.map_or(Vec3::ZERO, |v| v.linear);
                 let angular = velocity.map_or(Vec3::ZERO, |v| v.angular);
-                let cap = (spec.pool_cap as usize).clamp(1, SHARD_CAP);
+                let cap = (spec.pool_cap as usize)
+                    .clamp(1, SHARD_CAP)
+                    .min(scaling.as_ref().map_or(SHARD_CAP, |s| s.budget().shards));
                 let outer = actor.components.material().cloned().unwrap_or_default();
                 let outside = materials.add(crate::materials::surface_standard(
                     &mut commands,
@@ -551,6 +572,7 @@ fn simulate(
                         .spawn((
                             Shard {
                                 age: 0.0,
+                                last_visible: now,
                                 lifetime: spec.lifetime.clamp(0.1, 3600.0),
                                 asleep: 0.0,
                                 sleep_seconds: spec.sleep_seconds.clamp(0.1, 3600.0),

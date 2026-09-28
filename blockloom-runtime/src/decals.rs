@@ -58,6 +58,7 @@ fn clear(
 }
 
 fn apply_effects(
+    scaling: Option<Res<crate::quality::Scaling>>,
     engine: NonSend<Engine>,
     time: Res<Time<Fixed>>,
     effects: Res<PendingEffects>,
@@ -66,10 +67,21 @@ fn apply_effects(
     if !engine.running || engine.paused {
         return;
     }
+    decals.pool.trim(
+        scaling
+            .as_ref()
+            .map_or(blockloom_core::decals::CAPACITY, |s| s.budget().decals),
+    );
     decals.pool.step(time.delta_secs());
     for effect in &effects.0 {
         match effect {
-            Effect::SpawnDecal(spawn) => decals.pool.spawn(spawn.clone()),
+            Effect::SpawnDecal(spawn) => {
+                let capacity = scaling
+                    .as_ref()
+                    .map_or(blockloom_core::decals::CAPACITY, |s| s.budget().decals);
+                decals.pool.trim(capacity.saturating_sub(1));
+                decals.pool.spawn(spawn.clone());
+            }
             Effect::FadeDecals {
                 at,
                 radius,

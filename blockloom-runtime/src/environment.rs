@@ -719,6 +719,7 @@ pub fn blend_environment(
     volumes: Res<EnvironmentVolumes>,
     claims: Res<ExposureClaims>,
     mut environment: ResMut<Environment>,
+    scaling: Option<Res<crate::quality::Scaling>>,
 ) {
     let mut blended = Environment::from_world(&engine.project.world);
     for (weight, over) in &volumes.0 {
@@ -738,6 +739,20 @@ pub fn blend_environment(
     }
     if let Some(wetness) = engine.surface.wetness {
         blended.wetness = wetness;
+    }
+    if let Some(scaling) = scaling {
+        use blockloom_core::{clouds::CloudQuality, quality::Quality};
+        let cap = match scaling.controller.quality {
+            Quality::Low => CloudQuality::Low,
+            Quality::Medium => CloudQuality::Medium,
+            Quality::High => CloudQuality::High,
+            Quality::Ultra => CloudQuality::Ultra,
+        };
+        if blended.clouds.quality.steps().0 > cap.steps().0 {
+            blended.clouds.quality = cap;
+        }
+        blended.sun.shadow_map_size = blended.sun.shadow_map_size.min(scaling.budget().shadow);
+        blended.post.sharpen = blended.post.sharpen.max(scaling.settings.sharpness);
     }
     environment.set_if_neq(blended);
 }

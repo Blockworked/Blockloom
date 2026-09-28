@@ -104,11 +104,8 @@ pub struct Pool {
 }
 
 impl Pool {
-    pub fn spawn(&mut self, spawn: Spawn) {
-        let Some(spawn) = spawn.normalized() else {
-            return;
-        };
-        if self.marks.len() == CAPACITY {
+    pub fn trim(&mut self, capacity: usize) {
+        while self.marks.len() > capacity {
             let oldest = self
                 .marks
                 .iter()
@@ -119,6 +116,13 @@ impl Pool {
             self.marks.remove(oldest);
             self.stolen += 1;
         }
+    }
+
+    pub fn spawn(&mut self, spawn: Spawn) {
+        let Some(spawn) = spawn.normalized() else {
+            return;
+        };
+        self.trim(CAPACITY - 1);
         self.next += 1;
         self.marks.push(Mark {
             id: self.next,
@@ -280,6 +284,23 @@ mod tests {
         assert_eq!(pool.marks[0].id, first);
         assert!(!pool.marks.iter().any(|m| m.spawn.at[0] == 1.0));
     }
+    #[test]
+    fn quality_drop_keeps_recently_visible_marks() {
+        let mut pool = Pool::default();
+        for i in 0..4 {
+            pool.spawn(mark(i as f32));
+        }
+        let kept = pool.marks[0].id;
+        pool.step(1.0);
+        pool.touch(kept);
+        pool.trim(2);
+        assert_eq!(pool.marks.len(), 2);
+        assert!(pool.marks.iter().any(|m| m.id == kept));
+        assert_eq!(pool.stolen, 2);
+        pool.trim(0);
+        assert!(pool.marks.is_empty());
+    }
+
     #[test]
     fn radius_fades_only_nearby_and_never_restarts() {
         let mut pool = Pool::default();

@@ -1552,6 +1552,43 @@ mod tests {
 
     #[test]
     #[ignore = "needs a GPU"]
+    fn quality_scaling_preserves_native_output() {
+        for mode in [Mode::TwoD, Mode::ThreeD] {
+            let project = red_world(mode);
+            let (native, native_index, errors) =
+                run_world(project.clone(), |_| {}, game_camera(), 60, |_| false);
+            assert!(errors.is_empty(), "{errors:?}");
+            let native = native.expect("native view produced no frame");
+            let reference = frame_pixels(
+                &native.images[native_index],
+                SIZE.x as usize,
+                SIZE.y as usize,
+            );
+            let mut project = project;
+            project.world.quality.resolution_scale = 0.5;
+            project.world.quality.upscaler = blockloom_core::quality::Upscaler::Taa;
+            let (set, index, errors) = run_world(project, |_| {}, game_camera(), 60, |_| false);
+            assert!(errors.is_empty(), "{errors:?}");
+            let set = set.expect("scaled view produced no frame");
+            assert_eq!((set.width, set.height), (SIZE.x, SIZE.y));
+            let scaled = frame_pixels(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+            for (x, y) in [(0, 0), (SIZE.x / 2, SIZE.y / 2), (SIZE.x - 1, SIZE.y - 1)] {
+                let i = (y * SIZE.x + x) as usize;
+                assert!(
+                    scaled[i]
+                        .iter()
+                        .zip(reference[i])
+                        .all(|(a, b)| a.abs_diff(b) < 20),
+                    "{mode:?} at ({x},{y}): native {:?}, scaled {:?}",
+                    reference[i],
+                    scaled[i]
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
     fn an_embedded_world_shows_false_color_over_its_hdr_frame() {
         // Red's luminance sits a quarter stop over middle grey: the green band.
         let view = SceneView {

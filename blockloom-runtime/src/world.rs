@@ -1177,10 +1177,11 @@ pub fn publish_sensors(
         Option<&AnimationPlayer>,
     )>,
     sound: Res<crate::sound::SoundState>,
-    (atmosphere, water, particles): (
+    (atmosphere, water, particles, scaling): (
         Option<Res<crate::atmosphere::Atmosphere>>,
         Option<Res<crate::water::WaterSample>>,
         Option<Res<crate::vfx::ParticleSenses>>,
+        Option<Res<crate::quality::Scaling>>,
     ),
     preview_pointer: Option<ResMut<crate::preview::PreviewPointer>>,
 ) {
@@ -1436,6 +1437,7 @@ pub fn publish_sensors(
         bus_volumes: sound.bus_volumes(),
         // The last fixed tick's, not a fresh one: a frame between ticks
         // reads what the schedulers read.
+        performance: scaling.map(|s| s.sample()).unwrap_or_default(),
         atmosphere: atmosphere.map(|air| air.0.clone()).unwrap_or_default(),
         water: water.map(|water| water.0.clone()).unwrap_or_default(),
         // `tiles::publish_level` fills it straight after.
@@ -3664,10 +3666,11 @@ pub fn report_status(
     gpu: crate::gpu::GpuReport,
     volumes: Option<Res<crate::volumes::VolumeBlend>>,
     terrain: Option<Res<crate::terrain::TerrainStats>>,
-    (vfx, decals, destruction): (
+    (vfx, decals, destruction, scaling): (
         Option<Res<crate::vfx::VfxStats>>,
         Option<Res<crate::decals::Decals>>,
         Option<Res<crate::destruction::Destruction>>,
+        Option<Res<crate::quality::Scaling>>,
     ),
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
@@ -3773,7 +3776,14 @@ pub fn report_status(
         }
     }
     if let Some(state) = destruction {
-        for (name, value) in state.metrics() {
+        for (name, mut value) in state.metrics() {
+            if name == "destruction/shard_budget" {
+                value = scaling
+                    .as_ref()
+                    .map_or(blockloom_core::destruction::SHARD_CAP, |s| {
+                        s.budget().shards
+                    }) as f64;
+            }
             render_metrics.push(RenderMetric {
                 name: name.into(),
                 value,
@@ -3784,7 +3794,13 @@ pub fn report_status(
     if let Some(decals) = decals {
         for (name, value) in [
             ("decals/active", decals.pool.marks.len() as f64),
-            ("decals/budget", blockloom_core::decals::CAPACITY as f64),
+            (
+                "decals/budget",
+                scaling
+                    .as_ref()
+                    .map_or(blockloom_core::decals::CAPACITY, |s| s.budget().decals)
+                    as f64,
+            ),
             ("decals/stolen", decals.pool.stolen as f64),
         ] {
             render_metrics.push(RenderMetric {
@@ -3875,6 +3891,55 @@ pub fn report_status(
                 name: format!("update/{label}"),
                 value: *ms,
                 unit: "ms".into(),
+            });
+        }
+    }
+    if let Some(scaling) = scaling {
+        let budget = scaling.budget();
+        for (index, system) in crate::quality::SYSTEMS.iter().enumerate() {
+            for (metric, value) in [
+                ("estimated_draws", scaling.costs[index].draws as f64),
+                ("draw_budget", budget.draws[index] as f64),
+                ("triangles", scaling.costs[index].triangles as f64),
+                ("triangle_budget", budget.triangles[index] as f64),
+            ] {
+                render_metrics.push(RenderMetric {
+                    name: format!("budget/{system}/{metric}"),
+                    value,
+                    unit: "count".into(),
+                });
+            }
+        }
+        for (name, value, unit) in [
+            (
+                "quality/preset",
+                scaling.controller.quality as u32 as f64,
+                "index",
+            ),
+            (
+                "quality/resolution_scale",
+                scaling.controller.scale as f64,
+                "ratio",
+            ),
+            ("quality/frame", scaling.controller.frame_ms as f64, "ms"),
+            ("quality/target", scaling.settings.target_ms as f64, "ms"),
+            ("quality/drops", scaling.controller.drops as f64, "count"),
+            (
+                "quality/estimated_mesh_draws",
+                scaling.draw_calls as f64,
+                "count",
+            ),
+            (
+                "quality/visible_mesh_triangles",
+                scaling.triangles as f64,
+                "count",
+            ),
+            ("quality/dlss_available", 0.0, "bool"),
+        ] {
+            render_metrics.push(RenderMetric {
+                name: name.into(),
+                value,
+                unit: unit.into(),
             });
         }
     }
@@ -4142,6 +4207,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         // Making, deleting and re-parenting an actor are `apply_lifetimes`'s
         // to carry out, and none of them is a change to a transform.
         Effect::SetGravity { .. }
+        | Effect::SetRenderSetting { .. }
         | Effect::SetExposure { .. }
         | Effect::SetHdrOutput { .. }
         | Effect::SetPeakBrightness { .. }

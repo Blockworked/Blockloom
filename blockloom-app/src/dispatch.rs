@@ -226,6 +226,7 @@ impl Backend {
                 let vfx: blockloom_core::vfx::VfxSettings = arg(&args, "vfx")?;
                 to_json(commands::set_vfx(state, app, vfx)?)
             }
+            "set_quality" => to_json(commands::set_quality(state, app, arg(&args, "quality")?)?),
             "set_post_process" => {
                 let post: PostProcess = arg(&args, "post")?;
                 to_json(commands::set_post_process(state, app, post)?)

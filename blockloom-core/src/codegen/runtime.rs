@@ -153,6 +153,10 @@ pub enum Act {
         factor: f32,
     },
     /// EV100 for the rest of the run; world-global, like gravity.
+    SetRenderSetting {
+        setting: &'static str,
+        value: String,
+    },
     SetExposure {
         ev: f32,
     },
@@ -784,6 +788,7 @@ impl Runner {
         for (index, entry) in entries.iter().enumerate() {
             let matches = match (entry.trigger, kind) {
                 ("Started", "Started")
+                | ("QualityDropped", "QualityDropped")
                 | ("SceneStarted", "SceneStarted")
                 | ("SceneEnded", "SceneEnded") => true,
                 ("Key", "Key") | ("Message", "Message") => entry.detail == detail,
@@ -1164,7 +1169,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 30;
+pub const LOGIC_ABI_VERSION: u32 = 31;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1285,6 +1290,7 @@ pub const ACT_BIND_ACTION: u32 = 61;
 /// `a` = action.
 pub const ACT_CLEAR_ACTION_BINDINGS: u32 = 62;
 /// `n0` = EV100. Window-global: no actor.
+pub const ACT_SET_RENDER_SETTING: u32 = 110;
 pub const ACT_SET_EXPOSURE: u32 = 67;
 /// `n0` = lumens.
 pub const ACT_SET_LIGHT_INTENSITY: u32 = 68;
@@ -1754,6 +1760,14 @@ impl Host for AbiHost {
                 "",
                 "",
                 [factor as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetRenderSetting { setting, value } => self.act_wire(
+                actor,
+                ACT_SET_RENDER_SETTING,
+                setting,
+                &value,
+                [0.0; 3],
                 &zero,
             ),
             Act::SetExposure { ev } => self.act_wire(

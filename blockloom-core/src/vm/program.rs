@@ -45,6 +45,7 @@ pub enum Trigger {
     },
     /// The newly loaded scene finished warming up and its actors started.
     SceneStarted,
+    QualityDropped,
     /// The outgoing scene is about to unload for a `switch scene to`.
     SceneEnded,
     /// The named input action went down.
@@ -156,6 +157,10 @@ pub enum Action {
     },
     SetSpriteDial {
         dial: crate::blocks::SpriteDial,
+        value: Value,
+    },
+    SetRenderSetting {
+        setting: crate::quality::Setting,
         value: Value,
     },
     SetExposure(Value),
@@ -520,6 +525,7 @@ pub fn compile(graph: &ActorGraph) -> Program {
             continue;
         };
         let trigger = match &header.kind {
+            InstructionKind::WhenQualityDrops => Some(Trigger::QualityDropped),
             InstructionKind::WhenStarted => Some(Trigger::Started),
             InstructionKind::WhenKeyPressed { key } => {
                 Some(Trigger::KeyPressed(crate::sense::normalize_key(key)))
@@ -691,6 +697,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
     match action {
         Action::Move(value)
         | Action::SetScale(value)
+        | Action::SetRenderSetting { value, .. }
         | Action::SetExposure(value)
         | Action::SetLightIntensity(value)
         | Action::SetEmissiveStrength(value)
@@ -974,6 +981,10 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
             degrees: lift_one(degrees, ctx),
         },
         Action::SetScale(v) => Action::SetScale(lift_one(v, ctx)),
+        Action::SetRenderSetting { setting, value } => Action::SetRenderSetting {
+            setting,
+            value: lift_one(value, ctx),
+        },
         Action::SetExposure(v) => Action::SetExposure(lift_one(v, ctx)),
         Action::SetLightIntensity(v) => Action::SetLightIntensity(lift_one(v, ctx)),
         Action::SetEmissiveStrength(v) => Action::SetEmissiveStrength(lift_one(v, ctx)),
@@ -1461,6 +1472,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenParticles { .. }
         | K::WhenAnimationMarker { .. }
         | K::WhenEnterRoom { .. }
+        | K::WhenQualityDrops
         | K::WhenSceneStarts
         | K::WhenSceneEnds
         | K::WhenUiEvent { .. }
@@ -1563,6 +1575,12 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             steps.push(Step::Action(Action::PointTowards(target.clone())))
         }
         K::SetScale { factor } => steps.push(Step::Action(Action::SetScale(factor.clone()))),
+        K::SetRenderSetting { setting, value } => {
+            steps.push(Step::Action(Action::SetRenderSetting {
+                setting: *setting,
+                value: value.clone(),
+            }))
+        }
         K::SetExposure { ev } => steps.push(Step::Action(Action::SetExposure(ev.clone()))),
         K::SetLightIntensity { intensity } => {
             steps.push(Step::Action(Action::SetLightIntensity(intensity.clone())))

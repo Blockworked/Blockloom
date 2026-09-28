@@ -1385,6 +1385,24 @@ pub(crate) fn set_vfx(
     Ok(())
 }
 
+/// Saves the shared rendering budgets and frame-time feedback settings.
+pub(crate) fn set_quality(
+    state: &SharedState,
+    app: &AppHandle,
+    mut quality: blockloom_core::quality::Settings,
+) -> Result<(), String> {
+    quality.normalize();
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    if let Some(project) = s.project_mut() {
+        project.world.quality = quality;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
 /// Sets the post-process on the world camera: the whole chain from exposure
 /// to grain. What the project settings dialog edits; the runtime seeds
 /// its camera components from it on every rebuild.

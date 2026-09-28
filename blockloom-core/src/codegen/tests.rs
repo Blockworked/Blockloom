@@ -674,3 +674,34 @@ fn loading_a_scene_swaps_which_program_runs() {
     runner.fire("SceneStarted", "", "", "");
     assert!(runner.is_running());
 }
+
+#[test]
+fn quality_drop_has_a_dedicated_trigger() {
+    let mut project = started(vec![]);
+    project.actors[0].graph.strands[0].instructions[0] = Instruction::new(K::WhenQualityDrops);
+    let source = compile(&project).expect("quality drop compiles");
+    assert!(source.contains("trigger: \"QualityDropped\""));
+    fn nop(_h: &mut dyn Host, s: &mut State, _a: &mut Actors) {
+        s.finish();
+    }
+    static ENTRIES: &[Entry] = &[Entry {
+        actor: "a1",
+        strand: "s1",
+        trigger: "QualityDropped",
+        detail: "",
+        start: 0,
+        counters: 0,
+        run: nop,
+    }];
+    static SCENES: &[SceneTable] = &[SceneTable {
+        id: "one",
+        name: "One",
+        names: &[("a1", "Player")],
+        entries: ENTRIES,
+    }];
+    let mut runner = Runner::new(SCENES, 0);
+    runner.fire("Started", "", "", "");
+    assert!(!runner.is_running());
+    runner.fire("QualityDropped", "", "", "");
+    assert!(runner.is_running());
+}

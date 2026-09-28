@@ -208,6 +208,7 @@ pub struct Surfaces(HashMap<String, Surface>);
 /// Keeps a mirror camera for every body that reflects with one.
 #[allow(clippy::type_complexity)]
 fn drive_mirrors(
+    scaling: Option<Res<crate::quality::Scaling>>,
     mut commands: Commands,
     state: Res<WaterState>,
     surfaces: Res<Surfaces>,
@@ -225,6 +226,15 @@ fn drive_mirrors(
         Without<WorldCamera>,
     >,
 ) {
+    let max_scale = world
+        .iter()
+        .next()
+        .and_then(|(camera, ..)| camera.physical_viewport_size())
+        .map_or(1.0, |size| {
+            scaling.as_ref().map_or(1.0, |s| {
+                s.budget().reflection as f32 / size.max_element().max(1) as f32
+            })
+        });
     let wants = state
         .bodies
         .iter()
@@ -233,7 +243,7 @@ fn drive_mirrors(
             Some(Want {
                 id: live.body.id.clone(),
                 level: live.body.center[1],
-                scale: live.spec.reflections.planar_scale,
+                scale: live.spec.reflections.planar_scale.min(max_scale),
                 hide: surfaces.0.get(&live.body.id)?.entity,
             })
         })
@@ -399,6 +409,7 @@ fn render_time(engine: &Engine, state: &WaterState, fixed: &Time<Fixed>, time: &
 /// camera's transmission pass while there is any.
 #[allow(clippy::too_many_arguments)]
 fn sync_surfaces(
+    scaling: Option<Res<crate::quality::Scaling>>,
     mut commands: Commands,
     engine: NonSend<Engine>,
     state: Res<WaterState>,
@@ -536,8 +547,14 @@ fn sync_surfaces(
                 hide: Some(surface.entity),
                 ..ProbeRequest::water(
                     spot,
-                    reflections.probe_resolution,
-                    reflections.probe_refresh,
+                    reflections
+                        .probe_resolution
+                        .min(scaling.as_ref().map_or(u32::MAX, |s| s.budget().reflection)),
+                    reflections.probe_refresh.max(
+                        scaling
+                            .as_ref()
+                            .map_or(1, |s| (8.0 / s.budget().distance) as u32),
+                    ),
                 )
             };
             let stale = surface.probe.as_ref().is_some_and(|(_, asked)| {

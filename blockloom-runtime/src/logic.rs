@@ -22,15 +22,15 @@ use blockloom_core::codegen::{
     ACT_SET_GI_SAMPLES, ACT_SET_GRAVITY, ACT_SET_HDR_OUTPUT, ACT_SET_IK_TARGET,
     ACT_SET_LIGHT_INTENSITY, ACT_SET_LIGHT_SHADOWS, ACT_SET_LIGHTNING_RATE, ACT_SET_MASS,
     ACT_SET_MOUSE_LOCKED, ACT_SET_PARALLAX, ACT_SET_PARENT, ACT_SET_PAUSED,
-    ACT_SET_PEAK_BRIGHTNESS, ACT_SET_RAY_TRACING, ACT_SET_RIG_SLOT, ACT_SET_ROTATION,
-    ACT_SET_SCALE, ACT_SET_SHADOW_DISTANCE, ACT_SET_SLOT_TINT, ACT_SET_SOUND_PITCH,
-    ACT_SET_SOUND_VOLUME, ACT_SET_SPRITE_DIAL, ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER,
-    ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT,
-    ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT, ACT_SPAWN_DECAL, ACT_SPLASH, ACT_STOP_ANIMATION,
-    ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_SWITCH_SCENE, ACT_TURN,
-    ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, LOGIC_ABI_VERSION,
-    LogicHostApi, READ_SENSE, READ_VARIABLE, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER,
-    VALUE_TEXT,
+    ACT_SET_PEAK_BRIGHTNESS, ACT_SET_RAY_TRACING, ACT_SET_RENDER_SETTING, ACT_SET_RIG_SLOT,
+    ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SHADOW_DISTANCE, ACT_SET_SLOT_TINT,
+    ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_SPRITE_DIAL, ACT_SET_TRAIL_ENABLED,
+    ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE,
+    ACT_SET_VOLUME_WEIGHT, ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT, ACT_SPAWN_DECAL,
+    ACT_SPLASH, ACT_STOP_ANIMATION, ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING,
+    ACT_SWITCH_SCENE, ACT_TURN, ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr,
+    AbiValue, LOGIC_ABI_VERSION, LogicHostApi, READ_SENSE, READ_VARIABLE, TICK_STOPPED, VALUE_BOOL,
+    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
 };
 // Symbol names for the native `dlopen` path; web builds link statically later.
 #[cfg(not(target_arch = "wasm32"))]
@@ -170,6 +170,7 @@ impl LoadedLogic {
     pub fn fire(&mut self, event: Event, project: &Project) {
         match event {
             Event::Started => self.fire_raw("Started", "", "", ""),
+            Event::QualityDropped => self.fire_raw("QualityDropped", "", "", ""),
             Event::SceneStarted => self.fire_raw("SceneStarted", "", "", ""),
             Event::SceneEnded => self.fire_raw("SceneEnded", "", "", ""),
             Event::Key(key) => self.fire_raw("Key", "", &key, ""),
@@ -626,6 +627,16 @@ extern "C" fn act(
         ACT_SET_SCALE => Effect::SetScale {
             actor,
             factor: n0 as f32,
+        },
+        ACT_SET_RENDER_SETTING => Effect::SetRenderSetting {
+            setting: match a {
+                "Quality" => blockloom_core::quality::Setting::Quality,
+                "ResolutionScale" => blockloom_core::quality::Setting::ResolutionScale,
+                "Upscaler" => blockloom_core::quality::Setting::Upscaler,
+                "DlssMode" => blockloom_core::quality::Setting::DlssMode,
+                _ => return,
+            },
+            value: b.to_string(),
         },
         ACT_SET_EXPOSURE => Effect::SetExposure { ev: n0 as f32 },
         ACT_SET_LIGHT_INTENSITY => Effect::SetLightIntensity {

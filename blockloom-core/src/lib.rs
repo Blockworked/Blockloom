@@ -56,6 +56,7 @@ pub mod physics_query;
 pub mod pipeline;
 pub mod probe;
 pub mod project;
+pub mod quality;
 pub mod rig2d;
 pub mod save;
 pub mod scene;

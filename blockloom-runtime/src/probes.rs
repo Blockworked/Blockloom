@@ -270,6 +270,7 @@ pub fn hide_from_captures(
 
 /// Starts queued captures, ticks live ones, tears down what is finished.
 pub fn run_captures(
+    scaling: Option<Res<crate::quality::Scaling>>,
     mut commands: Commands,
     mut service: ResMut<ProbeService>,
     mut images: ResMut<Assets<Image>>,
@@ -290,7 +291,19 @@ pub fn run_captures(
             despawn(&mut commands, &capture.cameras);
         }
     }
-    for (id, request) in std::mem::take(&mut service.queued) {
+    let active = service
+        .live
+        .values()
+        .filter(|c| !matches!(c.stage, Stage::Done))
+        .count();
+    let slots = scaling
+        .as_ref()
+        .map_or(usize::MAX, |s| s.budget().captures)
+        .saturating_sub(active);
+    let mut queued = std::mem::take(&mut service.queued);
+    let pending = queued.split_off(slots.min(queued.len()));
+    service.queued = pending;
+    for (id, request) in queued {
         let resolution = face_resolution(request.resolution);
         let faces = std::array::from_fn(|_| images.add(face_image(resolution)));
         let cameras = std::array::from_fn(|face| {
@@ -397,7 +410,7 @@ pub fn run_captures(
             ProbeRefresh::Once => finished.push(id),
             ProbeRefresh::Every(every) => {
                 // Render on refresh frames only; the faces hold in between.
-                let due = capture.frames % every.max(1) == 0;
+                let due = capture.frames.wrapping_add(id.0) % every.max(1) == 0;
                 for camera in capture.cameras {
                     if let Ok((mut camera, mut transform, mut exposure)) = cameras.get_mut(camera) {
                         camera.is_active = due;

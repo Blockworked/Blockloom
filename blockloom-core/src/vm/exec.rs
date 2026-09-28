@@ -276,6 +276,7 @@ pub enum Event {
     /// The newly loaded scene finished warming up: every `when scene
     /// starts` strand in it.
     SceneStarted,
+    QualityDropped,
     /// The outgoing scene is about to unload: every `when scene ends`
     /// strand in it.
     SceneEnded,
@@ -740,6 +741,7 @@ impl Vm {
     fn entry_matches(&self, actor: &str, trigger: &Trigger, event: &Event) -> bool {
         match (trigger, event) {
             (Trigger::Started, Event::Started) => true,
+            (Trigger::QualityDropped, Event::QualityDropped) => true,
             (Trigger::SceneStarted, Event::SceneStarted) => true,
             (Trigger::SceneEnded, Event::SceneEnded) => true,
             (Trigger::KeyPressed(want), Event::Key(got)) => want == got,
@@ -1445,6 +1447,13 @@ impl Vm {
                 out.push(Effect::SetSpriteDial {
                     actor: actor.to_string(),
                     dial: *dial,
+                    value,
+                });
+            }
+            Action::SetRenderSetting { setting, value } => {
+                let value = self.eval(value, actor, params, temps, out).as_text();
+                out.push(Effect::SetRenderSetting {
+                    setting: *setting,
                     value,
                 });
             }

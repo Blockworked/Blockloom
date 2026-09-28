@@ -118,6 +118,7 @@ pub struct UiSense {
 /// Everything sensible about the world this frame. Keyed by actor id.
 #[derive(Debug, Clone, Default)]
 pub struct Sensors {
+    pub performance: crate::quality::Sample,
     /// Seconds since the run started. Frozen while the game is paused.
     pub time: f64,
     /// The same, unfrozen: what a strand the interface started reads, so a

@@ -302,6 +302,7 @@ impl Host for Recorder {
             | Act::SetFocus { .. }
             | Act::SetUiTheme { .. }
             | Act::SetBusVolume { .. }
+            | Act::SetRenderSetting { .. }
             | Act::SetExposure { .. }
             | Act::SetHdrOutput { .. }
             | Act::SetPeakBrightness { .. }
@@ -1005,6 +1006,7 @@ fn line_of(act: &Act) -> String {
         Act::SetSpriteDial { dial, value } => format!("SetSpriteDial {dial} {value:?}"),
         Act::Turn { axis, degrees } => format!("Turn {axis} {degrees:?}"),
         Act::SetScale { factor } => format!("SetScale {factor:?}"),
+        Act::SetRenderSetting { setting, value } => format!("SetRenderSetting {setting} {value:?}"),
         Act::SetExposure { ev } => format!("SetExposure {ev:?}"),
         Act::SetLightIntensity { intensity } => format!("SetLightIntensity {intensity:?}"),
         Act::SetEmissiveStrength { strength } => format!("SetEmissiveStrength {strength:?}"),
@@ -1260,6 +1262,9 @@ fn line_of(effect: &Effect) -> Option<String> {
             degrees,
         } => format!("{actor}|Turn {} {degrees:?}", axis.index()),
         Effect::SetScale { actor, factor } => format!("{actor}|SetScale {factor:?}"),
+        Effect::SetRenderSetting { setting, value } => {
+            format!("|SetRenderSetting {setting:?} {value:?}")
+        }
         Effect::SetExposure { ev } => format!("|SetExposure {ev:?}"),
         Effect::SetLightIntensity { actor, intensity } => {
             format!("{actor}|SetLightIntensity {intensity:?}")
@@ -4574,5 +4579,32 @@ fn bubbled_ui_event_strands_run_while_the_world_is_paused() {
                 vec![say("wrong widget")],
             ),
         ],
+    );
+}
+
+#[test]
+fn render_settings_match_compiled_logic() {
+    use blockloom_core::quality::Setting;
+    assert_same(
+        "render-settings",
+        vec![
+            K::SetRenderSetting {
+                setting: Setting::Quality,
+                value: Value::text("Medium"),
+            },
+            K::SetRenderSetting {
+                setting: Setting::ResolutionScale,
+                value: number(0.75),
+            },
+            K::SetRenderSetting {
+                setting: Setting::Upscaler,
+                value: Value::text("Taa"),
+            },
+            K::SetRenderSetting {
+                setting: Setting::DlssMode,
+                value: Value::text("Balanced"),
+            },
+        ],
+        &[],
     );
 }

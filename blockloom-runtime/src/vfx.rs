@@ -167,15 +167,19 @@ pub struct VfxStats {
     /// Screens' worth of particle area: 1.0 is every pixel drawn once.
     pub overdraw: f32,
     pub budget: u32,
+    pub allocated: u32,
+    pub stolen: u64,
 }
 
 impl VfxStats {
-    pub fn metrics(&self) -> [(&'static str, f64, &'static str); 5] {
+    pub fn metrics(&self) -> [(&'static str, f64, &'static str); 7] {
         [
             ("vfx/emitters", self.emitters as f64, "count"),
             ("vfx/gpu_emitters", self.gpu_emitters as f64, "count"),
             ("vfx/particles", self.particles as f64, "count"),
             ("vfx/budget", self.budget as f64, "count"),
+            ("vfx/allocated_slots", self.allocated as f64, "count"),
+            ("vfx/stolen_pools", self.stolen as f64, "count"),
             ("vfx/overdraw", self.overdraw as f64, "screens"),
         ]
     }
@@ -290,6 +294,7 @@ struct Draw {
     preview: EmitterState,
     alive: u32,
     touched: bool,
+    last_used: f32,
 }
 
 /// Every emitter's draw, by actor id.
@@ -335,11 +340,13 @@ struct DrawAssets<'w> {
 #[derive(SystemParam)]
 struct Surroundings<'w, 's> {
     wind: Option<Res<'w, WindField>>,
+    scaling: Option<Res<'w, crate::quality::Scaling>>,
     editor: Option<Res<'w, crate::edit::SceneEditor>>,
     cameras: Query<'w, 's, (&'static GlobalTransform, &'static Camera), With<WorldCamera>>,
     shapes: Query<'w, 's, (&'static Mesh3d, &'static GlobalTransform)>,
     children: Query<'w, 's, &'static Children>,
     poses: Query<'w, 's, &'static Transform, With<ActorId>>,
+    visibility: Query<'w, 's, &'static ViewVisibility>,
 }
 
 fn step_emitters(
@@ -371,7 +378,12 @@ fn step_emitters(
         .flatten();
     let gpu_ok =
         mode.is_3d() && gpu_ready(assets.device.as_deref()) && !engine.project.world.vfx.cpu_only;
-    let budget = engine.project.world.vfx.budget;
+    let budget = engine.project.world.vfx.budget.min(
+        around
+            .scaling
+            .as_ref()
+            .map_or(u32::MAX, |s| s.budget().particles),
+    );
     let camera = around.cameras.iter().next();
     let eye = camera.map_or(Vec3::ZERO, |(transform, _)| transform.translation());
     let pixels = camera
@@ -386,10 +398,18 @@ fn step_emitters(
         .push(meter.restart(&mut commands, &mut assets.buffers));
     for draw in draws.0.values_mut() {
         draw.touched = false;
+        if draw
+            .entities
+            .iter()
+            .any(|e| around.visibility.get(*e).is_ok_and(|v| v.get()))
+        {
+            draw.last_used = time.elapsed_secs();
+        }
     }
     let mut room = budget.saturating_sub(stats.particles);
     let mut next = VfxStats {
         budget,
+        stolen: stats.stolen,
         // Last frame's fragments over the screen's pixels.
         overdraw: if pixels > 0 {
             meter.fragments as f32 / pixels as f32
@@ -401,7 +421,28 @@ fn step_emitters(
     let mut sensed = HashMap::new();
     let mut fired = Vec::new();
     let gravity = Vec3::from_array(engine.project.world.gravity);
-    for (entity, id, transform, state) in &mut emitters {
+    let mut order: Vec<_> = emitters
+        .iter()
+        .map(|(entity, id, pose, _)| {
+            let used = draws.0.get(&id.0).map_or(0.0, |d| d.last_used);
+            (
+                entity,
+                used,
+                pose.translation.distance_squared(eye),
+                id.0.clone(),
+            )
+        })
+        .collect();
+    order.sort_by(|a, b| {
+        b.1.total_cmp(&a.1)
+            .then(a.2.total_cmp(&b.2))
+            .then(a.3.cmp(&b.3))
+    });
+    let mut allocation_room = budget;
+    for (entity, ..) in order {
+        let Ok((entity, id, transform, state)) = emitters.get_mut(entity) else {
+            continue;
+        };
         let id = &id.0;
         let live = running && state.is_some() && engine.has_component(id, "Emitter");
         let preview = previewing.as_deref() == Some(id.as_str());
@@ -422,7 +463,19 @@ fn step_emitters(
         spec.normalize();
         let pinned = spec.ribbon.enabled && spec.ribbon.source == RibbonSource::Actor;
         let gpu = gpu_ok && spec.sim == SimMode::Auto && !pinned;
-        let capacity = spec.max.min(if gpu { GPU_MAX } else { CPU_MAX }).max(1);
+        let capacity = spec
+            .max
+            .min(if gpu { GPU_MAX } else { CPU_MAX })
+            .max(1)
+            .min(allocation_room);
+        if capacity == 0 {
+            if draws.0.contains_key(id) {
+                next.stolen += 1;
+            }
+            continue;
+        }
+        allocation_room -= capacity;
+        next.allocated += capacity;
         let key = DrawKey {
             gpu,
             capacity,
@@ -1047,6 +1100,7 @@ fn new_draw(
         preview: EmitterState::fresh(),
         alive: 0,
         touched: true,
+        last_used: 0.0,
     }
 }
 

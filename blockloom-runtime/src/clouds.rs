@@ -64,6 +64,7 @@ struct CloudRender {
 /// Which volume files are loaded, so they are read once per change.
 #[derive(Resource, Default)]
 struct LoadedVolumes {
+    jobs: crate::streaming::CellTasks<usize, Result<NoiseVolume, String>>,
     key: Option<(Option<std::path::PathBuf>, String, String)>,
 }
 fn load_noise(dir: &std::path::Path, relative: &str) -> Result<NoiseVolume, String> {
@@ -82,35 +83,60 @@ fn load_noise(dir: &std::path::Path, relative: &str) -> Result<NoiseVolume, Stri
 /// Reads the clouds' authored volumes when their paths change.
 fn load_volumes(
     engine: NonSend<Engine>,
+    mut cells: ResMut<crate::streaming::StreamingCells>,
     mut loaded: ResMut<LoadedVolumes>,
     mut render: ResMut<CloudRender>,
 ) {
     let clouds = &engine.project.world.clouds;
     let key = (
         engine.project_dir.clone(),
-        clouds.shape_volume.clone(),
-        clouds.detail_volume.clone(),
+        if clouds.enabled {
+            clouds.shape_volume.clone()
+        } else {
+            String::new()
+        },
+        if clouds.enabled {
+            clouds.detail_volume.clone()
+        } else {
+            String::new()
+        },
     );
-    if loaded.key.as_ref() == Some(&key) {
-        return;
+    if loaded.key.as_ref() != Some(&key) {
+        for index in 0..2 {
+            loaded.jobs.cancel(&mut cells, &index);
+        }
+        render.volumes = [None, None];
+        render.generation = render.generation.wrapping_add(1);
+        if let Some(dir) = &key.0 {
+            for (index, path) in [&key.1, &key.2].into_iter().enumerate() {
+                if path.trim().is_empty() {
+                    continue;
+                }
+                let (dir, path) = (dir.clone(), path.clone());
+                loaded.jobs.spawn(
+                    &mut cells,
+                    index,
+                    crate::streaming::GLOBAL_CELL,
+                    move || load_noise(&dir, &path),
+                );
+            }
+        }
+        loaded.key = Some(key);
     }
-    let load = |path: &str| {
-        // A world with no folder (a bare test world) has no assets to read.
-        let dir = key.0.as_ref().filter(|_| !path.trim().is_empty())?;
-        load_noise(dir, path)
-            .map_err(|error| {
-                crate::bridge::send(&blockloom_protocol::RuntimeMessage::Error {
-                    actor: "Blockloom".into(),
-                    message: format!("The cloud noise didn't load, baking it instead: {error}"),
-                })
-            })
-            .ok()
-            .map(std::sync::Arc::new)
-    };
-    render.volumes = [load(&key.1), load(&key.2)];
-    render.generation = render.generation.wrapping_add(1);
-    loaded.key = Some(key);
+    for (index, result) in loaded.jobs.poll(&mut cells) {
+        match result {
+            Ok(volume) => {
+                render.volumes[index] = Some(std::sync::Arc::new(volume));
+                render.generation = render.generation.wrapping_add(1);
+            }
+            Err(error) => crate::bridge::send(&blockloom_protocol::RuntimeMessage::Error {
+                actor: "Blockloom".into(),
+                message: format!("The cloud noise didn't load, baking it instead: {error}"),
+            }),
+        }
+    }
 }
+
 impl ExtractResource<RenderApp> for CloudRender {
     type Source = Self;
     fn extract_resource(source: &Self) -> Self {

@@ -56,6 +56,8 @@ pub fn register(app: &mut App) {
 // ─── Cells ─────────────────────────────────────────────────────────────────
 
 pub type Cell = (i32, i32);
+/// Global environment payloads stay resident until their asset key changes.
+pub const GLOBAL_CELL: Cell = (i32::MIN, i32::MIN);
 
 /// A cell came within reach of the camera: payloads start loading it.
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +73,7 @@ pub struct CellLeft(pub Cell);
 /// on as messages.
 #[derive(Resource, Default)]
 pub struct StreamingCells {
+    position: Vec3,
     pub active: HashSet<Cell>,
     pub entered: Vec<Cell>,
     pub left: Vec<Cell>,
@@ -91,7 +94,7 @@ impl StreamingCells {
     pub fn clear(&mut self) {
         self.left.extend(self.active.drain());
         self.entered.clear();
-        self.pending.clear();
+        self.pending.retain(|cell, _| *cell == GLOBAL_CELL);
         self.due = 0;
     }
 
@@ -103,6 +106,7 @@ impl StreamingCells {
     }
 
     pub fn update(&mut self, position: Vec3) {
+        self.position = position;
         self.active.retain(|&cell| {
             let keep = cell_distance(position, cell, Self::SIZE) <= Self::EXIT;
             if !keep {
@@ -215,6 +219,8 @@ pub fn cell_rect_2d(cell: Cell) -> (Vec2, Vec2) {
 /// piece belonging to one cell. The cell counts as loading until the task
 /// lands or is dropped; spawning over a running key cancels the old task.
 pub struct CellTasks<K, T> {
+    queued: Vec<(K, Cell, Box<dyn FnOnce() -> T + Send + Sync>)>,
+    limit: usize,
     running: HashMap<K, (Cell, Task<T>)>,
 }
 
@@ -222,27 +228,63 @@ impl<K, T> Default for CellTasks<K, T> {
     fn default() -> Self {
         Self {
             running: HashMap::new(),
+            queued: Vec::new(),
+            limit: 2,
         }
     }
 }
 
 impl<K: Eq + Hash + Clone, T: Send + 'static> CellTasks<K, T> {
+    pub fn with_limit(limit: usize) -> Self {
+        Self {
+            limit: limit.max(1),
+            ..Default::default()
+        }
+    }
+
+    fn promote(&mut self, cells: &StreamingCells) {
+        let distance = |cell| {
+            if cell == GLOBAL_CELL {
+                -1.0
+            } else {
+                cell_distance(cells.position, cell, StreamingCells::SIZE)
+            }
+        };
+        self.queued
+            .sort_by(|a, b| distance(a.1).total_cmp(&distance(b.1)));
+        let count = self
+            .limit
+            .saturating_sub(self.running.len())
+            .min(self.queued.len());
+        let pool = AsyncComputeTaskPool::get_or_init(TaskPool::new);
+        for (key, cell, work) in self.queued.drain(..count) {
+            self.running
+                .insert(key, (cell, pool.spawn(async move { work() })));
+        }
+    }
+
     pub fn spawn(
         &mut self,
         cells: &mut StreamingCells,
         key: K,
         cell: Cell,
-        work: impl FnOnce() -> T + Send + 'static,
+        work: impl FnOnce() -> T + Send + Sync + 'static,
     ) {
         self.cancel(cells, &key);
         cells.begin(cell);
-        let pool = AsyncComputeTaskPool::get_or_init(TaskPool::new);
-        self.running
-            .insert(key, (cell, pool.spawn(async move { work() })));
+        self.queued.push((key, cell, Box::new(work)));
     }
 
     /// Drops the task under `key`, if any. Dropping a task cancels it.
     pub fn cancel(&mut self, cells: &mut StreamingCells, key: &K) {
+        self.queued.retain(|(queued, cell, _)| {
+            if queued == key {
+                cells.finish(*cell);
+                false
+            } else {
+                true
+            }
+        });
         if let Some((cell, _)) = self.running.remove(key) {
             cells.finish(cell);
         }
@@ -251,6 +293,14 @@ impl<K: Eq + Hash + Clone, T: Send + 'static> CellTasks<K, T> {
     /// Drops every task working on `cell`, for a payload told it left.
     #[allow(dead_code)]
     pub fn cancel_cell(&mut self, cells: &mut StreamingCells, cell: Cell) {
+        self.queued.retain(|(_, at, _)| {
+            if *at == cell {
+                cells.finish(cell);
+                false
+            } else {
+                true
+            }
+        });
         self.running.retain(|_, (at, _)| {
             let keep = *at != cell;
             if !keep {
@@ -262,6 +312,7 @@ impl<K: Eq + Hash + Clone, T: Send + 'static> CellTasks<K, T> {
 
     /// Whatever finished since the last poll.
     pub fn poll(&mut self, cells: &mut StreamingCells) -> Vec<(K, T)> {
+        self.promote(cells);
         let mut done = Vec::new();
         self.running.retain(
             |key, (cell, task)| match bevy::tasks::futures::check_ready(task) {
@@ -730,6 +781,32 @@ mod tests {
         cells.clear();
         assert_eq!(cells.left.len(), active);
         assert!(cells.active.is_empty());
+    }
+
+    #[test]
+    fn global_payload_survives_cell_reset() {
+        let mut cells = StreamingCells::default();
+        cells.begin(GLOBAL_CELL);
+        cells.begin((0, 0));
+        cells.clear();
+        assert_eq!(cells.loading(), 1);
+        cells.finish(GLOBAL_CELL);
+        assert_eq!(cells.loading(), 0);
+    }
+
+    #[test]
+    fn payload_queue_admits_nearest_first_under_its_limit() {
+        let mut cells = StreamingCells::default();
+        let mut tasks = CellTasks::<u32, ()>::with_limit(1);
+        tasks.spawn(&mut cells, 1, (10, 10), || ());
+        tasks.spawn(&mut cells, 2, (0, 0), || ());
+        tasks.promote(&cells);
+        assert!(tasks.running.contains_key(&2));
+        assert_eq!(tasks.queued.len(), 1);
+        tasks.cancel_cell(&mut cells, (10, 10));
+        assert!(tasks.queued.is_empty());
+        tasks.cancel(&mut cells, &2);
+        assert_eq!(cells.loading(), 0);
     }
 
     #[test]

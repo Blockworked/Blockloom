@@ -1402,6 +1402,8 @@ impl DisplayOutput {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct World {
     #[serde(default)]
+    pub quality: crate::quality::Settings,
+    #[serde(default)]
     pub interface: crate::ui::UiDocument,
     #[serde(default)]
     pub mode: Mode,
@@ -1483,6 +1485,7 @@ fn default_fixed_rate() -> f32 {
 impl Default for World {
     fn default() -> Self {
         Self {
+            quality: crate::quality::Settings::default(),
             interface: crate::ui::UiDocument::default(),
             mode: Mode::TwoD,
             background: default_background(),
