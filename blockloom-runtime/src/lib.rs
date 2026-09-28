@@ -137,6 +137,13 @@ pub fn run_process() {
     };
 
     let mut app = App::new();
+    // DLSS needs its project id before `DefaultPlugins` (which holds
+    // `DlssInitPlugin` when the `dlss` feature is on). One id for all of
+    // Blockloom; generate a fresh one per fork, never copy Bevy's example.
+    #[cfg(all(feature = "dlss", not(target_arch = "wasm32")))]
+    app.insert_resource(bevy::anti_alias::dlss::DlssProjectId(
+        bevy::asset::uuid::uuid!("259f6fa9-7a86-42c3-a74a-91643c0b9c7b"),
+    ));
     #[cfg(target_os = "linux")]
     {
         let mut vulkan = bevy::render::renderer::raw_vulkan_init::RawVulkanInitSettings::default();

@@ -101,6 +101,13 @@ ray_tracing = ["bevy/bevy_solari"]
 # the target, which the wasm target has none of here, so web builds leave
 # it out and ship PNG/JPEG instead (see `just web-check`).
 compressed_textures = ["bevy/ktx2", "bevy/basis-universal"]
+# NVIDIA DLSS Super Resolution (and Ray Reconstruction for Solari) through
+# Bevy's `dlss` path. Off by default: building it needs the DLSS SDK
+# (`DLSS_SDK` set to an absolute path), the Vulkan SDK, clang, and agreement
+# to NVIDIA's SDK license. Needs an RTX GPU, Vulkan, and the redistributable
+# DLLs beside the player at run time; otherwise the probe reports unavailable
+# and the TAA plus spatial fallback carries on. Never on web.
+dlss = ["bevy/dlss"]
 
 [dev-dependencies]
 naga.workspace = true

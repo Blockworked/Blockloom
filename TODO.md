@@ -1215,8 +1215,10 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - The Dashboard gains a Settings entry (gear button beside the version):
         an App Settings dialog with an Android section - status rows for
         cmdline-tools, platform, build-tools, NDK, platform-tools/adb, JDK
-        and Rust targets, plus install/update buttons, path overrides and
-        license state.
+        and Rust targets, plus install/update buttons, an SDK path row and
+        an NDK path row (each with a browse button) and license state.
+        The paths are settings, not env lookups: Blockloom never reads
+        `ANDROID_HOME`, `ANDROID_SDK_ROOT` or `ANDROID_NDK_HOME`.
   - Storage is a new app config file beside `projects.json` under the data
         dir (`library.rs` neighborhood, honors `BLOCKLOOM_DATA_DIR`): SDK/NDK
         paths, the license-accepted stamp, keystore choices (never passwords).
@@ -1229,14 +1231,15 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         equivalents.
 - [ ] SDK install flow (the Settings button runs this; headless runs the
       same code):
-  - Needs a JDK first (17 or newer): probe `java -version`, else point at a
+  - Needs JDK 25 first (the latest LTS): probe `java -version`, else point at a
         download. Installing a JDK silently is not v1.
-  - Download Google's cmdline-tools into the data dir default
-        (`~/Blockloom/android-sdk`, or under `BLOCKLOOM_DATA_DIR`), then
+  - Download Google's cmdline-tools into the SDK path setting (default
+        `~/Blockloom/android-sdk`, or under `BLOCKLOOM_DATA_DIR`), then
         `sdkmanager` installs one pinned platform (android-35), matching
-        build-tools, a pinned NDK (r27, bumped deliberately) and
-        platform-tools for adb. Honor `ANDROID_HOME`/`ANDROID_SDK_ROOT`/
-        `ANDROID_NDK_HOME` when set instead of downloading.
+        build-tools, platform-tools for adb and a pinned NDK (r27, bumped
+        deliberately) into the NDK path setting (default `<sdk>/ndk/<pin>`).
+        Pointing either row at an existing install reuses it: the status
+        probe validates what is there and only missing pieces download.
   - Show the licenses, then accept on the user's click. Piping yes into
         `sdkmanager --licenses` with no prompt is not allowed: record the
         stamp in the app config. Offline or proxy failure reports what is
@@ -1267,7 +1270,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         assets minus script sources, atlas, baked sky, probes, terrain), then
         an APK assembly from a checked-in template
         (`blockloom-core/src/android-template/`: manifest, activity
-        bootstrap, pinned Gradle wrapper) with applicationId,
+        bootstrap, Gradle wrapper pinned to a version that runs on JDK 25) with applicationId,
         versionCode/versionName, adaptive icons and the game files under
         `assets/`, signed and zipaligned with the build-tools on the SDK
         just installed. Scripts and native block logic cross-compile

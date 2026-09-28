@@ -27,9 +27,9 @@ pub struct Scaling {
     pub draw_calls: u32,
     pub triangles: u64,
     pub costs: [DrawCost; 6],
-    /// Stays false: no build vendors the DLSS SDK yet. The probe fills
-    /// `dlss_reason` instead, so the flag and the reporters flip with it
-    /// the day a build does.
+    /// True once the renderer reports `DlssSuperResolutionSupported` under
+    /// the `dlss` cargo feature. Without that feature this stays false and
+    /// the probe only fills `dlss_reason`.
     pub dlss_available: bool,
     pub dlss_reason: String,
 }
@@ -251,6 +251,11 @@ fn feedback(
 /// PCI vendor id for NVIDIA adapters, the only DLSS target.
 const NVIDIA_VENDOR: u32 = 0x10DE;
 
+/// Whether this build can even try DLSS: the `dlss` cargo feature links the
+/// SDK path (needs `DLSS_SDK`, the Vulkan SDK and clang at build time).
+/// Web builds never set it.
+const DLSS_BUILD: bool = cfg!(feature = "dlss") && !cfg!(target_arch = "wasm32");
+
 /// Whether a DLSS ask falls back to spatial-only instead of TAA plus
 /// spatial. Web builds keep the cheap path; native rides TAA in 3D.
 fn dlss_spatial_only() -> bool {
@@ -261,32 +266,113 @@ fn temporal_for(upscaler: Upscaler, dlss_spatial_only: bool) -> bool {
     match upscaler {
         Upscaler::Spatial => false,
         Upscaler::Taa => true,
-        // No build carries the SDK, so DLSS rides the TAA path in 3D -
+        // Without DLSS running, the ask rides the TAA path in 3D -
         // except where it falls back to spatial-only like 2D does.
         Upscaler::Dlss => !dlss_spatial_only,
     }
 }
 
-/// Why DLSS can't run here. No build carries the SDK yet, so this always
-/// finds a reason; the adapter only decides how specific it is.
-fn dlss_unavailable(wasm: bool, vendor: Option<u32>, name: &str) -> Option<String> {
+/// Whether the world wants the real DLSS component rather than the TAA
+/// fallback: the ask, the build, the probe, HDR (which `Dlss` requires)
+/// and a perspective projection (which its extract requires).
+fn wants_dlss(upscaler: Upscaler, available: bool, hdr: bool, perspective: bool) -> bool {
+    upscaler == Upscaler::Dlss && available && hdr && perspective && DLSS_BUILD
+}
+
+/// Whether DLSS drives render resolution itself, so the spatial
+/// `scale_views` stands down. Per-view HDR and projection are checked where
+/// the component is inserted; here the global ask plus probe is enough to
+/// avoid scaling twice.
+fn dlss_drives_resolution(upscaler: Upscaler, available: bool) -> bool {
+    upscaler == Upscaler::Dlss && available && DLSS_BUILD
+}
+
+/// Why DLSS can't run here. With the `dlss` feature the adapter only decides
+/// how specific the driver/DLL half is; without it every branch names the
+/// missing SDK build instead.
+fn dlss_unavailable(
+    wasm: bool,
+    vendor: Option<u32>,
+    name: &str,
+    has_sdk: bool,
+) -> Option<String> {
     if wasm {
         return Some("DLSS is off on web builds".into());
     }
+    if !has_sdk {
+        return match vendor {
+            Some(NVIDIA_VENDOR) => Some(format!(
+                "the {name} speaks DLSS, but this build leaves the DLSS SDK out (build with --features dlss)"
+            )),
+            Some(_) => Some(format!(
+                "the {name} has no DLSS driver support, and this build leaves the SDK out either"
+            )),
+            None => Some(
+                "this build leaves the DLSS SDK out (build with --features dlss)".into(),
+            ),
+        };
+    }
     match vendor {
         Some(NVIDIA_VENDOR) => Some(format!(
-            "the {name} speaks DLSS, but no Blockloom build carries the DLSS SDK yet"
+            "the {name} refused DLSS: needs an RTX GPU, Vulkan, a new driver and nvngx_dlss beside the player"
         )),
-        Some(_) => Some(format!(
-            "the {name} has no DLSS driver support, and no Blockloom build carries the SDK either"
-        )),
-        None => Some("no Blockloom build carries the DLSS SDK yet".into()),
+        Some(_) => Some(format!("the {name} has no DLSS driver support (needs NVIDIA RTX)")),
+        None => Some("DLSS found no usable adapter on this renderer".into()),
     }
+}
+
+#[cfg(feature = "dlss")]
+fn dlss_perf_mode(
+    mode: blockloom_core::quality::DlssMode,
+) -> bevy::anti_alias::dlss::DlssPerfQualityMode {
+    use bevy::anti_alias::dlss::DlssPerfQualityMode as Bevy;
+    match mode {
+        blockloom_core::quality::DlssMode::Dlaa => Bevy::Dlaa,
+        blockloom_core::quality::DlssMode::Quality => Bevy::Quality,
+        blockloom_core::quality::DlssMode::Balanced => Bevy::Balanced,
+        blockloom_core::quality::DlssMode::Performance => Bevy::Performance,
+        blockloom_core::quality::DlssMode::UltraPerformance => Bevy::UltraPerformance,
+    }
+}
+
+/// Probes DLSS capability once the renderer is up, and says why once when
+/// a run asks for it. Under the `dlss` feature availability comes from
+/// Bevy's `DlssSuperResolutionSupported`; without it availability stays
+/// false and the reason names the missing SDK build.
+#[cfg(feature = "dlss")]
+fn probe_dlss(
+    engine: NonSend<Engine>,
+    device: Option<Res<RenderDevice>>,
+    adapter: Option<Res<RenderAdapter>>,
+    supported: Option<Res<bevy::anti_alias::dlss::DlssSuperResolutionSupported>>,
+    mut scaling: ResMut<Scaling>,
+    mut warned: Local<bool>,
+) {
+    let was_available = scaling.dlss_available;
+    scaling.dlss_available = supported.is_some();
+    if scaling.dlss_available {
+        scaling.dlss_reason.clear();
+    } else if scaling.dlss_reason.is_empty() || was_available {
+        if cfg!(target_arch = "wasm32") {
+            scaling.dlss_reason = dlss_unavailable(true, None, "", true).unwrap_or_default();
+        } else if let Some(adapter) = adapter.as_deref() {
+            let info = adapter.get_info();
+            scaling.dlss_reason =
+                dlss_unavailable(false, Some(info.vendor), &info.name, true).unwrap_or_default();
+        } else if device.is_some() {
+            scaling.dlss_reason = dlss_unavailable(false, None, "", true).unwrap_or_default();
+        } else {
+            scaling.dlss_available = was_available;
+            return;
+        }
+    }
+    warn_if_dlss_off(&engine, &scaling, &mut warned);
 }
 
 /// Probes DLSS capability once the renderer is up, and says why once when
 /// a run asks for it. Availability itself stays false until some build
 /// vendors the SDK; the probe only makes the reason adapter-aware.
+#[cfg(not(feature = "dlss"))]
 fn probe_dlss(
     engine: NonSend<Engine>,
     device: Option<Res<RenderDevice>>,
@@ -296,17 +382,21 @@ fn probe_dlss(
 ) {
     if scaling.dlss_reason.is_empty() {
         if cfg!(target_arch = "wasm32") {
-            scaling.dlss_reason = dlss_unavailable(true, None, "").unwrap_or_default();
+            scaling.dlss_reason = dlss_unavailable(true, None, "", false).unwrap_or_default();
         } else if let Some(adapter) = adapter.as_deref() {
             let info = adapter.get_info();
             scaling.dlss_reason =
-                dlss_unavailable(false, Some(info.vendor), &info.name).unwrap_or_default();
+                dlss_unavailable(false, Some(info.vendor), &info.name, false).unwrap_or_default();
         } else if device.is_some() {
-            scaling.dlss_reason = dlss_unavailable(false, None, "").unwrap_or_default();
+            scaling.dlss_reason = dlss_unavailable(false, None, "", false).unwrap_or_default();
         } else {
             return;
         }
     }
+    warn_if_dlss_off(&engine, &scaling, &mut warned);
+}
+
+fn warn_if_dlss_off(engine: &Engine, scaling: &Scaling, warned: &mut bool) {
     if engine.running
         && scaling.settings.upscaler == Upscaler::Dlss
         && !scaling.dlss_available
@@ -325,6 +415,75 @@ fn probe_dlss(
     }
 }
 
+/// Real DLSS path: inserts `Dlss` with the project's perf mode while the
+/// probe says it is supported, HDR and perspective allow it, and falls back
+/// to TAA plus spatial otherwise. DLSS drives its own render resolution
+/// through `MainPassResolutionOverride`, so the spatial `scale_views` stands
+/// down while it is on (see below).
+#[cfg(feature = "dlss")]
+fn configure_cameras(
+    mut commands: Commands,
+    scaling: Res<Scaling>,
+    environment: Res<crate::environment::Environment>,
+    cameras: Query<
+        (
+            Entity,
+            Option<&TemporalAntiAliasing>,
+            Option<&bevy::anti_alias::dlss::Dlss>,
+            &mut Msaa,
+            Has<bevy::camera::Hdr>,
+            Option<&Projection>,
+        ),
+        (With<WorldCamera>, With<Camera3d>),
+    >,
+) {
+    use bevy::anti_alias::dlss::Dlss;
+    for (entity, taa, dlss, mut msaa, hdr, projection) in cameras {
+        let perspective = projection.is_none_or(|p| matches!(p, Projection::Perspective(_)));
+        if wants_dlss(scaling.settings.upscaler, scaling.dlss_available, hdr, perspective) {
+            *msaa = Msaa::Off;
+            let wanted = dlss_perf_mode(scaling.settings.dlss_mode);
+            // `Dlss` requires jitter, mip bias, depth and motion-vector
+            // prepasses plus HDR; its `#[require]` adds what is missing.
+            let stale = dlss.is_none_or(|live| live.perf_quality_mode != wanted);
+            if taa.is_some() {
+                commands.entity(entity).remove::<TemporalAntiAliasing>();
+            }
+            if stale {
+                commands.entity(entity).insert(Dlss {
+                    perf_quality_mode: wanted,
+                    reset: false,
+                    ..default()
+                });
+            }
+            continue;
+        }
+        if dlss.is_some() {
+            commands.entity(entity).remove::<Dlss>();
+        }
+        let temporal = temporal_for(scaling.settings.upscaler, dlss_spatial_only());
+        if temporal {
+            *msaa = Msaa::Off;
+            if taa.is_none() {
+                commands
+                    .entity(entity)
+                    .insert(TemporalAntiAliasing::default());
+            }
+        } else if taa.is_some() {
+            *msaa = if environment.wants_msaa_off() {
+                Msaa::Off
+            } else {
+                Msaa::default()
+            };
+            commands.entity(entity).remove::<TemporalAntiAliasing>();
+            commands
+                .entity(entity)
+                .remove::<bevy::render::camera::TemporalJitter>();
+        }
+    }
+}
+
+#[cfg(not(feature = "dlss"))]
 fn configure_cameras(
     mut commands: Commands,
     scaling: Res<Scaling>,
@@ -359,11 +518,17 @@ fn configure_cameras(
 
 /// Scale working targets, leaving the output attachment and input coordinates
 /// native. Bevy's final spatial blit fills that attachment in both dimensions.
+/// While real DLSS runs it drives its own render resolution through
+/// `MainPassResolutionOverride`, so this stands down rather than scaling
+/// twice.
 fn scale_views(
     scaling: Extract<Res<Scaling>>,
     worlds: Extract<Query<RenderEntity, With<WorldCamera>>>,
     mut views: Query<(&mut ExtractedCamera, &mut ExtractedView)>,
 ) {
+    if dlss_drives_resolution(scaling.settings.upscaler, scaling.dlss_available) {
+        return;
+    }
     let scale = scaling.controller.scale;
     if scale >= 1.0 {
         return;
@@ -662,19 +827,75 @@ mod tests {
     }
 
     #[test]
-    fn dlss_probe_names_the_adapter_and_never_claims_support() {
+    fn dlss_probe_names_the_adapter_and_sdk_build() {
         assert_eq!(
-            dlss_unavailable(true, None, "").as_deref(),
+            dlss_unavailable(true, None, "", false).as_deref(),
             Some("DLSS is off on web builds")
         );
+        assert_eq!(
+            dlss_unavailable(true, None, "", true).as_deref(),
+            Some("DLSS is off on web builds")
+        );
+        // Without the SDK build every branch names it.
         let nvidia =
-            dlss_unavailable(false, Some(NVIDIA_VENDOR), "NVIDIA GeForce RTX 4070").unwrap();
+            dlss_unavailable(false, Some(NVIDIA_VENDOR), "NVIDIA GeForce RTX 4070", false).unwrap();
         assert!(nvidia.contains("NVIDIA GeForce RTX 4070"));
         assert!(nvidia.contains("SDK"));
-        let other = dlss_unavailable(false, Some(0x8086), "Intel Arc A770").unwrap();
+        let other = dlss_unavailable(false, Some(0x8086), "Intel Arc A770", false).unwrap();
         assert!(other.contains("Intel Arc A770"));
         assert!(other.contains("no DLSS driver support"));
-        assert!(dlss_unavailable(false, None, "").unwrap().contains("SDK"));
+        assert!(dlss_unavailable(false, None, "", false).unwrap().contains("SDK"));
+        // With the SDK the reason is the driver, DLL or adapter instead.
+        let refused =
+            dlss_unavailable(false, Some(NVIDIA_VENDOR), "NVIDIA GeForce RTX 4070", true).unwrap();
+        assert!(refused.contains("NVIDIA GeForce RTX 4070"));
+        assert!(!refused.contains("leaves the DLSS SDK out"));
+        let no_rtx = dlss_unavailable(false, Some(0x8086), "Intel Arc A770", true).unwrap();
+        assert!(no_rtx.contains("Intel Arc A770"));
+        assert!(no_rtx.contains("needs NVIDIA RTX"));
+    }
+
+    #[test]
+    fn dlss_wants_the_component_only_when_everything_lines_up() {
+        use blockloom_core::quality::Upscaler;
+        // The ask alone is never enough.
+        assert!(!wants_dlss(Upscaler::Spatial, true, true, true));
+        assert!(!wants_dlss(Upscaler::Taa, true, true, true));
+        assert!(!wants_dlss(Upscaler::Dlss, false, true, true));
+        assert!(!wants_dlss(Upscaler::Dlss, true, false, true));
+        assert!(!wants_dlss(Upscaler::Dlss, true, true, false));
+        // With everything lined up the answer follows the build flag, so a
+        // non-SDK build keeps the TAA fallback even on ideal hardware.
+        assert_eq!(
+            wants_dlss(Upscaler::Dlss, true, true, true),
+            DLSS_BUILD
+        );
+        // Resolution follows the same flag: DLSS drives it, otherwise spatial.
+        assert!(!dlss_drives_resolution(Upscaler::Spatial, true));
+        assert!(!dlss_drives_resolution(Upscaler::Taa, true));
+        assert!(!dlss_drives_resolution(Upscaler::Dlss, false));
+        assert_eq!(
+            dlss_drives_resolution(Upscaler::Dlss, true),
+            DLSS_BUILD
+        );
+    }
+
+    #[cfg(feature = "dlss")]
+    #[test]
+    fn dlss_modes_map_one_to_one() {
+        use bevy::anti_alias::dlss::DlssPerfQualityMode as Bevy;
+        use blockloom_core::quality::DlssMode;
+        assert!(matches!(dlss_perf_mode(DlssMode::Dlaa), Bevy::Dlaa));
+        assert!(matches!(dlss_perf_mode(DlssMode::Quality), Bevy::Quality));
+        assert!(matches!(dlss_perf_mode(DlssMode::Balanced), Bevy::Balanced));
+        assert!(matches!(
+            dlss_perf_mode(DlssMode::Performance),
+            Bevy::Performance
+        ));
+        assert!(matches!(
+            dlss_perf_mode(DlssMode::UltraPerformance),
+            Bevy::UltraPerformance
+        ));
     }
 
     #[test]

@@ -85,6 +85,12 @@ pub fn run(embedded: Embedded) {
     let _detach = Detach(world, frames.clone());
 
     let mut app = App::new();
+    // Same DLSS project id as the process runtime; must land before
+    // `DefaultPlugins` holds `DlssInitPlugin` under the `dlss` feature.
+    #[cfg(all(feature = "dlss", not(target_arch = "wasm32")))]
+    app.insert_resource(bevy::anti_alias::dlss::DlssProjectId(
+        bevy::asset::uuid::uuid!("259f6fa9-7a86-42c3-a74a-91643c0b9c7b"),
+    ));
     let mut vulkan = dmabuf::vulkan_settings();
     display::add_vulkan_extensions(&mut vulkan);
     app.insert_resource(vulkan);
