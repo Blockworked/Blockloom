@@ -403,7 +403,9 @@ fn simulate(
         let stamp = |entity| existing.get(entity).map_or(0.0, |(s, _)| s.last_visible);
         stamp(*a).total_cmp(&stamp(*b)).then(a.cmp(b))
     });
-    let cap = scaling.as_ref().map_or(SHARD_CAP, |s| s.budget().shards);
+    let cap = scaling
+        .as_ref()
+        .map_or(SHARD_CAP, |s| s.shard_budget(SHARD_CAP));
     while state.shards.len() > cap {
         if let Some(entity) = state.shards.pop_front() {
             commands.entity(entity).try_despawn();
@@ -528,9 +530,10 @@ fn simulate(
                 }
                 let linear = velocity.map_or(Vec3::ZERO, |v| v.linear);
                 let angular = velocity.map_or(Vec3::ZERO, |v| v.angular);
-                let cap = (spec.pool_cap as usize)
-                    .clamp(1, SHARD_CAP)
-                    .min(scaling.as_ref().map_or(SHARD_CAP, |s| s.budget().shards));
+                let authored_cap = (spec.pool_cap as usize).clamp(1, SHARD_CAP);
+                let cap = scaling
+                    .as_ref()
+                    .map_or(authored_cap, |s| s.shard_budget(authored_cap).max(1));
                 let outer = actor.components.material().cloned().unwrap_or_default();
                 let outside = materials.add(crate::materials::surface_standard(
                     &mut commands,
@@ -1006,6 +1009,95 @@ mod tests {
             assert_eq!(velocity.angular, Vec3::Y);
             assert!(app.world().get::<rp::Collider>(*entity).is_some());
         }
+    }
+
+    #[test]
+    fn debris_density_evicts_hidden_shards_and_counts_their_child_meshes() {
+        let (mut app, id) = app();
+        app.init_resource::<crate::quality::Scaling>()
+            .add_systems(Last, crate::quality::measure_draws);
+        app.world_mut().resource_mut::<PendingEffects>().0 = vec![Effect::Fracture { actor: id }];
+        app.update();
+        let shards: Vec<_> = app
+            .world()
+            .resource::<Destruction>()
+            .shards
+            .iter()
+            .copied()
+            .collect();
+        // Meshes draw below the physics entity that carries the shard marker.
+        let meshes: Vec<_> = app
+            .world_mut()
+            .query_filtered::<Entity, With<Mesh3d>>()
+            .iter(app.world())
+            .collect();
+        for entity in &meshes {
+            app.world_mut()
+                .entity_mut(*entity)
+                .insert(ViewVisibility::VISIBLE);
+        }
+        let kept = shards[0];
+        app.world_mut()
+            .entity_mut(kept)
+            .insert(ViewVisibility::VISIBLE);
+        app.world_mut().resource_mut::<PendingEffects>().0.clear();
+        app.world_mut()
+            .resource_mut::<crate::quality::Scaling>()
+            .geometry
+            .factors[4] = 0.5;
+        app.update();
+        let state = app.world().resource::<Destruction>();
+        assert_eq!(state.shards.len(), 4);
+        // The global cap trims existing shards, preserving the visible one.
+        app.world_mut()
+            .resource_mut::<crate::quality::Scaling>()
+            .controller
+            .quality = blockloom_core::quality::Quality::Low;
+        app.world_mut()
+            .resource_mut::<crate::quality::Scaling>()
+            .geometry
+            .factors[4] = 0.25;
+        // Add old hidden entries to exercise trimming without another fracture.
+        for _ in 0..20 {
+            let entity = app
+                .world_mut()
+                .spawn(Shard {
+                    age: 0.0,
+                    last_visible: -1.0,
+                    lifetime: 10.0,
+                    asleep: 0.0,
+                    sleep_seconds: 1.0,
+                    sound: String::new(),
+                    bounce_in: 0.0,
+                })
+                .id();
+            app.world_mut()
+                .resource_mut::<Destruction>()
+                .shards
+                .push_back(entity);
+        }
+        for _ in 0..29 {
+            app.update();
+        }
+        let state = app.world().resource::<Destruction>();
+        assert_eq!(state.shards.len(), 16);
+        assert!(state.shards.contains(&kept));
+        let scaling = app.world().resource::<crate::quality::Scaling>();
+        assert!(scaling.costs[4].triangles > 0);
+        assert_eq!(scaling.costs[2].triangles, 0);
+    }
+
+    #[test]
+    fn fracture_scales_an_authored_pool_cap_before_spawning() {
+        let (mut app, id) = app();
+        app.init_resource::<crate::quality::Scaling>();
+        app.world_mut()
+            .resource_mut::<crate::quality::Scaling>()
+            .geometry
+            .factors[4] = 0.5;
+        app.world_mut().resource_mut::<PendingEffects>().0 = vec![Effect::Fracture { actor: id }];
+        app.update();
+        assert_eq!(app.world().resource::<Destruction>().shards.len(), 2);
     }
 
     #[test]

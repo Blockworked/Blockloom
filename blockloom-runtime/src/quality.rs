@@ -48,6 +48,12 @@ impl Scaling {
             dlss_available: false,
         }
     }
+    pub fn particle_budget(&self, authored: u32) -> u32 {
+        (authored.min(self.budget().particles) as f32 * self.geometry.factors[3]) as u32
+    }
+    pub fn shard_budget(&self, authored: usize) -> usize {
+        (authored.min(self.budget().shards) as f32 * self.geometry.factors[4]) as usize
+    }
     pub fn budget(&self) -> Budget {
         self.controller.quality.budget()
     }
@@ -222,7 +228,7 @@ fn fire_drop(mut engine: NonSendMut<Engine>, mut scaling: ResMut<Scaling>) {
 
 /// Visible mesh/material groups, excluding shadow and post passes. Transparent
 /// and custom materials count separately because their ordering can split draws.
-fn measure_draws(
+pub(crate) fn measure_draws(
     mut every: Local<u32>,
     mut triangles_by_mesh: Local<std::collections::HashMap<AssetId<Mesh>, u64>>,
     mut mesh_events: MessageReader<AssetEvent<Mesh>>,
@@ -242,7 +248,9 @@ fn measure_draws(
         Has<crate::destruction::Shard>,
         Has<crate::water::WaterSurface>,
     )>,
-    parents: Query<(&ChildOf, Has<crate::terrain::vegetation::ScatterInstance>)>,
+    parents: Query<&ChildOf>,
+    scatter_roots: Query<(), With<crate::terrain::vegetation::ScatterInstance>>,
+    shard_roots: Query<(), With<crate::destruction::Shard>>,
 ) {
     // Capture counts before extraction moves render-only vertex data to the GPU.
     for event in mesh_events.read() {
@@ -278,9 +286,14 @@ fn measure_draws(
         };
         let mut ancestor = entity;
         let mut vegetation = grass || scatter;
-        while !vegetation && let Ok((parent, is_scatter)) = parents.get(ancestor) {
-            vegetation |= is_scatter;
+        let mut debris = debris;
+        while !vegetation
+            && !debris
+            && let Ok(parent) = parents.get(ancestor)
+        {
             ancestor = parent.parent();
+            vegetation |= scatter_roots.contains(ancestor);
+            debris |= shard_roots.contains(ancestor);
         }
         let system = if terrain {
             0
@@ -370,15 +383,32 @@ mod tests {
         for _ in 0..30 {
             app.update();
         }
-        assert_eq!(app.world().resource::<Scaling>().geometry.factors, [1.0; 2]);
+        assert_eq!(app.world().resource::<Scaling>().geometry.factors, [1.0; 6]);
         app.world_mut().non_send_mut::<Engine>().paused = false;
         for _ in 0..15 {
             app.update();
         }
         let scaling = app.world().resource::<Scaling>();
-        assert_eq!(scaling.geometry.factors, [1.0, 0.9]);
+        assert_eq!(scaling.geometry.factors, [1.0, 0.9, 1.0, 1.0, 1.0, 1.0]);
         assert_eq!(scaling.controller.quality, Quality::High);
         assert_eq!(scaling.controller.scale, 1.0);
+    }
+
+    #[test]
+    fn transient_limits_combine_authored_caps_presets_and_local_density() {
+        let mut scaling = Scaling::default();
+        scaling.geometry.factors[3] = 0.5;
+        assert_eq!(scaling.particle_budget(100), 50);
+        assert_eq!(scaling.particle_budget(u32::MAX), 100_000);
+        assert_eq!(scaling.shard_budget(256), 256);
+        scaling.geometry.factors[4] = 0.25;
+        assert_eq!(scaling.shard_budget(100), 25);
+        assert_eq!(scaling.shard_budget(usize::MAX), 64);
+        scaling.controller.quality = Quality::Low;
+        assert_eq!(scaling.particle_budget(u32::MAX), 12_500);
+        assert_eq!(scaling.shard_budget(usize::MAX), 16);
+        assert_eq!(scaling.particle_budget(0), 0);
+        assert_eq!(scaling.shard_budget(0), 0);
     }
 
     #[test]
@@ -393,13 +423,13 @@ mod tests {
             ]))
             .add_systems(Update, apply_effects);
         app.world_mut().resource_mut::<Scaling>().controller.quality = Quality::Low;
-        app.world_mut().resource_mut::<Scaling>().geometry.factors = [0.25; 2];
+        app.world_mut().resource_mut::<Scaling>().geometry.factors = [0.25; 6];
         app.update();
         assert_eq!(
             app.world().resource::<Scaling>().controller.quality,
             Quality::High
         );
-        assert_eq!(app.world().resource::<Scaling>().geometry.factors, [1.0; 2]);
+        assert_eq!(app.world().resource::<Scaling>().geometry.factors, [1.0; 6]);
     }
 
     #[test]
@@ -415,7 +445,7 @@ mod tests {
             let mut scaling = app.world_mut().resource_mut::<Scaling>();
             scaling.overrides.push((Setting::Quality, "Low".into()));
             scaling.controller.quality = Quality::Low;
-            scaling.geometry.factors = [0.25; 2];
+            scaling.geometry.factors = [0.25; 6];
             scaling.dropped = true;
         }
         app.update();
@@ -423,7 +453,7 @@ mod tests {
         assert!(scaling.overrides.is_empty());
         assert!(!scaling.dropped);
         assert_eq!(scaling.controller.quality, Quality::High);
-        assert_eq!(scaling.geometry.factors, [1.0; 2]);
+        assert_eq!(scaling.geometry.factors, [1.0; 6]);
     }
 
     #[test]

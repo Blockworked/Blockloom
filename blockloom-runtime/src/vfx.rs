@@ -187,7 +187,16 @@ impl VfxStats {
 
 /// The last GPU step's counts per emitter, as the readback brought them.
 #[derive(Resource, Default)]
-struct GpuCounts(HashMap<String, GpuState>);
+struct GpuCounts(HashMap<String, (Entity, GpuState)>);
+
+impl GpuCounts {
+    fn state_for(&self, id: &str, reader: Entity) -> Option<&GpuState> {
+        self.0
+            .get(id)
+            .filter(|(source, _)| *source == reader)
+            .map(|(_, state)| state)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct GpuState {
@@ -251,7 +260,7 @@ fn read_state(
         return;
     };
     if let Some(state) = GpuState::parse(&event.data) {
-        counts.0.insert(reader.0.clone(), state);
+        counts.0.insert(reader.0.clone(), (event.entity, state));
     }
 }
 
@@ -359,7 +368,7 @@ fn step_emitters(
     mut assets: DrawAssets,
     around: Surroundings,
     mut frame: ResMut<VfxFrame>,
-    counts: Res<GpuCounts>,
+    mut counts: ResMut<GpuCounts>,
     mut stats: ResMut<VfxStats>,
     mut meter: ResMut<OverdrawMeter>,
     mut senses: ResMut<ParticleSenses>,
@@ -378,12 +387,11 @@ fn step_emitters(
         .flatten();
     let gpu_ok =
         mode.is_3d() && gpu_ready(assets.device.as_deref()) && !engine.project.world.vfx.cpu_only;
-    let budget = engine.project.world.vfx.budget.min(
-        around
-            .scaling
-            .as_ref()
-            .map_or(u32::MAX, |s| s.budget().particles),
-    );
+    let authored_budget = engine.project.world.vfx.budget;
+    let budget = around
+        .scaling
+        .as_ref()
+        .map_or(authored_budget, |s| s.particle_budget(authored_budget));
     let camera = around.cameras.iter().next();
     let eye = camera.map_or(Vec3::ZERO, |(transform, _)| transform.translation());
     let pixels = camera
@@ -463,10 +471,13 @@ fn step_emitters(
         spec.normalize();
         let pinned = spec.ribbon.enabled && spec.ribbon.source == RibbonSource::Actor;
         let gpu = gpu_ok && spec.sim == SimMode::Auto && !pinned;
-        let capacity = spec
-            .max
-            .min(if gpu { GPU_MAX } else { CPU_MAX })
-            .max(1)
+        let authored_capacity = spec.max.min(if gpu { GPU_MAX } else { CPU_MAX }).max(1);
+        let capacity = around
+            .scaling
+            .as_ref()
+            .map_or(authored_capacity, |s| {
+                s.particle_budget(authored_capacity).max(1)
+            })
             .min(allocation_room);
         if capacity == 0 {
             if draws.0.contains_key(id) {
@@ -494,6 +505,7 @@ fn step_emitters(
             && let Some(old) = draws.0.remove(id)
         {
             Draws::drop_draw(&mut commands, old);
+            counts.0.remove(id);
         }
         if !draws.0.contains_key(id) {
             let overdraw = meter.counter(&mut assets.buffers);
@@ -648,7 +660,7 @@ fn step_emitters(
                 surface,
                 sequence,
                 seen,
-                ..
+                reader,
             } => {
                 let wind = around.wind.as_deref().map_or(Vec3::ZERO, |wind| {
                     wind.at(transform.translation) * spec.wind
@@ -688,7 +700,7 @@ fn step_emitters(
                 });
                 // A step's counts come back a frame or two late; each set
                 // is used once.
-                match counts.0.get(id) {
+                match counts.state_for(id, *reader) {
                     Some(counts) if counts.sequence != *seen => {
                         *seen = counts.sequence;
                         draw.alive = counts.alive;
@@ -723,6 +735,7 @@ fn step_emitters(
         .map(|(id, _)| id.clone())
         .collect();
     for id in stale {
+        counts.0.remove(&id);
         if let Some(draw) = draws.0.remove(&id) {
             Draws::drop_draw(&mut commands, draw);
         }
@@ -1249,6 +1262,77 @@ mod tests {
     use super::*;
 
     #[test]
+    fn local_density_resizes_cpu_pools_and_enforces_the_total_allocation() {
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(rx, Mode::ThreeD);
+        engine.running = true;
+        engine.rebuild = false;
+        engine.project.world.vfx.budget = 160;
+        let mut actors = Vec::new();
+        for id in ["a", "b"] {
+            let mut actor = engine.project.actors[0].clone();
+            actor.id = id.into();
+            actor
+                .components
+                .insert(blockloom_core::components::ActorComponent::Emitter {
+                    emitter: ParticleSpec {
+                        max: 100,
+                        sim: SimMode::Cpu,
+                        ..default()
+                    },
+                });
+            engine.attached.insert(id.into(), ["Emitter".into()].into());
+            actors.push(actor);
+        }
+        engine.project.actors = actors;
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<ShaderBuffer>()
+            .init_asset::<ParticleMaterial>()
+            .insert_non_send(engine)
+            .insert_resource(Dimension(Mode::ThreeD))
+            .init_resource::<crate::quality::Scaling>()
+            .init_resource::<Draws>()
+            .init_resource::<OverdrawMeter>()
+            .init_resource::<ParticleSenses>()
+            .init_resource::<VfxStats>()
+            .init_resource::<GpuCounts>()
+            .init_resource::<VfxFrame>()
+            .add_systems(Update, step_emitters);
+        for id in ["a", "b"] {
+            app.world_mut().spawn((
+                ActorId(id.into()),
+                Transform::default(),
+                EmitterState::fresh(),
+            ));
+        }
+        app.update();
+        assert_eq!(app.world().resource::<VfxStats>().allocated, 160);
+        assert_eq!(app.world().resource::<Draws>().0["a"].key.capacity, 100);
+        app.world_mut()
+            .resource_mut::<crate::quality::Scaling>()
+            .geometry
+            .factors[3] = 0.5;
+        app.update();
+        let stats = app.world().resource::<VfxStats>();
+        assert_eq!(stats.budget, 80);
+        assert_eq!(stats.allocated, 80);
+        let draws = app.world().resource::<Draws>();
+        for (id, expected) in [("a", 50), ("b", 30)] {
+            let draw = &draws.0[id];
+            assert_eq!(draw.key.capacity, expected);
+            let Sim::Cpu(pool) = &draw.sim else {
+                panic!("expected CPU pool")
+            };
+            assert_eq!(pool.capacity(), expected);
+        }
+        // Retaining the reduction keeps the same allocations on quiet frames.
+        app.update();
+        assert_eq!(app.world().resource::<VfxStats>().allocated, 80);
+    }
+
+    #[test]
     fn the_sim_shader_compiles() {
         let source = include_str!("shaders/vfx_sim.wesl");
         for multisampled in [false, true] {
@@ -1296,6 +1380,27 @@ fn apply_pbr_lighting(p: Pbr) -> vec4<f32> { return p.material.base_color; }\n";
             ],
         )
         .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    #[test]
+    fn a_resized_gpu_pool_rejects_the_old_readers_counts() {
+        let mut world = World::new();
+        let old_reader = world.spawn_empty().id();
+        let new_reader = world.spawn_empty().id();
+        let state = GpuState {
+            alive: 100,
+            sequence: 1,
+            ..default()
+        };
+        let mut counts = GpuCounts::default();
+        counts.0.insert("sparks".into(), (old_reader, state));
+        assert_eq!(counts.state_for("sparks", old_reader), Some(&state));
+        assert_eq!(counts.state_for("sparks", new_reader), None);
+        counts.0.insert(
+            "sparks".into(),
+            (new_reader, GpuState { alive: 5, ..state }),
+        );
+        assert_eq!(counts.state_for("sparks", new_reader).unwrap().alive, 5);
     }
 
     #[test]

@@ -173,11 +173,16 @@ install:
     sudo ln -sf {{LIBDIR}}/blockloom /usr/bin/blockloom
     sudo install -Dm0644 res/blockloom.desktop /usr/share/applications/com.blockworked.Blockloom.desktop
     sudo install -Dm0644 res/icons/blockloom.png /usr/share/icons/hicolor/256x256/apps/blockloom.png
+    # Staged players a built game ships, beside the editor where the exporter
+    # looks for them (see `just player` / `just web-player`).
+    if [ -d target/release/players ]; then sudo mkdir -p {{LIBDIR}}/players && sudo cp -a target/release/players/. {{LIBDIR}}/players/; fi
 
 [linux]
 uninstall:
     sudo rm -rf {{LIBDIR}}
     sudo rm -f /usr/bin/blockloom /usr/share/applications/com.blockworked.Blockloom.desktop /usr/share/applications/blockloom.desktop /usr/share/icons/hicolor/256x256/apps/blockloom.png
 
+# Reinstall the editor plus the players a built game ships, so an installed
+# Build dialog can offer this machine's native target and the web target.
 [linux]
-replace: build uninstall install
+replace: build player web-player uninstall install

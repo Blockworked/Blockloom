@@ -75,26 +75,29 @@ impl DrawCost {
     }
 }
 
-/// Run-only terrain and vegetation throttles. Keep reductions until an explicit
-/// setting change or rebuild, so unloading content cannot cause a reload loop.
+/// Run-only distance and density throttles. Reductions last until a setting
+/// change or rebuild, so unloading content cannot cause a reload loop.
 #[derive(Clone, Debug)]
 pub struct GeometryController {
-    pub factors: [f32; 2],
-    over: [u32; 2],
+    pub factors: [f32; 6],
+    over: [u32; 6],
 }
 
 impl Default for GeometryController {
     fn default() -> Self {
         Self {
-            factors: [1.0; 2],
-            over: [0; 2],
+            factors: [1.0; 6],
+            over: [0; 6],
         }
     }
 }
 
 impl GeometryController {
+    pub const LOCAL_SYSTEMS: [usize; 4] = [0, 1, 3, 4];
+
     pub fn sample(&mut self, settings: &Settings, budget: &Budget, costs: &[DrawCost; 6]) {
-        for (system, cost) in costs.iter().enumerate().take(2) {
+        for system in Self::LOCAL_SYSTEMS {
+            let cost = costs[system];
             self.over[system] = if settings.auto_drop && cost.exceeds(budget, system) {
                 self.over[system].saturating_add(1)
             } else {
@@ -112,7 +115,7 @@ impl GeometryController {
     pub fn needs_preset_drop(&self, budget: &Budget, costs: &[DrawCost; 6]) -> bool {
         costs.iter().enumerate().any(|(system, cost)| {
             cost.exceeds(budget, system)
-                && (system >= self.factors.len() || self.factors[system] <= 0.25)
+                && (!Self::LOCAL_SYSTEMS.contains(&system) || self.factors[system] <= 0.25)
         })
     }
 }
@@ -271,14 +274,14 @@ mod tests {
         for _ in 0..settings.over_budget_frames - 1 {
             local.sample(&settings, &budget, &costs);
         }
-        assert_eq!(local.factors, [1.0; 2]);
+        assert_eq!(local.factors, [1.0; 6]);
         assert!(!local.needs_preset_drop(&budget, &costs));
         local.sample(&settings, &budget, &costs);
-        assert_eq!(local.factors, [1.0, 0.9]);
+        assert_eq!(local.factors, [1.0, 0.9, 1.0, 1.0, 1.0, 1.0]);
         for _ in 0..settings.over_budget_frames * 20 {
             local.sample(&settings, &budget, &costs);
         }
-        assert_eq!(local.factors, [1.0, 0.25]);
+        assert_eq!(local.factors, [1.0, 0.25, 1.0, 1.0, 1.0, 1.0]);
         assert!(local.needs_preset_drop(&budget, &costs));
     }
 
@@ -297,12 +300,12 @@ mod tests {
         }
         local.sample(&settings, &budget, &[DrawCost::default(); 6]);
         local.sample(&settings, &budget, &costs);
-        assert_eq!(local.factors, [1.0; 2]);
+        assert_eq!(local.factors, [1.0; 6]);
         settings.auto_drop = false;
         for _ in 0..settings.over_budget_frames * 10 {
             local.sample(&settings, &budget, &costs);
         }
-        assert_eq!(local.factors, [1.0; 2]);
+        assert_eq!(local.factors, [1.0; 6]);
     }
 
     #[test]
@@ -321,9 +324,41 @@ mod tests {
         for _ in 0..1000 {
             local.sample(&settings, &budget, &[DrawCost::default(); 6]);
         }
-        assert_eq!(local.factors, [0.9, 1.0]);
+        assert_eq!(local.factors, [0.9, 1.0, 1.0, 1.0, 1.0, 1.0]);
         costs[2].draws = budget.draws[2] + 1;
         assert!(local.needs_preset_drop(&budget, &costs));
+    }
+
+    #[test]
+    fn transient_pressure_throttles_only_its_pool_before_the_shared_preset() {
+        let settings = Settings {
+            auto_drop: true,
+            ..Default::default()
+        };
+        let budget = settings.preset.budget();
+        for system in [3, 4] {
+            let mut local = GeometryController::default();
+            let mut costs = [DrawCost::default(); 6];
+            costs[system].triangles = budget.triangles[system] + 1;
+            for _ in 0..settings.over_budget_frames - 1 {
+                local.sample(&settings, &budget, &costs);
+            }
+            assert_eq!(local.factors, [1.0; 6]);
+            local.sample(&settings, &budget, &costs);
+            let mut expected = [1.0; 6];
+            expected[system] = 0.9;
+            assert_eq!(local.factors, expected);
+            assert!(!local.needs_preset_drop(&budget, &costs));
+            for _ in 0..settings.over_budget_frames * 20 {
+                local.sample(&settings, &budget, &costs);
+            }
+            assert_eq!(local.factors[system], 0.25);
+            assert!(local.needs_preset_drop(&budget, &costs));
+            for _ in 0..1000 {
+                local.sample(&settings, &budget, &[DrawCost::default(); 6]);
+            }
+            assert_eq!(local.factors[system], 0.25);
+        }
     }
 
     #[test]

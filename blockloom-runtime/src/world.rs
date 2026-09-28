@@ -3781,7 +3781,7 @@ pub fn report_status(
                 value = scaling
                     .as_ref()
                     .map_or(blockloom_core::destruction::SHARD_CAP, |s| {
-                        s.budget().shards
+                        s.shard_budget(blockloom_core::destruction::SHARD_CAP)
                     }) as f64;
             }
             render_metrics.push(RenderMetric {
@@ -3909,10 +3909,15 @@ pub fn report_status(
                     unit: "count".into(),
                 });
             }
-            if let Some(factor) = scaling.geometry.factors.get(index) {
+            if blockloom_core::quality::GeometryController::LOCAL_SYSTEMS.contains(&index) {
+                let metric = if index < 2 {
+                    "distance_scale"
+                } else {
+                    "density_scale"
+                };
                 render_metrics.push(RenderMetric {
-                    name: format!("budget/{system}/distance_scale"),
-                    value: *factor as f64,
+                    name: format!("budget/{system}/{metric}"),
+                    value: scaling.geometry.factors[index] as f64,
                     unit: "ratio".into(),
                 });
             }
