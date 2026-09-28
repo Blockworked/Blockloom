@@ -292,6 +292,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         bevy::audio::SpatialScale::new_2d(1.0 / 500.0)
     }));
     app.init_resource::<model::ModelCache>();
+    app.init_resource::<model::ModelLodCache>();
     app.init_resource::<lights::LightMasks>();
     app.add_plugins(
         bevy_rapier2d::prelude::RapierPhysicsPlugin::<dim2::OneWayHooks>::pixels_per_meter(
@@ -340,8 +341,9 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .before(VisibilitySystems::CalculateBounds)
                     .before(VisibilitySystems::CheckVisibility),
                 // A culled placeholder's loaded glTF scene hangs off
-                // `ModelChild` with its own visibility: hide it with the
-                // group so distant models shed draws like culled boxes.
+                // `ModelChild` with its own visibility: at mid range it draws
+                // decimated meshes, and far out it hides with the group so
+                // distant models shed draws like culled boxes.
                 model::sync_model_lod
                     .after(culling::select_lod)
                     .before(VisibilitySystems::CheckVisibility),

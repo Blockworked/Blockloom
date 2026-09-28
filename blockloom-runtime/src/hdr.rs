@@ -319,17 +319,25 @@ impl HdrFrame {
     /// goes out HDR, and takes them off when it doesn't.
     pub fn apply(&self, camera: &mut EntityCommands, is_3d: bool) {
         camera.remove::<(HdrTone3d, HdrTone2d, HdrEncode3d, HdrEncode2d)>();
-        let encode = match self.space {
-            OutputSpace::Sdr => return,
-            OutputSpace::Scrgb => 11,
-            OutputSpace::Hdr10 => 12,
+        let Some(encode) = self.encode() else {
+            return;
         };
         let tone = self.pass(10, 1.0);
-        let encode = self.pass(encode, self.paper_white_nits);
         if is_3d {
             camera.insert((HdrTone3d::from(tone), HdrEncode3d::from(encode)));
         } else {
             camera.insert((HdrTone2d::from(tone), HdrEncode2d::from(encode)));
+        }
+    }
+
+    /// The encode pass for this frame, if it goes out HDR. The scene's tone
+    /// curve stays on the world camera; the encode moves onto the native UI
+    /// camera while one composites the interface (see `quality`).
+    pub fn encode(&self) -> Option<HdrPass> {
+        match self.space {
+            OutputSpace::Sdr => None,
+            OutputSpace::Scrgb => Some(self.pass(11, self.paper_white_nits)),
+            OutputSpace::Hdr10 => Some(self.pass(12, self.paper_white_nits)),
         }
     }
 }

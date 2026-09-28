@@ -41,6 +41,100 @@ impl Volume {
     }
 }
 
+/// One page in a [`VolumeAtlasLayout`]: where its texels sit in the packed
+/// staging buffer and where they would sit in a depth-stacked GPU atlas.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VolumeAtlasPage {
+    /// Texels along x, y and z.
+    pub size: [u32; 3],
+    /// Origin in the depth-stacked image (XY shared, pages stacked in Z).
+    pub origin: [u32; 3],
+    /// Offset in the packed staging buffer, in texels.
+    pub offset_texels: u64,
+}
+
+/// Several volumes sharing one allocation: LUT pages in the grading atlas,
+/// noise volumes in the cloud staging buffer. Staging packs pages back to
+/// back with no padding, so an existing upload reads its page straight from
+/// a slice; `origin`/`atlas` describe the depth-stacked GPU image a
+/// single-bind pass would sample instead.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VolumeAtlasLayout {
+    /// XY is the largest page's, Z the sum of every page's.
+    pub atlas: [u32; 3],
+    pub pages: Vec<VolumeAtlasPage>,
+    /// Texels in the packed staging buffer.
+    pub total_texels: u64,
+}
+
+impl VolumeAtlasLayout {
+    /// Where page `index` starts in the staging buffer, in texels.
+    pub fn page_offset(&self, index: usize) -> u64 {
+        self.pages[index].offset_texels
+    }
+
+    /// Maps a page-local z in 0-1 onto the stacked image's z, for a shader
+    /// sampling the whole atlas as one 3D texture.
+    pub fn page_z(&self, index: usize, z: f32) -> f32 {
+        let page = &self.pages[index];
+        (page.origin[2] as f32 + z.clamp(0.0, 1.0) * page.size[2] as f32)
+            / self.atlas[2].max(1) as f32
+    }
+
+    /// How much of the stacked image's XY a page covers (1 for same-size
+    /// pages, less for a small page padded into a larger atlas).
+    pub fn page_xy_scale(&self, index: usize) -> [f32; 2] {
+        let page = &self.pages[index];
+        [
+            page.size[0] as f32 / self.atlas[0].max(1) as f32,
+            page.size[1] as f32 / self.atlas[1].max(1) as f32,
+        ]
+    }
+}
+
+/// Lays `sizes` out as one atlas. Errors on an empty list or a zero-sided
+/// page; overflow-safe, since stacked noise can pass 4B texels.
+pub fn pack_volume_atlas(sizes: &[[u32; 3]]) -> Result<VolumeAtlasLayout, String> {
+    if sizes.is_empty() {
+        return Err("a volume atlas needs at least one page".into());
+    }
+    let mut atlas = [0u32, 0u32, 0u32];
+    let mut pages = Vec::with_capacity(sizes.len());
+    let mut total: u64 = 0;
+    for size in sizes {
+        if size.contains(&0) {
+            return Err(format!(
+                "a volume atlas page can't be empty ({})",
+                describe(*size)
+            ));
+        }
+        let texels: u64 = size.iter().map(|side| *side as u64).product();
+        total = total
+            .checked_add(texels)
+            .ok_or_else(|| "a volume atlas can't hold that many texels".to_string())?;
+        atlas[0] = atlas[0].max(size[0]);
+        atlas[1] = atlas[1].max(size[1]);
+        let origin = [0, 0, atlas[2]];
+        atlas[2] = atlas[2]
+            .checked_add(size[2])
+            .ok_or_else(|| "a volume atlas can't stack that deep".to_string())?;
+        pages.push(VolumeAtlasPage {
+            size: *size,
+            origin,
+            offset_texels: total - texels,
+        });
+    }
+    Ok(VolumeAtlasLayout {
+        atlas,
+        pages,
+        total_texels: total,
+    })
+}
+
+fn describe(size: [u32; 3]) -> String {
+    format!("{}x{}x{}", size[0], size[1], size[2])
+}
+
 /// Parses an Adobe/Resolve `.cube` 3D LUT. Red runs fastest, as the format
 /// says, which is the texel order a 3D texture wants with red on x.
 pub fn parse_cube(name: &str, text: &str) -> Result<Volume, String> {
@@ -219,5 +313,35 @@ mod tests {
         let volume = volume_from_strip("grade.png", &strip).unwrap();
         assert_eq!(volume.at(1, 1, 1), [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(volume.at(1, 1, 0), [0.0; 4]);
+    }
+
+    #[test]
+    fn an_atlas_stacks_pages_with_staging_offsets() {
+        // Two same-size LUT pages: one page per depth slab.
+        let layout = pack_volume_atlas(&[[16; 3], [16; 3]]).unwrap();
+        assert_eq!(layout.atlas, [16, 16, 32]);
+        assert_eq!(layout.pages[0].origin, [0, 0, 0]);
+        assert_eq!(layout.pages[1].origin, [0, 0, 16]);
+        assert_eq!(layout.page_offset(0), 0);
+        assert_eq!(layout.page_offset(1), 16u64.pow(3));
+        assert_eq!(layout.total_texels, 2 * 16u64.pow(3));
+        // A page's z maps onto its own slab of the stacked image.
+        assert_eq!(layout.page_z(0, 0.0), 0.0);
+        assert_eq!(layout.page_z(0, 1.0), 0.5);
+        assert_eq!(layout.page_z(1, 0.0), 0.5);
+        assert_eq!(layout.page_z(1, 1.0), 1.0);
+        assert_eq!(layout.page_xy_scale(0), [1.0, 1.0]);
+        // Mixed sizes share XY, stack in Z: a small page covers a corner.
+        let mixed = pack_volume_atlas(&[[128, 128, 128], [32, 32, 32]]).unwrap();
+        assert_eq!(mixed.atlas, [128, 128, 160]);
+        assert_eq!(mixed.pages[1].origin, [0, 0, 128]);
+        assert_eq!(mixed.page_xy_scale(1), [0.25, 0.25]);
+        assert_eq!(mixed.page_z(1, 1.0), 1.0);
+        // One page is the identity, and bad lists are refused.
+        let single = pack_volume_atlas(&[[32; 3]]).unwrap();
+        assert_eq!(single.atlas, [32; 3]);
+        assert_eq!(single.page_z(0, 0.25), 0.25);
+        assert!(pack_volume_atlas(&[]).is_err());
+        assert!(pack_volume_atlas(&[[16, 16, 0]]).is_err());
     }
 }

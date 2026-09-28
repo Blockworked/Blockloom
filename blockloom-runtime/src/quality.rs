@@ -122,8 +122,10 @@ pub fn register(app: &mut App) {
     }
 }
 
-/// Composite SDR UI after the scene's spatial blit. HDR keeps its linear UI
-/// blend before encoding until that chain has a native composition target.
+/// Composite the interface at native resolution after the scaled scene, in
+/// SDR and HDR both. Under HDR the world's tone curve stays on the scaled
+/// scene while the encode moves onto this camera, so the HUD is encoded at
+/// paper white instead of being toned with the world.
 fn configure_ui_camera(
     mut commands: Commands,
     scaling: Res<Scaling>,
@@ -132,27 +134,42 @@ fn configure_ui_camera(
         (&Node, Has<crate::ui::UiRoot>, Option<&Children>),
         (Without<ChildOf>, Without<crate::overlay::OverlayText>),
     >,
-    worlds: Query<(Entity, &Camera, &RenderTarget, Has<IsDefaultUiCamera>), With<WorldCamera>>,
+    worlds: Query<
+        (
+            Entity,
+            &Camera,
+            &RenderTarget,
+            Has<IsDefaultUiCamera>,
+            Has<Camera3d>,
+            Has<crate::hdr::HdrEncode2d>,
+            Has<crate::hdr::HdrEncode3d>,
+        ),
+        With<WorldCamera>,
+    >,
     mut overlays: Query<
         (
             Entity,
             &mut Camera,
             &mut RenderTarget,
             Has<IsDefaultUiCamera>,
+            Has<bevy::camera::Hdr>,
+            Has<crate::hdr::HdrEncode2d>,
         ),
         (With<NativeUiCamera>, Without<WorldCamera>),
     >,
 ) {
     let world = worlds.iter().find(|(_, camera, ..)| camera.is_active);
-    let Some((world_entity, world_camera, target, world_ui)) = world else {
+    let Some((world_entity, world_camera, target, world_ui, world_is_3d, world_enc2, world_enc3)) =
+        world
+    else {
         for (entity, ..) in &overlays {
             commands.entity(entity).despawn();
         }
         return;
     };
+    let hdr = frame.is_hdr();
     let native = scaling.controller.scale < 1.0
         && world_camera.viewport.is_none()
-        && !frame.is_hdr()
         && roots.iter().any(|(node, interface, children)| {
             node.display != Display::None
                 && (!interface || children.is_some_and(|children| !children.is_empty()))
@@ -164,7 +181,19 @@ fn configure_ui_camera(
             commands.entity(world_entity).insert(IsDefaultUiCamera);
         }
     }
-    if let Ok((entity, mut camera, mut overlay_target, ui)) = overlays.single_mut() {
+    // The encode follows the UI: onto the overlay while it composites HDR,
+    // back onto the world when it stands down.
+    let hdr_ui = native && hdr;
+    if hdr_ui {
+        commands
+            .entity(world_entity)
+            .remove::<(crate::hdr::HdrEncode2d, crate::hdr::HdrEncode3d)>();
+    } else if hdr && !(world_enc2 || world_enc3) {
+        frame.apply(&mut commands.entity(world_entity), world_is_3d);
+    }
+    if let Ok((entity, mut camera, mut overlay_target, ui, overlay_hdr, overlay_enc)) =
+        overlays.single_mut()
+    {
         if camera.is_active != native {
             camera.is_active = native;
         }
@@ -184,8 +213,25 @@ fn configure_ui_camera(
                 commands.entity(entity).remove::<IsDefaultUiCamera>();
             }
         }
+        if hdr_ui {
+            if !overlay_hdr {
+                commands.entity(entity).insert(bevy::camera::Hdr);
+            }
+            if !overlay_enc && let Some(encode) = frame.encode() {
+                commands
+                    .entity(entity)
+                    .insert(crate::hdr::HdrEncode2d::from(encode));
+            }
+        } else {
+            if overlay_enc {
+                commands.entity(entity).remove::<crate::hdr::HdrEncode2d>();
+            }
+            if overlay_hdr && !hdr {
+                commands.entity(entity).remove::<bevy::camera::Hdr>();
+            }
+        }
     } else if native {
-        commands.spawn((
+        let mut overlay = commands.spawn((
             NativeUiCamera,
             Camera2d,
             Camera {
@@ -203,6 +249,12 @@ fn configure_ui_camera(
             Msaa::Off,
             bevy::core_pipeline::tonemapping::Tonemapping::None,
         ));
+        if hdr {
+            overlay.insert(bevy::camera::Hdr);
+            if let Some(encode) = frame.encode() {
+                overlay.insert(crate::hdr::HdrEncode2d::from(encode));
+            }
+        }
     }
 }
 
@@ -937,6 +989,7 @@ mod tests {
             app.update();
             assert!(app.world().get::<Camera>(overlay).unwrap().is_active);
 
+            use crate::hdr::{HdrEncode2d, HdrEncode3d};
             use blockloom_core::scene::{DisplayOutput, OutputSpace};
             let hdr = DisplayOutput {
                 space: OutputSpace::Hdr10,
@@ -948,13 +1001,20 @@ mod tests {
                 crate::hdr::HdrPolicy::default(),
             ));
             app.update();
-            assert!(!app.world().get::<Camera>(overlay).unwrap().is_active);
-            assert!(app.world().get::<IsDefaultUiCamera>(overlay).is_none());
-            assert!(app.world().get::<IsDefaultUiCamera>(world).is_some());
+            // HDR keeps the native overlay: the world's encode moves onto
+            // it, so the HUD is encoded at paper white at full resolution.
+            assert!(app.world().get::<Camera>(overlay).unwrap().is_active);
+            assert!(app.world().get::<IsDefaultUiCamera>(overlay).is_some());
+            assert!(app.world().get::<IsDefaultUiCamera>(world).is_none());
+            assert!(app.world().get::<bevy::camera::Hdr>(overlay).is_some());
+            assert!(app.world().get::<HdrEncode2d>(overlay).is_some());
+            assert!(app.world().get::<HdrEncode2d>(world).is_none());
+            assert!(app.world().get::<HdrEncode3d>(world).is_none());
 
             app.insert_resource(crate::hdr::HdrFrame::default());
             app.update();
             assert!(app.world().get::<Camera>(overlay).unwrap().is_active);
+            assert!(app.world().get::<HdrEncode2d>(overlay).is_none());
             app.world_mut().get_mut::<Camera>(world).unwrap().viewport =
                 Some(bevy::camera::Viewport::default());
             app.update();
@@ -965,6 +1025,21 @@ mod tests {
             app.update();
             assert!(!app.world().get::<Camera>(overlay).unwrap().is_active);
             assert!(app.world().get::<IsDefaultUiCamera>(world).is_some());
+
+            // Standing the overlay down under HDR hands the encode back to
+            // the world, in its own dimension's pass.
+            app.insert_resource(crate::hdr::HdrFrame::resolve(
+                hdr,
+                Some(&[OutputSpace::Hdr10]),
+                crate::hdr::HdrPolicy::default(),
+            ));
+            app.update();
+            assert!(!app.world().get::<Camera>(overlay).unwrap().is_active);
+            if three_d {
+                assert!(app.world().get::<HdrEncode3d>(world).is_some());
+            } else {
+                assert!(app.world().get::<HdrEncode2d>(world).is_some());
+            }
 
             app.world_mut().despawn(world);
             app.update();

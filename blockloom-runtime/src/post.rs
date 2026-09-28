@@ -150,13 +150,117 @@ impl PostDebug {
     }
 }
 
-/// A loaded LUT: its 3D image and the input range it maps from.
+/// A loaded LUT: its page in the shared atlas image and the input range
+/// it maps from.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lut {
     pub image: Handle<Image>,
     pub size: u32,
     pub domain_min: Vec3,
     pub domain_max: Vec3,
+    /// Which depth slab of the atlas holds this LUT, and how many slabs the
+    /// atlas has. A lone LUT is page 0 of 1, which samples exactly like the
+    /// old standalone image.
+    pub page: u32,
+    pub pages: u32,
+}
+
+/// One LUT page waiting in the atlas: decoded texels plus the range they map
+/// from, so rebuilding the atlas after a size change loses nothing.
+#[derive(Clone, Debug)]
+struct LutPage {
+    texels: Vec<[f32; 4]>,
+    size: u32,
+    domain_min: Vec3,
+    domain_max: Vec3,
+}
+
+/// Every grading LUT shares one 3D image, pages stacked in depth. Switching
+/// between two same-size LUTs then costs a uniform, not an upload; a new
+/// size rebuilds the atlas around that LUT alone.
+#[derive(Default)]
+struct LutAtlas {
+    image: Option<Handle<Image>>,
+    size: u32,
+    order: Vec<String>,
+    pages: std::collections::HashMap<String, LutPage>,
+}
+
+impl LutAtlas {
+    /// The active LUT's page, loading the file on first sight. Pages of a
+    /// different size are dropped: one atlas holds one grid size.
+    fn page(
+        &mut self,
+        dir: &std::path::Path,
+        path: &str,
+        images: &mut Assets<Image>,
+    ) -> Result<Lut, String> {
+        if !self.pages.contains_key(path) {
+            let volume = blockloom_core::pipeline::load_volume(dir, path)?;
+            let [x, y, z] = volume.info.size;
+            if x != y || y != z || x < 2 {
+                return Err(format!("{path} isn't a cube LUT ({x}x{y}x{z})"));
+            }
+            if !self.order.is_empty() && self.size != x {
+                self.pages.clear();
+                self.order.clear();
+            }
+            self.size = x;
+            self.order.push(path.to_string());
+            self.pages.insert(
+                path.to_string(),
+                LutPage {
+                    texels: volume.texels,
+                    size: x,
+                    domain_min: Vec3::from(volume.domain_min),
+                    domain_max: Vec3::from(volume.domain_max),
+                },
+            );
+            self.upload(images);
+        }
+        let index = self.order.iter().position(|key| key == path).unwrap_or(0);
+        let page = &self.pages[path];
+        Ok(Lut {
+            image: self.image.clone().unwrap_or_default(),
+            size: page.size,
+            domain_min: page.domain_min,
+            domain_max: page.domain_max,
+            page: index as u32,
+            pages: self.order.len().max(1) as u32,
+        })
+    }
+
+    /// Concatenates every page in order into one depth-stacked image.
+    fn upload(&mut self, images: &mut Assets<Image>) {
+        let size = self.size;
+        let bytes: Vec<u8> = self
+            .order
+            .iter()
+            .flat_map(|key| self.pages[key].texels.iter())
+            .flat_map(|texel| texel.map(|c| half::f16::from_f32(c).to_le_bytes()))
+            .flatten()
+            .collect();
+        let mut image = Image::new(
+            Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: size * self.order.len().max(1) as u32,
+            },
+            TextureDimension::D3,
+            bytes,
+            TextureFormat::Rgba16Float,
+            RenderAssetUsages::RENDER_WORLD,
+        );
+        image.texture_descriptor.label = Some("post_lut_atlas");
+        match &self.image {
+            Some(handle) => {
+                let _ = images.insert(handle.id(), image);
+            }
+            None => {
+                self.image = Some(images.add(image));
+            }
+        }
+    }
 }
 
 /// Everything the post passes need for one camera, resolved each frame.
@@ -241,43 +345,13 @@ pub fn white_balance(grading: &Grading) -> Mat3 {
     LMS_TO_RGB * Mat3::from_diagonal(D65_LMS / lms) * RGB_TO_LMS
 }
 
-/// The LUT file the project names, read once per change.
+/// The LUT file the project names, read once per change into the shared
+/// atlas.
 #[derive(Resource, Default)]
 pub struct LoadedLut {
     key: Option<(Option<std::path::PathBuf>, String)>,
     lut: Option<Lut>,
-}
-
-fn load_lut(dir: &std::path::Path, path: &str, images: &mut Assets<Image>) -> Result<Lut, String> {
-    let volume = blockloom_core::pipeline::load_volume(dir, path)?;
-    let [x, y, z] = volume.info.size;
-    if x != y || y != z || x < 2 {
-        return Err(format!("{path} isn't a cube LUT ({x}x{y}x{z})"));
-    }
-    let bytes = volume
-        .texels
-        .iter()
-        .flat_map(|texel| texel.map(|c| half::f16::from_f32(c).to_le_bytes()))
-        .flatten()
-        .collect();
-    let mut image = Image::new(
-        Extent3d {
-            width: x,
-            height: y,
-            depth_or_array_layers: z,
-        },
-        TextureDimension::D3,
-        bytes,
-        TextureFormat::Rgba16Float,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    image.texture_descriptor.label = Some("post_lut");
-    Ok(Lut {
-        image: images.add(image),
-        size: x,
-        domain_min: Vec3::from(volume.domain_min),
-        domain_max: Vec3::from(volume.domain_max),
-    })
+    atlas: LutAtlas,
 }
 
 /// Resolves every world camera's `PostStack` from the blended environment.
@@ -308,7 +382,9 @@ pub fn apply_post(
     let key = (dir.clone(), post.grading.lut.trim().to_string());
     if loaded.key.as_ref() != Some(&key) {
         loaded.lut = match (&key.0, key.1.as_str()) {
-            (Some(dir), path) if !path.is_empty() => load_lut(dir, path, &mut images)
+            (Some(dir), path) if !path.is_empty() => loaded
+                .atlas
+                .page(dir, path, &mut images)
                 .map_err(|error| {
                     crate::bridge::send(&blockloom_protocol::RuntimeMessage::Error {
                         actor: "Blockloom".into(),
@@ -427,6 +503,19 @@ impl SceneLuminance {
 
 // ─── Render world ────────────────────────────────────────────────────────
 
+/// The LUT domain plus which atlas slab to sample: the page in `min.w`,
+/// the page count in `max.w`. A lone LUT is page 0 of 1, which is the old
+/// whole-image sample.
+fn lut_range(lut: Option<&Lut>) -> (Vec4, Vec4) {
+    lut.map(|lut| {
+        (
+            lut.domain_min.extend(lut.page as f32),
+            lut.domain_max.extend(lut.pages as f32),
+        )
+    })
+    .unwrap_or((Vec4::ZERO, Vec4::new(1.0, 1.0, 1.0, 0.0)))
+}
+
 /// `PostUniforms` in `post.wesl`, field for field.
 #[derive(Clone, Copy, Debug, Default, ShaderType)]
 pub struct PostUniforms {
@@ -510,8 +599,8 @@ impl PostUniforms {
                 f32::from(lut.is_some()),
                 f32::from(stack.hdr_output),
             ),
-            lut_min: lut.map_or(Vec3::ZERO, |lut| lut.domain_min).extend(0.0),
-            lut_max: lut.map_or(Vec3::ONE, |lut| lut.domain_max).extend(0.0),
+            lut_min: lut_range(stack.lut.as_ref()).0,
+            lut_max: lut_range(stack.lut.as_ref()).1,
             grain: Vec4::new(
                 post.grain.intensity,
                 post.grain.size,
@@ -1166,6 +1255,69 @@ fn post_ldr(
 mod tests {
     use super::*;
     use blockloom_core::shader_lib;
+
+    #[test]
+    fn lut_pages_share_one_atlas_image() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!(
+            "blockloom-lut-{}",
+            bevy::asset::uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cube = |size: u32| {
+            let mut text = format!("LUT_3D_SIZE {size}\n");
+            for _ in 0..(size as usize).pow(3) {
+                text += "0.1 0.2 0.3\n";
+            }
+            text
+        };
+        for (name, size) in [("a.cube", 2), ("b.cube", 2), ("c.cube", 4)] {
+            let mut file = std::fs::File::create(dir.join(name)).unwrap();
+            file.write_all(cube(size).as_bytes()).unwrap();
+        }
+        let mut images = Assets::<Image>::default();
+        let mut atlas = LutAtlas::default();
+        let a = atlas.page(&dir, "a.cube", &mut images).unwrap();
+        assert_eq!((a.page, a.pages, a.size), (0, 1, 2));
+        let again = atlas.page(&dir, "a.cube", &mut images).unwrap();
+        assert_eq!(again, a);
+        let b = atlas.page(&dir, "b.cube", &mut images).unwrap();
+        // Same size shares the image: a second page, not a second upload.
+        assert_eq!((b.page, b.pages), (1, 2));
+        assert_eq!(a.image, b.image);
+        let stored = images.get(&a.image).unwrap();
+        assert_eq!(stored.texture_descriptor.size.depth_or_array_layers, 4);
+        // A new size rebuilds the atlas around that LUT alone, keeping the
+        // same handle so live stacks don't churn.
+        let c = atlas.page(&dir, "c.cube", &mut images).unwrap();
+        assert_eq!((c.page, c.pages, c.size), (0, 1, 4));
+        assert_eq!(c.image, a.image);
+        let stored = images.get(&c.image).unwrap();
+        assert_eq!(stored.texture_descriptor.size.depth_or_array_layers, 4);
+        // A file that isn't a LUT loads nothing and keeps the atlas.
+        assert!(atlas.page(&dir, "missing.cube", &mut images).is_err());
+        assert_eq!(atlas.order.len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn lut_uniforms_point_at_the_atlas_slab() {
+        let lut = Lut {
+            image: Handle::default(),
+            size: 16,
+            domain_min: Vec3::ZERO,
+            domain_max: Vec3::ONE,
+            page: 1,
+            pages: 2,
+        };
+        let (min, max) = lut_range(Some(&lut));
+        assert_eq!((min.w, max.w), (1.0, 2.0));
+        // The shader's slab for this page runs from the midpoint on.
+        assert_eq!((min.w + 0.0) / max.w.max(1.0), 0.5);
+        assert_eq!((min.w + 1.0) / max.w.max(1.0), 1.0);
+        let (min, max) = lut_range(None);
+        assert_eq!((min, max), (Vec4::ZERO, Vec4::new(1.0, 1.0, 1.0, 0.0)));
+    }
 
     #[test]
     fn the_post_shader_compiles_for_every_guide() {

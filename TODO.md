@@ -541,8 +541,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         neither), traced rays that escape see the sky (Solari's shaders
         patched to read the environment map) or a flat sky's ambient, and a
         hooded spot emitter that only lights its cone.
-        Not covered: DLSS Ray Reconstruction (no build carries the SDK);
-        converging stills in the inspector; cookies and IES profiles aren't
+        Not covered: converging stills in the inspector; cookies and IES profiles aren't
         traced; box-projected and shader surfaces stay forward with raster
         lights; skinned meshes trace in their bind pose; the denoiser has no
         separate specular signal, so glossy reflections only get a shorter
@@ -1020,17 +1019,30 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           LUTs, lens dirt) never register as variants so they keep full
           resolution. A culled LOD group now hides its loaded glTF scene too
           (`model::sync_model_lod` runs after `select_lod`): the placeholder
-          cull verdict propagates onto the `ModelChild` subtree, so distant
-          models shed draws like culled boxes (still cull-only, no decimated
-          meshes). Draw accounting counts sharing exactly: groups serving
+          levels drive the `ModelChild` subtree, so mid-range models draw
+          decimated meshes and distant ones hide like culled boxes. Draw accounting counts sharing exactly: groups serving
           more than one visible mesh report as `quality/instanced_draws`
           with the absorbed meshes in `quality/batched_instances`, so the
           profiler tells one instanced draw covering ten props from ten
           draws. Rebuilds clear the new counters with the rest.
-        - Still open: per-texture distance-based mip selection and noise/LUT
-          atlases; native-resolution HDR UI compositing
-          during scene scaling; GPU-side indirect-draw counters and
-          decimated simplified meshes for loaded model scenes.
+          Loaded models thin out before they cull: each placeholder carries
+          a full level plus a simplified one, and `sync_model_lod` swaps
+          every mesh under its scene for a decimated copy (every fourth
+          triangle, all vertex attributes thinned, cached per mesh and
+          cleared on file reload) at mid range, hiding the subtree far out.
+          Texture streaming lays per-texture distance steps over the preset
+          bias (`Quality::distance_mip_steps`, thresholds riding the distance
+          budget, tracked per variant from its nearest material user), so far
+          walls stream coarser while near ones stay sharp. Grading LUTs share
+          one depth-stacked 3D atlas (`post::LutAtlas`, paged in the finish
+          shader; a new grid size rebuilds it), and authored cloud noise
+          shares one staging buffer (`clouds::NoiseStaging` over
+          `pipeline::pack_volume_atlas`). The native UI camera now composites
+          under HDR too: the world's tone curve stays on the scaled scene
+          while the encode moves onto the UI camera, so the HUD is encoded at
+          paper white at full resolution.
+        - Still open: GPU-side indirect-draw counters; a single-bind pass
+          sampling the stacked noise/LUT image.
         - Draw policy (numbers on the Phase 4 mechanisms, no new machinery):
           which meshes instance (vegetation, props, debris, decals) and at what
           density, indirect-draw batch membership, per-system draw-call and

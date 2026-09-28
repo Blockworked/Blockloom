@@ -30,6 +30,29 @@ impl Quality {
         }
     }
 
+    /// Extra mip levels shed for a texture whose nearest user stands
+    /// `distance_m` from the camera, on top of [`Self::texture_lod_bias`].
+    /// Thresholds ride the preset's distance budget, so a Low world sheds
+    /// far detail sooner. Returns 0, 1 or 2 whole levels: fractional clamps
+    /// blur without saving bandwidth.
+    pub fn distance_mip_steps(distance_m: f32, distance_budget: f32) -> f32 {
+        if !distance_m.is_finite() || distance_m < 0.0 {
+            return 0.0;
+        }
+        let budget = if distance_budget.is_finite() && distance_budget > 0.0 {
+            distance_budget
+        } else {
+            1.0
+        };
+        if distance_m >= 110.0 * budget {
+            2.0
+        } else if distance_m >= 40.0 * budget {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
     /// Anisotropy cap for streamed surface textures. Baked data textures
     /// (cloud noise, LUTs, lens dirt) never pass through streaming.
     pub fn anisotropy_cap(self) -> u8 {
@@ -294,6 +317,22 @@ mod tests {
         assert!(Quality::Low.anisotropy_cap() < Quality::Medium.anisotropy_cap());
         assert!(Quality::Medium.anisotropy_cap() < Quality::High.anisotropy_cap());
         assert!(Quality::High.anisotropy_cap() < Quality::Ultra.anisotropy_cap());
+    }
+
+    #[test]
+    fn distance_mips_shed_far_textures_first() {
+        assert_eq!(Quality::distance_mip_steps(10.0, 1.0), 0.0);
+        assert_eq!(Quality::distance_mip_steps(39.9, 1.0), 0.0);
+        assert_eq!(Quality::distance_mip_steps(40.0, 1.0), 1.0);
+        assert_eq!(Quality::distance_mip_steps(109.9, 1.0), 1.0);
+        assert_eq!(Quality::distance_mip_steps(110.0, 1.0), 2.0);
+        // Thresholds ride the distance budget: Low (0.5) sheds sooner.
+        assert_eq!(Quality::distance_mip_steps(30.0, 0.5), 1.0);
+        assert_eq!(Quality::distance_mip_steps(60.0, 0.5), 2.0);
+        // Bad inputs never push mips coarser.
+        assert_eq!(Quality::distance_mip_steps(f32::NAN, 1.0), 0.0);
+        assert_eq!(Quality::distance_mip_steps(-5.0, 1.0), 0.0);
+        assert_eq!(Quality::distance_mip_steps(1000.0, f32::NAN), 2.0);
     }
 
     #[test]

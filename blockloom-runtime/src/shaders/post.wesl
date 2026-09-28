@@ -25,7 +25,9 @@ struct PostUniforms {
     gain: vec4<f32>,
     // contribution, texels a side, LUT on, HDR output
     lut: vec4<f32>,
+    // domain min, atlas page
     lut_min: vec4<f32>,
+    // domain max, atlas pages
     lut_max: vec4<f32>,
     // intensity, size in pixels, response, seed
     grain: vec4<f32>,
@@ -292,7 +294,9 @@ fn finish(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         let coord = clamp((to_srgb(c) - post.lut_min.xyz) / span, vec3<f32>(0.0), vec3<f32>(1.0));
         let n = post.lut.y;
         let texel = coord * (n - 1.0) / n + 0.5 / n;
-        let graded = textureSampleLevel(lut, linear_clamp, texel, 0.0).rgb;
+        // The atlas stacks LUT pages in depth: this page's slab.
+        let slab = (post.lut_min.w + texel.z) / max(post.lut_max.w, 1.0);
+        let graded = textureSampleLevel(lut, linear_clamp, vec3<f32>(texel.xy, slab), 0.0).rgb;
         c = mix(c, to_linear(graded), post.lut.x);
     }
     if post.grain.x > 0.0 {

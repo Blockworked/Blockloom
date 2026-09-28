@@ -248,11 +248,12 @@ impl RenderCache {
         Some(handle)
     }
 
-    /// Coarser meshes for the round primitives; boxes, planes and model
-    /// placeholders get a cull-only level, so distant props still shed
-    /// their draw under the props throttle instead of never thinning out.
-    /// One level never swaps meshes; while visible the prop still merges,
-    /// and once culled batching leaves it out of merges entirely.
+    /// Spheres and capsules swap to coarser meshes at range; boxes and
+    /// planes get a cull-only level. A model placeholder gets a full level
+    /// and a simplified level, so a distant prop first draws its decimated
+    /// scene (`model::sync_model_lod`) and only then leaves the view under
+    /// the props throttle instead of never thinning out. Cull-only levels never swap meshes; while visible the prop still
+    /// merges, and once culled batching leaves it out of merges entirely.
     pub fn lod(
         &mut self,
         visual: &Visual,
@@ -263,12 +264,22 @@ impl RenderCache {
         // at 70 degrees FOV hits it around 70 m out; the props throttle
         // shrinks the measured size first, so pressure culls closer in.
         const PROP_CULL_SCREEN: f32 = 0.01;
+        if let Visual::Model { scale, .. } = visual {
+            let cull_radius = Vec3::from(*scale).length() * 0.5;
+            if cull_radius > 0.0 {
+                return Some(
+                    crate::culling::LodGroup::new(cull_radius)
+                        .level(crate::model::SIMPLIFY_SCREEN, None)
+                        .level(PROP_CULL_SCREEN, None),
+                );
+            }
+            return None;
+        }
         let cull_radius = match visual {
             Visual::Cuboid { size, .. } => Vec3::from(*size).length() * 0.5,
             Visual::Plane { size, .. } => {
                 Vec3::new(size[0], crate::dim3::PLANE_THICKNESS, size[1]).length() * 0.5
             }
-            Visual::Model { scale, .. } => Vec3::from(*scale).length() * 0.5,
             _ => 0.0,
         };
         if cull_radius > 0.0 {
@@ -424,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    fn boxes_planes_and_models_get_cull_only_lods() {
+    fn boxes_planes_get_cull_only_lods_models_get_a_simplified_level() {
         let mut cache = RenderCache::default();
         let mut meshes = Assets::<Mesh>::default();
         let high = meshes.add(Mesh::new(
@@ -440,12 +451,6 @@ mod tests {
                 color: "#fff".into(),
                 size: [4.0, 4.0],
             },
-            Visual::Model {
-                path: "box.glb".into(),
-                tint: "#fff".into(),
-                scale: [1.0, 2.0, 3.0],
-                animation: String::new(),
-            },
         ] {
             let group = cache.lod(&visual, &high, &mut meshes).unwrap();
             assert_eq!(group.levels().len(), 1);
@@ -453,6 +458,21 @@ mod tests {
             assert_eq!(group.levels()[0].mesh, Some(high.clone()));
             assert!(group.levels()[0].min_screen > 0.0);
         }
+        // A model placeholder gets a full level plus a simplified one,
+        // so `sync_model_lod` thins the scene before it culls.
+        let model = Visual::Model {
+            path: "box.glb".into(),
+            tint: "#fff".into(),
+            scale: [1.0, 2.0, 3.0],
+            animation: String::new(),
+        };
+        let group = cache.lod(&model, &high, &mut meshes).unwrap();
+        assert_eq!(group.levels().len(), 2);
+        assert!(!group.swaps_meshes());
+        assert!(group.levels()[0].mesh.is_none());
+        assert_eq!(group.levels()[0].min_screen, crate::model::SIMPLIFY_SCREEN);
+        assert!(group.levels()[1].min_screen > 0.0);
+        assert!(group.levels()[1].min_screen < group.levels()[0].min_screen);
         let sphere = Visual::Sphere {
             color: "#fff".into(),
             radius: 1.0,

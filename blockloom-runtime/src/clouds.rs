@@ -49,22 +49,79 @@ struct CloudUniforms {
     previous_drift: Vec4,
 }
 /// An authored noise volume, as RGBA8 texels ready to upload.
+#[derive(Clone)]
 struct NoiseVolume {
     size: UVec3,
     bytes: Vec<u8>,
 }
+
+/// Authored noise pages sharing one staging allocation, laid out by
+/// [`pack_volume_atlas`]. Uploads still write one 3D texture per volume -
+/// a single-bind pass sampling the stacked image is the open follow-up -
+/// but the two files now load as one payload family with one lifetime, and
+/// the layout already describes where each page would sit in that image.
+#[derive(Clone)]
+struct NoiseStaging {
+    layout: blockloom_core::pipeline::volume::VolumeAtlasLayout,
+    bytes: Vec<u8>,
+    /// Which layout page each volume slot reads, when that slot is loaded.
+    page_of: [Option<usize>; 2],
+}
+
+impl NoiseStaging {
+    /// Packs the loaded slots back to back. `None` with no pages, so an
+    /// empty atlas never uploads.
+    fn build(slots: [&Option<NoiseVolume>; 2]) -> Option<Self> {
+        let mut sizes = Vec::new();
+        let mut page_of = [None, None];
+        for (slot, volume) in slots.iter().enumerate() {
+            if let Some(volume) = volume {
+                page_of[slot] = Some(sizes.len());
+                sizes.push([volume.size.x, volume.size.y, volume.size.z]);
+            }
+        }
+        if sizes.is_empty() {
+            return None;
+        }
+        let layout = blockloom_core::pipeline::volume::pack_volume_atlas(&sizes).ok()?;
+        let mut bytes = Vec::with_capacity(layout.total_texels as usize * 4);
+        for volume in slots.into_iter().flatten() {
+            bytes.extend_from_slice(&volume.bytes);
+        }
+        Some(Self {
+            layout,
+            bytes,
+            page_of,
+        })
+    }
+
+    /// This slot's page, if loaded: its native size plus its staging slice,
+    /// which uploads exactly like the old per-volume bytes did.
+    fn page(&self, slot: usize) -> Option<(UVec3, &[u8])> {
+        let index = self.page_of[slot]?;
+        let size = self.layout.pages[index].size;
+        let start = self.layout.page_offset(index) as usize * 4;
+        let len = (size[0] as usize * size[1] as usize * size[2] as usize) * 4;
+        Some((
+            UVec3::new(size[0], size[1], size[2]),
+            self.bytes.get(start..start + len)?,
+        ))
+    }
+}
 #[derive(Resource, Clone, Default)]
 struct CloudRender {
     uniforms: Option<CloudUniforms>,
-    /// Authored shape and detail volumes; `None` bakes from the seed.
-    volumes: [Option<std::sync::Arc<NoiseVolume>>; 2],
-    /// Bumped whenever `volumes` changes, so views re-upload.
+    /// Authored shape and detail pages in one staging buffer; `None` bakes
+    /// from the seed.
+    staging: Option<std::sync::Arc<NoiseStaging>>,
+    /// Bumped whenever `staging` changes, so views re-upload.
     generation: u32,
 }
 /// Which volume files are loaded, so they are read once per change.
 #[derive(Resource, Default)]
 struct LoadedVolumes {
     jobs: crate::streaming::CellTasks<usize, Result<NoiseVolume, String>>,
+    slots: [Option<NoiseVolume>; 2],
     key: Option<(Option<std::path::PathBuf>, String, String)>,
 }
 fn load_noise(dir: &std::path::Path, relative: &str) -> Result<NoiseVolume, String> {
@@ -105,7 +162,8 @@ fn load_volumes(
         for index in 0..2 {
             loaded.jobs.cancel(&mut cells, &index);
         }
-        render.volumes = [None, None];
+        loaded.slots = [None, None];
+        render.staging = None;
         render.generation = render.generation.wrapping_add(1);
         if let Some(dir) = &key.0 {
             for (index, path) in [&key.1, &key.2].into_iter().enumerate() {
@@ -126,7 +184,9 @@ fn load_volumes(
     for (index, result) in loaded.jobs.poll(&mut cells) {
         match result {
             Ok(volume) => {
-                render.volumes[index] = Some(std::sync::Arc::new(volume));
+                loaded.slots[index] = Some(volume);
+                render.staging = NoiseStaging::build([&loaded.slots[0], &loaded.slots[1]])
+                    .map(std::sync::Arc::new);
                 render.generation = render.generation.wrapping_add(1);
             }
             Err(error) => crate::bridge::send(&blockloom_protocol::RuntimeMessage::Error {
@@ -490,26 +550,26 @@ fn texture(
 fn noise_texture(
     device: &RenderDevice,
     queue: &RenderQueue,
-    authored: &Option<std::sync::Arc<NoiseVolume>>,
+    page: Option<(UVec3, &[u8])>,
     baked: u32,
     label: &'static str,
 ) -> (Texture, TextureView) {
-    let Some(volume) = authored else {
+    let Some((size, bytes)) = page else {
         return texture(device, UVec3::splat(baked), true, label);
     };
-    let (t, v) = texture(device, volume.size, true, label);
+    let (t, v) = texture(device, size, true, label);
     queue.write_texture(
         t.as_image_copy(),
-        &volume.bytes,
+        bytes,
         TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(volume.size.x * 4),
-            rows_per_image: Some(volume.size.y),
+            bytes_per_row: Some(size.x * 4),
+            rows_per_image: Some(size.y),
         },
         Extent3d {
-            width: volume.size.x,
-            height: volume.size.y,
-            depth_or_array_layers: volume.size.z,
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: size.z,
         },
     );
     (t, v)
@@ -633,18 +693,30 @@ fn prepare(
                     shape: noise_texture(
                         &device,
                         &queue,
-                        &render.volumes[0],
+                        render
+                            .staging
+                            .as_deref()
+                            .and_then(|staging| staging.page(0)),
                         128,
                         "working_cloud_shape",
                     ),
                     detail: noise_texture(
                         &device,
                         &queue,
-                        &render.volumes[1],
+                        render
+                            .staging
+                            .as_deref()
+                            .and_then(|staging| staging.page(1)),
                         32,
                         "working_cloud_detail",
                     ),
-                    bake: render.volumes.each_ref().map(Option::is_none),
+                    bake: [0, 1].map(|slot| {
+                        render
+                            .staging
+                            .as_deref()
+                            .and_then(|staging| staging.page(slot))
+                            .is_none()
+                    }),
                     generation: render.generation,
                     baked: AtomicBool::new(false),
                     drawn: AtomicBool::new(false),
@@ -919,6 +991,44 @@ mod tests {
     #[test]
     fn uniform_layout() {
         assert_eq!(CloudUniforms::min_size().get(), 128 + 19 * 16);
+    }
+
+    fn noise_volume(size: u32, fill: u8) -> NoiseVolume {
+        NoiseVolume {
+            size: UVec3::splat(size),
+            bytes: vec![fill; size as usize * size as usize * size as usize * 4],
+        }
+    }
+
+    #[test]
+    fn authored_volumes_share_one_staging_buffer() {
+        assert!(NoiseStaging::build([&None, &None]).is_none());
+        // One page is the identity: the upload reads its own bytes back.
+        let shape = noise_volume(4, 7);
+        let staging = NoiseStaging::build([&Some(shape), &None]).unwrap();
+        assert_eq!(staging.page_of, [Some(0), None]);
+        let (size, bytes) = staging.page(0).unwrap();
+        assert_eq!(size, UVec3::splat(4));
+        assert!(bytes.iter().all(|byte| *byte == 7));
+        assert!(staging.page(1).is_none());
+        // Two pages pack back to back with the layout's offsets.
+        let detail = noise_volume(2, 9);
+        let both = NoiseStaging::build([&Some(noise_volume(4, 7)), &Some(detail)]).unwrap();
+        assert_eq!(both.layout.atlas, [4, 4, 6]);
+        let (_, shape_bytes) = both.page(0).unwrap();
+        let (detail_size, detail_bytes) = both.page(1).unwrap();
+        assert_eq!(detail_size, UVec3::splat(2));
+        assert_eq!(shape_bytes.len(), 4 * 4 * 4 * 4);
+        assert_eq!(detail_bytes.len(), 2 * 2 * 2 * 4);
+        assert!(shape_bytes.iter().all(|byte| *byte == 7));
+        assert!(detail_bytes.iter().all(|byte| *byte == 9));
+        // The second page starts where the first ends.
+        let offset = both.layout.page_offset(1) as usize * 4;
+        assert_eq!(offset, shape_bytes.len());
+        assert_eq!(
+            &both.bytes[offset..offset + detail_bytes.len()],
+            detail_bytes
+        );
     }
 }
 

@@ -69,8 +69,15 @@ pub fn register(app: &mut App) {
     app.add_plugins(MaterialPlugin::<GraphMaterial3d>::default());
     app.add_plugins(MaterialPlugin::<BoxMaterial>::default());
     app.init_resource::<TextureVariants>();
+    app.init_resource::<TextureDistances>();
     app.init_resource::<SurfaceGlobals>();
-    app.add_systems(Update, (sync_texture_variants, update_surface_globals));
+    app.add_systems(
+        Update,
+        (
+            (track_texture_distances, sync_texture_variants).chain(),
+            update_surface_globals,
+        ),
+    );
 }
 
 #[derive(Resource, Default)]
@@ -78,6 +85,9 @@ struct TextureVariants {
     variants: HashMap<AssetId<Image>, TextureVariant>,
     applied_bias: f32,
     applied_aniso: u8,
+    /// Total `lod_min_clamp` already written per variant, so a texture whose
+    /// camera distance moved re-uploads while a still one costs nothing.
+    applied_total: HashMap<AssetId<Image>, f32>,
 }
 
 struct TextureVariant {
@@ -85,6 +95,84 @@ struct TextureVariant {
     sampler: TextureSampler,
     anisotropy: u8,
     srgb: bool,
+    /// Nearest world-space distance to the camera, in metres. Zero until
+    /// the tracker runs, which reads as near.
+    distance_m: f32,
+}
+
+/// Nearest camera distance per streamed texture variant, in metres. Written
+/// by [`track_texture_distances`] from the actors using each texture, read
+/// by [`sync_texture_variants`] as extra mip levels over the preset bias.
+#[derive(Resource, Default)]
+pub struct TextureDistances {
+    nearest: HashMap<AssetId<Image>, f32>,
+}
+
+fn texture_handles(material: &StandardMaterial) -> [Option<Handle<Image>>; 3] {
+    [
+        material.base_color_texture.clone(),
+        material.normal_map_texture.clone(),
+        material.metallic_roughness_texture.clone(),
+    ]
+}
+
+/// Records each streamed texture's nearest user: the closest actor whose
+/// material names that variant. Cleared every frame, so a texture nobody
+/// draws reads as near rather than keeping a stale far bias.
+#[allow(clippy::too_many_arguments)]
+fn track_texture_distances(
+    variants: Res<TextureVariants>,
+    mut distances: ResMut<TextureDistances>,
+    cameras: Query<(&Camera, &GlobalTransform), With<crate::world::WorldCamera>>,
+    standards: Query<(&GlobalTransform, &MeshMaterial3d<StandardMaterial>)>,
+    boxes: Query<(&GlobalTransform, &MeshMaterial3d<BoxMaterial>)>,
+    standard_materials: Res<Assets<StandardMaterial>>,
+    box_materials: Res<Assets<BoxMaterial>>,
+) {
+    distances.nearest.clear();
+    let Some(camera_at) = cameras
+        .iter()
+        .find(|(camera, _)| camera.is_active)
+        .map(|(_, at)| at.translation())
+    else {
+        return;
+    };
+    let mut note = |id: &AssetId<Image>, at: Vec3| {
+        if !variants.variants.contains_key(id) {
+            return;
+        }
+        let distance = camera_at.distance(at);
+        distances
+            .nearest
+            .entry(*id)
+            .and_modify(|nearest| *nearest = nearest.min(distance))
+            .or_insert(distance);
+    };
+    for (at, material) in &standards {
+        let Some(material) = standard_materials.get(&material.0) else {
+            continue;
+        };
+        for handle in texture_handles(material).iter().flatten() {
+            note(&handle.id(), at.translation());
+        }
+    }
+    for (at, material) in &boxes {
+        let Some(material) = box_materials.get(&material.0) else {
+            continue;
+        };
+        let mut handles = texture_handles(&material.base).to_vec();
+        let extension = &material.extension;
+        handles.extend([
+            extension.albedo.clone(),
+            extension.normal.clone(),
+            extension.roughness.clone(),
+            extension.macro_map.clone(),
+            extension.detail_map.clone(),
+        ]);
+        for handle in handles.into_iter().flatten() {
+            note(&handle.id(), at.translation());
+        }
+    }
 }
 
 fn sync_texture_variants(
@@ -92,14 +180,19 @@ fn sync_texture_variants(
     mut images: ResMut<Assets<Image>>,
     mut events: MessageReader<AssetEvent<Image>>,
     scaling: Option<Res<crate::quality::Scaling>>,
+    distances: Res<TextureDistances>,
 ) {
     // One quality preset maps onto every streaming dial: the lod clamp
     // pushes mip selection coarser and the anisotropy cap trims bandwidth.
     // Baked data textures (cloud noise volumes, grading LUTs, lens dirt)
     // never register here, so they keep full resolution.
-    let (bias, cap) = scaling.map_or((0.0, u8::MAX), |s| {
+    let (bias, cap, distance_budget) = scaling.map_or((0.0, u8::MAX, 1.0), |s| {
         let q = s.controller.quality;
-        (q.texture_lod_bias(), q.anisotropy_cap())
+        (
+            q.texture_lod_bias(),
+            q.anisotropy_cap(),
+            s.budget().distance,
+        )
     });
     let streaming_moved = bias != variants.applied_bias || cap != variants.applied_aniso;
     if streaming_moved {
@@ -113,8 +206,28 @@ fn sync_texture_variants(
             _ => None,
         })
         .collect();
-    for (id, request) in &mut variants.variants {
-        if images.get(*id).is_some() && !streaming_moved && !changed.contains(&request.source.id())
+    let TextureVariants {
+        variants,
+        applied_total,
+        ..
+    } = &mut *variants;
+    for (id, request) in variants {
+        // A texture's floor is the preset bias plus whole mip steps for its
+        // nearest user: far walls stream coarser while near ones stay sharp.
+        let extra = distances
+            .nearest
+            .get(id)
+            .map(|distance| {
+                blockloom_core::quality::Quality::distance_mip_steps(*distance, distance_budget)
+            })
+            .unwrap_or(0.0);
+        request.distance_m = distances.nearest.get(id).copied().unwrap_or(0.0);
+        let total = bias + extra;
+        let applied = applied_total.get(id).copied();
+        if images.get(*id).is_some()
+            && !streaming_moved
+            && applied == Some(total)
+            && !changed.contains(&request.source.id())
         {
             continue;
         }
@@ -130,7 +243,7 @@ fn sync_texture_variants(
         descriptor.address_mode_u = mode;
         descriptor.address_mode_v = mode;
         descriptor.anisotropy_clamp = u16::from(request.anisotropy.min(cap).max(1));
-        descriptor.lod_min_clamp = bias;
+        descriptor.lod_min_clamp = total;
         image.sampler = ImageSampler::Descriptor(descriptor);
         image.texture_descriptor.format = if request.srgb {
             image.texture_descriptor.format.add_srgb_suffix()
@@ -138,6 +251,7 @@ fn sync_texture_variants(
             image.texture_descriptor.format.remove_srgb_suffix()
         };
         let _ = images.insert(*id, image);
+        applied_total.insert(*id, total);
     }
 }
 
@@ -797,6 +911,7 @@ pub fn load_surface_image(
                 sampler,
                 anisotropy,
                 srgb,
+                distance_m: 0.0,
             },
         );
     });
@@ -1149,6 +1264,7 @@ fn position_world_to_clip(p: vec3<f32>) -> vec4<f32> { return vec4<f32>(p, 1.0);
     fn quality_streaming_clamps_mips_and_anisotropy() {
         let mut app = App::new();
         app.init_resource::<TextureVariants>()
+            .init_resource::<TextureDistances>()
             .init_resource::<Assets<Image>>()
             .init_resource::<crate::quality::Scaling>()
             .add_message::<AssetEvent<Image>>()
@@ -1169,6 +1285,7 @@ fn position_world_to_clip(p: vec3<f32>) -> vec4<f32> { return vec4<f32>(p, 1.0);
                     sampler: TextureSampler::Repeat,
                     anisotropy: 16,
                     srgb: true,
+                    distance_m: 0.0,
                 },
             );
         app.update();
@@ -1185,5 +1302,116 @@ fn position_world_to_clip(p: vec3<f32>) -> vec4<f32> { return vec4<f32>(p, 1.0);
         let descriptor = images.get(id).map(sampler_of).unwrap();
         assert_eq!(descriptor.lod_min_clamp, 2.0);
         assert_eq!(descriptor.anisotropy_clamp, 2);
+    }
+
+    #[test]
+    fn far_textures_stream_coarser_than_near_ones() {
+        let mut app = App::new();
+        app.init_resource::<TextureVariants>()
+            .init_resource::<TextureDistances>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<crate::quality::Scaling>()
+            .add_message::<AssetEvent<Image>>()
+            .add_systems(Update, sync_texture_variants);
+        let source = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(Image::default());
+        let mut ids = Vec::new();
+        for n in [3u64, 5u64] {
+            let handle = Handle::<Image>::from(bevy::asset::uuid::Uuid::from_u64_pair(n, n));
+            ids.push(handle.id());
+            app.world_mut()
+                .resource_mut::<TextureVariants>()
+                .variants
+                .insert(
+                    handle.id(),
+                    TextureVariant {
+                        source: source.clone(),
+                        sampler: TextureSampler::Clamp,
+                        anisotropy: 8,
+                        srgb: false,
+                        distance_m: 0.0,
+                    },
+                );
+        }
+        let (near, far) = (ids[0], ids[1]);
+        app.world_mut()
+            .resource_mut::<TextureDistances>()
+            .nearest
+            .extend([(near, 5.0), (far, 200.0)]);
+        app.update();
+        let images = app.world().resource::<Assets<Image>>();
+        assert_eq!(images.get(near).map(sampler_of).unwrap().lod_min_clamp, 0.0);
+        assert_eq!(images.get(far).map(sampler_of).unwrap().lod_min_clamp, 2.0);
+        // Moving closer streams the far texture back to full resolution.
+        app.world_mut()
+            .resource_mut::<TextureDistances>()
+            .nearest
+            .insert(far, 5.0);
+        app.update();
+        let images = app.world().resource::<Assets<Image>>();
+        assert_eq!(images.get(far).map(sampler_of).unwrap().lod_min_clamp, 0.0);
+    }
+
+    #[test]
+    fn the_tracker_records_each_textures_nearest_user() {
+        use crate::world::WorldCamera;
+        let mut app = App::new();
+        app.init_resource::<TextureVariants>()
+            .init_resource::<TextureDistances>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<BoxMaterial>>()
+            .add_systems(Update, track_texture_distances);
+        let variant = Handle::<Image>::from(bevy::asset::uuid::Uuid::from_u64_pair(7, 7));
+        app.world_mut()
+            .resource_mut::<TextureVariants>()
+            .variants
+            .insert(
+                variant.id(),
+                TextureVariant {
+                    source: variant.clone(),
+                    sampler: TextureSampler::Repeat,
+                    anisotropy: 8,
+                    srgb: true,
+                    distance_m: 0.0,
+                },
+            );
+        app.world_mut().spawn((
+            WorldCamera,
+            Camera::default(),
+            Camera3d::default(),
+            Transform::default(),
+        ));
+        let material = app
+            .world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial {
+                base_color_texture: Some(variant.clone()),
+                ..default()
+            });
+        app.world_mut().spawn((
+            GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 50.0)),
+            MeshMaterial3d(material),
+        ));
+        // A texture nobody names stays out of the map and reads as near.
+        let stray = Handle::<Image>::from(bevy::asset::uuid::Uuid::from_u64_pair(9, 9));
+        app.world_mut()
+            .resource_mut::<TextureVariants>()
+            .variants
+            .insert(
+                stray.id(),
+                TextureVariant {
+                    source: stray.clone(),
+                    sampler: TextureSampler::Repeat,
+                    anisotropy: 8,
+                    srgb: true,
+                    distance_m: 0.0,
+                },
+            );
+        app.update();
+        let distances = app.world().resource::<TextureDistances>();
+        assert_eq!(distances.nearest.get(&variant.id()), Some(&50.0));
+        assert!(!distances.nearest.contains_key(&stray.id()));
     }
 }

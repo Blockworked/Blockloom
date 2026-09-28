@@ -483,17 +483,25 @@ lake/river grids and ocean rings while keeping their full extent. Water floors
 count toward water costs and keep their meshes when only tessellation changes.
 Props have a local LOD-distance throttle too (`budget/props/distance_scale`),
 applied to every prop level. Spheres and capsules swap to coarser meshes and
-then leave the view far out; cuboids, planes and model placeholders carry a
+then leave the view far out; cuboids and planes carry a
 cull-only level, so visible ones still merge into batches while culled ones
-stay out of merges entirely. Loaded model scenes have no decimated meshes,
-so a culled group hides the whole `ModelChild` subtree instead
-(`model::sync_model_lod`), which sheds the scene's draws without a
-simplified level. If props stay over budget at the local
+stay out of merges entirely. Model placeholders carry a full level plus a
+simplified one: at mid range `model::sync_model_lod` swaps every mesh under
+the `ModelChild` subtree for a decimated copy (`model::simplify_mesh`, every
+fourth triangle, cached per mesh and cleared on file reload), and far out a
+culled group hides the subtree instead, which sheds the scene's draws. If props stay over budget at the local
 floor, shared preset feedback takes over. Draw groups serving more than one
 visible mesh count as `quality/instanced_draws`, with the absorbed meshes in
 `quality/batched_instances`. Texture streaming maps the preset onto surface
-samplers (a lod clamp plus an anisotropy cap, re-applied on quality change);
-baked noise, LUT and lens-dirt textures never register as variants.
+samplers (a lod clamp plus an anisotropy cap, re-applied on quality change),
+laid over per-texture distance steps (`Quality::distance_mip_steps`, tracked
+from each variant's nearest material user in `materials::track_texture_distances`):
+far walls stream coarser while near ones stay sharp. Baked data textures
+(cloud noise volumes, grading LUTs, lens dirt) never register as variants.
+Grading LUTs share one depth-stacked 3D atlas (`post::LutAtlas`, paged in the
+finish shader; a new grid size rebuilds it), and authored cloud noise shares
+one staging buffer (`clouds::NoiseStaging` over `pipeline::pack_volume_atlas`);
+a single-bind pass sampling the stacked image is still open.
 
 The main-world camera stays at native size for input. Extracted world-view targets
 scale before rendering and Bevy's spatial blit fills the output. Custom sub-viewports
@@ -502,9 +510,9 @@ with `--features dlss` (`just player-dlss`): `just dlss-sdk` fetches the pinned
 SDK once per clone (sparse, about 330MB under gitignored `third-party/dlss`;
 cloning it accepts NVIDIA's license), the justfile exports `DLSS_SDK`, and a
 Vulkan SDK plus clang complete the build (`VULKAN_SDK`, default `/usr` on
-Linux). The `Dlss` component carries the effective perf mode - the project's,
-or ray reconstruction's while Hybrid Solari lights the view - on perspective
-HDR world cameras and drives its own render resolution while the spatial
+Linux). The `Dlss` component carries the effective perf mode on perspective
+HDR world cameras - plain super resolution, or the ray-reconstruction
+variant while Hybrid Solari lights the view - and drives its own render resolution while the spatial
 `scale_views` stands down. Manual modes step down with the dynamic-resolution
 signal; `Auto` (the default) leaves the ratio to the SDK. Otherwise - no SDK
 build, no RTX, no Vulkan,
@@ -514,12 +522,13 @@ the feature exists and the adapter elsewhere, reports through the same
 `dlss_available` flag the reporters read, and says why once in the run log
 when a run asks for it. The redistributable (`nvngx_dlss` / `libnvidia-ngx-dlss`
 plus the `dlssd` twin and a license blurb) stages beside the player payload and
-ships beside each built game; without it the game falls back to TAA. With SDR scene scaling,
+ships beside each built game; without it the game falls back to TAA. With scene scaling,
 a separate unlit UI camera composites at native resolution after the scene blit,
 using premultiplied alpha and no world render layers. It follows the world output
-and owns `IsDefaultUiCamera` while active. HDR UI still shares the scene's internal
-resolution so it blends in linear light before encoding. Script rendering overrides
-end on a world rebuild.
+and owns `IsDefaultUiCamera` while active. Under HDR the world's tone curve stays
+on the scaled scene while the encode moves onto the UI camera, so the HUD is
+encoded at paper white at full resolution instead of blending in linear light.
+Script rendering overrides end on a world rebuild.
 
 `ssr.rs` traces only specular light into the shared half-size scratch target,
 then adds it to the scene with the depth-guided upsampler. Bevy still supplies
