@@ -944,7 +944,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         per-object toggle (Bevy's motion vectors have no per-mesh switch);
         auto-exposure, depth of field, motion blur, SSAO and SSR are 3D; the
         LUT is skipped under HDR output.
-  - [ ] Performance and scalability (whole-frame budgets for the stack above):
+  - [x] Performance and scalability (whole-frame budgets for the stack above):
         - Implemented: shared Low/Medium/High/Ultra settings and hysteretic
           frame-time auto-drop, dynamic spatial scaling and 3D TAA fallback,
           editor controls, blocks/scripts/reporters and quality-drop events.
@@ -1058,24 +1058,45 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           `multidraw_sets`, `transparent_draws` and the `gpu` flag beside the
           CPU's `quality/estimated_mesh_draws`, and rebuilds clear the counts
           with the rest. 2D, shadow, prepass and probe views stay out.
-        - Draw policy (numbers on the Phase 4 mechanisms, no new machinery):
+        - [x] Draw policy (numbers on the Phase 4 mechanisms, no new machinery):
           which meshes instance (vegetation, props, debris, decals) and at what
           density, indirect-draw batch membership, per-system draw-call and
           triangle budgets surfaced in the profiler. A system over budget loses
           density or distance before it loses features.
-        - LOD and throttle policy (thresholds, not selectors): screen-size and
+          Done: per-system draw/triangle budgets (`Quality::budget`) with live
+          `estimated_draws`/`draw_budget` and `budget/<system>/...` profiler
+          rows; sustained local throttles shrink density/distance before the
+          shared preset drops; the render world counts binned phases into
+          `indirect/*` with a CPU membership mirror.
+        - [x] LOD and throttle policy (thresholds, not selectors): screen-size and
           distance cutoffs for terrain chunks, trees, water tiles and VFX, cloud
           step counts by distance and weather weight, probe and shadow update
           throttling (staggered refresh, frozen static probes, cascade shrinking).
-        - Content streaming (payloads on the Phase 4 cell system, not a second
+          Done: terrain pixel-error LOD, prop/model LOD distance throttles,
+          water tessellation throttle, particle/shard density throttles, cloud
+          march steps capped by preset (`capped_quality`, like the fog grid
+          cap), probe captures admitted under a per-preset concurrent cap with
+          staggered refresh phases, shadow distance shrunk and map size capped
+          by the distance/shadow budgets.
+        - [x] Content streaming (payloads on the Phase 4 cell system, not a second
           one): terrain chunk data, noise volumes, HDRI mips and probe captures
           register as streamable payloads with per-type priority and eviction
           policy. No new hysteresis or prewarm logic here.
-        - Resolution scaling: dynamic resolution driven by frame-time feedback,
+          Done: terrain builds, grass, scatter, tile rooms, batch merges, cloud
+          noise bakes and HDRI/probe captures all arrive as `CellTasks`
+          payloads with per-type limits and nearest-first admission on the one
+          `StreamingCells` hysteresis; static bakes stay resident under
+          `GLOBAL_CELL` until their key changes.
+        - [x] Resolution scaling: dynamic resolution driven by frame-time feedback,
           spatial upscaler plus temporal anti-aliasing path, half-res volumetrics,
           fog and SSR with bilateral upsample, reflection and shadow resolution
           budgets per quality preset.
-        - DLSS (Bevy `dlss` path on NVIDIA RTX): configurable mode (Auto, DLAA,
+          Done: hysteretic frame-time controller drives `scale_views` (spatial)
+          plus TAA, the UI recomposites natively after the scaled scene, clouds
+          march half-res with bilateral upsample, fog resolves at its grid and
+          SSR traces half-res through the shared upsampler, reflections and
+          shadows follow the `reflection`/`shadow`/`distance` budgets.
+        - [x] DLSS (Bevy `dlss` path on NVIDIA RTX): configurable mode (Auto, DLAA,
           Quality, Balanced, Performance, Ultra Performance) plus sharpness
           through the existing CAS dial; manual modes step down with the
           dynamic-resolution signal while `Auto` leaves the ratio to the SDK.
@@ -1085,12 +1106,24 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           spatial to spatial-only, per-platform toggle (off on WASM and weak
           targets), editor override with a warning when unavailable. Shares the
           jittered-camera and motion-vector plumbing with the TAA path.
-        - Memory: texture streaming with distance-based mip bias, BC/BC6H compression
+          Done: `Dlss` component behind the `dlss` cargo feature with SDK probe
+          plus warn-once fallback, effective mode riding the resolution signal,
+          ray reconstruction on Hybrid, redistributable staged beside players
+          and shipped in builds, Project Settings and `set quality` rows.
+        - [x] Memory: texture streaming with distance-based mip bias, BC/BC6H compression
           defaults, noise and LUT atlasing, pool caps for particles/decals/shards
           with LRU steal. One quality preset maps onto every dial above, plus an
           auto-drop rule shared with the editor scaling panel.
-        - Blocks and scripts: `set quality/resolution scale/upscaler/DLSS mode to`, reporters
+          Done: preset lod bias plus anisotropy caps with per-texture distance
+          steps, BC6H sky/probe bakes, stacked cloud-noise and grading-LUT
+          atlases, bounded particle/decal/shard pools with visibility-based
+          eviction, and one auto-drop rule in Project Settings driving all of
+          it.
+        - [x] Blocks and scripts: `set quality/resolution scale/upscaler/DLSS mode to`, reporters
           `frame time`, `draw calls`, `current quality`, `is DLSS available?`, event `when quality drops`.
+          Done: `SetRenderSetting` (Quality, ResolutionScale, Upscaler,
+          DlssMode) in QML, VM, codegen and scripts, the four reporters sampled
+          on the fixed tick, and `WhenQualityDrops` fired by the controller.
   - [ ] Time-of-day and weather director (the thing that makes it shippable):
         - 24h curve editor: tracks for sun azimuth/elevation, moon azimuth/elevation,
           exposure EV (the default writer of `Environment.exposure`; wins over post

@@ -316,12 +316,19 @@ fn resolve(
     wind: Res<WindField>,
     engine: NonSend<Engine>,
     moon: Option<Res<crate::space::MoonState>>,
+    scaling: Option<Res<crate::quality::Scaling>>,
     mut render: ResMut<CloudRender>,
     mut sources: ResMut<crate::atmosphere::AtmosphereSources>,
     views: Query<(Entity, Has<CloudView>), With<WorldCamera>>,
 ) {
     let mut c = env.clouds.clone();
     c.normalize();
+    // The preset caps authored march quality the way the fog pass caps its
+    // grid: a Low world never marches Ultra steps.
+    if let Some(scaling) = scaling {
+        let capped = capped_quality(c.quality, scaling.controller.quality);
+        c.quality = capped;
+    }
     let on = c.enabled && c.coverage > 0.0 && c.density > 0.0;
     sources.cloud_cover = if on { c.coverage } else { 0.0 };
     render.uniforms = on.then(|| {
@@ -373,6 +380,26 @@ fn resolve(
         } else if !on && has {
             commands.entity(entity).remove::<CloudView>();
         }
+    }
+}
+
+/// The preset's cap on authored march quality, mirroring the fog grid cap:
+/// a Low world never marches Ultra steps.
+fn capped_quality(
+    authored: blockloom_core::clouds::CloudQuality,
+    preset: blockloom_core::quality::Quality,
+) -> blockloom_core::clouds::CloudQuality {
+    use blockloom_core::{clouds::CloudQuality, quality::Quality};
+    let cap = match preset {
+        Quality::Low => CloudQuality::Low,
+        Quality::Medium => CloudQuality::Medium,
+        Quality::High => CloudQuality::High,
+        Quality::Ultra => CloudQuality::Ultra,
+    };
+    if authored.steps().0 > cap.steps().0 {
+        cap
+    } else {
+        authored
     }
 }
 #[derive(Resource)]
@@ -1085,6 +1112,26 @@ mod tests {
             )
             .unwrap();
         }
+    }
+    #[test]
+    fn the_preset_caps_authored_march_quality() {
+        use blockloom_core::{clouds::CloudQuality, quality::Quality};
+        assert_eq!(
+            capped_quality(CloudQuality::Ultra, Quality::Low),
+            CloudQuality::Low
+        );
+        assert_eq!(
+            capped_quality(CloudQuality::Ultra, Quality::Medium),
+            CloudQuality::Medium
+        );
+        assert_eq!(
+            capped_quality(CloudQuality::Low, Quality::Ultra),
+            CloudQuality::Low
+        );
+        assert_eq!(
+            capped_quality(CloudQuality::Ultra, Quality::Ultra),
+            CloudQuality::Ultra
+        );
     }
     #[test]
     fn history_rejects_edits_and_fast_drift() {

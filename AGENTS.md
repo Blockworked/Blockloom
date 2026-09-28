@@ -550,6 +550,9 @@ viewports keep Bevy's full-size pass. The trace timing is `ssr_half`.
 Global HDRI/noise jobs use `GLOBAL_CELL`, remain part of warmup accounting across
 cell resets, and cancel when their content key changes. HDRI quality caps discard
 highest-resolution baked mips before GPU upload, retaining BC6H where supported.
+The preset caps authored volumetric quality too: fog grids step down to the
+preset's grid and cloud march steps step down to its `CloudQuality`
+(`clouds::capped_quality`), so a Low world never marches Ultra steps.
 
 ### GPU measurement
 
