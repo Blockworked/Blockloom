@@ -482,8 +482,12 @@ Water has its own sustained tessellation throttle, reported as
 lake/river grids and ocean rings while keeping their full extent. Water floors
 count toward water costs and keep their meshes when only tessellation changes.
 Props have a local LOD-distance throttle too (`budget/props/distance_scale`),
-applied to existing sphere/capsule levels. Props without LODs keep their geometry;
-if they stay over budget at the local floor, shared preset feedback takes over.
+applied to every prop level. Spheres and capsules swap to coarser meshes and
+then leave the view far out; cuboids, planes and model placeholders carry a
+cull-only level, so visible ones still merge into batches while culled ones
+stay out of merges entirely. Loaded model scenes have no simplified levels,
+so only their placeholder thins out. If props stay over budget at the local
+floor, shared preset feedback takes over.
 
 The main-world camera stays at native size for input. Extracted world-view targets
 scale before rendering and Bevy's spatial blit fills the output. Custom sub-viewports

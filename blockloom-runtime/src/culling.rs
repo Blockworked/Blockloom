@@ -67,6 +67,13 @@ impl LodGroup {
         self.current
     }
 
+    /// True once selection has pushed the group past its last level.
+    /// Batching reads this so a culled prop never joins a merge it would
+    /// still cost tris inside of.
+    pub fn is_culled(&self) -> bool {
+        !self.levels.is_empty() && self.current.is_none()
+    }
+
     pub fn swaps_meshes(&self) -> bool {
         self.levels
             .iter()
@@ -785,6 +792,68 @@ mod tests {
             GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -2.0));
         app.update();
         assert_eq!(app.world().get::<Mesh3d>(prop).unwrap().0, high);
+    }
+
+    #[test]
+    fn cull_only_boxes_leave_the_view_far_out_and_earlier_under_throttle() {
+        let mut app = App::new();
+        app.init_resource::<LodPolicy>()
+            .init_resource::<Culling>()
+            .init_resource::<crate::quality::Scaling>()
+            .add_systems(Update, select_lod);
+        app.world_mut().spawn((
+            WorldCamera,
+            Camera::default(),
+            GlobalTransform::default(),
+            Projection::Perspective(PerspectiveProjection {
+                fov: std::f32::consts::FRAC_PI_2,
+                ..default()
+            }),
+        ));
+        // A 2 m box bounds a 1.73 m sphere: visible at 5 m, gone past ~173 m.
+        let group = LodGroup::new(1.732).level(0.01, None);
+        assert!(!group.swaps_meshes());
+        let near = app
+            .world_mut()
+            .spawn((
+                GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -5.0)),
+                group.clone(),
+            ))
+            .id();
+        let far = app
+            .world_mut()
+            .spawn((
+                GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -200.0)),
+                group.clone(),
+            ))
+            .id();
+        let mid = app
+            .world_mut()
+            .spawn((
+                GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -100.0)),
+                group,
+            ))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<LodGroup>(near).unwrap().current(),
+            Some(0)
+        );
+        assert_eq!(app.world().get::<LodGroup>(far).unwrap().current(), None);
+        assert_eq!(
+            app.world().get::<LodGroup>(mid).unwrap().current(),
+            Some(0)
+        );
+        app.world_mut()
+            .resource_mut::<crate::quality::Scaling>()
+            .geometry
+            .factors[2] = 0.5;
+        app.update();
+        assert_eq!(
+            app.world().get::<LodGroup>(near).unwrap().current(),
+            Some(0)
+        );
+        assert_eq!(app.world().get::<LodGroup>(mid).unwrap().current(), None);
     }
 
     #[test]

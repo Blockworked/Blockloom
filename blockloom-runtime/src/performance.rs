@@ -248,13 +248,35 @@ impl RenderCache {
         Some(handle)
     }
 
-    /// Coarser levels for the round primitives; boxes and planes have none.
+    /// Coarser meshes for the round primitives; boxes, planes and model
+    /// placeholders get a cull-only level, so distant props still shed
+    /// their draw under the props throttle instead of never thinning out.
+    /// One level never swaps meshes; while visible the prop still merges,
+    /// and once culled batching leaves it out of merges entirely.
     pub fn lod(
         &mut self,
         visual: &Visual,
         high: &Handle<Mesh>,
         meshes: &mut Assets<Mesh>,
     ) -> Option<crate::culling::LodGroup> {
+        // Below this screen size a prop leaves the main view. A 1 m box
+        // at 70 degrees FOV hits it around 70 m out; the props throttle
+        // shrinks the measured size first, so pressure culls closer in.
+        const PROP_CULL_SCREEN: f32 = 0.01;
+        let cull_radius = match visual {
+            Visual::Cuboid { size, .. } => Vec3::from(*size).length() * 0.5,
+            Visual::Plane { size, .. } => {
+                Vec3::new(size[0], crate::dim3::PLANE_THICKNESS, size[1]).length() * 0.5
+            }
+            Visual::Model { scale, .. } => Vec3::from(*scale).length() * 0.5,
+            _ => 0.0,
+        };
+        if cull_radius > 0.0 {
+            return Some(
+                crate::culling::LodGroup::new(cull_radius)
+                    .level(PROP_CULL_SCREEN, Some(high.clone())),
+            );
+        }
         let key = MeshKey::of(visual)?;
         let (radius, make): (f32, fn(&Visual, u8) -> Mesh) = match visual {
             Visual::Sphere { radius, .. } => (*radius, |visual, level| {
@@ -288,7 +310,7 @@ impl RenderCache {
             crate::culling::LodGroup::new(radius)
                 .level(0.25, Some(high.clone()))
                 .level(0.05, Some(medium))
-                .level(0.0, Some(low)),
+                .level(PROP_CULL_SCREEN, Some(low)),
         )
     }
 
@@ -399,5 +421,55 @@ mod tests {
         assert_eq!(split.accum_ms, 0.0);
         assert_eq!(split.frame_fixed_ms, 10.0);
         assert!((split.fixed_ms - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn boxes_planes_and_models_get_cull_only_lods() {
+        let mut cache = RenderCache::default();
+        let mut meshes = Assets::<Mesh>::default();
+        let high = meshes.add(Mesh::new(
+            bevy::render::render_resource::PrimitiveTopology::TriangleList,
+            bevy::asset::RenderAssetUsages::MAIN_WORLD,
+        ));
+        for visual in [
+            Visual::Cuboid {
+                color: "#fff".into(),
+                size: [2.0, 2.0, 2.0],
+            },
+            Visual::Plane {
+                color: "#fff".into(),
+                size: [4.0, 4.0],
+            },
+            Visual::Model {
+                path: "box.glb".into(),
+                tint: "#fff".into(),
+                scale: [1.0, 2.0, 3.0],
+                animation: String::new(),
+            },
+        ] {
+            let group = cache.lod(&visual, &high, &mut meshes).unwrap();
+            assert_eq!(group.levels().len(), 1);
+            assert!(!group.swaps_meshes());
+            assert_eq!(group.levels()[0].mesh, Some(high.clone()));
+            assert!(group.levels()[0].min_screen > 0.0);
+        }
+        let sphere = Visual::Sphere {
+            color: "#fff".into(),
+            radius: 1.0,
+        };
+        let group = cache.lod(&sphere, &high, &mut meshes).unwrap();
+        assert_eq!(group.levels().len(), 3);
+        assert!(group.swaps_meshes());
+        assert!(group.levels().last().unwrap().min_screen > 0.0);
+        assert!(cache
+            .lod(
+                &Visual::Rect {
+                    color: "#fff".into(),
+                    size: [1.0, 1.0]
+                },
+                &high,
+                &mut meshes
+            )
+            .is_none());
     }
 }

@@ -502,8 +502,10 @@ pub fn batch_meshes(
     let batches = &mut *batches;
     let mut candidates = Vec::new();
     for (entity, mesh, inst, boxed, slot, transform, visible, body, lod) in &actors {
-        // A merged mesh can't change level, so LOD'd actors stay instanced.
-        if !visible.get() || lod.is_some_and(|lod| lod.swaps_meshes()) {
+        // A merged mesh can't change level, so mesh-swapping actors stay
+        // instanced; a culled prop stays out entirely rather than costing
+        // tris inside a merge.
+        if !visible.get() || lod.is_some_and(|lod| lod.swaps_meshes() || lod.is_culled()) {
             continue;
         }
         let surface = match (inst, boxed) {
