@@ -945,185 +945,50 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         auto-exposure, depth of field, motion blur, SSAO and SSR are 3D; the
         LUT is skipped under HDR output.
   - [x] Performance and scalability (whole-frame budgets for the stack above):
-        - Implemented: shared Low/Medium/High/Ultra settings and hysteretic
-          frame-time auto-drop, dynamic spatial scaling and 3D TAA fallback,
-          editor controls, blocks/scripts/reporters and quality-drop events.
-          Presets cap vegetation density/distance, LOD bias, cloud/fog quality,
-          shadow maps/distance, reflections and concurrent staggered probes.
-          Profiler exposes per-system estimated mesh draws/triangles and budgets.
-          Particle, decal and debris pools use bounded visibility-based eviction.
-          Terrain/noise/HDRI payloads share bounded nearest-first cell tasks;
-          HDRI residency drops top mips with quality. Clouds adapt march counts
-          to distance and weather density.
-          Terrain and vegetation now have independent sustained geometry-budget
-          throttles under auto-drop: terrain/scatter LOD distance and grass
-          density/distance reduce before geometry requests a shared preset drop.
-          Reductions persist until a setting change or rebuild to avoid reload
-          churn; profiler rows expose both distance multipliers. Scattered model
-          parts count toward vegetation rather than props, and mesh triangle
-          counts survive render-only uploads through an asset-event cache.
-          VFX and debris now have independent sustained density throttles too:
-          particle allocations and shard caps shrink before a shared preset drop,
-          retaining visibility-based eviction. Fractured child meshes count as
-          debris, and the profiler reports local density and effective pool caps.
-          GPU particle readbacks are tied to their pool so a resized allocation
-          cannot reuse stale particle counts or events.
-          Water now has an independent sustained geometry throttle: lake/river
-          grids and ocean rings reduce tessellation before a shared preset drop,
-          preserving body extent and ocean reach. Presets also cap water detail;
-          floors count toward water budgets, and the profiler exposes the local
-          tessellation multiplier. Floor meshes survive detail-only changes.
-          Props now have an independent sustained LOD-distance throttle, reported
-          as budget/props/distance_scale. Spheres and capsules swap to coarser
-          meshes and then leave the view far out, while cuboids, planes and
-          model placeholders carry a cull-only level that keeps them batchable
-          yet still sheds distant draws; loaded model scenes keep no simplified
-          levels, so only their placeholder thins. Props still over budget at
-          the local floor force a shared preset drop.
-          Draw estimates use the active world camera's visible mesh list, so
-          LOD/occlusion removals and shadow-only meshes do not inflate feedback.
-          Rebuilds clear sampled costs from the previous world.
-          SDR game UI and speech bubbles now composite at native resolution
-          after the scaled scene, in both 2D and 3D. Transparent areas preserve
-          the scene; the UI camera follows output-target changes and stands
-          down at native scene scale, for custom viewports or without UI.
-          HDR retains the existing linear UI blend before output encoding.
-          SSR now traces specular light at half resolution and adds it through
-          the shared depth-guided bilateral upsampler, preserving scene detail
-          and environment/probe fallback light. It follows scene scaling,
-          handles odd target sizes, and retains Bevy's full-resolution path
-          while pipelines compile, for custom viewports or if the shader patch
-          cannot apply. The profiler times the trace as ssr_half.
-          DLSS runs Bevy's `dlss` path behind the `dlss` cargo feature
-          (`just player-dlss`): `just dlss-sdk` fetches the pinned SDK
-          (v310.7.0, sparse into gitignored `third-party/dlss`) once per
-          clone, the justfile exports `DLSS_SDK`, and a Vulkan SDK plus clang
-          complete the build. `DlssProjectId` before `DefaultPlugins`, the
-          `Dlss` component with the project's perf mode on perspective HDR
-          world cameras, its own render resolution while spatial `scale_views`
-          stands down, and `DlssSuperResolutionSupported` as the probe with a
-          warn-once fallback to TAA plus spatial in 3D and spatial in 2D and
-          on web. `player-dlss` stages the redistributable beside the player
-          payload and each built game carries it (`Build.dlss`), with the
-          Build log naming it; shippers add the section 9.5 license blurb as
-          DLSS_LICENSE.txt. Ray reconstruction replaces the SVGF denoiser
-          while Hybrid Solari lights the view (both SDK probes agreeing),
-          and the DLSS mode rides the dynamic-resolution signal - each 0.05
-          of scale below the ceiling steps a manual mode down towards
-          Performance, while `Auto` (the default) leaves the ratio to the SDK.
-          Texture streaming maps the preset onto surface samplers
-          (`Quality::texture_lod_bias`/`anisotropy_cap`, applied in
-          `sync_texture_variants` and re-applied on quality change): Low
-          starts two mips coarser with aniso 2, Medium one mip with aniso 4,
-          High/Ultra full with aniso 8/16. Baked data textures (cloud noise,
-          LUTs, lens dirt) never register as variants so they keep full
-          resolution. A culled LOD group now hides its loaded glTF scene too
-          (`model::sync_model_lod` runs after `select_lod`): the placeholder
-          levels drive the `ModelChild` subtree, so mid-range models draw
-          decimated meshes and distant ones hide like culled boxes. Draw accounting counts sharing exactly: groups serving
-          more than one visible mesh report as `quality/instanced_draws`
-          with the absorbed meshes in `quality/batched_instances`, so the
-          profiler tells one instanced draw covering ten props from ten
-          draws. Rebuilds clear the new counters with the rest.
-          Loaded models thin out before they cull: each placeholder carries
-          a full level plus a simplified one, and `sync_model_lod` swaps
-          every mesh under its scene for a decimated copy (every fourth
-          triangle, all vertex attributes thinned, cached per mesh and
-          cleared on file reload) at mid range, hiding the subtree far out.
-          Texture streaming lays per-texture distance steps over the preset
-          bias (`Quality::distance_mip_steps`, thresholds riding the distance
-          budget, tracked per variant from its nearest material user), so far
-          walls stream coarser while near ones stay sharp. Grading LUTs share
-          one depth-stacked 3D atlas (`post::LutAtlas`, paged in the finish
-          shader; a new grid size rebuilds it), and authored cloud noise
-          shares one stacked 3D atlas too (`clouds::noise_atlas_texture`):
-          shape under detail in one image, paged in the march shader through
-          `noise_shape`/`noise_detail`, so the march and the shadow pass bind
-          once. Baked pages render into scratch textures and copy into their
-          slab once. The native UI camera now composites
-          under HDR too: the world's tone curve stays on the scaled scene
-          while the encode moves onto the UI camera, so the HUD is encoded at
-          paper white at full resolution.
-          GPU-side indirect-draw counters are in (`indirect.rs`): the render
-          world counts the binned opaque, mask, deferred and transparent
-          phases for the world cameras after batching (multidraw sets as one
-          API call each, batchable bins and unbatchable entities as direct
-          draws, one command per set as a lower bound since a set's bins
-          expand on the GPU), and hands the totals to the main world over a
-          shared snapshot. Before the first render count the totals mirror
-          the CPU's visible-mesh grouping instead, which is also what keeps
-          the per-system `indirect/draws/<system>` membership rows filled,
-          since bins don't know which system a mesh belongs to. The profiler
-          shows `indirect/api_draws`, `commands`, `instances`,
-          `multidraw_sets`, `transparent_draws` and the `gpu` flag beside the
-          CPU's `quality/estimated_mesh_draws`, and rebuilds clear the counts
-          with the rest. 2D, shadow, prepass and probe views stay out.
-        - [x] Draw policy (numbers on the Phase 4 mechanisms, no new machinery):
-          which meshes instance (vegetation, props, debris, decals) and at what
-          density, indirect-draw batch membership, per-system draw-call and
-          triangle budgets surfaced in the profiler. A system over budget loses
-          density or distance before it loses features.
-          Done: per-system draw/triangle budgets (`Quality::budget`) with live
-          `estimated_draws`/`draw_budget` and `budget/<system>/...` profiler
-          rows; sustained local throttles shrink density/distance before the
-          shared preset drops; the render world counts binned phases into
-          `indirect/*` with a CPU membership mirror.
-        - [x] LOD and throttle policy (thresholds, not selectors): screen-size and
-          distance cutoffs for terrain chunks, trees, water tiles and VFX, cloud
-          step counts by distance and weather weight, probe and shadow update
-          throttling (staggered refresh, frozen static probes, cascade shrinking).
-          Done: terrain pixel-error LOD, prop/model LOD distance throttles,
-          water tessellation throttle, particle/shard density throttles, cloud
-          march steps capped by preset (`capped_quality`, like the fog grid
-          cap), probe captures admitted under a per-preset concurrent cap with
-          staggered refresh phases, shadow distance shrunk and map size capped
-          by the distance/shadow budgets.
-        - [x] Content streaming (payloads on the Phase 4 cell system, not a second
-          one): terrain chunk data, noise volumes, HDRI mips and probe captures
-          register as streamable payloads with per-type priority and eviction
-          policy. No new hysteresis or prewarm logic here.
-          Done: terrain builds, grass, scatter, tile rooms, batch merges, cloud
-          noise bakes and HDRI/probe captures all arrive as `CellTasks`
-          payloads with per-type limits and nearest-first admission on the one
-          `StreamingCells` hysteresis; static bakes stay resident under
+        - Done: shared Low/Medium/High/Ultra presets with hysteretic frame-time
+          auto-drop, spatial `scale_views` plus TAA, per-system draw/triangle
+          budgets (`Quality::budget`, `budget/<system>/...`), and quality blocks,
+          reporters and `when quality drops`. Local throttles shrink before a
+          shared preset drop: terrain/scatter LOD distance, grass density,
+          particle/shard caps, water tessellation, prop/model LOD distance
+          (spheres/capsules swap coarser then cull; cuboids/planes/models carry
+          a batchable cull-only level, models decimated at mid range). Draws
+          count the active world camera's visible meshes; rebuilds clear sampled
+          costs. Streaming stays on the one `StreamingCells`/`CellTasks`
+          hysteresis. UI recomposites natively (SDR) or at paper white (HDR).
+          SSR traces half-res through the shared upsampler (`ssr_half`).
+          Texture streaming is preset lod bias plus aniso caps with per-texture
+          distance steps; LUTs and cloud noise share stacked 3D atlases.
+          `indirect.rs` counts binned phases into `indirect/*` with a CPU
+          membership mirror. DLSS is Bevy's `dlss` path behind the `dlss`
+          feature (`just player-dlss`, SDK via `just dlss-sdk`), Auto default,
+          ray reconstruction on Hybrid, warn-once fallback to TAA/spatial.
+        - [x] Draw policy: per-system draw/triangle budgets with live
+          `estimated_draws`/`draw_budget` and `budget/<system>/...` rows; local
+          throttles shrink density/distance before the shared preset drops.
+        - [x] LOD and throttle policy: terrain pixel-error LOD, prop/model LOD
+          distance, water tessellation, particle/shard density, cloud/fog caps
+          by preset, staggered probe captures, shadow distance and map caps.
+        - [x] Content streaming: terrain, grass, scatter, tile rooms, batch
+          merges, cloud noise, HDRI/probe captures as `CellTasks` payloads on
+          the one `StreamingCells` hysteresis; static bakes stay under
           `GLOBAL_CELL` until their key changes.
-        - [x] Resolution scaling: dynamic resolution driven by frame-time feedback,
-          spatial upscaler plus temporal anti-aliasing path, half-res volumetrics,
-          fog and SSR with bilateral upsample, reflection and shadow resolution
-          budgets per quality preset.
-          Done: hysteretic frame-time controller drives `scale_views` (spatial)
-          plus TAA, the UI recomposites natively after the scaled scene, clouds
-          march half-res with bilateral upsample, fog resolves at its grid and
-          SSR traces half-res through the shared upsampler, reflections and
-          shadows follow the `reflection`/`shadow`/`distance` budgets.
-        - [x] DLSS (Bevy `dlss` path on NVIDIA RTX): configurable mode (Auto, DLAA,
-          Quality, Balanced, Performance, Ultra Performance) plus sharpness
-          through the existing CAS dial; manual modes step down with the
-          dynamic-resolution signal while `Auto` leaves the ratio to the SDK.
-          Ray reconstruction denoises Hybrid Solari output where both SDK
-          probes agree, standing the SVGF pass down. Vendor the DLSS
-          redistributable in player builds, probe capability at startup, fallback chain DLSS to TAA plus
-          spatial to spatial-only, per-platform toggle (off on WASM and weak
-          targets), editor override with a warning when unavailable. Shares the
-          jittered-camera and motion-vector plumbing with the TAA path.
-          Done: `Dlss` component behind the `dlss` cargo feature with SDK probe
-          plus warn-once fallback, effective mode riding the resolution signal,
-          ray reconstruction on Hybrid, redistributable staged beside players
-          and shipped in builds, Project Settings and `set quality` rows.
-        - [x] Memory: texture streaming with distance-based mip bias, BC/BC6H compression
-          defaults, noise and LUT atlasing, pool caps for particles/decals/shards
-          with LRU steal. One quality preset maps onto every dial above, plus an
-          auto-drop rule shared with the editor scaling panel.
-          Done: preset lod bias plus anisotropy caps with per-texture distance
-          steps, BC6H sky/probe bakes, stacked cloud-noise and grading-LUT
-          atlases, bounded particle/decal/shard pools with visibility-based
-          eviction, and one auto-drop rule in Project Settings driving all of
-          it.
-        - [x] Blocks and scripts: `set quality/resolution scale/upscaler/DLSS mode to`, reporters
-          `frame time`, `draw calls`, `current quality`, `is DLSS available?`, event `when quality drops`.
-          Done: `SetRenderSetting` (Quality, ResolutionScale, Upscaler,
-          DlssMode) in QML, VM, codegen and scripts, the four reporters sampled
-          on the fixed tick, and `WhenQualityDrops` fired by the controller.
+        - [x] Resolution scaling: frame-time controller drives `scale_views`
+          plus TAA with native UI recomposite; clouds march half-res, fog at
+          its grid, SSR half-res, reflections/shadows follow budgets.
+        - [x] DLSS (NVIDIA RTX, Bevy `dlss` path): Auto/DLAA/Quality/Balanced/
+          Performance/Ultra Performance plus CAS sharpness; manual modes step
+          down with the resolution signal; ray reconstruction on Hybrid;
+          redistributable staged beside players and shipped in builds; off on
+          WASM and weak targets.
+        - [x] Memory: preset lod bias plus aniso caps with distance steps, BC6H
+          sky/probe bakes, stacked noise/LUT atlases, bounded
+          particle/decal/shard pools with visibility-based eviction, one
+          auto-drop rule driving all of it.
+        - [x] Blocks and scripts: `set quality/resolution scale/upscaler/DLSS
+          mode to`, reporters `frame time`, `draw calls`, `current quality`,
+          `is DLSS available?`, event `when quality drops` (`SetRenderSetting`,
+          fixed-tick sampling).
   - [ ] Time-of-day and weather director (the thing that makes it shippable):
         - 24h curve editor: tracks for sun azimuth/elevation, moon azimuth/elevation,
           exposure EV (the default writer of `Environment.exposure`; wins over post
