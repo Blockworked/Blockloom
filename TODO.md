@@ -1036,13 +1036,28 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           walls stream coarser while near ones stay sharp. Grading LUTs share
           one depth-stacked 3D atlas (`post::LutAtlas`, paged in the finish
           shader; a new grid size rebuilds it), and authored cloud noise
-          shares one staging buffer (`clouds::NoiseStaging` over
-          `pipeline::pack_volume_atlas`). The native UI camera now composites
+          shares one stacked 3D atlas too (`clouds::noise_atlas_texture`):
+          shape under detail in one image, paged in the march shader through
+          `noise_shape`/`noise_detail`, so the march and the shadow pass bind
+          once. Baked pages render into scratch textures and copy into their
+          slab once. The native UI camera now composites
           under HDR too: the world's tone curve stays on the scaled scene
           while the encode moves onto the UI camera, so the HUD is encoded at
           paper white at full resolution.
-        - Still open: GPU-side indirect-draw counters; a single-bind pass
-          sampling the stacked noise/LUT image.
+          GPU-side indirect-draw counters are in (`indirect.rs`): the render
+          world counts the binned opaque, mask, deferred and transparent
+          phases for the world cameras after batching (multidraw sets as one
+          API call each, batchable bins and unbatchable entities as direct
+          draws, one command per set as a lower bound since a set's bins
+          expand on the GPU), and hands the totals to the main world over a
+          shared snapshot. Before the first render count the totals mirror
+          the CPU's visible-mesh grouping instead, which is also what keeps
+          the per-system `indirect/draws/<system>` membership rows filled,
+          since bins don't know which system a mesh belongs to. The profiler
+          shows `indirect/api_draws`, `commands`, `instances`,
+          `multidraw_sets`, `transparent_draws` and the `gpu` flag beside the
+          CPU's `quality/estimated_mesh_draws`, and rebuilds clear the counts
+          with the rest. 2D, shadow, prepass and probe views stay out.
         - Draw policy (numbers on the Phase 4 mechanisms, no new machinery):
           which meshes instance (vegetation, props, debris, decals) and at what
           density, indirect-draw batch membership, per-system draw-call and

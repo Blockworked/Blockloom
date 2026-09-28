@@ -1,9 +1,8 @@
 import blockloom::clouds::{CloudUniforms,density};
 @group(0) @binding(0) var<uniform> c: CloudUniforms;
-@group(0) @binding(1) var shape_tex: texture_3d<f32>;
-@group(0) @binding(2) var detail_tex: texture_3d<f32>;
-@group(0) @binding(3) var repeat: sampler;
-@group(0) @binding(4) var shadow_map: texture_storage_2d<rgba16float,write>;
+@group(0) @binding(1) var noise_tex: texture_3d<f32>;
+@group(0) @binding(2) var repeat: sampler;
+@group(0) @binding(3) var shadow_map: texture_storage_2d<rgba16float,write>;
 fn optical_depth(xz:vec2<f32>,light:vec4<f32>)->f32 {
     let sun=normalize(light.xyz);var optical=0.0;
     if sun.y>0.01 && c.shadow.y>0.0 && light.w>0.0 {
@@ -11,7 +10,7 @@ fn optical_depth(xz:vec2<f32>,light:vec4<f32>)->f32 {
         for(var i=0u;i<8u;i++){
             let y=c.layer.x+(f32(i)+0.5)*step;
             let p=vec3<f32>(xz.x,0.0,xz.y)+sun*y/sun.y;
-            optical+=density(p,c,shape_tex,detail_tex,repeat)*step/sun.y;
+            optical+=density(p,c,noise_tex,repeat)*step/sun.y;
         }
     }
     return exp(-optical);

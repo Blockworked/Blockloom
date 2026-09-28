@@ -1599,6 +1599,7 @@ fn project_with_headers(
         id: "p".to_string(),
         name: "differential".to_string(),
         icon: String::new(),
+        android: Default::default(),
         scenes: vec![scene],
         active_scene: "s1".to_string(),
         default_scene: "s1".to_string(),

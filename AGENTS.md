@@ -492,7 +492,14 @@ fourth triangle, cached per mesh and cleared on file reload), and far out a
 culled group hides the subtree instead, which sheds the scene's draws. If props stay over budget at the local
 floor, shared preset feedback takes over. Draw groups serving more than one
 visible mesh count as `quality/instanced_draws`, with the absorbed meshes in
-`quality/batched_instances`. Texture streaming maps the preset onto surface
+`quality/batched_instances`. The render world also counts what batching
+actually issued (`indirect.rs`): the world cameras' binned opaque, mask,
+deferred and transparent phases after batching, as `indirect/api_draws`,
+`commands`, `instances`, `multidraw_sets` and `transparent_draws` with a
+`gpu` flag saying the renderer has counted, plus per-system
+`indirect/draws/<system>` membership from the CPU's grouping, since bins
+don't know which system a mesh belongs to. Before the first render count
+the totals mirror that grouping instead. Texture streaming maps the preset onto surface
 samplers (a lod clamp plus an anisotropy cap, re-applied on quality change),
 laid over per-texture distance steps (`Quality::distance_mip_steps`, tracked
 from each variant's nearest material user in `materials::track_texture_distances`):
@@ -500,8 +507,11 @@ far walls stream coarser while near ones stay sharp. Baked data textures
 (cloud noise volumes, grading LUTs, lens dirt) never register as variants.
 Grading LUTs share one depth-stacked 3D atlas (`post::LutAtlas`, paged in the
 finish shader; a new grid size rebuilds it), and authored cloud noise shares
-one staging buffer (`clouds::NoiseStaging` over `pipeline::pack_volume_atlas`);
-a single-bind pass sampling the stacked image is still open.
+one stacked 3D atlas too (`clouds::noise_atlas_texture` over
+`pipeline::pack_volume_atlas` sizes): shape under detail in one image, paged
+in the march shader through `noise_shape`/`noise_detail`, so the march and
+the shadow pass bind once instead of once per volume. Baked pages render
+into scratch textures and copy into their slab once.
 
 The main-world camera stays at native size for input. Extracted world-view targets
 scale before rendering and Bevy's spatial blit fills the output. Custom sub-viewports

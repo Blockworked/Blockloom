@@ -423,10 +423,8 @@ pub fn build(
     if target.is_web() {
         return build_web(project, project_dir, target, player, parent);
     }
-    // APK assembly (template, manifest, signing) lands in a later step;
-    // refusing here beats shipping a desktop folder with an Android name.
     if target.is_android() {
-        return Err("Android APK assembly isn't implemented yet, so the game wasn't built. `android-status` reports what the toolchain still needs.".to_string());
+        return build_android(project, project_dir, target, player, parent, options);
     }
     let fast = options.fast;
     let shaders = check_shaders(project, project_dir)?;
@@ -638,6 +636,174 @@ fn build_web(
         // No DLSS in a browser: WebGPU has no SDK path.
         dlss: false,
     })
+}
+
+/// An Android build: the same game-folder staging desktop and web share,
+/// then APK assembly straight from the installed SDK build-tools (see
+/// `android`). `runtime_so` is the NDK cross-build of `blockloom-runtime`
+/// the caller resolved - the APK's `lib/<abi>/` entry everything runs
+/// through. Scripts and native logic ride beside it as more `.so` files;
+/// whoever calls this compiled them first, same as every other target.
+fn build_android(
+    project: &Project,
+    project_dir: &Path,
+    target: &'static Target,
+    runtime_so: &Path,
+    parent: &Path,
+    options: BuildOptions,
+) -> Result<Build, String> {
+    let config = android::load();
+    build_android_with_config(
+        project,
+        project_dir,
+        target,
+        runtime_so,
+        parent,
+        options,
+        &config,
+        &android::ensure_debug_keystore()?,
+    )
+}
+
+// Eight params because the test seam takes what production loads globally;
+// splitting the struct up further would just move the list.
+#[allow(clippy::too_many_arguments)]
+fn build_android_with_config(
+    project: &Project,
+    project_dir: &Path,
+    target: &'static Target,
+    runtime_so: &Path,
+    parent: &Path,
+    options: BuildOptions,
+    config: &android::AppConfig,
+    keystore: &Path,
+) -> Result<Build, String> {
+    let (ready, note) = android::readiness_for_config(config, target.triple);
+    if !ready {
+        return Err(format!("Can't build for {} yet: {note}", target.label));
+    }
+    if !runtime_so.is_file() {
+        return Err(format!(
+            "The runtime library {} is missing, so there is nothing to run.",
+            runtime_so.display()
+        ));
+    }
+    // Resolve the tools before staging anything: a missing binary stops
+    // the build now, not after minutes of baking.
+    let tools = android::apk_tools_for(config)?;
+
+    let shaders = check_shaders(project, project_dir)?;
+    let dir = parent.join(build_name(project, target));
+    clear_build_dir(&dir)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    std::fs::write(dir.join(BUILD_MARKER), target.triple)
+        .map_err(|error| format!("{}: {error}", dir.display()))?;
+
+    // The staged game folder becomes the APK's `assets/`, read through
+    // Bevy's Android asset reader rather than the disk.
+    let game = dir.join("assets");
+    std::fs::create_dir_all(&game).map_err(|e| format!("{}: {e}", game.display()))?;
+    let mut game_pack = GamePack::new(project.clone());
+    game_pack.hdr = false;
+    game_pack.write(&pack::pack_path(&game))?;
+
+    let assets = copy_assets(project_dir, &game)?;
+    let atlas = bake_sprite_atlas(project, project_dir, &game)?;
+    let sky = bake_sky(project, project_dir, &game)?;
+    copy_probes(project, project_dir, &game)?;
+    copy_terrain(project, project_dir, &game)?;
+    let native_libs = android_native_libs(project, project_dir, target, runtime_so, options.fast)?;
+
+    let manifest = android::render_manifest(&project.android, &project.name)?;
+    let icons = android::launcher_icons(project_dir, &project.icon)?;
+    let contents = android::ApkContents {
+        manifest,
+        icons,
+        assets_dir: game,
+        native_libs,
+    };
+    android::ensure_debug_keystore_at(keystore)?;
+    let apk_name = format!("{}.apk", project::folder_name(&project.name));
+    let binary = dir.join(&apk_name);
+    let mut report =
+        android::assemble_apk(&contents, &dir.join("apk-work"), &tools, keystore, &binary)?;
+    report.application_id = project.android.application_id_for(&project.name)?;
+    report.version_name = project.android.version_name_or_default();
+    report.version_code = project.android.version_code_or_default();
+
+    let archive = parent.join(format!("{}.zip", build_name(project, target)));
+    distribution::archive(&dir, &archive, &[])?;
+    Ok(Build {
+        dir,
+        binary,
+        archive,
+        size: report.size,
+        target: target.triple,
+        assets,
+        scripts: script_lib_count(project),
+        compiled: options.fast,
+        atlas,
+        shaders,
+        sky,
+        dlss: false,
+    })
+}
+
+/// Every script's prebuilt `.so` for `target`, runtime first: the exact
+/// files the APK packs under `lib/<abi>/`. A script nobody compiled for
+/// the target stops the build here, the way `copy_scripts` does.
+fn android_native_libs(
+    project: &Project,
+    project_dir: &Path,
+    target: &Target,
+    runtime_so: &Path,
+    fast: bool,
+) -> Result<Vec<(String, PathBuf)>, String> {
+    let abi = android::abi(target.triple)
+        .ok_or_else(|| format!("{} isn't an Android target", target.triple))?
+        .to_string();
+    let triple = Some(target.triple);
+    let mut libs = vec![(abi.clone(), runtime_so.to_path_buf())];
+    for relative in script_paths(project) {
+        let library = script::library_path_for(project_dir, relative, triple);
+        if !library.is_file() {
+            return Err(format!(
+                "{relative} hasn't been built for {}, so the game would ship without it",
+                target.label
+            ));
+        }
+        libs.push((abi.clone(), library));
+    }
+    if fast {
+        let logic = crate::codegen::library_path_for(project_dir, triple);
+        if !logic.is_file() {
+            return Err(format!(
+                "the blocks haven't been compiled for {}, so a fast build can't be made",
+                target.label
+            ));
+        }
+        libs.push((abi, logic));
+    }
+    Ok(libs)
+}
+
+/// The distinct script sources the project's actors name, like
+/// `copy_scripts` collects them.
+fn script_paths(project: &Project) -> Vec<&str> {
+    let mut paths: Vec<&str> = project
+        .scenes
+        .iter()
+        .flat_map(|scene| scene.actors.iter())
+        .filter_map(|actor| actor.components.script())
+        .collect();
+    paths.sort_unstable();
+    paths.dedup();
+    paths
+}
+
+/// How many script libraries an Android build carries, for the report.
+fn script_lib_count(project: &Project) -> usize {
+    script_paths(project).len()
 }
 
 /// A byte count the way the Build dialog says it.
@@ -1741,20 +1907,194 @@ mod tests {
     }
 
     #[test]
-    fn an_android_build_stops_with_a_clear_error_until_apk_assembly_lands() {
-        let root = temp("android-build");
+    fn an_android_build_without_a_toolchain_says_so() {
+        let root = temp("android-toolchain");
         let (project, project_dir, player) = a_project(&root);
         let target = target(android::ARM64_TRIPLE).unwrap();
-        let error = build(
+        // An empty SDK row is never ready, on any machine.
+        let config = android::AppConfig {
+            sdk_path: Some(root.join("no-sdk-here")),
+            ndk_path: None,
+            licenses_accepted: false,
+        };
+        let error = build_android_with_config(
             &project,
             &project_dir,
             target,
             &player,
             &root.join("out"),
             BuildOptions::default(),
+            &config,
+            &root.join("debug.keystore"),
         )
         .unwrap_err();
-        assert!(error.contains("APK"), "{error}");
+        assert!(
+            error.contains("Can't build for Android (arm64) yet"),
+            "{error}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn android_native_libs_start_with_the_runtime_then_the_scripts() {
+        let root = temp("android-libs");
+        let (mut project, project_dir, _) = a_project(&root);
+        let target = target(android::ARM64_TRIPLE).unwrap();
+        let runtime = root.join("libblockloom_runtime.so");
+        std::fs::write(&runtime, b"fake-so").unwrap();
+
+        // No scripts: the runtime rides alone.
+        let libs = android_native_libs(&project, &project_dir, target, &runtime, false).unwrap();
+        assert_eq!(libs, vec![("arm64-v8a".to_string(), runtime.clone())]);
+
+        // A script nobody compiled for the target stops the build.
+        project.scenes[0].actors[0]
+            .components
+            .insert(crate::components::ActorComponent::Script {
+                path: "assets/scripts/player.rs".to_string(),
+            });
+        let error =
+            android_native_libs(&project, &project_dir, target, &runtime, false).unwrap_err();
+        assert!(
+            error.contains("hasn't been built for Android (arm64)"),
+            "{error}"
+        );
+
+        // Compiled (a stand-in file at the cross-build path), it rides along.
+        let library = crate::script::library_path_for(
+            &project_dir,
+            "assets/scripts/player.rs",
+            Some(target.triple),
+        );
+        std::fs::create_dir_all(library.parent().unwrap()).unwrap();
+        std::fs::write(&library, b"fake-script").unwrap();
+        let libs = android_native_libs(&project, &project_dir, target, &runtime, false).unwrap();
+        assert_eq!(
+            libs,
+            vec![
+                ("arm64-v8a".to_string(), runtime.clone()),
+                ("arm64-v8a".to_string(), library),
+            ]
+        );
+
+        // Fast asks for the logic library too.
+        let error =
+            android_native_libs(&project, &project_dir, target, &runtime, true).unwrap_err();
+        assert!(error.contains("haven't been compiled"), "{error}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A fabricated SDK tree with stub tools: aapt2 `compile` touches its
+    /// `-o`, `link` writes an empty zip there, zipalign/apksigner copy
+    /// input to output. Unix-only, like the assembly test it exercises.
+    #[cfg(unix)]
+    fn stub_apk_tools(root: &Path) -> (android::AppConfig, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let sdk = root.join("sdk");
+        let bin = sdk.join("build-tools").join(android::BUILD_TOOLS);
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(sdk.join("cmdline-tools/latest/bin")).unwrap();
+        std::fs::write(sdk.join("cmdline-tools/latest/bin/sdkmanager"), b"fake").unwrap();
+        std::fs::create_dir_all(sdk.join("platforms").join(android::PLATFORM)).unwrap();
+        std::fs::write(
+            sdk.join("platforms")
+                .join(android::PLATFORM)
+                .join("android.jar"),
+            b"fake",
+        )
+        .unwrap();
+        std::fs::create_dir_all(sdk.join("platform-tools")).unwrap();
+        std::fs::write(sdk.join("platform-tools").join("adb"), b"fake").unwrap();
+        let aapt2_body = "#!/bin/sh\nout=\"\"\nprev=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"-o\" ]; then out=\"$a\"; fi\n  prev=\"$a\"\ndone\nif [ \"$1\" = \"link\" ]; then\n  printf '\\120\\113\\005\\006\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000' > \"$out\"\nelse\n  touch \"$out\"\nfi\n";
+        let aapt2 = bin.join("aapt2");
+        std::fs::write(&aapt2, aapt2_body).unwrap();
+        std::fs::set_permissions(&aapt2, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let zipalign = bin.join("zipalign");
+        std::fs::write(&zipalign, "#!/bin/sh\ncp \"$3\" \"$4\"\n").unwrap();
+        std::fs::set_permissions(&zipalign, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let apksigner = bin.join("apksigner");
+        std::fs::write(
+            &apksigner,
+            "#!/bin/sh\nout=\"\"\nprev=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"--out\" ]; then out=\"$a\"; fi\n  prev=\"$a\"\ndone\nlast=\"\"\nfor a in \"$@\"; do last=\"$a\"; done\ncp \"$last\" \"$out\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&apksigner, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // A matching-major NDK with a linker wrapper for the probes.
+        let ndk_bin = sdk
+            .join("ndk/27.0.0/toolchains/llvm/prebuilt")
+            .join(android::host_tag())
+            .join("bin");
+        std::fs::create_dir_all(&ndk_bin).unwrap();
+        for name in [
+            format!("{}{}-clang", android::ARM64_TRIPLE, android::MIN_SDK),
+            "llvm-ar".to_string(),
+        ] {
+            std::fs::write(ndk_bin.join(name), b"fake").unwrap();
+        }
+        std::fs::write(
+            sdk.join("ndk/27.0.0/source.properties"),
+            b"Pkg.Revision = 27.0.0\n",
+        )
+        .unwrap();
+        let config = android::AppConfig {
+            sdk_path: Some(sdk),
+            ndk_path: None,
+            licenses_accepted: true,
+        };
+        (config, root.join("debug.keystore"))
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_android_build_stages_the_game_and_assembles_an_apk() {
+        if !android::jdk_status().ok
+            || !android::rust_target_status(android::ARM64_TRIPLE).ok
+            || android::keytool().is_err()
+        {
+            eprintln!("SKIP: needs JDK 25, the Android Rust std and keytool");
+            return;
+        }
+        let root = temp("android-apk");
+        let (project, project_dir, _) = a_project(&root);
+        let target = target(android::ARM64_TRIPLE).unwrap();
+        let (config, keystore) = stub_apk_tools(&root);
+        android::ensure_debug_keystore_at(&keystore).unwrap();
+        let runtime = root.join("libblockloom_runtime.so");
+        std::fs::write(&runtime, b"fake-so").unwrap();
+
+        let built = build_android_with_config(
+            &project,
+            &project_dir,
+            target,
+            &runtime,
+            &root.join("out"),
+            BuildOptions::default(),
+            &config,
+            &keystore,
+        )
+        .unwrap();
+
+        assert!(built.binary.is_file());
+        assert_eq!(built.binary.extension().unwrap().to_string_lossy(), "apk");
+        assert!(built.size > 0);
+        assert!(built.archive.is_file());
+        assert!(!built.compiled);
+        // The staging is real even though the stub link packed nothing:
+        // the game folder sits under the build dir as the APK's assets.
+        let staged = built.dir.join("assets");
+        assert!(pack::pack_path(&staged).is_file());
+        assert!(staged.join("assets/sprites/ball.png").is_file());
+        let pack = GamePack::read(&pack::pack_path(&staged)).unwrap();
+        assert_eq!(pack.title(), "Pond Game");
+        assert!(!pack.hdr);
+        // The stub link wrote an empty zip; the real injection added the .so.
+        let file = std::fs::File::open(&built.binary).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        assert!(
+            archive
+                .by_name("lib/arm64-v8a/blockloom_runtime.so")
+                .is_ok()
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

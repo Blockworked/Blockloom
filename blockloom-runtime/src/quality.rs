@@ -772,6 +772,7 @@ pub(crate) fn measure_draws(
     mut triangles_by_mesh: Local<std::collections::HashMap<AssetId<Mesh>, u64>>,
     mut mesh_events: MessageReader<AssetEvent<Mesh>>,
     mut scaling: ResMut<Scaling>,
+    indirect: Option<ResMut<crate::indirect::IndirectDrawCounters>>,
     meshes: Res<Assets<Mesh>>,
     materials: Res<Assets<StandardMaterial>>,
     cameras: Query<(&Camera, &VisibleEntities), With<WorldCamera>>,
@@ -885,6 +886,9 @@ pub(crate) fn measure_draws(
     scaling.batched_instances = meshes_seen.saturating_sub(groups.len() as u32);
     scaling.triangles = triangles;
     scaling.costs = costs;
+    if let Some(mut indirect) = indirect {
+        indirect.fill_membership(&groups);
+    }
 }
 
 fn triangle_count(mesh: &Mesh) -> Option<u64> {

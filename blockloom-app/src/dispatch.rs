@@ -102,6 +102,11 @@ impl Backend {
             "android_accept_licenses" => to_json(commands::android_accept_licenses(
                 arg(&args, "accept").unwrap_or_default(),
             )?),
+            "android_install" => to_json(commands::android_install(
+                arg(&args, "apk")?,
+                arg(&args, "app")?,
+                arg(&args, "device").ok().flatten(),
+            )?),
             // ── The world ──────────────────────────────────────────────────
             "set_mode" => {
                 let mode: Mode = arg(&args, "mode")?;

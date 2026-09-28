@@ -56,8 +56,8 @@ pub struct VolumeAtlasPage {
 /// Several volumes sharing one allocation: LUT pages in the grading atlas,
 /// noise volumes in the cloud staging buffer. Staging packs pages back to
 /// back with no padding, so an existing upload reads its page straight from
-/// a slice; `origin`/`atlas` describe the depth-stacked GPU image a
-/// single-bind pass would sample instead.
+/// a slice; `origin`/`atlas` describe the depth-stacked GPU image the
+/// single-bind pass samples instead.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VolumeAtlasLayout {
     /// XY is the largest page's, Z the sum of every page's.

@@ -5,19 +5,18 @@ import blockloom::scattering::{dual_lobe_phase,beer,powder};
 @group(0) @binding(0) var<uniform> c: CloudUniforms;
 @if(!MULTISAMPLED) @group(0) @binding(1) var depth_tex: texture_depth_2d;
 @if(MULTISAMPLED) @group(0) @binding(1) var depth_tex: texture_depth_multisampled_2d;
-@group(0) @binding(2) var shape_tex: texture_3d<f32>;
-@group(0) @binding(3) var detail_tex: texture_3d<f32>;
-@group(0) @binding(4) var repeat: sampler;
-@group(0) @binding(5) var history: texture_2d<f32>;
-@group(0) @binding(6) var history_depth: texture_2d<f32>;
-@group(0) @binding(7) var sky: texture_cube<f32>;
-@group(0) @binding(8) var linear: sampler;
+@group(0) @binding(2) var noise_tex: texture_3d<f32>;
+@group(0) @binding(3) var repeat: sampler;
+@group(0) @binding(4) var history: texture_2d<f32>;
+@group(0) @binding(5) var history_depth: texture_2d<f32>;
+@group(0) @binding(6) var sky: texture_cube<f32>;
+@group(0) @binding(7) var linear: sampler;
 struct Output { @location(0) color: vec4<f32>, @location(1) depths: vec4<f32> }
 fn world(uv:vec2<f32>,d:f32)->vec3<f32>{
     let p=c.world_from_clip*vec4<f32>(uv*vec2<f32>(2.0,-2.0)+vec2<f32>(-1.0,1.0),d,1.0);
     return p.xyz/p.w;
 }
-fn medium(p:vec3<f32>)->f32 { return density(p,c,shape_tex,detail_tex,repeat); }
+fn medium(p:vec3<f32>)->f32 { return density(p,c,noise_tex,repeat); }
 fn incident(p:vec3<f32>,ray:vec3<f32>,light:vec4<f32>,color:vec3<f32>,jitter:f32,sigma:f32,step:f32,h:f32)->vec3<f32> {
     if max(max(color.x,color.y),color.z)<=0.0 {return vec3<f32>(0.0);}
     let direction=normalize(light.xyz);

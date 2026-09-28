@@ -276,6 +276,29 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             required: false,
         }],
     },
+    CommandSpec {
+        name: "android-install",
+        cmd: "android_install",
+        aliases: &["android_install"],
+        summary: "Install an APK on a connected device or emulator and launch it.",
+        args: &[
+            ArgSpec {
+                name: "apk",
+                ty: "file path",
+                required: true,
+            },
+            ArgSpec {
+                name: "app",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "device",
+                ty: "string",
+                required: false,
+            },
+        ],
+    },
     // ── The world ─────────────────────────────────────────────────────────
     CommandSpec {
         name: "set-mode",

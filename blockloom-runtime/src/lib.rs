@@ -45,6 +45,7 @@ mod fog;
 mod fx;
 mod gpu;
 mod hdr;
+mod indirect;
 mod light_probes;
 mod lightning;
 mod lights;
@@ -215,6 +216,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     volume_heat::register(app);
     streaming::register(app);
     gpu::register(app);
+    indirect::register(app);
     quality::register(app);
     // Custom shader materials plus the tilemap material. Every dimension
     // registers all three, so systems can take their asset stores

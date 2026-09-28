@@ -637,6 +637,8 @@ pub struct ProjectFile {
     #[serde(default)]
     pub icon: String,
     #[serde(default)]
+    pub android: crate::android::AndroidSettings,
+    #[serde(default)]
     pub active_scene: String,
     /// Which scene a fresh open - and a built game - boots into. Empty in
     /// older files means the active scene.
@@ -871,6 +873,9 @@ pub struct Project {
     /// An image asset used to brand packaged builds. Empty uses Blockloom's
     /// bundled icon.
     pub icon: String,
+    /// applicationId, version and friends for Android builds. Old files
+    /// carry none and read as the defaults.
+    pub android: crate::android::AndroidSettings,
     pub scenes: Vec<Scene>,
     pub active_scene: String,
     /// Which scene a fresh open - and a built game - boots into. The editor
@@ -906,10 +911,11 @@ impl DerefMut for Project {
 impl Serialize for Project {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let active = self.active_scene_ref();
-        let mut s = serializer.serialize_struct("Project", 9)?;
+        let mut s = serializer.serialize_struct("Project", 10)?;
         s.serialize_field("id", &self.id)?;
         s.serialize_field("name", &self.name)?;
         s.serialize_field("icon", &self.icon)?;
+        s.serialize_field("android", &self.android)?;
         s.serialize_field("scenes", &self.scenes)?;
         s.serialize_field("active_scene", &self.active_scene)?;
         s.serialize_field("default_scene", &self.default_scene)?;
@@ -934,6 +940,8 @@ impl<'de> Deserialize<'de> for Project {
             name: String,
             #[serde(default)]
             icon: String,
+            #[serde(default)]
+            android: crate::android::AndroidSettings,
             #[serde(default)]
             scenes: Option<Vec<Scene>>,
             #[serde(default)]
@@ -980,6 +988,7 @@ impl<'de> Deserialize<'de> for Project {
             id: if de.id.is_empty() { new_id() } else { de.id },
             name: de.name,
             icon: de.icon,
+            android: de.android,
             scenes,
             active_scene,
             default_scene,
@@ -1062,6 +1071,7 @@ impl Project {
             id: new_id(),
             name: name.into(),
             icon: String::new(),
+            android: crate::android::AndroidSettings::default(),
             scenes: vec![scene],
             active_scene: active_scene.clone(),
             default_scene: active_scene,
@@ -2168,6 +2178,7 @@ pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
         },
         name: file.name,
         icon: file.icon,
+        android: file.android,
         scenes,
         active_scene: file.active_scene,
         default_scene: file.default_scene,
@@ -2185,6 +2196,7 @@ pub fn project_to_file(project: &Project) -> ProjectFile {
         id: project.id.clone(),
         name: project.name.clone(),
         icon: project.icon.clone(),
+        android: project.android.clone(),
         active_scene: project.active_scene.clone(),
         default_scene: project.default_scene.clone(),
         scenes: project
@@ -2326,6 +2338,32 @@ mod tests {
         save_project(&project, &dir).unwrap();
 
         assert_eq!(read_project_dir(&dir).unwrap(), project);
+    }
+
+    #[test]
+    fn android_settings_survive_a_save_and_old_files_default() {
+        let temp = TempDir::new();
+        let mut project = Project::starter("Pond Game", Mode::TwoD);
+        project.android = crate::android::AndroidSettings {
+            application_id: "com.example.pond".to_string(),
+            version_code: 7,
+            version_name: "2.1".to_string(),
+        };
+        let dir = create_project(&project, &temp.0).unwrap();
+        save_project(&project, &dir).unwrap();
+        assert_eq!(read_project_dir(&dir).unwrap(), project);
+
+        // A file from before the settings existed reads as the defaults.
+        let text = std::fs::read_to_string(project_file(&dir)).unwrap();
+        let mut index: serde_json::Value = serde_json::from_str(&text).unwrap();
+        index.as_object_mut().unwrap().remove("android");
+        std::fs::write(project_file(&dir), serde_json::to_string(&index).unwrap()).unwrap();
+        let loaded = read_project_dir(&dir).unwrap();
+        assert_eq!(loaded.android, crate::android::AndroidSettings::default());
+        assert_eq!(
+            loaded.android.application_id_for(&loaded.name).unwrap(),
+            "com.blockloom.game.pond_game"
+        );
     }
 
     #[test]

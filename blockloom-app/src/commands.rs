@@ -2355,8 +2355,14 @@ fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
         return scripts.len();
     }
     let mut failed = 0;
+    // Android links through the NDK wrapper, which a direct rustc call only
+    // takes as `-C linker=`. Anything else links the way Play does.
+    let linker = target
+        .filter(|triple| android::is_android(triple))
+        .and_then(android::ndk_linker_for);
     for (actor, path) in scripts {
-        if let Err(error) = script::compile_for(&dir, &path, target) {
+        if let Err(error) = script::compile_for_with_linker(&dir, &path, target, linker.as_deref())
+        {
             failed += 1;
             s.push_log(LogLine {
                 kind: "error".to_string(),
@@ -2420,16 +2426,21 @@ pub(crate) fn build_game(
         None => build::host()
             .ok_or("Blockloom has no name for this platform, so it can't build for it")?,
     };
-    let player =
+    let player = if target.is_android() {
+        // No staged player: the desktop NDK cross-builds the runtime into
+        // the APK's `lib/<abi>/`, so `build` takes its path as the player.
+        // A prebuilt one wins when the env names it (see
+        // `android::runtime_so_override`); otherwise this compiles one,
+        // which is the long step of an Android build.
+        android::runtime_so_for(target.triple)?
+    } else {
         build::player_for(target, &blockloom_protocol::runtime_path()).ok_or_else(|| {
-            if target.is_android() {
-                return "There is no Android toolchain ready yet. Run `android-status` to see what is missing.".to_string();
-            }
             format!(
                 "There is no player for {}. Stage one in players/{}/ beside Blockloom.",
                 target.label, target.triple
             )
-        })?;
+        })?
+    };
     auto_save(&s);
 
     let fast_source = codegen::compile(&project)
@@ -2466,7 +2477,19 @@ pub(crate) fn build_game(
     }
 
     if fast {
-        codegen::compile_for(&project, &dir, build::script_target(target))?;
+        match build::script_target(target) {
+            Some(triple) if target.is_android() => {
+                codegen::compile_for_with_linker(
+                    &project,
+                    &dir,
+                    Some(triple),
+                    android::ndk_linker_for(triple).as_deref(),
+                )?;
+            }
+            other => {
+                codegen::compile_for(&project, &dir, other)?;
+            }
+        }
     }
 
     let options = build::BuildOptions {
@@ -2528,6 +2551,16 @@ pub(crate) fn android_install_sdk() -> Result<android::InstallReport, String> {
 /// records the stamp in the app config.
 pub(crate) fn android_accept_licenses(accept: bool) -> Result<android::LicenseReport, String> {
     android::accept_licenses(accept)
+}
+
+/// Installs `apk` on `device` (or the only device when unset) and launches
+/// it, answering the started component. An emulator counts as a device.
+pub(crate) fn android_install(
+    apk: String,
+    app: String,
+    device: Option<String>,
+) -> Result<android::ApkInstall, String> {
+    android::install_apk(std::path::Path::new(&apk), &app, device.as_deref())
 }
 
 // ─── Assets ────────────────────────────────────────────────────────────────

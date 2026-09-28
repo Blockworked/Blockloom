@@ -3666,11 +3666,12 @@ pub fn report_status(
     gpu: crate::gpu::GpuReport,
     volumes: Option<Res<crate::volumes::VolumeBlend>>,
     terrain: Option<Res<crate::terrain::TerrainStats>>,
-    (vfx, decals, destruction, scaling): (
+    (vfx, decals, destruction, scaling, indirect): (
         Option<Res<crate::vfx::VfxStats>>,
         Option<Res<crate::decals::Decals>>,
         Option<Res<crate::destruction::Destruction>>,
         Option<Res<crate::quality::Scaling>>,
+        Option<Res<crate::indirect::IndirectDrawCounters>>,
     ),
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
@@ -3891,6 +3892,37 @@ pub fn report_status(
                 name: format!("update/{label}"),
                 value: *ms,
                 unit: "ms".into(),
+            });
+        }
+    }
+    if let Some(indirect) = indirect {
+        for (name, value, unit) in [
+            ("indirect/api_draws", indirect.api_draws as f64, "count"),
+            ("indirect/commands", indirect.commands as f64, "count"),
+            ("indirect/instances", indirect.instances as f64, "count"),
+            (
+                "indirect/multidraw_sets",
+                indirect.multidraw_sets as f64,
+                "count",
+            ),
+            (
+                "indirect/transparent_draws",
+                indirect.transparent_draws as f64,
+                "count",
+            ),
+            ("indirect/gpu", f64::from(u8::from(indirect.gpu)), "flag"),
+        ] {
+            render_metrics.push(RenderMetric {
+                name: name.into(),
+                value,
+                unit: unit.into(),
+            });
+        }
+        for (index, system) in crate::quality::SYSTEMS.iter().enumerate() {
+            render_metrics.push(RenderMetric {
+                name: format!("indirect/draws/{system}"),
+                value: indirect.draws_per_system[index] as f64,
+                unit: "count".into(),
             });
         }
     }

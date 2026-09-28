@@ -232,6 +232,17 @@ pub fn compile_for(
     project_dir: &Path,
     target: Option<&str>,
 ) -> Result<PathBuf, String> {
+    compile_for_with_linker(project, project_dir, target, None)
+}
+
+/// [`compile_for`] with an explicit linker for `target`, the same NDK
+/// wrapper scripts take (see `script::compile_for_with_linker`).
+pub fn compile_for_with_linker(
+    project: &Project,
+    project_dir: &Path,
+    target: Option<&str>,
+    linker: Option<&Path>,
+) -> Result<PathBuf, String> {
     let source = compile(project).map_err(|error| error.to_string())?;
     let toolchain = crate::script::toolchain_version()?;
     if let Some(triple) = target {
@@ -244,6 +255,9 @@ pub fn compile_for(
     let stamp = build.join(format!("{LOGIC_STEM}.stamp"));
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     source.hash(&mut hasher);
+    if let Some(linker) = linker {
+        linker.display().to_string().hash(&mut hasher);
+    }
     let wanted = format!(
         "logic abi {LOGIC_ABI_VERSION}\n{toolchain}\ntarget {}\nprofile opt3-lto-fat-cu1\nsource {:016x}\n",
         target.unwrap_or("host"),
@@ -258,6 +272,11 @@ pub fn compile_for(
     let mut command = Command::new("rustc");
     if let Some(triple) = target {
         command.arg("--target").arg(triple);
+        if let Some(linker) = linker {
+            command
+                .arg("-C")
+                .arg(format!("linker={}", linker.display()));
+        }
     }
     let output = command
         .arg("--edition")

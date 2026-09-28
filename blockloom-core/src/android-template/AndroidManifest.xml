@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Blockloom's Android shell, filled in per build (see `android::render_manifest`).
+     The activity is the framework's own NativeActivity, so v1 ships no Java:
+     Bevy's winit backend brings the app up through it and reads the game
+     files from the APK's assets. No permissions in v1: a game that needs
+     none declares none. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="__APPLICATION_ID__"
+    android:versionCode="__VERSION_CODE__"
+    android:versionName="__VERSION_NAME__">
+
+    <uses-sdk
+        android:minSdkVersion="29"
+        android:targetSdkVersion="35" />
+
+    <application
+        android:label="__APP_LABEL__"
+        android:icon="@mipmap/ic_launcher"
+        android:extractNativeLibs="true"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|density|layoutDirection">
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="__LIB_NAME__" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

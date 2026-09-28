@@ -209,6 +209,21 @@ android-sdk-install:
     cargo build --release -p blockloom-app --bin blockloom-shell
     "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-install-sdk' --no-state
 
+# Builds a project folder into a signed APK, exactly what the Build dialog's
+# Android rows make: the NDK cross-builds the runtime into lib/<abi>/, the
+# game folder stages under the APK's assets, and the debug keystore signs
+# it. First run needs the network for the target's crates.
+android-build project out="android-dist" triple="aarch64-linux-android":
+    cargo build --release -p blockloom-app --bin blockloom-shell
+    printf 'open-project path=%s\nbuild-game path=%s target=%s\n' "$(realpath '{{project}}')" "$(realpath -m '{{out}}')" "{{triple}}" \
+        | "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --no-state
+
+# Installs an APK on a connected device or emulator and launches it
+# (`android-device-status` lists the serials when several are attached).
+android-install apk app device="":
+    cargo build --release -p blockloom-app --bin blockloom-shell
+    "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-install apk="{{apk}}" app="{{app}}"{{ if device != "" { " device=" + device } else { "" } }}' --no-state
+
 test:
     cargo test --workspace
 

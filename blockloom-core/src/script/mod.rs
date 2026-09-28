@@ -252,6 +252,18 @@ pub fn compile_for(
     relative: &str,
     target: Option<&str>,
 ) -> Result<PathBuf, String> {
+    compile_for_with_linker(project_dir, relative, target, None)
+}
+
+/// [`compile_for`] with an explicit linker for `target`: Android links
+/// through the NDK clang wrapper, which rustc only takes as `-C linker=`.
+/// `None` links the way the toolchain defaults to, as Play does.
+pub fn compile_for_with_linker(
+    project_dir: &Path,
+    relative: &str,
+    target: Option<&str>,
+    linker: Option<&Path>,
+) -> Result<PathBuf, String> {
     if !is_valid_path(relative) {
         return Err(format!(
             "\"{relative}\" isn't a script path - a script lives in {SCRIPTS_DIR}/ and ends in .rs"
@@ -274,7 +286,12 @@ pub fn compile_for(
 
     let library = library_path_for(project_dir, relative, target);
     let stamp = stamp_path(project_dir, relative, target);
-    let wanted = stamp_for(&toolchain, target, &source);
+    let mut wanted = stamp_for(&toolchain, target, &source);
+    // A moved SDK row moves the linker: without it in the stamp a stale
+    // library would survive the move.
+    if let Some(linker) = linker {
+        wanted.push_str(&format!("linker {}\n", linker.display()));
+    }
     if library.is_file()
         && std::fs::read_to_string(&stamp).is_ok_and(|previous| previous == wanted)
         && is_newer(&library, &source_path)
@@ -286,6 +303,11 @@ pub fn compile_for(
     let mut command = Command::new("rustc");
     if let Some(triple) = target {
         command.arg("--target").arg(triple);
+        if let Some(linker) = linker {
+            command
+                .arg("-C")
+                .arg(format!("linker={}", linker.display()));
+        }
         // A page carries its scripts inside it; debug info would be most of
         // each module. A panic's message names the script as the project
         // does, not by where this machine keeps it.

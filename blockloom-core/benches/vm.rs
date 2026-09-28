@@ -100,6 +100,7 @@ fn project(actor: impl Fn(usize) -> Actor) -> Project {
         id: "bench".to_string(),
         name: "bench".to_string(),
         icon: String::new(),
+        android: Default::default(),
         scenes: vec![scene],
         active_scene: "s1".to_string(),
         default_scene: "s1".to_string(),

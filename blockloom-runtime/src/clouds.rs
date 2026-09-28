@@ -47,6 +47,49 @@ struct CloudUniforms {
     steps: UVec4,
     shadow: Vec4,
     previous_drift: Vec4,
+    // Single-bind stacked noise atlas: each page's XY scale into the
+    // shared image plus its depth slab (offset, extent) in 0-1.
+    noise_shape: Vec4,
+    noise_detail: Vec4,
+}
+
+/// Default atlas pages when nothing is authored: a 128^3 shape slab under
+/// a 32^3 detail slab, matching the bake sizes below.
+const BAKED_SHAPE: u32 = 128;
+const BAKED_DETAIL: u32 = 32;
+
+/// Atlas size and both page mappings for the current staging, or the baked
+/// defaults when a slot has no authored volume. The atlas always holds
+/// both pages: the authored size when loaded, else the bake size.
+fn noise_atlas(staging: Option<&NoiseStaging>) -> (UVec3, Vec4, Vec4) {
+    fn slot_size(staging: Option<&NoiseStaging>, slot: usize, baked: u32) -> UVec3 {
+        staging
+            .and_then(|s| s.page_of[slot])
+            .and_then(|i| staging?.layout.pages.get(i))
+            .map(|page| UVec3::new(page.size[0], page.size[1], page.size[2]))
+            .unwrap_or(UVec3::splat(baked))
+    }
+    let shape_size = slot_size(staging, 0, BAKED_SHAPE);
+    let detail_size = slot_size(staging, 1, BAKED_DETAIL);
+    let atlas = UVec3::new(
+        shape_size.x.max(detail_size.x),
+        shape_size.y.max(detail_size.y),
+        shape_size.z + detail_size.z,
+    );
+    let depth = atlas.z.max(1) as f32;
+    let shape = Vec4::new(
+        shape_size.x as f32 / atlas.x.max(1) as f32,
+        shape_size.y as f32 / atlas.y.max(1) as f32,
+        0.0,
+        shape_size.z as f32 / depth,
+    );
+    let detail = Vec4::new(
+        detail_size.x as f32 / atlas.x.max(1) as f32,
+        detail_size.y as f32 / atlas.y.max(1) as f32,
+        shape_size.z as f32 / depth,
+        detail_size.z as f32 / depth,
+    );
+    (atlas, shape, detail)
 }
 /// An authored noise volume, as RGBA8 texels ready to upload.
 #[derive(Clone)]
@@ -56,10 +99,9 @@ struct NoiseVolume {
 }
 
 /// Authored noise pages sharing one staging allocation, laid out by
-/// [`pack_volume_atlas`]. Uploads still write one 3D texture per volume -
-/// a single-bind pass sampling the stacked image is the open follow-up -
-/// but the two files now load as one payload family with one lifetime, and
-/// the layout already describes where each page would sit in that image.
+/// [`pack_volume_atlas`]. Both files load as one payload family with one
+/// lifetime; the march samples them from one stacked 3D atlas, so the pass
+/// binds once instead of once per volume.
 #[derive(Clone)]
 struct NoiseStaging {
     layout: blockloom_core::pipeline::volume::VolumeAtlasLayout,
@@ -285,6 +327,7 @@ fn resolve(
     render.uniforms = on.then(|| {
         let (primary, light) = c.quality.steps();
         let sun = env.sun.color.to_linear().to_vec3() * env.sun.illuminance;
+        let (_, noise_shape, noise_detail) = noise_atlas(render.staging.as_deref());
         CloudUniforms {
             layer: Vec4::new(c.bottom, c.top, c.tiling_km * 1000.0, c.threshold),
             shape: Vec4::new(c.coverage, c.density, c.cloud_type, c.toe),
@@ -317,6 +360,8 @@ fn resolve(
                 0.0,
                 0.0,
             ),
+            noise_shape,
+            noise_detail,
             ..default()
         }
     });
@@ -394,7 +439,7 @@ fn init(
                     } else {
                         texture_depth_2d()
                     },
-                    texture_3d(TextureSampleType::Float { filterable: true }),
+                    // One stacked noise atlas for shape and detail both.
                     texture_3d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
                     texture_2d(TextureSampleType::Float { filterable: true }),
@@ -455,7 +500,7 @@ fn init(
             ShaderStages::COMPUTE,
             (
                 uniform_buffer::<CloudUniforms>(true),
-                texture_3d(TextureSampleType::Float { filterable: true }),
+                // One stacked noise atlas for shape and detail both.
                 texture_3d(TextureSampleType::Float { filterable: true }),
                 sampler(SamplerBindingType::Filtering),
                 texture_storage_2d(WORKING_FORMAT, StorageTextureAccess::WriteOnly),
@@ -537,7 +582,9 @@ fn texture(
         },
         usage: TextureUsages::TEXTURE_BINDING
             | if volume {
-                TextureUsages::STORAGE_BINDING
+                // The stacked noise atlas takes authored uploads plus
+                // bake-then-copy fills, so it needs both copy ends.
+                TextureUsages::STORAGE_BINDING | TextureUsages::COPY_DST | TextureUsages::COPY_SRC
             } else {
                 TextureUsages::RENDER_ATTACHMENT | TextureUsages::STORAGE_BINDING
             },
@@ -546,33 +593,63 @@ fn texture(
     let v = t.create_view(&default());
     (t, v)
 }
-/// A noise volume: the authored one uploaded, or an empty one to bake into.
-fn noise_texture(
+/// Both noise page sizes: the authored size when loaded, else the bake size.
+fn noise_pages(staging: Option<&NoiseStaging>) -> [UVec3; 2] {
+    fn slot(staging: Option<&NoiseStaging>, slot: usize, baked: u32) -> UVec3 {
+        staging
+            .and_then(|s| s.page_of[slot])
+            .and_then(|i| staging?.layout.pages.get(i))
+            .map(|page| UVec3::new(page.size[0], page.size[1], page.size[2]))
+            .unwrap_or(UVec3::splat(baked))
+    }
+    [
+        slot(staging, 0, BAKED_SHAPE),
+        slot(staging, 1, BAKED_DETAIL),
+    ]
+}
+/// One stacked 3D atlas for shape under detail, with authored pages
+/// uploaded into their slabs. Missing pages stay zero until the bake pass
+/// copies its scratch textures in.
+fn noise_atlas_texture(
     device: &RenderDevice,
     queue: &RenderQueue,
-    page: Option<(UVec3, &[u8])>,
-    baked: u32,
-    label: &'static str,
-) -> (Texture, TextureView) {
-    let Some((size, bytes)) = page else {
-        return texture(device, UVec3::splat(baked), true, label);
-    };
-    let (t, v) = texture(device, size, true, label);
-    queue.write_texture(
-        t.as_image_copy(),
-        bytes,
-        TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(size.x * 4),
-            rows_per_image: Some(size.y),
-        },
-        Extent3d {
-            width: size.x,
-            height: size.y,
-            depth_or_array_layers: size.z,
-        },
+    staging: Option<&NoiseStaging>,
+) -> ((Texture, TextureView), [UVec3; 2]) {
+    let pages = noise_pages(staging);
+    let size = UVec3::new(
+        pages[0].x.max(pages[1].x),
+        pages[0].y.max(pages[1].y),
+        pages[0].z + pages[1].z,
     );
-    (t, v)
+    let (t, v) = texture(device, size, true, "working_cloud_noise");
+    if let Some(staging) = staging {
+        let mut z = 0;
+        for (slot, page) in pages.iter().enumerate() {
+            if let Some((_, bytes)) = staging.page(slot) {
+                queue.write_texture(
+                    TexelCopyTextureInfo {
+                        texture: &t,
+                        mip_level: 0,
+                        origin: Origin3d { x: 0, y: 0, z },
+                        aspect: TextureAspect::All,
+                    },
+                    bytes,
+                    TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(page.x * 4),
+                        rows_per_image: Some(page.y),
+                    },
+                    Extent3d {
+                        width: page.x,
+                        height: page.y,
+                        depth_or_array_layers: page.z,
+                    },
+                );
+            }
+            z += page.z;
+        }
+    }
+    ((t, v), pages)
 }
 fn compatible_history(mut old: CloudUniforms, next: CloudUniforms) -> bool {
     let limit = next.layer.z * 0.1;
@@ -596,8 +673,14 @@ struct History {
     size: UVec2,
     color: [(Texture, TextureView); 2],
     depth: [(Texture, TextureView); 2],
-    shape: (Texture, TextureView),
-    detail: (Texture, TextureView),
+    /// One stacked atlas for shape under detail: a single bind for the
+    /// march and the shadow pass both.
+    noise: (Texture, TextureView),
+    /// Bake targets for pages with no authored volume, copied into their
+    /// atlas slab once the bake lands.
+    scratch: [Option<(Texture, TextureView)>; 2],
+    /// Shape and detail page sizes, in order.
+    pages: [UVec3; 2],
     /// Which of shape and detail still need the GPU bake.
     bake: [bool; 2],
     generation: u32,
@@ -676,6 +759,27 @@ fn prepare(
                 h.frame = frame.0;
             }
             _ => {
+                let ((noise, noise_view), pages) =
+                    noise_atlas_texture(&device, &queue, render.staging.as_deref());
+                let scratch = [0, 1].map(|slot| {
+                    let authored = render
+                        .staging
+                        .as_deref()
+                        .and_then(|staging| staging.page(slot))
+                        .is_some();
+                    (!authored).then(|| {
+                        texture(
+                            &device,
+                            pages[slot],
+                            true,
+                            if slot == 0 {
+                                "working_cloud_shape"
+                            } else {
+                                "working_cloud_detail"
+                            },
+                        )
+                    })
+                });
                 commands.entity(entity).insert(History {
                     shadow: texture(
                         &device,
@@ -690,26 +794,9 @@ fn prepare(
                     depth: std::array::from_fn(|_| {
                         texture(&device, half.extend(1), false, "working_cloud_depth")
                     }),
-                    shape: noise_texture(
-                        &device,
-                        &queue,
-                        render
-                            .staging
-                            .as_deref()
-                            .and_then(|staging| staging.page(0)),
-                        128,
-                        "working_cloud_shape",
-                    ),
-                    detail: noise_texture(
-                        &device,
-                        &queue,
-                        render
-                            .staging
-                            .as_deref()
-                            .and_then(|staging| staging.page(1)),
-                        32,
-                        "working_cloud_detail",
-                    ),
+                    noise: (noise, noise_view),
+                    scratch,
+                    pages,
                     bake: [0, 1].map(|slot| {
                         render
                             .staging
@@ -783,27 +870,59 @@ fn draw(
     }
     let device = ctx.render_device().clone();
     if !h.baked.load(Ordering::Relaxed) {
-        for (tex, size, wanted) in [
-            (&h.shape.1, 128u32, h.bake[0]),
-            (&h.detail.1, 32u32, h.bake[1]),
-        ] {
-            if !wanted {
-                continue;
+        for (slot, page) in h.pages.iter().enumerate() {
+            let size = page.x;
+            if h.bake[slot]
+                && let Some((_, view)) = &h.scratch[slot]
+            {
+                let group = device.create_bind_group(
+                    "cloud_bake",
+                    &cache.get_bind_group_layout(&pipeline.bake_layout),
+                    &BindGroupEntries::sequential((uniform.clone(), view)),
+                );
+                let mut pass = ctx
+                    .command_encoder()
+                    .begin_compute_pass(&ComputePassDescriptor {
+                        label: Some("cloud_bake"),
+                        timestamp_writes: None,
+                    });
+                pass.set_pipeline(bake);
+                pass.set_bind_group(0, &group, &[v.offset]);
+                pass.dispatch_workgroups(size / 4, size / 4, size / 4);
             }
-            let group = device.create_bind_group(
-                "cloud_bake",
-                &cache.get_bind_group_layout(&pipeline.bake_layout),
-                &BindGroupEntries::sequential((uniform.clone(), tex)),
-            );
-            let mut pass = ctx
-                .command_encoder()
-                .begin_compute_pass(&ComputePassDescriptor {
-                    label: Some("cloud_bake"),
-                    timestamp_writes: None,
-                });
-            pass.set_pipeline(bake);
-            pass.set_bind_group(0, &group, &[v.offset]);
-            pass.dispatch_workgroups(size / 4, size / 4, size / 4);
+        }
+        // Bake targets are page-sized; the atlas is shared, so copy each
+        // fresh page into its own slab before the march samples it.
+        let mut base = 0;
+        for (slot, page) in h.pages.iter().enumerate() {
+            if h.bake[slot]
+                && let Some((texture, _)) = &h.scratch[slot]
+            {
+                ctx.command_encoder().copy_texture_to_texture(
+                    TexelCopyTextureInfo {
+                        texture,
+                        mip_level: 0,
+                        origin: Origin3d::ZERO,
+                        aspect: TextureAspect::All,
+                    },
+                    TexelCopyTextureInfo {
+                        texture: &h.noise.0,
+                        mip_level: 0,
+                        origin: Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: base,
+                        },
+                        aspect: TextureAspect::All,
+                    },
+                    Extent3d {
+                        width: page.x,
+                        height: page.y,
+                        depth_or_array_layers: page.z,
+                    },
+                );
+            }
+            base += page.z;
         }
         h.baked.store(true, Ordering::Relaxed);
     }
@@ -819,8 +938,7 @@ fn draw(
             &cache.get_bind_group_layout(&pipeline.shadow_layout),
             &BindGroupEntries::sequential((
                 uniform.clone(),
-                &h.shape.1,
-                &h.detail.1,
+                &h.noise.1,
                 &pipeline.repeat,
                 &h.shadow.1,
             )),
@@ -873,8 +991,7 @@ fn draw(
         &BindGroupEntries::sequential((
             uniform,
             depth,
-            &h.shape.1,
-            &h.detail.1,
+            &h.noise.1,
             &pipeline.repeat,
             &h.color[h.current ^ 1].1,
             &h.depth[h.current ^ 1].1,
@@ -990,7 +1107,29 @@ mod tests {
 
     #[test]
     fn uniform_layout() {
-        assert_eq!(CloudUniforms::min_size().get(), 128 + 19 * 16);
+        assert_eq!(CloudUniforms::min_size().get(), 128 + 21 * 16);
+    }
+
+    #[test]
+    fn stacked_atlas_maps_each_page_onto_its_own_slab() {
+        // Baked defaults: shape fills the full XY, detail a corner slab after it.
+        let (size, shape, detail) = noise_atlas(None);
+        assert_eq!(size, UVec3::new(128, 128, 160));
+        assert_eq!(shape, Vec4::new(1.0, 1.0, 0.0, 128.0 / 160.0));
+        assert_eq!(detail, Vec4::new(0.25, 0.25, 128.0 / 160.0, 32.0 / 160.0));
+        // Two authored pages: shape at the base, detail stacked after it.
+        let staging =
+            NoiseStaging::build([&Some(noise_volume(4, 7)), &Some(noise_volume(2, 9))]).unwrap();
+        let (size, shape, detail) = noise_atlas(Some(&staging));
+        assert_eq!(size, UVec3::new(4, 4, 6));
+        assert_eq!(shape, Vec4::new(1.0, 1.0, 0.0, 4.0 / 6.0));
+        assert_eq!(detail, Vec4::new(0.5, 0.5, 4.0 / 6.0, 2.0 / 6.0));
+        // One authored page: the missing one falls back to its bake size.
+        let staging = NoiseStaging::build([&Some(noise_volume(4, 7)), &None]).unwrap();
+        let (size, shape, detail) = noise_atlas(Some(&staging));
+        assert_eq!(size, UVec3::new(32, 32, 36));
+        assert_eq!(shape.z, 0.0);
+        assert!((shape.w + detail.w - 1.0).abs() < 1e-6);
     }
 
     fn noise_volume(size: u32, fill: u8) -> NoiseVolume {

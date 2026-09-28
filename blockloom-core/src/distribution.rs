@@ -37,6 +37,12 @@ impl Icons {
     }
 }
 
+/// The centered square fit every branded icon uses, exposed for the
+/// Android launcher densities (same file, different module).
+pub(crate) fn square_for_launcher(image: &DynamicImage, size: u32) -> RgbaImage {
+    square(image, size)
+}
+
 fn square(image: &DynamicImage, size: u32) -> RgbaImage {
     let (width, height) = image.dimensions();
     let scale = (size as f64 / width as f64).min(size as f64 / height as f64);
