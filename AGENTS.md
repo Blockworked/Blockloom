@@ -476,6 +476,10 @@ reach a local floor before geometry asks for a shared preset drop. These run-onl
 reductions reset on setting changes or rebuilds. The profiler reports terrain
 and vegetation under `budget/<system>/distance_scale`, VFX and debris under
 `budget/<system>/density_scale`. Fractured child meshes count toward debris.
+Water has its own sustained tessellation throttle, reported as
+`budget/water/tessellation_scale`. Preset density and the local multiplier thin
+lake/river grids and ocean rings while keeping their full extent. Water floors
+count toward water costs and keep their meshes when only tessellation changes.
 
 The main-world camera stays at native size for input. Extracted world-view targets
 scale before rendering and Bevy's spatial blit fills the output. Custom sub-viewports

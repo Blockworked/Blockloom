@@ -274,18 +274,25 @@ struct Surface {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Shape {
     Grid { half: [f32; 2], cells: [u32; 2] },
-    Ocean { spacing: f32 },
+    Ocean { spacing: f32, segments: u32 },
 }
 
 impl Shape {
-    fn of(live: &LiveBody) -> Self {
+    fn of(live: &LiveBody, detail: f32) -> Self {
+        // Preset and local pressure thin vertices, keeping the full body covered.
         // Around ten vertices along the longest wave.
         let spacing = (live.spec.waves.wavelength / 10.0).clamp(0.05, 4.0);
         match live.body.kind {
-            WaterKind::Ocean => Shape::Ocean { spacing },
+            WaterKind::Ocean => Shape::Ocean {
+                spacing: spacing / detail,
+                segments: (256.0 * detail).round().max(16.0) as u32,
+            },
             _ => {
                 let half = live.body.half;
-                let cells = half.map(|h| ((2.0 * h / spacing).ceil() as u32).clamp(16, 256));
+                let cells = half.map(|h| {
+                    let authored = ((2.0 * h / spacing).ceil() as u32).clamp(16, 256);
+                    (authored as f32 * detail).round().max(1.0) as u32
+                });
                 Shape::Grid { half, cells }
             }
         }
@@ -294,16 +301,19 @@ impl Shape {
     fn mesh(self) -> Mesh {
         match self {
             Shape::Grid { half, cells } => grid_mesh(half, cells),
-            Shape::Ocean { spacing } => ocean_mesh(spacing, 256),
+            Shape::Ocean { spacing, segments } => ocean_mesh(spacing, segments),
+        }
+    }
+
+    fn floor_half(self) -> Vec2 {
+        match self {
+            Shape::Grid { half, .. } => Vec2::from(half),
+            Shape::Ocean { .. } => Vec2::splat(OCEAN_REACH),
         }
     }
 
     fn floor(self) -> Mesh {
-        let half = match self {
-            Shape::Grid { half, .. } => Vec2::from(half),
-            Shape::Ocean { .. } => Vec2::splat(OCEAN_REACH),
-        };
-        Plane3d::new(Vec3::Y, half).mesh().build()
+        Plane3d::new(Vec3::Y, self.floor_half()).mesh().build()
     }
 }
 
@@ -473,7 +483,8 @@ fn sync_surfaces(
     });
     for live in &state.bodies {
         let body = &live.body;
-        let shape = Shape::of(live);
+        let detail = scaling.as_ref().map_or(1.0, |s| s.water_detail());
+        let shape = Shape::of(live, detail);
         let deep = rgb(&live.spec.look.deep);
         let surface = surfaces.entry(body.id.clone()).or_insert_with(|| {
             let material = materials.add(new_material());
@@ -511,17 +522,19 @@ fn sync_surfaces(
             }
         });
         if surface.shape != shape {
+            if surface.shape.floor_half() != shape.floor_half() {
+                commands
+                    .entity(surface.floor)
+                    .insert(Mesh3d(meshes.add(shape.floor())));
+            }
             surface.shape = shape;
             commands
                 .entity(surface.entity)
                 .insert(Mesh3d(meshes.add(shape.mesh())));
-            commands
-                .entity(surface.floor)
-                .insert(Mesh3d(meshes.add(shape.floor())));
         }
         let level = body.center[1];
         let (centre, yaw) = match shape {
-            Shape::Ocean { spacing } => (ocean_centre(eye, spacing), 0.0),
+            Shape::Ocean { spacing, .. } => (ocean_centre(eye, spacing), 0.0),
             Shape::Grid { .. } => (
                 Vec2::new(body.center[0], body.center[2]),
                 (-body.axis[1]).atan2(body.axis[0]),
@@ -675,6 +688,131 @@ fn floor_material(deep: Vec3) -> StandardMaterial {
 mod tests {
     use super::*;
     use blockloom_core::shader_lib;
+
+    fn live(kind: WaterKind, size: [f32; 2]) -> LiveBody {
+        let spec = blockloom_core::water::WaterSpec {
+            kind,
+            size,
+            ..default()
+        };
+        LiveBody {
+            body: blockloom_core::water::WaterBody {
+                id: "water".into(),
+                kind,
+                center: [0.0; 3],
+                axis: [1.0, 0.0],
+                half: size.map(|n| n * 0.5),
+                depth: spec.depth,
+                flow: [0.0; 2],
+                waves: Vec::new(),
+                flat: false,
+                calm: [0.0; 3],
+                ripples: None,
+            },
+            spec,
+            dials: default(),
+            detail: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn local_water_pressure_thins_all_body_shapes_without_shrinking_them() {
+        for kind in [WaterKind::Lake, WaterKind::River, WaterKind::Ocean] {
+            let live = live(kind, [400.0, 200.0]);
+            let full = Shape::of(&live, 1.0);
+            let mut previous = full.mesh().indices().unwrap().len();
+            for detail in [0.9, 0.5, 0.25, 0.0625] {
+                let shape = Shape::of(&live, detail);
+                let mesh = shape.mesh();
+                assert!(mesh.indices().unwrap().len() < previous);
+                previous = mesh.indices().unwrap().len();
+                assert_eq!(shape.floor_half(), full.floor_half());
+                let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) =
+                    mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                else {
+                    panic!("positions");
+                };
+                let max_index = mesh.indices().unwrap().iter().max().unwrap();
+                assert!(max_index < positions.len());
+                if kind == WaterKind::Ocean {
+                    let far = positions
+                        .iter()
+                        .map(|p| Vec2::new(p[0], p[2]).length())
+                        .fold(0.0, f32::max);
+                    assert!((far - OCEAN_REACH).abs() < 1.0);
+                } else {
+                    assert_eq!(positions.first().unwrap(), &[-200.0, 0.0, -100.0]);
+                    assert_eq!(positions.last().unwrap(), &[200.0, 0.0, 100.0]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_smallest_grid_still_has_valid_cells_at_the_low_quality_floor() {
+        let live = live(WaterKind::Lake, [0.01, 0.01]);
+        let shape = Shape::of(&live, 0.0625);
+        assert_eq!(
+            shape,
+            Shape::Grid {
+                half: [0.005; 2],
+                cells: [1; 2]
+            }
+        );
+        let mesh = shape.mesh();
+        assert_eq!(mesh.count_vertices(), 4);
+        assert_eq!(mesh.indices().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn changing_water_detail_reuses_the_floor_and_settles_after_one_update() {
+        let (_, incoming) = std::sync::mpsc::channel();
+        let engine = Engine::new(incoming, blockloom_core::scene::Mode::ThreeD);
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
+            .insert_non_send(engine)
+            .init_asset::<Mesh>()
+            .init_asset::<Image>()
+            .init_asset::<StandardMaterial>()
+            .init_asset::<WaterMaterial>()
+            .init_resource::<Environment>()
+            .init_resource::<Surfaces>()
+            .init_resource::<Mirrors>()
+            .init_resource::<WaterState>()
+            .init_resource::<crate::quality::Scaling>()
+            .add_systems(Update, sync_surfaces);
+        app.world_mut()
+            .resource_mut::<WaterState>()
+            .bodies
+            .push(live(WaterKind::Lake, [40.0; 2]));
+        app.update();
+        let surface = &app.world().resource::<Surfaces>().0["water"];
+        let entity = surface.entity;
+        let floor = surface.floor;
+        let full = app.world().get::<Mesh3d>(entity).unwrap().0.clone();
+        let bed = app.world().get::<Mesh3d>(floor).unwrap().0.clone();
+        app.world_mut()
+            .resource_mut::<crate::quality::Scaling>()
+            .geometry
+            .factors[5] = 0.5;
+        app.update();
+        let reduced = app.world().get::<Mesh3d>(entity).unwrap().0.clone();
+        assert_ne!(reduced, full);
+        assert_eq!(app.world().get::<Mesh3d>(floor).unwrap().0, bed);
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        assert!(
+            meshes.get(&reduced).unwrap().indices().unwrap().len()
+                < meshes.get(&full).unwrap().indices().unwrap().len()
+        );
+        app.update();
+        assert_eq!(app.world().get::<Mesh3d>(entity).unwrap().0, reduced);
+        assert_eq!(app.world().get::<Mesh3d>(floor).unwrap().0, bed);
+        app.world_mut().resource_mut::<WaterState>().bodies[0]
+            .body
+            .half[0] = 30.0;
+        app.update();
+        assert_ne!(app.world().get::<Mesh3d>(floor).unwrap().0, bed);
+    }
 
     #[test]
     fn a_grid_spans_its_rectangle() {

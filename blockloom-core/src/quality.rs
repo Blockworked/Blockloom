@@ -93,7 +93,7 @@ impl Default for GeometryController {
 }
 
 impl GeometryController {
-    pub const LOCAL_SYSTEMS: [usize; 4] = [0, 1, 3, 4];
+    pub const LOCAL_SYSTEMS: [usize; 5] = [0, 1, 3, 4, 5];
 
     pub fn sample(&mut self, settings: &Settings, budget: &Budget, costs: &[DrawCost; 6]) {
         for system in Self::LOCAL_SYSTEMS {
@@ -330,13 +330,13 @@ mod tests {
     }
 
     #[test]
-    fn transient_pressure_throttles_only_its_pool_before_the_shared_preset() {
+    fn local_pressure_throttles_only_its_system_before_the_shared_preset() {
         let settings = Settings {
             auto_drop: true,
             ..Default::default()
         };
         let budget = settings.preset.budget();
-        for system in [3, 4] {
+        for system in [3, 4, 5] {
             let mut local = GeometryController::default();
             let mut costs = [DrawCost::default(); 6];
             costs[system].triangles = budget.triangles[system] + 1;

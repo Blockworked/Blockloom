@@ -969,11 +969,16 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           debris, and the profiler reports local density and effective pool caps.
           GPU particle readbacks are tied to their pool so a resized allocation
           cannot reuse stale particle counts or events.
+          Water now has an independent sustained geometry throttle: lake/river
+          grids and ocean rings reduce tessellation before a shared preset drop,
+          preserving body extent and ocean reach. Presets also cap water detail;
+          floors count toward water budgets, and the profiler exposes the local
+          tessellation multiplier. Floor meshes survive detail-only changes.
         - Still open: real DLSS SDK/redistributable integration and capability
           detection; distance-based general texture mip streaming and noise/LUT
           atlases; half-resolution SSR; native-resolution UI compositing during
           scene scaling; exact GPU indirect-draw accounting and per-system
-          adaptive thresholds for props and water. DLSS selection currently
+          adaptive thresholds for props. DLSS selection currently
           reports unavailable and falls back to TAA/spatial.
         - Draw policy (numbers on the Phase 4 mechanisms, no new machinery):
           which meshes instance (vegetation, props, debris, decals) and at what

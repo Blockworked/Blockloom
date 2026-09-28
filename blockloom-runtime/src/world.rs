@@ -3910,10 +3910,10 @@ pub fn report_status(
                 });
             }
             if blockloom_core::quality::GeometryController::LOCAL_SYSTEMS.contains(&index) {
-                let metric = if index < 2 {
-                    "distance_scale"
-                } else {
-                    "density_scale"
+                let metric = match index {
+                    0 | 1 => "distance_scale",
+                    5 => "tessellation_scale",
+                    _ => "density_scale",
                 };
                 render_metrics.push(RenderMetric {
                     name: format!("budget/{system}/{metric}"),
