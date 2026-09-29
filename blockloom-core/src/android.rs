@@ -199,6 +199,15 @@ pub struct AndroidSettings {
     /// Empty in an old file means `1.0.0`.
     #[serde(default)]
     pub version_name: String,
+    /// Release keystore for this game, as an absolute path. Empty signs
+    /// with the debug keystore instead. Passwords are never stored here;
+    /// each build asks for them (or reads the env, see below).
+    #[serde(default)]
+    pub keystore: String,
+    /// Which key inside that keystore signs the APK. Empty is only fine
+    /// when no keystore is set.
+    #[serde(default)]
+    pub key_alias: String,
 }
 
 impl Default for AndroidSettings {
@@ -207,6 +216,8 @@ impl Default for AndroidSettings {
             application_id: String::new(),
             version_code: 1,
             version_name: "1.0.0".to_string(),
+            keystore: String::new(),
+            key_alias: String::new(),
         }
     }
 }
@@ -1195,10 +1206,235 @@ pub fn keytool() -> Result<PathBuf, String> {
     ))
 }
 
+// ─── Release signing ─────────────────────────────────────────────────
+// A release key is a real identity: its keystore path plus alias live in
+// Project settings, but passwords never touch the project file or the app
+// config. Each build asks for them; headless builds read the env instead
+// (`BLOCKLOOM_ANDROID_STORE_PASS`, and `BLOCKLOOM_ANDROID_KEY_PASS` when
+// the key has its own). The debug keystore below stays the default for the
+// dev loop, clearly marked as such.
+
+/// Env var holding the keystore password for headless release builds.
+pub const STORE_PASS_ENV: &str = "BLOCKLOOM_ANDROID_STORE_PASS";
+/// Env var holding the key password, when it differs from the store's.
+pub const KEY_PASS_ENV: &str = "BLOCKLOOM_ANDROID_KEY_PASS";
+
+/// What an APK signs with: the dev-loop debug key, or the project's own
+/// release key with its passwords resolved for this build only.
+pub struct Signing {
+    pub keystore: PathBuf,
+    pub alias: Option<String>,
+    pub store_pass: String,
+    pub key_pass: String,
+    pub release: bool,
+}
+
+impl std::fmt::Debug for Signing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Passwords never reach logs: only which key and which mode.
+        f.debug_struct("Signing")
+            .field("keystore", &self.keystore)
+            .field("alias", &self.alias)
+            .field("release", &self.release)
+            .finish()
+    }
+}
+
+impl Signing {
+    pub fn label(&self) -> &'static str {
+        if self.release { "release" } else { "debug" }
+    }
+}
+
+/// Picks the key for `settings`: the debug keystore when no release key is
+/// set, else the project's keystore plus alias with passwords from the
+/// explicit args or the env. Refuses a release row that names nothing
+/// usable, with the fix attached.
+pub fn resolve_signing(
+    settings: &AndroidSettings,
+    store_pass: Option<&str>,
+    key_pass: Option<&str>,
+) -> Result<Signing, String> {
+    if settings.keystore.trim().is_empty() {
+        let keystore = ensure_debug_keystore()?;
+        return Ok(Signing {
+            keystore,
+            alias: Some("blockloom-debug".to_string()),
+            store_pass: DEBUG_KEYSTORE_PASSWORD.to_string(),
+            key_pass: DEBUG_KEYSTORE_PASSWORD.to_string(),
+            release: false,
+        });
+    }
+    let keystore = PathBuf::from(settings.keystore.trim());
+    if !keystore.is_file() {
+        return Err(format!(
+            "The release keystore {} isn't there. Pick the key file again in Project settings, or clear it to sign debug.",
+            keystore.display()
+        ));
+    }
+    let alias = settings.key_alias.trim();
+    if alias.is_empty() {
+        return Err(
+            "The release keystore names no alias. Add the key's alias in Project settings."
+                .to_string(),
+        );
+    }
+    let store_pass = store_pass
+        .map(str::trim)
+        .filter(|pass| !pass.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var(STORE_PASS_ENV)
+                .ok()
+                .filter(|pass| !pass.trim().is_empty())
+        })
+        .ok_or_else(|| {
+            format!(
+                "The release key needs its keystore password: type it in the Build dialog, or set {STORE_PASS_ENV} headless."
+            )
+        })?;
+    let key_pass = key_pass
+        .map(str::trim)
+        .filter(|pass| !pass.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var(KEY_PASS_ENV)
+                .ok()
+                .filter(|pass| !pass.trim().is_empty())
+        })
+        .unwrap_or_else(|| store_pass.clone());
+    Ok(Signing {
+        keystore,
+        alias: Some(alias.to_string()),
+        store_pass,
+        key_pass,
+        release: true,
+    })
+}
+
+/// Makes a release key: a new RSA keypair under `alias` in the keystore at
+/// `path`, creating the file when it names nothing yet. Answers the aliases
+/// the file holds afterwards. Passwords come from the args or the same env
+/// the build reads; keytool wants at least 6 characters for each.
+pub fn create_keystore(
+    path: &Path,
+    alias: &str,
+    store_pass: Option<&str>,
+    key_pass: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let alias = alias.trim();
+    if alias.is_empty() {
+        return Err("Name the key's alias, so the build knows which key signs.".to_string());
+    }
+    let store_pass = store_pass
+        .map(str::trim)
+        .filter(|pass| !pass.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var(STORE_PASS_ENV)
+                .ok()
+                .filter(|pass| !pass.trim().is_empty())
+        })
+        .ok_or_else(|| {
+            format!("A new key needs a keystore password: type one in, or set {STORE_PASS_ENV} headless.")
+        })?;
+    if store_pass.len() < 6 {
+        return Err("The keystore password needs at least 6 characters.".to_string());
+    }
+    let key_pass = key_pass
+        .map(str::trim)
+        .filter(|pass| !pass.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var(KEY_PASS_ENV)
+                .ok()
+                .filter(|pass| !pass.trim().is_empty())
+        })
+        .unwrap_or_else(|| store_pass.clone());
+    if key_pass.len() < 6 {
+        return Err("The key password needs at least 6 characters.".to_string());
+    }
+    if path.is_file()
+        && keystore_aliases(path, &store_pass)?
+            .iter()
+            .any(|name| name == alias)
+    {
+        return Err(format!(
+            "{} already holds a key named \"{alias}\". Pick another alias.",
+            path.display()
+        ));
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let output = std::process::Command::new(keytool()?)
+        .arg("-genkeypair")
+        .arg("-keystore")
+        .arg(path)
+        .arg("-alias")
+        .arg(alias)
+        .arg("-keyalg")
+        .arg("RSA")
+        .arg("-keysize")
+        .arg("2048")
+        .arg("-validity")
+        .arg("10950")
+        .arg("-storepass")
+        .arg(&store_pass)
+        .arg("-keypass")
+        .arg(&key_pass)
+        .arg("-dname")
+        .arg(format!("CN={alias}"))
+        .output()
+        .map_err(|e| format!("Couldn't run keytool: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "keytool couldn't create the key: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    keystore_aliases(path, &store_pass)
+}
+
+/// The key aliases a keystore file holds, for the create step's duplicate
+/// check. Needs the store password; a wrong one reads as keytool failing.
+pub fn keystore_aliases(path: &Path, store_pass: &str) -> Result<Vec<String>, String> {
+    let output = std::process::Command::new(keytool()?)
+        .arg("-list")
+        .arg("-keystore")
+        .arg(path)
+        .arg("-storepass")
+        .arg(store_pass)
+        .output()
+        .map_err(|e| format!("Couldn't run keytool: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "keytool couldn't list {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    // One `alias, date, PrivateKeyEntry,` line per key, plus a header.
+    let mut aliases = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let first = line.split(',').next().unwrap_or("").trim();
+        if first.is_empty()
+            || first.contains(' ')
+            || first.eq_ignore_ascii_case("keystore")
+            || first.eq_ignore_ascii_case("keystore type:")
+        {
+            continue;
+        }
+        aliases.push(first.to_string());
+    }
+    Ok(aliases)
+}
+
 // ─── Debug keystore ────────────────────────────────────────────────────
 // One keystore for every dev install, clearly debug-only. Release signing
-// takes a keystore plus alias in Project settings and asks for passwords
-// on each build; that is a later step, not this one.
+// above takes a keystore plus alias in Project settings and asks for
+// passwords on each build; the debug key is what an empty release row
+// falls back to.
 
 /// The debug password Android tooling has used forever. Public knowledge,
 /// which is exactly why nothing release ever signs with it.
@@ -1274,7 +1510,7 @@ pub struct ApkReport {
     pub version_name: String,
     pub version_code: u32,
     pub abis: Vec<String>,
-    /// Always `debug` in v1; release signing is a later step.
+    /// `debug` for the dev-loop key, `release` for the project's own key.
     pub signed: String,
 }
 
@@ -1370,20 +1606,28 @@ pub fn zipalign_args(from: &Path, to: &Path) -> Vec<String> {
         .collect()
 }
 
-pub fn apksigner_args(keystore: &Path, from: &Path, to: &Path) -> Vec<String> {
-    [
-        "sign",
-        "--ks",
-        &keystore.to_string_lossy(),
-        "--ks-pass",
-        &format!("pass:{DEBUG_KEYSTORE_PASSWORD}"),
-        "--out",
-        &to.to_string_lossy(),
-        &from.to_string_lossy(),
-    ]
-    .iter()
-    .map(|arg| arg.to_string())
-    .collect()
+pub fn apksigner_args(signing: &Signing, from: &Path, to: &Path) -> Vec<String> {
+    let mut args = vec![
+        "sign".to_string(),
+        "--ks".to_string(),
+        signing.keystore.to_string_lossy().into_owned(),
+        "--ks-pass".to_string(),
+        format!("pass:{}", signing.store_pass),
+    ];
+    if let Some(alias) = &signing.alias {
+        args.push("--ks-key-alias".to_string());
+        args.push(alias.clone());
+    }
+    // A key with its own password signs under `--key-pass`; one sharing
+    // the store's needs no extra flag.
+    if signing.key_pass != signing.store_pass {
+        args.push("--key-pass".to_string());
+        args.push(format!("pass:{}", signing.key_pass));
+    }
+    args.push("--out".to_string());
+    args.push(to.to_string_lossy().into_owned());
+    args.push(from.to_string_lossy().into_owned());
+    args
 }
 
 /// Links, packs, aligns and signs: `work` is scratch space beside the
@@ -1393,7 +1637,7 @@ pub fn assemble_apk(
     contents: &ApkContents,
     work: &Path,
     tools: &ApkTools,
-    keystore: &Path,
+    signing: &Signing,
     dest: &Path,
 ) -> Result<ApkReport, String> {
     if contents.native_libs.is_empty() {
@@ -1430,7 +1674,7 @@ pub fn assemble_apk(
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    run_tool(&tools.apksigner, &apksigner_args(keystore, &aligned, dest))?;
+    run_tool(&tools.apksigner, &apksigner_args(signing, &aligned, dest))?;
 
     let mut abis: Vec<String> = contents
         .native_libs
@@ -1446,7 +1690,7 @@ pub fn assemble_apk(
         version_name: String::new(),
         version_code: 0,
         abis,
-        signed: "debug".to_string(),
+        signed: signing.label().to_string(),
     })
 }
 
@@ -1800,6 +2044,7 @@ mod tests {
             application_id: "com.example.pond".to_string(),
             version_code: 7,
             version_name: "2.1".to_string(),
+            ..AndroidSettings::default()
         };
         assert_eq!(
             explicit.application_id_for("Pond Game").unwrap(),
@@ -1828,6 +2073,7 @@ mod tests {
             application_id: String::new(),
             version_code: 3,
             version_name: "1.2.3".to_string(),
+            ..AndroidSettings::default()
         };
         let manifest = render_manifest(&settings, "Pond & Pebbles").unwrap();
         assert!(
@@ -1968,13 +2214,29 @@ mod tests {
         assert!(link.contains(&"/sdk/android.jar".to_string()));
         let align = zipalign_args(&root.join("in.apk"), &root.join("out.apk"));
         assert_eq!(align[0..2], ["-f", "4"]);
-        let sign = apksigner_args(
-            &root.join("debug.keystore"),
-            &root.join("in.apk"),
-            &root.join("out.apk"),
-        );
+        let signing = Signing {
+            keystore: root.join("debug.keystore"),
+            alias: Some("blockloom-debug".to_string()),
+            store_pass: DEBUG_KEYSTORE_PASSWORD.to_string(),
+            key_pass: DEBUG_KEYSTORE_PASSWORD.to_string(),
+            release: false,
+        };
+        let sign = apksigner_args(&signing, &root.join("in.apk"), &root.join("out.apk"));
         assert_eq!(sign[0], "sign");
         assert!(sign.contains(&"pass:android".to_string()), "{sign:?}");
+        assert!(sign.contains(&"blockloom-debug".to_string()), "{sign:?}");
+        // A key with its own password signs under an extra flag.
+        let separate = Signing {
+            key_pass: "key-secret".to_string(),
+            release: true,
+            ..signing
+        };
+        let separate = apksigner_args(&separate, &root.join("in.apk"), &root.join("out.apk"));
+        assert!(separate.contains(&"--key-pass".to_string()), "{separate:?}");
+        assert!(
+            separate.contains(&"pass:key-secret".to_string()),
+            "{separate:?}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2162,6 +2424,88 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn release_rows_refuse_what_they_cannot_sign_with() {
+        // Passwords come from the caller, never the project: clear the env
+        // so this test reads its own args, not the machine's.
+        // SAFETY: no other test reads these vars, so no thread observes it.
+        unsafe {
+            std::env::remove_var(STORE_PASS_ENV);
+            std::env::remove_var(KEY_PASS_ENV);
+        }
+        if keytool().is_err() {
+            eprintln!("SKIP: no keytool on PATH, so no signing test");
+            return;
+        }
+        // Empty rows fall back to debug without needing passwords.
+        let debug = resolve_signing(&AndroidSettings::default(), None, None).unwrap();
+        assert!(!debug.release);
+        assert_eq!(debug.label(), "debug");
+        // A keystore that isn't there names the fix.
+        let missing = AndroidSettings {
+            keystore: "/no-such-dir/release.keystore".to_string(),
+            key_alias: "upload".to_string(),
+            ..AndroidSettings::default()
+        };
+        assert!(resolve_signing(&missing, Some("secret1"), None).is_err());
+        // A keystore with no alias names the fix.
+        let root = temp_root("signing-rows");
+        let store = root.join("release.keystore");
+        std::fs::write(&store, b"fake").unwrap();
+        let no_alias = AndroidSettings {
+            keystore: store.to_string_lossy().into_owned(),
+            key_alias: String::new(),
+            ..AndroidSettings::default()
+        };
+        let error = resolve_signing(&no_alias, Some("secret1"), None).unwrap_err();
+        assert!(error.contains("alias"), "{error}");
+        // A release row with no password says where one comes from.
+        let no_pass = AndroidSettings {
+            keystore: store.to_string_lossy().into_owned(),
+            key_alias: "upload".to_string(),
+            ..AndroidSettings::default()
+        };
+        let error = resolve_signing(&no_pass, None, None).unwrap_err();
+        assert!(error.contains(STORE_PASS_ENV), "{error}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn keytool_makes_a_release_key_and_lists_it() {
+        if keytool().is_err() {
+            eprintln!("SKIP: no keytool on PATH, so no release key test");
+            return;
+        }
+        // SAFETY: no other test reads these vars, so no thread observes it.
+        unsafe {
+            std::env::remove_var(STORE_PASS_ENV);
+            std::env::remove_var(KEY_PASS_ENV);
+        }
+        let root = temp_root("release-key");
+        let store = root.join("release.keystore");
+        let aliases = create_keystore(&store, "upload", Some("secret1"), None).unwrap();
+        assert_eq!(aliases, vec!["upload".to_string()]);
+        // The same alias twice is refused rather than overwritten.
+        let again = create_keystore(&store, "upload", Some("secret1"), None).unwrap_err();
+        assert!(again.contains("already holds"), "{again}");
+        // A second alias lands beside the first.
+        let aliases =
+            create_keystore(&store, "upload2", Some("secret1"), Some("key2key2")).unwrap();
+        assert_eq!(aliases.len(), 2, "{aliases:?}");
+        // And the release row now resolves, with the key defaulting to the
+        // store password when it has none of its own.
+        let settings = AndroidSettings {
+            keystore: store.to_string_lossy().into_owned(),
+            key_alias: "upload".to_string(),
+            ..AndroidSettings::default()
+        };
+        let signing = resolve_signing(&settings, Some("secret1"), None).unwrap();
+        assert!(signing.release);
+        assert_eq!(signing.label(), "release");
+        assert_eq!(signing.key_pass, "secret1");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A fake `aapt2 link` writes an empty zip (end-of-central-directory
     /// only) to its `-o`, so the real zip-append below has valid input.
     #[cfg(unix)]
@@ -2229,8 +2573,15 @@ mod tests {
         };
         let keystore = root.join("debug.keystore");
         std::fs::write(&keystore, b"fake").unwrap();
+        let signing = Signing {
+            keystore,
+            alias: Some("blockloom-debug".to_string()),
+            store_pass: DEBUG_KEYSTORE_PASSWORD.to_string(),
+            key_pass: DEBUG_KEYSTORE_PASSWORD.to_string(),
+            release: false,
+        };
         let dest = root.join("pond.apk");
-        let report = assemble_apk(&contents, &root.join("work"), &tools, &keystore, &dest).unwrap();
+        let report = assemble_apk(&contents, &root.join("work"), &tools, &signing, &dest).unwrap();
         assert!(dest.is_file());
         assert_eq!(report.abis, vec!["arm64-v8a".to_string()]);
         assert_eq!(report.signed, "debug");

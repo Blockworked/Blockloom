@@ -95,6 +95,8 @@ impl Backend {
                 arg(&args, "target").ok().flatten(),
                 arg(&args, "fast").ok().flatten(),
                 arg(&args, "hdr").ok().flatten(),
+                arg(&args, "store_pass").ok().flatten(),
+                arg(&args, "key_pass").ok().flatten(),
             )?),
             "android_status" => to_json(commands::android_status()?),
             "android_device_status" => to_json(commands::android_device_status()?),
@@ -122,6 +124,14 @@ impl Backend {
                 arg(&args, "applicationId").ok().flatten(),
                 arg(&args, "versionCode").ok().flatten(),
                 arg(&args, "versionName").ok().flatten(),
+                arg(&args, "keystore").ok().flatten(),
+                arg(&args, "keyAlias").ok().flatten(),
+            )?),
+            "android_create_keystore" => to_json(commands::android_create_keystore(
+                arg(&args, "path")?,
+                arg(&args, "alias")?,
+                arg(&args, "storePass").ok().flatten(),
+                arg(&args, "keyPass").ok().flatten(),
             )?),
             // ── The world ──────────────────────────────────────────────────
             "set_mode" => {
@@ -256,6 +266,12 @@ impl Backend {
                 state,
                 app,
                 arg(&args, "preset")?,
+            )?),
+            "save_director_preset" => to_json(commands::save_director_preset(
+                state,
+                app,
+                arg(&args, "name")?,
+                arg(&args, "from")?,
             )?),
             "set_vfx" => {
                 let vfx: blockloom_core::vfx::VfxSettings = arg(&args, "vfx")?;

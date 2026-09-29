@@ -1028,19 +1028,20 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         Project Settings has the clock, day length, loop and keyframe
         buttons, a curve editor (`DirectorTrackField.qml`) that draws each
         dial's Bezier track for click/drag/double-click key editing with
-        tangent and loop controls, and the shell/MCP has `set-director` and
-        `apply-director-preset`. Presets carry the whole look: sunlight,
+        tangent and loop controls, a preset gallery that starts a saved
+        preset from any built-in or saved one (`save-director-preset`) and
+        edits its 21 dials in place, and the shell/MCP has `set-director`,
+        `apply-director-preset` and `save-director-preset`. Presets carry the whole look: sunlight,
         ambient, sky exposure, bloom and saturation ride beside the
         fog/cloud/wind dials and land on the sun, the ambient dimmer, the sky
         and the post chain. Wetness is a spatial map (`WetnessMap`): a 32x32
         grid round the camera that rain soaks and warm sun and wind dry back
         towards the weather's damp at each cell's own uneven pace, sampled
         into both the reporters and the surface wetness.
-        Not covered: named presets are still edited through the shell
-        (`set-director`) or MCP - there is no preset gallery UI; the wetness
-        map uploads at 32x32, so dampness varies over 2 m cells rather than
-        per texel, and instanced batches, graph surfaces and 2D sprites keep
-        the sampled uniform instead of the texture.
+        Not covered: the wetness map uploads at 32x32, so dampness varies
+        over 2 m cells rather than per texel, and instanced batches, graph
+        surfaces and 2D sprites keep the sampled uniform instead of the
+        texture.
   - [ ] Cinematics: timeline tracks (camera cut, transform, FOV, volume weight, signal
         fires block at marker), dolly/crane spline path with look-at target plus roll,
         camera shake (trauma 0-1, Perlin translation/rotation noise, decay), letterbox

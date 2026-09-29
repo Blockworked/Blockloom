@@ -2349,6 +2349,8 @@ mod tests {
             application_id: "com.example.pond".to_string(),
             version_code: 7,
             version_name: "2.1".to_string(),
+            keystore: "/keys/release.keystore".to_string(),
+            key_alias: "upload".to_string(),
         };
         let dir = create_project(&project, &temp.0).unwrap();
         save_project(&project, &dir).unwrap();
@@ -2365,6 +2367,18 @@ mod tests {
             loaded.android.application_id_for(&loaded.name).unwrap(),
             "com.blockloom.game.pond_game"
         );
+
+        // A file from before release signing reads empty key rows.
+        let mut index: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(project_file(&dir)).unwrap()).unwrap();
+        index.as_object_mut().unwrap().insert(
+            "android".to_string(),
+            serde_json::json!({"application_id": "", "version_code": 1, "version_name": "1.0.0"}),
+        );
+        std::fs::write(project_file(&dir), serde_json::to_string(&index).unwrap()).unwrap();
+        let loaded = read_project_dir(&dir).unwrap();
+        assert_eq!(loaded.android.keystore, "");
+        assert_eq!(loaded.android.key_alias, "");
     }
 
     #[test]

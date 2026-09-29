@@ -360,13 +360,19 @@ fn staged_player(target: &Target, fallback: &Path) -> Option<PathBuf> {
 }
 
 /// What a build carries beyond the project itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BuildOptions {
     /// Ship the blocks as one native library as well as the document.
     pub fast: bool,
     /// Clamp the player to an 8-bit SDR frame, for targets too weak for
     /// FP16 targets and HDR output.
     pub sdr_only: bool,
+    /// Release keystore password for this build only. `None` reads the env
+    /// (see `android::STORE_PASS_ENV`); ignored off Android. Never stored.
+    pub store_pass: Option<String>,
+    /// Release key password when it differs from the store's. Falls back
+    /// to the store password; ignored off Android. Never stored.
+    pub key_pass: Option<String>,
 }
 
 /// Where a build landed, and what went into it.
@@ -398,6 +404,9 @@ pub struct Build {
     /// Empty on every non-Android target.
     #[serde(default)]
     pub application_id: String,
+    /// `debug` or `release` on Android, empty everywhere else.
+    #[serde(default)]
+    pub signed: String,
     /// Bytes of what ships: the ZIP, or for the web the one `.html`.
     pub size: u64,
 }
@@ -493,6 +502,7 @@ pub fn build(
         sky,
         dlss,
         application_id: String::new(),
+        signed: String::new(),
     })
 }
 
@@ -641,6 +651,7 @@ fn build_web(
         // No DLSS in a browser: WebGPU has no SDK path.
         dlss: false,
         application_id: String::new(),
+        signed: String::new(),
     })
 }
 
@@ -667,11 +678,10 @@ fn build_android(
         parent,
         options,
         &config,
-        &android::ensure_debug_keystore()?,
     )
 }
 
-// Eight params because the test seam takes what production loads globally;
+// Seven params because the test seam takes what production loads globally;
 // splitting the struct up further would just move the list.
 #[allow(clippy::too_many_arguments)]
 fn build_android_with_config(
@@ -682,12 +692,18 @@ fn build_android_with_config(
     parent: &Path,
     options: BuildOptions,
     config: &android::AppConfig,
-    keystore: &Path,
 ) -> Result<Build, String> {
     let (ready, note) = android::readiness_for_config(config, target.triple);
     if !ready {
         return Err(format!("Can't build for {} yet: {note}", target.label));
     }
+    // The key before anything expensive: a release row with no password
+    // stops the build now, not after minutes of baking.
+    let signing = android::resolve_signing(
+        &project.android,
+        options.store_pass.as_deref(),
+        options.key_pass.as_deref(),
+    )?;
     if !runtime_so.is_file() {
         return Err(format!(
             "The runtime library {} is missing, so there is nothing to run.",
@@ -728,11 +744,10 @@ fn build_android_with_config(
         assets_dir: game,
         native_libs,
     };
-    android::ensure_debug_keystore_at(keystore)?;
     let apk_name = format!("{}.apk", project::folder_name(&project.name));
     let binary = dir.join(&apk_name);
     let mut report =
-        android::assemble_apk(&contents, &dir.join("apk-work"), &tools, keystore, &binary)?;
+        android::assemble_apk(&contents, &dir.join("apk-work"), &tools, &signing, &binary)?;
     report.application_id = project.android.application_id_for(&project.name)?;
     report.version_name = project.android.version_name_or_default();
     report.version_code = project.android.version_code_or_default();
@@ -753,6 +768,7 @@ fn build_android_with_config(
         sky,
         dlss: false,
         application_id: report.application_id.clone(),
+        signed: report.signed.clone(),
     })
 }
 
@@ -1647,6 +1663,7 @@ mod tests {
         let options = BuildOptions {
             fast: false,
             sdr_only: true,
+            ..BuildOptions::default()
         };
         let built = build(
             &project,
@@ -1932,7 +1949,6 @@ mod tests {
             &root.join("out"),
             BuildOptions::default(),
             &config,
-            &root.join("debug.keystore"),
         )
         .unwrap_err();
         assert!(
@@ -1995,7 +2011,7 @@ mod tests {
     /// `-o`, `link` writes an empty zip there, zipalign/apksigner copy
     /// input to output. Unix-only, like the assembly test it exercises.
     #[cfg(unix)]
-    fn stub_apk_tools(root: &Path) -> (android::AppConfig, PathBuf) {
+    fn stub_apk_tools(root: &Path) -> android::AppConfig {
         use std::os::unix::fs::PermissionsExt;
         let sdk = root.join("sdk");
         let bin = sdk.join("build-tools").join(android::BUILD_TOOLS);
@@ -2043,12 +2059,11 @@ mod tests {
             b"Pkg.Revision = 27.0.0\n",
         )
         .unwrap();
-        let config = android::AppConfig {
+        android::AppConfig {
             sdk_path: Some(sdk),
             ndk_path: None,
             licenses_accepted: true,
-        };
-        (config, root.join("debug.keystore"))
+        }
     }
 
     #[test]
@@ -2064,8 +2079,7 @@ mod tests {
         let root = temp("android-apk");
         let (project, project_dir, _) = a_project(&root);
         let target = target(android::ARM64_TRIPLE).unwrap();
-        let (config, keystore) = stub_apk_tools(&root);
-        android::ensure_debug_keystore_at(&keystore).unwrap();
+        let config = stub_apk_tools(&root);
         let runtime = root.join("libblockloom_runtime.so");
         std::fs::write(&runtime, b"fake-so").unwrap();
 
@@ -2077,7 +2091,6 @@ mod tests {
             &root.join("out"),
             BuildOptions::default(),
             &config,
-            &keystore,
         )
         .unwrap();
 

@@ -242,6 +242,16 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 ty: "bool",
                 required: false,
             },
+            ArgSpec {
+                name: "storePass",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "keyPass",
+                ty: "string",
+                required: false,
+            },
         ],
     },
     CommandSpec {
@@ -336,7 +346,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "set-android-settings",
         cmd: "set_android_settings",
         aliases: &["set_android_settings"],
-        summary: "Write the open project's Android rows: applicationId override (empty for the default), version code and name.",
+        summary: "Write the open project's Android rows: applicationId override (empty for the default), version code and name, release keystore file plus key alias (empty signs debug). Passwords are never stored.",
         args: &[
             ArgSpec {
                 name: "applicationId",
@@ -350,6 +360,44 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             },
             ArgSpec {
                 name: "versionName",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "keystore",
+                ty: "file path",
+                required: false,
+            },
+            ArgSpec {
+                name: "keyAlias",
+                ty: "string",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "android-create-keystore",
+        cmd: "android_create_keystore",
+        aliases: &["android_create_keystore"],
+        summary: "Make a release key: a new RSA keypair under alias in the key file at path, creating the file when needed. Passwords come from storePass/keyPass or the env, and are never stored.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "file path",
+                required: true,
+            },
+            ArgSpec {
+                name: "alias",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "storePass",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "keyPass",
                 ty: "string",
                 required: false,
             },
@@ -732,6 +780,24 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             ty: "dawn|noon|dusk|midnight",
             required: true,
         }],
+    },
+    CommandSpec {
+        name: "save-director-preset",
+        cmd: "save_director_preset",
+        aliases: &["save_director_preset"],
+        summary: "Copy a weather preset (a project one, or a built-in like Storm) to a project preset under a new name, replacing the project preset of that name when one exists.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "from",
+                ty: "string",
+                required: true,
+            },
+        ],
     },
     CommandSpec {
         name: "set-vfx",

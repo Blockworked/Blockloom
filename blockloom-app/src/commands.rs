@@ -1403,6 +1403,47 @@ pub(crate) fn apply_director_preset(
     Ok(name)
 }
 
+/// Copies a weather preset - a project one, or a built-in like Storm - to a
+/// project preset under a new name, replacing the project preset of that
+/// name when one exists. What the preset gallery's Save copy button writes
+/// through; answers the saved name.
+pub(crate) fn save_director_preset(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+    from: String,
+) -> Result<String, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Name the preset first".to_string());
+    }
+    let s = lock(state)?;
+    let director = s
+        .project()
+        .map(|project| project.world.director.clone())
+        .ok_or_else(|| "No project is open".to_string())?;
+    let mut preset = director
+        .preset(&from)
+        .ok_or_else(|| format!("There's no weather called \"{}\"", from.trim()))?;
+    preset.name = name.clone();
+    preset.normalize();
+    let mut next: Vec<blockloom_core::director::WeatherPreset> = director
+        .presets
+        .iter()
+        .filter(|p| !p.name.eq_ignore_ascii_case(&name))
+        .cloned()
+        .collect();
+    if next.len() >= 32 {
+        return Err("A project holds at most 32 presets".to_string());
+    }
+    next.push(preset);
+    drop(s);
+    let mut full = director;
+    full.presets = next;
+    set_director(state, app, full)?;
+    Ok(name)
+}
+
 /// Sets the project's particle budget and whether emitters stay on the CPU.
 pub(crate) fn set_vfx(
     state: &SharedState,
@@ -2441,6 +2482,7 @@ pub(crate) fn list_build_targets(state: &SharedState) -> Result<Vec<build::Targe
 /// into a folder under `path` that runs without the editor: the player
 /// binary, the project's pack, its assets and its compiled scripts (see
 /// `blockloom_core::build`). Returns where it landed.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_game(
     state: &SharedState,
     app: &AppHandle,
@@ -2448,6 +2490,8 @@ pub(crate) fn build_game(
     target: Option<String>,
     fast: Option<bool>,
     hdr: Option<bool>,
+    store_pass: Option<String>,
+    key_pass: Option<String>,
 ) -> Result<build::Build, String> {
     let mut s = lock(state)?;
     let Some(project) = s.project().cloned() else {
@@ -2463,6 +2507,9 @@ pub(crate) fn build_game(
             .ok_or("Blockloom has no name for this platform, so it can't build for it")?,
     };
     let player = if target.is_android() {
+        // Fail fast on a release row with no password, before the long NDK
+        // cross-build below: the build would refuse it anyway.
+        android::resolve_signing(&project.android, store_pass.as_deref(), key_pass.as_deref())?;
         // No staged player: the desktop NDK cross-builds the runtime into
         // the APK's `lib/<abi>/`, so `build` takes its path as the player.
         // A prebuilt one wins when the env names it (see
@@ -2531,13 +2578,22 @@ pub(crate) fn build_game(
     let options = build::BuildOptions {
         fast,
         sdr_only: target.is_web() || !hdr.unwrap_or(target.hdr_default().0),
+        store_pass,
+        key_pass,
     };
-    let built = build::build(&project, &dir, target, &player, Path::new(&path), options)?;
+    let built = build::build(
+        &project,
+        &dir,
+        target,
+        &player,
+        Path::new(&path),
+        options.clone(),
+    )?;
     s.push_log(LogLine {
         kind: "say".to_string(),
         actor: "Blockloom".to_string(),
         text: format!(
-            "Built {} for {}: {} asset(s), {} script(s), {} shader(s), {} blocks, {}{}{}, {} -> {} and {}",
+            "Built {} for {}: {} asset(s), {} script(s), {} shader(s), {} blocks, {}{}{}{}, {} -> {} and {}",
             project.name,
             target.label,
             built.assets,
@@ -2550,6 +2606,11 @@ pub(crate) fn build_game(
                 ", DLSS DLLs included"
             } else {
                 ""
+            },
+            if target.is_android() {
+                format!(", {}-signed", built.signed)
+            } else {
+                String::new()
             },
             build::size_text(built.size),
             built.dir.display(),
@@ -2619,15 +2680,19 @@ pub(crate) fn android_set_ndk_path(path: String) -> Result<String, String> {
 }
 
 /// Writes the per-project Android rows (applicationId override, version
-/// code and name). Each is optional so a caller can change one row without
-/// resending the rest; an invalid id refuses the edit, empty clears back to
-/// the default id from the project name.
+/// code and name, release keystore plus alias). Each is optional so a caller
+/// can change one row without resending the rest; an invalid id refuses the
+/// edit, empty clears back to the default id from the project name. A
+/// keystore row must name a file that exists; passwords are never stored
+/// here, each build asks for them.
 pub(crate) fn set_android_settings(
     state: &SharedState,
     app: &AppHandle,
     application_id: Option<String>,
     version_code: Option<u32>,
     version_name: Option<String>,
+    keystore: Option<String>,
+    key_alias: Option<String>,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     if s.open.is_none() {
@@ -2637,6 +2702,14 @@ pub(crate) fn set_android_settings(
         let trimmed = id.trim();
         if !trimmed.is_empty() {
             android::validate_application_id(trimmed)?;
+        }
+    }
+    if let Some(path) = &keystore {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() && !std::path::Path::new(trimmed).is_file() {
+            return Err(format!(
+                "{trimmed} isn't a key file. Create one first, or pick the file again."
+            ));
         }
     }
     let current = s.project().map(|project| project.android.clone());
@@ -2654,6 +2727,12 @@ pub(crate) fn set_android_settings(
             name.trim().to_string()
         };
     }
+    if let Some(path) = keystore {
+        next.keystore = path.trim().to_string();
+    }
+    if let Some(alias) = key_alias {
+        next.key_alias = alias.trim().to_string();
+    }
     if current.is_some_and(|current| current == next) {
         return Ok(());
     }
@@ -2664,6 +2743,27 @@ pub(crate) fn set_android_settings(
     auto_save(&s);
     emit(app, &s);
     Ok(())
+}
+
+/// Makes a release key: a new RSA keypair under `alias` in the keystore at
+/// `path`, creating the file when it names nothing yet. Answers the aliases
+/// the file holds afterwards. Passwords come from the args or the env (see
+/// `android::STORE_PASS_ENV`); nothing is stored. Needs no open project.
+pub(crate) fn android_create_keystore(
+    path: String,
+    alias: String,
+    store_pass: Option<String>,
+    key_pass: Option<String>,
+) -> Result<Vec<String>, String> {
+    if path.trim().is_empty() {
+        return Err("Name the key file first.".to_string());
+    }
+    android::create_keystore(
+        std::path::Path::new(path.trim()),
+        &alias,
+        store_pass.as_deref(),
+        key_pass.as_deref(),
+    )
 }
 
 // ─── Assets ────────────────────────────────────────────────────────────────

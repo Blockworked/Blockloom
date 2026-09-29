@@ -28,6 +28,12 @@ BwDialog {
     property string installError: ""
     property bool installing: false
     property string logcat: ""
+    // Release signing: the project's key rows, and this build's passwords.
+    // Passwords live in these fields only, never in the project or config.
+    readonly property string releaseKeystore: app.appState.project && app.appState.project.android ? (app.appState.project.android.keystore || "") : ""
+    readonly property string releaseAlias: app.appState.project && app.appState.project.android ? (app.appState.project.android.key_alias || "") : ""
+    property string storePass: ""
+    property string keyPass: ""
     function sizeText(bytes) {
         if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB";
         return Math.max(1, Math.round(bytes / 1024)) + " KB";
@@ -43,6 +49,7 @@ BwDialog {
     onOpened: {
         error = ""; built = null; busy = false;
         devices = []; device = ""; installState = ""; installError = ""; logcat = "";
+        storePass = ""; keyPass = "";
         locationField.text = app.appState.default_build_location || app.appState.default_project_location;
         app.invoke("list_build_targets", {}, list => {
             targets = list;
@@ -55,8 +62,15 @@ BwDialog {
         if (busy || !chosen || !chosen.ready) return;
         busy = true; error = ""; built = null;
         installState = ""; installError = ""; logcat = "";
-        app.invoke("build_game", { path: locationField.text.trim(), target: triple, fast: fast, hdr: root.android || root.web ? false : hdr },
-            result => { busy = false; built = result; if (root.android) root.listDevices(); }, e => { busy = false; error = String(e); });
+        const args = { path: locationField.text.trim(), target: triple, fast: fast, hdr: root.android || root.web ? false : hdr };
+        // Passwords ride this call only: a release row without them stops
+        // the build with where to type them, and headless reads the env.
+        if (root.android && root.releaseKeystore !== "") {
+            args.storePass = storePass;
+            args.keyPass = keyPass;
+        }
+        app.invoke("build_game", args,
+            result => { busy = false; built = result; storePass = ""; keyPass = ""; if (root.android) root.listDevices(); }, e => { busy = false; error = String(e); });
     }
     function listDevices() {
         app.invoke("android_device_status", {}, result => {
@@ -114,8 +128,28 @@ BwDialog {
                 : "The game gets a folder of its own, named for the project and the platform, with the player and the project's assets inside it. Anyone on that platform can run it without Blockloom." }
         ColumnLayout {
             visible: !!root.built; Layout.fillWidth: true; spacing: 4
-            TextEdit { Layout.fillWidth: true; readOnly: true; selectByMouse: true; wrapMode: Text.WrapAnywhere; color: Theme.text; font.pixelSize: 12; text: !root.built ? "" : root.web ? "Web page: " + root.built.binary + " (" + root.sizeText(root.built.size) + ")" : root.android ? "APK: " + root.built.binary + " (" + root.sizeText(root.built.size) + ", debug-signed)" : "Runnable folder: " + root.built.dir }
+            TextEdit { Layout.fillWidth: true; readOnly: true; selectByMouse: true; wrapMode: Text.WrapAnywhere; color: Theme.text; font.pixelSize: 12; text: !root.built ? "" : root.web ? "Web page: " + root.built.binary + " (" + root.sizeText(root.built.size) + ")" : root.android ? "APK: " + root.built.binary + " (" + root.sizeText(root.built.size) + ", " + (root.built.signed || "debug") + "-signed)" : "Runnable folder: " + root.built.dir }
             TextEdit { Layout.fillWidth: true; readOnly: true; selectByMouse: true; wrapMode: Text.WrapAnywhere; color: Theme.text; font.pixelSize: 12; text: root.built ? "Shareable ZIP: " + root.built.archive : "" }
+        }
+        ColumnLayout {
+            visible: root.android; Layout.fillWidth: true; spacing: 6
+            Text { text: "Signing"; color: Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold }
+            Text { visible: root.releaseKeystore === ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
+                text: "Debug-signed: fine for devices, refused by the Play store. Pick a release key file plus alias in Project settings for store uploads - or make one below." }
+            ColumnLayout { visible: root.releaseKeystore !== ""; Layout.fillWidth: true; spacing: 6
+                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: "Release key: " + root.releaseKeystore + " (" + (root.releaseAlias || "no alias set") + "). Passwords are asked on every build and never stored; headless builds read BLOCKLOOM_ANDROID_STORE_PASS / BLOCKLOOM_ANDROID_KEY_PASS instead." }
+                RowLayout {
+                    Layout.fillWidth: true; spacing: 8
+                    Text { text: "Keystore password"; color: Theme.textDim; font.pixelSize: 12; Layout.preferredWidth: 130 }
+                    BwTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: root.storePass; placeholderText: "Asked every build"; onTextChanged: root.storePass = text }
+                }
+                RowLayout {
+                    Layout.fillWidth: true; spacing: 8
+                    Text { text: "Key password"; color: Theme.textDim; font.pixelSize: 12; Layout.preferredWidth: 130 }
+                    BwTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: root.keyPass; placeholderText: "Empty means the keystore password"; onTextChanged: root.keyPass = text }
+                }
+            }
+            BwButton { text: "Create a new release key..."; onClicked: { newKey.error = ""; newKey.open(); } }
         }
         ColumnLayout {
             visible: root.android && !!root.built; Layout.fillWidth: true; spacing: 6
@@ -140,6 +174,60 @@ BwDialog {
             BwButton { text: root.built ? "Done" : "Cancel"; onClicked: root.close() }
             BwButton { text: root.busy ? "Building..." : "Build"; primary: true; enabled: !root.busy && !!root.chosen && root.chosen.ready; onClicked: root.submit() }
         }
+    }
+    BwDialog {
+        id: newKey
+        property string error: ""
+        property string keyPath: ""
+        property string keyAlias: ""
+        property string keyStorePass: ""
+        property string keyKeyPass: ""
+        property bool busy: false
+        title: "Create a release key"
+        standardButtons: Dialog.NoButton
+        width: 480
+        onOpened: { error = ""; busy = false; }
+        function create() {
+            if (busy || keyPath.trim() === "" || keyAlias.trim() === "") return;
+            busy = true; error = "";
+            app.invoke("android_create_keystore", { path: keyPath.trim(), alias: keyAlias.trim(), storePass: keyStorePass, keyPass: keyKeyPass },
+                aliases => {
+                    busy = false;
+                    // The new key signs this project from now on.
+                    app.invoke("set_android_settings", { keystore: keyPath.trim(), keyAlias: keyAlias.trim() },
+                        () => newKey.close(), e => error = String(e));
+                }, e => { busy = false; error = String(e); });
+        }
+        ColumnLayout {
+            width: parent.width; spacing: 8
+            Text { visible: newKey.error.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.danger; font.pixelSize: 12; text: newKey.error }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
+                text: "A new RSA keypair for store uploads. Guard the file and its passwords: lose them and updates to the game cannot be signed." }
+            Text { text: "Key file"; color: Theme.textDim; font.pixelSize: 12 }
+            RowLayout {
+                Layout.fillWidth: true
+                BwTextField { Layout.fillWidth: true; text: newKey.keyPath; placeholderText: "/path/to/release.keystore"; onTextChanged: newKey.keyPath = text }
+                IconButton { iconName: "folder-open"; tip: "Choose where the key file goes"; implicitWidth: 34; implicitHeight: 34; onClicked: newKeyBrowse.open() }
+            }
+            Text { text: "Alias"; color: Theme.textDim; font.pixelSize: 12 }
+            BwTextField { Layout.fillWidth: true; text: newKey.keyAlias; placeholderText: "upload"; onTextChanged: newKey.keyAlias = text }
+            Text { text: "Keystore password"; color: Theme.textDim; font.pixelSize: 12 }
+            BwTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: newKey.keyStorePass; placeholderText: "At least 6 characters"; onTextChanged: newKey.keyStorePass = text }
+            Text { text: "Key password"; color: Theme.textDim; font.pixelSize: 12 }
+            BwTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: newKey.keyKeyPass; placeholderText: "Empty means the keystore password"; onTextChanged: newKey.keyKeyPass = text }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight; Layout.topMargin: 8; spacing: 8
+                BwButton { text: "Cancel"; onClicked: newKey.close() }
+                BwButton { text: newKey.busy ? "Creating..." : "Create key"; primary: true; enabled: !newKey.busy && newKey.keyPath.trim() !== "" && newKey.keyAlias.trim() !== ""; onClicked: newKey.create() }
+            }
+        }
+    }
+    FileDialog {
+        id: newKeyBrowse
+        title: "Where the release key file goes"
+        fileMode: FileDialog.SaveFile
+        nameFilters: ["Key files (*.jks *.keystore)", "All files (*)"]
+        onAccepted: newKey.keyPath = root.app.fromFileUrl(selectedFile)
     }
     FolderDialog {
         id: browse

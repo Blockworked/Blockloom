@@ -152,10 +152,10 @@ BwDialog {
                 heading: "Android"
                 readonly property var android: root.project && root.project.android ? root.project.android : ({ application_id: "", version_code: 1, version_name: "1.0.0" })
                 function writeAndroid(next) {
-                    const current = { application_id: "", version_code: 1, version_name: "1.0.0" };
+                    const current = { application_id: "", version_code: 1, version_name: "1.0.0", keystore: "", key_alias: "" };
                     Object.assign(current, root.project && root.project.android ? root.project.android : {});
                     Object.assign(current, next);
-                    root.invoke("set_android_settings", { applicationId: current.application_id || "", versionCode: Math.max(1, Math.round(current.version_code || 1)), versionName: current.version_name || "1.0.0" });
+                    root.invoke("set_android_settings", { applicationId: current.application_id || "", versionCode: Math.max(1, Math.round(current.version_code || 1)), versionName: current.version_name || "1.0.0", keystore: current.keystore || "", keyAlias: current.key_alias || "" });
                 }
                 InspectorRow { label: "Application ID"; labelWidth: 110; Layout.fillWidth: true
                     BwTextField {
@@ -175,6 +175,24 @@ BwDialog {
                         onEditingFinished: androidSection.writeAndroid({ version_name: text.trim() || "1.0.0" })
                     } }
                 Note { text: "minSdk 29, targetSdk 35, no permissions in v1. The launcher icon comes from the game icon above." }
+                InspectorRow { label: "Release key"; labelWidth: 110; Layout.fillWidth: true
+                    BwTextField {
+                        id: keystoreField
+                        Layout.fillWidth: true
+                        text: androidSection.android.keystore || ""
+                        placeholderText: "Debug key (for store uploads, pick a key file)"
+                        onEditingFinished: androidSection.writeAndroid({ keystore: text.trim() })
+                    }
+                    IconButton { iconName: "folder-open"; tip: "Choose a key file"; onClicked: keystoreFile.open() }
+                    IconButton { iconName: "x"; tip: "Sign with the debug key instead"; enabled: (androidSection.android.keystore || "") !== ""; onClicked: androidSection.writeAndroid({ keystore: "", key_alias: "" }) } }
+                InspectorRow { visible: (androidSection.android.keystore || "") !== ""; label: "Key alias"; labelWidth: 110; Layout.fillWidth: true
+                    BwTextField {
+                        Layout.fillWidth: true
+                        text: androidSection.android.key_alias || ""
+                        placeholderText: "Which key in the file signs"
+                        onEditingFinished: androidSection.writeAndroid({ key_alias: text.trim() })
+                    } }
+                Note { text: "Empty signs every build with the debug key, which the Play store refuses. A release key asks for its passwords on each build (or reads them from the env headless) and never stores them." }
             }
             Section {
                 heading: "World"; visible: !!root.world
@@ -743,6 +761,58 @@ BwDialog {
                 function dialRange() { const found = dials().find(entry => entry.value === directorSection.dial); return found || { low: 0, high: 1 }; }
                 function trackOf() { const t = directorSection.d ? directorSection.d[directorSection.dial] : null; return t && t.keys ? t : { keys: [], loop_enabled: true }; }
                 function writeTrack(t) { const o = {}; o[directorSection.dial] = t; root.writeDirector(o); }
+                property string presetName: ""
+                property string copyFrom: "Storm"
+                function customPresets() { const d = directorSection.d; return d && d.presets ? d.presets : []; }
+                function builtinNames() { return ["Clear", "Overcast", "Storm", "Sunset", "Night"]; }
+                function editingPreset() { const found = customPresets().find(p => p.name === directorSection.presetName); return found || null; }
+                function presetValue(key, fallback) { const p = directorSection.editingPreset(); const v = p && p.values ? p.values[key] : undefined; return v === undefined || v === null ? fallback : v; }
+                function writePresetValue(key, v) {
+                    const next = customPresets().map(p => {
+                        if (p.name !== directorSection.presetName) return p;
+                        const values = Object.assign({}, p.values); values[key] = v;
+                        return { name: p.name, values: values };
+                    });
+                    root.writeDirector({ presets: next });
+                }
+                function deletePreset() {
+                    const left = customPresets().filter(p => p.name !== directorSection.presetName);
+                    directorSection.presetName = "";
+                    root.writeDirector({ presets: left });
+                }
+                function presetGroups() {
+                    return [
+                        { heading: "Air", fields: [
+                            { key: "fog_density", label: "Fog density", fallback: 0 },
+                            { key: "cloud_coverage", label: "Cloud cover", fallback: 0.35 },
+                            { key: "cloud_density", label: "Cloud density", fallback: 0.8 },
+                            { key: "cloud_type", label: "Cloud type", fallback: 0.7 },
+                            { key: "precipitation", label: "Rain", fallback: 0 },
+                            { key: "snow", label: "Snow", fallback: 0 },
+                            { key: "wetness", label: "Wetness", fallback: 0 },
+                            { key: "temperature", label: "Temperature C", fallback: 20 }
+                        ] },
+                        { heading: "Wind", fields: [
+                            { key: "wind_speed", label: "Wind speed", fallback: 0 },
+                            { key: "wind_direction", label: "Wind direction", fallback: 45 },
+                            { key: "storm", label: "Storm", fallback: 0 }
+                        ] },
+                        { heading: "Sun and sky", fields: [
+                            { key: "sun_azimuth", label: "Sun azimuth", fallback: 135 },
+                            { key: "sun_elevation", label: "Sun elevation", fallback: 54.7 },
+                            { key: "sunlight", label: "Sunlight", fallback: 1 },
+                            { key: "ambient", label: "Ambient", fallback: 1 },
+                            { key: "sky_exposure", label: "Sky exposure EV", fallback: 0 },
+                            { key: "aurora_kp", label: "Aurora KP", fallback: 0 }
+                        ] },
+                        { heading: "Camera", fields: [
+                            { key: "exposure", label: "Exposure EV", fallback: 9.7 },
+                            { key: "bloom", label: "Bloom", fallback: 1 },
+                            { key: "saturation", label: "Saturation", fallback: 1 },
+                            { key: "lut_weight", label: "Grading LUT weight", fallback: 0 }
+                        ] }
+                    ];
+                }
                 InspectorRow { label: "Director"; labelWidth: 110; Layout.fillWidth: true
                     SwitchField { value: !!directorSection.d.enabled; onToggled: on => root.writeDirector({ enabled: on }) } Item { Layout.fillWidth: true } }
                 InspectorRow { visible: !!directorSection.d.enabled; label: "Clock, day s"; labelWidth: 110; Layout.fillWidth: true
@@ -762,7 +832,54 @@ BwDialog {
                     high: directorSection.dialRange().high
                     onEdited: t => directorSection.writeTrack(t)
                 }
-                Note { text: "A 24h clock driving sun, moon, exposure, fog, clouds, wind and weather: 0 freezes it (blocks still move it), day seconds set how long a full day takes, and loop wraps past midnight. Keyframes lay a sun track through that moment with matching exposure, fog and clouds; the track editor above draws each dial's Bezier curve - click to add a key, drag to move it, double-click to remove it - and named presets are edited through the shell (`set-director`) or MCP. While it runs, its exposure is the camera's default writer - `set exposure to` still wins. Blocks: `set time of day to`, `advance time by`, `set precipitation to`, `blend weather to _ over _ seconds` (Clear, Overcast, Storm, Sunset, Night built in), reporters `time of day`, `sun elevation`, `current weather`, and `when weather becomes`." }
+                InspectorRow { label: "Preset"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField {
+                        options: directorSection.customPresets().map(p => ({ value: p.name, label: p.name }))
+                        value: directorSection.presetName
+                        placeholder: directorSection.customPresets().length ? "Pick a saved preset" : "No saved presets"
+                        onChosen: v => directorSection.presetName = v
+                    }
+                    BwButton { text: "Delete"; implicitHeight: 30; enabled: !!directorSection.editingPreset(); onClicked: directorSection.deletePreset() } }
+                InspectorRow { label: "New preset"; labelWidth: 110; Layout.fillWidth: true
+                    TextField { id: presetNameField; Layout.fillWidth: true; placeholderText: "Name"; maximumLength: 64 }
+                    ChoiceField {
+                        options: directorSection.builtinNames().concat(directorSection.customPresets().map(p => p.name)).map(n => ({ value: n, label: n }))
+                        value: directorSection.copyFrom
+                        onChosen: v => directorSection.copyFrom = v
+                    }
+                    BwButton { text: "Save copy"; implicitHeight: 30; onClicked: {
+                        const name = presetNameField.text.trim();
+                        if (!name) return;
+                        root.app.invoke("save_director_preset", { name: name, from: directorSection.copyFrom }, saved => {
+                            directorSection.presetName = saved;
+                            presetNameField.text = "";
+                        });
+                    } } }
+                ColumnLayout {
+                    visible: !!directorSection.editingPreset()
+                    Layout.fillWidth: true; spacing: 2
+                    Repeater {
+                        model: directorSection.presetGroups()
+                        delegate: ColumnLayout {
+                            required property var modelData
+                            Layout.fillWidth: true; spacing: 2
+                            SubHeading { text: modelData.heading }
+                            Repeater {
+                                model: modelData.fields
+                                delegate: InspectorRow {
+                                    required property var modelData
+                                    label: modelData.label; labelWidth: 110; Layout.fillWidth: true
+                                    NumberField {
+                                        value: directorSection.presetValue(modelData.key, modelData.fallback)
+                                        fallback: modelData.fallback
+                                        onCommitted: n => directorSection.writePresetValue(modelData.key, n)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Note { text: "A 24h clock driving sun, moon, exposure, fog, clouds, wind and weather: 0 freezes it (blocks still move it), day seconds set how long a full day takes, and loop wraps past midnight. Keyframes lay a sun track through that moment with matching exposure, fog and clouds; the track editor above draws each dial's Bezier curve - click to add a key, drag to move it, double-click to remove it. The preset gallery keeps the project's named presets: Save copy starts one from a built-in or another saved preset, the dials edit it, and `blend weather to _ over _ seconds` moves the air towards it without popping. While it runs, its exposure is the camera's default writer - `set exposure to` still wins. Blocks: `set time of day to`, `advance time by`, `set precipitation to`, `blend weather to _ over _`, reporters `time of day`, `sun elevation`, `current weather`, and `when weather becomes`." }
             }
             Section {
                 heading: "Particles"; visible: !!root.world
@@ -1046,5 +1163,11 @@ BwDialog {
         nameFilters: ["Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.ico)"]
         onAccepted: root.app.invoke("import_assets", { parent: "assets", paths: [root.app.fromFileUrl(selectedFile)] },
             imported => { if (imported && imported[0]) root.invoke("set_project_icon", { path: imported[0] }); })
+    }
+    FileDialog {
+        id: keystoreFile
+        title: "Choose a release key file"
+        nameFilters: ["Key files (*.jks *.keystore)", "All files (*)"]
+        onAccepted: androidSection.writeAndroid({ keystore: root.app.fromFileUrl(selectedFile) })
     }
 }
