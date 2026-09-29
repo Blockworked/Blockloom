@@ -33,6 +33,7 @@ Rectangle {
         IconButton { iconName: "download"; tip: "Export this project"; onClicked: root.app.invoke("export_file_name", {}, name => { const base = root.appState.default_export_location || root.appState.default_project_location; exportFile.currentFile = root.app.toFileUrl(base + "/" + name); exportFile.open(); }) }
         IconButton { iconName: "package"; tip: "Build a standalone game"; onClicked: buildDialog.open() }
         IconButton { iconName: "settings"; tip: "Project settings"; onClicked: settingsDialog.open() }
+        IconButton { iconName: "smartphone"; tip: "App settings (Android SDK)"; onClicked: appSettings.open() }
         Item { Layout.fillWidth: true }
         IconButton { iconName: "undo-2"; tip: "Undo"; enabled: root.appState.can_undo; onClicked: root.app.invoke("undo") }
         IconButton { iconName: "redo-2"; tip: "Redo"; enabled: root.appState.can_redo; onClicked: root.app.invoke("redo") }
@@ -302,4 +303,5 @@ Rectangle {
     }
     BuildDialog { id: buildDialog; app: root.app }
     ProjectSettingsDialog { id: settingsDialog; app: root.app }
+    AppSettingsDialog { id: appSettings; app: root.app }
 }

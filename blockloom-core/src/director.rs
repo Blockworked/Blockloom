@@ -809,6 +809,22 @@ impl WetnessMap {
         Self::EXTENT / Self::GRID as f32
     }
 
+    /// The raw cells, row-major, for the GPU upload.
+    pub fn cells(&self) -> &[f32] {
+        &self.cells
+    }
+
+    /// Where the grid is centred in world XZ.
+    pub fn center(&self) -> (f32, f32) {
+        self.center
+    }
+
+    /// The shader frame: centre x/z, extent metres, unused. It matches
+    /// `sample`'s maths, so the texture reads what the CPU reads.
+    pub fn frame(&self) -> [f32; 4] {
+        [self.center.0, self.center.1, Self::EXTENT, 0.0]
+    }
+
     pub fn reset(&mut self) {
         *self = Self::default();
     }
@@ -1130,5 +1146,22 @@ mod tests {
         // Far outside still answers with the edge, never NaN.
         assert!(map.sample(9999.0, -9999.0).is_finite());
         assert!(map.sample(f32::NAN, 0.0).is_finite());
+    }
+
+    #[test]
+    fn the_frame_names_what_the_gpu_uploads() {
+        let mut map = WetnessMap::default();
+        map.recenter(6.0, -4.0);
+        assert_eq!(map.center(), map.center);
+        assert_eq!(
+            map.frame(),
+            [map.center.0, map.center.1, WetnessMap::EXTENT, 0.0]
+        );
+        assert_eq!(map.cells().len(), WetnessMap::GRID * WetnessMap::GRID);
+        // Cell order is row-major, so the upload's first row is the map's.
+        for _ in 0..60 {
+            map.step(0.0, 1.0, 0.0, 1.0);
+        }
+        assert!(map.cells().iter().all(|c| *c > 0.9));
     }
 }

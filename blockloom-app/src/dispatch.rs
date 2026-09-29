@@ -110,6 +110,19 @@ impl Backend {
             "android_logcat" => to_json(commands::android_logcat(
                 arg(&args, "device").ok().flatten(),
             )?),
+            "android_set_sdk_path" => to_json(commands::android_set_sdk_path(
+                arg(&args, "path").unwrap_or_default(),
+            )?),
+            "android_set_ndk_path" => to_json(commands::android_set_ndk_path(
+                arg(&args, "path").unwrap_or_default(),
+            )?),
+            "set_android_settings" => to_json(commands::set_android_settings(
+                state,
+                app,
+                arg(&args, "applicationId").ok().flatten(),
+                arg(&args, "versionCode").ok().flatten(),
+                arg(&args, "versionName").ok().flatten(),
+            )?),
             // ── The world ──────────────────────────────────────────────────
             "set_mode" => {
                 let mode: Mode = arg(&args, "mode")?;

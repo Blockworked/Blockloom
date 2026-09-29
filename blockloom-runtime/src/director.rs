@@ -6,6 +6,8 @@
 use crate::atmosphere::{AtmosphereSources, sample_atmosphere};
 use crate::engine::{Engine, PendingEffects};
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::render::storage::ShaderBuffer;
 use blockloom_core::director::{
     Director, WeatherPreset, WeatherValues, WetnessMap, evaporation_rate,
 };
@@ -14,6 +16,7 @@ use blockloom_core::vm::{Effect, Event};
 pub fn register(app: &mut App) {
     app.init_resource::<DirectorClock>()
         .init_resource::<WetnessField>()
+        .init_resource::<WetnessTexture>()
         .add_systems(
             FixedUpdate,
             (
@@ -25,7 +28,8 @@ pub fn register(app: &mut App) {
                     .after(crate::world::apply_common)
                     .before(crate::world::clear_effects),
             ),
-        );
+        )
+        .add_systems(Update, upload_wetness.after(crate::world::rebuild_world));
 }
 
 /// The ground wetness map: rain soaks it, evaporation dries it unevenly.
@@ -41,6 +45,88 @@ impl Default for WetnessField {
         Self {
             map: WetnessMap::default(),
             sampled: 0.0,
+        }
+    }
+}
+
+/// The wetness map as a GPU texture, so surfaces read per-pixel dampness
+/// instead of one sampled value. Row-major like the map's cells, wetness in
+/// R; the frame in `SurfaceGlobals` says where it sits in the world.
+#[derive(Resource, Default)]
+pub struct WetnessTexture {
+    image: Option<Handle<Image>>,
+    pixels: Vec<u8>,
+}
+
+fn upload_wetness(
+    wetness: Res<WetnessField>,
+    mut texture: ResMut<WetnessTexture>,
+    mut images: ResMut<Assets<Image>>,
+    mut globals: ResMut<crate::materials::SurfaceGlobals>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
+    mut boxes: ResMut<Assets<crate::materials::BoxMaterial>>,
+    terrain: Option<ResMut<Assets<crate::terrain::material::TerrainMaterial>>>,
+) {
+    let pixels: Vec<u8> = wetness
+        .map
+        .cells()
+        .iter()
+        .flat_map(|c| [(c.clamp(0.0, 1.0) * 255.0).round() as u8, 0, 0, 255])
+        .collect();
+    if texture.image.is_none() {
+        let mut image = Image::new(
+            Extent3d {
+                width: WetnessMap::GRID as u32,
+                height: WetnessMap::GRID as u32,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            pixels.clone(),
+            TextureFormat::Rgba8Unorm,
+            bevy::asset::RenderAssetUsages::default(),
+        );
+        image.texture_descriptor.label = Some("director/wetness_map");
+        texture.image = Some(images.add(image));
+    } else if pixels != texture.pixels
+        && let Some(handle) = texture.image.as_ref()
+        && let Some(mut image) = images.get_mut(handle)
+    {
+        image.data = Some(pixels.clone());
+    }
+    texture.pixels = pixels;
+    // The frame lands only once the texture exists, so a material never
+    // samples the fallback image as real dampness.
+    if texture.image.is_some() {
+        let frame = wetness.map.frame();
+        let frame = Vec4::new(frame[0], frame[1], frame[2], frame[3]);
+        if frame != globals.data.wet_frame {
+            globals.data.wet_frame = frame;
+            if let Some(mut buffer) = buffers.get_mut(&globals.buffer) {
+                *buffer = ShaderBuffer::from(vec![globals.data]);
+            }
+        }
+    }
+    let handle = texture.image.clone();
+    let missing: Vec<_> = boxes
+        .iter()
+        .filter(|(_, m)| m.extension.wet_state != handle)
+        .map(|(id, _)| id)
+        .collect();
+    for id in missing {
+        if let Some(mut material) = boxes.get_mut(id) {
+            material.extension.wet_state = handle.clone();
+        }
+    }
+    if let Some(mut terrain) = terrain {
+        let missing: Vec<_> = terrain
+            .iter()
+            .filter(|(_, m)| m.extension.wet_state != handle)
+            .map(|(id, _)| id)
+            .collect();
+        for id in missing {
+            if let Some(mut material) = terrain.get_mut(id) {
+                material.extension.wet_state = handle.clone();
+            }
         }
     }
 }

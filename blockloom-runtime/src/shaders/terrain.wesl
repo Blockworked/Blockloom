@@ -12,7 +12,7 @@ import bevy_pbr::render::mesh_view_bindings::view;
 import blockloom::texturing::{
     SurfaceGlobals, MaskUniforms, DetailUniforms, triplanar, triplanar_array,
     triplanar_normal, triplanar_normal_array, triplanar_weights, slope_degrees, macro_noise,
-    macro_tint, blend_detail, apply_masks_with_state, lasting_state, blend_debug,
+    macro_tint, blend_detail, apply_masks_with_state, lasting_state, wetness_at, blend_debug,
 };
 
 struct TerrainUniforms {
@@ -59,6 +59,7 @@ fn has(bits: f32, layer: i32) -> bool {
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(116) var lasting_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(117) var wet_texture: texture_2d<f32>;
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -125,7 +126,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         shading_n = blend_detail(shading_n, d, n, detail.detail.x, distance, detail.detail.z);
     }
 
-    let masked = apply_masks_with_state(albedo, roughness, slope_degrees(n), world.y, cavity, masks, globals, lasting_state(world,globals.surface_frame,lasting_texture));
+    let masked = apply_masks_with_state(albedo, roughness, slope_degrees(n), world.y, cavity, masks, globals, lasting_state(world,globals.surface_frame,lasting_texture), wetness_at(world,globals.wet_frame,wet_texture));
     pbr.material.base_color = vec4<f32>(masked.albedo, 1.0);
     pbr.material.perceptual_roughness = clamp(masked.roughness, 0.045, 1.0);
     pbr.world_normal = n;

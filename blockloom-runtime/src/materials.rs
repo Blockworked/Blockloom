@@ -288,6 +288,8 @@ pub struct BoxProjection {
     pub globals: Handle<ShaderBuffer>,
     #[texture(116)]
     pub surface_state: Option<Handle<Image>>,
+    #[texture(117)]
+    pub wet_state: Option<Handle<Image>>,
 }
 
 impl MaterialExtension for BoxProjection {
@@ -394,6 +396,9 @@ pub struct SurfaceGlobalsData {
     /// Wind velocity x/z at the camera, its speed, gusts per second.
     pub wind: Vec4,
     pub surface_frame: Vec4,
+    /// The director wetness map's frame: centre x/z, extent, unused.
+    /// Written by the wetness upload, not the per-frame globals update.
+    pub wet_frame: Vec4,
 }
 
 /// The one buffer [`SurfaceGlobalsData`] lives in, shared by every material
@@ -442,10 +447,14 @@ pub fn update_surface_globals(
                 0.0,
             )
         }),
+        // The wetness upload owns this lane (it knows when its texture
+        // exists); the per-frame update leaves it alone.
+        wet_frame: globals.data.wet_frame,
     };
     if (data.weather - globals.data.weather).abs().max_element() < 1e-3
         && (data.wind - globals.data.wind).abs().max_element() < 0.05
         && data.surface_frame == globals.data.surface_frame
+        && data.wet_frame == globals.data.wet_frame
     {
         return;
     }
@@ -509,6 +518,7 @@ pub fn box_material(
             // Filled in from `SurfaceGlobals` where the material is stored.
             globals: Handle::default(),
             surface_state: None,
+            wet_state: None,
         },
     }
 }

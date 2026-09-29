@@ -8,7 +8,7 @@ import bevy_pbr::render::mesh_view_bindings::view;
 import blockloom::texturing::{
     SurfaceGlobals, MaskUniforms, DetailUniforms, sample_uv, triplanar, triplanar_normal,
     triplanar_weights, slope_degrees, macro_noise, macro_tint, blend_detail, apply_masks_with_state, lasting_state,
-    blend_debug,
+    wetness_at, blend_debug,
 };
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> scale_offset: vec4<f32>;
@@ -59,6 +59,7 @@ fn box_sample(
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(116) var lasting_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(117) var wet_texture: texture_2d<f32>;
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -135,6 +136,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         masks,
         globals,
         lasting_state(world,globals.surface_frame,lasting_texture),
+        wetness_at(world,globals.wet_frame,wet_texture),
     );
     pbr.material.base_color = vec4<f32>(masked.albedo, pbr.material.base_color.a);
     pbr.material.perceptual_roughness = masked.roughness;

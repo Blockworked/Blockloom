@@ -394,6 +394,10 @@ pub struct Build {
     /// a false here just means the game falls back to TAA plus spatial.
     #[serde(default)]
     pub dlss: bool,
+    /// The APK's package id, for the Build dialog's install step to launch.
+    /// Empty on every non-Android target.
+    #[serde(default)]
+    pub application_id: String,
     /// Bytes of what ships: the ZIP, or for the web the one `.html`.
     pub size: u64,
 }
@@ -488,6 +492,7 @@ pub fn build(
         shaders,
         sky,
         dlss,
+        application_id: String::new(),
     })
 }
 
@@ -635,6 +640,7 @@ fn build_web(
         sky,
         // No DLSS in a browser: WebGPU has no SDK path.
         dlss: false,
+        application_id: String::new(),
     })
 }
 
@@ -746,6 +752,7 @@ fn build_android_with_config(
         shaders,
         sky,
         dlss: false,
+        application_id: report.application_id.clone(),
     })
 }
 

@@ -1038,8 +1038,9 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         into both the reporters and the surface wetness.
         Not covered: named presets are still edited through the shell
         (`set-director`) or MCP - there is no preset gallery UI; the wetness
-        map is coarse and feeds one sampled value, not a texture surfaces
-        read per-pixel.
+        map uploads at 32x32, so dampness varies over 2 m cells rather than
+        per texel, and instanced batches, graph surfaces and 2D sprites keep
+        the sampled uniform instead of the texture.
   - [ ] Cinematics: timeline tracks (camera cut, transform, FOV, volume weight, signal
         fires block at marker), dolly/crane spline path with look-at target plus roll,
         camera shake (trauma 0-1, Perlin translation/rotation noise, decay), letterbox

@@ -148,6 +148,35 @@ BwDialog {
                 Note { text: "World rows below edit this scene; each scene owns its own World. Double-click another scene file in the Assets tray to open it." }
             }
             Section {
+                id: androidSection
+                heading: "Android"
+                readonly property var android: root.project && root.project.android ? root.project.android : ({ application_id: "", version_code: 1, version_name: "1.0.0" })
+                function writeAndroid(next) {
+                    const current = { application_id: "", version_code: 1, version_name: "1.0.0" };
+                    Object.assign(current, root.project && root.project.android ? root.project.android : {});
+                    Object.assign(current, next);
+                    root.invoke("set_android_settings", { applicationId: current.application_id || "", versionCode: Math.max(1, Math.round(current.version_code || 1)), versionName: current.version_name || "1.0.0" });
+                }
+                InspectorRow { label: "Application ID"; labelWidth: 110; Layout.fillWidth: true
+                    BwTextField {
+                        Layout.fillWidth: true
+                        text: androidSection.android.application_id || ""
+                        placeholderText: "com.blockloom.game.<project>"
+                        onEditingFinished: androidSection.writeAndroid({ application_id: text.trim() })
+                    } }
+                Note { text: "The APK's package id. Empty uses the project name made package-safe; anything else must be dot-separated words starting with a letter." }
+                InspectorRow { label: "Version code"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: androidSection.android.version_code || 1; fallback: 1; onCommitted: n => androidSection.writeAndroid({ version_code: Math.max(1, Math.round(n)) }) } }
+                InspectorRow { label: "Version name"; labelWidth: 110; Layout.fillWidth: true
+                    BwTextField {
+                        Layout.fillWidth: true
+                        text: androidSection.android.version_name || "1.0.0"
+                        placeholderText: "1.0.0"
+                        onEditingFinished: androidSection.writeAndroid({ version_name: text.trim() || "1.0.0" })
+                    } }
+                Note { text: "minSdk 29, targetSdk 35, no permissions in v1. The launcher icon comes from the game icon above." }
+            }
+            Section {
                 heading: "World"; visible: !!root.world
                 InspectorRow { label: "Background"; labelWidth: 110; Layout.fillWidth: true
                     ColorField { value: root.world ? root.world.background : "#000000"; onPicked: c => root.invoke("set_background", { color: c }) } Item { Layout.fillWidth: true } }

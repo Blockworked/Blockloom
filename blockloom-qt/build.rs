@@ -42,6 +42,7 @@ fn main() {
                 "qml/SoundPreview.qml",
                 "qml/PreviewPanel.qml",
                 "qml/ProjectSettingsDialog.qml",
+                "qml/AppSettingsDialog.qml",
                 "qml/BuildDialog.qml",
                 "qml/ScriptDialog.qml",
                 "qml/MakeBlockDialog.qml",

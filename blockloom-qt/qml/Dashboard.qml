@@ -40,6 +40,7 @@ Rectangle {
             }
             Item { Layout.fillWidth: true }
             Text { text: app.appVersion; color: Theme.textDim; font.pixelSize: 12 }
+            IconButton { iconName: "settings"; tip: "App settings"; implicitWidth: 30; implicitHeight: 30; onClicked: appSettings.open() }
         }
         Rectangle {
             visible: !root.appState.runtime_available
@@ -101,6 +102,7 @@ Rectangle {
     }
 
     NewProjectDialog { id: newProject; app: root.app }
+    AppSettingsDialog { id: appSettings; app: root.app }
     FolderDialog {
         id: openFolder
         title: "Open project"

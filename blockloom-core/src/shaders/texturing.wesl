@@ -13,6 +13,8 @@ struct SurfaceGlobals {
     // Wind heading (x, z), speed in m/s, gust 0-1.
     wind: vec4<f32>,
     surface_frame: vec4<f32>,
+    // The director's wetness map: centre x/z, extent metres, unused.
+    wet_frame: vec4<f32>,
 }
 
 // A material's mask stack. A rule with strength 0 is off.
@@ -328,6 +330,24 @@ fn lasting_state(world: vec3<f32>, frame: vec4<f32>, map: texture_2d<f32>) -> ve
     return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);
 }
 
+// The director's wetness map at a world point, bilinear like the lasting
+// state above. Answers -1 outside the map or before the first upload, so
+// the caller falls back to the uniform wetness.
+fn wetness_at(world: vec3<f32>, frame: vec4<f32>, map: texture_2d<f32>) -> f32 {
+    if (frame.z <= 0.0) { return -1.0; }
+    let uv = (world.xz - (frame.xy - vec2<f32>(frame.z * 0.5))) / frame.z;
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) { return -1.0; }
+    let size = vec2<i32>(textureDimensions(map));
+    let p = uv * vec2<f32>(size) - vec2<f32>(0.5);
+    let low = vec2<i32>(floor(p));
+    let f = fract(p);
+    let a = textureLoad(map, clamp(low, vec2<i32>(0), size-vec2<i32>(1)), 0).r;
+    let b = textureLoad(map, clamp(low+vec2<i32>(1,0), vec2<i32>(0), size-vec2<i32>(1)), 0).r;
+    let c = textureLoad(map, clamp(low+vec2<i32>(0,1), vec2<i32>(0), size-vec2<i32>(1)), 0).r;
+    let d = textureLoad(map, clamp(low+vec2<i32>(1,1), vec2<i32>(0), size-vec2<i32>(1)), 0).r;
+    return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);
+}
+
 fn apply_lasting(albedo: vec3<f32>, roughness: f32, state: vec2<f32>) -> Masked {
     var out: Masked;
     out.albedo = albedo * (1.0-state.x*0.8) * (1.0-state.y*0.35);
@@ -340,7 +360,7 @@ fn apply_masks(
     albedo: vec3<f32>, roughness: f32, slope: f32, height: f32,
     cavity: f32, masks: MaskUniforms, globals: SurfaceGlobals,
 ) -> Masked {
-    return apply_masks_with_state(albedo,roughness,slope,height,cavity,masks,globals,vec2<f32>(0.0));
+    return apply_masks_with_state(albedo,roughness,slope,height,cavity,masks,globals,vec2<f32>(0.0),-1.0);
 }
 
 fn apply_masks_with_state(
@@ -352,6 +372,7 @@ fn apply_masks_with_state(
     masks: MaskUniforms,
     globals: SurfaceGlobals,
     lasting: vec2<f32>,
+    wet_map: f32,
 ) -> Masked {
     var out: Masked;
     out.albedo = albedo;
@@ -370,7 +391,11 @@ fn apply_masks_with_state(
     out.roughness = mix(out.roughness, masks.snow_color.w, snow);
     var wet = 0.0;
     if (masks.wetness.x > 0.0) {
-        let level = clamp(globals.weather.y * masks.wetness.x, 0.0, 1.0);
+        // The map's cell where the camera's ground is uneven; outside it
+        // the uniform sampled at the camera stands in.
+        var base = globals.weather.y;
+        if (wet_map >= 0.0) { base = wet_map; }
+        let level = clamp(base * masks.wetness.x, 0.0, 1.0);
         // Hollows fill first; with puddles at 0 everything wets evenly.
         let pooled = clamp(level * 2.0 - 1.0 + cavity * masks.wetness.w * 2.0, 0.0, 1.0);
         wet = mix(level, pooled, masks.wetness.w) * (1.0 - snow);

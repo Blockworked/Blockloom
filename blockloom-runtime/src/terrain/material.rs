@@ -76,6 +76,8 @@ pub struct TerrainSurface {
     pub globals: Handle<ShaderBuffer>,
     #[texture(116)]
     pub surface_state: Option<Handle<Image>>,
+    #[texture(117)]
+    pub wet_state: Option<Handle<Image>>,
 }
 
 impl MaterialExtension for TerrainSurface {
@@ -196,6 +198,7 @@ pub fn terrain_material(
             normal,
             roughness,
             surface_state: None,
+            wet_state: None,
             masks: MaskUniforms::of(&detail.masks),
             detail: DetailUniforms::of(detail, macro_map.is_some()),
             macro_map,

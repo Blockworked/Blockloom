@@ -105,6 +105,41 @@ pub fn save(config: &AppConfig) -> Result<(), String> {
     save_to(config, &config_path())
 }
 
+/// Points the SDK row at `path` (empty clears back to the default) and
+/// answers the resolved dir. Never touches `ANDROID_HOME` or friends: the
+/// row is the only source of truth.
+pub fn set_sdk_path(path: &str) -> Result<PathBuf, String> {
+    let mut config = load();
+    let trimmed = path.trim();
+    config.sdk_path = if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    };
+    let resolved = sdk_dir(&config);
+    save(&config)?;
+    Ok(resolved)
+}
+
+/// Points the NDK row at `path` (empty clears back to the pinned NDK inside
+/// the SDK) and answers the resolved dir.
+pub fn set_ndk_path(path: &str) -> Result<PathBuf, String> {
+    let mut config = load();
+    let trimmed = path.trim();
+    config.ndk_path = if trimmed.is_empty() {
+        None
+    } else {
+        let dir = PathBuf::from(trimmed);
+        if !dir.is_dir() {
+            return Err(format!("{} isn't a directory.", dir.display()));
+        }
+        Some(dir)
+    };
+    let resolved = ndk_dir(&config);
+    save(&config)?;
+    Ok(resolved)
+}
+
 /// `~/Blockloom/android-sdk`, or under `BLOCKLOOM_DATA_DIR` when set, so a
 /// test run never touches the real one.
 pub fn default_sdk_dir() -> PathBuf {

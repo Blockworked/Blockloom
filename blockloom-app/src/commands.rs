@@ -2606,6 +2606,66 @@ pub(crate) fn android_logcat(device: Option<String>) -> Result<android::Logcat, 
     android::logcat(device.as_deref(), "blockloom")
 }
 
+/// Points the SDK row at `path` (empty clears back to the default) and
+/// answers the resolved dir. Needs no open project: the row is app-level.
+pub(crate) fn android_set_sdk_path(path: String) -> Result<String, String> {
+    Ok(android::set_sdk_path(&path)?.to_string_lossy().into_owned())
+}
+
+/// Points the NDK row at `path` (empty clears back to the pinned NDK inside
+/// the SDK) and answers the resolved dir.
+pub(crate) fn android_set_ndk_path(path: String) -> Result<String, String> {
+    Ok(android::set_ndk_path(&path)?.to_string_lossy().into_owned())
+}
+
+/// Writes the per-project Android rows (applicationId override, version
+/// code and name). Each is optional so a caller can change one row without
+/// resending the rest; an invalid id refuses the edit, empty clears back to
+/// the default id from the project name.
+pub(crate) fn set_android_settings(
+    state: &SharedState,
+    app: &AppHandle,
+    application_id: Option<String>,
+    version_code: Option<u32>,
+    version_name: Option<String>,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    if s.open.is_none() {
+        return Err("Open a project first.".to_string());
+    }
+    if let Some(id) = &application_id {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() {
+            android::validate_application_id(trimmed)?;
+        }
+    }
+    let current = s.project().map(|project| project.android.clone());
+    let mut next = current.clone().unwrap_or_default();
+    if let Some(id) = application_id {
+        next.application_id = id.trim().to_string();
+    }
+    if let Some(code) = version_code {
+        next.version_code = code.max(1);
+    }
+    if let Some(name) = version_name {
+        next.version_name = if name.trim().is_empty() {
+            "1.0.0".to_string()
+        } else {
+            name.trim().to_string()
+        };
+    }
+    if current.is_some_and(|current| current == next) {
+        return Ok(());
+    }
+    push_undo(&mut s);
+    if let Some(project) = s.project_mut() {
+        project.android = next;
+    }
+    auto_save(&s);
+    emit(app, &s);
+    Ok(())
+}
+
 // ─── Assets ────────────────────────────────────────────────────────────────
 //
 // A project is a folder, so its assets are files in it and the asset tray is a

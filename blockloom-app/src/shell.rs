@@ -310,6 +310,51 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             required: false,
         }],
     },
+    CommandSpec {
+        name: "android-set-sdk-path",
+        cmd: "android_set_sdk_path",
+        aliases: &["android_set_sdk_path"],
+        summary: "Point the SDK row at a folder (empty clears back to the default).",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "folder path",
+            required: false,
+        }],
+    },
+    CommandSpec {
+        name: "android-set-ndk-path",
+        cmd: "android_set_ndk_path",
+        aliases: &["android_set_ndk_path"],
+        summary: "Point the NDK row at a folder (empty clears back to the pinned NDK inside the SDK).",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "folder path",
+            required: false,
+        }],
+    },
+    CommandSpec {
+        name: "set-android-settings",
+        cmd: "set_android_settings",
+        aliases: &["set_android_settings"],
+        summary: "Write the open project's Android rows: applicationId override (empty for the default), version code and name.",
+        args: &[
+            ArgSpec {
+                name: "applicationId",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "versionCode",
+                ty: "number",
+                required: false,
+            },
+            ArgSpec {
+                name: "versionName",
+                ty: "string",
+                required: false,
+            },
+        ],
+    },
     // ── The world ─────────────────────────────────────────────────────────
     CommandSpec {
         name: "set-mode",
