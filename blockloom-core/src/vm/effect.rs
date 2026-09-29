@@ -240,6 +240,24 @@ pub enum Effect {
         property: crate::clouds::CloudProperty,
         value: f32,
     },
+    /// The clock in hours, 0-24, for the rest of the run. Window-global.
+    SetTimeOfDay {
+        time: f32,
+    },
+    /// Moves the director's clock by hours, for the rest of the run.
+    AdvanceTime {
+        hours: f32,
+    },
+    /// Rain or snow intensity, 0-1, for the rest of the run. Window-global.
+    SetPrecipitation {
+        property: crate::director::PrecipitationKind,
+        value: f32,
+    },
+    /// Blends the weather towards a preset over seconds. Window-global.
+    BlendWeather {
+        weather: String,
+        seconds: f32,
+    },
     /// A water dial for the rest of the run: `actor`'s own water when it has
     /// some, every body's otherwise.
     SetWater {

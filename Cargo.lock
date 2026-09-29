@@ -2474,6 +2474,7 @@ version = "0.0.1"
 dependencies = [
  "ash",
  "bevy",
+ "bevy_android",
  "bevy_rapier2d",
  "bevy_rapier3d",
  "blockloom-core",

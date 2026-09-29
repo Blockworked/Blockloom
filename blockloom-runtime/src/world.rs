@@ -28,6 +28,8 @@ use bevy::input::touch::Touches;
 use bevy::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::CursorGrabMode;
+#[cfg(target_os = "android")]
+use bevy::window::Ime;
 use bevy::window::{CursorOptions, PrimaryWindow, WindowFocused};
 use blockloom_core::components::CameraView;
 use blockloom_core::input::{ActionSense, LiveInput, normalize_pad_axis, normalize_pad_button};
@@ -433,6 +435,18 @@ pub fn begin_run(engine: &mut Engine, now: f64) {
     engine.fire(Event::Started);
 }
 
+/// Where this run's saves live. Desktop uses the data dir; an APK's assets
+/// are read-only, so Android uses the app's internal data dir instead.
+#[cfg(target_os = "android")]
+fn save_path_for(project_id: &str) -> std::path::PathBuf {
+    crate::android::save_path(project_id)
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+fn save_path_for(project_id: &str) -> std::path::PathBuf {
+    blockloom_core::save::path(project_id)
+}
+
 fn load_saved_data(engine: &mut Engine) {
     // The browser has no files: saves live in localStorage under the pack's
     // id instead (see `web`).
@@ -445,7 +459,7 @@ fn load_saved_data(engine: &mut Engine) {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        engine.save_path = blockloom_core::save::path(&engine.project.id);
+        engine.save_path = save_path_for(&engine.project.id);
         match blockloom_core::save::read(&engine.save_path) {
             Ok(data) => {
                 data.apply(&engine.project, &engine.variables);
@@ -648,6 +662,9 @@ pub fn rebuild_world(
     engine.aurora_kp = None;
     engine.lightning_rate = None;
     engine.wind = Default::default();
+    engine.precipitation = Default::default();
+    engine.weather = Default::default();
+    engine.director_time = None;
     engine.clouds = Default::default();
     engine.surface = Default::default();
     engine.cloud_layers = Default::default();
@@ -1546,6 +1563,35 @@ fn screen_to_world(
     }
 }
 
+/// Fires the Android back button as the `back` key. It has no physical code
+/// (winit reports it `Unidentified`) and arrives as logical `BrowserBack`,
+/// which nothing else reads - so this small system owns it rather than
+/// growing `publish_sensors` past Bevy's parameter limit.
+///
+/// Runs before `type_into_focused_input`: a focused input releases on the
+/// same press (closing the soft keyboard), and the world never sees that
+/// one. A visible modal swallows it, like clicks. Anything else fires even
+/// while paused, the way escape does, so a game with no escape key can still
+/// toggle its menu.
+pub fn back_button(
+    mut engine: NonSendMut<Engine>,
+    manager: Res<crate::ui::UiManager>,
+    mut presses: MessageReader<KeyboardInput>,
+) {
+    for press in presses.read() {
+        if press.state != ButtonState::Pressed || press.logical_key != Key::BrowserBack {
+            continue;
+        }
+        if !engine.running {
+            continue;
+        }
+        if manager.focus().is_some() || manager.swallows_world_clicks() {
+            continue;
+        }
+        engine.fire(Event::Key("back".to_string()));
+    }
+}
+
 /// Types into whichever text input holds the keyboard. Escape lets go of
 /// it, Backspace rubs a character out, and every other key that means a
 /// character adds one. `changed` fires per keystroke, as the spec has it.
@@ -1556,11 +1602,14 @@ pub fn type_into_focused_input(
     mut engine: NonSendMut<Engine>,
     mut manager: ResMut<crate::ui::UiManager>,
     mut typed: MessageReader<KeyboardInput>,
+    #[cfg(target_os = "android")] mut imes: MessageReader<Ime>,
 ) {
     let Some(focused) = manager.focus().map(str::to_string) else {
         // Nothing has the keyboard, but the queue still has to be drained:
         // otherwise a burst arrives the moment an input is clicked.
         typed.clear();
+        #[cfg(target_os = "android")]
+        imes.clear();
         return;
     };
     if !engine.running {
@@ -1568,6 +1617,8 @@ pub fn type_into_focused_input(
     }
     let Some(node) = manager.get(&focused) else {
         typed.clear();
+        #[cfg(target_os = "android")]
+        imes.clear();
         return;
     };
     let (allow, ceiling) = (node.allow(), node.max_length());
@@ -1589,6 +1640,9 @@ pub fn type_into_focused_input(
         }
         match &key.logical_key {
             Key::Escape => release = true,
+            // The phone's back button behaves like escape in a field: it
+            // hands the keyboard back rather than typing anything.
+            Key::BrowserBack => release = true,
             Key::Backspace => {
                 text.pop();
             }
@@ -1600,6 +1654,16 @@ pub fn type_into_focused_input(
                 }
             }
             _ => {}
+        }
+    }
+    // The soft keyboard commits whole runs instead of keys: same rules, one
+    // at a time. Only on Android, where the keyboard raises it.
+    #[cfg(target_os = "android")]
+    for ime in imes.read() {
+        if let Ime::Commit { value, .. } = ime {
+            for ch in value.chars() {
+                write(&mut text, ch);
+            }
         }
     }
     if text != before
@@ -4288,6 +4352,10 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetWind { .. }
         | Effect::SetCloudDrift { .. }
         | Effect::SetClouds { .. }
+        | Effect::SetTimeOfDay { .. }
+        | Effect::AdvanceTime { .. }
+        | Effect::SetPrecipitation { .. }
+        | Effect::BlendWeather { .. }
         | Effect::SetCloudLayer { .. }
         | Effect::SetWater { .. }
         // The level's, applied by `tiles`.
@@ -6759,6 +6827,101 @@ mod tests {
         keys_in(&mut app, "h");
         assert!(routed(&mut app).is_empty());
         assert_eq!(typed_text(&app), "");
+    }
+
+    /// An app with one actor whose canvas answers the back button, and the
+    /// `back_button` system on Update. The physical code is arbitrary here:
+    /// on a phone winit sends `Unidentified` and only the logical key names
+    /// the button.
+    fn back_harness() -> App {
+        use blockloom_core::blocks::{Instruction, InstructionKind as K, Strand};
+
+        let mut actor = Actor::new(
+            "Hero",
+            Visual::Rect {
+                color: "#FFFFFF".to_string(),
+                size: [10.0, 10.0],
+            },
+        );
+        actor.id = "hero".to_string();
+        actor.graph.strands = vec![Strand::with_instructions(
+            0,
+            0,
+            vec![
+                Instruction::new(K::WhenKeyPressed {
+                    key: "back".to_string(),
+                }),
+                Instruction::new(K::Say {
+                    text: blockloom_core::value::Value::text("went-back"),
+                }),
+            ],
+        )];
+
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.project.actors = vec![actor];
+        let project = engine.project.clone();
+        engine.vm.load(&project);
+        engine.running = true;
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.init_resource::<Messages<KeyboardInput>>();
+        app.init_resource::<crate::ui::UiManager>();
+        app.insert_non_send(engine);
+        app.add_systems(Update, back_button);
+        app
+    }
+
+    fn press_back(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<Messages<KeyboardInput>>()
+            .write(KeyboardInput {
+                key_code: KeyCode::Space,
+                logical_key: Key::BrowserBack,
+                state: ButtonState::Pressed,
+                text: None,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            });
+    }
+
+    #[test]
+    fn the_back_button_starts_its_key_strand() {
+        let mut app = back_harness();
+        press_back(&mut app);
+        assert_eq!(routed(&mut app), vec!["went-back".to_string()]);
+    }
+
+    #[test]
+    fn a_modal_swallows_the_back_button_like_a_click() {
+        let mut app = back_harness();
+        let mut menu = element("menu", blockloom_core::ui::UiKind::Panel);
+        menu.modal = true;
+        let mut manager = app.world_mut().resource_mut::<crate::ui::UiManager>();
+        manager.show(menu);
+        manager.take_pending();
+        press_back(&mut app);
+        assert!(routed(&mut app).is_empty());
+    }
+
+    #[test]
+    fn the_back_button_fires_while_paused_like_escape() {
+        let mut app = back_harness();
+        app.world_mut().non_send_mut::<Engine>().paused = true;
+        press_back(&mut app);
+        assert_eq!(routed(&mut app), vec!["went-back".to_string()]);
+    }
+
+    #[test]
+    fn a_focused_input_keeps_the_back_button_for_its_keyboard() {
+        let mut app = back_harness();
+        let mut manager = app.world_mut().resource_mut::<crate::ui::UiManager>();
+        manager.show(element("name", blockloom_core::ui::UiKind::Input));
+        manager.take_pending();
+        manager.focus_on(Some("name"));
+        press_back(&mut app);
+        assert!(routed(&mut app).is_empty());
     }
 
     #[test]

@@ -77,7 +77,7 @@ pub fn listen() -> Receiver<EditorMessage> {
 }
 
 /// Routes [`send`] into `outgoing` for the embedded world `world`.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[cfg_attr(any(target_arch = "wasm32", target_os = "android"), allow(dead_code))]
 pub fn attach(world: u64, outgoing: Sender<RuntimeMessage>) {
     ATTACHED.store(true, Ordering::Relaxed);
     if let Ok(mut sink) = SINK.lock() {
@@ -86,7 +86,7 @@ pub fn attach(world: u64, outgoing: Sender<RuntimeMessage>) {
 }
 
 /// Drops `world`'s sender, which is how the editor hears it has gone.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[cfg_attr(any(target_arch = "wasm32", target_os = "android"), allow(dead_code))]
 pub fn detach(world: u64) {
     if let Ok(mut sink) = SINK.lock()
         && sink.as_ref().is_some_and(|(owner, _)| *owner == world)

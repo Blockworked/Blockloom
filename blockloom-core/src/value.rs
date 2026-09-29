@@ -981,6 +981,44 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |_| Ok(Evaluated::Text(sense::read(|s| s.current_scene.clone()))),
     },
     ExtOperator {
+        kind: "TimeOfDay",
+        op: "TimeOfDay",
+        arity: 0,
+        default_args: Vec::new,
+        // Hours, 0-24. Sampled with the air on the fixed tick, so every
+        // scheduler agrees.
+        eval: |_| {
+            Ok(Evaluated::Number(
+                sense::read(|s| s.atmosphere.time_of_day) as f64
+            ))
+        },
+    },
+    ExtOperator {
+        kind: "SunElevation",
+        op: "SunElevation",
+        arity: 0,
+        default_args: Vec::new,
+        // Degrees above the horizon, from the tick's sun direction.
+        eval: |_| {
+            Ok(Evaluated::Number(sense::read(|s| {
+                s.atmosphere.field("sun elevation").unwrap_or(0.0)
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "CurrentWeather",
+        op: "CurrentWeather",
+        arity: 0,
+        default_args: Vec::new,
+        // The weather preset the air is in, by name. Empty before the first
+        // blend. Sampled on the fixed tick like `current scene`.
+        eval: |_| {
+            Ok(Evaluated::Text(sense::read(|s| {
+                s.atmosphere.weather.clone()
+            })))
+        },
+    },
+    ExtOperator {
         kind: "SceneNames",
         op: "SceneNames",
         arity: 0,

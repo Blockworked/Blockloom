@@ -29,8 +29,8 @@ pub struct LoopPace {
 
 impl LoopPace {
     /// Fold paced-loop timings in. Only the embedded Game view paces, so web
-    /// builds never call this.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    /// and Android builds never call this.
+    #[cfg_attr(any(target_arch = "wasm32", target_os = "android"), allow(dead_code))]
     pub fn push(&mut self, update_ms: f64, wait_ms: f64) {
         const BLEND: f64 = 0.1;
         self.update_ms += BLEND * (update_ms - self.update_ms);

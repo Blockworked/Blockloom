@@ -714,10 +714,20 @@ pub fn apply_exposure_effects(
 
 /// Builds this frame's `Environment`. Only a real change marks it changed,
 /// so `apply_environment` leaves the camera alone on a quiet frame.
+/// The ground map's read at the camera, or dry when no world has stepped it.
+fn wetness_sample(wet: &Option<Res<crate::director::WetnessField>>) -> f32 {
+    wet.as_ref()
+        .map(|w| w.sampled)
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0)
+}
+
 pub fn blend_environment(
     engine: NonSend<Engine>,
     volumes: Res<EnvironmentVolumes>,
     claims: Res<ExposureClaims>,
+    clock: Option<Res<crate::director::DirectorClock>>,
+    wet: Option<Res<crate::director::WetnessField>>,
     mut environment: ResMut<Environment>,
     scaling: Option<Res<crate::quality::Scaling>>,
 ) {
@@ -725,8 +735,84 @@ pub fn blend_environment(
     for (weight, over) in &volumes.0 {
         blended.blend(over, *weight);
     }
+    // The director moves the sun before the air tints it: tracks first,
+    // then the weather blend's sun. Volumes already had their say above.
+    {
+        let director = &engine.project.world.director;
+        let weather_active = engine.weather.is_active();
+        let weather = engine.weather.sampled();
+        let time = clock
+            .as_ref()
+            .map(|c| c.time)
+            .unwrap_or(director.time_of_day);
+        if director.enabled || weather_active {
+            if let Some((az, el)) =
+                crate::director::director_sun(director, time, &weather, weather_active)
+            {
+                let dir = Vec3::from_array(blockloom_core::sky::direction(az, el).to_array());
+                if dir.length_squared() > 1e-12 {
+                    blended.sun.direction = dir.normalize();
+                }
+            }
+            // Fog and clouds from tracks, then the blend. Explicit blocks
+            // still win below.
+            if let Some(d) = director.fog_density.sample(time) {
+                blended.fog_density = d.max(0.0);
+            }
+            if let Some(c) = director.cloud_coverage.sample(time) {
+                blended.clouds.coverage = c.clamp(0.0, 1.0);
+            }
+            if let Some(t) = director.cloud_type.sample(time) {
+                blended.clouds.cloud_type = t.clamp(0.0, 1.0);
+            }
+            if weather_active {
+                blended.fog_density = weather.fog_density;
+                blended.clouds.coverage = weather.cloud_coverage;
+                blended.clouds.density = weather.cloud_density;
+                blended.clouds.cloud_type = weather.cloud_type;
+                // The whole look rides the blend now: sky, sun, fill and
+                // post, not just the air. Explicit blocks still win below.
+                blended.sky_exposure += weather.sky_exposure;
+                blended.sun.illuminance = (blended.sun.illuminance * weather.sunlight).max(0.0);
+                blended.ambient_dimmer = (blended.ambient_dimmer * weather.ambient).clamp(0.0, 4.0);
+                blended.post.bloom_intensity =
+                    (blended.post.bloom_intensity * weather.bloom).max(0.0);
+                blended.post.grading.saturation =
+                    (blended.post.grading.saturation * weather.saturation).clamp(0.0, 4.0);
+                blended.post.grading.lut_contribution = weather.lut_weight;
+                // Surface wetness is the ground map's read at the camera,
+                // lagged behind the rain, while a run is live.
+                if engine.running {
+                    blended.wetness = wetness_sample(&wet);
+                } else {
+                    blended.wetness = weather.wetness;
+                }
+            } else if director.enabled && engine.running {
+                // A wetness track alone still darkens the ground through
+                // the same map.
+                blended.wetness = wetness_sample(&wet);
+            }
+        }
+    }
     blended.through_air(&engine.project.world.sky);
     blended.exposure = claims.resolve(blended.exposure);
+    // The director's exposure is the default writer of the EV while it runs:
+    // it lays down only where `set exposure to` hasn't claimed the slot, so
+    // the block keeps top precedence over tracks, blends, auto and manual.
+    if claims.director.is_none() {
+        let director = &engine.project.world.director;
+        let weather_active = engine.weather.is_active();
+        let weather = engine.weather.sampled();
+        let time = clock
+            .as_ref()
+            .map(|c| c.time)
+            .unwrap_or(director.time_of_day);
+        if let Some(ev) =
+            crate::director::director_exposure(director, time, weather_active, &weather)
+        {
+            blended.exposure = ev;
+        }
+    }
     // `set fog density` outlasts every volume, like the director's exposure,
     // and moves volumetric fog and beams by the same ratio.
     if let Some(density) = engine.fog_density.filter(|d| d.is_finite()) {

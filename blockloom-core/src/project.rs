@@ -1688,6 +1688,7 @@ impl Project {
             crate::cloud_layers::normalize(&mut world.cloud_layers);
             world.lightning.normalize();
             world.wind.normalize();
+            world.director.normalize();
             world.surface.normalize();
             world.vfx.normalize();
             world.quality.normalize();

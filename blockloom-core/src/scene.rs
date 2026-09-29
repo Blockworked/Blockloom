@@ -1459,6 +1459,10 @@ pub struct World {
     /// drift on it.
     #[serde(default)]
     pub wind: crate::wind::Wind,
+    /// Time-of-day clock, 24h curve tracks and weather presets. Off by
+    /// default, so old projects keep exactly the look they shipped.
+    #[serde(default)]
+    pub director: crate::director::Director,
     /// Snow cover and wetness, which surface masks scale by.
     #[serde(default)]
     pub surface: crate::material::SurfaceWeather,
@@ -1505,6 +1509,7 @@ impl Default for World {
             cloud_layers: Vec::new(),
             lightning: crate::lightning::Lightning::default(),
             wind: crate::wind::Wind::default(),
+            director: crate::director::Director::default(),
             surface: crate::material::SurfaceWeather::default(),
             vfx: crate::vfx::VfxSettings::default(),
         }

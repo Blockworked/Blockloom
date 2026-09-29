@@ -316,6 +316,10 @@ pub enum Event {
         actor: String,
         room: String,
     },
+    /// The weather blend landed on the named preset.
+    Weather {
+        weather: String,
+    },
     /// The named input action went down, in lowercase action spelling.
     Action(String),
     /// A finger touched the screen.
@@ -719,9 +723,11 @@ impl Vm {
 
     fn start_for(&mut self, event: Event) {
         // Escape is the pause key: while paused it starts key strands as
-        // interface strands, so a pause menu can toggle itself shut.
-        let ui =
-            event.is_ui() || (self.paused && matches!(&event, Event::Key(key) if key == "escape"));
+        // interface strands, so a pause menu can toggle itself shut. Back is
+        // the phone's equivalent (the Android back button).
+        let ui = event.is_ui()
+            || (self.paused
+                && matches!(&event, Event::Key(key) if key == "escape" || key == "back"));
         let matches: Vec<(String, String, usize)> = self
             .programs
             .iter()
@@ -784,6 +790,9 @@ impl Vm {
                     room,
                 },
             ) => entered == actor && (want.is_empty() || want.eq_ignore_ascii_case(room)),
+            (Trigger::Weather { weather: want }, Event::Weather { weather }) => {
+                want.is_empty() || want.eq_ignore_ascii_case(weather)
+            }
             (Trigger::ActionPressed(want), Event::Action(got)) => want == got,
             (Trigger::Touched, Event::Touched) => true,
             (
@@ -1622,6 +1631,29 @@ impl Vm {
                 out.push(Effect::SetClouds {
                     property: *property,
                     value,
+                });
+            }
+            Action::SetTimeOfDay(time) => {
+                let time = self.eval_f32(time, actor, params, temps, out);
+                out.push(Effect::SetTimeOfDay { time });
+            }
+            Action::AdvanceTime(hours) => {
+                let hours = self.eval_f32(hours, actor, params, temps, out);
+                out.push(Effect::AdvanceTime { hours });
+            }
+            Action::SetPrecipitation { property, value } => {
+                let value = self.eval_f32(value, actor, params, temps, out);
+                out.push(Effect::SetPrecipitation {
+                    property: *property,
+                    value,
+                });
+            }
+            Action::BlendWeather { weather, seconds } => {
+                let weather = self.eval(weather, actor, params, temps, out).as_text();
+                let seconds = self.eval_f32(seconds, actor, params, temps, out);
+                out.push(Effect::BlendWeather {
+                    weather: weather.trim().to_string(),
+                    seconds,
                 });
             }
             Action::SetWater { property, value } => {

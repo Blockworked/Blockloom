@@ -2131,3 +2131,114 @@ fn the_atmosphere_reporter_reads_the_fixed_tick_slot() {
     let missing = Value::op(Op::from_name("Atmosphere"), vec![Value::text("humidity")]);
     assert!(missing.eval().is_err());
 }
+
+#[test]
+fn the_director_blocks_ask_for_clock_precipitation_and_weather() {
+    use blockloom_core::director::PrecipitationKind;
+    let project = project_with(vec![started(vec![
+        InstructionKind::SetTimeOfDay {
+            time: Value::number(18.5),
+        },
+        InstructionKind::AdvanceTime {
+            hours: Value::number(-2.0),
+        },
+        InstructionKind::SetPrecipitation {
+            property: PrecipitationKind::Rain,
+            value: Value::number(0.7),
+        },
+        InstructionKind::BlendWeather {
+            weather: Value::text("  Storm  "),
+            seconds: Value::number(5.0),
+        },
+    ])]);
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(
+        effects
+            .iter()
+            .filter(|effect| !matches!(effect, Effect::Error { .. }))
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![
+            Effect::SetTimeOfDay { time: 18.5 },
+            Effect::AdvanceTime { hours: -2.0 },
+            Effect::SetPrecipitation {
+                property: PrecipitationKind::Rain,
+                value: 0.7,
+            },
+            // The name is trimmed, as it is everywhere a block names
+            // something.
+            Effect::BlendWeather {
+                weather: "Storm".to_string(),
+                seconds: 5.0,
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_weather_event_starts_only_the_strand_that_names_it() {
+    let project = project_with(vec![
+        Strand::with_instructions(
+            0,
+            0,
+            vec![
+                ins(InstructionKind::WhenWeather {
+                    weather: "Storm".to_string(),
+                }),
+                ins(say("storm's here")),
+            ],
+        ),
+        Strand::with_instructions(
+            0,
+            400,
+            vec![
+                ins(InstructionKind::WhenWeather {
+                    weather: "Clear".to_string(),
+                }),
+                ins(say("never")),
+            ],
+        ),
+        Strand::with_instructions(
+            0,
+            800,
+            vec![
+                ins(InstructionKind::WhenWeather {
+                    weather: "".to_string(),
+                }),
+                ins(say("any weather")),
+            ],
+        ),
+    ]);
+    let mut vm = Harness::new(&project);
+    vm.vm.fire(Event::Weather {
+        weather: "Storm".to_string(),
+    });
+    assert_eq!(
+        says(&vm.run(1)),
+        vec!["storm's here".to_string(), "any weather".to_string()]
+    );
+}
+
+#[test]
+fn the_director_reporters_read_the_fixed_tick_slot() {
+    use blockloom_core::sense::{self, AtmosphereSense};
+    blockloom_core::init();
+    sense::publish(Sensors::default());
+    sense::publish_atmosphere(AtmosphereSense {
+        time_of_day: 6.5,
+        sun_direction: [0.0, 0.5, -0.8660254],
+        weather: "Storm".to_string(),
+        ..Default::default()
+    });
+    let time = Value::op(Op::from_name("TimeOfDay"), vec![]);
+    assert_eq!(time.eval(), Ok(Evaluated::Number(6.5)));
+    let elevation = Value::op(Op::from_name("SunElevation"), vec![]);
+    assert!((elevation.eval().unwrap().as_number().unwrap() - 30.0).abs() < 1e-3);
+    let weather = Value::op(Op::from_name("CurrentWeather"), vec![]);
+    assert_eq!(weather.eval(), Ok(Evaluated::Text("Storm".to_string())));
+    let by_name = Value::op(
+        Op::from_name("Atmosphere"),
+        vec![Value::text("time of day")],
+    );
+    assert_eq!(by_name.eval(), Ok(Evaluated::Number(6.5)));
+}

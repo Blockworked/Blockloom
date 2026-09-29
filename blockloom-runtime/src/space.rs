@@ -150,8 +150,15 @@ impl SpaceParams {
     }
 }
 
-/// The aurora's KP this run: `set aurora` over the project's.
+/// The aurora's KP this run: `set aurora` over the weather blend over the
+/// project's.
 pub fn aurora_kp(engine: &Engine) -> f32 {
+    if let Some(kp) = engine.aurora_kp {
+        return kp.clamp(0.0, 9.0);
+    }
+    if engine.weather.is_active() {
+        return engine.weather.sampled().aurora_kp.clamp(0.0, 9.0);
+    }
     let aurora = &engine.project.world.sky.aurora;
     engine
         .aurora_kp

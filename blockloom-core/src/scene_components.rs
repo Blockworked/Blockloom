@@ -10,6 +10,7 @@
 
 use crate::cloud_layers::CloudLayer;
 use crate::clouds::Clouds;
+use crate::director::Director;
 use crate::fog::Fog;
 use crate::input::InputConfig;
 use crate::lightning::Lightning;
@@ -42,6 +43,7 @@ pub const BUILT_IN_SCENE_NAMES: &[&str] = &[
     "CloudLayers",
     "Lightning",
     "Wind",
+    "Director",
     "Surface",
     "Vfx",
     "Interface",
@@ -88,6 +90,8 @@ pub enum SceneComponent {
     Lightning { lightning: Lightning },
     /// The wind everything that moves with the air reads.
     Wind { wind: Wind },
+    /// The 24h clock, curve tracks and weather presets.
+    Director { director: Director },
     /// Snow cover and wetness, which surface masks scale by.
     Surface { surface: SurfaceWeather },
     /// The particle budget and where emitters simulate.
@@ -117,6 +121,7 @@ impl SceneComponent {
             SceneComponent::CloudLayers { .. } => "CloudLayers",
             SceneComponent::Lightning { .. } => "Lightning",
             SceneComponent::Wind { .. } => "Wind",
+            SceneComponent::Director { .. } => "Director",
             SceneComponent::Surface { .. } => "Surface",
             SceneComponent::Vfx { .. } => "Vfx",
             SceneComponent::Interface { .. } => "Interface",
@@ -185,6 +190,9 @@ impl SceneComponents {
             SceneComponent::Wind {
                 wind: world.wind.clone(),
             },
+            SceneComponent::Director {
+                director: world.director.clone(),
+            },
             SceneComponent::Surface {
                 surface: world.surface,
             },
@@ -241,6 +249,7 @@ impl SceneComponents {
                     world.lightning.clone_from(lightning);
                 }
                 SceneComponent::Wind { wind } => world.wind.clone_from(wind),
+                SceneComponent::Director { director } => world.director.clone_from(director),
                 SceneComponent::Surface { surface } => world.surface.clone_from(surface),
                 SceneComponent::Vfx { settings } => world.vfx.clone_from(settings),
                 SceneComponent::Interface { document } => world.interface.clone_from(document),

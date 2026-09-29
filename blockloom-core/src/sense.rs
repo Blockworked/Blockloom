@@ -235,6 +235,11 @@ pub struct AtmosphereSense {
     /// Names of the environment volumes showing at the camera, lowest
     /// priority first. What `active volumes` reports.
     pub volumes: Vec<String>,
+    /// Hours, 0-24. What `time of day` reports, sampled on the fixed tick.
+    pub time_of_day: f32,
+    /// The weather preset the air is in, by name. Empty before the first
+    /// blend. What `current weather` reports.
+    pub weather: String,
     /// The aurora's KP index, 0 when there is none.
     pub aurora: f32,
     /// How bright the latest lightning flash is right now, 0-1.
@@ -268,6 +273,8 @@ impl Default for AtmosphereSense {
             ray_tracing: false,
             ray_tracing_available: false,
             volumes: Vec::new(),
+            time_of_day: 12.0,
+            weather: String::new(),
             aurora: 0.0,
             lightning: 0.0,
         }
@@ -302,6 +309,8 @@ pub const ATMOSPHERE_FIELDS: &[&str] = &[
     "ray tracing available",
     "aurora",
     "lightning",
+    "time of day",
+    "sun elevation",
 ];
 
 impl AtmosphereSense {
@@ -345,6 +354,10 @@ impl AtmosphereSense {
             "raytracingavailable" => f32::from(u8::from(self.ray_tracing_available)),
             "aurora" | "kp" => self.aurora,
             "lightning" | "flash" => self.lightning,
+            "timeofday" | "time" => self.time_of_day,
+            "sunelevation" | "sunelev" | "sune" => {
+                self.sun_direction[1].clamp(-1.0, 1.0).asin().to_degrees()
+            }
             _ => return None,
         };
         Some(value as f64)
@@ -541,6 +554,9 @@ pub const KEY_NAMES: &[&str] = &[
     "alt",
     "tab",
     "backspace",
+    // The Android back button (winit's `GoBack`): the phone's pause key, the
+    // way escape is the desktop's. Never produced on desktop.
+    "back",
     "a",
     "b",
     "c",

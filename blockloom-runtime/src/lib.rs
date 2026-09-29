@@ -21,6 +21,8 @@
 #![allow(clippy::type_complexity)]
 
 mod ai;
+#[cfg(target_os = "android")]
+mod android;
 mod anim2d;
 mod atmosphere;
 mod batching;
@@ -35,6 +37,7 @@ mod decals_deferred;
 mod destruction;
 mod dim2;
 mod dim3;
+mod director;
 mod display;
 mod edit;
 #[cfg(target_os = "linux")]
@@ -126,10 +129,36 @@ fn rebuild_ready(
 
 /// Runs the world as its own process: the editor's child, or a built game.
 pub fn run_process() {
+    // The binary never runs on a phone - the APK loads the library - but a
+    // stray execution should still boot the game rather than wait on stdin.
+    #[cfg(target_os = "android")]
+    run_android();
     // Before the pack is read: a saved document names Blockloom's own
     // reporter blocks, which have to be registered to evaluate.
+    #[cfg(not(target_os = "android"))]
+    {
+        blockloom_core::init();
+        let launch = Launch::from_args(std::env::args().skip(1));
+        run_launch(launch);
+    }
+}
+
+/// Boots the shipped game on Android: the pack comes from the APK's assets,
+/// and the world presses its own green flag like every other player build.
+/// Called from the `bevy_main` entry, never from the binary.
+#[cfg(target_os = "android")]
+pub fn run_android() {
     blockloom_core::init();
-    let launch = Launch::from_args(std::env::args().skip(1));
+    match crate::android::load_pack() {
+        Ok(pack) => run_launch(Launch::from_android(pack)),
+        Err(message) => {
+            eprintln!("blockloom: {message}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn run_launch(launch: Launch) {
     let mode = launch.mode();
     let title = launch.title();
     let hdr = hdr::HdrPolicy {
@@ -170,13 +199,17 @@ pub fn run_process() {
     if hdr.allow {
         display::register(&mut app);
     }
+    #[cfg(target_os = "android")]
+    crate::android::register(&mut app);
     app.run();
 }
 
 /// Project assets live in the project's own folder, anywhere on disk, and
 /// are handed to the asset server as absolute paths. Those are unapproved
 /// by default in Bevy 0.19 (`Forbid`), which fails the load and leaves a
-/// white sprite - so allow them here. The files are the user's own.
+/// white sprite - so allow them here. The files are the user's own. On
+/// Android the default reader is already the APK asset manager, which serves
+/// the staged game folder without any override here.
 pub(crate) fn asset_plugin() -> AssetPlugin {
     AssetPlugin {
         unapproved_path_mode: UnapprovedPathMode::Allow,
@@ -236,6 +269,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     lightning::register(app);
     decals::register(app);
     destruction::register(app);
+    director::register(app);
     wind::register(app);
     vfx::register(app, mode);
     water::register(app, mode);
@@ -655,6 +689,13 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 materials::animate_tiles,
             )
                 .chain(),
+        )
+        // Its own call, not part of the chained tuple above (which sits at
+        // Bevy's tuple cap): the back button fires before text inputs see
+        // it, so a focused field releases rather than double-firing.
+        .add_systems(
+            Update,
+            world::back_button.before(world::type_into_focused_input),
         )
         .add_systems(
             Update,

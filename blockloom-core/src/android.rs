@@ -1295,9 +1295,11 @@ pub fn aapt2_link_args(
     .collect()
 }
 
-/// Packs every `.so` under `lib/<abi>/`, stored uncompressed. The manifest
-/// sets `extractNativeLibs`, so the installer unpacks them itself and no
-/// page-alignment dance is needed before zipalign.
+/// Packs every `.so` under `lib/<abi>/`, stored uncompressed. The file name
+/// is kept as is: Android loads `lib<name>.so` for `android.app.lib_name`
+/// `<name>`, so stripping the prefix would leave an unloadable entry. The
+/// manifest sets `extractNativeLibs`, so the installer unpacks them itself
+/// and no page-alignment dance is needed before zipalign.
 pub fn inject_native_libs(apk: &Path, libs: &[(String, PathBuf)]) -> Result<(), String> {
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -1309,14 +1311,11 @@ pub fn inject_native_libs(apk: &Path, libs: &[(String, PathBuf)]) -> Result<(), 
     let options =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     for (abi, so) in libs {
-        let name = format!(
-            "lib/{}/{}.so",
-            abi,
-            so.file_stem()
-                .and_then(|stem| stem.to_str())
-                .ok_or_else(|| format!("{} has no file name", so.display()))?
-                .trim_start_matches("lib")
-        );
+        let file_name = so
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| format!("{} has no file name", so.display()))?;
+        let name = format!("lib/{abi}/{file_name}");
         archive
             .start_file(&name, options)
             .map_err(|e| format!("{apk}: {e}", apk = apk.display()))?;
@@ -1625,6 +1624,65 @@ fn install_apk_with_adb(
     })
 }
 
+/// What one `adb logcat` dump kept: the matching lines plus whether any
+/// reads as a native crash, which is what a smoke test fails on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Logcat {
+    pub lines: Vec<String>,
+    pub panics: Vec<String>,
+}
+
+/// Dumps the device log (`adb logcat -d`) and keeps the lines naming
+/// `needle` - the runtime's `blockloom:` markers - plus any Rust panic or
+/// fatal exception anywhere, which fail a smoke run. One shot, not a
+/// stream: RunLog streaming is a later step, this is for the dev loop and
+/// `just android-smoke`.
+pub fn logcat(device: Option<&str>, needle: &str) -> Result<Logcat, String> {
+    let config = load();
+    logcat_with_adb(
+        &sdk_dir(&config).join("platform-tools").join(exe("adb")),
+        device,
+        needle,
+    )
+}
+
+fn logcat_with_adb(adb: &Path, device: Option<&str>, needle: &str) -> Result<Logcat, String> {
+    if !adb.is_file() {
+        return Err("No adb: install platform-tools in App Settings first.".to_string());
+    }
+    let mut dump = std::process::Command::new(adb);
+    if let Some(serial) = device {
+        dump.arg("-s").arg(serial);
+    }
+    let output = dump
+        .arg("logcat")
+        .arg("-d")
+        .output()
+        .map_err(|e| format!("Couldn't run {}: {e}", adb.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "adb logcat failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let needle = needle.to_lowercase();
+    let mut lines = Vec::new();
+    let mut panics = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let lower = line.to_lowercase();
+        if lower.contains("panicked")
+            || lower.contains("fatal exception")
+            || lower.contains("fatal:")
+        {
+            panics.push(line.to_string());
+        }
+        if !needle.is_empty() && lower.contains(&needle) {
+            lines.push(line.to_string());
+        }
+    }
+    Ok(Logcat { lines, panics })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1916,9 +1974,11 @@ mod tests {
         .unwrap();
         let file = std::fs::File::open(&apk).unwrap();
         let mut archive = zip::ZipArchive::new(file).unwrap();
+        // File names kept whole: NativeActivity loads `lib<name>.so` for
+        // `android.app.lib_name` `<name>`, so the prefix has to survive.
         for name in [
-            "lib/arm64-v8a/blockloom_runtime.so",
-            "lib/arm64-v8a/player.so",
+            "lib/arm64-v8a/libblockloom_runtime.so",
+            "lib/arm64-v8a/libplayer.so",
         ] {
             let entry = archive.by_name(name).unwrap();
             assert_eq!(
@@ -1965,6 +2025,27 @@ mod tests {
                 .contains("shell am start -n com.blockloom.game.pond/android.app.NativeActivity"),
             "{calls}"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn logcat_keeps_markers_and_calls_out_panics() {
+        let root = temp_root("logcat");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let adb = stub_tool(
+            &bin,
+            "adb",
+            "#!/bin/sh\necho '01-01 00:00:01.000  123  123 I blockloom: run started'\necho '01-01 00:00:02.000  123  123 I blockloom: actors {\"a\":[1,2]}'\necho '01-01 00:00:03.000  123  123 E AndroidRuntime: FATAL EXCEPTION: main'\necho '01-01 00:00:04.000  123  123 I SomeTag: unrelated line'\n",
+        );
+        // The stub ignores its argv and prints a fixed dump: what matters is
+        // the filtering, not the adb invocation (covered by the install test).
+        let dumped = logcat_with_adb(&adb, None, "blockloom").unwrap();
+        assert_eq!(dumped.lines.len(), 2, "{dumped:?}");
+        assert!(dumped.lines[0].contains("run started"), "{dumped:?}");
+        assert_eq!(dumped.panics.len(), 1, "{dumped:?}");
+        assert!(dumped.panics[0].contains("FATAL EXCEPTION"), "{dumped:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2130,7 +2211,7 @@ mod tests {
         let mut archive = zip::ZipArchive::new(file).unwrap();
         assert!(
             archive
-                .by_name("lib/arm64-v8a/blockloom_runtime.so")
+                .by_name("lib/arm64-v8a/libblockloom_runtime.so")
                 .is_ok()
         );
         let _ = std::fs::remove_dir_all(&root);

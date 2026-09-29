@@ -45,6 +45,10 @@ pub enum Trigger {
     },
     /// The newly loaded scene finished warming up and its actors started.
     SceneStarted,
+    /// The weather blend landed on the named preset. Empty matches any.
+    Weather {
+        weather: String,
+    },
     QualityDropped,
     /// The outgoing scene is about to unload for a `switch scene to`.
     SceneEnded,
@@ -201,6 +205,16 @@ pub enum Action {
     SetClouds {
         property: crate::clouds::CloudProperty,
         value: Value,
+    },
+    SetTimeOfDay(Value),
+    AdvanceTime(Value),
+    SetPrecipitation {
+        property: crate::director::PrecipitationKind,
+        value: Value,
+    },
+    BlendWeather {
+        weather: Value,
+        seconds: Value,
     },
     SetWater {
         property: crate::water::WaterProperty,
@@ -549,6 +563,9 @@ pub fn compile(graph: &ActorGraph) -> Program {
                 room: room.trim().to_string(),
             }),
             InstructionKind::WhenSceneStarts => Some(Trigger::SceneStarted),
+            InstructionKind::WhenWeather { weather } => Some(Trigger::Weather {
+                weather: weather.trim().to_string(),
+            }),
             InstructionKind::WhenSceneEnds => Some(Trigger::SceneEnded),
             InstructionKind::WhenActionPressed { action } => Some(Trigger::ActionPressed(
                 crate::input::normalize_action(action).to_lowercase(),
@@ -710,6 +727,9 @@ fn action_values(action: &Action) -> Vec<&Value> {
         | Action::SetLightningRate(value)
         | Action::SetWind { value, .. }
         | Action::SetClouds { value, .. }
+        | Action::SetTimeOfDay(value)
+        | Action::AdvanceTime(value)
+        | Action::SetPrecipitation { value, .. }
         | Action::SetWater { value, .. }
         | Action::Say(value)
         | Action::SetColor(value)
@@ -794,6 +814,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
             values
         }
         Action::SetUiProp { id, value, .. } => vec![id, value],
+        Action::BlendWeather { weather, seconds } => vec![weather, seconds],
         Action::HideElement { id, .. } => vec![id],
         Action::CreateActor { name, position } => {
             let mut values = vec![name];
@@ -1016,6 +1037,16 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         Action::SetClouds { property, value } => Action::SetClouds {
             property,
             value: lift_one(value, ctx),
+        },
+        Action::SetTimeOfDay(v) => Action::SetTimeOfDay(lift_one(v, ctx)),
+        Action::AdvanceTime(v) => Action::AdvanceTime(lift_one(v, ctx)),
+        Action::SetPrecipitation { property, value } => Action::SetPrecipitation {
+            property,
+            value: lift_one(value, ctx),
+        },
+        Action::BlendWeather { weather, seconds } => Action::BlendWeather {
+            weather: lift_one(weather, ctx),
+            seconds: lift_one(seconds, ctx),
         },
         Action::SetWater { property, value } => Action::SetWater {
             property,
@@ -1474,6 +1505,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenEnterRoom { .. }
         | K::WhenQualityDrops
         | K::WhenSceneStarts
+        | K::WhenWeather { .. }
         | K::WhenSceneEnds
         | K::WhenUiEvent { .. }
         | K::WhenUiClicked { .. }
@@ -1678,6 +1710,18 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::SetClouds { property, value } => steps.push(Step::Action(Action::SetClouds {
             property: *property,
             value: value.clone(),
+        })),
+        K::SetTimeOfDay { time } => steps.push(Step::Action(Action::SetTimeOfDay(time.clone()))),
+        K::AdvanceTime { hours } => steps.push(Step::Action(Action::AdvanceTime(hours.clone()))),
+        K::SetPrecipitation { property, value } => {
+            steps.push(Step::Action(Action::SetPrecipitation {
+                property: *property,
+                value: value.clone(),
+            }))
+        }
+        K::BlendWeather { weather, seconds } => steps.push(Step::Action(Action::BlendWeather {
+            weather: weather.clone(),
+            seconds: seconds.clone(),
         })),
         K::SetWater { property, value } => steps.push(Step::Action(Action::SetWater {
             property: *property,

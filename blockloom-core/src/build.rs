@@ -2092,7 +2092,7 @@ mod tests {
         let mut archive = zip::ZipArchive::new(file).unwrap();
         assert!(
             archive
-                .by_name("lib/arm64-v8a/blockloom_runtime.so")
+                .by_name("lib/arm64-v8a/libblockloom_runtime.so")
                 .is_ok()
         );
         let _ = std::fs::remove_dir_all(&root);

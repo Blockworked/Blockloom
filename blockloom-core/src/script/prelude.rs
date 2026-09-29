@@ -1370,6 +1370,80 @@ impl Actor {
         self.text(TEXT_CURRENT_SCENE, Str::EMPTY, Str::EMPTY)
     }
 
+    /// The weather preset the air is in, by name. What `current weather`
+    /// reports. Empty before the first blend lands.
+    pub fn current_weather(&self) -> Option<String> {
+        self.text(TEXT_CURRENT_WEATHER, Str::EMPTY, Str::EMPTY)
+    }
+
+    /// Hours, 0-24, as of this fixed tick. What `time of day` reports.
+    pub fn time_of_day(&self) -> f32 {
+        self.atmosphere("time of day").unwrap_or(12.0) as f32
+    }
+
+    /// Degrees above the horizon, as of this fixed tick. What
+    /// `sun elevation` reports.
+    pub fn sun_elevation(&self) -> f32 {
+        self.atmosphere("sun elevation").unwrap_or(0.0) as f32
+    }
+
+    /// The clock in hours, 0-24, for the rest of the run. Moves the
+    /// director's sun and every track reading from it.
+    pub fn set_time_of_day(&self, hours: f32) {
+        self.act(
+            ACT_SET_TIME_OF_DAY,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            hours as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Moves the director's clock by hours (negative rewinds), for the rest
+    /// of the run.
+    pub fn advance_time(&self, hours: f32) {
+        self.act(
+            ACT_ADVANCE_TIME,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            hours as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Rain or snow intensity, 0-1, for the rest of the run: `"rain"` or
+    /// `"snow"`.
+    pub fn set_precipitation(&self, kind: &str, value: f32) {
+        self.act(
+            ACT_SET_PRECIPITATION,
+            Str::borrow(kind),
+            Str::EMPTY,
+            Str::EMPTY,
+            value as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Blends the weather towards a preset (Clear, Overcast, Storm, Sunset,
+    /// Night, or one the project authored) over seconds. A new blend begun
+    /// mid-blend carries on from where the air is.
+    pub fn blend_weather(&self, weather: &str, seconds: f32) {
+        self.act(
+            ACT_BLEND_WEATHER,
+            Str::borrow(weather),
+            Str::EMPTY,
+            Str::EMPTY,
+            seconds as f64,
+            0.0,
+            0.0,
+        );
+    }
+
     /// Every scene's name, in project order. What `scene names` reports.
     pub fn scene_names(&self) -> Option<String> {
         self.text(TEXT_SCENE_NAMES, Str::EMPTY, Str::EMPTY)
@@ -2380,6 +2454,8 @@ pub enum Event {
     Ui { element: String, event: String },
     /// This actor walked into a room, by the room's name.
     EnteredRoom(String),
+    /// The weather blend landed on a preset, by name.
+    Weather(String),
     /// The newly loaded scene finished warming up.
     SceneStarted,
     /// The outgoing scene is about to unload.
@@ -2436,6 +2512,7 @@ impl Event {
                 event: word("detail"),
             },
             EVENT_ENTERED_ROOM => Event::EnteredRoom(subject),
+            EVENT_WEATHER => Event::Weather(subject),
             EVENT_SCENE_STARTED => Event::SceneStarted,
             EVENT_SCENE_ENDED => Event::SceneEnded,
             _ => return None,

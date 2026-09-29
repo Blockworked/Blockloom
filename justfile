@@ -224,6 +224,58 @@ android-install apk app device="":
     cargo build --release -p blockloom-app --bin blockloom-shell
     "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-install apk="{{apk}}" app="{{app}}"{{ if device != "" { " device=" + device } else { "" } }}' --no-state
 
+# One-shot device log for the dev loop: the runtime's blockloom markers plus
+# any Rust panic. Streaming into RunLog is a later step; this is what
+# `android-smoke` checks and what a developer reads first.
+android-logcat device="":
+    cargo build --release -p blockloom-app --bin blockloom-shell
+    "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-logcat{{ if device != "" { " device=" + device } else { "" } }}' --no-state
+
+# Typechecks the shipped runtime for both Android triples without linking:
+# new `cfg(target_os = "android")` code has to compile there, not just here.
+# The C build scripts (blake3, ring) need the NDK clang, so this resolves the
+# toolchain the same way a build does: the installed SDK's NDK through
+# `android-status`, or the `ndk` dir handed in (CI downloads one standalone).
+# Needs the Android Rust std (`rustup target add aarch64-linux-android
+# x86_64-linux-android`); the SDK licenses don't matter for a check.
+android-runtime-check ndk="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p blockloom-app --bin blockloom-shell
+    SHELL_BIN="${CARGO_TARGET_DIR:-target}/release/blockloom-shell"
+    if [ -z "{{ndk}}" ]; then
+      NDK="$("$SHELL_BIN" --eval 'android-status' --no-state \
+        | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['ndk_path'])")"
+    else
+      NDK="$(realpath '{{ndk}}')"
+    fi
+    case "$(uname -s)" in
+      Linux) HOST="linux-x86_64" ;;
+      Darwin) HOST="darwin-x86_64" ;;
+      *) HOST="windows-x86_64" ;;
+    esac
+    BIN="$NDK/toolchains/llvm/prebuilt/$HOST/bin"
+    # The API level on the wrapper only sets the default -target; rustc
+    # passes --target itself. 29 is MIN_SDK in blockloom-core/src/android.rs.
+    for triple in aarch64-linux-android x86_64-linux-android; do
+      stem="$(echo "$triple" | tr '-' '_')"
+      upper="$(echo "$triple" | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+      export "CC_$stem"="$BIN/${triple}29-clang"
+      export "CXX_$stem"="$BIN/${triple}29-clang++"
+      export "AR_$stem"="$BIN/llvm-ar"
+      export "CARGO_TARGET_${upper}_LINKER"="$BIN/${triple}29-clang"
+      # The shipped .so builds with no default features (SDR-only, no Solari
+      # or texture compression), so the check builds the same shape.
+      cargo check -p blockloom-runtime --no-default-features --target "$triple"
+    done
+
+# Headless check of an APK beside `web-smoke`: installs on a connected device
+# or emulator, launches, and watches logcat for the world-built marker and a
+# second actor snapshot, failing on any Rust panic. Needs exactly one device
+# (or pass its serial) - an emulator counts.
+android-smoke apk app device="":
+    bash scripts/android-smoke.sh "{{apk}}" "{{app}}" "{{device}}"
+
 test:
     cargo test --workspace
 

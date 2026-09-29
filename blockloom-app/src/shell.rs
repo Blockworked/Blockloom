@@ -299,6 +299,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             },
         ],
     },
+    CommandSpec {
+        name: "android-logcat",
+        cmd: "android_logcat",
+        aliases: &["android_logcat"],
+        summary: "Dump the device log, keeping the runtime's blockloom markers and any Rust panic. One shot for the dev loop and smoke tests.",
+        args: &[ArgSpec {
+            name: "device",
+            ty: "string",
+            required: false,
+        }],
+    },
     // ── The world ─────────────────────────────────────────────────────────
     CommandSpec {
         name: "set-mode",
@@ -652,6 +663,28 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[ArgSpec {
             name: "wind",
             ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-director",
+        cmd: "set_director",
+        aliases: &["set_director"],
+        summary: "Set the time-of-day and weather director: enabled, time_of_day (0-24), day_length seconds per day (0 freezes), loop_enabled, one 24h Bezier track per dial (sun/moon azimuth and elevation, exposure, temperature, fog_density, cloud_coverage, cloud_type, precipitation, wetness, wind_speed, wind_direction, aurora_kp, lut_weight; each {keys: [{time, value, in_tangent, out_tangent}], loop_enabled}) and presets (Clear, Overcast, Storm, Sunset, Night built in, plus project ones).",
+        args: &[ArgSpec {
+            name: "director",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "apply-director-preset",
+        cmd: "apply_director_preset",
+        aliases: &["apply_director_preset"],
+        summary: "Replace the director with a keyframe preset (dawn, noon, dusk or midnight): a sun track through that moment plus matching exposure, fog and cloud tracks.",
+        args: &[ArgSpec {
+            name: "preset",
+            ty: "dawn|noon|dusk|midnight",
             required: true,
         }],
     },

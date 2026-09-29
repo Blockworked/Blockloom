@@ -57,6 +57,15 @@ libloading.workspace = true
 # fall back to hard shadows as they do on WebGL2.
 bevy = { workspace = true, features = ["experimental_pbr_pcss"] }
 
+# Android entry and asset reads: the APK's NativeActivity handle behind
+# `ANDROID_APP`, which the asset manager and the data dir come from. Same
+# Bevy line the workspace pins, so no extra version to track. The manifest
+# names the framework's own NativeActivity, so the native-activity backend
+# rides along (GameActivity would want Java instead).
+[target.'cfg(target_os = "android")'.dependencies]
+bevy_android = "0.20.0-rc.1"
+bevy = { workspace = true, features = ["android-native-activity"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # WebGPU, not Bevy's WebGL2 default: the world's compute passes (sky cubes,
 # froxel fog, clouds, the luminance meter) need compute and storage textures,

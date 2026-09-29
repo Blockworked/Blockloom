@@ -107,6 +107,9 @@ impl Backend {
                 arg(&args, "app")?,
                 arg(&args, "device").ok().flatten(),
             )?),
+            "android_logcat" => to_json(commands::android_logcat(
+                arg(&args, "device").ok().flatten(),
+            )?),
             // ── The world ──────────────────────────────────────────────────
             "set_mode" => {
                 let mode: Mode = arg(&args, "mode")?;
@@ -232,6 +235,15 @@ impl Backend {
                 let wind: blockloom_core::wind::Wind = arg(&args, "wind")?;
                 to_json(commands::set_wind(state, app, wind)?)
             }
+            "set_director" => {
+                let director: blockloom_core::director::Director = arg(&args, "director")?;
+                to_json(commands::set_director(state, app, director)?)
+            }
+            "apply_director_preset" => to_json(commands::apply_director_preset(
+                state,
+                app,
+                arg(&args, "preset")?,
+            )?),
             "set_vfx" => {
                 let vfx: blockloom_core::vfx::VfxSettings = arg(&args, "vfx")?;
                 to_json(commands::set_vfx(state, app, vfx)?)

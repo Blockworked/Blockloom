@@ -245,6 +245,14 @@ pub struct Engine {
     /// `set wind`, `set storm` and `set cloud drift` this run, over the
     /// project's wind.
     pub wind: blockloom_core::wind::WindOverrides,
+    /// `set precipitation` this run, over the director and the project.
+    pub precipitation: blockloom_core::director::PrecipitationOverrides,
+    /// The live weather blend: what the air is right now and where it is
+    /// going. Stepped on the fixed tick; `blend weather to` moves it.
+    pub weather: blockloom_core::director::WeatherState,
+    /// The director clock's explicit time, 0-24, once `set time of day` or
+    /// `advance time by` has moved it. `None` follows the project's clock.
+    pub director_time: Option<f32>,
     /// `set clouds` this run, over the blended volumetric clouds.
     pub clouds: blockloom_core::clouds::CloudOverrides,
     /// `set snow cover to` and `set surface wetness to`, for the run.
@@ -352,6 +360,9 @@ impl Engine {
             aurora_kp: None,
             lightning_rate: None,
             wind: Default::default(),
+            precipitation: Default::default(),
+            weather: Default::default(),
+            director_time: None,
             clouds: Default::default(),
             surface: Default::default(),
             terrain_previews: Vec::new(),

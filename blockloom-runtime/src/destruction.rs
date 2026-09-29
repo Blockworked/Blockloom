@@ -90,11 +90,22 @@ fn storage_key(engine: &Engine) -> String {
         .collect()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 fn load(key: &str) -> Result<Option<SurfaceMap>, String> {
     let path = blockloom_core::project::data_dir()
         .join("surfaces")
         .join(format!("{key}.json"));
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+#[cfg(target_os = "android")]
+fn load(key: &str) -> Result<Option<SurfaceMap>, String> {
+    let path = crate::android::data_file(&format!("surfaces/{key}.json"));
     if !path.exists() {
         return Ok(None);
     }
@@ -116,9 +127,17 @@ fn load(key: &str) -> Result<Option<SurfaceMap>, String> {
         .map(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
         .transpose()
 }
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 fn store(key: &str, map: &SurfaceMap) -> Result<(), String> {
     let dir = blockloom_core::project::data_dir().join("surfaces");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{key}.json"));
+    std::fs::write(path, serde_json::to_vec(map).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+#[cfg(target_os = "android")]
+fn store(key: &str, map: &SurfaceMap) -> Result<(), String> {
+    let dir = crate::android::data_file("surfaces");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(format!("{key}.json"));
     std::fs::write(path, serde_json::to_vec(map).map_err(|e| e.to_string())?)

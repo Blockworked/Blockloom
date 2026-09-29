@@ -237,6 +237,20 @@ pub enum Act {
         property: &'static str,
         value: f32,
     },
+    SetTimeOfDay {
+        time: f32,
+    },
+    AdvanceTime {
+        hours: f32,
+    },
+    SetPrecipitation {
+        property: &'static str,
+        value: f32,
+    },
+    BlendWeather {
+        weather: String,
+        seconds: f32,
+    },
     SetWater {
         property: &'static str,
         value: f32,
@@ -810,6 +824,9 @@ impl Runner {
                     entry.actor == &*template
                         && (entry.detail.is_empty() || entry.detail.eq_ignore_ascii_case(detail))
                 }
+                ("Weather", "Weather") => {
+                    entry.detail.is_empty() || entry.detail.eq_ignore_ascii_case(detail)
+                }
                 ("Particles", "Particles") => entry.actor == &*template && entry.detail == detail,
                 _ => false,
             };
@@ -844,8 +861,12 @@ impl Runner {
         let entry = &entries[index];
         let mut state = entry.begin(&actor);
         // Escape is the pause key: while paused it starts key strands as
-        // interface strands, so a pause menu can toggle itself shut.
-        if self.actors.paused && entry.trigger == "Key" && entry.detail == "escape" {
+        // interface strands, so a pause menu can toggle itself shut. Back is
+        // the phone's equivalent (the Android back button).
+        if self.actors.paused
+            && entry.trigger == "Key"
+            && (entry.detail == "escape" || entry.detail == "back")
+        {
             state.ui = true;
         }
         let fresh = Live {
@@ -1169,7 +1190,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 31;
+pub const LOGIC_ABI_VERSION: u32 = 32;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1381,6 +1402,15 @@ pub const ACT_SPLASH: u32 = 108;
 pub const ACT_PUFF_SMOKE: u32 = 109;
 /// `a` = scene name, `b` = transition (`none`, `fade`, `wipe`, `circle`).
 pub const ACT_SWITCH_SCENE: u32 = 106;
+/// `n0` = hours, 0-24. Window-global: no actor.
+pub const ACT_SET_TIME_OF_DAY: u32 = 111;
+/// `n0` = hours to move the clock by. Window-global: no actor.
+pub const ACT_ADVANCE_TIME: u32 = 112;
+/// `a` = precipitation kind (`Rain`, `Snow`); `n0` = intensity 0-1.
+/// Window-global: no actor.
+pub const ACT_SET_PRECIPITATION: u32 = 113;
+/// `a` = preset name; `n0` = seconds. Window-global: no actor.
+pub const ACT_BLEND_WEATHER: u32 = 114;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1945,6 +1975,38 @@ impl Host for AbiHost {
                 property,
                 "",
                 [value as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetTimeOfDay { time } => self.act_wire(
+                actor,
+                ACT_SET_TIME_OF_DAY,
+                "",
+                "",
+                [time as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::AdvanceTime { hours } => self.act_wire(
+                actor,
+                ACT_ADVANCE_TIME,
+                "",
+                "",
+                [hours as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetPrecipitation { property, value } => self.act_wire(
+                actor,
+                ACT_SET_PRECIPITATION,
+                property,
+                "",
+                [value as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::BlendWeather { weather, seconds } => self.act_wire(
+                actor,
+                ACT_BLEND_WEATHER,
+                &weather,
+                "",
+                [seconds as f64, 0.0, 0.0],
                 &zero,
             ),
             Act::SetWater { property, value } => self.act_wire(

@@ -73,3 +73,27 @@ jobs:
         run: >
           cargo test -p blockloom-core --lib
           script::tests::a_script_built_for_the_web_is_a_module_importing_the_host_calls
+
+  # The Android player (Phase 6.5): the runtime has to keep checking for both
+  # Android triples, built the way the APK builds it (no default features).
+  # No SDK install: a standalone NDK feeds the C build scripts, and the Rust
+  # std comes from rustup. Installs and emulator runs stay manual
+  # (`just android-smoke`).
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - run: rustup target add aarch64-linux-android x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+      - name: Fetch the pinned NDK major
+        run: |
+          curl -sS -o /tmp/ndk.zip \
+            https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
+          unzip -q /tmp/ndk.zip -d /tmp
+          ls /tmp/android-ndk-r27d/toolchains/llvm/prebuilt/linux-x86_64/bin/ \
+            | grep -E "29-clang$|llvm-ar"
+      - name: Check the shipped shape
+        run: just android-runtime-check /tmp/android-ndk-r27d

@@ -25,6 +25,7 @@ use blockloom_core::blocks::{
 };
 use blockloom_core::cloud_layers::CloudLayerProperty;
 use blockloom_core::clouds::CloudProperty;
+use blockloom_core::director::PrecipitationKind;
 use blockloom_core::input::ActionSense;
 use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::{Axis, Mode, Visual};
@@ -137,6 +138,9 @@ fn publish_world() {
     sensors.gamepad_axes.insert("leftstickx".to_string(), 0.5);
     sensors.gamepad_buttons.insert("south".to_string());
     sensors.atmosphere.wind_speed = 3.0;
+    sensors.atmosphere.time_of_day = 6.5;
+    sensors.atmosphere.weather = "Storm".to_string();
+    sensors.atmosphere.sun_direction = [0.0, 0.5, -0.8660254];
     sensors.atmosphere.luminance = 42.0;
     sensors.atmosphere.hdr_display = true;
     sensors.atmosphere.peak_brightness = 600.0;
@@ -323,6 +327,10 @@ impl Host for Recorder {
             | Act::SetCloudDrift { .. }
             | Act::SetClouds { .. }
             | Act::SetCloudLayer { .. }
+            | Act::SetTimeOfDay { .. }
+            | Act::AdvanceTime { .. }
+            | Act::SetPrecipitation { .. }
+            | Act::BlendWeather { .. }
             | Act::SetPaused { .. } => String::new(),
             _ => actor.to_string(),
         };
@@ -391,6 +399,11 @@ impl Host for Recorder {
             ))),
             "UiFocus" => Ok(Val::Text("name".to_string())),
             "SceneLuminance" => Ok(Val::Num(42.0)),
+            "TimeOfDay" => Ok(Val::Num(6.5)),
+            // The same f32 maths the snapshot's own field does, so the two
+            // halves print the same digits.
+            "SunElevation" => Ok(Val::Num(f32::to_degrees(f32::asin(0.5)) as f64)),
+            "CurrentWeather" => Ok(Val::Text("Storm".into())),
             "IsHdrDisplay" => Ok(Val::Bool(true)),
             "PeakBrightness" => Ok(Val::Num(600.0)),
             "IsRayTracing" => Ok(Val::Bool(true)),
@@ -400,6 +413,8 @@ impl Host for Recorder {
             "SceneNames" => Ok(Val::Text("[\"Scene 1\",\"Scene 2\"]".into())),
             "Atmosphere" => match args[0].as_text().as_str() {
                 "wind speed" => Ok(Val::Num(3.0)),
+                "time of day" => Ok(Val::Num(6.5)),
+                "sun elevation" => Ok(Val::Num(f32::to_degrees(f32::asin(0.5)) as f64)),
                 other => Err(format!("the atmosphere has no \"{other}\" reading")),
             },
             // The harness player idles holding Walk on frame 3, mirroring
@@ -1032,6 +1047,14 @@ fn line_of(act: &Act) -> String {
         Act::SetWind { property, value } => format!("SetWind {property} {value:?}"),
         Act::SetCloudDrift { drift } => format!("SetCloudDrift {drift:?}"),
         Act::SetClouds { property, value } => format!("SetClouds {property} {value:?}"),
+        Act::SetTimeOfDay { time } => format!("SetTimeOfDay {time:?}"),
+        Act::AdvanceTime { hours } => format!("AdvanceTime {hours:?}"),
+        Act::SetPrecipitation { property, value } => {
+            format!("SetPrecipitation {property} {value:?}")
+        }
+        Act::BlendWeather { weather, seconds } => {
+            format!("BlendWeather {weather} {seconds:?}")
+        }
         Act::SetWater { property, value } => format!("SetWater {property} {value:?}"),
         Act::PaintTile { map, tile, x, y, z } => format!(
             "PaintTile {map} {} {x:?} {y:?} {z:?}",
@@ -1153,6 +1176,9 @@ fn main() {
     runner.fire("Particles", "a1", "Die", "");
     runner.fire("AnimationMarker", "a1", "Step", "");
     runner.fire("EnteredRoom", "a1", "Cave", "");
+    // A storm arriving, beside the green flag: a case with a `when weather
+    // becomes` strand gets one, and nothing else sees it.
+    runner.fire("Weather", "", "Storm", "");
 
     for tick in 0..TICKS {
         recorder.tick = tick;
@@ -1333,6 +1359,14 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetCloudDrift { drift } => format!("|SetCloudDrift {drift:?}"),
         Effect::SetClouds { property, value } => {
             format!("|SetClouds {} {value:?}", property.name())
+        }
+        Effect::SetTimeOfDay { time } => format!("|SetTimeOfDay {time:?}"),
+        Effect::AdvanceTime { hours } => format!("|AdvanceTime {hours:?}"),
+        Effect::SetPrecipitation { property, value } => {
+            format!("|SetPrecipitation {} {value:?}", property.name())
+        }
+        Effect::BlendWeather { weather, seconds } => {
+            format!("|BlendWeather {weather} {seconds:?}")
         }
         Effect::SetWater {
             actor,
@@ -1649,6 +1683,11 @@ fn by_vm(project: &Project) -> Vec<String> {
     vm.fire(Event::EnteredRoom {
         actor: ACTOR.to_string(),
         room: "Cave".to_string(),
+    });
+    // A storm arriving, beside the green flag: a case with a `when weather
+    // becomes` strand gets one, like above.
+    vm.fire(Event::Weather {
+        weather: "Storm".to_string(),
     });
     let mut lines = Vec::new();
     for tick in 0..TICKS {
@@ -2758,6 +2797,93 @@ fn every_actor_is_in_the_name_table_whether_it_has_blocks_or_not() {
     assert!(source.contains("(\"a2\", \"Scenery\")"), "{source}");
     // And nothing was emitted for it: an actor with no steps has no strands.
     assert!(!source.contains("fn actor_1("), "{source}");
+}
+
+#[test]
+fn the_weather_director_asks_for_the_same_things() {
+    // Both halves read each slot first, trim the weather's name, and ask in
+    // row order - so what follows never runs on either side.
+    assert_same(
+        "weather-director",
+        vec![
+            K::SetTimeOfDay {
+                time: op("Add", vec![number(6.0), number(12.5)]),
+            },
+            // A clock that isn't a number stands a zero, the same both ways.
+            K::SetTimeOfDay {
+                time: Value::text("noon"),
+            },
+            K::AdvanceTime {
+                hours: op("Sub", vec![number(2.0), number(0.5)]),
+            },
+            K::SetPrecipitation {
+                property: PrecipitationKind::Rain,
+                value: op("Div", vec![number(7.0), number(10.0)]),
+            },
+            // Snow that isn't a number stands a zero too.
+            K::SetPrecipitation {
+                property: PrecipitationKind::Snow,
+                value: Value::text("flurry"),
+            },
+            K::BlendWeather {
+                weather: Value::text(" Storm "),
+                seconds: op("Add", vec![number(2.0), number(3.0)]),
+            },
+            K::BlendWeather {
+                weather: op("Join", vec![Value::text("Sto"), Value::text("rm")]),
+                seconds: number(0.0),
+            },
+            K::Say {
+                text: op("TimeOfDay", vec![]),
+            },
+            K::Say {
+                text: op("SunElevation", vec![]),
+            },
+            K::Say {
+                text: op("CurrentWeather", vec![]),
+            },
+            K::Say {
+                text: op("Atmosphere", vec![Value::text("time of day")]),
+            },
+            K::Say {
+                text: op("Atmosphere", vec![Value::text("sun elevation")]),
+            },
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn when_weather_becomes_starts_only_for_its_weather() {
+    assert_same_headed(
+        "weather-arrives",
+        vec![
+            (
+                K::WhenWeather {
+                    weather: "storm".to_string(),
+                },
+                vec![K::Say {
+                    text: Value::text("storm's here"),
+                }],
+            ),
+            (
+                K::WhenWeather {
+                    weather: "Clear".to_string(),
+                },
+                vec![K::Say {
+                    text: Value::text("never"),
+                }],
+            ),
+            (
+                K::WhenWeather {
+                    weather: "".to_string(),
+                },
+                vec![K::Say {
+                    text: Value::text("any weather"),
+                }],
+            ),
+        ],
+    );
 }
 
 #[test]

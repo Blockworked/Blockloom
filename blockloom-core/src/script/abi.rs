@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 33;
+pub const ABI_VERSION: u32 = 34;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -209,6 +209,8 @@ pub const TEXT_CURRENT_SCENE: u32 = 16;
 /// Every scene's name as a JSON list, in project order. What `scene names`
 /// reports.
 pub const TEXT_SCENE_NAMES: u32 = 17;
+/// The weather preset the air is in, by name. What `current weather` reports.
+pub const TEXT_CURRENT_WEATHER: u32 = 19;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -408,6 +410,15 @@ pub const ACT_SET_PARALLAX: u32 = 87;
 /// `a` = scene name, `b` = transition (`none`, `fade`, `wipe` or `circle`).
 /// Loads another scene and continues the run there.
 pub const ACT_SWITCH_SCENE: u32 = 88;
+/// `n0` = hours, 0-24. Moves the director's clock. Window-global.
+pub const ACT_SET_TIME_OF_DAY: u32 = 89;
+/// `n0` = hours to move the clock by. Window-global.
+pub const ACT_ADVANCE_TIME: u32 = 90;
+/// `a` = precipitation kind (`rain` or `snow`), `n0` = intensity 0-1.
+/// Window-global.
+pub const ACT_SET_PRECIPITATION: u32 = 91;
+/// `a` = preset name, `n0` = seconds. Blends the weather. Window-global.
+pub const ACT_BLEND_WEATHER: u32 = 92;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per
@@ -472,6 +483,8 @@ pub const EVENT_QUALITY_DROPPED: u32 = 16;
 pub const EVENT_SCENE_STARTED: u32 = 14;
 /// The outgoing scene is about to unload.
 pub const EVENT_SCENE_ENDED: u32 = 15;
+/// The weather blend landed on a preset. Subject: its name.
+pub const EVENT_WEATHER: u32 = 17;
 
 // ─── The same three calls in a browser ─────────────────────────────────────
 // A web build loads each script as its own wasm module, and one module can't

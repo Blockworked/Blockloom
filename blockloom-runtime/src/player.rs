@@ -26,6 +26,11 @@ pub enum Launch {
     /// the game folder is the empty path, which names the files the page
     /// mounted (see `blockloom_core::vfs`). Saves live in localStorage.
     Web { pack: Box<GamePack> },
+    /// Running inside its APK on a phone or tablet: the pack comes from the
+    /// APK's assets (see `crate::android`), the game folder is the empty
+    /// path like a web run, and saves live in the app's data dir. Always
+    /// SDR, like the browser.
+    Android { pack: Box<GamePack> },
 }
 
 impl Launch {
@@ -76,7 +81,9 @@ impl Launch {
     pub fn mode(&self) -> Mode {
         match self {
             Self::Editor { mode } => *mode,
-            Self::Player { pack, .. } | Self::Web { pack } => pack.project.world.mode,
+            Self::Player { pack, .. } | Self::Web { pack } | Self::Android { pack } => {
+                pack.project.world.mode
+            }
         }
     }
 
@@ -90,12 +97,21 @@ impl Launch {
         }
     }
 
+    /// The same pack from the APK's assets: the Android entry point's whole
+    /// job. Android builds ship SDR-only, like web ones.
+    pub fn from_android(mut pack: GamePack) -> Self {
+        pack.hdr = false;
+        Self::Android {
+            pack: Box::new(pack),
+        }
+    }
+
     /// Whether this run may leave SDR: a build made SDR-only never does, and
-    /// neither does the browser.
+    /// neither does the browser or a phone.
     pub fn allows_hdr(&self) -> bool {
         match self {
             Self::Player { pack, .. } => pack.hdr,
-            Self::Web { .. } => false,
+            Self::Web { .. } | Self::Android { .. } => false,
             _ => true,
         }
     }
@@ -103,7 +119,9 @@ impl Launch {
     pub fn title(&self) -> String {
         match self {
             Self::Editor { .. } => "Blockloom".to_string(),
-            Self::Player { pack, .. } | Self::Web { pack } => pack.title().to_string(),
+            Self::Player { pack, .. } | Self::Web { pack } | Self::Android { pack } => {
+                pack.title().to_string()
+            }
         }
     }
 
@@ -129,8 +147,9 @@ impl Launch {
                 engine
             }
             // The game folder is the page's mounted files, reached through
-            // relative paths; the green flag is the same.
-            Self::Web { mut pack } => {
+            // relative paths; the green flag is the same. Android reads the
+            // same way, through the asset-reader hook instead of a mount.
+            Self::Web { mut pack } | Self::Android { mut pack } => {
                 pack.project.active_scene = pack.project.boot_scene_id();
                 let (tx, rx) = std::sync::mpsc::channel();
                 let _ = tx.send(EditorMessage::Load {
@@ -238,6 +257,32 @@ mod tests {
         assert_eq!(launch.mode(), blockloom_core::scene::Mode::ThreeD);
         assert!(!launch.allows_hdr());
         assert_eq!(launch.title(), "Pond");
+    }
+
+    #[test]
+    fn an_android_launch_takes_its_mode_from_the_pack_and_stays_sdr() {
+        let mut pack = GamePack::new(blockloom_core::project::Project::starter(
+            "Pond",
+            blockloom_core::scene::Mode::TwoD,
+        ));
+        pack.hdr = true;
+        let launch = Launch::from_android(pack);
+        assert_eq!(launch.mode(), blockloom_core::scene::Mode::TwoD);
+        assert!(!launch.allows_hdr());
+        assert_eq!(launch.title(), "Pond");
+        // Same synthetic Load and Start as every other player launch: the
+        // pack's project arrives on the engine's channel before the first
+        // pump, with the game folder as the empty path like a web run.
+        let engine = launch.into_engine();
+        let EditorMessage::Load { project, dir } = engine.incoming.try_recv().unwrap() else {
+            panic!("an Android launch starts with Load");
+        };
+        assert_eq!(project.name, "Pond");
+        assert_eq!(dir.as_deref(), Some(""));
+        assert!(matches!(
+            engine.incoming.try_recv().unwrap(),
+            EditorMessage::Start
+        ));
     }
 
     #[test]

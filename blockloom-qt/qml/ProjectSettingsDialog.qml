@@ -56,6 +56,8 @@ BwDialog {
     function vfxOf() { return Object.assign({ budget: 200000, cpu_only: false }, world && world.vfx ? world.vfx : {}); }
     function writeVfx(next) { invoke("set_vfx", { vfx: Object.assign(vfxOf(), next) }); }
     function writeWind(next) { invoke("set_wind", { wind: Object.assign(JSON.parse(JSON.stringify(world.wind)), next) }); }
+    function directorOf() { return Object.assign({ enabled: false, time_of_day: 12, day_length: 600, loop_enabled: true, presets: [] }, world && world.director ? world.director : {}); }
+    function writeDirector(next) { invoke("set_director", { director: Object.assign(directorOf(), next) }); }
     function writeClouds(next) { writeWind({ clouds: Object.assign(JSON.parse(JSON.stringify(world.wind.clouds)), next) }); }
     function writeLighting(next) { invoke("set_lighting", { lighting: Object.assign(JSON.parse(JSON.stringify(world.lighting)), next) }); }
     function writePost(next) { invoke("set_post_process", { post: Object.assign(postOf(), next) }); }
@@ -684,6 +686,54 @@ BwDialog {
                     NumberField { value: windSection.c.seed; fallback: 1; onCommitted: n => root.writeClouds({ seed: Math.max(Math.round(n), 0) }) }
                     BwButton { text: "Shuffle"; iconName: "refresh-cw"; implicitHeight: 30; onClicked: root.writeClouds({ seed: 1 + Math.floor(Math.random() * 2147483646) }) } }
                 Note { text: "Direction is where the wind blows towards, in degrees clockwise from north (-Z in 3D, up the screen in 2D), and speed is measured at the reference height. Gusts come and go on smooth noise, swinging the direction by up to the veer; one seed always blows the same. In 3D the ground profile calms the wind towards the ground on a log law. Storm (0 to 1) triples the speed, quadruples the gusts and triples zone turbulence at full. Particles ride it (each emitter says how much), volumetric fog's noise drifts with it, and the clouds take the wind at their altitude times follow, plus their own drift; time-lapse runs them up to 1000x faster. Volumes can make local wind zones. Blocks: `set wind`, `set cloud drift to`, and the `wind speed`, `wind direction` and `storm` atmosphere readings." }
+            }
+            Section {
+                id: directorSection
+                heading: "Time of day and weather"; visible: !!root.world && !!root.world.director
+                readonly property var d: root.directorOf()
+                property string dial: "sun_elevation"
+                function dials() {
+                    return [
+                        { value: "sun_azimuth", label: "Sun azimuth", low: 0, high: 360 },
+                        { value: "sun_elevation", label: "Sun elevation", low: -90, high: 90 },
+                        { value: "moon_azimuth", label: "Moon azimuth", low: 0, high: 360 },
+                        { value: "moon_elevation", label: "Moon elevation", low: -90, high: 90 },
+                        { value: "exposure", label: "Exposure EV", low: 0, high: 16 },
+                        { value: "temperature", label: "Temperature C", low: -20, high: 40 },
+                        { value: "fog_density", label: "Fog density", low: 0, high: 0.1 },
+                        { value: "cloud_coverage", label: "Cloud coverage", low: 0, high: 1 },
+                        { value: "cloud_type", label: "Cloud type", low: 0, high: 1 },
+                        { value: "precipitation", label: "Precipitation", low: 0, high: 1 },
+                        { value: "wetness", label: "Wetness", low: 0, high: 1 },
+                        { value: "wind_speed", label: "Wind speed", low: 0, high: 40 },
+                        { value: "wind_direction", label: "Wind direction", low: 0, high: 360 },
+                        { value: "aurora_kp", label: "Aurora KP", low: 0, high: 9 },
+                        { value: "lut_weight", label: "Grading LUT weight", low: 0, high: 1 }
+                    ];
+                }
+                function dialRange() { const found = dials().find(entry => entry.value === directorSection.dial); return found || { low: 0, high: 1 }; }
+                function trackOf() { const t = directorSection.d ? directorSection.d[directorSection.dial] : null; return t && t.keys ? t : { keys: [], loop_enabled: true }; }
+                function writeTrack(t) { const o = {}; o[directorSection.dial] = t; root.writeDirector(o); }
+                InspectorRow { label: "Director"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!directorSection.d.enabled; onToggled: on => root.writeDirector({ enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: !!directorSection.d.enabled; label: "Clock, day s"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: directorSection.d.time_of_day; fallback: 12; onCommitted: n => root.writeDirector({ time_of_day: ((n % 24) + 24) % 24 }) }
+                    NumberField { value: directorSection.d.day_length; fallback: 600; onCommitted: n => root.writeDirector({ day_length: root.clamp(n, 0, 86400) }) } }
+                InspectorRow { visible: !!directorSection.d.enabled; label: "Loop day"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: directorSection.d.loop_enabled !== false; onToggled: on => root.writeDirector({ loop_enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: !!directorSection.d.enabled; label: "Keyframe"; labelWidth: 110; Layout.fillWidth: true
+                    Repeater { model: ["dawn", "noon", "dusk", "midnight"]; delegate: BwButton { required property string modelData; text: modelData[0].toUpperCase() + modelData.slice(1); implicitHeight: 30; onClicked: root.invoke("apply_director_preset", { preset: modelData }) } } }
+                InspectorRow { visible: !!directorSection.d.enabled; label: "Track"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: directorSection.dials(); value: directorSection.dial; onChosen: v => directorSection.dial = v } }
+                DirectorTrackField {
+                    visible: !!directorSection.d.enabled
+                    Layout.fillWidth: true
+                    track: directorSection.trackOf()
+                    low: directorSection.dialRange().low
+                    high: directorSection.dialRange().high
+                    onEdited: t => directorSection.writeTrack(t)
+                }
+                Note { text: "A 24h clock driving sun, moon, exposure, fog, clouds, wind and weather: 0 freezes it (blocks still move it), day seconds set how long a full day takes, and loop wraps past midnight. Keyframes lay a sun track through that moment with matching exposure, fog and clouds; the track editor above draws each dial's Bezier curve - click to add a key, drag to move it, double-click to remove it - and named presets are edited through the shell (`set-director`) or MCP. While it runs, its exposure is the camera's default writer - `set exposure to` still wins. Blocks: `set time of day to`, `advance time by`, `set precipitation to`, `blend weather to _ over _ seconds` (Clear, Overcast, Storm, Sunset, Night built in), reporters `time of day`, `sun elevation`, `current weather`, and `when weather becomes`." }
             }
             Section {
                 heading: "Particles"; visible: !!root.world

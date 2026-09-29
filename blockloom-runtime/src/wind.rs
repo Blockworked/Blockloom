@@ -88,7 +88,21 @@ fn step_wind(
     }
     let flat = dimension.0 == Mode::TwoD;
     let wind = &engine.project.world.wind;
-    let dials = wind.dials(&engine.wind);
+    let mut dials = wind.dials(&engine.wind);
+    // The weather blend lays under explicit `set wind` dials: where a block
+    // moved a dial, the block wins; everywhere else the weather shows.
+    if engine.weather.is_active() {
+        let blended = engine.weather.sampled();
+        if engine.wind.direction.is_none() {
+            dials.direction = blended.wind_direction;
+        }
+        if engine.wind.speed.is_none() {
+            dials.speed = blended.wind_speed;
+        }
+        if engine.wind.storm.is_none() {
+            dials.storm = blended.storm;
+        }
+    }
     let field = &mut *field;
     if engine.running {
         let dt = time.delta_secs();

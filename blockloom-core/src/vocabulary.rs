@@ -91,6 +91,7 @@ const TWEEN_EASINGS: &[&str] = &[
 const SOUND_BUSES: &[&str] = &["Master", "Music", "Sfx"];
 const WIND_PROPERTIES: &[&str] = &["Direction", "Speed", "Gust", "Storm"];
 const CLOUD_PROPERTIES: &[&str] = &["Coverage", "Density", "Type"];
+const PRECIPITATION_KINDS: &[&str] = &["Rain", "Snow"];
 const WATER_PROPERTIES: &[&str] = &["Level", "Chop", "Foam"];
 const PARALLAX_AXES: &[&str] = &["Both", "X", "Y"];
 const CLOUD_LAYER_PROPERTIES: &[&str] = &["Coverage", "Opacity", "Contrast", "Altitude", "Spin"];
@@ -365,6 +366,18 @@ pub const BLOCKS: &[BlockSpec] = &[
         slots: NO_SLOTS,
         dropdowns: NO_DROPDOWNS,
         strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "WhenWeather",
+        category: "Events",
+        purpose: "Runs when the weather blend lands on the named preset (Clear, Overcast, Storm, Sunset, Night, or one the project authored). Empty matches any weather arriving.",
+        header: true,
+        three_d: false,
+        slots: NO_SLOTS,
+        dropdowns: NO_DROPDOWNS,
+        strings: &["weather"],
         bools: NO_BOOLS,
         bodies: NO_BODIES,
     },
@@ -1582,6 +1595,80 @@ pub const BLOCKS: &[BlockSpec] = &[
             Slot {
                 field: "z",
                 id: "CloudDriftZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetTimeOfDay",
+        category: "Looks",
+        purpose: "Sets the director's clock in hours, 0-24, for the rest of the run. Moves the sun and every 24h track reading from it; the `time of day` and `sun elevation` reporters follow on the next tick.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "time",
+            id: "TimeOfDay",
+            value: "Any",
+        }],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "AdvanceTime",
+        category: "Looks",
+        purpose: "Moves the director's clock by hours (negative rewinds), for the rest of the run.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "hours",
+            id: "AdvanceHours",
+            value: "Any",
+        }],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetPrecipitation",
+        category: "Looks",
+        purpose: "Sets rain or snow intensity, 0-1, for the rest of the run. The `rain` and `snow` atmosphere readings report it, and surfaces wet up behind it.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "value",
+            id: "PrecipitationValue",
+            value: "Any",
+        }],
+        dropdowns: &[Dropdown {
+            field: "property",
+            options: PRECIPITATION_KINDS,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "BlendWeather",
+        category: "Looks",
+        purpose: "Blends the weather towards a preset (Clear, Overcast, Storm, Sunset, Night, or one the project authored) over seconds. A new blend begun mid-blend carries on from where the air is, so rapid changes never pop; `when weather becomes` fires when it lands.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "weather",
+                id: "BlendWeatherName",
+                value: "Any",
+            },
+            Slot {
+                field: "seconds",
+                id: "BlendWeatherSeconds",
                 value: "Any",
             },
         ],

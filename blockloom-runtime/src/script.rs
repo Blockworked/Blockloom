@@ -54,18 +54,46 @@ pub struct LoadedScript {
     event: EventFn,
 }
 
+/// Where `relative`'s library opens from. Desktop joins the project dir;
+/// Android resolves the file name beside this library in the app's lib dir.
+#[cfg(target_os = "android")]
+fn library_path_for(project_dir: &Path, relative: &str) -> std::path::PathBuf {
+    let path = blockloom_core::script::library_path(project_dir, relative);
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("libscript.so");
+    crate::android::native_lib_path(name)
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+fn library_path_for(project_dir: &Path, relative: &str) -> std::path::PathBuf {
+    blockloom_core::script::library_path(project_dir, relative)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 impl LoadedScript {
     /// Whether the editor has built this script yet. Before the first Play it
-    /// hasn't, which is ordinary rather than a problem worth reporting.
+    /// hasn't, which is ordinary rather than a problem worth reporting. On
+    /// Android the build fails when a script lib is missing, so by the time
+    /// the APK exists every script rides beside the runtime: a missing one
+    /// is a load error, never a silent skip.
+    #[cfg(not(target_os = "android"))]
     pub fn is_built(project_dir: &Path, relative: &str) -> bool {
         blockloom_core::script::library_path(project_dir, relative).is_file()
     }
 
+    #[cfg(target_os = "android")]
+    pub fn is_built(_project_dir: &Path, _relative: &str) -> bool {
+        true
+    }
+
     /// Opens the library the editor built for `relative`, or says why it
-    /// couldn't be used.
+    /// couldn't be used. On Android that library is a `lib/<abi>/` entry
+    /// unpacked beside this one, found by file name.
     pub fn load(project_dir: &Path, relative: &str) -> Result<LoadedScript, String> {
-        let path = blockloom_core::script::library_path(project_dir, relative);
+        let path = library_path_for(project_dir, relative);
+        #[cfg(not(target_os = "android"))]
         if !path.is_file() {
             return Err(format!("{relative} hasn't been built"));
         }
@@ -253,6 +281,7 @@ impl ScriptEvent {
                 Some(actor.clone()),
                 ScriptEvent::new(abi::EVENT_ENTERED_ROOM, room),
             ),
+            Event::Weather { weather } => (None, ScriptEvent::new(abi::EVENT_WEATHER, weather)),
         })
     }
 }
@@ -757,6 +786,9 @@ fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
         abi::TEXT_CURRENT_SCENE => sense::read(|sensors| {
             Some(sensors.current_scene.clone()).filter(|name| !name.is_empty())
         }),
+        abi::TEXT_CURRENT_WEATHER => sense::read(|sensors| {
+            Some(sensors.atmosphere.weather.clone()).filter(|name| !name.is_empty())
+        }),
         abi::TEXT_SCENE_NAMES => {
             serde_json::to_string(&sense::read(|s| s.scene_names.clone())).ok()
         }
@@ -1215,6 +1247,22 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
                 actor,
                 message: format!("there's no cloud dial called \"{a}\""),
             },
+        },
+        abi::ACT_SET_TIME_OF_DAY => Effect::SetTimeOfDay { time: n0 as f32 },
+        abi::ACT_ADVANCE_TIME => Effect::AdvanceTime { hours: n0 as f32 },
+        abi::ACT_SET_PRECIPITATION => match blockloom_core::director::PrecipitationKind::parse(a) {
+            Some(property) => Effect::SetPrecipitation {
+                property,
+                value: n0 as f32,
+            },
+            None => Effect::Error {
+                actor,
+                message: format!("there's no precipitation called \"{a}\""),
+            },
+        },
+        abi::ACT_BLEND_WEATHER => Effect::BlendWeather {
+            weather: a.trim().to_string(),
+            seconds: n0 as f32,
         },
         abi::ACT_PAINT_TILE => Effect::PaintTile {
             actor,

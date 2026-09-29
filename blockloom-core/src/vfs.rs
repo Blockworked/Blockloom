@@ -2,10 +2,13 @@
 //! is no disk: the single-file web build carries every file inside its page,
 //! and the player mounts them here before the world starts (see
 //! `blockloom-runtime/src/web.rs`), so a read that names `assets/cloud.png`
-//! finds the same bytes either way.
+//! finds the same bytes either way. On Android the APK's assets are read
+//! through the asset manager instead (see `blockloom-runtime/src/android.rs`):
+//! the runtime registers a reader hook at boot, and the game folder is the
+//! empty path exactly like a web run.
 //!
-//! Only reads go through here. Writes stay `std::fs`, which a web build never
-//! reaches for its own game files.
+//! Only reads go through here. Writes stay `std::fs`, which neither a web
+//! build nor an APK reaches for its own game files.
 
 use std::io;
 use std::path::Path;
@@ -27,7 +30,7 @@ pub fn key(path: &Path) -> String {
     rest.to_string()
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", target_os = "android"))]
 mod table {
     use std::collections::HashMap;
     use std::sync::{Arc, RwLock};
@@ -41,7 +44,7 @@ mod table {
 
 /// Mounts the files a web page carried, keyed by their path in the game
 /// folder. Replaces whatever was mounted before.
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", target_os = "android"))]
 pub fn mount(files: impl IntoIterator<Item = (String, Vec<u8>)>) {
     let files = files
         .into_iter()
@@ -59,13 +62,34 @@ pub fn is_mounted() -> bool {
     table::FILES.read().is_ok_and(|table| table.is_some())
 }
 
+/// The APK asset reader the runtime registered at boot, or `None` on every
+/// other platform. Kept as a plain function: the asset manager behind it is
+/// a process-global handle, so a closure would buy nothing.
+#[cfg(target_os = "android")]
+static ASSET_READER: std::sync::RwLock<Option<fn(&str) -> Option<Vec<u8>>>> =
+    std::sync::RwLock::new(None);
+
+/// Registers how APK asset reads resolve: `key` is [`key`] of the path, the
+/// answer its bytes. Called once at boot before the pack is read.
+#[cfg(target_os = "android")]
+pub fn set_asset_reader(reader: fn(&str) -> Option<Vec<u8>>) {
+    if let Ok(mut slot) = ASSET_READER.write() {
+        *slot = Some(reader);
+    }
+}
+
+#[cfg(target_os = "android")]
+fn read_asset(key: &str) -> Option<Vec<u8>> {
+    ASSET_READER.read().ok()?.as_ref()?(key)
+}
+
 /// One mounted file, shared rather than copied. Always `None` natively.
 pub fn mounted(path: &Path) -> Option<std::sync::Arc<[u8]>> {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", target_os = "android"))]
     {
         table::get(&key(path))
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
     {
         let _ = path;
         None
@@ -75,7 +99,13 @@ pub fn mounted(path: &Path) -> Option<std::sync::Arc<[u8]>> {
 pub fn read(path: &Path) -> io::Result<Vec<u8>> {
     match mounted(path) {
         Some(bytes) => Ok(bytes.to_vec()),
-        None => std::fs::read(path),
+        None => {
+            #[cfg(target_os = "android")]
+            if let Some(bytes) = read_asset(&key(path)) {
+                return Ok(bytes);
+            }
+            std::fs::read(path)
+        }
     }
 }
 
@@ -83,11 +113,22 @@ pub fn read_to_string(path: &Path) -> io::Result<String> {
     match mounted(path) {
         Some(bytes) => String::from_utf8(bytes.to_vec())
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
-        None => std::fs::read_to_string(path),
+        None => {
+            #[cfg(target_os = "android")]
+            if let Some(bytes) = read_asset(&key(path)) {
+                return String::from_utf8(bytes)
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
+            }
+            std::fs::read_to_string(path)
+        }
     }
 }
 
 pub fn is_file(path: &Path) -> bool {
+    #[cfg(target_os = "android")]
+    if read_asset(&key(path)).is_some() {
+        return true;
+    }
     mounted(path).is_some() || path.is_file()
 }
 

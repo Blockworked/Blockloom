@@ -157,6 +157,11 @@ pub enum InstructionKind {
     /// Runs in the newly loaded scene's actors after a `switch scene to`
     /// finishes loading it, and once at the start of the first scene.
     WhenSceneStarts,
+    /// Runs when the weather blend lands on the named preset (an empty name
+    /// matches any weather arriving).
+    WhenWeather {
+        weather: String,
+    },
     /// Runs in the outgoing scene's actors before a `switch scene to`
     /// unloads it.
     WhenSceneEnds,
@@ -429,6 +434,29 @@ pub enum InstructionKind {
     SetClouds {
         property: crate::clouds::CloudProperty,
         value: Value,
+    },
+    /// The clock in hours, 0-24, for the rest of the run. Moves the
+    /// director's sun and every track reading from it. Window-global.
+    SetTimeOfDay {
+        time: Value,
+    },
+    /// Moves the director's clock by hours (negative rewinds), for the rest
+    /// of the run. Window-global.
+    AdvanceTime {
+        hours: Value,
+    },
+    /// Rain or snow intensity, 0-1, for the rest of the run. Window-global.
+    SetPrecipitation {
+        property: crate::director::PrecipitationKind,
+        value: Value,
+    },
+    /// Blends the weather towards a preset (Clear, Overcast, Storm, Sunset,
+    /// Night, or one the project authored) over seconds. Starting a new
+    /// blend mid-blend carries on from where the air is, so rapid changes
+    /// never pop. Window-global.
+    BlendWeather {
+        weather: Value,
+        seconds: Value,
     },
     /// A water dial for the rest of the run: the running actor's own water
     /// when it has some, every body's otherwise.
@@ -1027,6 +1055,9 @@ impl BlockKind for InstructionKind {
             | K::SetLightningRate { rate: v }
             | K::SetWind { value: v, .. }
             | K::SetClouds { value: v, .. }
+            | K::SetTimeOfDay { time: v }
+            | K::AdvanceTime { hours: v }
+            | K::SetPrecipitation { value: v, .. }
             | K::SetWater { value: v, .. }
             | K::SetDensity { density: v }
             | K::SetMass { mass: v }
@@ -1180,6 +1211,10 @@ impl BlockKind for InstructionKind {
                 f(x, InputValueType::Any);
                 f(y, InputValueType::Any);
                 f(z, InputValueType::Any);
+            }
+            K::BlendWeather { weather, seconds } => {
+                f(weather, InputValueType::Any);
+                f(seconds, InputValueType::Any);
             }
             K::SwitchScene { scene, transition } => {
                 f(scene, InputValueType::Any);
@@ -1399,6 +1434,7 @@ impl BlockKind for InstructionKind {
             | K::WhenAnimationMarker { .. }
             | K::WhenEnterRoom { .. }
             | K::WhenSceneStarts
+            | K::WhenWeather { .. }
             | K::WhenSceneEnds
             | K::BlockHeader { .. }
             | K::CreateClone { .. }
@@ -1456,6 +1492,7 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenAnimationMarker { .. }
                 | InstructionKind::WhenEnterRoom { .. }
                 | InstructionKind::WhenSceneStarts
+                | InstructionKind::WhenWeather { .. }
                 | InstructionKind::WhenSceneEnds
                 | InstructionKind::WhenUiEvent { .. }
                 | InstructionKind::WhenUiClicked { .. }

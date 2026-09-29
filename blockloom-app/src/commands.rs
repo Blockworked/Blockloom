@@ -1367,6 +1367,42 @@ pub(crate) fn set_wind(state: &SharedState, app: &AppHandle, wind: Wind) -> Resu
     Ok(())
 }
 
+/// Sets the time-of-day and weather director: the 24h clock, its curve
+/// tracks and the project's weather presets. Disabled by default, so old
+/// projects keep exactly the look they shipped.
+pub(crate) fn set_director(
+    state: &SharedState,
+    app: &AppHandle,
+    director: blockloom_core::director::Director,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut director = director;
+    director.normalize();
+    if let Some(project) = s.project_mut() {
+        project.world.director = director;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Replaces the director with one of its keyframe presets
+/// (dawn, noon, dusk or midnight): a sun track through that moment plus
+/// matching exposure, fog and cloud tracks. Answers the preset's name.
+pub(crate) fn apply_director_preset(
+    state: &SharedState,
+    app: &AppHandle,
+    preset: String,
+) -> Result<String, String> {
+    let director = blockloom_core::director::Director::keyframe_preset(&preset)
+        .ok_or_else(|| "Pick dawn, noon, dusk or midnight".to_string())?;
+    let name = preset.trim().to_string();
+    set_director(state, app, director)?;
+    Ok(name)
+}
+
 /// Sets the project's particle budget and whether emitters stay on the CPU.
 pub(crate) fn set_vfx(
     state: &SharedState,
@@ -2561,6 +2597,13 @@ pub(crate) fn android_install(
     device: Option<String>,
 ) -> Result<android::ApkInstall, String> {
     android::install_apk(std::path::Path::new(&apk), &app, device.as_deref())
+}
+
+/// Dumps the device log and keeps the runtime's `blockloom:` markers plus
+/// any Rust panic: what `just android-smoke` checks, and what a developer
+/// reads when a game misbehaves on device. One shot, not a stream.
+pub(crate) fn android_logcat(device: Option<String>) -> Result<android::Logcat, String> {
+    android::logcat(device.as_deref(), "blockloom")
 }
 
 // ─── Assets ────────────────────────────────────────────────────────────────

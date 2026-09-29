@@ -989,7 +989,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
           mode to`, reporters `frame time`, `draw calls`, `current quality`,
           `is DLSS available?`, event `when quality drops` (`SetRenderSetting`,
           fixed-tick sampling).
-  - [ ] Time-of-day and weather director (the thing that makes it shippable):
+  - [x] Time-of-day and weather director (the thing that makes it shippable):
         - 24h curve editor: tracks for sun azimuth/elevation, moon azimuth/elevation,
           exposure EV (the default writer of `Environment.exposure`; wins over post
           auto-exposure and manual EV while the director runs), temperature/tint, fog density, cloud coverage/type, precipitation,
@@ -1007,6 +1007,39 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         - Determinism: seeded RNG per blend so two runs with same inputs make same
           clouds; fixed-tick sampling so codegen and VM match (same rule as
           tests/codegen.rs line-for-line check).
+        Done: `World.director` (`blockloom-core/src/director.rs`, a `Director`
+        scene component, normalized on load) holds the clock (time of day,
+        day length, loop), one Bezier `TimeTrack` per dial above, and the
+        project's presets; `WeatherPreset::builtin` answers the five palette
+        names and `Director::keyframe_preset` the four moments. The runtime
+        (`blockloom-runtime/src/director.rs`) steps clock and blend on the
+        fixed tick ahead of the atmosphere sample: tracks and the blend move
+        the sun (ahead of the air tint), fog, clouds, wind, aurora, exposure
+        (only where `set exposure to` hasn't claimed the slot), rain, snow,
+        wetness (lagged behind rain), temperature, clock and weather name, and
+        a finished blend fires `when weather becomes`. Explicit blocks win
+        over the blend, which wins over tracks. Blocks, compiled logic and
+        scripts share `set time of day to`, `advance time by`,
+        `set precipitation to` (rain/snow), `blend weather to _ over _`,
+        `time of day`, `sun elevation`, `current weather` and `when weather
+        becomes` (ABI 34, LOGIC_ABI 32), with parity cases in
+        `tests/codegen.rs` (`weather-director`, `weather-arrives`) and
+        `tests/vm.rs`; fixed-tick sampling like the wind and storm directors.
+        Project Settings has the clock, day length, loop and keyframe
+        buttons, a curve editor (`DirectorTrackField.qml`) that draws each
+        dial's Bezier track for click/drag/double-click key editing with
+        tangent and loop controls, and the shell/MCP has `set-director` and
+        `apply-director-preset`. Presets carry the whole look: sunlight,
+        ambient, sky exposure, bloom and saturation ride beside the
+        fog/cloud/wind dials and land on the sun, the ambient dimmer, the sky
+        and the post chain. Wetness is a spatial map (`WetnessMap`): a 32x32
+        grid round the camera that rain soaks and warm sun and wind dry back
+        towards the weather's damp at each cell's own uneven pace, sampled
+        into both the reporters and the surface wetness.
+        Not covered: named presets are still edited through the shell
+        (`set-director`) or MCP - there is no preset gallery UI; the wetness
+        map is coarse and feeds one sampled value, not a texture surfaces
+        read per-pixel.
   - [ ] Cinematics: timeline tracks (camera cut, transform, FOV, volume weight, signal
         fires block at marker), dolly/crane spline path with look-at target plus roll,
         camera shake (trauma 0-1, Perlin translation/rotation noise, decay), letterbox

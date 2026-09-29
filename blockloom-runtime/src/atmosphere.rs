@@ -43,6 +43,11 @@ pub struct AtmosphereSources {
     pub aurora: f32,
     /// The latest flash, 0-1.
     pub lightning: f32,
+    /// Hours, 0-24. What `time of day` reports.
+    pub time_of_day: f32,
+    /// The weather preset the air is in, by name. What `current weather`
+    /// reports.
+    pub weather: String,
 }
 
 impl Default for AtmosphereSources {
@@ -62,6 +67,8 @@ impl Default for AtmosphereSources {
             temperature: calm.temperature,
             aurora: 0.0,
             lightning: 0.0,
+            time_of_day: 12.0,
+            weather: String::new(),
         }
     }
 }
@@ -168,6 +175,8 @@ fn sample(
         volumes: Vec::new(),
         aurora: sources.aurora.clamp(0.0, 9.0),
         lightning: sources.lightning.clamp(0.0, 1.0),
+        time_of_day: sources.time_of_day.rem_euclid(24.0),
+        weather: sources.weather.clone(),
     }
 }
 

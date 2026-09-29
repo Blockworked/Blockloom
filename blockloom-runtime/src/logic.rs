@@ -5,32 +5,33 @@ use blockloom_core::blocks::{
     parse_json_array, parse_json_object, resolve_dict_reporter, resolve_list_reporter,
 };
 use blockloom_core::codegen::{
-    ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_APPLY_IMPULSE, ACT_ATTACH, ACT_BIND_ACTION,
-    ACT_BROADCAST, ACT_BURST_PARTICLES, ACT_CAPTURE_PROBES, ACT_CHANGE_POSITION,
-    ACT_CLEAR_ACTION_BINDINGS, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR,
-    ACT_DELETE_ELEMENT, ACT_DETACH, ACT_DICT_CLEAR, ACT_DICT_DELETE_KEY, ACT_DICT_SET,
-    ACT_ENABLE_VOLUME, ACT_ERROR, ACT_FADE_DECALS, ACT_FIRE_ANIMATION_TRIGGER, ACT_FRACTURE,
-    ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD,
-    ACT_LIST_CLEAR, ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE,
-    ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_PAINT_TILE, ACT_PLAY_ANIMATION, ACT_PLAY_SOUND,
-    ACT_POINT_TOWARDS, ACT_PUFF_SMOKE, ACT_RUMBLE_GAMEPAD, ACT_SAVE_VARIABLE, ACT_SAY,
-    ACT_SET_ANIMATION_SPEED, ACT_SET_AURORA, ACT_SET_BODY, ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV,
-    ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_CLOUD_DRIFT, ACT_SET_CLOUD_LAYER,
-    ACT_SET_CLOUDS, ACT_SET_COLLISION_LAYER, ACT_SET_COLLISION_MASK, ACT_SET_COLOR,
-    ACT_SET_DENSITY, ACT_SET_EMISSIVE_STRENGTH, ACT_SET_EMITTER_DIAL, ACT_SET_EMITTER_PLAYING,
-    ACT_SET_EXPOSURE, ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_FOG_DENSITY, ACT_SET_GI_BOUNCES,
-    ACT_SET_GI_SAMPLES, ACT_SET_GRAVITY, ACT_SET_HDR_OUTPUT, ACT_SET_IK_TARGET,
-    ACT_SET_LIGHT_INTENSITY, ACT_SET_LIGHT_SHADOWS, ACT_SET_LIGHTNING_RATE, ACT_SET_MASS,
-    ACT_SET_MOUSE_LOCKED, ACT_SET_PARALLAX, ACT_SET_PARENT, ACT_SET_PAUSED,
-    ACT_SET_PEAK_BRIGHTNESS, ACT_SET_RAY_TRACING, ACT_SET_RENDER_SETTING, ACT_SET_RIG_SLOT,
-    ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SHADOW_DISTANCE, ACT_SET_SLOT_TINT,
-    ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_SPRITE_DIAL, ACT_SET_TRAIL_ENABLED,
-    ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE,
-    ACT_SET_VOLUME_WEIGHT, ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT, ACT_SPAWN_DECAL,
-    ACT_SPLASH, ACT_STOP_ANIMATION, ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING,
-    ACT_SWITCH_SCENE, ACT_TURN, ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr,
-    AbiValue, LOGIC_ABI_VERSION, LogicHostApi, READ_SENSE, READ_VARIABLE, TICK_STOPPED, VALUE_BOOL,
-    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
+    ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_ADVANCE_TIME, ACT_APPLY_IMPULSE, ACT_ATTACH,
+    ACT_BIND_ACTION, ACT_BLEND_WEATHER, ACT_BROADCAST, ACT_BURST_PARTICLES, ACT_CAPTURE_PROBES,
+    ACT_CHANGE_POSITION, ACT_CLEAR_ACTION_BINDINGS, ACT_CREATE_ACTOR, ACT_CREATE_CLONE,
+    ACT_DELETE_ACTOR, ACT_DELETE_ELEMENT, ACT_DETACH, ACT_DICT_CLEAR, ACT_DICT_DELETE_KEY,
+    ACT_DICT_SET, ACT_ENABLE_VOLUME, ACT_ERROR, ACT_FADE_DECALS, ACT_FIRE_ANIMATION_TRIGGER,
+    ACT_FRACTURE, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST,
+    ACT_LIST_ADD, ACT_LIST_CLEAR, ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE,
+    ACT_LIST_REVERSE, ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_PAINT_TILE,
+    ACT_PLAY_ANIMATION, ACT_PLAY_SOUND, ACT_POINT_TOWARDS, ACT_PUFF_SMOKE, ACT_RUMBLE_GAMEPAD,
+    ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_ANIMATION_SPEED, ACT_SET_AURORA, ACT_SET_BODY,
+    ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW,
+    ACT_SET_CLOUD_DRIFT, ACT_SET_CLOUD_LAYER, ACT_SET_CLOUDS, ACT_SET_COLLISION_LAYER,
+    ACT_SET_COLLISION_MASK, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_EMISSIVE_STRENGTH,
+    ACT_SET_EMITTER_DIAL, ACT_SET_EMITTER_PLAYING, ACT_SET_EXPOSURE, ACT_SET_FIELD, ACT_SET_FOCUS,
+    ACT_SET_FOG_DENSITY, ACT_SET_GI_BOUNCES, ACT_SET_GI_SAMPLES, ACT_SET_GRAVITY,
+    ACT_SET_HDR_OUTPUT, ACT_SET_IK_TARGET, ACT_SET_LIGHT_INTENSITY, ACT_SET_LIGHT_SHADOWS,
+    ACT_SET_LIGHTNING_RATE, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARALLAX, ACT_SET_PARENT,
+    ACT_SET_PAUSED, ACT_SET_PEAK_BRIGHTNESS, ACT_SET_PRECIPITATION, ACT_SET_RAY_TRACING,
+    ACT_SET_RENDER_SETTING, ACT_SET_RIG_SLOT, ACT_SET_ROTATION, ACT_SET_SCALE,
+    ACT_SET_SHADOW_DISTANCE, ACT_SET_SLOT_TINT, ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME,
+    ACT_SET_SPRITE_DIAL, ACT_SET_TIME_OF_DAY, ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER,
+    ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT,
+    ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT, ACT_SPAWN_DECAL, ACT_SPLASH, ACT_STOP_ANIMATION,
+    ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_SWITCH_SCENE, ACT_TURN,
+    ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, LOGIC_ABI_VERSION,
+    LogicHostApi, READ_SENSE, READ_VARIABLE, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER,
+    VALUE_TEXT,
 };
 // Symbol names for the native `dlopen` path; web builds link statically later.
 #[cfg(not(target_arch = "wasm32"))]
@@ -60,6 +61,23 @@ type TickFn = unsafe extern "C" fn(*mut c_void, *mut c_void, *const LogicHostApi
 type PauseFn = unsafe extern "C" fn(*mut c_void, u32);
 type SceneFn = unsafe extern "C" fn(*mut c_void, AbiStr) -> u32;
 
+/// Where the logic library opens from. Desktop joins the project dir;
+/// Android resolves the file name beside this library in the app's lib dir.
+#[cfg(target_os = "android")]
+fn logic_path_for(project_dir: &Path) -> std::path::PathBuf {
+    let path = codegen::library_path(project_dir);
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("libblockloom_logic.so");
+    crate::android::native_lib_path(name)
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+fn logic_path_for(project_dir: &Path) -> std::path::PathBuf {
+    codegen::library_path(project_dir)
+}
+
 /// One generated program and its suspended strands.
 ///
 /// Web builds have no `dlopen`, so compiled logic stays unloaded there and
@@ -82,12 +100,22 @@ pub struct LoadedLogic {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl LoadedLogic {
+    /// On Android the build fails when the logic library is missing, so by
+    /// the time the APK exists it rides beside the runtime: a missing one is
+    /// a load error, never a silent fallback to the VM.
+    #[cfg(not(target_os = "android"))]
     pub fn is_built(project_dir: &Path) -> bool {
         codegen::library_path(project_dir).is_file()
     }
 
+    #[cfg(target_os = "android")]
+    pub fn is_built(_project_dir: &Path) -> bool {
+        true
+    }
+
     pub fn load(project_dir: &Path) -> Result<Self, String> {
-        let path = codegen::library_path(project_dir);
+        let path = logic_path_for(project_dir);
+        #[cfg(not(target_os = "android"))]
         if !path.is_file() {
             return Err("this game has no compiled block program".to_string());
         }
@@ -200,6 +228,7 @@ impl LoadedLogic {
                 self.fire_raw("AnimationMarker", &actor, &marker, "")
             }
             Event::EnteredRoom { actor, room } => self.fire_raw("EnteredRoom", &actor, &room, ""),
+            Event::Weather { weather } => self.fire_raw("Weather", "", &weather, ""),
             Event::Action(action) => self.fire_raw("Action", "", &action, ""),
             Event::Touched => self.fire_raw("Touched", "", "", ""),
             // The program makes its own clones and starts their strands
@@ -736,6 +765,22 @@ extern "C" fn act(
                 actor,
                 message: format!("there's no cloud dial called \"{a}\""),
             },
+        },
+        ACT_SET_TIME_OF_DAY => Effect::SetTimeOfDay { time: n0 as f32 },
+        ACT_ADVANCE_TIME => Effect::AdvanceTime { hours: n0 as f32 },
+        ACT_SET_PRECIPITATION => match blockloom_core::director::PrecipitationKind::parse(a) {
+            Some(property) => Effect::SetPrecipitation {
+                property,
+                value: n0 as f32,
+            },
+            None => Effect::Error {
+                actor,
+                message: format!("there's no precipitation called \"{a}\""),
+            },
+        },
+        ACT_BLEND_WEATHER => Effect::BlendWeather {
+            weather: a.trim().to_string(),
+            seconds: n0 as f32,
         },
         ACT_PAINT_TILE => Effect::PaintTile {
             actor,

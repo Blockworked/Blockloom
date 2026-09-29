@@ -29,6 +29,7 @@ fn main() {
                 "qml/SurfaceDetailRows.qml",
                 "qml/EmitterGraphRows.qml",
                 "qml/CurveField.qml",
+                "qml/DirectorTrackField.qml",
                 "qml/NumberField.qml",
                 "qml/ColorField.qml",
                 "qml/HdrColorField.qml",
