@@ -30,6 +30,9 @@ BwDialog {
     property string installState: ""
     property string installError: ""
     property bool installing: false
+    // The streamed device log, newest last, capped so a chatty device
+    // cannot grow the dialog without bound. `logcat` is its joined text.
+    property var logLines: []
     property string logcat: ""
     property bool polling: false
     // Release signing: the project's key rows, and this build's passwords.
@@ -64,7 +67,7 @@ BwDialog {
 
     onOpened: {
         error = ""; built = null; busy = false;
-        devices = []; device = ""; installState = ""; installError = ""; logcat = ""; polling = false;
+        devices = []; device = ""; installState = ""; installError = ""; logLines = []; logcat = ""; polling = false;
         storePass = ""; keyPass = ""; remember = false;
         keyring = ({available: false, store_saved: false, key_saved: false});
         locationField.text = app.appState.default_build_location || app.appState.default_project_location;
@@ -86,7 +89,7 @@ BwDialog {
     function submit() {
         if (busy || !chosen || !chosen.ready) return;
         busy = true; error = ""; built = null;
-        installState = ""; installError = ""; logcat = ""; polling = false;
+        installState = ""; installError = ""; logLines = []; logcat = ""; polling = false;
         const args = { path: locationField.text.trim(), target: triple, fast: fast, hdr: root.android || root.web ? false : hdr };
         // Passwords ride this call only: a release row without them stops
         // the build with where to type them, and headless reads the env.
@@ -108,7 +111,7 @@ BwDialog {
     }
     function install() {
         if (installing || !built || !built.binary) return;
-        installing = true; installState = ""; installError = ""; logcat = ""; polling = false;
+        installing = true; installState = ""; installError = ""; logLines = []; logcat = ""; polling = false;
         app.invoke("android_device_status", {}, result => {
             devices = result || [];
             const serial = device || (devices.length === 1 ? devices[0].serial : "");
@@ -117,7 +120,7 @@ BwDialog {
             app.invoke("android_install", { apk: built.binary, app: built.application_id, device: serial || undefined },
                 launched => {
                     installing = false;
-                    installState = "Installed and launched " + launched.component + (launched.device ? " on " + launched.device : "") + ". Streaming the device log into the RunLog below.";
+                    installState = "Installed and launched " + launched.component + (launched.device ? " on " + launched.device : "") + ". Streaming the device log below and into the RunLog.";
                     // The install cleared the buffer, so the first poll reads
                     // only the fresh run; every poll after it only the new.
                     polling = true;
@@ -131,7 +134,7 @@ BwDialog {
         app.invoke("android_logcat_tail", serial ? { device: serial } : {}, dump => {
             if (!polling) return;
             const lines = (dump.lines || []).concat(dump.panics || []);
-            if (lines.length) logcat = (logcat ? logcat + "\n" : "") + lines.join("\n");
+            if (lines.length) { logLines = logLines.concat(lines).slice(-200); logcat = logLines.join("\n"); }
             if ((dump.panics || []).length) installError = "The device log reports a native crash - see below and in the RunLog.";
         }, e => { if (polling) installError = String(e); });
     }
@@ -212,8 +215,18 @@ BwDialog {
                 BwButton { text: "Refresh"; onClicked: root.listDevices() }
                 BwButton { text: root.installing ? "Installing..." : "Install and launch"; primary: true; enabled: !root.installing && !!root.built; onClicked: root.install() }
             }
-            Text { visible: root.devices.length === 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: "No devices seen: connect a phone or start an emulator. An emulator counts as a device on the x86_64 row." }
-            TextEdit { visible: root.logcat.length > 0; Layout.fillWidth: true; Layout.preferredHeight: 120; readOnly: true; selectByMouse: true; wrapMode: Text.Wrap; color: Theme.textDim; font.family: "monospace"; font.pixelSize: 11; text: root.logcat }
+            Text { visible: root.devices.length === 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: "No devices seen: connect a phone, or boot one from App settings (gear on the Dashboard). An emulator counts as a device on the x86_64 row." }
+            ScrollView {
+                id: logScroll
+                visible: root.logcat.length > 0
+                Layout.fillWidth: true; Layout.preferredHeight: 150; clip: true
+                TextEdit {
+                    width: logScroll.availableWidth
+                    readOnly: true; selectByMouse: true; wrapMode: Text.Wrap
+                    color: Theme.textDim; font.family: "monospace"; font.pixelSize: 11
+                    text: root.logcat
+                }
+            }
         }
         RowLayout {
             Layout.alignment: Qt.AlignRight; Layout.topMargin: 8; spacing: 8

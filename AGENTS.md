@@ -1510,6 +1510,27 @@ path, oldest stolen past 8 of a file or 128 total. Sounds ignore the pause
 freeze (a menu click still clicks), and `stop all` silences them. Reporters
 are `is playing?` and `bus volume`, read off the published snapshot.
 
+### Cinematics
+
+A cutscene is a named reel on the `World` (`blockloom-core/src/cinematic.rs`,
+a `Cutscenes` scene component): shots of a camera actor, an FOV and a
+length, each with an optional dolly path of look-at/roll/FOV keys eased
+between, plus signal, slow-motion and volume-weight keys.
+`blockloom-runtime/src/cinematic.rs` plays it on the real clock ahead of the
+sensor publish, so it runs through `pause game` like UI strands do. Shots
+drive the world camera after the rig and the room confine; signals fire
+`when cutscene signal` strands; slow-motion keys scale the virtual clock
+the fixed clock follows, so blocks and physics keep their tick; volume keys
+borrow weights and restore them at the end; `skip cutscene` fires the
+remaining signals before `when cutscene ends`. Trauma shakes the camera on
+seeded gradient noise and decays; letterbox bars (z 45) and a black/white
+fade wash (z 47) ease in over the interface but under the scene veil.
+Blocks are `play cutscene`, `skip cutscene`, `shake camera by`,
+`set time scale to`, `hitstop`, `set letterbox to` and `fade screen to`,
+with `is cutscene playing?` and `cutscene time` reporters. Reels are
+authored as JSON through `set-scene-component`; there is no visual
+timeline editor.
+
 ### Building a game
 
 Build is not Export. Export writes a `.blockloom` file for somebody else's

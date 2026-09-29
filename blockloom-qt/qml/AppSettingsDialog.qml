@@ -14,6 +14,12 @@ BwDialog {
     property string androidError: ""
     property var devices: []
     property string deviceError: ""
+    property var emulator: null
+    property string emulatorError: ""
+    property string emulatorNote: ""
+    property bool emuBusy: false
+    property bool emuPolling: false
+    property string emuTarget: ""
     property string licenseText: ""
     property bool licensesAccepted: false
     property bool busy: false
@@ -26,6 +32,7 @@ BwDialog {
     onOpened: refresh()
     function refresh() {
         androidError = ""; deviceError = ""; sdkResult = "";
+        emulatorError = ""; emulatorNote = "";
         app.invoke("android_status", {}, result => {
             android = result;
             licensesAccepted = !!result.licenses_accepted;
@@ -35,6 +42,54 @@ BwDialog {
         app.invoke("android_device_status", {}, result => {
             devices = result || [];
         }, e => deviceError = String(e));
+        app.invoke("android_emulator_status", {}, result => {
+            emulator = result;
+        }, e => emulatorError = String(e));
+    }
+    function refreshEmulator() {
+        app.invoke("android_emulator_status", {}, result => {
+            emulator = result;
+        }, e => emulatorError = String(e));
+    }
+    function pollEmulator() {
+        if (!emuPolling) return;
+        app.invoke("android_emulator_status", {}, result => {
+            emulator = result;
+            const target = (result.avds || []).find(a => a.name === emuTarget);
+            if (!target || target.booted) emuPolling = false;
+        }, e => { emuPolling = false; emulatorError = String(e); });
+    }
+    function startAvd(name) {
+        if (emuBusy) return;
+        emuBusy = true; emulatorError = ""; emulatorNote = "";
+        app.invoke("android_start_emulator", { avd: name }, result => {
+            emuBusy = false;
+            emulatorNote = result.booted
+                ? "Started " + result.avd + " (" + result.serial + "), booted."
+                : "Started " + result.avd + (result.serial ? " (" + result.serial + ")" : "") + ", still booting - this refreshes on its own.";
+            emuTarget = result.avd;
+            emuPolling = !result.booted;
+            refreshEmulator();
+        }, e => { emuBusy = false; emulatorError = String(e); });
+    }
+    function stopEmu(serial) {
+        if (emuBusy) return;
+        emuBusy = true; emulatorError = ""; emulatorNote = ""; emuPolling = false;
+        app.invoke("android_stop_emulator", { serial: serial }, stopped => {
+            emuBusy = false;
+            emulatorNote = "Stopped " + stopped + ".";
+            refreshEmulator();
+        }, e => { emuBusy = false; emulatorError = String(e); });
+    }
+    function createAvd() {
+        if (emuBusy) return;
+        emuBusy = true; emulatorError = ""; emulatorNote = "";
+        const name = newAvdField.text.trim();
+        app.invoke("android_create_avd", name ? { name: name } : {}, created => {
+            emuBusy = false; newAvdField.text = "";
+            emulatorNote = "Created " + created + ".";
+            refreshEmulator();
+        }, e => { emuBusy = false; emulatorError = String(e); });
     }
     function row(ok, detail) { return (ok ? "OK  " : "Missing  ") + detail; }
 
@@ -116,12 +171,40 @@ BwDialog {
                     text: modelData.serial + " (" + modelData.state + (modelData.emulator ? ", emulator" : "") + ")"
                 }
             }
+            Text { text: "Emulator"; color: Theme.text; font.pixelSize: 14; font.weight: Font.Bold }
+            Text { visible: root.emulatorError.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.danger; font.pixelSize: 12; text: root.emulatorError }
+            Text { visible: root.emulatorNote.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.text; font.pixelSize: 12; text: root.emulatorNote }
+            Text { visible: !!root.emulator; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
+                text: root.emulator ? (root.emulator.available ? root.emulator.detail + (root.emulator.avds.length ? "" : " No AVDs yet - create one below.") : root.emulator.detail) : "" }
+            Repeater {
+                model: root.emulator ? root.emulator.avds : []
+                delegate: RowLayout {
+                    required property var modelData
+                    Layout.fillWidth: true; spacing: 8
+                    Text {
+                        Layout.fillWidth: true; elide: Text.ElideRight; color: Theme.text; font.pixelSize: 12
+                        text: modelData.name + (modelData.serial ? " - " + modelData.serial + (modelData.booted ? " (booted)" : " (booting...)") : " - off")
+                    }
+                    BwButton { visible: !modelData.serial; text: "Start"; enabled: !root.emuBusy; onClicked: root.startAvd(modelData.name) }
+                    BwButton { visible: !!modelData.serial; text: "Stop"; enabled: !root.emuBusy; onClicked: root.stopEmu(modelData.serial) }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true; spacing: 8
+                BwTextField { id: newAvdField; Layout.fillWidth: true; placeholderText: "New AVD name (empty means blockloom)"; onAccepted: root.createAvd() }
+                BwButton { text: root.emuBusy ? "Working..." : "Create AVD"; enabled: !root.emuBusy; onClicked: root.createAvd() }
+            }
             RowLayout {
                 Layout.alignment: Qt.AlignRight; Layout.topMargin: 8; spacing: 8
                 BwButton { text: "Refresh"; onClicked: root.refresh() }
                 BwButton { text: "Done"; primary: true; onClicked: root.close() }
             }
         }
+    }
+    onClosed: emuPolling = false
+    Timer {
+        interval: 10000; running: root.emuPolling; repeat: true
+        onTriggered: root.pollEmulator()
     }
     FolderDialog {
         id: sdkBrowse

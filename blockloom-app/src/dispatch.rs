@@ -123,6 +123,17 @@ impl Backend {
             )?),
             "android_keyring_status" => to_json(commands::android_keyring_status(state)?),
             "android_forget_passwords" => to_json(commands::android_forget_passwords(state)?),
+            "android_emulator_status" => to_json(commands::android_emulator_status()?),
+            "android_create_avd" => to_json(commands::android_create_avd(
+                arg(&args, "name").ok().flatten(),
+            )?),
+            "android_start_emulator" => to_json(commands::android_start_emulator(
+                arg(&args, "avd").ok().flatten(),
+                arg(&args, "waitSecs").ok().flatten(),
+            )?),
+            "android_stop_emulator" => to_json(commands::android_stop_emulator(
+                arg(&args, "serial").ok().flatten(),
+            )?),
             "android_set_sdk_path" => to_json(commands::android_set_sdk_path(
                 arg(&args, "path").unwrap_or_default(),
             )?),

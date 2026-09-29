@@ -14,7 +14,7 @@
 //! locked store or no D-Bus session reads as absent or failed, never a
 //! panic: the build falls back to asking, which always works.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The credential store label every entry is kept under.
 pub const SERVICE: &str = "Blockloom";
@@ -264,6 +264,7 @@ fn secret_tool_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn keyring_with(tool: &Path, kind: Tool) -> Keyring {
         Keyring {

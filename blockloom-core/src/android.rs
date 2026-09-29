@@ -530,6 +530,8 @@ pub struct AndroidStatus {
     /// The one-line reason when a row is not ready.
     pub note_arm64: String,
     pub note_emulator: String,
+    /// The emulator dev loop: binary, image and AVDs with run state.
+    pub emulator: EmulatorStatus,
 }
 
 /// Probes the machine as it stands. Pure reads, safe to call headless.
@@ -558,6 +560,7 @@ fn status_for(config: &AppConfig) -> AndroidStatus {
         ready_emulator,
         note_arm64,
         note_emulator,
+        emulator: emulator_status_for(config),
     }
 }
 
@@ -617,7 +620,11 @@ pub fn device_status() -> Result<Vec<Device>, String> {
     if !adb.is_file() {
         return Err("No adb: install platform-tools in App Settings first.".to_string());
     }
-    let output = Command::new(&adb)
+    devices_with_adb(&adb)
+}
+
+fn devices_with_adb(adb: &Path) -> Result<Vec<Device>, String> {
+    let output = Command::new(adb)
         .arg("devices")
         .output()
         .map_err(|e| format!("Couldn't run {}: {e}", adb.display()))?;
@@ -637,6 +644,449 @@ pub fn device_status() -> Result<Vec<Device>, String> {
         });
     }
     Ok(devices)
+}
+
+// ─── Emulator ──────────────────────────────────────────────────────────
+// The x86_64 dev loop, managed from App Settings rather than a terminal:
+// the install flow brings the emulator package plus one pinned system
+// image, Blockloom keeps AVDs on it, and the Build dialog installs on
+// whoever is booted (an emulator counts as a device on the x86_64 row).
+
+/// The emulator system image the dev loop boots: API 35 with Google APIs,
+/// x86_64 to match the emulator build triple.
+pub const EMULATOR_IMAGE: &str = "system-images;android-35;google_apis;x86_64";
+/// The AVD name used when none is given.
+pub const DEFAULT_AVD: &str = "blockloom";
+/// How long a start waits for boot by default: first boots are slow.
+pub const BOOT_WAIT_SECS: u64 = 300;
+
+/// One virtual device: its AVD name, the adb serial while running (empty
+/// when off), and whether the boot completed. Joined from `emulator
+/// -list-avds` and `adb devices`, so one command draws the whole section.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EmulatorState {
+    pub name: String,
+    pub serial: String,
+    pub booted: bool,
+}
+
+/// The emulator rows: whether this machine can boot anything, why not, and
+/// every AVD with its run state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EmulatorStatus {
+    pub available: bool,
+    pub detail: String,
+    pub avds: Vec<EmulatorState>,
+}
+
+/// What an emulator start did: the AVD, the adb serial once adb sees it
+/// (empty when it hasn't yet), and whether the boot completed within the
+/// wait. A started-but-booting emulator is not an error: the dialog keeps
+/// polling `android_device_status` after it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EmulatorBoot {
+    pub avd: String,
+    pub serial: String,
+    pub booted: bool,
+}
+
+fn emulator_bin(config: &AppConfig) -> PathBuf {
+    sdk_dir(config).join("emulator").join(exe("emulator"))
+}
+
+fn avdmanager_bin(config: &AppConfig) -> Option<PathBuf> {
+    let path = sdk_dir(config)
+        .join("cmdline-tools/latest/bin")
+        .join(exe("avdmanager"));
+    path.is_file().then_some(path)
+}
+
+/// The system image dir on disk: `system-images/android-35/google_apis/x86_64`.
+fn system_image_dir(config: &AppConfig) -> PathBuf {
+    let mut dir = sdk_dir(config).join("system-images");
+    for part in EMULATOR_IMAGE
+        .strip_prefix("system-images;")
+        .unwrap_or(EMULATOR_IMAGE)
+        .split(';')
+    {
+        dir.push(part);
+    }
+    dir
+}
+
+/// The emulator rows as they stand: binary, image, and every AVD with its
+/// run state. Pure reads, safe to call headless.
+pub fn emulator_status() -> EmulatorStatus {
+    emulator_status_for(&load())
+}
+
+fn emulator_status_for(config: &AppConfig) -> EmulatorStatus {
+    if !emulator_bin(config).is_file() {
+        return EmulatorStatus {
+            available: false,
+            detail: "No emulator package: run Install / update SDK to fetch it.".to_string(),
+            avds: vec![],
+        };
+    }
+    if !system_image_dir(config).is_dir() {
+        return EmulatorStatus {
+            available: false,
+            detail: "No Android 35 x86_64 system image: run Install / update SDK to fetch it."
+                .to_string(),
+            avds: vec![],
+        };
+    }
+    let names = match list_avds_with(&emulator_bin(config)) {
+        Ok(names) => names,
+        Err(error) => {
+            return EmulatorStatus {
+                available: false,
+                detail: error,
+                avds: vec![],
+            };
+        }
+    };
+    // Run state is best effort: without adb the AVDs still list, just with
+    // no serials. `emu avd name` maps each running emulator back to its AVD.
+    let adb = sdk_dir(config).join("platform-tools").join(exe("adb"));
+    let mut running: Vec<(String, String, bool)> = Vec::new();
+    if adb.is_file() {
+        for device in devices_with_adb(&adb).unwrap_or_default() {
+            if device.serial.starts_with("emulator-") {
+                running.push((
+                    avd_name_with_adb(&adb, &device.serial).unwrap_or_default(),
+                    device.serial.clone(),
+                    booted_with_adb(&adb, &device.serial),
+                ));
+            }
+        }
+    }
+    EmulatorStatus {
+        available: true,
+        detail: "Emulator and the Android 35 x86_64 image are installed.".to_string(),
+        avds: names
+            .into_iter()
+            .map(|name| {
+                let (serial, booted) = running
+                    .iter()
+                    .find(|(avd, _, _)| avd == &name)
+                    .map(|(_, serial, booted)| (serial.clone(), *booted))
+                    .unwrap_or_default();
+                EmulatorState {
+                    name,
+                    serial,
+                    booted,
+                }
+            })
+            .collect(),
+    }
+}
+
+/// Every AVD the emulator binary knows, one name per line.
+pub fn list_avds() -> Result<Vec<String>, String> {
+    list_avds_with(&emulator_bin(&load()))
+}
+
+fn list_avds_with(emulator: &Path) -> Result<Vec<String>, String> {
+    if !emulator.is_file() {
+        return Err("No emulator: run Install / update SDK to fetch it.".to_string());
+    }
+    let output = Command::new(emulator)
+        .arg("-list-avds")
+        .output()
+        .map_err(|e| format!("Couldn't run {}: {e}", emulator.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Couldn't list AVDs: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// Makes an AVD on the pinned image, answering its name. Empty names the
+/// managed default. Refuses names avdmanager would choke on and ones
+/// already taken, with the fix attached.
+pub fn create_avd(name: Option<&str>) -> Result<String, String> {
+    let config = load();
+    let Some(manager) = avdmanager_bin(&config) else {
+        return Err("No avdmanager: run Install / update SDK to fetch it.".to_string());
+    };
+    create_avd_with(
+        &emulator_bin(&config),
+        &manager,
+        system_image_dir(&config).is_dir(),
+        name,
+    )
+}
+
+fn create_avd_with(
+    emulator: &Path,
+    manager: &Path,
+    image_present: bool,
+    name: Option<&str>,
+) -> Result<String, String> {
+    if !emulator.is_file() {
+        return Err("No emulator: run Install / update SDK to fetch it.".to_string());
+    }
+    if !image_present {
+        return Err(
+            "No Android 35 x86_64 system image: run Install / update SDK to fetch it.".to_string(),
+        );
+    }
+    let name = name
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or(DEFAULT_AVD);
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
+        return Err(format!(
+            "\"{name}\" can't be an AVD name: letters, digits, dots, dashes and underscores only."
+        ));
+    }
+    if list_avds_with(emulator)?.iter().any(|avd| avd == name) {
+        return Err(format!("{name} already exists. Start it instead."));
+    }
+    // Decline the custom hardware profile prompt on stdin: the pinned
+    // image's defaults are the dev loop.
+    let mut child = Command::new(manager)
+        .arg("create")
+        .arg("avd")
+        .arg("-n")
+        .arg(name)
+        .arg("-k")
+        .arg(EMULATOR_IMAGE)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Couldn't run {}: {e}", manager.display()))?;
+    use std::io::Write;
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| "Couldn't answer avdmanager's hardware prompt.".to_string())?
+        .write_all(b"no\n")
+        .map_err(|e| format!("Couldn't answer avdmanager's hardware prompt: {e}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Couldn't run {}: {e}", manager.display()))?;
+    if !output.status.success() || !list_avds_with(emulator)?.iter().any(|avd| avd == name) {
+        return Err(format!(
+            "avdmanager couldn't create {name}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(name.to_string())
+}
+
+/// The argv an emulator boot takes: the AVD with the boot animation off,
+/// so unattended starts reach the launcher sooner.
+pub fn emulator_spawn_args(avd: &str) -> Vec<String> {
+    ["-avd", avd, "-no-boot-anim"]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect()
+}
+
+/// Boots `avd` (the managed default when unset, created on the spot when no
+/// AVDs exist at all) and waits up to `wait_secs` (default 5 minutes, 0 to
+/// return right after spawning) for adb to see it booted. Answers the
+/// serial once adb sees it and whether the boot completed in time.
+pub fn start_emulator(avd: Option<&str>, wait_secs: Option<u64>) -> Result<EmulatorBoot, String> {
+    let config = load();
+    start_emulator_with(
+        &emulator_bin(&config),
+        &sdk_dir(&config).join("platform-tools").join(exe("adb")),
+        system_image_dir(&config).is_dir(),
+        avd,
+        wait_secs.unwrap_or(BOOT_WAIT_SECS),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_emulator_with(
+    emulator: &Path,
+    adb: &Path,
+    image_present: bool,
+    avd: Option<&str>,
+    wait_secs: u64,
+) -> Result<EmulatorBoot, String> {
+    if !emulator.is_file() {
+        return Err("No emulator: run Install / update SDK to fetch it.".to_string());
+    }
+    if !image_present {
+        return Err(
+            "No Android 35 x86_64 system image: run Install / update SDK to fetch it.".to_string(),
+        );
+    }
+    let avd = avd
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or(DEFAULT_AVD);
+    let names = list_avds_with(emulator)?;
+    if names.is_empty() && avd == DEFAULT_AVD {
+        // The dev loop's first Start just works: make the managed AVD.
+        // avdmanager sits beside the emulator binary's SDK; find it up.
+        let manager = emulator
+            .parent()
+            .and_then(|bin| bin.parent())
+            .map(|sdk| sdk.join("cmdline-tools/latest/bin").join(exe("avdmanager")))
+            .filter(|path| path.is_file())
+            .ok_or_else(|| "No avdmanager: run Install / update SDK to fetch it.".to_string())?;
+        create_avd_with(emulator, &manager, true, None)?;
+    } else if !names.iter().any(|name| name == avd) {
+        return Err(format!(
+            "No AVD named {avd}. Create one in App Settings first."
+        ));
+    }
+    let before: Vec<String> = devices_with_adb(adb)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|device| device.serial)
+        .collect();
+    Command::new(emulator)
+        .args(emulator_spawn_args(avd))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Couldn't start the emulator: {e}"))?;
+    // The new serial is the emulator adb didn't know before the spawn.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait_secs);
+    loop {
+        let mut serial = String::new();
+        for device in devices_with_adb(adb).unwrap_or_default() {
+            if device.serial.starts_with("emulator-") && !before.contains(&device.serial) {
+                serial = device.serial;
+                break;
+            }
+        }
+        if !serial.is_empty() && booted_with_adb(adb, &serial) {
+            return Ok(EmulatorBoot {
+                avd: avd.to_string(),
+                serial,
+                booted: true,
+            });
+        }
+        if !serial.is_empty() && std::time::Instant::now() >= deadline {
+            return Ok(EmulatorBoot {
+                avd: avd.to_string(),
+                serial,
+                booted: false,
+            });
+        }
+        if serial.is_empty() && (wait_secs == 0 || std::time::Instant::now() >= deadline) {
+            return Ok(EmulatorBoot {
+                avd: avd.to_string(),
+                serial,
+                booted: false,
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
+}
+
+/// Whether `serial` finished booting: `sys.boot_completed` reads 1.
+fn booted_with_adb(adb: &Path, serial: &str) -> bool {
+    boot_prop_with_adb(adb, serial).is_some_and(|value| value == "1")
+}
+
+fn boot_prop_with_adb(adb: &Path, serial: &str) -> Option<String> {
+    let output = Command::new(adb)
+        .arg("-s")
+        .arg(serial)
+        .arg("shell")
+        .arg("getprop")
+        .arg("sys.boot_completed")
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// The AVD name a running emulator booted, through `adb emu avd name`.
+/// Empty when adb can't say (offline emulator, old image).
+fn avd_name_with_adb(adb: &Path, serial: &str) -> Option<String> {
+    let output = Command::new(adb)
+        .arg("-s")
+        .arg(serial)
+        .arg("emu")
+        .arg("avd")
+        .arg("name")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && *line != "OK")
+        .map(str::to_string)
+}
+
+/// Stops the running emulator on `serial` (`adb emu kill`), answering it.
+/// Empty stops the only running emulator; several running need naming. A
+/// physical serial is refused: unplug those, don't kill them.
+pub fn stop_emulator(serial: Option<&str>) -> Result<String, String> {
+    // A physical serial is refused before adb is even looked up: unplug
+    // those, don't kill them.
+    if let Some(serial) = serial.map(str::trim).filter(|s| !s.is_empty())
+        && !serial.starts_with("emulator-")
+    {
+        return Err(format!(
+            "{serial} is not an emulator. Only emulators stop this way."
+        ));
+    }
+    let config = load();
+    let adb = sdk_dir(&config).join("platform-tools").join(exe("adb"));
+    if !adb.is_file() {
+        return Err("No adb: install platform-tools in App Settings first.".to_string());
+    }
+    let serial = match serial.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(serial) => serial.to_string(),
+        None => {
+            let running: Vec<String> = devices_with_adb(&adb)?
+                .into_iter()
+                .filter(|device| device.emulator)
+                .map(|device| device.serial)
+                .collect();
+            match running.len() {
+                0 => return Err("No emulator is running.".to_string()),
+                1 => running.into_iter().next().unwrap_or_default(),
+                _ => {
+                    return Err(format!(
+                        "Several emulators are running ({}). Name one's serial.",
+                        running.join(", ")
+                    ));
+                }
+            }
+        }
+    };
+    let output = Command::new(&adb)
+        .arg("-s")
+        .arg(&serial)
+        .arg("emu")
+        .arg("kill")
+        .output()
+        .map_err(|e| format!("Couldn't run {}: {e}", adb.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Couldn't stop {serial}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(serial)
 }
 
 // ─── SDK install flow ────────────────────────────────────────────────────
@@ -843,6 +1293,16 @@ fn package_present(sdk: &Path, package: &str) -> bool {
             .join(exe("aapt2"))
             .is_file();
     }
+    if package == "emulator" {
+        return sdk.join("emulator").join(exe("emulator")).is_file();
+    }
+    if let Some(image) = package.strip_prefix("system-images;") {
+        let mut dir = sdk.join("system-images");
+        for part in image.split(';') {
+            dir.push(part);
+        }
+        return dir.is_dir();
+    }
     false
 }
 
@@ -859,8 +1319,9 @@ pub struct InstallReport {
 }
 
 /// Downloads the bootstrap when needed and installs the pinned platform,
-/// build-tools, platform-tools and NDK. Offline or proxy failure reports
-/// what is missing and keeps any existing SDK usable. Desktop only.
+/// build-tools, platform-tools, NDK, emulator and one x86_64 system image.
+/// Offline or proxy failure reports what is missing and keeps any existing
+/// SDK usable. Desktop only.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn install_sdk() -> Result<InstallReport, String> {
     let config = load();
@@ -875,6 +1336,8 @@ pub fn install_sdk() -> Result<InstallReport, String> {
         "platform-tools".to_string(),
         format!("platforms;{PLATFORM}"),
         format!("build-tools;{BUILD_TOOLS}"),
+        "emulator".to_string(),
+        EMULATOR_IMAGE.to_string(),
     ];
     let ndk_present = ndk_dir(&config).join("source.properties").is_file();
     let ndk_package = if ndk_present {
@@ -950,6 +1413,7 @@ pub fn install_sdk() -> Result<InstallReport, String> {
         ("JDK", after.jdk.ok),
         ("SDK packages", after.sdk.ok),
         ("NDK", after.ndk.ok),
+        ("Emulator", after.emulator.available),
     ] {
         if !ok {
             still_missing.push(format!("{label} still probes red; see android-status."));
@@ -2104,13 +2568,49 @@ fn logcat_with_adb(adb: &Path, device: Option<&str>, needle: &str) -> Result<Log
             || lower.contains("fatal exception")
             || lower.contains("fatal:")
         {
-            panics.push(line.to_string());
+            panics.push(logcat_message(line).to_string());
         }
         if !needle.is_empty() && lower.contains(&needle) {
-            lines.push(line.to_string());
+            lines.push(logcat_message(line).to_string());
         }
     }
     Ok(Logcat { lines, panics })
+}
+
+/// Strips the `adb logcat` threadtime prefix (`09-28 22:12:31.290 19629
+/// 19629 D `), leaving `tag: message`. Anything not shaped like a stamp
+/// passes through untouched, so other formats never lose text.
+fn logcat_message(line: &str) -> &str {
+    let mut rest = line;
+    for _ in 0..5 {
+        rest = match rest.find(char::is_whitespace) {
+            Some(index) => rest[index..].trim_start(),
+            None => return line,
+        };
+    }
+    if rest.is_empty() {
+        return line;
+    }
+    let head = &line[..line.len() - rest.len()];
+    let mut fields = head.split_whitespace();
+    let stamped = match (
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+    ) {
+        (Some(date), Some(time), Some(pid), Some(tid), Some(prio)) => {
+            date.len() == 5
+                && date.as_bytes()[2] == b'-'
+                && time.contains(':')
+                && pid.bytes().all(|b| b.is_ascii_digit())
+                && tid.bytes().all(|b| b.is_ascii_digit())
+                && prio.len() == 1
+        }
+        _ => false,
+    };
+    if stamped { rest } else { line }
 }
 
 #[cfg(test)]
@@ -2253,6 +2753,10 @@ mod tests {
             "{manifest}"
         );
         assert!(manifest.contains("android:exported=\"true\""), "{manifest}");
+        // No classes.dex ships in v1, so the manifest must say the APK has
+        // no dex code of its own: without this the installer rejects it as
+        // codeless (INSTALL_FAILED_INVALID_APK, "code is missing").
+        assert!(manifest.contains("android:hasCode=\"false\""), "{manifest}");
         assert!(
             manifest.contains(&format!("android:value=\"{LIB_NAME}\"")),
             "{manifest}"
@@ -2488,15 +2992,151 @@ mod tests {
         let adb = stub_tool(
             &bin,
             "adb",
-            "#!/bin/sh\necho '01-01 00:00:01.000  123  123 I blockloom: run started'\necho '01-01 00:00:02.000  123  123 I blockloom: actors {\"a\":[1,2]}'\necho '01-01 00:00:03.000  123  123 E AndroidRuntime: FATAL EXCEPTION: main'\necho '01-01 00:00:04.000  123  123 I SomeTag: unrelated line'\n",
+            "#!/bin/sh\necho '01-01 00:00:01.000  123  123 I blockloom: run started'\necho '01-01 00:00:02.000  123  123 I blockloom: actors {\"a\":[1,2]}'\necho '01-01 00:00:03.000  123  123 E AndroidRuntime: FATAL EXCEPTION: main'\necho '01-01 00:00:04.000  123  123 I SomeTag: unrelated line'\necho '01-01 00:00:05.000  123  123 D nativeloader: Load /data/app/com.blockloom.game.pond/lib.so ok'\n",
         );
         // The stub ignores its argv and prints a fixed dump: what matters is
         // the filtering, not the adb invocation (covered by the install test).
-        let dumped = logcat_with_adb(&adb, None, "blockloom").unwrap();
-        assert_eq!(dumped.lines.len(), 2, "{dumped:?}");
-        assert!(dumped.lines[0].contains("run started"), "{dumped:?}");
+        // The needle needs its colon: the package path alone must not match.
+        let dumped = logcat_with_adb(&adb, None, "blockloom:").unwrap();
+        assert_eq!(
+            dumped.lines,
+            vec![
+                "blockloom: run started".to_string(),
+                "blockloom: actors {\"a\":[1,2]}".to_string(),
+            ],
+            "{dumped:?}"
+        );
         assert_eq!(dumped.panics.len(), 1, "{dumped:?}");
         assert!(dumped.panics[0].contains("FATAL EXCEPTION"), "{dumped:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn logcat_strips_only_threadtime_stamps() {
+        assert_eq!(
+            logcat_message("09-28 22:12:31.290 19629 19629 D nativeloader: ok"),
+            "nativeloader: ok"
+        );
+        assert_eq!(
+            logcat_message("blockloom: run started"),
+            "blockloom: run started"
+        );
+        assert_eq!(logcat_message(""), "");
+        assert_eq!(logcat_message("   "), "   ");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn avd_names_list_one_per_line() {
+        let root = temp_root("avds");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let emulator = stub_tool(
+            &bin,
+            "emulator",
+            "#!/bin/sh\necho 'blockloom'\necho ''\necho '  pond  '\n",
+        );
+        assert_eq!(
+            list_avds_with(&emulator).unwrap(),
+            vec!["blockloom".to_string(), "pond".to_string()]
+        );
+        // A missing binary names the install flow, not a crash.
+        let missing = bin.join("no-emulator");
+        assert!(list_avds_with(&missing).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn creating_an_avd_refuses_taken_and_bad_names() {
+        let root = temp_root("avd-create");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let log = root.join("calls.log");
+        let emulator = stub_tool(&bin, "emulator", "#!/bin/sh\necho 'blockloom'\n");
+        let manager = stub_tool(
+            &bin,
+            "avdmanager",
+            &format!(
+                "#!/bin/sh\nlog=\"{}\"\nfor a in \"$@\"; do printf '%s ' \"$a\" >> \"$log\"; done\nprintf '\\n' >> \"$log\"\nread answer\nprintf 'answer=%s\\n' \"$answer\" >> \"$log\"\n",
+                log.display()
+            ),
+        );
+        // Taken names point at Start; bad names at the naming rule.
+        assert!(create_avd_with(&emulator, &manager, true, Some("blockloom")).is_err());
+        assert!(create_avd_with(&emulator, &manager, true, Some("pond game")).is_err());
+        assert!(create_avd_with(&emulator, &manager, false, Some("pond")).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn emulator_boots_take_the_avd_without_the_boot_animation() {
+        assert_eq!(
+            emulator_spawn_args("blockloom"),
+            vec![
+                "-avd".to_string(),
+                "blockloom".to_string(),
+                "-no-boot-anim".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn boot_state_reads_sys_boot_completed() {
+        let root = temp_root("boot");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let booted = stub_tool(&bin, "adb-on", "#!/bin/sh\necho '1'\n");
+        assert!(booted_with_adb(&booted, "emulator-5554"));
+        let booting = stub_tool(&bin, "adb-off", "#!/bin/sh\necho '0'\n");
+        assert!(!booted_with_adb(&booting, "emulator-5554"));
+        // `emu avd name` answers the name above the trailing OK.
+        let named = stub_tool(&bin, "adb-name", "#!/bin/sh\necho 'blockloom'\necho 'OK'\n");
+        assert_eq!(
+            avd_name_with_adb(&named, "emulator-5554").as_deref(),
+            Some("blockloom")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn stopping_a_physical_serial_is_refused_before_adb() {
+        // The guard runs before any adb lookup, so no adb binary is needed.
+        let error = stop_emulator(Some("ABCDEF1234")).unwrap_err();
+        assert!(error.contains("not an emulator"), "{error}");
+    }
+
+    #[test]
+    fn emulator_and_image_probe_off_directory_shape() {
+        let root = temp_root("emu-present");
+        assert!(!package_present(&root, "emulator"));
+        assert!(!package_present(&root, EMULATOR_IMAGE));
+        std::fs::create_dir_all(root.join("emulator")).unwrap();
+        std::fs::write(root.join("emulator").join(exe("emulator")), b"fake").unwrap();
+        let mut image = root.join("system-images");
+        for part in ["android-35", "google_apis", "x86_64"] {
+            image.push(part);
+        }
+        std::fs::create_dir_all(&image).unwrap();
+        assert!(package_present(&root, "emulator"));
+        assert!(package_present(&root, EMULATOR_IMAGE));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn emulator_status_names_what_is_missing() {
+        let root = temp_root("emu-status");
+        let config = AppConfig {
+            sdk_path: Some(root.clone()),
+            ndk_path: None,
+            licenses_accepted: false,
+        };
+        // Neither binary nor image: the install flow is the fix.
+        let status = emulator_status_for(&config);
+        assert!(!status.available);
+        assert!(status.avds.is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -1042,12 +1042,37 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         over 2 m cells rather than per texel, and instanced batches, graph
         surfaces and 2D sprites keep the sampled uniform instead of the
         texture.
-  - [ ] Cinematics: timeline tracks (camera cut, transform, FOV, volume weight, signal
+  - [x] Cinematics: timeline tracks (camera cut, transform, FOV, volume weight, signal
         fires block at marker), dolly/crane spline path with look-at target plus roll,
         camera shake (trauma 0-1, Perlin translation/rotation noise, decay), letterbox
         bars plus fade to black/white, slow-mo (timeScale curve) plus hitstop frames
         blocks, skip support (`skip cutscene` jumps to end marker). Plays on wall clock
         even when `pause game` freezes world strands, like UI strands do.
+        Done: `World.cutscenes` (`blockloom-core/src/cinematic.rs`, a
+        `Cutscenes` scene component, normalized on load) holds named reels:
+        shots of a camera actor, an FOV and a length, each with an optional
+        dolly path of look-at/roll/FOV keys eased between, plus signal,
+        slow-motion and volume-weight keys. `blockloom-runtime/src/
+        cinematic.rs` plays the reel on the real clock ahead of the sensor
+        publish: shots drive the world camera after the rig and the room
+        confine, signals fire `when cutscene signal` strands, slow-motion
+        keys move the virtual clock the fixed clock follows (so blocks and
+        physics keep their tick), volume keys borrow weights and restore
+        them at the end, and `skip cutscene` fires the remaining signals
+        before `when cutscene ends` runs. Trauma shakes the camera on
+        seeded gradient noise and decays; letterbox bars (z 45) and a
+        black/white fade wash (z 47) ease in over the interface but under
+        the scene veil. Blocks, compiled logic and scripts share
+        `play cutscene`, `skip cutscene`, `shake camera by`,
+        `set time scale to`, `hitstop`, `set letterbox to`,
+        `fade screen to`, `is cutscene playing?` and `cutscene time`
+        (ABI 35, LOGIC_ABI 33), with parity cases in `tests/codegen.rs`
+        (`cutscene-director`, `cutscene-arrives`) and `tests/vm.rs`.
+        Reels are authored as JSON through `set-scene-component` (shell/MCP).
+        Not covered: no visual timeline editor (reels are JSON); volume keys
+        name actors carrying a `Volume`, and a reel never moves the sun or
+        weather tracks; 2D shots frame position only, never FOV; the fade
+        wash has no wipe/iris shapes.
   - [ ] Soundscape zones: reverb volumes (size/decay/damping/excursion, IR or
         parametric), occlusion (raycast, lowpass plus gain per wall hit) and
         obstruction (edge diffraction lowpass), weather-tied loop mixer (wind gain by

@@ -1283,7 +1283,7 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
         abi::ACT_HITSTOP => Effect::Hitstop { frames: n0 as f32 },
         abi::ACT_SET_LETTERBOX => Effect::SetLetterbox { on: n0 as f32 },
         abi::ACT_FADE_SCREEN => Effect::FadeScreen {
-            color: blockloom_core::cinematic::normalize_fade(&a),
+            color: blockloom_core::cinematic::normalize_fade(a),
         },
         abi::ACT_PAINT_TILE => Effect::PaintTile {
             actor,

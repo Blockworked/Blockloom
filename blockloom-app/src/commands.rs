@@ -2666,7 +2666,7 @@ pub(crate) fn android_install(
 /// any Rust panic: what `just android-smoke` checks, and what a developer
 /// reads when a game misbehaves on device. One shot, not a stream.
 pub(crate) fn android_logcat(device: Option<String>) -> Result<android::Logcat, String> {
-    android::logcat(device.as_deref(), "blockloom")
+    android::logcat(device.as_deref(), "blockloom:")
 }
 
 /// Polls the device log the way the Build dialog streams it: dumps, clears
@@ -2679,7 +2679,7 @@ pub(crate) fn android_logcat_tail(
     app: &AppHandle,
     device: Option<String>,
 ) -> Result<android::Logcat, String> {
-    let dumped = android::logcat_tail(device.as_deref(), "blockloom")?;
+    let dumped = android::logcat_tail(device.as_deref(), "blockloom:")?;
     if !dumped.lines.is_empty() || !dumped.panics.is_empty() {
         let mut s = lock(state)?;
         for line in &dumped.lines {
@@ -2722,6 +2722,35 @@ pub(crate) fn android_forget_passwords(state: &SharedState) -> Result<bool, Stri
     };
     drop(s);
     android::forget_signing(&project.android)
+}
+
+/// The emulator rows as they stand: binary, image and every AVD with its
+/// run state. Needs no open project and no device.
+pub(crate) fn android_emulator_status() -> Result<android::EmulatorStatus, String> {
+    Ok(android::emulator_status())
+}
+
+/// Makes an AVD on the pinned image, answering its name. Empty names the
+/// managed default. Needs no open project and no device.
+pub(crate) fn android_create_avd(name: Option<String>) -> Result<String, String> {
+    android::create_avd(name.as_deref())
+}
+
+/// Boots `avd` (the managed default when unset, created on the spot when no
+/// AVDs exist at all) and waits up to `wait_secs` (5 minutes when unset, 0
+/// to return right after spawning) for adb to see it booted. Needs no open
+/// project.
+pub(crate) fn android_start_emulator(
+    avd: Option<String>,
+    wait_secs: Option<u64>,
+) -> Result<android::EmulatorBoot, String> {
+    android::start_emulator(avd.as_deref(), wait_secs)
+}
+
+/// Stops the running emulator on `serial` (`adb emu kill`). Empty stops the
+/// only running emulator; a physical serial is refused. Needs no project.
+pub(crate) fn android_stop_emulator(serial: Option<String>) -> Result<String, String> {
+    android::stop_emulator(serial.as_deref())
 }
 
 /// Points the SDK row at `path` (empty clears back to the default) and

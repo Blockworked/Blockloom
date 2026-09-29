@@ -226,6 +226,25 @@ android-forget-passwords project:
     printf 'open-project path=%s\nandroid-forget-passwords\n' "$(realpath '{{project}}')" \
         | "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --no-state
 
+# Makes an AVD on the pinned Android 35 x86_64 image (empty names the
+# managed default), exactly what the App settings emulator section makes.
+android-avd-create name="":
+    cargo build --release -p blockloom-app --bin blockloom-shell
+    "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-create-avd{{ if name != "" { " name=" + name } else { "" } }}' --no-state
+
+# Boots an AVD and waits up to waitSecs for adb to see it booted: 5 minutes
+# when unset, 0 to return right after spawning. Empty names the managed
+# default, created on the spot when no AVDs exist at all.
+android-emulator-start avd="" wait="300":
+    cargo build --release -p blockloom-app --bin blockloom-shell
+    "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-start-emulator{{ if avd != "" { " avd=" + avd } else { "" } }}{{ if wait != "" { " waitSecs=" + wait } else { "" } }}' --no-state
+
+# Stops the running emulator on serial (empty stops the only running one;
+# a physical serial is refused).
+android-emulator-stop serial="":
+    cargo build --release -p blockloom-app --bin blockloom-shell
+    "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-stop-emulator{{ if serial != "" { " serial=" + serial } else { "" } }}' --no-state
+
 # Installs an APK on a connected device or emulator and launches it
 # (`android-device-status` lists the serials when several are attached).
 android-install apk app device="":

@@ -9,7 +9,7 @@
 
 use crate::engine::{ActorId, Dimension, Engine, PendingEffects};
 use bevy::prelude::*;
-use blockloom_core::cinematic::{Cutscene, normalize_fade, sample_path};
+use blockloom_core::cinematic::{normalize_fade, sample_path};
 use blockloom_core::vm::{Effect, Event};
 use std::collections::HashMap;
 
@@ -39,10 +39,10 @@ const WASH_Z: i32 = 47;
 const BAR_HEIGHT: f32 = 10.0;
 
 #[derive(Component)]
-struct CineBars;
+pub(crate) struct CineBars;
 
 #[derive(Component)]
-struct CineWash;
+pub(crate) struct CineWash;
 
 /// The reel playing right now, if any.
 struct Active {
@@ -439,13 +439,15 @@ fn draw_chrome(
                 commands.entity(entity).despawn();
             }
         } else {
-            let mut node = Node::default();
-            node.position_type = PositionType::Absolute;
-            node.left = Val::Percent(0.0);
-            node.right = Val::Percent(0.0);
-            node.top = Val::Percent(0.0);
-            node.width = Val::Percent(100.0);
-            node.height = Val::Percent(100.0);
+            let node = Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(0.0),
+                right: Val::Percent(0.0),
+                top: Val::Percent(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..Default::default()
+            };
             commands.spawn((
                 Name::new("cine-fade"),
                 CineWash,
@@ -463,17 +465,16 @@ fn draw_chrome(
 
 /// One bar node: the first call makes the top bar, the second the bottom.
 fn bars_needed(top: bool) -> (Node, BackgroundColor) {
-    let mut node = Node::default();
-    node.position_type = PositionType::Absolute;
-    node.left = Val::Percent(0.0);
-    node.right = Val::Percent(0.0);
-    node.width = Val::Percent(100.0);
-    node.height = Val::Percent(0.0);
-    if top {
-        node.top = Val::Percent(0.0);
-    } else {
-        node.bottom = Val::Percent(0.0);
-    }
+    let node = Node {
+        position_type: PositionType::Absolute,
+        left: Val::Percent(0.0),
+        right: Val::Percent(0.0),
+        width: Val::Percent(100.0),
+        height: Val::Percent(0.0),
+        top: if top { Val::Percent(0.0) } else { Val::Auto },
+        bottom: if top { Val::Auto } else { Val::Percent(0.0) },
+        ..Default::default()
+    };
     (node, BackgroundColor(Color::BLACK))
 }
 
@@ -541,7 +542,7 @@ fn drive_shot(
     engine: &Engine,
     dimension: &Res<Dimension>,
     camera: &mut Transform,
-    mut projection: Option<Mut<Projection>>,
+    projection: Option<Mut<Projection>>,
     shot: &blockloom_core::cinematic::Shot,
     local: f32,
     actors: &Query<(&ActorId, &Transform), Without<crate::world::WorldCamera>>,
@@ -599,15 +600,10 @@ fn shake_camera(camera: &mut Transform, dimension: &Res<Dimension>, trauma: f32,
         * Quat::from_rotation_z(spin.z);
 }
 
-/// What `is cutscene playing?` and `cutscene time` read. Written by the
-/// player ahead of the publish; dry with none playing.
-pub fn sample(engine: &Engine) -> (String, f32) {
-    (engine.cine_name.clone(), engine.cine_time)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use blockloom_core::cinematic::Cutscene;
     use blockloom_core::scene::Mode;
 
     fn app() -> App {

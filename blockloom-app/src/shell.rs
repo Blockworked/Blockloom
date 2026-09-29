@@ -351,6 +351,53 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[],
     },
     CommandSpec {
+        name: "android-emulator-status",
+        cmd: "android_emulator_status",
+        aliases: &["android_emulator_status"],
+        summary: "The emulator rows as they stand: whether this machine can boot anything, and every AVD with its run state. Needs no device.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "android-create-avd",
+        cmd: "android_create_avd",
+        aliases: &["android_create_avd"],
+        summary: "Make an AVD on the pinned Android 35 x86_64 image. Empty names the managed default. Needs no device.",
+        args: &[ArgSpec {
+            name: "name",
+            ty: "string",
+            required: false,
+        }],
+    },
+    CommandSpec {
+        name: "android-start-emulator",
+        cmd: "android_start_emulator",
+        aliases: &["android_start_emulator"],
+        summary: "Boot an AVD (the managed default when unset, created on the spot when no AVDs exist at all) and wait up to waitSecs for adb to see it booted: 5 minutes when unset, 0 to return right after spawning. Needs no device.",
+        args: &[
+            ArgSpec {
+                name: "avd",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "waitSecs",
+                ty: "number",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "android-stop-emulator",
+        cmd: "android_stop_emulator",
+        aliases: &["android_stop_emulator"],
+        summary: "Stop the running emulator on serial. Empty stops the only running emulator; a physical serial is refused. Needs no device.",
+        args: &[ArgSpec {
+            name: "serial",
+            ty: "string",
+            required: false,
+        }],
+    },
+    CommandSpec {
         name: "android-set-sdk-path",
         cmd: "android_set_sdk_path",
         aliases: &["android_set_sdk_path"],

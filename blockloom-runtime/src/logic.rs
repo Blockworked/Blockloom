@@ -795,7 +795,7 @@ extern "C" fn act(
         ACT_HITSTOP => Effect::Hitstop { frames: n0 as f32 },
         ACT_SET_LETTERBOX => Effect::SetLetterbox { on: n0 as f32 },
         ACT_FADE_SCREEN => Effect::FadeScreen {
-            color: blockloom_core::cinematic::normalize_fade(&a),
+            color: blockloom_core::cinematic::normalize_fade(a),
         },
         ACT_PAINT_TILE => Effect::PaintTile {
             actor,
