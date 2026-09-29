@@ -167,7 +167,7 @@ Item {
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6; spacing: 2
                         Repeater {
-                            model: [{ label: "Code", icon: "blocks" }, { label: "Game", icon: "gamepad-2" }, { label: "Interface", icon: "layout-grid" }]
+                            model: [{ label: "Code", icon: "blocks" }, { label: "Game", icon: "gamepad-2" }, { label: "Interface", icon: "layout-grid" }, { label: "Devices", icon: "smartphone" }]
                             delegate: Rectangle {
                                 id: tab
                                 required property var modelData
@@ -284,6 +284,7 @@ Item {
                     }
                     PreviewPanel { app: root.app }
                     UiDesigner { app: root.app }
+                    DevicesPanel { app: root.app }
                 }
             }
             InspectorPanel {

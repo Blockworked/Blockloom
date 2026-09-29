@@ -372,7 +372,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "android-start-emulator",
         cmd: "android_start_emulator",
         aliases: &["android_start_emulator"],
-        summary: "Boot an AVD (the managed default when unset, created on the spot when no AVDs exist at all) and wait up to waitSecs for adb to see it booted: 5 minutes when unset, 0 to return right after spawning. Needs no device.",
+        summary: "Boot an AVD (the managed default when unset, created on the spot when no AVDs exist at all) and wait up to waitSecs for adb to see it booted: 5 minutes when unset, 0 to return right after spawning. headless hides the host window for the embedded view. Needs no device.",
         args: &[
             ArgSpec {
                 name: "avd",
@@ -382,6 +382,11 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             ArgSpec {
                 name: "waitSecs",
                 ty: "number",
+                required: false,
+            },
+            ArgSpec {
+                name: "headless",
+                ty: "bool",
                 required: false,
             },
         ],
@@ -396,6 +401,103 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             ty: "string",
             required: false,
         }],
+    },
+    CommandSpec {
+        name: "android-mirror-frame",
+        cmd: "android_mirror_frame",
+        aliases: &["android_mirror_frame"],
+        summary: "Grab the device's screen as a downscaled PNG data URL for the embedded emulator view. Empty device means the only device; maxWidth caps the frame width (default 360).",
+        args: &[
+            ArgSpec {
+                name: "device",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "maxWidth",
+                ty: "number",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "android-mirror-tap",
+        cmd: "android_mirror_tap",
+        aliases: &["android_mirror_tap"],
+        summary: "Tap the device at the fractional point x, y (0..1 across the mirror image). What a click on the embedded screen becomes.",
+        args: &[
+            ArgSpec {
+                name: "device",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "x",
+                ty: "number",
+                required: false,
+            },
+            ArgSpec {
+                name: "y",
+                ty: "number",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "android-mirror-swipe",
+        cmd: "android_mirror_swipe",
+        aliases: &["android_mirror_swipe"],
+        summary: "Swipe the device from one fractional point to another over durationMs (default 300). What a drag on the embedded screen becomes.",
+        args: &[
+            ArgSpec {
+                name: "device",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "x1",
+                ty: "number",
+                required: false,
+            },
+            ArgSpec {
+                name: "y1",
+                ty: "number",
+                required: false,
+            },
+            ArgSpec {
+                name: "x2",
+                ty: "number",
+                required: false,
+            },
+            ArgSpec {
+                name: "y2",
+                ty: "number",
+                required: false,
+            },
+            ArgSpec {
+                name: "durationMs",
+                ty: "number",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "android-mirror-key",
+        cmd: "android_mirror_key",
+        aliases: &["android_mirror_key"],
+        summary: "Press a named key on the device: back, home, recents, enter, delete, tab, power, volume_up, volume_down, volume_mute. The embedded screen's hardware buttons.",
+        args: &[
+            ArgSpec {
+                name: "device",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "code",
+                ty: "string",
+                required: false,
+            },
+        ],
     },
     CommandSpec {
         name: "android-set-sdk-path",

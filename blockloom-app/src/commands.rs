@@ -2739,18 +2739,57 @@ pub(crate) fn android_create_avd(name: Option<String>) -> Result<String, String>
 /// Boots `avd` (the managed default when unset, created on the spot when no
 /// AVDs exist at all) and waits up to `wait_secs` (5 minutes when unset, 0
 /// to return right after spawning) for adb to see it booted. Needs no open
-/// project.
+/// project. `headless` hides the host window: the editor shows the screen
+/// itself through `android_mirror_frame`, like Android Studio's embedded
+/// emulator tool window.
 pub(crate) fn android_start_emulator(
     avd: Option<String>,
     wait_secs: Option<u64>,
+    headless: bool,
 ) -> Result<android::EmulatorBoot, String> {
-    android::start_emulator(avd.as_deref(), wait_secs)
+    android::start_emulator_with_options(avd.as_deref(), wait_secs, headless)
 }
 
 /// Stops the running emulator on `serial` (`adb emu kill`). Empty stops the
 /// only running emulator; a physical serial is refused. Needs no project.
 pub(crate) fn android_stop_emulator(serial: Option<String>) -> Result<String, String> {
     android::stop_emulator(serial.as_deref())
+}
+
+/// Grabs the device's screen as a downscaled PNG data URL for the embedded
+/// emulator view. `device` names a serial (empty means the only device);
+/// `max_width` caps the frame width (default 360). Needs no open project.
+pub(crate) fn android_mirror_frame(
+    device: Option<String>,
+    max_width: Option<u32>,
+) -> Result<android::MirrorFrame, String> {
+    android::mirror_frame(device.as_deref(), max_width)
+}
+
+/// Taps the device at the fractional point `x, y` (0..1 across the mirror
+/// image). What a click on the embedded screen becomes.
+pub(crate) fn android_mirror_tap(device: Option<String>, x: f32, y: f32) -> Result<String, String> {
+    android::mirror_tap(device.as_deref(), x, y)
+}
+
+/// Swipes the device from one fractional point to another over
+/// `duration_ms` (default 300). What a drag on the embedded screen becomes.
+pub(crate) fn android_mirror_swipe(
+    device: Option<String>,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    duration_ms: Option<u64>,
+) -> Result<String, String> {
+    android::mirror_swipe(device.as_deref(), x1, y1, x2, y2, duration_ms)
+}
+
+/// Presses a named key on the device: back, home, recents, enter, delete,
+/// tab, power, volume_up, volume_down, volume_mute. The embedded screen's
+/// hardware buttons.
+pub(crate) fn android_mirror_key(device: Option<String>, code: String) -> Result<String, String> {
+    android::mirror_key(device.as_deref(), &code)
 }
 
 /// Points the SDK row at `path` (empty clears back to the default) and

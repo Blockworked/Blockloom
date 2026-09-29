@@ -130,9 +130,31 @@ impl Backend {
             "android_start_emulator" => to_json(commands::android_start_emulator(
                 arg(&args, "avd").ok().flatten(),
                 arg(&args, "waitSecs").ok().flatten(),
+                arg(&args, "headless").ok().flatten().unwrap_or(false),
             )?),
             "android_stop_emulator" => to_json(commands::android_stop_emulator(
                 arg(&args, "serial").ok().flatten(),
+            )?),
+            "android_mirror_frame" => to_json(commands::android_mirror_frame(
+                arg(&args, "device").ok().flatten(),
+                arg(&args, "maxWidth").ok().flatten(),
+            )?),
+            "android_mirror_tap" => to_json(commands::android_mirror_tap(
+                arg(&args, "device").ok().flatten(),
+                arg(&args, "x").unwrap_or(0.5),
+                arg(&args, "y").unwrap_or(0.5),
+            )?),
+            "android_mirror_swipe" => to_json(commands::android_mirror_swipe(
+                arg(&args, "device").ok().flatten(),
+                arg(&args, "x1").unwrap_or(0.5),
+                arg(&args, "y1").unwrap_or(0.5),
+                arg(&args, "x2").unwrap_or(0.5),
+                arg(&args, "y2").unwrap_or(0.5),
+                arg(&args, "durationMs").ok().flatten(),
+            )?),
+            "android_mirror_key" => to_json(commands::android_mirror_key(
+                arg(&args, "device").ok().flatten(),
+                arg(&args, "code").unwrap_or_else(|_| "back".to_string()),
             )?),
             "android_set_sdk_path" => to_json(commands::android_set_sdk_path(
                 arg(&args, "path").unwrap_or_default(),

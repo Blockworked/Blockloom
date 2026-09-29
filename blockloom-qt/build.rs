@@ -44,6 +44,8 @@ fn main() {
                 "qml/ProjectSettingsDialog.qml",
                 "qml/AppSettingsDialog.qml",
                 "qml/BuildDialog.qml",
+                "qml/DevicePanel.qml",
+                "qml/DevicesPanel.qml",
                 "qml/ScriptDialog.qml",
                 "qml/MakeBlockDialog.qml",
                 "qml/SectionLabel.qml",

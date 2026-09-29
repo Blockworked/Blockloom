@@ -234,10 +234,11 @@ android-avd-create name="":
 
 # Boots an AVD and waits up to waitSecs for adb to see it booted: 5 minutes
 # when unset, 0 to return right after spawning. Empty names the managed
-# default, created on the spot when no AVDs exist at all.
-android-emulator-start avd="" wait="300":
+# default, created on the spot when no AVDs exist at all. headless=true
+# hides the host window for the editor's embedded view.
+android-emulator-start avd="" wait="300" headless="":
     cargo build --release -p blockloom-app --bin blockloom-shell
-    "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-start-emulator{{ if avd != "" { " avd=" + avd } else { "" } }}{{ if wait != "" { " waitSecs=" + wait } else { "" } }}' --no-state
+    "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-start-emulator{{ if avd != "" { " avd=" + avd } else { "" } }}{{ if wait != "" { " waitSecs=" + wait } else { "" } }}{{ if headless != "" { " headless=" + headless } else { "" } }}' --no-state
 
 # Stops the running emulator on serial (empty stops the only running one;
 # a physical serial is refused).

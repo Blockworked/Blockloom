@@ -466,8 +466,8 @@ pub fn host_tag() -> &'static str {
 /// The NDK clang wrapper Rust links Android targets through, if present.
 pub fn ndk_clang(ndk: &Path, host: &str) -> Option<PathBuf> {
     let prebuilt = ndk.join("toolchains/llvm/prebuilt").join(host).join("bin");
-    // The API level on the wrapper only sets the default `-target`; rustc
-    // passes `--target` itself, so any level 21+ wrapper links.
+    // Either triple's wrapper probes whether this machine can link at all;
+    // per-triple builds take `ndk_clang_for` below instead.
     let candidates = [
         format!("{ARM64_TRIPLE}{MIN_SDK}-clang"),
         format!("{EMULATOR_TRIPLE}{MIN_SDK}-clang"),
@@ -478,12 +478,29 @@ pub fn ndk_clang(ndk: &Path, host: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+/// The NDK clang wrapper for one triple: its own `{triple}{MIN_SDK}-clang`
+/// first, falling back to whatever wrapper the NDK has. The wrapper's name
+/// is its default `--target`, which rustc relies on when it shells out to
+/// link - an arm64 wrapper cannot link x86_64 objects, so each triple must
+/// take its own.
+pub fn ndk_clang_for(ndk: &Path, host: &str, triple: &str) -> Option<PathBuf> {
+    let own = ndk
+        .join("toolchains/llvm/prebuilt")
+        .join(host)
+        .join("bin")
+        .join(exe(&format!("{triple}{MIN_SDK}-clang")));
+    if own.is_file() {
+        return Some(own);
+    }
+    ndk_clang(ndk, host)
+}
+
 /// The `CARGO_TARGET_*_LINKER` env spelling for `triple`, pointed at the
 /// NDK clang wrapper. Callers merge this into the environment (or a cargo
 /// snippet beside the one `blockstitch-local` uses), never overwriting the
 /// user's own linker choice.
 pub fn cargo_linker_env(config: &AppConfig, triple: &str) -> Option<(String, PathBuf)> {
-    let clang = ndk_clang(&ndk_dir(config), host_tag())?;
+    let clang = ndk_clang_for(&ndk_dir(config), host_tag(), triple)?;
     let var = format!(
         "CARGO_TARGET_{}_LINKER",
         triple.to_uppercase().replace('-', "_")
@@ -888,12 +905,21 @@ fn create_avd_with(
 }
 
 /// The argv an emulator boot takes: the AVD with the boot animation off,
-/// so unattended starts reach the launcher sooner.
+/// so unattended starts reach the launcher sooner. Embedded boots add
+/// `-no-window`: the host window never opens and the editor shows the
+/// screen itself (see `mirror_frame`), Android Studio's tool-window mode.
 pub fn emulator_spawn_args(avd: &str) -> Vec<String> {
-    ["-avd", avd, "-no-boot-anim"]
-        .iter()
-        .map(|arg| arg.to_string())
-        .collect()
+    emulator_spawn_args_with(avd, false)
+}
+
+/// The argv an emulator boot takes, with or without its host window.
+pub fn emulator_spawn_args_with(avd: &str, headless: bool) -> Vec<String> {
+    let mut args = vec!["-avd".to_string(), avd.to_string()];
+    if headless {
+        args.push("-no-window".to_string());
+    }
+    args.push("-no-boot-anim".to_string());
+    args
 }
 
 /// Boots `avd` (the managed default when unset, created on the spot when no
@@ -901,6 +927,18 @@ pub fn emulator_spawn_args(avd: &str) -> Vec<String> {
 /// return right after spawning) for adb to see it booted. Answers the
 /// serial once adb sees it and whether the boot completed in time.
 pub fn start_emulator(avd: Option<&str>, wait_secs: Option<u64>) -> Result<EmulatorBoot, String> {
+    start_emulator_with_options(avd, wait_secs, false)
+}
+
+/// Boots `avd` the way `start_emulator` does, with its host window hidden
+/// when `headless` is true. Embedded boots never open a window: the editor
+/// shows the screen itself (see `mirror_frame`), like Android Studio's
+/// embedded emulator tool window.
+pub fn start_emulator_with_options(
+    avd: Option<&str>,
+    wait_secs: Option<u64>,
+    headless: bool,
+) -> Result<EmulatorBoot, String> {
     let config = load();
     start_emulator_with(
         &emulator_bin(&config),
@@ -908,6 +946,7 @@ pub fn start_emulator(avd: Option<&str>, wait_secs: Option<u64>) -> Result<Emula
         system_image_dir(&config).is_dir(),
         avd,
         wait_secs.unwrap_or(BOOT_WAIT_SECS),
+        headless,
     )
 }
 
@@ -918,6 +957,7 @@ fn start_emulator_with(
     image_present: bool,
     avd: Option<&str>,
     wait_secs: u64,
+    headless: bool,
 ) -> Result<EmulatorBoot, String> {
     if !emulator.is_file() {
         return Err("No emulator: run Install / update SDK to fetch it.".to_string());
@@ -953,7 +993,7 @@ fn start_emulator_with(
         .map(|device| device.serial)
         .collect();
     Command::new(emulator)
-        .args(emulator_spawn_args(avd))
+        .args(emulator_spawn_args_with(avd, headless))
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -1083,6 +1123,274 @@ pub fn stop_emulator(serial: Option<&str>) -> Result<String, String> {
     if !output.status.success() {
         return Err(format!(
             "Couldn't stop {serial}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(serial)
+}
+
+// ─── Embedded mirror ─────────────────────────────────────────────────────
+// Android Studio's emulator tool window, minus the video codec: a headless
+// boot (`-no-window`, see `start_emulator_with_options`) whose screen the
+// editor polls as downscaled PNGs and whose touch the editor forwards
+// through `adb shell input`. Polling `screencap` runs a few frames a
+// second - fine for menus and turn-based games, while action games keep
+// the external window. A later pass can swap the transport for scrcpy's
+// H.264 stream; the QML side already speaks frames plus fractional taps.
+
+/// The widest frame the mirror answers, in pixels. A phone screenshot is
+/// megabytes as PNG; a 360-wide one is tens of kilobytes and still sharp
+/// in the editor panel.
+pub const MIRROR_DEFAULT_WIDTH: u32 = 360;
+/// Hard bounds on the asked width, so a typo can't ask for an 8K PNG.
+pub const MIRROR_MIN_WIDTH: u32 = 144;
+/// Hard bounds on the asked width, so a typo can't ask for an 8K PNG.
+pub const MIRROR_MAX_WIDTH: u32 = 720;
+
+/// One polled screen: a `data:image/png;base64` URL the QML Image shows,
+/// its pixel size, and the device's own pixel size for input mapping.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MirrorFrame {
+    pub image: String,
+    pub width: u32,
+    pub height: u32,
+    pub device_width: u32,
+    pub device_height: u32,
+}
+
+/// Grabs `device`'s screen (or the only device when unset) as a downscaled
+/// PNG data URL. Physical phones mirror too; anything adb sees works.
+pub fn mirror_frame(device: Option<&str>, max_width: Option<u32>) -> Result<MirrorFrame, String> {
+    let adb = adb_path();
+    if !adb.is_file() {
+        return Err("No adb: install platform-tools in App Settings first.".to_string());
+    }
+    let serial = resolve_mirror_serial(&adb, device)?;
+    let output = Command::new(&adb)
+        .arg("-s")
+        .arg(&serial)
+        .arg("exec-out")
+        .arg("screencap")
+        .arg("-p")
+        .output()
+        .map_err(|e| format!("Couldn't run {}: {e}", adb.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Couldn't grab {serial}'s screen: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    // `exec-out` on Windows CRLF-mangles binary stdout; adb already wrote
+    // the PNG with lone LFs, so strip CRs back out before decoding.
+    let raw: Vec<u8> = output.stdout.into_iter().filter(|b| *b != b'\r').collect();
+    let shot = image::load_from_memory(&raw)
+        .map_err(|e| format!("Couldn't decode {serial}'s screenshot: {e}"))?;
+    let width = max_width
+        .unwrap_or(MIRROR_DEFAULT_WIDTH)
+        .clamp(MIRROR_MIN_WIDTH, MIRROR_MAX_WIDTH);
+    let small = shot.thumbnail(width, u32::MAX);
+    let mut png = Vec::new();
+    small
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|e| format!("Couldn't pack {serial}'s screenshot: {e}"))?;
+    let (device_width, device_height) =
+        device_size_with_adb(&adb, &serial).unwrap_or((small.width(), small.height()));
+    use base64::Engine;
+    Ok(MirrorFrame {
+        image: format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&png)
+        ),
+        width: small.width(),
+        height: small.height(),
+        device_width,
+        device_height,
+    })
+}
+
+/// Picks the serial a mirror command talks to: the named one, or the only
+/// device when unset. Several devices need naming, like `stop_emulator`.
+fn resolve_mirror_serial(adb: &Path, device: Option<&str>) -> Result<String, String> {
+    if let Some(serial) = device.map(str::trim).filter(|s| !s.is_empty()) {
+        return Ok(serial.to_string());
+    }
+    let devices = devices_with_adb(adb)?;
+    match devices.len() {
+        0 => Err("No devices: connect a phone or start an emulator first.".to_string()),
+        1 => Ok(devices
+            .into_iter()
+            .next()
+            .map(|d| d.serial)
+            .unwrap_or_default()),
+        _ => Err(format!(
+            "Several devices are connected ({}). Name one's serial.",
+            devices
+                .into_iter()
+                .map(|d| d.serial)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+/// The device's own pixel size through `adb shell wm size`, or why not.
+pub fn device_size(device: Option<&str>) -> Result<(u32, u32), String> {
+    let adb = adb_path();
+    if !adb.is_file() {
+        return Err("No adb: install platform-tools in App Settings first.".to_string());
+    }
+    let serial = resolve_mirror_serial(&adb, device)?;
+    device_size_with_adb(&adb, &serial)
+}
+
+fn device_size_with_adb(adb: &Path, serial: &str) -> Result<(u32, u32), String> {
+    let output = Command::new(adb)
+        .arg("-s")
+        .arg(serial)
+        .arg("shell")
+        .arg("wm")
+        .arg("size")
+        .output()
+        .map_err(|e| format!("Couldn't run {}: {e}", adb.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Couldn't read {serial}'s screen size: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    parse_wm_size(&String::from_utf8_lossy(&output.stdout)).ok_or_else(|| {
+        format!("Couldn't read {serial}'s screen size: unexpected `wm size` output.")
+    })
+}
+
+/// Reads `Physical size: 1080x2400` (or `Override size:`) out of `wm size`.
+fn parse_wm_size(text: &str) -> Option<(u32, u32)> {
+    for line in text.lines() {
+        let (_, dims) = line.split_once(':')?;
+        let (w, h) = dims.trim().split_once('x')?;
+        if let (Ok(w), Ok(h)) = (w.trim().parse(), h.trim().parse()) {
+            return Some((w, h));
+        }
+    }
+    None
+}
+
+/// Maps a fractional point (0..1 across the mirror image) onto device
+/// pixels. The QML side sends fractions; the device wants pixels.
+fn mirror_point(x: f32, y: f32, device_width: u32, device_height: u32) -> (u32, u32) {
+    (
+        (x.clamp(0.0, 1.0) * device_width as f32).round() as u32,
+        (y.clamp(0.0, 1.0) * device_height as f32).round() as u32,
+    )
+}
+
+/// Taps `device` at the fractional point `x, y` (0..1 across the mirror
+/// image). What a click on the embedded screen becomes.
+pub fn mirror_tap(device: Option<&str>, x: f32, y: f32) -> Result<String, String> {
+    let adb = adb_path();
+    if !adb.is_file() {
+        return Err("No adb: install platform-tools in App Settings first.".to_string());
+    }
+    let serial = resolve_mirror_serial(&adb, device)?;
+    let (dw, dh) = device_size_with_adb(&adb, &serial)?;
+    let (px, py) = mirror_point(x, y, dw, dh);
+    let output = Command::new(&adb)
+        .arg("-s")
+        .arg(&serial)
+        .arg("shell")
+        .arg("input")
+        .arg("tap")
+        .arg(px.to_string())
+        .arg(py.to_string())
+        .output()
+        .map_err(|e| format!("Couldn't run {}: {e}", adb.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Couldn't tap {serial}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(serial)
+}
+
+/// Swipes `device` from one fractional point to another over
+/// `duration_ms`. What a drag across the embedded screen becomes.
+pub fn mirror_swipe(
+    device: Option<&str>,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    duration_ms: Option<u64>,
+) -> Result<String, String> {
+    let adb = adb_path();
+    if !adb.is_file() {
+        return Err("No adb: install platform-tools in App Settings first.".to_string());
+    }
+    let serial = resolve_mirror_serial(&adb, device)?;
+    let (dw, dh) = device_size_with_adb(&adb, &serial)?;
+    let (x1, y1) = mirror_point(x1, y1, dw, dh);
+    let (x2, y2) = mirror_point(x2, y2, dw, dh);
+    let output = Command::new(&adb)
+        .arg("-s")
+        .arg(&serial)
+        .arg("shell")
+        .arg("input")
+        .arg("swipe")
+        .arg(x1.to_string())
+        .arg(y1.to_string())
+        .arg(x2.to_string())
+        .arg(y2.to_string())
+        .arg(duration_ms.unwrap_or(300).to_string())
+        .output()
+        .map_err(|e| format!("Couldn't run {}: {e}", adb.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Couldn't swipe on {serial}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(serial)
+}
+
+/// Presses a named key on `device`: back, home, recents, enter, delete,
+/// tab, power, or volume_up/volume_down/volume_mute. The embedded screen's
+/// hardware buttons.
+pub fn mirror_key(device: Option<&str>, code: &str) -> Result<String, String> {
+    let keycode = match code.trim().to_lowercase().as_str() {
+        "back" | "escape" => "KEYCODE_BACK",
+        "home" => "KEYCODE_HOME",
+        "recents" | "appswitch" => "KEYCODE_APP_SWITCH",
+        "enter" => "KEYCODE_ENTER",
+        "delete" => "KEYCODE_DEL",
+        "tab" => "KEYCODE_TAB",
+        "power" => "KEYCODE_POWER",
+        "volume_up" => "KEYCODE_VOLUME_UP",
+        "volume_down" => "KEYCODE_VOLUME_DOWN",
+        "volume_mute" => "KEYCODE_VOLUME_MUTE",
+        other => {
+            return Err(format!(
+                "\"{other}\" isn't a mirror key: back, home, recents, enter, delete, tab, power, volume_up, volume_down, volume_mute."
+            ));
+        }
+    };
+    let adb = adb_path();
+    if !adb.is_file() {
+        return Err("No adb: install platform-tools in App Settings first.".to_string());
+    }
+    let serial = resolve_mirror_serial(&adb, device)?;
+    let output = Command::new(&adb)
+        .arg("-s")
+        .arg(&serial)
+        .arg("shell")
+        .arg("input")
+        .arg("keyevent")
+        .arg(keycode)
+        .output()
+        .map_err(|e| format!("Couldn't run {}: {e}", adb.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Couldn't press {code} on {serial}: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
@@ -2372,7 +2680,7 @@ pub fn build_runtime_so(config: &AppConfig, triple: &str) -> Result<PathBuf, Str
     if !output.status.success() {
         return Err(format!(
             "cargo couldn't cross-build the runtime for {triple}:\n{}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            trim_cargo_output(&String::from_utf8_lossy(&output.stderr))
         ));
     }
     let target_dir = std::env::var_os("CARGO_TARGET_DIR")
@@ -2389,6 +2697,47 @@ pub fn build_runtime_so(config: &AppConfig, triple: &str) -> Result<PathBuf, Str
             "cargo reported success but {} never landed.",
             so.display()
         ))
+    }
+}
+
+/// Keeps the failure out of a cargo stderr: progress lines (`Compiling`,
+/// `Finished`, downloads) never explain a failure, so they go, and what is
+/// left is capped to the tail where the error and its summary sit. Without
+/// this the Build dialog shows hundreds of red progress lines.
+fn trim_cargo_output(stderr: &str) -> String {
+    let kept: Vec<&str> = stderr
+        .lines()
+        .filter(|line| {
+            let progress = line.trim_start();
+            ![
+                "Compiling ",
+                "Finished ",
+                "Running ",
+                "Downloading ",
+                "Downloaded ",
+                "Locking ",
+                "Updating ",
+                "Adding ",
+                "Removing ",
+                "Checking ",
+                "Fresh ",
+                "Dirty ",
+            ]
+            .iter()
+            .any(|prefix| progress.starts_with(prefix))
+        })
+        .collect();
+    const TAIL: usize = 40;
+    let tail = if kept.len() > TAIL {
+        &kept[kept.len() - TAIL..]
+    } else {
+        &kept[..]
+    };
+    let trimmed = tail.join("\n").trim().to_string();
+    if trimmed.is_empty() {
+        "cargo failed with no output.".to_string()
+    } else {
+        trimmed
     }
 }
 
@@ -2656,6 +3005,48 @@ mod tests {
         assert_eq!(abi(ARM64_TRIPLE), Some("arm64-v8a"));
         assert_eq!(abi(EMULATOR_TRIPLE), Some("x86_64"));
         assert_eq!(abi("wasm32-unknown-unknown"), None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn each_android_triple_links_through_its_own_wrapper() {
+        let root = temp_root("linkers");
+        let bin = root
+            .join("toolchains/llvm/prebuilt")
+            .join(host_tag())
+            .join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        stub_tool(
+            &bin,
+            &format!("{ARM64_TRIPLE}{MIN_SDK}-clang"),
+            "#!/bin/sh\n",
+        );
+        stub_tool(
+            &bin,
+            &format!("{EMULATOR_TRIPLE}{MIN_SDK}-clang"),
+            "#!/bin/sh\n",
+        );
+        let config = AppConfig {
+            ndk_path: Some(root.clone()),
+            ..AppConfig::default()
+        };
+        // Each triple takes its own wrapper: an arm64 wrapper cannot link
+        // x86_64 objects, which is what broke the emulator row's build.
+        let (_, arm64) = cargo_linker_env(&config, ARM64_TRIPLE).unwrap();
+        assert!(arm64.to_string_lossy().contains(ARM64_TRIPLE), "{arm64:?}");
+        let (_, emulator) = cargo_linker_env(&config, EMULATOR_TRIPLE).unwrap();
+        assert!(
+            emulator.to_string_lossy().contains(EMULATOR_TRIPLE),
+            "{emulator:?}"
+        );
+        // One wrapper left still links the other triple, as before.
+        std::fs::remove_file(bin.join(format!("{EMULATOR_TRIPLE}{MIN_SDK}-clang"))).unwrap();
+        let (_, fallback) = cargo_linker_env(&config, EMULATOR_TRIPLE).unwrap();
+        assert!(
+            fallback.to_string_lossy().contains(ARM64_TRIPLE),
+            "{fallback:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -3079,6 +3470,71 @@ mod tests {
                 "-no-boot-anim".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn embedded_boots_hide_the_host_window() {
+        assert_eq!(
+            emulator_spawn_args_with("blockloom", true),
+            vec![
+                "-avd".to_string(),
+                "blockloom".to_string(),
+                "-no-window".to_string(),
+                "-no-boot-anim".to_string()
+            ]
+        );
+        assert_eq!(
+            emulator_spawn_args_with("blockloom", false),
+            emulator_spawn_args("blockloom")
+        );
+    }
+
+    #[test]
+    fn wm_size_reads_physical_and_override_lines() {
+        assert_eq!(
+            parse_wm_size("Physical size: 1080x2400\n"),
+            Some((1080, 2400))
+        );
+        assert_eq!(
+            parse_wm_size("Physical size: 1080x2400\nOverride size: 720x1600\n"),
+            Some((1080, 2400))
+        );
+        assert_eq!(parse_wm_size("nope\n"), None);
+    }
+
+    #[test]
+    fn mirror_points_clamp_to_the_screen() {
+        assert_eq!(mirror_point(0.5, 0.5, 1080, 2400), (540, 1200));
+        assert_eq!(mirror_point(-1.0, 2.0, 1080, 2400), (0, 2400));
+        assert_eq!(mirror_point(1.0, 1.0, 1080, 2400), (1080, 2400));
+    }
+
+    #[test]
+    fn mirror_keys_refuse_unknown_names() {
+        assert!(mirror_key(Some("emulator-5554"), "eject").is_err());
+    }
+
+    #[test]
+    fn cargo_failures_keep_the_error_not_the_progress() {
+        let stderr = "   Compiling cfg-if v1.0.5\n   Compiling log v0.4.34\nerror: linker `x86_64-linux-android29-clang` not found\n  |\n  = note: No such file\nerror: could not compile `blockloom-runtime` due to 1 previous error\n";
+        let trimmed = trim_cargo_output(stderr);
+        assert!(!trimmed.contains("Compiling"), "{trimmed}");
+        assert!(trimmed.contains("linker"), "{trimmed}");
+        assert!(trimmed.contains("could not compile"), "{trimmed}");
+        // A wall of progress with no error still answers something.
+        let progress = (0..100)
+            .map(|n| format!("   Compiling crate{n} v0.1.0"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!trim_cargo_output(&progress).contains("Compiling"));
+        // Long errors cap to the tail where the summary sits.
+        let long = (0..100)
+            .map(|n| format!("error: problem {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let tail = trim_cargo_output(&long);
+        assert!(tail.lines().count() <= 40, "{}", tail.lines().count());
+        assert!(tail.contains("problem 99"), "{tail}");
     }
 
     #[test]
