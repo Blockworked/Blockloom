@@ -2242,3 +2242,131 @@ fn the_director_reporters_read_the_fixed_tick_slot() {
     );
     assert_eq!(by_name.eval(), Ok(Evaluated::Number(6.5)));
 }
+
+#[test]
+fn the_cutscene_blocks_ask_for_reels_shake_time_and_chrome() {
+    let project = project_with(vec![started(vec![
+        InstructionKind::PlayCutscene {
+            cutscene: Value::text("  Opener  "),
+        },
+        InstructionKind::SkipCutscene,
+        InstructionKind::CameraShake {
+            amount: Value::number(0.7),
+        },
+        InstructionKind::SetTimeScale {
+            scale: Value::number(0.5),
+        },
+        InstructionKind::Hitstop {
+            frames: Value::number(3.0),
+        },
+        InstructionKind::SetLetterbox {
+            on: Value::number(1.0),
+        },
+        InstructionKind::FadeScreen {
+            color: Value::text("CURTAIN"),
+        },
+    ])]);
+    let effects = Harness::started(&project).run(1);
+    assert_eq!(
+        effects
+            .iter()
+            .filter(|effect| !matches!(effect, Effect::Error { .. }))
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![
+            // The name is trimmed, as it is everywhere a block names
+            // something.
+            Effect::PlayCutscene {
+                cutscene: "Opener".to_string(),
+            },
+            Effect::SkipCutscene,
+            Effect::CameraShake { amount: 0.7 },
+            Effect::SetTimeScale { scale: 0.5 },
+            Effect::Hitstop { frames: 3.0 },
+            Effect::SetLetterbox { on: 1.0 },
+            // An unknown fade color reads as none, like transitions.
+            Effect::FadeScreen {
+                color: "none".to_string(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_cutscene_signal_starts_only_the_strand_that_names_it() {
+    let project = project_with(vec![
+        Strand::with_instructions(
+            0,
+            0,
+            vec![
+                ins(InstructionKind::WhenCutsceneSignal {
+                    signal: "beat".to_string(),
+                }),
+                ins(say("the beat drops")),
+            ],
+        ),
+        Strand::with_instructions(
+            0,
+            400,
+            vec![
+                ins(InstructionKind::WhenCutsceneSignal {
+                    signal: "sting".to_string(),
+                }),
+                ins(say("never")),
+            ],
+        ),
+        Strand::with_instructions(
+            0,
+            800,
+            vec![
+                ins(InstructionKind::WhenCutsceneSignal {
+                    signal: "".to_string(),
+                }),
+                ins(say("any signal")),
+            ],
+        ),
+    ]);
+    let mut vm = Harness::new(&project);
+    vm.vm.fire(Event::CutsceneSignal {
+        signal: "Beat".to_string(),
+    });
+    assert_eq!(
+        says(&vm.run(1)),
+        vec!["the beat drops".to_string(), "any signal".to_string()]
+    );
+}
+
+#[test]
+fn a_cutscene_end_runs_its_strands() {
+    let project = project_with(vec![Strand::with_instructions(
+        0,
+        0,
+        vec![
+            ins(InstructionKind::WhenCutsceneEnds),
+            ins(say("curtain down")),
+        ],
+    )]);
+    let mut vm = Harness::new(&project);
+    vm.vm.fire(Event::CutsceneEnded {
+        cutscene: "Opener".to_string(),
+    });
+    assert_eq!(says(&vm.run(1)), vec!["curtain down".to_string()]);
+}
+
+#[test]
+fn the_cutscene_reporters_read_the_published_snapshot() {
+    use blockloom_core::sense;
+    blockloom_core::init();
+    sense::publish(Sensors {
+        cutscene_name: "Opener".to_string(),
+        cutscene_time: 4.25,
+        ..Default::default()
+    });
+    let playing = Value::op(Op::from_name("IsCutscenePlaying"), vec![]);
+    assert_eq!(playing.eval(), Ok(Evaluated::Bool(true)));
+    let time = Value::op(Op::from_name("CutsceneTime"), vec![]);
+    assert_eq!(time.eval(), Ok(Evaluated::Number(4.25)));
+    sense::publish(Sensors::default());
+    let playing = Value::op(Op::from_name("IsCutscenePlaying"), vec![]);
+    assert_eq!(playing.eval(), Ok(Evaluated::Bool(false)));
+}

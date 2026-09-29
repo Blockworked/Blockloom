@@ -29,6 +29,7 @@ mod batching;
 mod beams;
 mod bridge;
 mod capture;
+mod cinematic;
 mod cloud_layers;
 mod clouds;
 mod culling;
@@ -233,6 +234,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .init_resource::<PendingEffects>()
         .init_resource::<world::NavMesh>()
         .init_resource::<ui::UiManager>()
+        .init_resource::<ui::DeviceInsets>()
         .init_resource::<sound::SoundState>()
         .init_resource::<fx::FxCache>()
         .init_resource::<performance::RenderCache>()
@@ -270,6 +272,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     decals::register(app);
     destruction::register(app);
     director::register(app);
+    cinematic::register(app);
     wind::register(app);
     vfx::register(app, mode);
     water::register(app, mode);

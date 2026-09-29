@@ -282,6 +282,12 @@ impl ScriptEvent {
                 ScriptEvent::new(abi::EVENT_ENTERED_ROOM, room),
             ),
             Event::Weather { weather } => (None, ScriptEvent::new(abi::EVENT_WEATHER, weather)),
+            Event::CutsceneSignal { signal } => {
+                (None, ScriptEvent::new(abi::EVENT_CUTSCENE_SIGNAL, signal))
+            }
+            Event::CutsceneEnded { cutscene } => {
+                (None, ScriptEvent::new(abi::EVENT_CUTSCENE_ENDED, cutscene))
+            }
         })
     }
 }
@@ -571,6 +577,7 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
         abi::READ_FRAME_TIME => Some(sense::read(|s| s.performance.frame_ms)),
         abi::READ_DRAW_CALLS => Some(sense::read(|s| s.performance.draw_calls) as f64),
         abi::READ_DLSS_AVAILABLE => bool_as(sense::read(|s| s.performance.dlss_available)),
+        abi::READ_CUTSCENE_TIME => Some(sense::read(|s| s.cutscene_time) as f64),
         abi::READ_ATMOSPHERE => sense::read(|sensors| sensors.atmosphere.field(a)),
         abi::READ_WATER => {
             let mut at = a.split_whitespace().map(|n| n.parse::<f32>().ok());
@@ -788,6 +795,9 @@ fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
         }),
         abi::TEXT_CURRENT_WEATHER => sense::read(|sensors| {
             Some(sensors.atmosphere.weather.clone()).filter(|name| !name.is_empty())
+        }),
+        abi::TEXT_CUTSCENE_NAME => sense::read(|sensors| {
+            Some(sensors.cutscene_name.clone()).filter(|name| !name.is_empty())
         }),
         abi::TEXT_SCENE_NAMES => {
             serde_json::to_string(&sense::read(|s| s.scene_names.clone())).ok()
@@ -1263,6 +1273,17 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
         abi::ACT_BLEND_WEATHER => Effect::BlendWeather {
             weather: a.trim().to_string(),
             seconds: n0 as f32,
+        },
+        abi::ACT_PLAY_CUTSCENE => Effect::PlayCutscene {
+            cutscene: a.trim().to_string(),
+        },
+        abi::ACT_SKIP_CUTSCENE => Effect::SkipCutscene,
+        abi::ACT_CAMERA_SHAKE => Effect::CameraShake { amount: n0 as f32 },
+        abi::ACT_SET_TIME_SCALE => Effect::SetTimeScale { scale: n0 as f32 },
+        abi::ACT_HITSTOP => Effect::Hitstop { frames: n0 as f32 },
+        abi::ACT_SET_LETTERBOX => Effect::SetLetterbox { on: n0 as f32 },
+        abi::ACT_FADE_SCREEN => Effect::FadeScreen {
+            color: blockloom_core::cinematic::normalize_fade(&a),
         },
         abi::ACT_PAINT_TILE => Effect::PaintTile {
             actor,

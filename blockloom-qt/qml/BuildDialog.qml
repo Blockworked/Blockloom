@@ -22,24 +22,40 @@ BwDialog {
     readonly property bool android: !!chosen && chosen.triple.indexOf("linux-android") >= 0
     readonly property var chosen: targets.find(t => t.triple === triple) || null
     // Install on a connected device: behind adb, listed when the APK lands.
+    // After a launch the dialog polls the device log into the RunLog (see
+    // `android_logcat_tail`): each poll clears the buffer, so every answer
+    // holds only what arrived since the last.
     property var devices: []
     property string device: ""
     property string installState: ""
     property string installError: ""
     property bool installing: false
     property string logcat: ""
+    property bool polling: false
     // Release signing: the project's key rows, and this build's passwords.
-    // Passwords live in these fields only, never in the project or config.
+    // Passwords live in these fields only, never in the project or config -
+    // unless remembered into the OS keyring below, which the next build
+    // reads back instead of asking.
     readonly property string releaseKeystore: app.appState.project && app.appState.project.android ? (app.appState.project.android.keystore || "") : ""
     readonly property string releaseAlias: app.appState.project && app.appState.project.android ? (app.appState.project.android.key_alias || "") : ""
     property string storePass: ""
     property string keyPass: ""
+    property bool remember: false
+    property var keyring: ({available: false, store_saved: false, key_saved: false})
     function sizeText(bytes) {
         if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB";
         return Math.max(1, Math.round(bytes / 1024)) + " KB";
     }
 
-    onChosenChanged: { fast = !!chosen && chosen.fast_ready; hdr = !chosen || chosen.hdr !== false; }
+    onChosenChanged: { fast = !!chosen && chosen.fast_ready; hdr = !chosen || chosen.hdr !== false; root.refreshKeyring(); }
+    onClosed: polling = false
+    // The stream behind `pollLogcat`: every two seconds the device log is
+    // dumped, cleared and appended to the RunLog, until the dialog closes
+    // or a new build or install restarts it.
+    Timer {
+        interval: 2000; running: root.polling; repeat: true
+        onTriggered: root.pollLogcat()
+    }
     title: "Build a game"
     standardButtons: Dialog.NoButton
     // Fixed width so long notes and target labels wrap instead of stretching
@@ -48,29 +64,40 @@ BwDialog {
 
     onOpened: {
         error = ""; built = null; busy = false;
-        devices = []; device = ""; installState = ""; installError = ""; logcat = "";
-        storePass = ""; keyPass = "";
+        devices = []; device = ""; installState = ""; installError = ""; logcat = ""; polling = false;
+        storePass = ""; keyPass = ""; remember = false;
+        keyring = ({available: false, store_saved: false, key_saved: false});
         locationField.text = app.appState.default_build_location || app.appState.default_project_location;
         app.invoke("list_build_targets", {}, list => {
             targets = list;
             // This machine comes first and can always build, so it is the default.
             const ready = list.find(t => t.ready) || list[0];
             triple = ready ? ready.triple : "";
+            root.refreshKeyring();
         }, e => error = String(e));
+    }
+    function refreshKeyring() {
+        if (!root.android) return;
+        app.invoke("android_keyring_status", {}, s => { keyring = s; }, e => {});
+    }
+    function forgetKeyring() {
+        app.invoke("android_forget_passwords", {}, forgot => { root.refreshKeyring(); }, e => installError = String(e));
     }
     function submit() {
         if (busy || !chosen || !chosen.ready) return;
         busy = true; error = ""; built = null;
-        installState = ""; installError = ""; logcat = "";
+        installState = ""; installError = ""; logcat = ""; polling = false;
         const args = { path: locationField.text.trim(), target: triple, fast: fast, hdr: root.android || root.web ? false : hdr };
         // Passwords ride this call only: a release row without them stops
         // the build with where to type them, and headless reads the env.
+        // Remembered ones are already in the keyring, so empty fields do.
         if (root.android && root.releaseKeystore !== "") {
             args.storePass = storePass;
             args.keyPass = keyPass;
+            args.rememberPasswords = remember;
         }
         app.invoke("build_game", args,
-            result => { busy = false; built = result; storePass = ""; keyPass = ""; if (root.android) root.listDevices(); }, e => { busy = false; error = String(e); });
+            result => { busy = false; built = result; storePass = ""; keyPass = ""; remember = false; if (root.android) { root.refreshKeyring(); root.listDevices(); } }, e => { busy = false; error = String(e); });
     }
     function listDevices() {
         app.invoke("android_device_status", {}, result => {
@@ -81,7 +108,7 @@ BwDialog {
     }
     function install() {
         if (installing || !built || !built.binary) return;
-        installing = true; installState = ""; installError = ""; logcat = "";
+        installing = true; installState = ""; installError = ""; logcat = ""; polling = false;
         app.invoke("android_device_status", {}, result => {
             devices = result || [];
             const serial = device || (devices.length === 1 ? devices[0].serial : "");
@@ -89,15 +116,24 @@ BwDialog {
             // the launch names the right component whatever the rows say.
             app.invoke("android_install", { apk: built.binary, app: built.application_id, device: serial || undefined },
                 launched => {
-                    installState = "Installed and launched " + launched.component + (launched.device ? " on " + launched.device : "") + ".";
-                    app.invoke("android_logcat", serial ? { device: serial } : {}, dump => {
-                        installing = false;
-                        const lines = (dump.lines || []).concat(dump.panics || []);
-                        logcat = lines.join("\n");
-                        if ((dump.panics || []).length) installError = "The device log reports a native crash - see below.";
-                    }, e => { installing = false; installError = String(e); });
+                    installing = false;
+                    installState = "Installed and launched " + launched.component + (launched.device ? " on " + launched.device : "") + ". Streaming the device log into the RunLog below.";
+                    // The install cleared the buffer, so the first poll reads
+                    // only the fresh run; every poll after it only the new.
+                    polling = true;
+                    root.pollLogcat();
                 }, e => { installing = false; installError = String(e); });
         }, e => { installing = false; installError = String(e); });
+    }
+    function pollLogcat() {
+        if (!polling) return;
+        const serial = device || (devices.length === 1 ? devices[0].serial : "");
+        app.invoke("android_logcat_tail", serial ? { device: serial } : {}, dump => {
+            if (!polling) return;
+            const lines = (dump.lines || []).concat(dump.panics || []);
+            if (lines.length) logcat = (logcat ? logcat + "\n" : "") + lines.join("\n");
+            if ((dump.panics || []).length) installError = "The device log reports a native crash - see below and in the RunLog.";
+        }, e => { if (polling) installError = String(e); });
     }
 
     ColumnLayout {
@@ -137,7 +173,9 @@ BwDialog {
             Text { visible: root.releaseKeystore === ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
                 text: "Debug-signed: fine for devices, refused by the Play store. Pick a release key file plus alias in Project settings for store uploads - or make one below." }
             ColumnLayout { visible: root.releaseKeystore !== ""; Layout.fillWidth: true; spacing: 6
-                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: "Release key: " + root.releaseKeystore + " (" + (root.releaseAlias || "no alias set") + "). Passwords are asked on every build and never stored; headless builds read BLOCKLOOM_ANDROID_STORE_PASS / BLOCKLOOM_ANDROID_KEY_PASS instead." }
+                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: "Release key: " + root.releaseKeystore + " (" + (root.releaseAlias || "no alias set") + "). Passwords are asked on every build and never stored unless remembered below; headless builds read BLOCKLOOM_ANDROID_STORE_PASS / BLOCKLOOM_ANDROID_KEY_PASS instead." }
+                Text { visible: root.keyring.store_saved || root.keyring.key_saved; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
+                    text: "The system keyring holds the passwords - leave the fields empty to reuse them, or type new ones." }
                 RowLayout {
                     Layout.fillWidth: true; spacing: 8
                     Text { text: "Keystore password"; color: Theme.textDim; font.pixelSize: 12; Layout.preferredWidth: 130 }
@@ -148,6 +186,14 @@ BwDialog {
                     Text { text: "Key password"; color: Theme.textDim; font.pixelSize: 12; Layout.preferredWidth: 130 }
                     BwTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: root.keyPass; placeholderText: "Empty means the keystore password"; onTextChanged: root.keyPass = text }
                 }
+                RowLayout {
+                    visible: root.keyring.available; Layout.fillWidth: true; spacing: 8
+                    BwCheckBox { text: "Remember passwords in the system keyring"; checked: root.remember; onToggled: root.remember = checked }
+                    Item { Layout.fillWidth: true }
+                    BwButton { visible: root.keyring.store_saved || root.keyring.key_saved; text: "Forget saved"; onClicked: root.forgetKeyring() }
+                }
+                Text { visible: !root.keyring.available; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
+                    text: "No scriptable system keyring on this machine, so every build asks." }
             }
             BwButton { text: "Create a new release key..."; onClicked: { newKey.error = ""; newKey.open(); } }
         }
@@ -182,20 +228,21 @@ BwDialog {
         property string keyAlias: ""
         property string keyStorePass: ""
         property string keyKeyPass: ""
+        property bool remember: false
         property bool busy: false
         title: "Create a release key"
         standardButtons: Dialog.NoButton
         width: 480
-        onOpened: { error = ""; busy = false; }
+        onOpened: { error = ""; busy = false; remember = false; }
         function create() {
             if (busy || keyPath.trim() === "" || keyAlias.trim() === "") return;
             busy = true; error = "";
-            app.invoke("android_create_keystore", { path: keyPath.trim(), alias: keyAlias.trim(), storePass: keyStorePass, keyPass: keyKeyPass },
+            app.invoke("android_create_keystore", { path: keyPath.trim(), alias: keyAlias.trim(), storePass: keyStorePass, keyPass: keyKeyPass, rememberPasswords: newKey.remember },
                 aliases => {
                     busy = false;
                     // The new key signs this project from now on.
                     app.invoke("set_android_settings", { keystore: keyPath.trim(), keyAlias: keyAlias.trim() },
-                        () => newKey.close(), e => error = String(e));
+                        () => { newKey.close(); root.refreshKeyring(); }, e => error = String(e));
                 }, e => { busy = false; error = String(e); });
         }
         ColumnLayout {
@@ -215,6 +262,7 @@ BwDialog {
             BwTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: newKey.keyStorePass; placeholderText: "At least 6 characters"; onTextChanged: newKey.keyStorePass = text }
             Text { text: "Key password"; color: Theme.textDim; font.pixelSize: 12 }
             BwTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: newKey.keyKeyPass; placeholderText: "Empty means the keystore password"; onTextChanged: newKey.keyKeyPass = text }
+            BwCheckBox { visible: root.keyring.available; text: "Remember passwords in the system keyring"; checked: newKey.remember; onToggled: newKey.remember = checked }
             RowLayout {
                 Layout.alignment: Qt.AlignRight; Layout.topMargin: 8; spacing: 8
                 BwButton { text: "Cancel"; onClicked: newKey.close() }

@@ -320,6 +320,14 @@ pub enum Event {
     Weather {
         weather: String,
     },
+    /// The playing cutscene passed the named signal marker.
+    CutsceneSignal {
+        signal: String,
+    },
+    /// The playing cutscene reached its end marker, by name.
+    CutsceneEnded {
+        cutscene: String,
+    },
     /// The named input action went down, in lowercase action spelling.
     Action(String),
     /// A finger touched the screen.
@@ -793,6 +801,10 @@ impl Vm {
             (Trigger::Weather { weather: want }, Event::Weather { weather }) => {
                 want.is_empty() || want.eq_ignore_ascii_case(weather)
             }
+            (Trigger::CutsceneSignal { signal: want }, Event::CutsceneSignal { signal }) => {
+                want.is_empty() || want.eq_ignore_ascii_case(signal)
+            }
+            (Trigger::CutsceneEnded, Event::CutsceneEnded { .. }) => true,
             (Trigger::ActionPressed(want), Event::Action(got)) => want == got,
             (Trigger::Touched, Event::Touched) => true,
             (
@@ -1654,6 +1666,35 @@ impl Vm {
                 out.push(Effect::BlendWeather {
                     weather: weather.trim().to_string(),
                     seconds,
+                });
+            }
+            Action::PlayCutscene { cutscene } => {
+                let cutscene = self.eval(cutscene, actor, params, temps, out).as_text();
+                out.push(Effect::PlayCutscene {
+                    cutscene: cutscene.trim().to_string(),
+                });
+            }
+            Action::SkipCutscene => out.push(Effect::SkipCutscene),
+            Action::CameraShake { amount } => {
+                let amount = self.eval_f32(amount, actor, params, temps, out);
+                out.push(Effect::CameraShake { amount });
+            }
+            Action::SetTimeScale { scale } => {
+                let scale = self.eval_f32(scale, actor, params, temps, out);
+                out.push(Effect::SetTimeScale { scale });
+            }
+            Action::Hitstop { frames } => {
+                let frames = self.eval_f32(frames, actor, params, temps, out);
+                out.push(Effect::Hitstop { frames });
+            }
+            Action::SetLetterbox { on } => {
+                let on = self.eval_f32(on, actor, params, temps, out);
+                out.push(Effect::SetLetterbox { on });
+            }
+            Action::FadeScreen { color } => {
+                let color = self.eval(color, actor, params, temps, out).as_text();
+                out.push(Effect::FadeScreen {
+                    color: crate::cinematic::normalize_fade(&color),
                 });
             }
             Action::SetWater { property, value } => {

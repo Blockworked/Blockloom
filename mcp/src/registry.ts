@@ -41,7 +41,7 @@ function proseToSchema(ty: string): z.ZodType {
   }
   if (STRING_KINDS.has(ty)) return z.string();
   if (ty === "number") return z.number();
-  if (ty === "bool" || ty === "boolean (default: on when available)") return z.boolean();
+  if (ty === "bool" || ty.startsWith("boolean")) return z.boolean();
   if (ty === "#RRGGBB") return z.string().regex(/^#[0-9a-fA-F]{6}$/);
   if (ty === "[x, y, z]") return z.array(z.number());
   if (ty === "[[u, v]]" || ty === "[[x0, y0, x1, y1]]") return z.array(z.array(z.number()));

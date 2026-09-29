@@ -1469,6 +1469,9 @@ pub struct World {
     /// The particle budget and where emitters simulate.
     #[serde(default)]
     pub vfx: crate::vfx::VfxSettings,
+    /// Named camera reels that `play cutscene` runs on the wall clock.
+    #[serde(default)]
+    pub cutscenes: Vec<crate::cinematic::Cutscene>,
 }
 
 fn default_background() -> String {
@@ -1512,6 +1515,7 @@ impl Default for World {
             director: crate::director::Director::default(),
             surface: crate::material::SurfaceWeather::default(),
             vfx: crate::vfx::VfxSettings::default(),
+            cutscenes: Vec::new(),
         }
     }
 }

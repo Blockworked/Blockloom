@@ -1019,6 +1019,28 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "IsCutscenePlaying",
+        op: "IsCutscenePlaying",
+        arity: 0,
+        default_args: Vec::new,
+        // Whether a cutscene reel is playing right now. Sampled with the
+        // sensors each frame from the wall-clock player, so VM and compiled
+        // logic agree.
+        eval: |_| {
+            Ok(Evaluated::Bool(sense::read(|s| {
+                !s.cutscene_name.is_empty()
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "CutsceneTime",
+        op: "CutsceneTime",
+        arity: 0,
+        default_args: Vec::new,
+        // Seconds into the playing cutscene, or 0 with none playing.
+        eval: |_| Ok(Evaluated::Number(sense::read(|s| s.cutscene_time) as f64)),
+    },
+    ExtOperator {
         kind: "SceneNames",
         op: "SceneNames",
         arity: 0,

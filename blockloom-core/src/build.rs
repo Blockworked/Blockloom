@@ -367,12 +367,18 @@ pub struct BuildOptions {
     /// Clamp the player to an 8-bit SDR frame, for targets too weak for
     /// FP16 targets and HDR output.
     pub sdr_only: bool,
-    /// Release keystore password for this build only. `None` reads the env
-    /// (see `android::STORE_PASS_ENV`); ignored off Android. Never stored.
+    /// Release keystore password for this build only. `None` reads the env,
+    /// then the OS keyring (see `android::STORE_PASS_ENV`); ignored off
+    /// Android. Never stored unless `remember_passwords` says so.
     pub store_pass: Option<String>,
     /// Release key password when it differs from the store's. Falls back
-    /// to the store password; ignored off Android. Never stored.
+    /// to the store password; ignored off Android. Never stored unless
+    /// `remember_passwords` says so.
     pub key_pass: Option<String>,
+    /// Keep the release passwords in the OS keyring after a successful
+    /// build, so the next one can skip typing them. Opt-in per build, and
+    /// only written when the APK signed: a failed build remembers nothing.
+    pub remember_passwords: bool,
 }
 
 /// Where a build landed, and what went into it.
@@ -751,6 +757,16 @@ fn build_android_with_config(
     report.application_id = project.android.application_id_for(&project.name)?;
     report.version_name = project.android.version_name_or_default();
     report.version_code = project.android.version_code_or_default();
+    if options.remember_passwords && signing.release {
+        // The APK just signed with these, so they are worth keeping. A
+        // keyring that won't keep them only affects the next build's
+        // typing, never this one's success.
+        let _ = android::remember_signing(
+            &project.android,
+            options.store_pass.as_deref(),
+            options.key_pass.as_deref(),
+        );
+    }
 
     let archive = parent.join(format!("{}.zip", build_name(project, target)));
     distribution::archive(&dir, &archive, &[])?;

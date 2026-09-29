@@ -505,6 +505,7 @@ pub fn canvas(
     mut manager: ResMut<UiManager>,
     cameras: Query<&Camera, With<crate::world::WorldCamera>>,
     ui_scale: Res<bevy::ui::UiScale>,
+    insets: Option<Res<crate::ui::DeviceInsets>>,
     mut roots: Query<(&mut Node, &mut UiTransform), With<crate::ui::UiRoot>>,
 ) {
     let Some(size) = cameras
@@ -515,7 +516,9 @@ pub fn canvas(
         return;
     };
     let size = size / ui_scale.0.max(0.01);
-    let [left, top, right, bottom] = manager.document.safe_area;
+    let insets = insets.map(|insets| insets.0).unwrap_or([0.; 4]);
+    let [left, top, right, bottom] =
+        blockloom_core::ui::effective_safe_area(manager.document.safe_area, insets);
     let available = (size - Vec2::new(left + right, top + bottom)).max(Vec2::ONE);
     let reference = Vec2::from_array(manager.document.reference_size).max(Vec2::ONE);
     let scale = if manager.document.scale == blockloom_core::ui::UiScale::ScaleWithSize {

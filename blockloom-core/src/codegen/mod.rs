@@ -58,28 +58,30 @@ mod runtime;
 
 pub use runtime::{
     ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_ADVANCE_TIME, ACT_APPLY_IMPULSE, ACT_ATTACH,
-    ACT_BIND_ACTION, ACT_BLEND_WEATHER, ACT_BROADCAST, ACT_BURST_PARTICLES, ACT_CAPTURE_PROBES,
-    ACT_CHANGE_POSITION, ACT_CLEAR_ACTION_BINDINGS, ACT_CREATE_ACTOR, ACT_CREATE_CLONE,
-    ACT_DELETE_ACTOR, ACT_DELETE_ELEMENT, ACT_DETACH, ACT_DICT_CLEAR, ACT_DICT_DELETE_KEY,
-    ACT_DICT_SET, ACT_ENABLE_VOLUME, ACT_ERROR, ACT_FADE_DECALS, ACT_FIRE_ANIMATION_TRIGGER,
-    ACT_FRACTURE, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST,
-    ACT_LIST_ADD, ACT_LIST_CLEAR, ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE,
-    ACT_LIST_REVERSE, ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_PAINT_TILE,
-    ACT_PLAY_ANIMATION, ACT_PLAY_SOUND, ACT_POINT_TOWARDS, ACT_PUFF_SMOKE, ACT_RUMBLE_GAMEPAD,
+    ACT_BIND_ACTION, ACT_BLEND_WEATHER, ACT_BROADCAST, ACT_BURST_PARTICLES, ACT_CAMERA_SHAKE,
+    ACT_CAPTURE_PROBES, ACT_CHANGE_POSITION, ACT_CLEAR_ACTION_BINDINGS, ACT_CREATE_ACTOR,
+    ACT_CREATE_CLONE, ACT_DELETE_ACTOR, ACT_DELETE_ELEMENT, ACT_DETACH, ACT_DICT_CLEAR,
+    ACT_DICT_DELETE_KEY, ACT_DICT_SET, ACT_ENABLE_VOLUME, ACT_ERROR, ACT_FADE_DECALS,
+    ACT_FADE_SCREEN, ACT_FIRE_ANIMATION_TRIGGER, ACT_FRACTURE, ACT_GLIDE, ACT_GO_TO,
+    ACT_HIDE_ELEMENT, ACT_HITSTOP, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD,
+    ACT_LIST_CLEAR, ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE,
+    ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_PAINT_TILE, ACT_PLAY_ANIMATION,
+    ACT_PLAY_CUTSCENE, ACT_PLAY_SOUND, ACT_POINT_TOWARDS, ACT_PUFF_SMOKE, ACT_RUMBLE_GAMEPAD,
     ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_ANIMATION_SPEED, ACT_SET_AURORA, ACT_SET_BODY,
     ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW,
     ACT_SET_CLOUD_DRIFT, ACT_SET_CLOUD_LAYER, ACT_SET_CLOUDS, ACT_SET_COLLISION_LAYER,
     ACT_SET_COLLISION_MASK, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_EMISSIVE_STRENGTH,
     ACT_SET_EMITTER_DIAL, ACT_SET_EMITTER_PLAYING, ACT_SET_EXPOSURE, ACT_SET_FIELD, ACT_SET_FOCUS,
     ACT_SET_FOG_DENSITY, ACT_SET_GI_BOUNCES, ACT_SET_GI_SAMPLES, ACT_SET_GRAVITY,
-    ACT_SET_HDR_OUTPUT, ACT_SET_IK_TARGET, ACT_SET_LIGHT_INTENSITY, ACT_SET_LIGHT_SHADOWS,
-    ACT_SET_LIGHTNING_RATE, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARALLAX, ACT_SET_PARENT,
-    ACT_SET_PAUSED, ACT_SET_PEAK_BRIGHTNESS, ACT_SET_PRECIPITATION, ACT_SET_RAY_TRACING,
-    ACT_SET_RENDER_SETTING, ACT_SET_RIG_SLOT, ACT_SET_ROTATION, ACT_SET_SCALE,
-    ACT_SET_SHADOW_DISTANCE, ACT_SET_SLOT_TINT, ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME,
-    ACT_SET_SPRITE_DIAL, ACT_SET_TIME_OF_DAY, ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER,
-    ACT_SET_UI_PROP, ACT_SET_UI_THEME, ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT,
-    ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT, ACT_SPAWN_DECAL, ACT_SPLASH, ACT_STOP_ANIMATION,
+    ACT_SET_HDR_OUTPUT, ACT_SET_IK_TARGET, ACT_SET_LETTERBOX, ACT_SET_LIGHT_INTENSITY,
+    ACT_SET_LIGHT_SHADOWS, ACT_SET_LIGHTNING_RATE, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED,
+    ACT_SET_PARALLAX, ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_PEAK_BRIGHTNESS,
+    ACT_SET_PRECIPITATION, ACT_SET_RAY_TRACING, ACT_SET_RENDER_SETTING, ACT_SET_RIG_SLOT,
+    ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SHADOW_DISTANCE, ACT_SET_SLOT_TINT,
+    ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_SPRITE_DIAL, ACT_SET_TIME_OF_DAY,
+    ACT_SET_TIME_SCALE, ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME,
+    ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT, ACT_SET_WATER, ACT_SET_WIND,
+    ACT_SHOW_ELEMENT, ACT_SKIP_CUTSCENE, ACT_SPAWN_DECAL, ACT_SPLASH, ACT_STOP_ANIMATION,
     ACT_STOP_SOUND, ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_SWITCH_SCENE, ACT_TURN,
     ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, Act, Actors, Entry,
     Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI,
@@ -429,6 +431,8 @@ fn trigger_name(trigger: &crate::vm::Trigger) -> &'static str {
         Trigger::AnimationMarker { .. } => "AnimationMarker",
         Trigger::EnteredRoom { .. } => "EnteredRoom",
         Trigger::Weather { .. } => "Weather",
+        Trigger::CutsceneSignal { .. } => "CutsceneSignal",
+        Trigger::CutsceneEnded => "CutsceneEnded",
         Trigger::ActionPressed(_) => "Action",
         Trigger::Touched => "Touched",
         Trigger::UiEvent { .. } => "UiEvent",
@@ -448,6 +452,7 @@ fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
         Trigger::AnimationMarker { marker } => marker.clone(),
         Trigger::EnteredRoom { room } => room.clone(),
         Trigger::Weather { weather } => weather.clone(),
+        Trigger::CutsceneSignal { signal } => signal.clone(),
         Trigger::UiEvent { id, event } => format!("{event}\n{id}"),
         Trigger::UiClicked(id) | Trigger::UiChanged(id) => id.clone(),
         Trigger::ActionPressed(action) => action.clone(),
@@ -455,6 +460,7 @@ fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
         | Trigger::QualityDropped
         | Trigger::SceneStarted
         | Trigger::SceneEnded
+        | Trigger::CutsceneEnded
         | Trigger::Clicked
         | Trigger::Cloned
         | Trigger::Touched => String::new(),
@@ -1268,6 +1274,33 @@ impl<'a> Pass<'a> {
                  h.act(&me, Act::BlendWeather {{ weather, seconds }});\n",
                 self.text(weather)?,
                 self.number(seconds)?,
+            ),
+            Action::PlayCutscene { cutscene } => format!(
+                "    let cutscene = {}.trim().to_string();\n    \
+                 h.act(&me, Act::PlayCutscene {{ cutscene }});\n",
+                self.text(cutscene)?,
+            ),
+            Action::SkipCutscene => "h.act(&me, Act::SkipCutscene);\n".to_string(),
+            Action::CameraShake { amount } => format!(
+                "    let amount = {} as f32;\n    h.act(&me, Act::CameraShake {{ amount }});\n",
+                self.number(amount)?,
+            ),
+            Action::SetTimeScale { scale } => format!(
+                "    let scale = {} as f32;\n    h.act(&me, Act::SetTimeScale {{ scale }});\n",
+                self.number(scale)?,
+            ),
+            Action::Hitstop { frames } => format!(
+                "    let frames = {} as f32;\n    h.act(&me, Act::Hitstop {{ frames }});\n",
+                self.number(frames)?,
+            ),
+            Action::SetLetterbox { on } => format!(
+                "    let on = {} as f32;\n    h.act(&me, Act::SetLetterbox {{ on }});\n",
+                self.number(on)?,
+            ),
+            Action::FadeScreen { color } => format!(
+                "    let color = {};\n    \
+                 h.act(&me, Act::FadeScreen {{ color: normalize_fade(&color) }});\n",
+                self.text(color)?,
             ),
             Action::SetWater { property, value } => reading(
                 self.number(value)?,

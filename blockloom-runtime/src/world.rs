@@ -1466,6 +1466,8 @@ pub fn publish_sensors(
             .iter()
             .map(|s| s.name.clone())
             .collect(),
+        cutscene_name: engine.cine_name.clone(),
+        cutscene_time: engine.cine_time,
     });
 
     // No world event queues while paused, so resuming never bursts.
@@ -4356,6 +4358,13 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::AdvanceTime { .. }
         | Effect::SetPrecipitation { .. }
         | Effect::BlendWeather { .. }
+        | Effect::PlayCutscene { .. }
+        | Effect::SkipCutscene
+        | Effect::CameraShake { .. }
+        | Effect::SetTimeScale { .. }
+        | Effect::Hitstop { .. }
+        | Effect::SetLetterbox { .. }
+        | Effect::FadeScreen { .. }
         | Effect::SetCloudLayer { .. }
         | Effect::SetWater { .. }
         // The level's, applied by `tiles`.

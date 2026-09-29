@@ -95,8 +95,12 @@ impl Backend {
                 arg(&args, "target").ok().flatten(),
                 arg(&args, "fast").ok().flatten(),
                 arg(&args, "hdr").ok().flatten(),
-                arg(&args, "store_pass").ok().flatten(),
-                arg(&args, "key_pass").ok().flatten(),
+                arg(&args, "storePass").ok().flatten(),
+                arg(&args, "keyPass").ok().flatten(),
+                arg(&args, "rememberPasswords")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(false),
             )?),
             "android_status" => to_json(commands::android_status()?),
             "android_device_status" => to_json(commands::android_device_status()?),
@@ -112,6 +116,13 @@ impl Backend {
             "android_logcat" => to_json(commands::android_logcat(
                 arg(&args, "device").ok().flatten(),
             )?),
+            "android_logcat_tail" => to_json(commands::android_logcat_tail(
+                state,
+                app,
+                arg(&args, "device").ok().flatten(),
+            )?),
+            "android_keyring_status" => to_json(commands::android_keyring_status(state)?),
+            "android_forget_passwords" => to_json(commands::android_forget_passwords(state)?),
             "android_set_sdk_path" => to_json(commands::android_set_sdk_path(
                 arg(&args, "path").unwrap_or_default(),
             )?),
@@ -132,6 +143,10 @@ impl Backend {
                 arg(&args, "alias")?,
                 arg(&args, "storePass").ok().flatten(),
                 arg(&args, "keyPass").ok().flatten(),
+                arg(&args, "rememberPasswords")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(false),
             )?),
             // ── The world ──────────────────────────────────────────────────
             "set_mode" => {

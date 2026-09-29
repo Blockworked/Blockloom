@@ -89,6 +89,7 @@ pub fn init() {
     value::register_blockloom_operators();
 }
 
+pub mod cinematic;
 pub mod cloud_layers;
 pub mod clouds;
 pub mod director;

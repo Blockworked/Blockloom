@@ -222,6 +222,15 @@ pub struct Engine {
     /// run, over the authored `Volume`.
     pub volume_enabled: HashMap<String, bool>,
     pub volume_weight: HashMap<String, f32>,
+    /// `set time scale` this run, over 1. A cutscene's slow-motion keys
+    /// only move `cine_scale` while this is unset.
+    pub time_scale: Option<f32>,
+    /// The playing cutscene's slow-motion keys, while one plays.
+    pub cine_scale: Option<f32>,
+    /// The cutscene playing right now, by name, and seconds into it. What
+    /// `is cutscene playing?` and `cutscene time` read.
+    pub cine_name: String,
+    pub cine_time: f32,
     /// Actor id -> whether `turn my light's shadows` left its light casting.
     pub light_shadows: HashMap<String, bool>,
     /// `set shadow distance` this run, over the project's.
@@ -348,6 +357,10 @@ impl Engine {
             light_intensity: HashMap::new(),
             volume_enabled: HashMap::new(),
             volume_weight: HashMap::new(),
+            time_scale: None,
+            cine_scale: None,
+            cine_name: String::new(),
+            cine_time: 0.0,
             light_shadows: HashMap::new(),
             shadow_distance: None,
             capture_probes: false,

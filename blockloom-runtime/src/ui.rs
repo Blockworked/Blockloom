@@ -48,6 +48,15 @@ pub struct UiSliderFill(pub String);
 #[derive(Component, Debug, Clone)]
 pub struct UiToggleLamp(pub String);
 
+/// The display cutout insets around the window - notch, punch hole,
+/// gesture bar - in logical pixels as `[left, top, right, bottom]`. Zero
+/// everywhere but Android, where the player module refreshes it from the
+/// activity's content rect; `ui_systems::canvas` lays it over the authored
+/// `safe_area`, so HUD widgets clear the cutout without the project
+/// padding for every phone.
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct DeviceInsets(pub [f32; 4]);
+
 /// What a `set` block has written over an element's defaults. Each is
 /// `None` until somebody says otherwise, so the active theme shows through.
 #[derive(Debug, Clone, Default)]

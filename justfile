@@ -211,11 +211,19 @@ android-sdk-install:
 
 # Builds a project folder into a signed APK, exactly what the Build dialog's
 # Android rows make: the NDK cross-builds the runtime into lib/<abi>/, the
-# game folder stages under the APK's assets, and the debug keystore signs
-# it. First run needs the network for the target's crates.
+# game folder stages under the APK's assets, and the debug keystore - or the
+# project's release key with BLOCKLOOM_ANDROID_STORE_PASS - signs it. First
+# run needs the network for the target's crates.
 android-build project out="android-dist" triple="aarch64-linux-android":
     cargo build --release -p blockloom-app --bin blockloom-shell
     printf 'open-project path=%s\nbuild-game path=%s target=%s\n' "$(realpath '{{project}}')" "$(realpath -m '{{out}}')" "{{triple}}" \
+        | "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --no-state
+
+# Forgets whatever the OS keyring keeps for a project's release key. Needs
+# an open project, like the Build dialog's Forget button.
+android-forget-passwords project:
+    cargo build --release -p blockloom-app --bin blockloom-shell
+    printf 'open-project path=%s\nandroid-forget-passwords\n' "$(realpath '{{project}}')" \
         | "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --no-state
 
 # Installs an APK on a connected device or emulator and launches it
@@ -225,11 +233,17 @@ android-install apk app device="":
     "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-install apk="{{apk}}" app="{{app}}"{{ if device != "" { " device=" + device } else { "" } }}' --no-state
 
 # One-shot device log for the dev loop: the runtime's blockloom markers plus
-# any Rust panic. Streaming into RunLog is a later step; this is what
-# `android-smoke` checks and what a developer reads first.
+# any Rust panic. What `android-smoke` checks and what a developer reads first.
 android-logcat device="":
     cargo build --release -p blockloom-app --bin blockloom-shell
     "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-logcat{{ if device != "" { " device=" + device } else { "" } }}' --no-state
+
+# Poll the device log the way the Build dialog streams it: dump, clear the
+# buffer for the next poll, and append every kept line to the RunLog. Repeat
+# for a follow tail; each call reads only what arrived since the last.
+android-logcat-tail device="":
+    cargo build --release -p blockloom-app --bin blockloom-shell
+    "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-logcat-tail{{ if device != "" { " device=" + device } else { "" } }}' --no-state
 
 # Typechecks the shipped runtime for both Android triples without linking:
 # new `cfg(target_os = "android")` code has to compile there, not just here.

@@ -1689,6 +1689,12 @@ impl Project {
             world.lightning.normalize();
             world.wind.normalize();
             world.director.normalize();
+            for cutscene in &mut world.cutscenes {
+                cutscene.normalize();
+            }
+            if world.cutscenes.len() > 32 {
+                world.cutscenes.truncate(32);
+            }
             world.surface.normalize();
             world.vfx.normalize();
             world.quality.normalize();

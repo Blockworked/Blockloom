@@ -10,12 +10,18 @@
 //! device and no Gradle run: the pinned toolchain versions, the app-level
 //! config (SDK/NDK paths plus the license stamp, beside `projects.json`),
 //! the status probes the Settings dialog and `just android-check` report,
-//! and the `applicationId` rules. APK assembly and signing come later.
+//! the `applicationId` rules, the SDK install and license flow, the APK
+//! assembly and signing (debug keystore, or the project's release key with
+//! per-build passwords from the args, the env or the OS keyring), and the
+//! install plus logcat tail behind the Build dialog's device rows.
 
 use crate::{project, script};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+#[path = "android_keyring.rs"]
+mod keyring;
 
 /// arm64 phones and tablets, the v1 device target.
 pub const ARM64_TRIPLE: &str = "aarch64-linux-android";
@@ -1211,13 +1217,133 @@ pub fn keytool() -> Result<PathBuf, String> {
 // Project settings, but passwords never touch the project file or the app
 // config. Each build asks for them; headless builds read the env instead
 // (`BLOCKLOOM_ANDROID_STORE_PASS`, and `BLOCKLOOM_ANDROID_KEY_PASS` when
-// the key has its own). The debug keystore below stays the default for the
-// dev loop, clearly marked as such.
+// the key has its own), and an opted-in build keeps them in the OS keyring
+// (`android_keyring`, macOS Keychain or Linux Secret Service) for the next
+// one. The debug keystore below stays the default for the dev loop, clearly
+// marked as such.
 
 /// Env var holding the keystore password for headless release builds.
 pub const STORE_PASS_ENV: &str = "BLOCKLOOM_ANDROID_STORE_PASS";
 /// Env var holding the key password, when it differs from the store's.
 pub const KEY_PASS_ENV: &str = "BLOCKLOOM_ANDROID_KEY_PASS";
+
+/// What the keyring holds for the open project's release key: whether this
+/// machine has a scriptable store at all, and which of the two passwords it
+/// keeps. The Build dialog reads this to say when typing is optional.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeyringStatus {
+    pub available: bool,
+    pub store_saved: bool,
+    pub key_saved: bool,
+}
+
+/// Reads one password from each source in turn: the explicit arg, the env,
+/// then the OS keyring. Empty strings never count, from anywhere.
+fn password_from(arg: Option<&str>, env: &str, account: Option<&str>) -> Option<String> {
+    arg.map(str::trim)
+        .filter(|pass| !pass.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var(env)
+                .ok()
+                .filter(|pass| !pass.trim().is_empty())
+        })
+        .or_else(|| {
+            account.and_then(|account| {
+                keyring::Keyring::probe()
+                    .and_then(|ring| ring.read(account).ok().flatten())
+                    .filter(|pass| !pass.trim().is_empty())
+            })
+        })
+}
+
+/// Whether this machine can keep passwords between builds: macOS Keychain
+/// or Linux Secret Service. Windows answers false in v1.
+pub fn keyring_available() -> bool {
+    keyring::Keyring::probe().is_some()
+}
+
+/// What the keyring holds for `settings`: an empty release row reports
+/// nothing saved, since there is no key to save for.
+pub fn keyring_status_for(settings: &AndroidSettings) -> KeyringStatus {
+    let Some(ring) = keyring::Keyring::probe() else {
+        return KeyringStatus {
+            available: false,
+            store_saved: false,
+            key_saved: false,
+        };
+    };
+    let (store_account, key_account) = match keyring_accounts(settings) {
+        Some(accounts) => accounts,
+        None => {
+            return KeyringStatus {
+                available: true,
+                store_saved: false,
+                key_saved: false,
+            };
+        }
+    };
+    KeyringStatus {
+        available: true,
+        store_saved: ring.has(&store_account).unwrap_or(false),
+        key_saved: ring.has(&key_account).unwrap_or(false),
+    }
+}
+
+/// The keyring accounts for a release row, or None when the row names no
+/// usable key (empty keystore or alias).
+fn keyring_accounts(settings: &AndroidSettings) -> Option<(String, String)> {
+    let keystore = settings.keystore.trim();
+    let alias = settings.key_alias.trim();
+    if keystore.is_empty() || alias.is_empty() {
+        return None;
+    }
+    Some((
+        keyring::account_for(keystore, alias, keyring::Purpose::Store),
+        keyring::account_for(keystore, alias, keyring::Purpose::Key),
+    ))
+}
+
+/// Keeps the build's passwords in the OS keyring under the release row's
+/// accounts, for the next build to read back. Takes the same explicit args
+/// the build took and resolves them the same way (args, then env, then what
+/// the keyring already holds), so remembered passwords are always the
+/// effective ones. Only call with the user's opt-in (the remember checkbox)
+/// and, ideally, passwords that just signed something: a typo saved here
+/// asks to be typed again nowhere.
+pub fn remember_signing(
+    settings: &AndroidSettings,
+    store_pass: Option<&str>,
+    key_pass: Option<&str>,
+) -> Result<(), String> {
+    let ring = keyring::Keyring::probe()
+        .ok_or_else(|| "This machine has no scriptable keyring to remember with.".to_string())?;
+    let (store_account, key_account) = keyring_accounts(settings)
+        .ok_or_else(|| "Set a release key file plus alias first.".to_string())?;
+    let store = password_from(store_pass, STORE_PASS_ENV, Some(&store_account))
+        .filter(|pass| !pass.trim().is_empty())
+        .ok_or_else(|| "There is no keystore password to remember.".to_string())?;
+    ring.write(&store_account, store.trim())?;
+    // One entry is enough when the key shares the store's password.
+    let key =
+        password_from(key_pass, KEY_PASS_ENV, Some(&key_account)).unwrap_or_else(|| store.clone());
+    if key.trim() != store.trim() {
+        ring.write(&key_account, key.trim())?;
+    } else {
+        let _ = ring.delete(&key_account);
+    }
+    Ok(())
+}
+
+/// Forgets whatever the keyring keeps for the release row. Answers whether
+/// anything was there to forget.
+pub fn forget_signing(settings: &AndroidSettings) -> Result<bool, String> {
+    let ring = keyring::Keyring::probe()
+        .ok_or_else(|| "This machine has no scriptable keyring to forget with.".to_string())?;
+    let (store_account, key_account) = keyring_accounts(settings)
+        .ok_or_else(|| "Set a release key file plus alias first.".to_string())?;
+    Ok(ring.delete(&store_account)? | ring.delete(&key_account)?)
+}
 
 /// What an APK signs with: the dev-loop debug key, or the project's own
 /// release key with its passwords resolved for this build only.
@@ -1248,8 +1374,8 @@ impl Signing {
 
 /// Picks the key for `settings`: the debug keystore when no release key is
 /// set, else the project's keystore plus alias with passwords from the
-/// explicit args or the env. Refuses a release row that names nothing
-/// usable, with the fix attached.
+/// explicit args, the env, then the OS keyring. Refuses a release row that
+/// names nothing usable, with the fix attached.
 pub fn resolve_signing(
     settings: &AndroidSettings,
     store_pass: Option<&str>,
@@ -1279,30 +1405,23 @@ pub fn resolve_signing(
                 .to_string(),
         );
     }
-    let store_pass = store_pass
-        .map(str::trim)
-        .filter(|pass| !pass.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            std::env::var(STORE_PASS_ENV)
-                .ok()
-                .filter(|pass| !pass.trim().is_empty())
-        })
-        .ok_or_else(|| {
-            format!(
-                "The release key needs its keystore password: type it in the Build dialog, or set {STORE_PASS_ENV} headless."
-            )
-        })?;
-    let key_pass = key_pass
-        .map(str::trim)
-        .filter(|pass| !pass.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            std::env::var(KEY_PASS_ENV)
-                .ok()
-                .filter(|pass| !pass.trim().is_empty())
-        })
-        .unwrap_or_else(|| store_pass.clone());
+    let accounts = keyring_accounts(settings);
+    let store_pass = password_from(
+        store_pass,
+        STORE_PASS_ENV,
+        accounts.as_ref().map(|(store, _)| store.as_str()),
+    )
+    .ok_or_else(|| {
+        format!(
+            "The release key needs its keystore password: type it in the Build dialog, save it in the system keyring, or set {STORE_PASS_ENV} headless."
+        )
+    })?;
+    let key_pass = password_from(
+        key_pass,
+        KEY_PASS_ENV,
+        accounts.as_ref().map(|(_, key)| key.as_str()),
+    )
+    .unwrap_or_else(|| store_pass.clone());
     Ok(Signing {
         keystore,
         alias: Some(alias.to_string()),
@@ -1314,8 +1433,8 @@ pub fn resolve_signing(
 
 /// Makes a release key: a new RSA keypair under `alias` in the keystore at
 /// `path`, creating the file when it names nothing yet. Answers the aliases
-/// the file holds afterwards. Passwords come from the args or the same env
-/// the build reads; keytool wants at least 6 characters for each.
+/// the file holds afterwards. Passwords come from the args, the env, then
+/// the OS keyring; keytool wants at least 6 characters for each.
 pub fn create_keystore(
     path: &Path,
     alias: &str,
@@ -1326,30 +1445,16 @@ pub fn create_keystore(
     if alias.is_empty() {
         return Err("Name the key's alias, so the build knows which key signs.".to_string());
     }
-    let store_pass = store_pass
-        .map(str::trim)
-        .filter(|pass| !pass.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            std::env::var(STORE_PASS_ENV)
-                .ok()
-                .filter(|pass| !pass.trim().is_empty())
-        })
-        .ok_or_else(|| {
-            format!("A new key needs a keystore password: type one in, or set {STORE_PASS_ENV} headless.")
-        })?;
+    let path_text = path.to_string_lossy();
+    let store_account = keyring::account_for(&path_text, alias, keyring::Purpose::Store);
+    let key_account = keyring::account_for(&path_text, alias, keyring::Purpose::Key);
+    let store_pass = password_from(store_pass, STORE_PASS_ENV, Some(&store_account)).ok_or_else(|| {
+        format!("A new key needs a keystore password: type one in, or set {STORE_PASS_ENV} headless.")
+    })?;
     if store_pass.len() < 6 {
         return Err("The keystore password needs at least 6 characters.".to_string());
     }
-    let key_pass = key_pass
-        .map(str::trim)
-        .filter(|pass| !pass.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            std::env::var(KEY_PASS_ENV)
-                .ok()
-                .filter(|pass| !pass.trim().is_empty())
-        })
+    let key_pass = password_from(key_pass, KEY_PASS_ENV, Some(&key_account))
         .unwrap_or_else(|| store_pass.clone());
     if key_pass.len() < 6 {
         return Err("The key password needs at least 6 characters.".to_string());
@@ -1897,6 +2002,9 @@ fn install_apk_with_adb(
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
+    // A fresh buffer means the first logcat poll after this reads only the
+    // new run. Failure just makes that poll noisier, never fails a launch.
+    let _ = clear_logcat_with_adb(adb, device);
     Ok(ApkInstall {
         component,
         device: device.unwrap_or_default().to_string(),
@@ -1914,15 +2022,58 @@ pub struct Logcat {
 /// Dumps the device log (`adb logcat -d`) and keeps the lines naming
 /// `needle` - the runtime's `blockloom:` markers - plus any Rust panic or
 /// fatal exception anywhere, which fail a smoke run. One shot, not a
-/// stream: RunLog streaming is a later step, this is for the dev loop and
-/// `just android-smoke`.
+/// stream: `logcat_tail` below polls this into the RunLog; this stays for
+/// the dev loop and `just android-smoke`.
 pub fn logcat(device: Option<&str>, needle: &str) -> Result<Logcat, String> {
-    let config = load();
-    logcat_with_adb(
-        &sdk_dir(&config).join("platform-tools").join(exe("adb")),
-        device,
-        needle,
-    )
+    logcat_with_adb(&adb_path(), device, needle)
+}
+
+/// Clears the device log buffer (`adb logcat -c`), so a later dump reads
+/// only what happened after. Best effort: the install step calls this and
+/// ignores a failure, leaving a noisier first poll rather than no install.
+pub fn clear_logcat(device: Option<&str>) -> Result<(), String> {
+    clear_logcat_with_adb(&adb_path(), device)
+}
+
+/// Dumps like `logcat`, then clears the buffer so the next poll reads only
+/// new lines. The Build dialog polls this after an install: each answer
+/// lands in the RunLog, which is the streaming half of the signing bullet.
+pub fn logcat_tail(device: Option<&str>, needle: &str) -> Result<Logcat, String> {
+    let adb = adb_path();
+    logcat_tail_with_adb(&adb, device, needle)
+}
+
+fn logcat_tail_with_adb(adb: &Path, device: Option<&str>, needle: &str) -> Result<Logcat, String> {
+    let dumped = logcat_with_adb(adb, device, needle)?;
+    // A failed clear only repeats lines next poll; the dump already won.
+    let _ = clear_logcat_with_adb(adb, device);
+    Ok(dumped)
+}
+
+fn adb_path() -> PathBuf {
+    sdk_dir(&load()).join("platform-tools").join(exe("adb"))
+}
+
+fn clear_logcat_with_adb(adb: &Path, device: Option<&str>) -> Result<(), String> {
+    if !adb.is_file() {
+        return Err("No adb: install platform-tools in App Settings first.".to_string());
+    }
+    let mut clear = std::process::Command::new(adb);
+    if let Some(serial) = device {
+        clear.arg("-s").arg(serial);
+    }
+    let output = clear
+        .arg("logcat")
+        .arg("-c")
+        .output()
+        .map_err(|e| format!("Couldn't run {}: {e}", adb.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "adb logcat -c failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
 }
 
 fn logcat_with_adb(adb: &Path, device: Option<&str>, needle: &str) -> Result<Logcat, String> {
@@ -2314,7 +2465,6 @@ mod tests {
         assert_eq!(installed.device, "emulator-5554");
         let calls = std::fs::read_to_string(&log).unwrap();
         let lines: Vec<&str> = calls.lines().collect();
-        assert_eq!(lines.len(), 2, "{calls}");
         assert!(lines[0].contains("-s emulator-5554 install -r"), "{calls}");
         assert!(lines[0].contains("pond.apk"), "{calls}");
         assert!(
@@ -2322,6 +2472,10 @@ mod tests {
                 .contains("shell am start -n com.blockloom.game.pond/android.app.NativeActivity"),
             "{calls}"
         );
+        // A fresh buffer after launch, so the first logcat poll reads only
+        // the new run; a failed clear would only make it noisier.
+        assert_eq!(lines.len(), 3, "{calls}");
+        assert!(lines[2].contains("logcat -c"), "{calls}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2343,6 +2497,31 @@ mod tests {
         assert!(dumped.lines[0].contains("run started"), "{dumped:?}");
         assert_eq!(dumped.panics.len(), 1, "{dumped:?}");
         assert!(dumped.panics[0].contains("FATAL EXCEPTION"), "{dumped:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_tail_dump_then_clears_for_the_next_poll() {
+        let root = temp_root("logcat-tail");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let log = root.join("calls.log");
+        let adb = stub_tool(
+            &bin,
+            "adb",
+            &format!(
+                "#!/bin/sh\nlog=\"{}\"\nfor a in \"$@\"; do printf '%s ' \"$a\" >> \"$log\"; done\nprintf '\\n' >> \"$log\"\necho '01-01 00:00:01.000  123  123 I blockloom: run started'\n",
+                log.display()
+            ),
+        );
+        let dumped = logcat_tail_with_adb(&adb, None, "blockloom").unwrap();
+        assert!(dumped.lines[0].contains("run started"), "{dumped:?}");
+        let calls = std::fs::read_to_string(&log).unwrap();
+        let lines: Vec<&str> = calls.lines().collect();
+        assert_eq!(lines.len(), 2, "{calls}");
+        assert!(lines[0].contains("logcat -d"), "{calls}");
+        assert!(lines[1].contains("logcat -c"), "{calls}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2503,6 +2682,65 @@ mod tests {
         assert!(signing.release);
         assert_eq!(signing.label(), "release");
         assert_eq!(signing.key_pass, "secret1");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn the_keyring_remembers_forgets_and_feeds_the_next_build() {
+        // SAFETY: no other test reads these vars, so no thread observes it.
+        unsafe {
+            std::env::remove_var(STORE_PASS_ENV);
+            std::env::remove_var(KEY_PASS_ENV);
+        }
+        let root = temp_root("keyring");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        // A fake `secret-tool` over a text file, argv-shaped like the real
+        // one (see `android_keyring`): store appends, lookup prints, clear
+        // drops. Point the probe at it through the env override.
+        let db = root.join("entries.txt");
+        let tool = stub_tool(
+            &bin,
+            "secret-tool",
+            &format!(
+                "#!/bin/sh\ndb=\"{}\"\ncmd=\"$1\"; shift\nacc=\"\"\nprev=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"account\" ]; then acc=\"$a\"; fi\n  prev=\"$a\"\ndone\ncase \"$cmd\" in\n--help) exit 0;;\nstore) read secret; touch \"$db\"; grep -v \"^$acc \" \"$db\" 2>/dev/null > \"$db.tmp\" || true; mv \"$db.tmp\" \"$db\"; echo \"$acc $secret\" >> \"$db\";;\nlookup) touch \"$db\"; grep \"^$acc \" \"$db\" 2>/dev/null | tail -1 | cut -d' ' -f2-;;\nclear) touch \"$db\"; grep -v \"^$acc \" \"$db\" 2>/dev/null > \"$db.tmp\" || true; mv \"$db.tmp\" \"$db\";;\n*) exit 1;;\nesac\n",
+                db.display()
+            ),
+        );
+        // SAFETY: same vars discipline as above; accounts are pid-scoped.
+        unsafe {
+            std::env::set_var("BLOCKLOOM_ANDROID_SECRET_TOOL", &tool);
+        }
+        let store = root.join("release.keystore");
+        std::fs::write(&store, b"fake").unwrap();
+        let settings = AndroidSettings {
+            keystore: store.to_string_lossy().into_owned(),
+            key_alias: "upload".to_string(),
+            ..AndroidSettings::default()
+        };
+        assert!(keyring_available());
+        let empty = keyring_status_for(&settings);
+        assert!(empty.available && !empty.store_saved && !empty.key_saved);
+        // Nothing typed, nothing in env or keyring: the build refuses.
+        assert!(resolve_signing(&settings, None, None).is_err());
+        // Remember with a key of its own: both entries land.
+        remember_signing(&settings, Some("secret1"), Some("key2key2")).unwrap();
+        let saved = keyring_status_for(&settings);
+        assert!(saved.store_saved && saved.key_saved, "{saved:?}");
+        // The next build resolves with empty fields, straight from the ring.
+        let signing = resolve_signing(&settings, None, None).unwrap();
+        assert_eq!(signing.store_pass, "secret1");
+        assert_eq!(signing.key_pass, "key2key2");
+        // Forgetting clears both, and the build refuses again.
+        assert!(forget_signing(&settings).unwrap());
+        assert!(!forget_signing(&settings).unwrap());
+        let cleared = keyring_status_for(&settings);
+        assert!(!cleared.store_saved && !cleared.key_saved);
+        assert!(resolve_signing(&settings, None, None).is_err());
+        unsafe {
+            std::env::remove_var("BLOCKLOOM_ANDROID_SECRET_TOOL");
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 

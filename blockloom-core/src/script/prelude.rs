@@ -1376,6 +1376,18 @@ impl Actor {
         self.text(TEXT_CURRENT_WEATHER, Str::EMPTY, Str::EMPTY)
     }
 
+    /// The cutscene playing right now, by name. Empty with none playing,
+    /// which is what `is cutscene playing?` reads.
+    pub fn cutscene_name(&self) -> Option<String> {
+        self.text(TEXT_CUTSCENE_NAME, Str::EMPTY, Str::EMPTY)
+    }
+
+    /// Seconds into the playing cutscene. What `cutscene time` reports.
+    pub fn cutscene_time(&self) -> f32 {
+        self.number(READ_CUTSCENE_TIME, Str::EMPTY, Str::EMPTY, 0.0)
+            .unwrap_or(0.0) as f32
+    }
+
     /// Hours, 0-24, as of this fixed tick. What `time of day` reports.
     pub fn time_of_day(&self) -> f32 {
         self.atmosphere("time of day").unwrap_or(12.0) as f32
@@ -1439,6 +1451,98 @@ impl Actor {
             Str::EMPTY,
             Str::EMPTY,
             seconds as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Plays the named cutscene reel on the wall clock. The strand carries
+    /// on; `when cutscene ends` runs when the reel does.
+    pub fn play_cutscene(&self, cutscene: &str) {
+        self.act(
+            ACT_PLAY_CUTSCENE,
+            Str::borrow(cutscene),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Jumps the playing cutscene to its end marker. Quiet with none.
+    pub fn skip_cutscene(&self) {
+        self.act(
+            ACT_SKIP_CUTSCENE,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Kicks the camera trauma 0-1 higher. Adds to what is shaking.
+    pub fn shake_camera(&self, amount: f32) {
+        self.act(
+            ACT_CAMERA_SHAKE,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            amount as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Scales world time for the rest of the run: 1 is normal speed.
+    pub fn set_time_scale(&self, scale: f32) {
+        self.act(
+            ACT_SET_TIME_SCALE,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            scale as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Freezes world strands for `frames` render frames.
+    pub fn hitstop(&self, frames: f32) {
+        self.act(
+            ACT_HITSTOP,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            frames as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Shows the letterbox bars for nonzero `on`, hides them for zero.
+    pub fn set_letterbox(&self, on: f32) {
+        self.act(
+            ACT_SET_LETTERBOX,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            on as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Fades the screen to `black` or `white`, or clears it for `none`.
+    pub fn fade_screen(&self, color: &str) {
+        self.act(
+            ACT_FADE_SCREEN,
+            Str::borrow(color),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
             0.0,
             0.0,
         );
@@ -2456,6 +2560,10 @@ pub enum Event {
     EnteredRoom(String),
     /// The weather blend landed on a preset, by name.
     Weather(String),
+    /// The playing cutscene passed a signal marker, by name.
+    CutsceneSignal(String),
+    /// The playing cutscene reached its end marker, by name.
+    CutsceneEnded(String),
     /// The newly loaded scene finished warming up.
     SceneStarted,
     /// The outgoing scene is about to unload.
@@ -2513,6 +2621,8 @@ impl Event {
             },
             EVENT_ENTERED_ROOM => Event::EnteredRoom(subject),
             EVENT_WEATHER => Event::Weather(subject),
+            EVENT_CUTSCENE_SIGNAL => Event::CutsceneSignal(subject),
+            EVENT_CUTSCENE_ENDED => Event::CutsceneEnded(subject),
             EVENT_SCENE_STARTED => Event::SceneStarted,
             EVENT_SCENE_ENDED => Event::SceneEnded,
             _ => return None,

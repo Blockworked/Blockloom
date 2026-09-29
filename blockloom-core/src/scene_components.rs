@@ -46,6 +46,7 @@ pub const BUILT_IN_SCENE_NAMES: &[&str] = &[
     "Director",
     "Surface",
     "Vfx",
+    "Cutscenes",
     "Interface",
 ];
 
@@ -96,6 +97,10 @@ pub enum SceneComponent {
     Surface { surface: SurfaceWeather },
     /// The particle budget and where emitters simulate.
     Vfx { settings: VfxSettings },
+    /// Named camera reels that `play cutscene` runs.
+    Cutscenes {
+        cutscenes: Vec<crate::cinematic::Cutscene>,
+    },
     /// The screen-space interface document.
     Interface { document: UiDocument },
 }
@@ -124,6 +129,7 @@ impl SceneComponent {
             SceneComponent::Director { .. } => "Director",
             SceneComponent::Surface { .. } => "Surface",
             SceneComponent::Vfx { .. } => "Vfx",
+            SceneComponent::Cutscenes { .. } => "Cutscenes",
             SceneComponent::Interface { .. } => "Interface",
         }
     }
@@ -199,6 +205,9 @@ impl SceneComponents {
             SceneComponent::Vfx {
                 settings: world.vfx.clone(),
             },
+            SceneComponent::Cutscenes {
+                cutscenes: world.cutscenes.clone(),
+            },
             SceneComponent::Interface {
                 document: world.interface.clone(),
             },
@@ -252,6 +261,7 @@ impl SceneComponents {
                 SceneComponent::Director { director } => world.director.clone_from(director),
                 SceneComponent::Surface { surface } => world.surface.clone_from(surface),
                 SceneComponent::Vfx { settings } => world.vfx.clone_from(settings),
+                SceneComponent::Cutscenes { cutscenes } => world.cutscenes.clone_from(cutscenes),
                 SceneComponent::Interface { document } => world.interface.clone_from(document),
             }
         }

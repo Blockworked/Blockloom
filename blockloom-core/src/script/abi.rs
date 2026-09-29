@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 34;
+pub const ABI_VERSION: u32 = 35;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -163,6 +163,9 @@ pub const READ_PARTICLES: u32 = 47;
 pub const READ_FRAME_TIME: u32 = 49;
 pub const READ_DRAW_CALLS: u32 = 50;
 pub const READ_DLSS_AVAILABLE: u32 = 51;
+/// Seconds into the playing cutscene, or 0 with none. What `cutscene time`
+/// reads.
+pub const READ_CUTSCENE_TIME: u32 = 52;
 pub const TEXT_CURRENT_QUALITY: u32 = 18;
 pub const READ_TILE_AT: u32 = 48;
 
@@ -211,6 +214,9 @@ pub const TEXT_CURRENT_SCENE: u32 = 16;
 pub const TEXT_SCENE_NAMES: u32 = 17;
 /// The weather preset the air is in, by name. What `current weather` reports.
 pub const TEXT_CURRENT_WEATHER: u32 = 19;
+/// The cutscene playing right now, by name, or empty for none. What
+/// `is cutscene playing?` reads.
+pub const TEXT_CUTSCENE_NAME: u32 = 20;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -419,6 +425,20 @@ pub const ACT_ADVANCE_TIME: u32 = 90;
 pub const ACT_SET_PRECIPITATION: u32 = 91;
 /// `a` = preset name, `n0` = seconds. Blends the weather. Window-global.
 pub const ACT_BLEND_WEATHER: u32 = 92;
+/// `a` = cutscene name. Plays the reel on the wall clock. Window-global.
+pub const ACT_PLAY_CUTSCENE: u32 = 93;
+/// Jumps the playing cutscene to its end marker. Window-global.
+pub const ACT_SKIP_CUTSCENE: u32 = 94;
+/// `n0` = trauma 0-1 to add. Shakes the camera. Window-global.
+pub const ACT_CAMERA_SHAKE: u32 = 95;
+/// `n0` = time scale, 1 is normal speed. Slows the world. Window-global.
+pub const ACT_SET_TIME_SCALE: u32 = 96;
+/// `n0` = render frames to freeze world strands for. Window-global.
+pub const ACT_HITSTOP: u32 = 97;
+/// `n0` = nonzero to show the letterbox bars, zero to hide. Window-global.
+pub const ACT_SET_LETTERBOX: u32 = 98;
+/// `a` = fade color (`black`, `white` or `none`). Window-global.
+pub const ACT_FADE_SCREEN: u32 = 99;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per
@@ -485,6 +505,10 @@ pub const EVENT_SCENE_STARTED: u32 = 14;
 pub const EVENT_SCENE_ENDED: u32 = 15;
 /// The weather blend landed on a preset. Subject: its name.
 pub const EVENT_WEATHER: u32 = 17;
+/// The playing cutscene passed a signal marker. Subject: its name.
+pub const EVENT_CUTSCENE_SIGNAL: u32 = 18;
+/// The playing cutscene reached its end marker. Subject: its name.
+pub const EVENT_CUTSCENE_ENDED: u32 = 19;
 
 // ─── The same three calls in a browser ─────────────────────────────────────
 // A web build loads each script as its own wasm module, and one module can't

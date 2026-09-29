@@ -144,7 +144,7 @@ QtObject {
         SetCameraView:"camera", SetCameraPitch:"video", SetCameraFov:"video", AttachComponent:"plus", DetachComponent:"x", SetParent:"link",
         CreateClone:"copy", CreateActor:"sparkles", DeleteActor:"trash-2", Wait:"clock", WaitUntil:"hand", If:"git-branch", IfElse:"git-fork",
         Repeat:"repeat", Forever:"infinity", While:"repeat", EscapeLoop:"log-out", ContinueLoop:"skip-forward", Broadcast:"radio", StopAll:"octagon",
-        SwitchScene:"layers", WhenSceneStarts:"play", WhenSceneEnds:"square",
+        SwitchScene:"layers", WhenSceneStarts:"play", WhenSceneEnds:"square", PlayCutscene:"video", SkipCutscene:"skip-forward", CameraShake:"zap", SetTimeScale:"timer", Hitstop:"square", SetLetterbox:"eye", FadeScreen:"square", WhenCutsceneSignal:"flag", WhenCutsceneEnds:"square",
         SetMouseLocked:"lock", RumbleGamepad:"vibrate", BindAction:"keyboard", ClearActionBindings:"eraser", ShowPanel:"layout-panel-top",
         ShowLabel:"type", ShowButton:"square-mouse-pointer", ShowImage:"image", ShowInput:"text-cursor-input", ShowSlider:"sliders-horizontal",
         ShowWidget:"layout-grid", ShowToggle:"toggle-left", ShowList:"list-checks", SetUiTheme:"palette", BindUi:"list-checks", SetUiItems:"list-checks", ScrollUi:"list-checks", SetElementTheme:"list-checks", SetUiProp:"list-checks", HideElement:"eye", HideAllUi:"eye",
@@ -179,8 +179,17 @@ QtObject {
             WhenWeather: header([lb("when weather becomes"), field("weather", "weather (empty for any)")]),
             WhenSceneStarts: header([lb("when scene starts")]),
             WhenSceneEnds: header([lb("when scene ends")]),
+            WhenCutsceneSignal: header([lb("when cutscene signal"), field("signal", "signal (empty for any)")]),
+            WhenCutsceneEnds: header([lb("when cutscene ends")]),
             Broadcast: row([lb("broadcast"), field("name", "message")]),
             SwitchScene: row([lb("switch scene to"), slot("SceneName", "scene"), lb("with transition"), slot("SceneTransition", "none")]),
+            PlayCutscene: row([lb("play cutscene"), slot("CutsceneName", "cutscene")]),
+            SkipCutscene: row([lb("skip cutscene")]),
+            CameraShake: row([lb("shake camera by"), slot("ShakeAmount", "amount")]),
+            SetTimeScale: row([lb("set time scale to"), slot("TimeScale", "scale")]),
+            Hitstop: row([lb("hitstop"), slot("HitstopFrames", "frames"), lb("frames")]),
+            SetLetterbox: row([lb("set letterbox to"), slot("LetterboxBars", "on")]),
+            FadeScreen: row([lb("fade screen to"), slot("FadeColor", "color")]),
             // Motion
             Move: row([lb("move"), slot("MoveSteps", "steps"), lb("steps")]),
             GoTo: row(vector("go to", ["GoToX","GoToY","GoToZ"], ["x","y","z"])),
@@ -429,6 +438,13 @@ QtObject {
         case "SetEmitterPlaying": return { playing: true };
         case "WhenParticles": return { event: "Spawn" };
         case "SwitchScene": return { scene: txt("Scene 2"), transition: txt("none") };
+        case "PlayCutscene": return { cutscene: txt("Opener") };
+        case "CameraShake": return { amount: num(0.5) };
+        case "SetTimeScale": return { scale: num(0.5) };
+        case "Hitstop": return { frames: num(6) };
+        case "SetLetterbox": return { on: num(1) };
+        case "FadeScreen": return { color: txt("black") };
+        case "WhenCutsceneSignal": return { signal: "" };
         case "PlaySound": return { sound: txt("assets/sounds/sound.wav"), volume: num(100), pitch: num(1), loop: false, bus: "Sfx" };
         case "PlaySoundAt": return { sound: txt("assets/sounds/sound.wav"), volume: num(100), pitch: num(1), loop: false, bus: "Sfx", target: txt("") };
         case "StopSound": return { sound: txt("") };
@@ -569,6 +585,8 @@ QtObject {
         ActiveVolumes: { prefix: "active volumes", result: "text", arity: 0 },
         CurrentScene: { prefix: "current scene", result: "text", arity: 0 },
         SceneNames: { prefix: "scene names", result: "text", arity: 0 },
+        IsCutscenePlaying: { prefix: "is cutscene playing?", result: "bool", arity: 0 },
+        CutsceneTime: { prefix: "cutscene time", result: "number", arity: 0 },
         TimeOfDay: { prefix: "time of day", result: "number", arity: 0 },
         SunElevation: { prefix: "sun elevation", result: "number", arity: 0 },
         CurrentWeather: { prefix: "current weather", result: "text", arity: 0 },
@@ -595,7 +613,7 @@ QtObject {
     })
     // Palette groups, the way the sidebar shows them.
     readonly property var operatorGroups: [
-        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","ActorPosition","ActorLocalPosition","ComponentField","SoundPlaying","BusVolume","IsTweening","CurrentClip","CurrentFrame","AnimationPlaying","Atmosphere","TimeOfDay","SunElevation","CurrentWeather","FrameTime","DrawCalls","CurrentQuality","DlssAvailable","SceneLuminance","IsHdrDisplay","PeakBrightness","ActiveVolumes","CurrentScene","SceneNames","CastsShadows","IsRayTracing","RayTracingAvailable","WaterHeight","Underwater","TileAt","RoomContaining","ParticleCount","ParticleEventCount","ParticleEventPosition"] },
+        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","ActorPosition","ActorLocalPosition","ComponentField","SoundPlaying","BusVolume","IsTweening","CurrentClip","CurrentFrame","AnimationPlaying","Atmosphere","TimeOfDay","SunElevation","CurrentWeather","FrameTime","DrawCalls","CurrentQuality","DlssAvailable","SceneLuminance","IsHdrDisplay","PeakBrightness","ActiveVolumes","CurrentScene","SceneNames","IsCutscenePlaying","CutsceneTime","CastsShadows","IsRayTracing","RayTracingAvailable","WaterHeight","Underwater","TileAt","RoomContaining","ParticleCount","ParticleEventCount","ParticleEventPosition"] },
         { label: "Interface", kinds: ["UiSelectedIndex","UiValue","UiText","UiShown","UiExists","UiFocus","GamePaused"] },
         { label: "Actors", kinds: ["IsClone","MyParent","NewActor","ActorCount"] },
         { label: "Maths", kinds: ["Add","Sub","Mul","Div","Mod","Round","Math","Random"] },
@@ -605,7 +623,7 @@ QtObject {
     readonly property var listOperatorKinds: ["ListItem","ListItemNumber","ListAmount","ListLength","ListContains","ListItemExists","ListIsEmpty","ListAsJson"]
     readonly property var dictOperatorKinds: ["DictValue","DictHasKey","DictSize","DictKeys","DictAsJson","DictIsEmpty"]
     readonly property var blockGroups: [
-        { label: "Events", types: ["WhenStarted","WhenQualityDrops","WhenSceneStarts","WhenSceneEnds","WhenWeather","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenParticles","WhenAnimationEnds","WhenAnimationMarker","WhenEnterRoom","WhenUiEvent","WhenUiClicked","WhenUiChanged","Broadcast"] },
+        { label: "Events", types: ["WhenStarted","WhenQualityDrops","WhenSceneStarts","WhenSceneEnds","WhenWeather","WhenCutsceneSignal","WhenCutsceneEnds","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenParticles","WhenAnimationEnds","WhenAnimationMarker","WhenEnterRoom","WhenUiEvent","WhenUiClicked","WhenUiChanged","Broadcast"] },
         { label: "Motion", types: ["Move","GoTo","NavigateTo","ChangePosition","Glide","TweenScale","TweenRotation","TweenColor","StopTweens","Turn","SetRotation","PointTowards","SetScale"] },
         { label: "Physics", types: ["SetBody","ApplyImpulse","SetVelocity","SetGravity","SetDensity","SetMass","SetTrigger","SetCollisionLayer","SetCollisionMask"] },
         { label: "Looks", types: ["Say","SetVisible","SetColor","SetRenderSetting","SetExposure","SetLightIntensity","SetEmissiveStrength","SetHdrOutput","SetPeakBrightness","EnableVolume","SetVolumeWeight","CaptureProbes","SetShadowDistance","SetLightShadows","SetRayTracing","SetGiBounces","SetGiSamples","SetFogDensity","SetAurora","StrikeLightning","SetLightningRate","SetWind","SetCloudDrift","SetClouds","SetCloudLayer","SetWater","SetTimeOfDay","AdvanceTime","SetPrecipitation","BlendWeather","Fracture","Splash","PuffSmoke","SpawnDecal","FadeDecals","PaintTile","SetParallax","BurstParticles","SetEmitterDial","SetTrailEnabled","SetEmitterPlaying","PlayAnimation","StopAnimation","SetAnimationSpeed","FireAnimationTrigger","SetRigSlot","SetSlotTint","SetIkTarget","SetSpriteDial"] },
@@ -613,7 +631,7 @@ QtObject {
         { label: "Components", types: ["SetComponentField","SetCameraView","SetCameraPitch","SetCameraFov","AttachComponent","DetachComponent","SetParent"] },
         { label: "Actors", types: ["CreateClone","CreateActor","DeleteActor"] },
         { label: "Interface", types: ["ShowWidget","ShowPanel","ShowLabel","ShowButton","ShowImage","ShowInput","ShowSlider","ShowToggle","ShowList","SetUiTheme","BindUi","SetUiItems","ScrollUi","SetElementTheme","SetUiProp","HideElement","HideAllUi","DeleteElement","FocusElement","ClearFocus","PauseGame","ResumeGame"] },
-        { label: "Control", types: ["Wait","WaitUntil","If","IfElse","Repeat","Forever","While","EscapeLoop","ContinueLoop","StopAll","SwitchScene","SetMouseLocked"] },
+        { label: "Control", types: ["Wait","WaitUntil","If","IfElse","Repeat","Forever","While","EscapeLoop","ContinueLoop","StopAll","SwitchScene","PlayCutscene","SkipCutscene","CameraShake","SetTimeScale","Hitstop","SetLetterbox","FadeScreen","SetMouseLocked"] },
         { label: "Input", types: ["RumbleGamepad","BindAction","ClearActionBindings"] }
     ]
     readonly property var variableCommandTypes: ["SetVariable","ChangeVariable","SaveVariable","ClearSavedVariable"]
@@ -656,7 +674,7 @@ QtObject {
         WhenStarted:"when the project starts", WhenKeyPressed:"when a key is pressed", WhenActionPressed:"when an input action is pressed",
         WhenTouched:"when the screen is touched", WhenClicked:"when I am clicked", WhenCollision:"when I touch", WhenMessage:"when I get a message", WhenAnimationEnds:"when an animation ends", WhenAnimationMarker:"when an animation reaches a marker", WhenEnterRoom:"when I enter a room",
         WhenQualityDrops:"when quality drops", SetRenderSetting:"set rendering quality", WhenUiEvent:"when an interface event occurs", WhenCloned:"when I start as a clone", WhenParticles:"when my particles spawn, die or collide", WhenUiClicked:"when an element is clicked", WhenUiChanged:"when an input is changed",
-        WhenSceneStarts:"when scene starts", WhenSceneEnds:"when scene ends", WhenWeather:"when weather becomes", SwitchScene:"switch scene to",
+        WhenSceneStarts:"when scene starts", WhenSceneEnds:"when scene ends", WhenWeather:"when weather becomes", WhenCutsceneSignal:"when cutscene signal", WhenCutsceneEnds:"when cutscene ends", SwitchScene:"switch scene to", PlayCutscene:"play cutscene", SkipCutscene:"skip cutscene", CameraShake:"shake camera", SetTimeScale:"set time scale", Hitstop:"hitstop frames", SetLetterbox:"set letterbox", FadeScreen:"fade screen",
         BlockHeader:"block definition", Move:"move forward", GoTo:"go to", NavigateTo:"navigate to", ChangePosition:"change position",
         Glide:"glide to", TweenScale:"tween size", TweenRotation:"tween rotation", TweenColor:"tween color", StopTweens:"stop my tweens", PlayAnimation:"play animation", StopAnimation:"stop my animation", SetAnimationSpeed:"set animation speed", FireAnimationTrigger:"fire an animation trigger", SetRigSlot:"swap a rig slot", SetSlotTint:"tint a rig slot", SetIkTarget:"point a rig IK chain", SetSpriteDial:"set a sprite dial", Turn:"turn", SetRotation:"point in direction", PointTowards:"point towards", SetScale:"set size", SetBody:"set body",
         SetTrigger:"make me solid or a trigger", SetCollisionLayer:"set my collision layer", SetCollisionMask:"set my collision mask",

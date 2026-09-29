@@ -49,6 +49,13 @@ pub enum Trigger {
     Weather {
         weather: String,
     },
+    /// The playing cutscene passed the named signal marker. Empty matches
+    /// any signal.
+    CutsceneSignal {
+        signal: String,
+    },
+    /// The playing cutscene reached its end marker.
+    CutsceneEnded,
     QualityDropped,
     /// The outgoing scene is about to unload for a `switch scene to`.
     SceneEnded,
@@ -316,6 +323,32 @@ pub enum Action {
         scene: Value,
         transition: Value,
     },
+    /// Plays the named cutscene reel. The strand carries on.
+    PlayCutscene {
+        cutscene: Value,
+    },
+    /// Jumps the playing cutscene to its end marker. Quiet with none.
+    SkipCutscene,
+    /// Kicks the camera trauma 0-1 higher.
+    CameraShake {
+        amount: Value,
+    },
+    /// Scales world time: 1 is normal speed.
+    SetTimeScale {
+        scale: Value,
+    },
+    /// Freezes world strands for `frames` render frames.
+    Hitstop {
+        frames: Value,
+    },
+    /// Shows the letterbox bars for a nonzero value, hides them for zero.
+    SetLetterbox {
+        on: Value,
+    },
+    /// Fades the screen to `black` or `white`, or clears it for `none`.
+    FadeScreen {
+        color: Value,
+    },
     /// Grabs or frees the pointer; window-global, like gravity.
     SetMouseLocked(bool),
     /// Rumbles connected gamepads: 0-100 strength for seconds.
@@ -567,6 +600,10 @@ pub fn compile(graph: &ActorGraph) -> Program {
                 weather: weather.trim().to_string(),
             }),
             InstructionKind::WhenSceneEnds => Some(Trigger::SceneEnded),
+            InstructionKind::WhenCutsceneSignal { signal } => Some(Trigger::CutsceneSignal {
+                signal: signal.trim().to_string(),
+            }),
+            InstructionKind::WhenCutsceneEnds => Some(Trigger::CutsceneEnded),
             InstructionKind::WhenActionPressed { action } => Some(Trigger::ActionPressed(
                 crate::input::normalize_action(action).to_lowercase(),
             )),
@@ -815,6 +852,12 @@ fn action_values(action: &Action) -> Vec<&Value> {
         }
         Action::SetUiProp { id, value, .. } => vec![id, value],
         Action::BlendWeather { weather, seconds } => vec![weather, seconds],
+        Action::PlayCutscene { cutscene } => vec![cutscene],
+        Action::CameraShake { amount } => vec![amount],
+        Action::SetTimeScale { scale } => vec![scale],
+        Action::Hitstop { frames } => vec![frames],
+        Action::SetLetterbox { on } => vec![on],
+        Action::FadeScreen { color } => vec![color],
         Action::HideElement { id, .. } => vec![id],
         Action::CreateActor { name, position } => {
             let mut values = vec![name];
@@ -1047,6 +1090,24 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         Action::BlendWeather { weather, seconds } => Action::BlendWeather {
             weather: lift_one(weather, ctx),
             seconds: lift_one(seconds, ctx),
+        },
+        Action::PlayCutscene { cutscene } => Action::PlayCutscene {
+            cutscene: lift_one(cutscene, ctx),
+        },
+        Action::CameraShake { amount } => Action::CameraShake {
+            amount: lift_one(amount, ctx),
+        },
+        Action::SetTimeScale { scale } => Action::SetTimeScale {
+            scale: lift_one(scale, ctx),
+        },
+        Action::Hitstop { frames } => Action::Hitstop {
+            frames: lift_one(frames, ctx),
+        },
+        Action::SetLetterbox { on } => Action::SetLetterbox {
+            on: lift_one(on, ctx),
+        },
+        Action::FadeScreen { color } => Action::FadeScreen {
+            color: lift_one(color, ctx),
         },
         Action::SetWater { property, value } => Action::SetWater {
             property,
@@ -1507,6 +1568,8 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenSceneStarts
         | K::WhenWeather { .. }
         | K::WhenSceneEnds
+        | K::WhenCutsceneSignal { .. }
+        | K::WhenCutsceneEnds
         | K::WhenUiEvent { .. }
         | K::WhenUiClicked { .. }
         | K::WhenUiChanged { .. }
@@ -1722,6 +1785,23 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::BlendWeather { weather, seconds } => steps.push(Step::Action(Action::BlendWeather {
             weather: weather.clone(),
             seconds: seconds.clone(),
+        })),
+        K::PlayCutscene { cutscene } => steps.push(Step::Action(Action::PlayCutscene {
+            cutscene: cutscene.clone(),
+        })),
+        K::SkipCutscene => steps.push(Step::Action(Action::SkipCutscene)),
+        K::CameraShake { amount } => steps.push(Step::Action(Action::CameraShake {
+            amount: amount.clone(),
+        })),
+        K::SetTimeScale { scale } => steps.push(Step::Action(Action::SetTimeScale {
+            scale: scale.clone(),
+        })),
+        K::Hitstop { frames } => steps.push(Step::Action(Action::Hitstop {
+            frames: frames.clone(),
+        })),
+        K::SetLetterbox { on } => steps.push(Step::Action(Action::SetLetterbox { on: on.clone() })),
+        K::FadeScreen { color } => steps.push(Step::Action(Action::FadeScreen {
+            color: color.clone(),
         })),
         K::SetWater { property, value } => steps.push(Step::Action(Action::SetWater {
             property: *property,

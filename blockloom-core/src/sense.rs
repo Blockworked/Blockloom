@@ -176,6 +176,12 @@ pub struct Sensors {
     /// Every scene's name, in project order. What `scene names` reports as
     /// a JSON list, so `load json into list` takes it.
     pub scene_names: Vec<String>,
+    /// The cutscene playing right now, by name, or empty for none. What
+    /// `is cutscene playing?` reads; sampled with the sensors each frame
+    /// from the wall-clock player, so VM and compiled logic agree.
+    pub cutscene_name: String,
+    /// Seconds into the playing cutscene. What `cutscene time` reads.
+    pub cutscene_time: f32,
 }
 
 /// The shape of [`AtmosphereSense`]. Bumped when a field changes meaning or

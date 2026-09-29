@@ -149,6 +149,8 @@ fn publish_world() {
     sensors.atmosphere.volumes = vec!["Cave".to_string()];
     sensors.current_scene = "Scene 1".to_string();
     sensors.scene_names = vec!["Scene 1".to_string(), "Scene 2".to_string()];
+    sensors.cutscene_name = "Opener".to_string();
+    sensors.cutscene_time = 4.25;
     blockloom_core::sense::publish(sensors);
 }
 
@@ -331,6 +333,13 @@ impl Host for Recorder {
             | Act::AdvanceTime { .. }
             | Act::SetPrecipitation { .. }
             | Act::BlendWeather { .. }
+            | Act::PlayCutscene { .. }
+            | Act::SkipCutscene
+            | Act::CameraShake { .. }
+            | Act::SetTimeScale { .. }
+            | Act::Hitstop { .. }
+            | Act::SetLetterbox { .. }
+            | Act::FadeScreen { .. }
             | Act::SetPaused { .. } => String::new(),
             _ => actor.to_string(),
         };
@@ -404,6 +413,8 @@ impl Host for Recorder {
             // halves print the same digits.
             "SunElevation" => Ok(Val::Num(f32::to_degrees(f32::asin(0.5)) as f64)),
             "CurrentWeather" => Ok(Val::Text("Storm".into())),
+            "IsCutscenePlaying" => Ok(Val::Bool(true)),
+            "CutsceneTime" => Ok(Val::Num(4.25)),
             "IsHdrDisplay" => Ok(Val::Bool(true)),
             "PeakBrightness" => Ok(Val::Num(600.0)),
             "IsRayTracing" => Ok(Val::Bool(true)),
@@ -1055,6 +1066,13 @@ fn line_of(act: &Act) -> String {
         Act::BlendWeather { weather, seconds } => {
             format!("BlendWeather {weather} {seconds:?}")
         }
+        Act::PlayCutscene { cutscene } => format!("PlayCutscene {cutscene}"),
+        Act::SkipCutscene => "SkipCutscene".to_string(),
+        Act::CameraShake { amount } => format!("CameraShake {amount:?}"),
+        Act::SetTimeScale { scale } => format!("SetTimeScale {scale:?}"),
+        Act::Hitstop { frames } => format!("Hitstop {frames:?}"),
+        Act::SetLetterbox { on } => format!("SetLetterbox {on:?}"),
+        Act::FadeScreen { color } => format!("FadeScreen {color}"),
         Act::SetWater { property, value } => format!("SetWater {property} {value:?}"),
         Act::PaintTile { map, tile, x, y, z } => format!(
             "PaintTile {map} {} {x:?} {y:?} {z:?}",
@@ -1179,6 +1197,9 @@ fn main() {
     // A storm arriving, beside the green flag: a case with a `when weather
     // becomes` strand gets one, and nothing else sees it.
     runner.fire("Weather", "", "Storm", "");
+    // A cutscene signal and end, likewise.
+    runner.fire("CutsceneSignal", "", "beat", "");
+    runner.fire("CutsceneEnded", "", "Opener", "");
 
     for tick in 0..TICKS {
         recorder.tick = tick;
@@ -1368,6 +1389,13 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::BlendWeather { weather, seconds } => {
             format!("|BlendWeather {weather} {seconds:?}")
         }
+        Effect::PlayCutscene { cutscene } => format!("|PlayCutscene {cutscene}"),
+        Effect::SkipCutscene => "|SkipCutscene".to_string(),
+        Effect::CameraShake { amount } => format!("|CameraShake {amount:?}"),
+        Effect::SetTimeScale { scale } => format!("|SetTimeScale {scale:?}"),
+        Effect::Hitstop { frames } => format!("|Hitstop {frames:?}"),
+        Effect::SetLetterbox { on } => format!("|SetLetterbox {on:?}"),
+        Effect::FadeScreen { color } => format!("|FadeScreen {color}"),
         Effect::SetWater {
             actor,
             property,
@@ -1688,6 +1716,14 @@ fn by_vm(project: &Project) -> Vec<String> {
     // becomes` strand gets one, like above.
     vm.fire(Event::Weather {
         weather: "Storm".to_string(),
+    });
+    // A cutscene signal and end, likewise: a case with a `when cutscene`
+    // strand gets them, and nothing else sees them.
+    vm.fire(Event::CutsceneSignal {
+        signal: "beat".to_string(),
+    });
+    vm.fire(Event::CutsceneEnded {
+        cutscene: "Opener".to_string(),
     });
     let mut lines = Vec::new();
     for tick in 0..TICKS {
@@ -2880,6 +2916,93 @@ fn when_weather_becomes_starts_only_for_its_weather() {
                 },
                 vec![K::Say {
                     text: Value::text("any weather"),
+                }],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn the_cutscene_blocks_ask_for_the_same_things_in_the_same_order() {
+    // Both halves read each slot in row order, trim names, normalize the
+    // fade, and keep the strand running - a cutscene plays beside the
+    // blocks, not instead of them.
+    assert_same(
+        "cutscene-director",
+        vec![
+            K::PlayCutscene {
+                cutscene: Value::text(" Opener "),
+            },
+            K::SkipCutscene,
+            K::CameraShake {
+                amount: op("Add", vec![number(0.2), number(0.5)]),
+            },
+            // A shake that isn't a number stands a zero, the same both ways.
+            K::CameraShake {
+                amount: Value::text("heavy"),
+            },
+            K::SetTimeScale {
+                scale: Value::text("blurred"),
+            },
+            K::SetTimeScale {
+                scale: op("Div", vec![number(1.0), number(2.0)]),
+            },
+            K::Hitstop {
+                frames: Value::number(3.0),
+            },
+            K::SetLetterbox {
+                on: Value::number(1.0),
+            },
+            K::FadeScreen {
+                color: Value::text("BLACK"),
+            },
+            K::FadeScreen {
+                color: Value::text("curtain"),
+            },
+            K::Say {
+                text: op("IsCutscenePlaying", vec![]),
+            },
+            K::Say {
+                text: op("CutsceneTime", vec![]),
+            },
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn when_cutscene_markers_arrive_they_start_their_strands() {
+    assert_same_headed(
+        "cutscene-arrives",
+        vec![
+            (
+                K::WhenCutsceneSignal {
+                    signal: "beat".to_string(),
+                },
+                vec![K::Say {
+                    text: Value::text("the beat drops"),
+                }],
+            ),
+            (
+                K::WhenCutsceneSignal {
+                    signal: "sting".to_string(),
+                },
+                vec![K::Say {
+                    text: Value::text("never"),
+                }],
+            ),
+            (
+                K::WhenCutsceneSignal {
+                    signal: "".to_string(),
+                },
+                vec![K::Say {
+                    text: Value::text("any signal"),
+                }],
+            ),
+            (
+                K::WhenCutsceneEnds,
+                vec![K::Say {
+                    text: Value::text("curtain down"),
                 }],
             ),
         ],

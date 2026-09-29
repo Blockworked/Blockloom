@@ -1288,16 +1288,29 @@ Phased by dependency and value per cost. Each phase unblocks the next.
       that cannot build for the target fails the build with rustc's error,
       the same as cross-desktop and wasm. Codegen logic ships as one more
       .so on the same path with the VM as fallback.
-- [ ] Signing and the dev loop:
+- [x] Signing and the dev loop:
   - A debug keystore is auto-created with `keytool` on the first Android
         build (data dir, clearly debug-only); release signing takes a
         keystore path plus alias in Project settings and asks for passwords
         on each build (env or OS keyring, never written into the project or
         the app config).
+        Done: `ensure_debug_keystore` on first build; `AndroidSettings`
+        carries the keystore path plus alias; `resolve_signing` reads each
+        password from the typed args, the env, then the OS keyring
+        (`android_keyring`: macOS Keychain through `security`, Linux Secret
+        Service through `secret-tool`, no new crates; Windows reads as
+        unavailable in v1). The Build dialog's remember checkbox (or
+        `rememberPasswords` headless) keeps passwords that just signed in
+        the keyring for the next build, with status rows, a Forget button
+        and `android-forget-passwords`; `create-key` offers the same.
   - The Build dialog gains Install on connected device (behind `adb
         devices` from the installed platform-tools): `adb install -r` plus
         `am start`, with logcat streaming the run log back into RunLog. An
         emulator counts as a device on the x86_64 row.
+        Done: `android_install` plus launch with the buffer cleared, then a
+        2 s `android_logcat_tail` poll that dumps, clears and appends every
+        line to the RunLog (markers as `say`, panics as `error`); emulators
+        list as devices on either row.
 - [ ] Branding and manifest (`distribution.rs` neighborhood):
   - Adaptive icons generated from the project icon (foreground plus
         background plus monochrome, through the existing `Icons` pipeline),

@@ -258,6 +258,32 @@ pub enum Effect {
         weather: String,
         seconds: f32,
     },
+    /// Plays the named cutscene reel. Window-global, like a broadcast.
+    PlayCutscene {
+        cutscene: String,
+    },
+    /// Jumps the playing cutscene to its end marker. Window-global.
+    SkipCutscene,
+    /// Kicks the camera trauma 0-1 higher. Window-global.
+    CameraShake {
+        amount: f32,
+    },
+    /// Scales world time for the rest of the run. Window-global.
+    SetTimeScale {
+        scale: f32,
+    },
+    /// Freezes world strands for `frames` render frames. Window-global.
+    Hitstop {
+        frames: f32,
+    },
+    /// Shows the letterbox bars for a nonzero value. Window-global.
+    SetLetterbox {
+        on: f32,
+    },
+    /// Fades the screen to `black` or `white`, or clears it. Window-global.
+    FadeScreen {
+        color: String,
+    },
     /// A water dial for the rest of the run: `actor`'s own water when it has
     /// some, every body's otherwise.
     SetWater {

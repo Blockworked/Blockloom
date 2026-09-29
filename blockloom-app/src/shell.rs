@@ -252,6 +252,11 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 ty: "string",
                 required: false,
             },
+            ArgSpec {
+                name: "rememberPasswords",
+                ty: "boolean (default: off)",
+                required: false,
+            },
         ],
     },
     CommandSpec {
@@ -321,6 +326,31 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "android-logcat-tail",
+        cmd: "android_logcat_tail",
+        aliases: &["android_logcat_tail"],
+        summary: "Poll the device log the way the Build dialog streams it: dump, clear the buffer for the next poll, and append every kept line to the RunLog. Each call reads only what arrived since the last.",
+        args: &[ArgSpec {
+            name: "device",
+            ty: "string",
+            required: false,
+        }],
+    },
+    CommandSpec {
+        name: "android-keyring-status",
+        cmd: "android_keyring_status",
+        aliases: &["android_keyring_status"],
+        summary: "What the OS keyring keeps for the open project's release key: whether this machine has a scriptable store, and which passwords it holds. Needs no device.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "android-forget-passwords",
+        cmd: "android_forget_passwords",
+        aliases: &["android_forget_passwords"],
+        summary: "Forget whatever the OS keyring keeps for the open project's release key. Needs no device.",
+        args: &[],
+    },
+    CommandSpec {
         name: "android-set-sdk-path",
         cmd: "android_set_sdk_path",
         aliases: &["android_set_sdk_path"],
@@ -379,7 +409,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "android-create-keystore",
         cmd: "android_create_keystore",
         aliases: &["android_create_keystore"],
-        summary: "Make a release key: a new RSA keypair under alias in the key file at path, creating the file when needed. Passwords come from storePass/keyPass or the env, and are never stored.",
+        summary: "Make a release key: a new RSA keypair under alias in the key file at path, creating the file when needed. Passwords come from storePass/keyPass, the env, then the OS keyring, and are kept there only with rememberPasswords.",
         args: &[
             ArgSpec {
                 name: "path",
@@ -399,6 +429,11 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             ArgSpec {
                 name: "keyPass",
                 ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "rememberPasswords",
+                ty: "boolean (default: off)",
                 required: false,
             },
         ],

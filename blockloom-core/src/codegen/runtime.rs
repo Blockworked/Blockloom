@@ -251,6 +251,25 @@ pub enum Act {
         weather: String,
         seconds: f32,
     },
+    PlayCutscene {
+        cutscene: String,
+    },
+    SkipCutscene,
+    CameraShake {
+        amount: f32,
+    },
+    SetTimeScale {
+        scale: f32,
+    },
+    Hitstop {
+        frames: f32,
+    },
+    SetLetterbox {
+        on: f32,
+    },
+    FadeScreen {
+        color: String,
+    },
     SetWater {
         property: &'static str,
         value: f32,
@@ -827,6 +846,10 @@ impl Runner {
                 ("Weather", "Weather") => {
                     entry.detail.is_empty() || entry.detail.eq_ignore_ascii_case(detail)
                 }
+                ("CutsceneSignal", "CutsceneSignal") => {
+                    entry.detail.is_empty() || entry.detail.eq_ignore_ascii_case(detail)
+                }
+                ("CutsceneEnded", "CutsceneEnded") => true,
                 ("Particles", "Particles") => entry.actor == &*template && entry.detail == detail,
                 _ => false,
             };
@@ -1190,7 +1213,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 32;
+pub const LOGIC_ABI_VERSION: u32 = 33;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1411,6 +1434,13 @@ pub const ACT_ADVANCE_TIME: u32 = 112;
 pub const ACT_SET_PRECIPITATION: u32 = 113;
 /// `a` = preset name; `n0` = seconds. Window-global: no actor.
 pub const ACT_BLEND_WEATHER: u32 = 114;
+pub const ACT_PLAY_CUTSCENE: u32 = 115;
+pub const ACT_SKIP_CUTSCENE: u32 = 116;
+pub const ACT_CAMERA_SHAKE: u32 = 117;
+pub const ACT_SET_TIME_SCALE: u32 = 118;
+pub const ACT_HITSTOP: u32 = 119;
+pub const ACT_SET_LETTERBOX: u32 = 120;
+pub const ACT_FADE_SCREEN: u32 = 121;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2009,6 +2039,40 @@ impl Host for AbiHost {
                 [seconds as f64, 0.0, 0.0],
                 &zero,
             ),
+            Act::PlayCutscene { cutscene } => {
+                self.act_wire(actor, ACT_PLAY_CUTSCENE, &cutscene, "", [0.0; 3], &zero)
+            }
+            Act::SkipCutscene => self.act_wire(actor, ACT_SKIP_CUTSCENE, "", "", [0.0; 3], &zero),
+            Act::CameraShake { amount } => self.act_wire(
+                actor,
+                ACT_CAMERA_SHAKE,
+                "",
+                "",
+                [amount as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetTimeScale { scale } => self.act_wire(
+                actor,
+                ACT_SET_TIME_SCALE,
+                "",
+                "",
+                [scale as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::Hitstop { frames } => {
+                self.act_wire(actor, ACT_HITSTOP, "", "", [frames as f64, 0.0, 0.0], &zero)
+            }
+            Act::SetLetterbox { on } => self.act_wire(
+                actor,
+                ACT_SET_LETTERBOX,
+                "",
+                "",
+                [on as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::FadeScreen { color } => {
+                self.act_wire(actor, ACT_FADE_SCREEN, &color, "", [0.0; 3], &zero)
+            }
             Act::SetWater { property, value } => self.act_wire(
                 actor,
                 ACT_SET_WATER,
@@ -2504,6 +2568,17 @@ pub fn normalize_transition(name: &str) -> String {
         "fade" => "fade".to_string(),
         "wipe" => "wipe".to_string(),
         "circle" => "circle".to_string(),
+        _ => "none".to_string(),
+    }
+}
+
+/// A fade color by the name a block spells it: `black` or `white`, else
+/// `none`. A twin of `crate::cinematic::normalize_fade`; change the two
+/// together, the same rule `normalize_transition` keeps with the VM.
+pub fn normalize_fade(name: &str) -> String {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "black" => "black".to_string(),
+        "white" => "white".to_string(),
         _ => "none".to_string(),
     }
 }

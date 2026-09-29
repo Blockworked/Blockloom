@@ -165,6 +165,14 @@ pub enum InstructionKind {
     /// Runs in the outgoing scene's actors before a `switch scene to`
     /// unloads it.
     WhenSceneEnds,
+    /// Runs when the playing cutscene passes the named signal marker.
+    /// Empty matches any signal.
+    WhenCutsceneSignal {
+        signal: String,
+    },
+    /// Runs when the playing cutscene reaches its end marker, by skipping
+    /// or by playing through.
+    WhenCutsceneEnds,
     /// Runs when the interface element named `element` is clicked.
     ///
     /// Spelled `element` rather than `id` because a flattened instruction
@@ -872,6 +880,41 @@ pub enum InstructionKind {
         scene: Value,
         transition: Value,
     },
+    /// Plays the named cutscene reel on the wall clock: camera cuts, dolly
+    /// moves, signal markers, slow-motion and volume keys. The strand that
+    /// asked carries on; `when cutscene ends` runs when the reel does.
+    PlayCutscene {
+        cutscene: Value,
+    },
+    /// Jumps the playing cutscene to its end marker: remaining signals fire
+    /// in order, then `when cutscene ends` runs. Quiet with none playing.
+    SkipCutscene,
+    /// Kicks the camera trauma 0-1 higher: the view shakes on seeded noise
+    /// and settles as the trauma decays. Adds to what is already shaking.
+    CameraShake {
+        amount: Value,
+    },
+    /// Scales world time for the rest of the run: 1 is normal speed, 0.5
+    /// halves it, 0 freezes world strands while interface strands tick on.
+    /// A cutscene's slow-motion keys only move it while no block has.
+    SetTimeScale {
+        scale: Value,
+    },
+    /// Freezes world strands for `frames` render frames - the punch landing
+    /// - while interface strands and the cutscene clock tick on.
+    Hitstop {
+        frames: Value,
+    },
+    /// Shows the cinematic letterbox bars for a nonzero `on`, hides them
+    /// for zero. They sit over the world but under the fade.
+    SetLetterbox {
+        on: Value,
+    },
+    /// Fades the screen to `black` or `white`, or clears the fade for
+    /// `none`. Unknown spellings read as `none`.
+    FadeScreen {
+        color: Value,
+    },
     /// Suspends this script for `duration` seconds.
     Wait {
         duration: Value,
@@ -1220,6 +1263,24 @@ impl BlockKind for InstructionKind {
                 f(scene, InputValueType::Any);
                 f(transition, InputValueType::Any);
             }
+            K::PlayCutscene { cutscene } => {
+                f(cutscene, InputValueType::Any);
+            }
+            K::CameraShake { amount } => {
+                f(amount, InputValueType::Any);
+            }
+            K::SetTimeScale { scale } => {
+                f(scale, InputValueType::Any);
+            }
+            K::Hitstop { frames } => {
+                f(frames, InputValueType::Any);
+            }
+            K::SetLetterbox { on } => {
+                f(on, InputValueType::Any);
+            }
+            K::FadeScreen { color } => {
+                f(color, InputValueType::Any);
+            }
             K::PlaySound {
                 sound,
                 volume,
@@ -1436,6 +1497,9 @@ impl BlockKind for InstructionKind {
             | K::WhenSceneStarts
             | K::WhenWeather { .. }
             | K::WhenSceneEnds
+            | K::WhenCutsceneSignal { .. }
+            | K::WhenCutsceneEnds
+            | K::SkipCutscene
             | K::BlockHeader { .. }
             | K::CreateClone { .. }
             | K::PointTowards { .. }
@@ -1494,6 +1558,8 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenSceneStarts
                 | InstructionKind::WhenWeather { .. }
                 | InstructionKind::WhenSceneEnds
+                | InstructionKind::WhenCutsceneSignal { .. }
+                | InstructionKind::WhenCutsceneEnds
                 | InstructionKind::WhenUiEvent { .. }
                 | InstructionKind::WhenUiClicked { .. }
                 | InstructionKind::WhenUiChanged { .. }

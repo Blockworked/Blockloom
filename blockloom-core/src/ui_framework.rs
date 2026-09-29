@@ -350,9 +350,29 @@ pub fn visible_rows(
     first..last.max(first)
 }
 
+/// Adds the device's display cutout insets (notch, punch hole, gesture bar)
+/// over the authored `safe_area` padding, edge by edge. Both are
+/// `[left, top, right, bottom]` in logical pixels; negatives clamp to zero,
+/// so a stale reading never pulls widgets off screen.
+pub fn effective_safe_area(authored: [f32; 4], device: [f32; 4]) -> [f32; 4] {
+    let mut out = [0.0; 4];
+    for i in 0..4 {
+        out[i] = (authored[i] + device[i]).max(0.0);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn device_insets_add_over_the_authored_safe_area() {
+        assert_eq!(
+            effective_safe_area([10., 0., 10., 0.], [0., 40., 0., 20.]),
+            [10., 40., 10., 20.]
+        );
+        assert_eq!(effective_safe_area([0.; 4], [-5., 0., 0., 0.]), [0.; 4]);
+    }
     #[test]
     fn rejects_cycles_and_missing_parents() {
         let mut d = UiDocument::default();

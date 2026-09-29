@@ -2492,6 +2492,7 @@ pub(crate) fn build_game(
     hdr: Option<bool>,
     store_pass: Option<String>,
     key_pass: Option<String>,
+    remember_passwords: bool,
 ) -> Result<build::Build, String> {
     let mut s = lock(state)?;
     let Some(project) = s.project().cloned() else {
@@ -2580,6 +2581,7 @@ pub(crate) fn build_game(
         sdr_only: target.is_web() || !hdr.unwrap_or(target.hdr_default().0),
         store_pass,
         key_pass,
+        remember_passwords,
     };
     let built = build::build(
         &project,
@@ -2665,6 +2667,61 @@ pub(crate) fn android_install(
 /// reads when a game misbehaves on device. One shot, not a stream.
 pub(crate) fn android_logcat(device: Option<String>) -> Result<android::Logcat, String> {
     android::logcat(device.as_deref(), "blockloom")
+}
+
+/// Polls the device log the way the Build dialog streams it: dumps, clears
+/// the buffer for the next poll, and appends every kept line to the RunLog
+/// (markers as `say`, panics as `error`, both from `Android`), then answers
+/// the same dump. The install step clears the buffer on launch, so the
+/// first poll after it reads only the fresh run.
+pub(crate) fn android_logcat_tail(
+    state: &SharedState,
+    app: &AppHandle,
+    device: Option<String>,
+) -> Result<android::Logcat, String> {
+    let dumped = android::logcat_tail(device.as_deref(), "blockloom")?;
+    if !dumped.lines.is_empty() || !dumped.panics.is_empty() {
+        let mut s = lock(state)?;
+        for line in &dumped.lines {
+            s.push_log(LogLine {
+                kind: "say".to_string(),
+                actor: "Android".to_string(),
+                text: line.trim().to_string(),
+            });
+        }
+        for line in &dumped.panics {
+            s.push_log(LogLine {
+                kind: "error".to_string(),
+                actor: "Android".to_string(),
+                text: line.trim().to_string(),
+            });
+        }
+        emit(app, &s);
+    }
+    Ok(dumped)
+}
+
+/// What the OS keyring keeps for the open project's release key, so the
+/// Build dialog can say when typing passwords is optional. Needs no device.
+pub(crate) fn android_keyring_status(
+    state: &SharedState,
+) -> Result<android::KeyringStatus, String> {
+    let s = lock(state)?;
+    let Some(project) = s.project() else {
+        return Err("Open a project first.".to_string());
+    };
+    Ok(android::keyring_status_for(&project.android))
+}
+
+/// Forgets whatever the OS keyring keeps for the open project's release
+/// key. Answers whether anything was there. Needs no device.
+pub(crate) fn android_forget_passwords(state: &SharedState) -> Result<bool, String> {
+    let s = lock(state)?;
+    let Some(project) = s.project().cloned() else {
+        return Err("Open a project first.".to_string());
+    };
+    drop(s);
+    android::forget_signing(&project.android)
 }
 
 /// Points the SDK row at `path` (empty clears back to the default) and
@@ -2754,16 +2811,32 @@ pub(crate) fn android_create_keystore(
     alias: String,
     store_pass: Option<String>,
     key_pass: Option<String>,
+    remember_passwords: bool,
 ) -> Result<Vec<String>, String> {
     if path.trim().is_empty() {
         return Err("Name the key file first.".to_string());
     }
-    android::create_keystore(
+    let aliases = android::create_keystore(
         std::path::Path::new(path.trim()),
         &alias,
         store_pass.as_deref(),
         key_pass.as_deref(),
-    )
+    )?;
+    if remember_passwords {
+        // The key just proved these passwords work, so they are worth
+        // keeping. A keyring that won't keep them only affects the next
+        // build's typing, never the key just made.
+        let _ = android::remember_signing(
+            &android::AndroidSettings {
+                keystore: path.trim().to_string(),
+                key_alias: alias.trim().to_string(),
+                ..android::AndroidSettings::default()
+            },
+            store_pass.as_deref(),
+            key_pass.as_deref(),
+        );
+    }
+    Ok(aliases)
 }
 
 // ─── Assets ────────────────────────────────────────────────────────────────

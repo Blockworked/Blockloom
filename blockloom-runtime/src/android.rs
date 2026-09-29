@@ -18,9 +18,9 @@
 //!   arrives as the `back` key (a visible modal swallows it, like clicks),
 //!   and a focused text input raises the soft keyboard. Touch and gamepads
 //!   are Bevy's own mobile input; there is no second stack.
-//! - No safe-area API exists in this Bevy line, so notched displays are not
-//!   inset: feeding the activity's content rect into the UI layout is a later
-//!   step, not this one.
+//! - Display cutout insets come from the activity's content rect each frame
+//!   and lay over the authored UI `safe_area`, so HUD widgets clear notches
+//!   and gesture bars with no per-phone project padding.
 
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowFocused};
@@ -135,7 +135,47 @@ impl Default for SmokeLog {
 pub fn register(app: &mut App) {
     app.init_resource::<AutoPaused>()
         .init_resource::<SmokeLog>()
-        .add_systems(Update, (auto_pause, sync_soft_keyboard, smoke_log));
+        .add_systems(
+            Update,
+            (
+                auto_pause,
+                sync_soft_keyboard,
+                sync_device_insets,
+                smoke_log,
+            ),
+        );
+}
+
+/// Refreshes the display cutout insets from the activity's content rect:
+/// whatever of the window the rect leaves out is notch, punch hole or
+/// gesture bar. Physical pixels over the window's scale factor, so the UI
+/// canvas (which works logical) can lay them over the authored `safe_area`.
+/// An empty rect - before the first layout - leaves the last reading alone
+/// rather than insetting the whole window.
+fn sync_device_insets(
+    mut insets: ResMut<crate::ui::DeviceInsets>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+) {
+    let Some(app) = bevy_android::ANDROID_APP.get() else {
+        return;
+    };
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let rect = app.content_rect();
+    if rect.right <= rect.left || rect.bottom <= rect.top {
+        return;
+    }
+    let scale = window.scale_factor().max(0.01);
+    let next = [
+        rect.left.max(0) as f32 / scale,
+        rect.top.max(0) as f32 / scale,
+        (window.physical_width() as f32 - rect.right as f32).max(0.0) / scale,
+        (window.physical_height() as f32 - rect.bottom as f32).max(0.0) / scale,
+    ];
+    if insets.0 != next {
+        insets.0 = next;
+    }
 }
 
 /// Freezes the world when the activity loses focus (home button, task
