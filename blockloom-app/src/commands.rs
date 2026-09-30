@@ -2591,11 +2591,15 @@ pub(crate) fn build_game(
         Path::new(&path),
         options.clone(),
     )?;
+    // A cached Android build reused the previous APK, so say so instead of
+    // claiming a fresh compile.
+    let action = if built.cached { "Reusing" } else { "Built" };
     s.push_log(LogLine {
         kind: "say".to_string(),
         actor: "Blockloom".to_string(),
         text: format!(
-            "Built {} for {}: {} asset(s), {} script(s), {} shader(s), {} blocks, {}{}{}{}, {} -> {} and {}",
+            "{} {} for {}: {} asset(s), {} script(s), {} shader(s), {} blocks, {}{}{}{}, {} -> {} and {}{}",
+            action,
             project.name,
             target.label,
             built.assets,
@@ -2616,7 +2620,12 @@ pub(crate) fn build_game(
             },
             build::size_text(built.size),
             built.dir.display(),
-            built.archive.display()
+            built.archive.display(),
+            if built.cached {
+                " (nothing changed)"
+            } else {
+                ""
+            },
         ),
     });
     emit(app, &s);

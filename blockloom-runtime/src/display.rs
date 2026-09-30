@@ -58,6 +58,35 @@ pub fn register(app: &mut App) {
     }
 }
 
+/// Bevy quits on any validation error by default; an HDR surface refusal is
+/// already degraded to SDR by the surface code, so quitting would kill a
+/// healthy run over a display that changed its mind mid-frame (seen on
+/// Wayland, where caps answers go stale between check and configure).
+/// Called from `add_world`, so every runtime carries it.
+pub fn install_render_error_handler(app: &mut App) {
+    use bevy::render::error_handler::RenderErrorHandler;
+    app.insert_resource(RenderErrorHandler(render_error_handler));
+}
+
+/// Keeps Bevy's quit for every error but a refused surface configure, which
+/// the HDR surface code survives on its own by falling back to SDR.
+fn render_error_handler(
+    error: &bevy::render::error_handler::RenderError,
+    main: &mut World,
+    _render: &mut World,
+) -> bevy::render::error_handler::RenderErrorPolicy {
+    use bevy::render::error_handler::{ErrorType, RenderErrorPolicy};
+    if error.ty == ErrorType::Validation && error.description.contains("Surface::configure") {
+        bevy::log::warn!(
+            "rendering on past a refused surface configure; the HDR surface already fell back to SDR"
+        );
+        return RenderErrorPolicy::Ignore;
+    }
+    bevy::log::error!("Quitting the application due to {:?} RenderError", error.ty);
+    main.write_message(bevy::app::AppExit::error());
+    RenderErrorPolicy::StopRendering
+}
+
 /// A window whose surface this module owns, in the space it last configured.
 #[derive(Component)]
 #[cfg(not(target_arch = "wasm32"))]
@@ -186,7 +215,7 @@ fn alpha_mode(mode: CompositeAlphaMode) -> wgpu::CompositeAlphaMode {
 /// Views are always drawn through an sRGB view of an 8-bit surface, as
 /// Bevy's own are; HDR formats have no sRGB twin.
 #[cfg(not(target_arch = "wasm32"))]
-fn view_format(format: TextureFormat) -> TextureFormat {
+pub(crate) fn view_format(format: TextureFormat) -> TextureFormat {
     format.add_srgb_suffix()
 }
 
@@ -236,12 +265,49 @@ fn adopt_window(
         }
         offers.set(formats.offers());
         let view = view_format(format);
+        // A surface that never configured has no error sink, so a refused
+        // configure below would turn the acquire after it into a fatal
+        // panic. Seed an SDR configure first when HDR is wanted: the 8-bit
+        // pair all but always takes, and from then on a refusal (Wayland
+        // caps can flap between the takes() check above and the configure)
+        // is a logged error instead. Sizes clamp off zero, which fails
+        // validation outright; the stale check below resizes on arrival.
+        let width = window.physical_width.max(1);
+        let height = window.physical_height.max(1);
+        if matches!(
+            color_space,
+            SurfaceColorSpace::ExtendedSrgbLinear | SurfaceColorSpace::Bt2100Pq
+        ) {
+            let (sdr, _) = formats.configure(OutputSpace::Sdr);
+            let seed_view = view_format(sdr);
+            device.configure_surface(
+                &surface,
+                &wgpu::SurfaceConfiguration {
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    format: sdr,
+                    color_space: SurfaceColorSpace::Auto,
+                    width,
+                    height,
+                    present_mode: present_mode(window.present_mode, &caps),
+                    desired_maximum_frame_latency: window
+                        .desired_maximum_frame_latency
+                        .map(|latency| latency.get())
+                        .unwrap_or(2),
+                    alpha_mode: alpha_mode(window.alpha_mode),
+                    view_formats: if seed_view != sdr {
+                        vec![seed_view]
+                    } else {
+                        vec![]
+                    },
+                },
+            );
+        }
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
             color_space,
-            width: window.physical_width,
-            height: window.physical_height,
+            width,
+            height,
             present_mode: present_mode(window.present_mode, &caps),
             desired_maximum_frame_latency: window
                 .desired_maximum_frame_latency

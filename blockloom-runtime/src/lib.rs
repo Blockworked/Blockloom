@@ -149,9 +149,27 @@ pub fn run_process() {
 /// Called from the `bevy_main` entry, never from the binary.
 #[cfg(target_os = "android")]
 pub fn run_android() {
+    // winit forbids building its event loop twice in one process, so a
+    // second activity in a lingering process would panic with
+    // RecreationAttempt. Die instead; the relaunch then forks fresh.
+    static ENTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if ENTERED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        std::process::exit(0);
+    }
+    crate::android::install_panic_hook();
+    // Forwards `log` records (wgpu, driver notes) into Bevy's tracing so
+    // they reach logcat. Without this they vanish on device, including
+    // the descriptor-allocator diagnostics.
+    let _ = tracing_log::LogTracer::init();
     blockloom_core::init();
     match crate::android::load_pack() {
-        Ok(pack) => run_launch(Launch::from_android(pack)),
+        Ok(pack) => {
+            run_launch(Launch::from_android(pack));
+            // The activity is gone when the app returns (back button, quit).
+            // Die with it so the next launch forks fresh rather than
+            // hitting the guard above and flashing out.
+            std::process::exit(0);
+        }
         Err(message) => {
             eprintln!("blockloom: {message}");
             std::process::exit(1);
@@ -202,7 +220,25 @@ fn run_launch(launch: Launch) {
     }
     #[cfg(target_os = "android")]
     crate::android::register(&mut app);
+    // Serialize render schedules on Android to avoid concurrent Mali driver
+    // calls. Desktop keeps its threads.
+    #[cfg(target_os = "android")]
+    serial_render(&mut app);
     app.run();
+}
+
+/// Serializes the outer render schedule and its nested camera schedules.
+#[cfg(target_os = "android")]
+fn serial_render(app: &mut App) {
+    use bevy::ecs::schedule::{Schedules, SingleThreadedExecutor};
+    use bevy::render::RenderApp;
+    let Some(render) = app.get_sub_app_mut(RenderApp) else {
+        return;
+    };
+    let mut schedules = render.world_mut().resource_mut::<Schedules>();
+    for (_, schedule) in schedules.iter_mut() {
+        schedule.set_executor(SingleThreadedExecutor::new());
+    }
 }
 
 /// Project assets live in the project's own folder, anywhere on disk, and
@@ -228,6 +264,9 @@ pub(crate) fn asset_plugin() -> AssetPlugin {
 /// schedules, the same whether it has a window or an embedded view.
 pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     engine.prewarm = true;
+    // Before Bevy's own: a refused HDR surface configure degrades to SDR
+    // in the surface code, so it must not quit the run like other errors.
+    display::install_render_error_handler(app);
     app.add_plugins((RenderDiagnosticsPlugin, MeshAllocatorDiagnosticPlugin));
     app.insert_resource(ClearColor(Color::srgb(0.11, 0.14, 0.19)))
         .insert_resource(Dimension(mode))

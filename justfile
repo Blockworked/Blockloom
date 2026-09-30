@@ -49,9 +49,13 @@ rm-cargo-cfg := if os() == "windows" { 'if exist .cargo\config.toml (del /F /Q .
 
 default: build
 
+# Recreate local patched crates without committing dependency source trees.
+prepare-patched-deps:
+    bash scripts/prepare-patched-deps.sh
+
 # Build everything. The editor launches `blockloom-runtime` from beside itself,
 # so the whole workspace has to be built, not just the `blockloom` package.
-build *args:
+build *args: prepare-patched-deps
     cargo build --release --workspace {{args}}
 
 run: build
@@ -59,7 +63,7 @@ run: build
 
 # The browser dev loop: the real backend behind an HTTP bridge, plus Vite.
 # Run these in two terminals, then open http://localhost:1420.
-dev-backend:
+dev-backend: prepare-patched-deps
     cargo build -p blockloom-runtime
     cargo run -p blockloom-app --features dev-bridge --bin blockloom-devserver
 
@@ -68,7 +72,7 @@ dev-ui:
 
 # A shell onto the backend: each line is a command, each answer is JSON.
 # Builds the whole workspace first so Play has `blockloom-runtime` beside it.
-shell *args:
+shell *args: prepare-patched-deps
     just build
     cargo run -p blockloom-app --bin blockloom-shell -- {{args}}
 
@@ -76,7 +80,7 @@ shell *args:
 # `dist` profile asks, staged where the exporter looks for it. `just build`
 # keeps its quicker link, so this is a deliberate step before shipping games.
 # Other platforms' payloads come from running this there - see `stage-player`.
-player:
+player: prepare-patched-deps
     cargo build --profile dist -p blockloom-runtime
     {{mkdir-players}}
     {{copy-player}}
@@ -116,7 +120,7 @@ dlss-sdk:
 # DLSS_LICENSE.txt beside the staged player - builds then carry it along.
 # A run without the DLLs falls back to TAA plus spatial. Never for web.
 [unix]
-player-dlss: dlss-sdk
+player-dlss: dlss-sdk prepare-patched-deps
     @if [ "$(uname -s)" = "Darwin" ]; then echo "DLSS needs Windows or Linux (Vulkan RTX); macOS has no path."; exit 1; fi
     @if [ ! -f "${VULKAN_SDK:-/usr}/include/vulkan/vulkan.h" ]; then echo "Need a Vulkan SDK with headers (VULKAN_SDK, default /usr on Linux)."; exit 1; fi
     VULKAN_SDK="${VULKAN_SDK:-/usr}" cargo build --profile dist -p blockloom-runtime --features dlss
@@ -126,7 +130,7 @@ player-dlss: dlss-sdk
     @echo 'Staged the DLSS player. Add DLSS_LICENSE.txt beside it in {{players-dir}} (section 9.5 blurb), or runs fall back to TAA.'
 
 [windows]
-player-dlss: dlss-sdk
+player-dlss: dlss-sdk prepare-patched-deps
     @if "%VULKAN_SDK%"=="" (echo Set VULKAN_SDK to your Vulkan SDK - the Lunarg installer sets it system-wide. && exit 1)
     @if not exist "%VULKAN_SDK%\Include\vulkan\vulkan.h" (echo VULKAN_SDK=%VULKAN_SDK% has no Vulkan headers. && exit 1)
     cargo build --profile dist -p blockloom-runtime --features dlss
@@ -155,18 +159,18 @@ stage-player target file:
 # Basis/KTX2 C++ codecs (web builds ship PNG/JPEG). Blocks run on the VM;
 # scripts compile to wasm modules of their own. Needs, once:
 # `rustup target add wasm32-unknown-unknown` and `just web-tools`.
-web-check:
+web-check: prepare-patched-deps
     cargo check -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown
 
 # The wasm-bindgen CLI matching Cargo.lock's wasm-bindgen, which the glue
 # generator has to match exactly.
-web-tools:
+web-tools: prepare-patched-deps
     cargo install wasm-bindgen-cli --locked --version "$(cargo metadata --format-version 1 --filter-platform wasm32-unknown-unknown | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "wasm-bindgen"))')"
 
 # The web player, staged beside the editor where the Build dialog looks for
 # it (players/wasm32-unknown-unknown/: the wasm and its JS glue). `dist` is
 # what games ship; `release` links much faster for trying things out.
-web-player profile="dist":
+web-player profile="dist": prepare-patched-deps
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown --profile {{profile}}
@@ -180,7 +184,7 @@ web-player profile="dist":
 # Builds a project folder for the browser: one self-contained .html under
 # out/, exactly what the Build dialog's Web target makes. Open it from disk
 # or host it anywhere static (`just web-serve`).
-web-build project out="web-dist" profile="dist":
+web-build project out="web-dist" profile="dist": prepare-patched-deps
     just web-player {{profile}}
     cargo build --release -p blockloom-app --bin blockloom-shell
     printf 'open-project path=%s\nbuild-game path=%s target=wasm32-unknown-unknown\n' "$(realpath '{{project}}')" "$(realpath -m '{{out}}')" \
@@ -198,14 +202,14 @@ web-smoke page *args:
 
 # Android toolchain probe (Phase 6.5): SDK/NDK/JDK/Rust targets, no device
 # needed. Same code the App Settings dialog reports.
-android-check:
+android-check: prepare-patched-deps
     cargo build --release -p blockloom-app --bin blockloom-shell
     "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-status' --no-state
 
 # Android SDK install (Phase 6.5): the bootstrap download plus the pinned
 # packages through sdkmanager. Same code the Settings button runs; licenses
 # stay unaccepted until `android-accept-licenses accept=true`.
-android-sdk-install:
+android-sdk-install: prepare-patched-deps
     cargo build --release -p blockloom-app --bin blockloom-shell
     "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-install-sdk' --no-state
 
@@ -214,21 +218,21 @@ android-sdk-install:
 # game folder stages under the APK's assets, and the debug keystore - or the
 # project's release key with BLOCKLOOM_ANDROID_STORE_PASS - signs it. First
 # run needs the network for the target's crates.
-android-build project out="android-dist" triple="aarch64-linux-android":
+android-build project out="android-dist" triple="aarch64-linux-android": prepare-patched-deps
     cargo build --release -p blockloom-app --bin blockloom-shell
     printf 'open-project path=%s\nbuild-game path=%s target=%s\n' "$(realpath '{{project}}')" "$(realpath -m '{{out}}')" "{{triple}}" \
         | "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --no-state
 
 # Forgets whatever the OS keyring keeps for a project's release key. Needs
 # an open project, like the Build dialog's Forget button.
-android-forget-passwords project:
+android-forget-passwords project: prepare-patched-deps
     cargo build --release -p blockloom-app --bin blockloom-shell
     printf 'open-project path=%s\nandroid-forget-passwords\n' "$(realpath '{{project}}')" \
         | "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --no-state
 
 # Makes an AVD on the pinned Android 35 x86_64 image (empty names the
 # managed default), exactly what the App settings emulator section makes.
-android-avd-create name="":
+android-avd-create name="": prepare-patched-deps
     cargo build --release -p blockloom-app --bin blockloom-shell
     "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-create-avd{{ if name != "" { " name=" + name } else { "" } }}' --no-state
 
@@ -236,32 +240,32 @@ android-avd-create name="":
 # when unset, 0 to return right after spawning. Empty names the managed
 # default, created on the spot when no AVDs exist at all. headless=true
 # hides the host window for the editor's embedded view.
-android-emulator-start avd="" wait="300" headless="":
+android-emulator-start avd="" wait="300" headless="": prepare-patched-deps
     cargo build --release -p blockloom-app --bin blockloom-shell
     "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-start-emulator{{ if avd != "" { " avd=" + avd } else { "" } }}{{ if wait != "" { " waitSecs=" + wait } else { "" } }}{{ if headless != "" { " headless=" + headless } else { "" } }}' --no-state
 
 # Stops the running emulator on serial (empty stops the only running one;
 # a physical serial is refused).
-android-emulator-stop serial="":
+android-emulator-stop serial="": prepare-patched-deps
     cargo build --release -p blockloom-app --bin blockloom-shell
     "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-stop-emulator{{ if serial != "" { " serial=" + serial } else { "" } }}' --no-state
 
 # Installs an APK on a connected device or emulator and launches it
 # (`android-device-status` lists the serials when several are attached).
-android-install apk app device="":
+android-install apk app device="": prepare-patched-deps
     cargo build --release -p blockloom-app --bin blockloom-shell
     "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-install apk="{{apk}}" app="{{app}}"{{ if device != "" { " device=" + device } else { "" } }}' --no-state
 
 # One-shot device log for the dev loop: the runtime's blockloom markers plus
 # any Rust panic. What `android-smoke` checks and what a developer reads first.
-android-logcat device="":
+android-logcat device="": prepare-patched-deps
     cargo build --release -p blockloom-app --bin blockloom-shell
     "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-logcat{{ if device != "" { " device=" + device } else { "" } }}' --no-state
 
 # Poll the device log the way the Build dialog streams it: dump, clear the
 # buffer for the next poll, and append every kept line to the RunLog. Repeat
 # for a follow tail; each call reads only what arrived since the last.
-android-logcat-tail device="":
+android-logcat-tail device="": prepare-patched-deps
     cargo build --release -p blockloom-app --bin blockloom-shell
     "${CARGO_TARGET_DIR:-target}/release/blockloom-shell" --eval 'android-logcat-tail{{ if device != "" { " device=" + device } else { "" } }}' --no-state
 
@@ -272,7 +276,7 @@ android-logcat-tail device="":
 # `android-status`, or the `ndk` dir handed in (CI downloads one standalone).
 # Needs the Android Rust std (`rustup target add aarch64-linux-android
 # x86_64-linux-android`); the SDK licenses don't matter for a check.
-android-runtime-check ndk="":
+android-runtime-check ndk="": prepare-patched-deps
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p blockloom-app --bin blockloom-shell
@@ -310,8 +314,12 @@ android-runtime-check ndk="":
 android-smoke apk app device="":
     bash scripts/android-smoke.sh "{{apk}}" "{{app}}" "{{device}}"
 
-test:
+test: prepare-patched-deps
     cargo test --workspace
+
+# Qt Quick interaction and layout tests use the staged blockstitch controls.
+qml-test: build
+    bash scripts/test-devices-qml.sh
 
 # An MCP server standing on `blockloom-shell`: every backend command becomes
 # an MCP tool, so an agent can drive a project the way a user does. Builds the
@@ -334,7 +342,7 @@ blockstitch-local path="../../blockstitch":
     {{mkdir-cargo}}
     {{ if os() == "windows" { 'echo paths = ["' + replace(clean(justfile_directory() / "ui" / path), "\\", "/") + '", "' + replace(clean(justfile_directory() / "ui" / path), "\\", "/") + '/crates/blockstitch-core"] > .cargo\config.toml' } else { "printf 'paths = [\"" + "%s\", \"%s/crates/blockstitch-core" + "\"]\\n' \"$(realpath ui/" + path + ")\" \"$(realpath ui/" + path + ")\" > .cargo/config.toml" } }}
 
-blockstitch-published commit="":
+blockstitch-published commit="": prepare-patched-deps
     {{rm-cargo-cfg}}
     git update-index --no-skip-worktree ui/package.json ui/pnpm-lock.yaml
     git checkout -- ui/package.json ui/pnpm-lock.yaml

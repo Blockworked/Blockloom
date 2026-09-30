@@ -110,9 +110,17 @@ impl LoadedLogic {
         codegen::library_path(project_dir).is_file()
     }
 
+    /// A fast build stages the logic library beside the runtime; a VM-only
+    /// build ships none, and there is nothing to open then - blocks run on
+    /// the VM without a `dlopen` failure logged on every run.
     #[cfg(target_os = "android")]
-    pub fn is_built(_project_dir: &Path) -> bool {
-        true
+    pub fn is_built(project_dir: &Path) -> bool {
+        let path = codegen::library_path(project_dir);
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("libblockloom_logic.so");
+        crate::android::native_lib_found(name)
     }
 
     pub fn load(project_dir: &Path) -> Result<Self, String> {

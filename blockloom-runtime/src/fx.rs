@@ -78,16 +78,78 @@ pub struct FxCache {
 pub fn despawn_fx(
     mut commands: Commands,
     engine: NonSend<Engine>,
-    particles: Query<Entity, With<Particle>>,
-    ghosts: Query<Entity, With<Ghost>>,
+    particles: Query<(Entity, Option<&MeshMaterial3d<StandardMaterial>>), With<Particle>>,
+    ghosts: Query<
+        (
+            Entity,
+            Option<&MeshMaterial2d<ColorMaterial>>,
+            Option<&MeshMaterial2d<GraphMaterial2d>>,
+            Option<&MeshMaterial3d<StandardMaterial>>,
+            Option<&MeshMaterial3d<GraphMaterial3d>>,
+            Option<&MeshMaterial3d<crate::materials::BoxMaterial>>,
+        ),
+        With<Ghost>,
+    >,
+    mut tiles: ResMut<Assets<ColorMaterial>>,
+    mut graphs_2d: ResMut<Assets<GraphMaterial2d>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut graphs_3d: ResMut<Assets<GraphMaterial3d>>,
+    mut boxes: ResMut<Assets<crate::materials::BoxMaterial>>,
     mut draws: ResMut<crate::vfx::Draws>,
 ) {
     if !engine.rebuild {
         return;
     }
     draws.clear(&mut commands);
-    for entity in particles.iter().chain(ghosts.iter()) {
+    for (entity, handle) in &particles {
+        if let Some(handle) = handle {
+            materials.remove(&handle.0);
+        }
         commands.entity(entity).despawn();
+    }
+    for (entity, tile, graph_2d, handle, graph_3d, box_3d) in &ghosts {
+        free_ghost_material(
+            &mut tiles,
+            &mut graphs_2d,
+            &mut materials,
+            &mut graphs_3d,
+            &mut boxes,
+            tile,
+            graph_2d,
+            handle,
+            graph_3d,
+            box_3d,
+        );
+        commands.entity(entity).despawn();
+    }
+}
+
+/// Drops a ghost's faded material copy. Every ghost carries its own (so it
+/// can fade alone), and Bevy only frees assets on explicit remove: without
+/// this each ghost leaks one asset and its bind group forever.
+#[allow(clippy::too_many_arguments)]
+fn free_ghost_material(
+    tiles: &mut Assets<ColorMaterial>,
+    graphs_2d: &mut Assets<GraphMaterial2d>,
+    materials: &mut Assets<StandardMaterial>,
+    graphs_3d: &mut Assets<GraphMaterial3d>,
+    boxes: &mut Assets<crate::materials::BoxMaterial>,
+    tile: Option<&MeshMaterial2d<ColorMaterial>>,
+    graph_2d: Option<&MeshMaterial2d<GraphMaterial2d>>,
+    handle: Option<&MeshMaterial3d<StandardMaterial>>,
+    graph_3d: Option<&MeshMaterial3d<GraphMaterial3d>>,
+    box_3d: Option<&MeshMaterial3d<crate::materials::BoxMaterial>>,
+) {
+    if let Some(handle) = tile {
+        tiles.remove(&handle.0);
+    } else if let Some(handle) = graph_2d {
+        graphs_2d.remove(&handle.0);
+    } else if let Some(handle) = handle {
+        materials.remove(&handle.0);
+    } else if let Some(handle) = graph_3d {
+        graphs_3d.remove(&handle.0);
+    } else if let Some(handle) = box_3d {
+        boxes.remove(&handle.0);
     }
 }
 
@@ -287,6 +349,9 @@ pub fn step_particles(
     for (entity, mut particle, mut transform, sprite, handle) in &mut particles {
         particle.age += dt;
         if particle.age >= particle.life {
+            if let Some(handle) = handle {
+                materials.remove(&handle.0);
+            }
             commands.entity(entity).despawn();
             continue;
         }
@@ -524,6 +589,18 @@ pub fn step_ghosts(
     for (entity, mut ghost, sprite, tile, graph_2d, handle, graph_3d, box_3d) in &mut ghosts {
         ghost.age += dt;
         if ghost.age >= ghost.life {
+            free_ghost_material(
+                &mut tiles,
+                &mut graphs_2d,
+                &mut materials,
+                &mut graphs_3d,
+                &mut boxes,
+                tile,
+                graph_2d,
+                handle,
+                graph_3d,
+                box_3d,
+            );
             commands.entity(entity).despawn();
             continue;
         }

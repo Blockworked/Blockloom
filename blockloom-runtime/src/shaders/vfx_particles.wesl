@@ -71,6 +71,12 @@ fn has(bit: u32) -> bool {
     return (look.modes.z & bit) != 0u;
 }
 
+// Vector picks without a vector `select`: scalarizing one crashes Mali's
+// shader compiler on some drivers, so branchless arithmetic instead.
+fn pick3(a: vec3<f32>, b: vec3<f32>, cond: bool) -> vec3<f32> {
+    return mix(a, b, select(0.0, 1.0, cond));
+}
+
 fn curve(t: f32) -> vec4<f32> {
     let at = lut_at(t);
     let i = u32(at.x);
@@ -136,10 +142,10 @@ fn billboard(slot: u32, corner: u32) -> VertexOutput {
     switch look.modes.y {
         case 1u: {
             let speed = length(p.velocity);
-            let axis = select(view.world_from_view[1].xyz, p.velocity / speed, speed > 1e-5);
+            let axis = pick3(view.world_from_view[1].xyz, p.velocity / speed, speed > 1e-5);
             let to_eye = normalize(view.world_position - p.position);
             var side = cross(axis, to_eye);
-            side = select(view.world_from_view[0].xyz, normalize(side), length(side) > 1e-5);
+            side = pick3(view.world_from_view[0].xyz, normalize(side), length(side) > 1e-5);
             let reach = size + speed * look.size.z;
             offset = side * q.x * size + axis * q.y * reach;
         }
@@ -207,7 +213,7 @@ fn ribbon(slot: u32, corner: u32, segment: u32) -> VertexOutput {
     } else {
         side = cross(tangent, vec3<f32>(0.0, 1.0, 0.0));
     }
-    side = select(view.world_from_view[0].xyz, normalize(side), length(side) > 1e-6);
+    side = pick3(view.world_from_view[0].xyz, normalize(side), length(side) > 1e-6);
     let s = x / f32(held - 1u);
     let t = life_t(p);
     let width = look.extra.y * ribbon_width(s);
@@ -248,8 +254,12 @@ fn sample_frame(index: f32, uv: vec2<f32>) -> vec4<f32> {
 
 @if(DEPTH_PREPASS)
 fn soft_fade(position: vec4<f32>) -> f32 {
-    let size = vec2<f32>(textureDimensions(view_bindings::depth_prepass_texture));
-    let texel = vec2<i32>(clamp(position.xy, vec2<f32>(0.0), size - 1.0));
+    // Scalar casts only: a vector uint-to-float or float-to-int cast here
+    // crashes Mali's shader compiler (scalarizer) on some drivers.
+    let dims = textureDimensions(view_bindings::depth_prepass_texture);
+    let size = vec2<f32>(f32(dims.x), f32(dims.y));
+    let clamped = clamp(position.xy, vec2<f32>(0.0), size - 1.0);
+    let texel = vec2<i32>(i32(clamped.x), i32(clamped.y));
     let scene = textureLoad(view_bindings::depth_prepass_texture, texel, 0);
     if (scene <= 0.0) {
         return 1.0;

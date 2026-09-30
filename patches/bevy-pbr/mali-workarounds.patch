@@ -1,0 +1,666 @@
+--- a/src/render/mesh_view_bindings.rs
++++ b/src/render/mesh_view_bindings.rs
+@@ -18,10 +18,12 @@
+     entity::Entity,
+     query::Has,
+     resource::Resource,
+-    system::{Commands, Query, Res},
++    system::{Commands, Local, Query, Res},
+ };
+ use bevy_light::{EnvironmentMapLight, IrradianceVolume};
+ use bevy_math::Vec4;
++use bevy_platform::collections::HashMap;
++use bevy_platform::hash::{DefaultHasher, FixedState};
+ use bevy_platform::sync::Arc;
+ use bevy_render::{
+     camera::ExtractedCamera,
+@@ -36,6 +38,7 @@
+     },
+ };
+ use core::fmt::Write;
++use core::hash::{BuildHasher, Hash, Hasher};
+ use core::num::NonZero;
+ 
+ use crate::{
+@@ -629,6 +632,103 @@
+     pub empty: BindGroup,
+ }
+ 
++/// Mali reuses view bind groups while their resource identities and ranges match.
++#[derive(Default)]
++pub struct ViewBindGroupReuseCache {
++    signatures: HashMap<Entity, u64>,
++}
++
++/// ARM's PCI vendor ID, matching the Mali denylist in
++/// `blockloom-runtime/src/shadows.rs`.
++const MALI_VENDOR: u32 = 0x13B5;
++
++/// Hash GPU handles, not wrapper addresses that can hold different resources.
++fn hash_binding_resource(state: &mut DefaultHasher, resource: &BindingResource) {
++    match resource {
++        BindingResource::Buffer(binding) => {
++            0u8.hash(state);
++            binding.buffer.hash(state);
++            binding.offset.hash(state);
++            binding.size.hash(state);
++        }
++        BindingResource::BufferArray(bindings) => {
++            1u8.hash(state);
++            bindings.len().hash(state);
++            for binding in *bindings {
++                binding.buffer.hash(state);
++                binding.offset.hash(state);
++                binding.size.hash(state);
++            }
++        }
++        BindingResource::Sampler(sampler) => {
++            2u8.hash(state);
++            sampler.hash(state);
++        }
++        BindingResource::SamplerArray(samplers) => {
++            3u8.hash(state);
++            samplers.len().hash(state);
++            for sampler in *samplers {
++                sampler.hash(state);
++            }
++        }
++        BindingResource::TextureView(view) => {
++            4u8.hash(state);
++            view.hash(state);
++        }
++        BindingResource::TextureViewArray(views) => {
++            5u8.hash(state);
++            views.len().hash(state);
++            for view in *views {
++                view.hash(state);
++            }
++        }
++        BindingResource::AccelerationStructure(tlas) => {
++            6u8.hash(state);
++            tlas.hash(state);
++        }
++        BindingResource::AccelerationStructureArray(tlasses) => {
++            7u8.hash(state);
++            tlasses.len().hash(state);
++            for tlas in *tlasses {
++                tlas.hash(state);
++            }
++        }
++        BindingResource::ExternalTexture(texture) => {
++            8u8.hash(state);
++            texture.hash(state);
++        }
++        // `BindingResource` is non-exhaustive for semver flexibility; the
++        // variants above cover everything wgpu 30 can construct.
++        _ => {
++            9u8.hash(state);
++        }
++    }
++}
++
++/// The full signature a view's three bind groups depend on.
++fn view_bind_group_signature(
++    layout_key: MeshPipelineViewLayoutKey,
++    offsets: &[u32],
++    entries: &[BindGroupEntry],
++    entries_binding_array: &[BindGroupEntry],
++) -> u64 {
++    // Fixed seed: signatures only need to be stable within a run.
++    let mut state = FixedState::with_seed(0x9E3779B97F4A7C15).build_hasher();
++    layout_key.bits().hash(&mut state);
++    offsets.hash(&mut state);
++    entries.len().hash(&mut state);
++    for entry in entries {
++        entry.binding.hash(&mut state);
++        hash_binding_resource(&mut state, &entry.resource);
++    }
++    entries_binding_array.len().hash(&mut state);
++    for entry in entries_binding_array {
++        entry.binding.hash(&mut state);
++        hash_binding_resource(&mut state, &entry.resource);
++    }
++    state.finish()
++}
++
+ pub fn prepare_mesh_view_bind_groups(
+     mut commands: Commands,
+     (render_device, pipeline_cache, render_adapter): (
+@@ -686,19 +786,28 @@
+         Res<ContactShadowsBuffer>,
+         Res<OitBuffers>,
+     ),
+-    (decals_buffer, render_decals, atmosphere_sampler, blue_noise, area_light_luts, dfg_lut): (
++    (
++        decals_buffer,
++        render_decals,
++        atmosphere_sampler,
++        blue_noise,
++        area_light_luts,
++        dfg_lut,
++        mut reuse_cache,
++    ): (
+         Res<DecalsBuffer>,
+         Res<RenderClusteredDecals>,
+         Option<Res<AtmosphereSampler>>,
+         Res<Bluenoise>,
+         Res<AreaLightLuts>,
+         Res<DfgLut>,
++        Local<ViewBindGroupReuseCache>,
+     ),
+     // TODO: Figure out how to reuse the memory. `BindGroupEntry` is non-send on wasm with atomics.
+     #[cfg(not(all(target_arch = "wasm32", target_feature = "atomics")))]
+-    mut entries_cache: bevy_ecs::system::Local<Vec<BindGroupEntry>>,
++    mut entries_cache: Local<Vec<BindGroupEntry>>,
+     #[cfg(not(all(target_arch = "wasm32", target_feature = "atomics")))]
+-    mut entries_binding_array_cache: bevy_ecs::system::Local<Vec<BindGroupEntry>>,
++    mut entries_binding_array_cache: Local<Vec<BindGroupEntry>>,
+ ) {
+     if let (
+         Some(view_binding),
+@@ -717,6 +826,9 @@
+         light_probes_buffer.binding(),
+         visibility_ranges.buffer().buffer(),
+     ) {
++        // Blockloom vendor patch: Mali cannot reuse freed descriptor
++        // slots, so only there are bind groups kept across frames.
++        let cache_on_mali = render_adapter.get_info().vendor == MALI_VENDOR;
+         for (
+             entity,
+             camera,
+@@ -1017,24 +1129,45 @@
+             }
+ 
+             let layout = mesh_pipeline.get_view_layout(layout_key);
+-            commands.entity(entity).insert((MeshViewBindGroup {
+-                main_offsets: offsets,
+-                main: render_device.create_bind_group(
+-                    "mesh_view_bind_group",
+-                    &pipeline_cache.get_bind_group_layout(&layout.main_layout),
+-                    &entries,
+-                ),
+-                binding_array: render_device.create_bind_group(
+-                    "mesh_view_bind_group_binding_array",
+-                    &pipeline_cache.get_bind_group_layout(&layout.binding_array_layout),
+-                    &entries_binding_array,
+-                ),
+-                empty: render_device.create_bind_group(
+-                    "mesh_view_bind_group_empty",
+-                    &pipeline_cache.get_bind_group_layout(&layout.empty_layout),
+-                    &[],
+-                ),
+-            },));
++            // Blockloom vendor patch: on Mali the bind groups are kept
++            // while the signature matches, so a steady frame allocates
++            // nothing. Elsewhere this stays the upstream unconditional
++            // recreation.
++            let reuse = cache_on_mali && {
++                let signature = view_bind_group_signature(
++                    layout_key,
++                    &offsets,
++                    &entries.entries,
++                    &entries_binding_array.entries,
++                );
++                match reuse_cache.signatures.get(&entity) {
++                    Some(last) if *last == signature => true,
++                    _ => {
++                        reuse_cache.signatures.insert(entity, signature);
++                        false
++                    }
++                }
++            };
++            if !reuse {
++                commands.entity(entity).insert((MeshViewBindGroup {
++                    main_offsets: offsets,
++                    main: render_device.create_bind_group(
++                        "mesh_view_bind_group",
++                        &pipeline_cache.get_bind_group_layout(&layout.main_layout),
++                        &entries,
++                    ),
++                    binding_array: render_device.create_bind_group(
++                        "mesh_view_bind_group_binding_array",
++                        &pipeline_cache.get_bind_group_layout(&layout.binding_array_layout),
++                        &entries_binding_array,
++                    ),
++                    empty: render_device.create_bind_group(
++                        "mesh_view_bind_group_empty",
++                        &pipeline_cache.get_bind_group_layout(&layout.empty_layout),
++                        &[],
++                    ),
++                },));
++            }
+ 
+             #[cfg(not(all(target_arch = "wasm32", target_feature = "atomics")))]
+             {
+--- a/src/render/gpu_preprocess.rs
++++ b/src/render/gpu_preprocess.rs
+@@ -9,14 +9,14 @@
+ use core::num::{NonZero, NonZeroU64};
+ 
+ use bevy_app::{App, Plugin};
+-use bevy_asset::{embedded_asset, load_embedded_asset, Handle};
++use bevy_asset::{Handle, embedded_asset, load_embedded_asset};
+ use bevy_core_pipeline::{
+     deferred::node::late_deferred_prepass,
+-    mip_generation::experimental::depth::{early_downsample_depth, ViewDepthPyramid},
++    mip_generation::experimental::depth::{ViewDepthPyramid, early_downsample_depth},
+     prepass::{
+-        node::{early_prepass, late_prepass},
+         DeferredPrepass, DepthPrepass, MotionVectorPrepass, NormalPrepass, PreviousViewData,
+         PreviousViewUniformOffset, PreviousViewUniforms,
++        node::{early_prepass, late_prepass},
+     },
+     schedule::{Core3d, Core3dSystems},
+ };
+@@ -27,51 +27,50 @@
+     prelude::resource_exists,
+     query::{Has, Or, With, Without},
+     resource::Resource,
+-    schedule::{common_conditions::any_match_filter, IntoScheduleConfigs as _},
+-    system::{Commands, Query, Res, ResMut},
++    schedule::{IntoScheduleConfigs as _, common_conditions::any_match_filter},
++    system::{Commands, Local, Query, Res, ResMut},
+     world::{FromWorld, World},
+ };
+ use bevy_log::warn_once;
+ use bevy_math::Vec4;
+ use bevy_platform::collections::HashMap;
+ use bevy_render::{
++    GpuResourceAppExt, Render, RenderApp, RenderSystems,
+     batching::gpu_preprocessing::{
+-        clear_scene_unpacking_buffers, BatchedInstanceBuffers, BinUnpackingMetadataIndex,
+-        BuildIndirectParametersMetadata, GpuBinMetadata, GpuBinUnpackingMetadata,
+-        GpuOcclusionCullingWorkItemBuffers, GpuPreprocessingMode, GpuPreprocessingSupport,
+-        GpuUniformAllocationMetadata, IndirectBatchSet, IndirectParametersBuffers,
+-        IndirectParametersBuildJob, IndirectParametersBuildJobs, IndirectParametersIndexed,
+-        IndirectParametersMetadata, IndirectParametersNonIndexed,
+-        LatePreprocessWorkItemIndirectParameters, PreprocessWorkItem, PreprocessWorkItemBuffers,
+-        SceneUnpackingBuffers, SceneUnpackingBuffersKey, SceneUnpackingJob,
+-        UniformAllocationMetadataIndex, UntypedPhaseBatchedInstanceBuffers,
+-        UntypedPhaseIndirectParametersBuffers,
++        BatchedInstanceBuffers, BinUnpackingMetadataIndex, BuildIndirectParametersMetadata,
++        GpuBinMetadata, GpuBinUnpackingMetadata, GpuOcclusionCullingWorkItemBuffers,
++        GpuPreprocessingMode, GpuPreprocessingSupport, GpuUniformAllocationMetadata,
++        IndirectBatchSet, IndirectParametersBuffers, IndirectParametersBuildJob,
++        IndirectParametersBuildJobs, IndirectParametersIndexed, IndirectParametersMetadata,
++        IndirectParametersNonIndexed, LatePreprocessWorkItemIndirectParameters, PreprocessWorkItem,
++        PreprocessWorkItemBuffers, SceneUnpackingBuffers, SceneUnpackingBuffersKey,
++        SceneUnpackingJob, UniformAllocationMetadataIndex, UntypedPhaseBatchedInstanceBuffers,
++        UntypedPhaseIndirectParametersBuffers, clear_scene_unpacking_buffers,
+     },
+     diagnostic::RecordDiagnostics as _,
+     occlusion_culling::OcclusionCulling,
+     render_phase::{GpuRenderBinnedMeshInstance, UNIFORM_ALLOCATION_WORKGROUP_SIZE},
+     render_resource::{
+-        binding_types::{storage_buffer, storage_buffer_read_only, texture_2d, uniform_buffer},
+         BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
+-        BindingResource, Buffer, BufferBinding, BufferVec, CachedComputePipelineId,
+-        ComputePassDescriptor, ComputePipelineDescriptor, DynamicBindGroupLayoutEntries,
+-        PartialBufferVec, PipelineCache, RawBufferVec, ShaderStages, ShaderType,
+-        SparseBufferUpdateBindGroups, SparseBufferUpdateJobs, SparseBufferUpdatePipelines,
+-        SpecializedComputePipeline, SpecializedComputePipelines, TextureSampleType,
+-        UninitBufferVec,
++        BindGroupLayoutId, BindingResource, Buffer, BufferBinding, BufferId, BufferVec,
++        CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor,
++        DynamicBindGroupLayoutEntries, PartialBufferVec, PipelineCache, RawBufferVec, ShaderStages,
++        ShaderType, SparseBufferUpdateBindGroups, SparseBufferUpdateJobs,
++        SparseBufferUpdatePipelines, SpecializedComputePipeline, SpecializedComputePipelines,
++        TextureSampleType, UninitBufferVec,
++        binding_types::{storage_buffer, storage_buffer_read_only, texture_2d, uniform_buffer},
+     },
+-    renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery},
++    renderer::{RenderAdapter, RenderContext, RenderDevice, RenderQueue, ViewQuery},
+     settings::WgpuFeatures,
+     view::{
+         ExtractedView, NoIndirectDrawing, RenderVisibilityRanges, RetainedViewEntity, ViewUniform,
+         ViewUniformOffset, ViewUniforms,
+     },
+-    GpuResourceAppExt, Render, RenderApp, RenderSystems,
+ };
+ use bevy_shader::Shader;
+-use bevy_utils::{default, TypeIdHashMap};
++use bevy_utils::{TypeIdHashMap, default};
+ use bitflags::bitflags;
+-use smallvec::{smallvec, SmallVec};
++use smallvec::{SmallVec, smallvec};
+ use tracing::warn;
+ 
+ use crate::{
+@@ -421,6 +420,41 @@
+     pub HashMap<SceneUnpackingBuffersKey, ViewPhaseBinUnpackingBindGroups>,
+ );
+ 
++#[derive(Clone, PartialEq, Eq, Hash)]
++struct PreprocessBindGroupKey {
++    layout: BindGroupLayoutId,
++    buffers: [Option<BufferId>; 5],
++    offset: u64,
++    size: u64,
++}
++
++/// Mali keeps descriptors for unchanged preprocessing buffers across frames.
++#[derive(Default)]
++pub struct PreprocessBindGroupReuseCache {
++    enabled: bool,
++    frame: u64,
++    groups: HashMap<PreprocessBindGroupKey, (BindGroup, u64)>,
++}
++
++impl PreprocessBindGroupReuseCache {
++    fn get_or_create(
++        &mut self,
++        key: PreprocessBindGroupKey,
++        create: impl FnOnce() -> BindGroup,
++    ) -> BindGroup {
++        if !self.enabled {
++            return create();
++        }
++        if let Some((group, frame)) = self.groups.get_mut(&key) {
++            *frame = self.frame;
++            return group.clone();
++        }
++        let group = create();
++        self.groups.insert(key, (group.clone(), self.frame));
++        group
++    }
++}
++
+ /// The bind groups for the `unpack_bins` shader for a single (view, phase)
+ /// combination.
+ #[derive(Clone)]
+@@ -2189,7 +2223,11 @@
+     mut commands: Commands,
+     views: Query<(Entity, &ExtractedView)>,
+     view_depth_pyramids: Query<(&ViewDepthPyramid, &PreviousViewUniformOffset)>,
+-    render_device: Res<RenderDevice>,
++    (render_device, render_adapter, mut reuse_cache): (
++        Res<RenderDevice>,
++        Res<RenderAdapter>,
++        Local<PreprocessBindGroupReuseCache>,
++    ),
+     pipeline_cache: Res<PipelineCache>,
+     batched_instance_buffers: Res<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>,
+     indirect_parameters_buffers: Res<IndirectParametersBuffers>,
+@@ -2203,6 +2241,8 @@
+     mut bin_unpacking_bind_groups: ResMut<BinUnpackingBindGroups>,
+     mut uniform_allocation_bind_groups: ResMut<UniformAllocationBindGroups>,
+ ) {
++    reuse_cache.enabled = render_adapter.get_info().vendor == 0x13B5;
++    reuse_cache.frame = reuse_cache.frame.wrapping_add(1);
+     // Grab the `BatchedInstanceBuffers`.
+     let BatchedInstanceBuffers {
+         current_input_buffer: current_input_buffer_vec,
+@@ -2214,6 +2254,7 @@
+         current_input_buffer_vec.buffer().buffer(),
+         previous_input_buffer_vec.buffer(),
+     ) else {
++        reuse_cache.groups.clear();
+         return;
+     };
+ 
+@@ -2337,6 +2378,7 @@
+     for (_, view) in &views {
+         create_bin_unpacking_bind_groups(
+             &mut bin_unpacking_bind_groups,
++            &mut reuse_cache,
+             &render_device,
+             &pipeline_cache,
+             &pipelines,
+@@ -2347,6 +2389,7 @@
+         );
+         create_uniform_allocation_bind_groups(
+             &mut uniform_allocation_bind_groups,
++            &mut reuse_cache,
+             &render_device,
+             &pipeline_cache,
+             &pipelines,
+@@ -2355,6 +2398,11 @@
+             &view.retained_view_entity,
+         );
+     }
++    let frame = reuse_cache.frame;
++    // Keep alternate frame buffers, but release removed views and old allocations.
++    reuse_cache
++        .groups
++        .retain(|_, (_, used)| frame.wrapping_sub(*used) <= 4);
+ }
+ 
+ /// A temporary structure that stores all the information needed to construct
+@@ -3309,6 +3357,7 @@
+ /// phases for a single view.
+ fn create_bin_unpacking_bind_groups(
+     bin_unpacking_bind_groups: &mut BinUnpackingBindGroups,
++    reuse_cache: &mut PreprocessBindGroupReuseCache,
+     render_device: &RenderDevice,
+     pipeline_cache: &PipelineCache,
+     preprocess_pipelines: &PreprocessPipelines,
+@@ -3370,6 +3419,7 @@
+                         .iter()
+                         .map(|job| {
+                             create_bin_unpacking_bind_group(
++                                reuse_cache,
+                                 render_device,
+                                 preprocess_pipelines,
+                                 pipeline_cache,
+@@ -3388,6 +3438,7 @@
+                         .iter()
+                         .map(|job| {
+                             create_bin_unpacking_bind_group(
++                                reuse_cache,
+                                 render_device,
+                                 preprocess_pipelines,
+                                 pipeline_cache,
+@@ -3408,6 +3459,7 @@
+ /// Creates a bind group for the bin unpacking shader for a single (view, phase,
+ /// mesh indexed-ness) combination.
+ fn create_bin_unpacking_bind_group(
++    reuse_cache: &mut PreprocessBindGroupReuseCache,
+     render_device: &RenderDevice,
+     preprocess_pipelines: &PreprocessPipelines,
+     pipeline_cache: &PipelineCache,
+@@ -3416,40 +3468,55 @@
+     work_item_buffer: &Buffer,
+     indexed: bool,
+ ) -> ViewPhaseBinUnpackingBindGroup {
+-    let bind_group = render_device.create_bind_group(
+-        if indexed {
+-            "bin unpacking indexed bind group"
+-        } else {
+-            "bin unpacking non-indexed bind group"
+-        },
+-        &pipeline_cache
+-            .get_bind_group_layout(&preprocess_pipelines.bin_unpacking.bind_group_layout),
+-        &BindGroupEntries::sequential((
+-            // @group(0) @binding(0) var<uniform>
+-            // bin_unpacking_metadata:
+-            // BinUnpackingMetadata;
+-            BindingResource::Buffer(BufferBinding {
+-                buffer: bin_unpacking_metadata_buffer,
+-                offset: job.bin_unpacking_metadata_index.uniform_offset() as u64,
+-                size: NonZeroU64::new(size_of::<GpuBinUnpackingMetadata>() as u64),
+-            }),
+-            // @group(0) @binding(1) var<storage>
+-            // binned_mesh_instances:
+-            // array<BinnedMeshInstance>;
+-            job.render_binned_mesh_instance_buffer.as_entire_binding(),
+-            // @group(0) @binding(2) var<storage,
+-            // read_write> preprocess_work_items:
+-            // array<PreprocessWorkItem>;
+-            work_item_buffer.as_entire_binding(),
+-            // @group(0) @binding(3) var<storage> bin_metadata:
+-            // array<BinMetadata>;
+-            job.bin_metadata_buffer.as_entire_binding(),
+-            // @group(0) @binding(4) var<storage>
+-            // bin_index_to_bin_metadata_index: array<u32>;
+-            job.bin_index_to_bin_metadata_index_buffer
+-                .as_entire_binding(),
+-        )),
+-    );
++    let layout =
++        pipeline_cache.get_bind_group_layout(&preprocess_pipelines.bin_unpacking.bind_group_layout);
++    let key = PreprocessBindGroupKey {
++        layout: layout.id(),
++        buffers: [
++            Some(bin_unpacking_metadata_buffer.id()),
++            Some(job.render_binned_mesh_instance_buffer.id()),
++            Some(work_item_buffer.id()),
++            Some(job.bin_metadata_buffer.id()),
++            Some(job.bin_index_to_bin_metadata_index_buffer.id()),
++        ],
++        offset: job.bin_unpacking_metadata_index.uniform_offset() as u64,
++        size: size_of::<GpuBinUnpackingMetadata>() as u64,
++    };
++    let bind_group = reuse_cache.get_or_create(key, || {
++        render_device.create_bind_group(
++            if indexed {
++                "bin unpacking indexed bind group"
++            } else {
++                "bin unpacking non-indexed bind group"
++            },
++            &layout,
++            &BindGroupEntries::sequential((
++                // @group(0) @binding(0) var<uniform>
++                // bin_unpacking_metadata:
++                // BinUnpackingMetadata;
++                BindingResource::Buffer(BufferBinding {
++                    buffer: bin_unpacking_metadata_buffer,
++                    offset: job.bin_unpacking_metadata_index.uniform_offset() as u64,
++                    size: NonZeroU64::new(size_of::<GpuBinUnpackingMetadata>() as u64),
++                }),
++                // @group(0) @binding(1) var<storage>
++                // binned_mesh_instances:
++                // array<BinnedMeshInstance>;
++                job.render_binned_mesh_instance_buffer.as_entire_binding(),
++                // @group(0) @binding(2) var<storage,
++                // read_write> preprocess_work_items:
++                // array<PreprocessWorkItem>;
++                work_item_buffer.as_entire_binding(),
++                // @group(0) @binding(3) var<storage> bin_metadata:
++                // array<BinMetadata>;
++                job.bin_metadata_buffer.as_entire_binding(),
++                // @group(0) @binding(4) var<storage>
++                // bin_index_to_bin_metadata_index: array<u32>;
++                job.bin_index_to_bin_metadata_index_buffer
++                    .as_entire_binding(),
++            )),
++        )
++    });
+     ViewPhaseBinUnpackingBindGroup {
+         metadata_index: job.bin_unpacking_metadata_index,
+         bind_group,
+@@ -3461,6 +3528,7 @@
+ /// the phases for a single view.
+ fn create_uniform_allocation_bind_groups(
+     uniform_allocation_bind_groups: &mut UniformAllocationBindGroups,
++    reuse_cache: &mut PreprocessBindGroupReuseCache,
+     render_device: &RenderDevice,
+     pipeline_cache: &PipelineCache,
+     preprocess_pipelines: &PreprocessPipelines,
+@@ -3500,6 +3568,7 @@
+                             .iter()
+                             .map(|job| {
+                                 create_uniform_allocation_bind_group(
++                                    reuse_cache,
+                                     render_device,
+                                     preprocess_pipelines,
+                                     pipeline_cache,
+@@ -3523,6 +3592,7 @@
+                             .iter()
+                             .map(|job| {
+                                 create_uniform_allocation_bind_group(
++                                    reuse_cache,
+                                     render_device,
+                                     preprocess_pipelines,
+                                     pipeline_cache,
+@@ -3543,6 +3613,7 @@
+ /// Creates a bind group for the uniform allocation shader for a single (view,
+ /// phase, mesh indexed-ness) combination.
+ fn create_uniform_allocation_bind_group(
++    reuse_cache: &mut PreprocessBindGroupReuseCache,
+     render_device: &RenderDevice,
+     preprocess_pipelines: &PreprocessPipelines,
+     pipeline_cache: &PipelineCache,
+@@ -3551,38 +3622,52 @@
+     indirect_parameters_metadata_buffer: &Buffer,
+     indexed: bool,
+ ) -> ViewPhaseUniformAllocationBindGroup {
+-    let bind_group = render_device.create_bind_group(
+-        if indexed {
+-            "uniform allocation indexed bind group"
+-        } else {
+-            "uniform allocation non-indexed bind group"
+-        },
+-        &pipeline_cache.get_bind_group_layout(
+-            // All the pipelines' bind group layouts should be identical.
+-            &preprocess_pipelines
+-                .uniform_allocation
+-                .local_scan
+-                .bind_group_layout,
+-        ),
+-        &BindGroupEntries::sequential((
+-            // @group(0) @binding(0) var<uniform> allocate_uniforms_metadata:
+-            // AllocateUniformsMetadata;
+-            BindingResource::Buffer(BufferBinding {
+-                buffer: uniform_allocation_metadata_buffer,
+-                offset: job.uniform_allocation_metadata_index.uniform_offset() as u64,
+-                size: NonZeroU64::new(size_of::<GpuUniformAllocationMetadata>() as u64),
+-            }),
+-            // @group(0) @binding(1) var<storage> bin_metadata:
+-            // array<BinMetadata>;
+-            job.bin_metadata_buffer.as_entire_binding(),
+-            // @group(0) @binding(2) var<storage, read_write>
+-            // indirect_parameters_metadata: array<IndirectParametersMetadata>;
+-            indirect_parameters_metadata_buffer.as_entire_binding(),
+-            // @group(0) @binding(3) var<storage, read_write> fan_buffer:
+-            // array<u32>;
+-            job.fan_buffer.as_entire_binding(),
+-        )),
++    let layout = pipeline_cache.get_bind_group_layout(
++        &preprocess_pipelines
++            .uniform_allocation
++            .local_scan
++            .bind_group_layout,
+     );
++    let key = PreprocessBindGroupKey {
++        layout: layout.id(),
++        buffers: [
++            Some(uniform_allocation_metadata_buffer.id()),
++            Some(job.bin_metadata_buffer.id()),
++            Some(indirect_parameters_metadata_buffer.id()),
++            Some(job.fan_buffer.id()),
++            None,
++        ],
++        offset: job.uniform_allocation_metadata_index.uniform_offset() as u64,
++        size: size_of::<GpuUniformAllocationMetadata>() as u64,
++    };
++    let bind_group = reuse_cache.get_or_create(key, || {
++        render_device.create_bind_group(
++            if indexed {
++                "uniform allocation indexed bind group"
++            } else {
++                "uniform allocation non-indexed bind group"
++            },
++            &layout,
++            &BindGroupEntries::sequential((
++                // @group(0) @binding(0) var<uniform> allocate_uniforms_metadata:
++                // AllocateUniformsMetadata;
++                BindingResource::Buffer(BufferBinding {
++                    buffer: uniform_allocation_metadata_buffer,
++                    offset: job.uniform_allocation_metadata_index.uniform_offset() as u64,
++                    size: NonZeroU64::new(size_of::<GpuUniformAllocationMetadata>() as u64),
++                }),
++                // @group(0) @binding(1) var<storage> bin_metadata:
++                // array<BinMetadata>;
++                job.bin_metadata_buffer.as_entire_binding(),
++                // @group(0) @binding(2) var<storage, read_write>
++                // indirect_parameters_metadata: array<IndirectParametersMetadata>;
++                indirect_parameters_metadata_buffer.as_entire_binding(),
++                // @group(0) @binding(3) var<storage, read_write> fan_buffer:
++                // array<u32>;
++                job.fan_buffer.as_entire_binding(),
++            )),
++        )
++    });
+     ViewPhaseUniformAllocationBindGroup {
+         metadata_index: job.uniform_allocation_metadata_index,
+         bind_group,

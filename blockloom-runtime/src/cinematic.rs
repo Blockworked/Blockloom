@@ -61,7 +61,7 @@ struct Active {
 
 /// The wall-clock side of cinematics: the reel, the trauma, the bars and
 /// the fade. Cleared on every rebuild, so nothing leaks run to run.
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct CinePlayer {
     active: Option<Active>,
     pub trauma: f32,
@@ -71,6 +71,21 @@ pub struct CinePlayer {
     fade_alpha: f32,
     pub hitstop: u32,
     last_speed: f32,
+}
+
+impl Default for CinePlayer {
+    fn default() -> Self {
+        Self {
+            active: None,
+            trauma: 0.0,
+            letterbox: false,
+            bar: 0.0,
+            fade: "none".to_string(),
+            fade_alpha: 0.0,
+            hitstop: 0,
+            last_speed: 0.0,
+        }
+    }
 }
 
 impl Default for Active {
@@ -636,6 +651,54 @@ mod tests {
             }],
             ..Cutscene::default()
         }
+    }
+
+    #[test]
+    fn an_ordinary_run_has_no_cinematic_fade() {
+        let mut app = app();
+        app.world_mut().non_send_mut::<Engine>().running = true;
+        app.world_mut().non_send_mut::<Engine>().rebuild = false;
+        app.world_mut()
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_secs(1));
+        app.update();
+        assert_eq!(app.world().resource::<CinePlayer>().fade, "none");
+        assert_eq!(app.world().resource::<CinePlayer>().fade_alpha, 0.0);
+        assert_eq!(
+            app.world_mut()
+                .query::<&CineWash>()
+                .iter(app.world())
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn restarting_clears_the_fade_without_recreating_it() {
+        let mut app = app();
+        {
+            let mut player = app.world_mut().resource_mut::<CinePlayer>();
+            player.fade = "black".to_string();
+            player.fade_alpha = 1.0;
+        }
+        app.world_mut()
+            .spawn((Node::default(), BackgroundColor(Color::BLACK), CineWash));
+        app.update();
+        assert_eq!(app.world().resource::<CinePlayer>().fade, "none");
+        app.world_mut().non_send_mut::<Engine>().running = true;
+        app.world_mut().non_send_mut::<Engine>().rebuild = false;
+        app.world_mut()
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_secs(1));
+        app.update();
+        assert_eq!(app.world().resource::<CinePlayer>().fade_alpha, 0.0);
+        assert_eq!(
+            app.world_mut()
+                .query::<&CineWash>()
+                .iter(app.world())
+                .count(),
+            0
+        );
     }
 
     #[test]

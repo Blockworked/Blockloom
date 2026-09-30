@@ -805,6 +805,12 @@ struct HdrPlane {
     frame: Option<wgpu::SurfaceTexture>,
     /// Set once the surface was made or found wanting, so it is tried once.
     tried: bool,
+    /// Set once an SDR configure installed the surface's error sink, so a
+    /// refused HDR configure degrades instead of panicking the acquire.
+    seeded: bool,
+    /// Consecutive acquires with no texture: a surface that never yields
+    /// one is dropped back to the 8-bit ring rather than retried forever.
+    misses: u32,
 }
 
 /// Makes a swapchain on the viewer's HDR surface the first time there is
@@ -839,18 +845,44 @@ fn aim_plane(
         return;
     }
     let size = scratch.size();
+    if size.width == 0 || size.height == 0 {
+        return;
+    }
     let caps = surface.get_capabilities(&adapter);
     if !display::takes(&caps, format, color_space) {
         // Caps claimed a space the device refuses (seen on some Wayland
         // drivers); drop the plane and fall back to the 8-bit ring rather
         // than failing the run on the configure below.
         tracing::info!("game view: HDR surface refused {format:?} {color_space:?}");
-        plane.surface = None;
-        plane.formats = None;
-        plane.config = None;
-        plane.metadata = None;
-        offers.set(vec![OutputSpace::Sdr]);
+        drop_plane(plane, &offers);
         return;
+    }
+    let present_mode = [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate]
+        .into_iter()
+        .find(|mode| caps.present_modes.contains(mode))
+        .unwrap_or(wgpu::PresentMode::Fifo);
+    // A surface that never configured has no error sink, so a refused
+    // configure below would turn the acquire after it into a fatal panic.
+    // Seed an SDR configure first: the 8-bit pair all but always takes,
+    // and from then on a refusal is a logged error plus an early return.
+    if !plane.seeded {
+        plane.seeded = true;
+        let (sdr, _) = formats.configure(OutputSpace::Sdr);
+        let view = display::view_format(sdr);
+        device.configure_surface(
+            surface,
+            &wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format: sdr,
+                color_space: wgpu::SurfaceColorSpace::Auto,
+                width: size.width,
+                height: size.height,
+                present_mode,
+                desired_maximum_frame_latency: 2,
+                alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+                view_formats: if view != sdr { vec![view] } else { vec![] },
+            },
+        );
     }
     let wanted = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -859,16 +891,24 @@ fn aim_plane(
         width: size.width,
         height: size.height,
         // The view paces the world; the surface never makes it wait.
-        present_mode: [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate]
-            .into_iter()
-            .find(|mode| caps.present_modes.contains(mode))
-            .unwrap_or(wgpu::PresentMode::Fifo),
+        present_mode,
         desired_maximum_frame_latency: 2,
         alpha_mode: wgpu::CompositeAlphaMode::Opaque,
         view_formats: Vec::new(),
     };
     if plane.config.as_ref() != Some(&wanted) {
         device.configure_surface(surface, &wanted);
+        // Wayland answers caps live, so the check above and the configure's
+        // own check can disagree: re-check after, and drop the plane when
+        // they do rather than acquiring a surface that never configured.
+        let caps = surface.get_capabilities(&adapter);
+        if !display::takes(&caps, format, color_space) {
+            tracing::info!(
+                "game view: HDR surface refused {format:?} {color_space:?} on configure"
+            );
+            drop_plane(plane, &offers);
+            return;
+        }
         plane.config = Some(wanted);
         plane.metadata = None;
     }
@@ -885,9 +925,21 @@ fn aim_plane(
     }
     let texture = match texture {
         wgpu::CurrentSurfaceTexture::Success(texture)
-        | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-        // The cameras draw into the scratch target, and nothing changes.
-        _ => return,
+        | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => {
+            plane.misses = 0;
+            texture
+        }
+        // A surface that never yields a texture is dropped back to the
+        // ring: transient timeouts recover on their own, a dead surface
+        // does not, and the seed above keeps every attempt non-fatal.
+        _ => {
+            plane.misses += 1;
+            if plane.misses >= 5 {
+                tracing::info!("game view: HDR surface yielded no texture, falling back to SDR");
+                drop_plane(plane, &offers);
+            }
+            return;
+        }
     };
     let metadata = frame.metadata();
     if metadata != plane.metadata {
@@ -904,6 +956,17 @@ fn aim_plane(
         OutputColorAttachment::new(view.into(), format),
     );
     plane.frame = Some(texture);
+}
+
+/// Drops the plane back to the 8-bit ring: the next frames rebuild without
+/// it, and the offers drive the frame's space back to SDR with them.
+fn drop_plane(plane: &mut HdrPlane, offers: &DisplayOffers) {
+    plane.surface = None;
+    plane.formats = None;
+    plane.config = None;
+    plane.metadata = None;
+    plane.misses = 0;
+    offers.set(vec![OutputSpace::Sdr]);
 }
 
 /// Makes the swapchain's surface on the viewer's `wl_surface`, and keeps

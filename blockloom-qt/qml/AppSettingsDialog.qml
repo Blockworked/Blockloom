@@ -20,7 +20,7 @@ BwDialog {
     property string sdkResult: ""
     title: "App settings"
     standardButtons: Dialog.NoButton
-    width: 560
+    width: 600
 
     onOpened: refresh()
     function refresh() {
@@ -33,13 +33,37 @@ BwDialog {
         }, e => androidError = String(e));
     }
     function row(ok, detail) { return (ok ? "OK  " : "Missing  ") + detail; }
+    function installSdk() {
+        if (root.sdkBusy) return;
+        root.sdkBusy = true; root.sdkResult = ""; root.androidError = "";
+        root.app.invoke("android_install_sdk", {}, result => {
+            root.sdkBusy = false;
+            root.sdkResult = "Installed: " + (result.installed.length ? result.installed.join(", ") : "nothing new") + ". " + (result.still_missing.length ? "Still missing: " + result.still_missing.join(" ") : "All rows probe green.");
+            root.refresh();
+        }, e => { root.sdkBusy = false; root.androidError = String(e); });
+    }
 
     ScrollView {
+        id: outerScroll
         anchors.fill: parent; clip: true
         contentWidth: availableWidth
         ColumnLayout {
             width: parent.width - 12; spacing: 8
-            Text { visible: root.androidError.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.danger; font.pixelSize: 12; text: root.androidError }
+            // Install failures arrive trimmed to the error tail already;
+            // this caps the view so a long one never blows the dialog up,
+            // and opens at the bottom where the actual error sits.
+            ScrollView {
+                id: errorScroll
+                visible: root.androidError.length > 0
+                Layout.fillWidth: true; Layout.preferredHeight: 140; clip: true
+                TextEdit {
+                    width: errorScroll.availableWidth
+                    readOnly: true; selectByMouse: true; wrapMode: Text.Wrap
+                    color: Theme.danger; font.family: "monospace"; font.pixelSize: 11
+                    text: root.androidError
+                    onTextChanged: errorScroll.contentItem.contentY = Math.max(0, errorScroll.contentItem.contentHeight - errorScroll.height)
+                }
+            }
             Text { text: "Android"; color: Theme.text; font.pixelSize: 14; font.weight: Font.Bold }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
                 text: "A project builds into an installable APK from Windows, Linux or macOS. No editor runs on the device: Android is a Build dialog row, never a Play path." }
@@ -80,27 +104,38 @@ BwDialog {
                 BwButton {
                     text: root.sdkBusy ? "Installing..." : "Install / update SDK"
                     enabled: !root.sdkBusy
-                    onClicked: {
-                        root.sdkBusy = true; root.sdkResult = ""; root.androidError = "";
-                        root.app.invoke("android_install_sdk", {}, result => {
-                            root.sdkBusy = false;
-                            root.sdkResult = "Installed: " + (result.installed.length ? result.installed.join(", ") : "nothing new") + ". " + (result.still_missing.length ? "Still missing: " + result.still_missing.join(" ") : "All rows probe green.");
-                            root.refresh();
-                        }, e => { root.sdkBusy = false; root.androidError = String(e); });
-                    }
+                    onClicked: root.installSdk()
                 }
                 BwButton {
-                    text: "Show licenses"
+                    text: "Show licenses"; enabled: !root.sdkBusy
                     onClicked: root.app.invoke("android_accept_licenses", { accept: false }, result => { root.licenseText = result.text; root.licensesAccepted = !!result.accepted; }, e => root.androidError = String(e))
                 }
                 BwButton {
-                    text: "Accept licenses"; enabled: !root.licensesAccepted
-                    onClicked: root.app.invoke("android_accept_licenses", { accept: true }, result => { root.licenseText = result.text; root.licensesAccepted = true; root.refresh(); }, e => root.androidError = String(e))
+                    text: "Accept licenses"; enabled: !root.licensesAccepted && !root.sdkBusy
+                    // Accepting is for installing: packages refused before
+                    // this left an empty emulator dir behind, so install
+                    // straight on rather than leaving them unfetched.
+                    onClicked: root.app.invoke("android_accept_licenses", { accept: true }, result => {
+                        root.licenseText = result.text; root.licensesAccepted = true; root.installSdk();
+                    }, e => root.androidError = String(e))
                 }
             }
+            Text { visible: root.sdkBusy; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: "Installing packages - the first run downloads a few hundred megabytes and takes a while." }
             Text { visible: root.sdkResult.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.text; font.pixelSize: 12; text: root.sdkResult }
             Text { visible: root.licensesAccepted; Layout.fillWidth: true; color: Theme.textDim; font.pixelSize: 12; text: "SDK licenses accepted." }
-            TextEdit { visible: root.licenseText.length > 0; Layout.fillWidth: true; Layout.preferredHeight: 120; readOnly: true; selectByMouse: true; wrapMode: Text.Wrap; color: Theme.textDim; font.pixelSize: 11; text: root.licenseText }
+            // A fixed-height scroll rather than a fixed-height text box: the
+            // box painted its overflow over the rows below it.
+            ScrollView {
+                id: licenseScroll
+                visible: root.licenseText.length > 0
+                Layout.fillWidth: true; Layout.preferredHeight: 140; clip: true
+                TextEdit {
+                    width: licenseScroll.availableWidth
+                    readOnly: true; selectByMouse: true; wrapMode: Text.Wrap
+                    color: Theme.textDim; font.family: "monospace"; font.pixelSize: 11
+                    text: root.licenseText
+                }
+            }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
                 text: "Phones and emulators live in the editor's Devices tab: boot them there, see their screens and run the game on them." }
             RowLayout {

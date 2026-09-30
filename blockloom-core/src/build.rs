@@ -21,6 +21,7 @@ use crate::pack::{self, GamePack};
 use crate::project::{self, Project};
 use crate::script;
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 /// One platform a game can be built for.
@@ -415,6 +416,14 @@ pub struct Build {
     pub signed: String,
     /// Bytes of what ships: the ZIP, or for the web the one `.html`.
     pub size: u64,
+    /// True when nothing changed and the previous output was reused.
+    /// Only Android sets this; other targets always rebuild.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cached: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// What the build folder is called. The platform is in the name because one
@@ -509,6 +518,7 @@ pub fn build(
         dlss,
         application_id: String::new(),
         signed: String::new(),
+        cached: false,
     })
 }
 
@@ -658,6 +668,7 @@ fn build_web(
         dlss: false,
         application_id: String::new(),
         signed: String::new(),
+        cached: false,
     })
 }
 
@@ -699,6 +710,21 @@ fn build_android_with_config(
     options: BuildOptions,
     config: &android::AppConfig,
 ) -> Result<Build, String> {
+    let dir = parent.join(build_name(project, target));
+    // Fast path first: when nothing changed the previous APK is still good,
+    // so skip staging, baking and signing entirely. No passwords needed in
+    // that case since nothing signs.
+    if let Some(cached) = android_cached_build(
+        project,
+        project_dir,
+        target,
+        runtime_so,
+        &options,
+        config,
+        &dir,
+    ) {
+        return Ok(cached);
+    }
     let (ready, note) = android::readiness_for_config(config, target.triple);
     if !ready {
         return Err(format!("Can't build for {} yet: {note}", target.label));
@@ -721,7 +747,6 @@ fn build_android_with_config(
     let tools = android::apk_tools_for(config)?;
 
     let shaders = check_shaders(project, project_dir)?;
-    let dir = parent.join(build_name(project, target));
     clear_build_dir(&dir)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     std::fs::write(dir.join(BUILD_MARKER), target.triple)
@@ -770,10 +795,10 @@ fn build_android_with_config(
 
     let archive = parent.join(format!("{}.zip", build_name(project, target)));
     distribution::archive(&dir, &archive, &[])?;
-    Ok(Build {
-        dir,
-        binary,
-        archive,
+    let built = Build {
+        dir: dir.clone(),
+        binary: binary.clone(),
+        archive: archive.clone(),
         size: report.size,
         target: target.triple,
         assets,
@@ -785,7 +810,259 @@ fn build_android_with_config(
         dlss: false,
         application_id: report.application_id.clone(),
         signed: report.signed.clone(),
+        cached: false,
+    };
+    write_android_cache(
+        &dir,
+        project,
+        project_dir,
+        target,
+        runtime_so,
+        &options,
+        config,
+        &built,
+    );
+    Ok(built)
+}
+
+/// The fingerprint sidecar in an Android output dir. Rebuilding deletes the
+/// dir, so a missing file just means a first build.
+const ANDROID_FINGERPRINT_FILE: &str = ".blockloom-android-fingerprint.json";
+
+/// What a cache hit returns without rebuilding: the counts a fresh build
+/// would have reported, plus the fingerprint they were built from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct AndroidBuildCache {
+    fingerprint: String,
+    assets: usize,
+    scripts: usize,
+    compiled: bool,
+    atlas: usize,
+    shaders: usize,
+    sky: bool,
+    application_id: String,
+    signed: String,
+}
+
+/// The previous APK when nothing changed: its fingerprint still matches and
+/// both outputs are still on disk. Passwords are not needed since nothing
+/// signs; a missing file is not an error, just a rebuild.
+fn android_cached_build(
+    project: &Project,
+    project_dir: &Path,
+    target: &'static Target,
+    runtime_so: &Path,
+    options: &BuildOptions,
+    config: &android::AppConfig,
+    dir: &Path,
+) -> Option<Build> {
+    let wanted = android_build_fingerprint(
+        project,
+        project_dir,
+        target,
+        runtime_so,
+        options,
+        config,
+        dir,
+    )
+    .ok()?;
+    let text = std::fs::read_to_string(dir.join(ANDROID_FINGERPRINT_FILE)).ok()?;
+    let cache: AndroidBuildCache = serde_json::from_str(&text).ok()?;
+    if cache.fingerprint != wanted {
+        return None;
+    }
+    let apk_name = format!("{}.apk", project::folder_name(&project.name));
+    let binary = dir.join(&apk_name);
+    let archive = dir
+        .parent()
+        .map(|parent| parent.join(format!("{}.zip", build_name(project, target))))
+        .unwrap_or_else(|| dir.join("build.zip"));
+    if !binary.is_file() || !archive.is_file() {
+        return None;
+    }
+    Some(Build {
+        dir: dir.to_path_buf(),
+        binary,
+        archive,
+        size: file_size(&dir.join(&apk_name)),
+        target: target.triple,
+        assets: cache.assets,
+        scripts: cache.scripts,
+        compiled: cache.compiled,
+        atlas: cache.atlas,
+        shaders: cache.shaders,
+        sky: cache.sky,
+        dlss: false,
+        application_id: cache.application_id,
+        signed: cache.signed,
+        cached: true,
     })
+}
+
+/// Records a fresh Android build for the next launch to reuse. Best effort:
+/// a write failure just means the next build rebuilds.
+#[allow(clippy::too_many_arguments)]
+fn write_android_cache(
+    dir: &Path,
+    project: &Project,
+    project_dir: &Path,
+    target: &Target,
+    runtime_so: &Path,
+    options: &BuildOptions,
+    config: &android::AppConfig,
+    built: &Build,
+) {
+    let Ok(fingerprint) = android_build_fingerprint(
+        project,
+        project_dir,
+        target,
+        runtime_so,
+        options,
+        config,
+        dir,
+    ) else {
+        return;
+    };
+    let cache = AndroidBuildCache {
+        fingerprint,
+        assets: built.assets,
+        scripts: built.scripts,
+        compiled: built.compiled,
+        atlas: built.atlas,
+        shaders: built.shaders,
+        sky: built.sky,
+        application_id: built.application_id.clone(),
+        signed: built.signed.clone(),
+    };
+    if let Ok(text) = serde_json::to_string_pretty(&cache) {
+        let _ = std::fs::write(dir.join(ANDROID_FINGERPRINT_FILE), text);
+    }
+}
+
+/// What an Android APK is built from, as one hash. Project JSON covers
+/// blocks and settings; the file walk covers assets on disk; native lib
+/// mtimes cover the compiled inputs; toolchain and NDK cover the tools.
+/// Passwords never land here since they do not change the bytes.
+#[allow(clippy::too_many_arguments)]
+fn android_build_fingerprint(
+    project: &Project,
+    project_dir: &Path,
+    target: &Target,
+    runtime_so: &Path,
+    options: &BuildOptions,
+    config: &android::AppConfig,
+    output_dir: &Path,
+) -> Result<String, String> {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let project_json =
+        serde_json::to_string(project).map_err(|e| format!("couldn't hash the project: {e}"))?;
+    project_json.hash(&mut hasher);
+    target.triple.hash(&mut hasher);
+    options.fast.hash(&mut hasher);
+    hash_file_meta(&mut hasher, runtime_so);
+    for relative in script_paths(project) {
+        let library = script::library_path_for(project_dir, relative, Some(target.triple));
+        hash_file_meta(&mut hasher, &library);
+    }
+    if options.fast {
+        hash_file_meta(
+            &mut hasher,
+            &codegen::library_path_for(project_dir, Some(target.triple)),
+        );
+    }
+    hash_project_files(&mut hasher, project_dir, output_dir)?;
+    // Toolchain moves rebuild the runtime first, whose mtime then busts
+    // this too; still hash them so a tools-only change is caught directly.
+    script::toolchain_version()
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    android::ndk_revision(config).hash(&mut hasher);
+    config.sdk_path.hash(&mut hasher);
+    config.ndk_path.hash(&mut hasher);
+    Ok(format!("{:016x}", hasher.finish()))
+}
+
+/// A file's identity for the fingerprint: its bytes when small enough to
+/// hash cheaply are ideal, but mtime plus size is enough here since the
+/// runtime and script stamps already guard content. Missing hashes as
+/// missing so a first build never hits.
+fn hash_file_meta(hasher: &mut std::collections::hash_map::DefaultHasher, path: &Path) {
+    match std::fs::metadata(path) {
+        Ok(meta) => {
+            path.to_string_lossy().hash(&mut *hasher);
+            meta.len().hash(&mut *hasher);
+            if let Ok(mtime) = meta.modified()
+                && let Ok(age) = mtime.duration_since(std::time::UNIX_EPOCH)
+            {
+                age.as_secs().hash(&mut *hasher);
+                age.subsec_nanos().hash(&mut *hasher);
+            }
+        }
+        Err(_) => {
+            path.to_string_lossy().hash(&mut *hasher);
+            "missing".hash(&mut *hasher);
+        }
+    }
+}
+
+/// Every file under the project folder, sorted, minus the script build
+/// cache and the output dir. Host Play builds touch that cache constantly;
+/// the triple libs above already cover what Android ships. The output dir
+/// is skipped since a previous APK inside the project would bust every
+/// fingerprint on its own mtime.
+fn hash_project_files(
+    hasher: &mut std::collections::hash_map::DefaultHasher,
+    project_dir: &Path,
+    output_dir: &Path,
+) -> Result<(), String> {
+    let build_cache = project_dir.join(".blockloom").join("build");
+    let mut files: Vec<(String, u64, u64, u32)> = Vec::new();
+    let mut stack = vec![project_dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if dir.starts_with(&build_cache) || dir.starts_with(output_dir) {
+            continue;
+        }
+        let entries = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.starts_with(&build_cache) || path.starts_with(output_dir) {
+                continue;
+            }
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let Ok(relative) = path.strip_prefix(project_dir) else {
+                continue;
+            };
+            let (len, secs, nanos) = match std::fs::metadata(&path) {
+                Ok(meta) => {
+                    let (secs, nanos) = meta
+                        .modified()
+                        .ok()
+                        .and_then(|mtime| mtime.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|age| (age.as_secs(), age.subsec_nanos()))
+                        .unwrap_or((0, 0));
+                    (meta.len(), secs, nanos)
+                }
+                Err(_) => continue,
+            };
+            files.push((
+                relative.to_string_lossy().replace('\\', "/"),
+                len,
+                secs,
+                nanos,
+            ));
+        }
+    }
+    files.sort();
+    for (relative, len, secs, nanos) in files {
+        relative.hash(&mut *hasher);
+        len.hash(&mut *hasher);
+        secs.hash(&mut *hasher);
+        nanos.hash(&mut *hasher);
+    }
+    Ok(())
 }
 
 /// Every script's prebuilt `.so` for `target`, runtime first: the exact
@@ -2115,6 +2392,7 @@ mod tests {
         assert!(built.size > 0);
         assert!(built.archive.is_file());
         assert!(!built.compiled);
+        assert!(!built.cached);
         // The staging is real even though the stub link packed nothing:
         // the game folder sits under the build dir as the APK's assets.
         let staged = built.dir.join("assets");
@@ -2131,6 +2409,70 @@ mod tests {
                 .by_name("lib/arm64-v8a/libblockloom_runtime.so")
                 .is_ok()
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_android_build_reuses_the_apk_when_nothing_changed() {
+        if !android::jdk_status().ok
+            || !android::rust_target_status(android::ARM64_TRIPLE).ok
+            || android::keytool().is_err()
+        {
+            eprintln!("SKIP: needs JDK 25, the Android Rust std and keytool");
+            return;
+        }
+        let root = temp("android-cache");
+        let (project, project_dir, _) = a_project(&root);
+        let target = target(android::ARM64_TRIPLE).unwrap();
+        let config = stub_apk_tools(&root);
+        let runtime = root.join("libblockloom_runtime.so");
+        std::fs::write(&runtime, b"fake-so").unwrap();
+        let out = root.join("out");
+
+        let first = build_android_with_config(
+            &project,
+            &project_dir,
+            target,
+            &runtime,
+            &out,
+            BuildOptions::default(),
+            &config,
+        )
+        .unwrap();
+        assert!(!first.cached);
+        // A leftover proves the second build did not clear the dir.
+        std::fs::write(first.dir.join("leftover.txt"), b"old").unwrap();
+
+        let second = build_android_with_config(
+            &project,
+            &project_dir,
+            target,
+            &runtime,
+            &out,
+            BuildOptions::default(),
+            &config,
+        )
+        .unwrap();
+        assert!(second.cached);
+        assert_eq!(second.binary, first.binary);
+        assert!(second.dir.join("leftover.txt").is_file());
+
+        // A new asset busts the fingerprint, so the next build rebuilds
+        // and clears the leftover.
+        std::fs::write(project_dir.join("assets/sprites/new.png"), b"png").unwrap();
+        let third = build_android_with_config(
+            &project,
+            &project_dir,
+            target,
+            &runtime,
+            &out,
+            BuildOptions::default(),
+            &config,
+        )
+        .unwrap();
+        assert!(!third.cached);
+        assert!(!third.dir.join("leftover.txt").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -101,15 +101,21 @@ fn scene_color(uv: vec2<f32>) -> vec3<f32> {
 
 @if(DEPTH_PREPASS && MULTISAMPLED)
 fn scene_depth(uv: vec2<f32>) -> f32 {
-    let size = vec2<f32>(textureDimensions(view_bindings::depth_prepass_texture));
-    let texel = vec2<i32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.9999)) * size);
+    // Scalar casts only, like the particle soft fade: vector casts crash
+    // Mali's shader compiler on some drivers.
+    let dims = textureDimensions(view_bindings::depth_prepass_texture);
+    let size = vec2<f32>(f32(dims.x), f32(dims.y));
+    let scaled = clamp(uv, vec2<f32>(0.0), vec2<f32>(0.9999)) * size;
+    let texel = vec2<i32>(i32(scaled.x), i32(scaled.y));
     return textureLoad(view_bindings::depth_prepass_texture, texel, 0);
 }
 
 @if(DEPTH_PREPASS && !MULTISAMPLED)
 fn scene_depth(uv: vec2<f32>) -> f32 {
-    let size = vec2<f32>(textureDimensions(view_bindings::depth_prepass_texture));
-    let texel = vec2<i32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.9999)) * size);
+    let dims = textureDimensions(view_bindings::depth_prepass_texture);
+    let size = vec2<f32>(f32(dims.x), f32(dims.y));
+    let scaled = clamp(uv, vec2<f32>(0.0), vec2<f32>(0.9999)) * size;
+    let texel = vec2<i32>(i32(scaled.x), i32(scaled.y));
     return textureLoad(view_bindings::depth_prepass_texture, texel, 0);
 }
 

@@ -12,6 +12,11 @@ editor's Game view.
 
 ## Common commands
 
+Patched Bevy/wgpu sources are generated into gitignored `.patched-deps/` from
+the small diffs under `patches/`. `just` Cargo recipes prepare them automatically.
+Before invoking Cargo directly on a fresh checkout, run `just prepare-patched-deps`.
+See `patches/README.md` for prerequisites and updating patches.
+
 ```bash
 just build              # cargo build --release --workspace (the normal build)
 just run                # build, then launch target/release/blockloom

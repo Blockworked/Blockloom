@@ -10,11 +10,11 @@ Rectangle {
     required property var app
     readonly property var appState: app.appState
     readonly property var globals: app.status ? app.status.globals : []
-    implicitHeight: 30 + (remembered.open ? 96 : 0)
+    implicitHeight: 30 + (remembered.open ? remembered.height : 0)
     color: Theme.panel
     border.color: Theme.borderSoft
 
-    Settings { id: remembered; category: "runlog"; property bool open: true }
+    Settings { id: remembered; category: "runlog"; property bool open: true; property real height: 96 }
     // Appends the lines not yet shown and drops what the backend dropped.
     readonly property var log: app.log
     property real shownTotal: 0
@@ -37,6 +37,18 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent; spacing: 0
+        // Drag the top edge to resize.
+        Rectangle {
+            visible: remembered.open
+            Layout.fillWidth: true; Layout.preferredHeight: 4; color: resizer.containsMouse || resizer.pressed ? Theme.accent : "transparent"
+            MouseArea {
+                id: resizer
+                anchors.fill: parent; anchors.topMargin: -3; anchors.bottomMargin: -3; hoverEnabled: true; cursorShape: Qt.SizeVerCursor
+                property real startHeight: 0; property real startY: 0
+                onPressed: mouse => { startHeight = remembered.height; startY = mapToItem(null, 0, mouse.y).y; }
+                onPositionChanged: mouse => { if (pressed) remembered.height = Math.max(60, Math.min(520, startHeight + startY - mapToItem(null, 0, mouse.y).y)); }
+            }
+        }
         RowLayout {
             Layout.fillWidth: true; Layout.preferredHeight: 30; Layout.leftMargin: 6; Layout.rightMargin: 6; spacing: 12
             IconButton { iconName: remembered.open ? "chevron-down" : "chevron-up"; tip: remembered.open ? "Hide the log" : "Show the log"; implicitWidth: 24; implicitHeight: 24; onClicked: remembered.open = !remembered.open }
@@ -58,15 +70,19 @@ Rectangle {
             model: lineModel
             ScrollBar.vertical: ScrollBar {}
             onCountChanged: positionViewAtEnd()
-            delegate: Text {
+            delegate: TextEdit {
                 required property string kind
                 required property string actor
                 required property string words
                 width: lines.width - 16; x: 8
-                wrapMode: Text.Wrap; font.family: "monospace"; font.pixelSize: 12
-                textFormat: Text.PlainText
+                wrapMode: TextEdit.Wrap; font.family: "monospace"; font.pixelSize: 12
+                textFormat: TextEdit.PlainText
                 color: kind === "error" ? Theme.danger : Theme.text
                 text: (actor ? actor + "  " : "") + words
+                readOnly: true
+                selectByMouse: true
+                selectByKeyboard: true
+                persistentSelection: true
             }
         }
     }

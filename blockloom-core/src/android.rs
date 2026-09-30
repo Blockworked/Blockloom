@@ -901,7 +901,41 @@ fn create_avd_with(
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
+    // avdmanager's defaults are a postage stamp: size a fresh AVD like the
+    // phone it stands in for, the way Studio's Pixel template does.
+    size_avd(name);
     Ok(name.to_string())
+}
+
+/// Sizes a fresh AVD to a phone screen (1080x2400): what avdmanager writes
+/// by default is far too small to test a game on. Best effort after the
+/// fact; a running emulator picks it up on its next boot.
+fn size_avd(name: &str) {
+    let home = std::env::var_os("ANDROID_SDK_HOME")
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let config = home
+        .join(".android")
+        .join("avd")
+        .join(format!("{name}.avd"))
+        .join("config.ini");
+    let Ok(text) = std::fs::read_to_string(&config) else {
+        return;
+    };
+    let mut rows: Vec<String> = text.lines().map(str::to_string).collect();
+    for (key, value) in [
+        ("hw.lcd.width", "1080"),
+        ("hw.lcd.height", "2400"),
+        ("hw.lcd.density", "420"),
+    ] {
+        match rows.iter_mut().find(|row| row.starts_with(key)) {
+            Some(row) => *row = format!("{key}={value}"),
+            None => rows.push(format!("{key}={value}")),
+        }
+    }
+    rows.push(String::new());
+    let _ = std::fs::write(&config, rows.join("\n"));
 }
 
 /// The argv an emulator boot takes: the AVD with the boot animation off,
@@ -1180,14 +1214,18 @@ pub fn mirror_frame(device: Option<&str>, max_width: Option<u32>) -> Result<Mirr
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    // `exec-out` on Windows CRLF-mangles binary stdout; adb already wrote
-    // the PNG with lone LFs, so strip CRs back out before decoding.
-    let raw: Vec<u8> = output.stdout.into_iter().filter(|b| *b != b'\r').collect();
-    let shot = image::load_from_memory(&raw)
+    // `adb exec-out` is raw binary, but some hosts mangle LF into CRLF on
+    // the way out, which corrupts the PNG. Decode untouched first: PNG
+    // data holds lone CRs of its own (its signature starts with one), so
+    // stripping them up front breaks every screenshot where no mangling
+    // happened. Only normalize CRLF back when the raw bytes won't decode.
+    let shot = decode_screenshot(&output.stdout)
         .map_err(|e| format!("Couldn't decode {serial}'s screenshot: {e}"))?;
     let width = max_width
         .unwrap_or(MIRROR_DEFAULT_WIDTH)
-        .clamp(MIRROR_MIN_WIDTH, MIRROR_MAX_WIDTH);
+        .clamp(MIRROR_MIN_WIDTH, MIRROR_MAX_WIDTH)
+        .min(shot.width())
+        .max(1);
     let small = shot.thumbnail(width, u32::MAX);
     let mut png = Vec::new();
     small
@@ -1206,6 +1244,29 @@ pub fn mirror_frame(device: Option<&str>, max_width: Option<u32>) -> Result<Mirr
         device_width,
         device_height,
     })
+}
+
+/// Decodes an `adb exec-out screencap -p` capture. Raw bytes first, since
+/// a PNG holds lone CRs of its own, falling back to CRLF normalization
+/// for hosts that mangle binary stdout on the way out.
+fn decode_screenshot(raw: &[u8]) -> Result<image::DynamicImage, image::ImageError> {
+    match image::load_from_memory(raw) {
+        Ok(shot) => Ok(shot),
+        Err(first) => {
+            let mut normalized = Vec::with_capacity(raw.len());
+            let mut iter = raw.iter().peekable();
+            while let Some(byte) = iter.next() {
+                if *byte == b'\r' && iter.peek().is_some_and(|next| **next == b'\n') {
+                    continue;
+                }
+                normalized.push(*byte);
+            }
+            if normalized.len() == raw.len() {
+                return Err(first);
+            }
+            image::load_from_memory(&normalized)
+        }
+    }
 }
 
 /// Picks the serial a mirror command talks to: the named one, or the only
@@ -1592,7 +1653,13 @@ fn package_present(sdk: &Path, package: &str) -> bool {
         return sdk.join("platform-tools").join(exe("adb")).is_file();
     }
     if let Some(platform) = package.strip_prefix("platforms;") {
-        return sdk.join("platforms").join(platform).is_dir();
+        // android.jar is the payload: a stopped download leaves the dir
+        // behind with nothing usable in it.
+        return sdk
+            .join("platforms")
+            .join(platform)
+            .join("android.jar")
+            .is_file();
     }
     if let Some(tools) = package.strip_prefix("build-tools;") {
         return sdk
@@ -1609,9 +1676,122 @@ fn package_present(sdk: &Path, package: &str) -> bool {
         for part in image.split(';') {
             dir.push(part);
         }
-        return dir.is_dir();
+        // The image payload, not the dir: sdkmanager builds the skeleton
+        // first, so an interrupted download probes present otherwise.
+        return dir.join("package.xml").is_file() && dir.join("system.img").is_file();
     }
     false
+}
+
+/// Whether a raw sdkmanager line is progress chatter rather than content:
+/// the `[==== ] 25% ...` bars and the repository fetch status around them.
+/// The dialog has no progress bar, so these lines only ever read as noise.
+fn is_sdkmanager_progress(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    if trimmed.contains("Loading local repository") || trimmed.contains("Fetch remote repository") {
+        return true;
+    }
+    // A bar line redraws with carriage returns: `[=====   ] 25% ...`.
+    if trimmed.contains('[') && trimmed.contains(']') && trimmed.contains('%') {
+        return true;
+    }
+    false
+}
+
+/// Strips one ANSI escape out of a line. sdkmanager colors its progress on
+/// some hosts; the dialog shows plain text.
+fn strip_ansi(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            } else {
+                chars.next();
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Collapses raw sdkmanager output into what the Settings dialog can show:
+/// progress bars go, ANSI colors go, and the manifest warnings that repeat
+/// once per package fold into one counted line. Keeps first-seen order for
+/// everything else, so a real error (`Failed to find package ...`) stays
+/// where sdkmanager put it.
+pub fn sanitize_sdkmanager_output(output: &str) -> String {
+    let mut kept: Vec<String> = Vec::new();
+    let mut io_manifest = 0usize;
+    let mut waiting = 0usize;
+    // Bars redraw with carriage returns, so split on those too.
+    for raw in output.replace('\r', "\n").split('\n') {
+        let line = strip_ansi(raw).trim().to_string();
+        if line.is_empty() || is_sdkmanager_progress(&line) {
+            continue;
+        }
+        if line.contains("IO exception while downloading manifest") {
+            io_manifest += 1;
+            continue;
+        }
+        if line.contains("Still waiting for package manifests") {
+            waiting += 1;
+            continue;
+        }
+        if kept.last().is_some_and(|last| last == &line) {
+            continue;
+        }
+        kept.push(line);
+    }
+    let mut head: Vec<String> = Vec::new();
+    if io_manifest > 0 {
+        head.push(format!(
+            "Warning: the package list could not be fetched (IO exception while downloading manifest{}). Check the network or proxy.",
+            if io_manifest > 1 {
+                format!(", repeated {io_manifest}x")
+            } else {
+                String::new()
+            }
+        ));
+    }
+    if waiting > 0 {
+        head.push(format!(
+            "Warning: still waiting for package manifests to be fetched remotely{}.",
+            if waiting > 1 {
+                format!(" (repeated {waiting}x)")
+            } else {
+                String::new()
+            }
+        ));
+    }
+    head.extend(kept);
+    head.join("\n")
+}
+
+/// The tail of a sanitized sdkmanager log for error messages. Without this
+/// the dialog shows the whole log above the actual failure.
+fn sdkmanager_error_tail(raw: &str) -> String {
+    let cleaned = sanitize_sdkmanager_output(raw);
+    if cleaned.is_empty() {
+        return String::new();
+    }
+    const TAIL: usize = 20;
+    let lines: Vec<&str> = cleaned.lines().collect();
+    if lines.len() > TAIL {
+        lines[lines.len() - TAIL..].join("\n")
+    } else {
+        cleaned
+    }
 }
 
 /// What happened when the install flow ran. Licenses are never accepted
@@ -1669,7 +1849,7 @@ pub fn install_sdk() -> Result<InstallReport, String> {
         let mut install_args = vec!["--install"];
         install_args.extend(missing.iter().copied());
         let output = run_sdkmanager(&manager, &install_args, std::process::Stdio::inherit())?;
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let tail = sdkmanager_error_tail(&String::from_utf8_lossy(&output.stderr));
         let refused: Vec<&str> = missing
             .iter()
             .copied()
@@ -1682,10 +1862,17 @@ pub fn install_sdk() -> Result<InstallReport, String> {
                     refused.join(", ")
                 ));
             }
-            return Err(format!(
-                "sdkmanager couldn't install {}. {stderr}",
-                refused.join(", ")
-            ));
+            return Err(if tail.is_empty() {
+                format!(
+                    "sdkmanager couldn't install {}. Check the network or proxy and try again.",
+                    refused.join(", ")
+                )
+            } else {
+                format!(
+                    "sdkmanager couldn't install {}.\n{tail}",
+                    refused.join(", ")
+                )
+            });
         }
         installed.extend(missing.iter().map(|package| package.to_string()));
     }
@@ -1701,10 +1888,14 @@ pub fn install_sdk() -> Result<InstallReport, String> {
                     "sdkmanager installed nothing: the SDK licenses aren't accepted yet, so {package} stayed missing. Read them with android-accept-licenses, then re-run with accept=true."
                 ));
             }
-            return Err(format!(
-                "sdkmanager couldn't install {package}. {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
+            let tail = sdkmanager_error_tail(&String::from_utf8_lossy(&output.stderr));
+            return Err(if tail.is_empty() {
+                format!(
+                    "sdkmanager couldn't install {package}. Check the network or proxy and try again."
+                )
+            } else {
+                format!("sdkmanager couldn't install {package}.\n{tail}")
+            });
         }
         installed.push(package);
     } else {
@@ -1753,12 +1944,12 @@ pub fn accept_licenses(accept: bool) -> Result<LicenseReport, String> {
         .ok_or_else(|| "No sdkmanager yet. Run android-install-sdk first.".to_string())?;
     if !accept {
         let output = run_sdkmanager(&manager, &["--licenses"], std::process::Stdio::null())?;
-        let text = format!(
+        let raw = format!(
             "{}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let text = text.trim().to_string();
+        let text = sanitize_sdkmanager_output(&raw);
         return Ok(LicenseReport {
             text: if text.is_empty() {
                 "sdkmanager showed no licenses. They may all be accepted already.".to_string()
@@ -1794,22 +1985,27 @@ pub fn accept_licenses(accept: bool) -> Result<LicenseReport, String> {
         .wait_with_output()
         .map_err(|e| format!("Couldn't finish {}: {e}", manager.display()))?;
     if !output.status.success() {
-        return Err(format!(
-            "sdkmanager --licenses failed. {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        let tail = sdkmanager_error_tail(&String::from_utf8_lossy(&output.stderr));
+        return Err(if tail.is_empty() {
+            "sdkmanager --licenses failed. Check the network or proxy and try again.".to_string()
+        } else {
+            format!("sdkmanager --licenses failed.\n{tail}")
+        });
     }
     let mut config = config;
     config.licenses_accepted = true;
     save(&config)?;
+    let accepted = sanitize_sdkmanager_output(&format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    ));
     Ok(LicenseReport {
-        text: format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .trim()
-        .to_string(),
+        text: if accepted.is_empty() {
+            "Licenses accepted.".to_string()
+        } else {
+            accepted
+        },
         accepted: true,
     })
 }
@@ -2647,10 +2843,113 @@ pub fn ndk_linker_for_config(config: &AppConfig, triple: &str) -> Option<PathBuf
     cargo_linker_env(config, triple).map(|(_, path)| path)
 }
 
+/// The NDK patch revision from its `source.properties`, or unknown when
+/// unreadable. Part of the runtime stamp so an NDK update rebuilds.
+pub fn ndk_revision(config: &AppConfig) -> String {
+    let text =
+        std::fs::read_to_string(ndk_dir(config).join("source.properties")).unwrap_or_default();
+    text.lines()
+        .find_map(|line| line.strip_prefix("Pkg.Revision = "))
+        .unwrap_or("unknown")
+        .trim()
+        .to_string()
+}
+
+/// The stamp beside the built `.so` recording what built it. Cargo owns the
+/// target dir, but a sidecar file there survives its rebuilds.
+fn runtime_stamp_path(so: &Path) -> PathBuf {
+    let name = so
+        .file_name()
+        .map(|name| format!("{}.stamp", name.to_string_lossy()))
+        .unwrap_or_else(|| "libblockloom_runtime.so.stamp".to_string());
+    match so.parent() {
+        Some(dir) => dir.join(&name),
+        None => PathBuf::from(name),
+    }
+}
+
+/// What a fresh `.so` for `triple` must record: toolchain, target, linker
+/// and NDK. Change any of it and the cache misses.
+fn runtime_stamp_wanted(config: &AppConfig, triple: &str, linker: &Path) -> Result<String, String> {
+    let toolchain = script::toolchain_version()?;
+    Ok(format!(
+        "runtime {}\n{}\ntriple {triple}\nlinker {}\nndk {}\nfeatures no-default lib release\n",
+        abi_stamp(),
+        toolchain,
+        linker.display(),
+        ndk_revision(config),
+    ))
+}
+
+/// The workspace crates a runtime `.so` is built from. App and Qt changes
+/// never reach it, so they must not bust its cache.
+fn runtime_crate_dirs(root: &Path) -> [PathBuf; 3] {
+    [
+        root.join("blockloom-runtime"),
+        root.join("blockloom-core"),
+        root.join("blockloom-protocol"),
+    ]
+}
+
+/// Whether any workspace source is newer than the built `.so`. Walks only
+/// the crates the runtime links, plus the manifests that pin its deps. A
+/// walk failure rebuilds: slow but correct beats stale.
+fn runtime_sources_newer_than(so_mtime: std::time::SystemTime, root: &Path) -> bool {
+    fn newer_than(path: &Path, stamp: std::time::SystemTime) -> bool {
+        std::fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .is_ok_and(|mtime| mtime > stamp)
+    }
+    for file in [
+        root.join("Cargo.toml"),
+        root.join("Cargo.lock"),
+        root.join("rust-toolchain.toml"),
+        root.join("scripts/prepare-patched-deps.sh"),
+    ] {
+        if file.is_file() && newer_than(&file, so_mtime) {
+            return true;
+        }
+    }
+    let mut stack: Vec<PathBuf> = runtime_crate_dirs(root).into_iter().collect();
+    // Both patch inputs and generated crates affect the Android runtime.
+    for directory in ["patches", ".patched-deps"] {
+        let directory = root.join(directory);
+        if directory.is_dir() {
+            stack.push(directory);
+        }
+    }
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return true;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                if name == "target" || name.starts_with('.') {
+                    continue;
+                }
+                stack.push(path);
+            } else if path.is_file() && newer_than(&path, so_mtime) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn abi_stamp() -> u32 {
+    script::abi::ABI_VERSION
+}
+
 /// Compiles `blockloom-runtime` for `triple` (release, SDR-only feature
 /// set: no Solari, no KTX2/Basis - PNG/JPEG like web) and answers where
-/// `libblockloom_runtime.so` landed. First run needs the network for the
-/// target's crates, like the SDK install did.
+/// `libblockloom_runtime.so` landed. Reuses the last build when the
+/// toolchain, the NDK and the workspace sources are all unchanged, so a
+/// second launch costs no cargo run at all. First run needs the network
+/// for the target's crates, like the SDK install did.
 pub fn build_runtime_so(config: &AppConfig, triple: &str) -> Result<PathBuf, String> {
     let root = workspace_root().ok_or_else(|| {
         "The Blockloom source tree wasn't found above the working dir, so the runtime can't be cross-built. Set BLOCKLOOM_ANDROID_RUNTIME_SO to a prebuilt libblockloom_runtime.so instead.".to_string()
@@ -2660,6 +2959,41 @@ pub fn build_runtime_so(config: &AppConfig, triple: &str) -> Result<PathBuf, Str
             "No NDK linker for {triple}. Run android-install-sdk first."
         ));
     };
+    let (_, linker) = cargo_linker_env(config, triple)
+        .ok_or_else(|| format!("No NDK linker for {triple}. Run android-install-sdk first."))?;
+    let prepared = std::process::Command::new("bash")
+        .arg(root.join("scripts/prepare-patched-deps.sh"))
+        .current_dir(&root)
+        .output()
+        .map_err(|e| format!("Couldn't prepare patched dependencies (Bash is required): {e}"))?;
+    if !prepared.status.success() {
+        return Err(format!(
+            "Couldn't prepare patched dependencies:\n{}\n{}",
+            String::from_utf8_lossy(&prepared.stdout),
+            String::from_utf8_lossy(&prepared.stderr),
+        ));
+    }
+    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("target"));
+    let so = target_dir
+        .join(triple)
+        .join("release")
+        .join("libblockloom_runtime.so");
+    // Fast path: the stamp names the toolchain and NDK, the mtime walk
+    // covers the sources. Hit means cargo would report fresh anyway.
+    if so.is_file() {
+        let stamp = runtime_stamp_path(&so);
+        let wanted = runtime_stamp_wanted(config, triple, &linker);
+        let previous = std::fs::read_to_string(&stamp).unwrap_or_default();
+        let fresh = wanted.is_ok_and(|wanted| previous == wanted)
+            && std::fs::metadata(&so)
+                .and_then(|meta| meta.modified())
+                .is_ok_and(|mtime| !runtime_sources_newer_than(mtime, &root));
+        if fresh {
+            return Ok(so);
+        }
+    }
     let mut command = std::process::Command::new("cargo");
     command
         .arg("build")
@@ -2670,7 +3004,13 @@ pub fn build_runtime_so(config: &AppConfig, triple: &str) -> Result<PathBuf, Str
         .arg("blockloom-runtime")
         .arg("--lib")
         .arg("--no-default-features")
+        // Release disables incremental by default; the dev loop wants it
+        // back so a touched engine crate rebuilds fast instead of whole.
+        .arg("--config")
+        .arg("profile.release.incremental=true")
         .current_dir(&root);
+    // Same switch as env, in case the outer env disabled it (CI sets 0).
+    command.env("CARGO_INCREMENTAL", "1");
     for (key, value) in &env {
         command.env(key, value);
     }
@@ -2683,14 +3023,11 @@ pub fn build_runtime_so(config: &AppConfig, triple: &str) -> Result<PathBuf, Str
             trim_cargo_output(&String::from_utf8_lossy(&output.stderr))
         ));
     }
-    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("target"));
-    let so = target_dir
-        .join(triple)
-        .join("release")
-        .join("libblockloom_runtime.so");
     if so.is_file() {
+        if let Ok(wanted) = runtime_stamp_wanted(config, triple, &linker) {
+            let stamp = runtime_stamp_path(&so);
+            let _ = std::fs::write(&stamp, wanted);
+        }
         Ok(so)
     } else {
         Err(format!(
@@ -2833,10 +3170,10 @@ pub struct Logcat {
 }
 
 /// Dumps the device log (`adb logcat -d`) and keeps the lines naming
-/// `needle` - the runtime's `blockloom:` markers - plus any Rust panic or
-/// fatal exception anywhere, which fail a smoke run. One shot, not a
-/// stream: `logcat_tail` below polls this into the RunLog; this stays for
-/// the dev loop and `just android-smoke`.
+/// `needle` - the runtime's `blockloom:` markers - plus any Rust panic,
+/// fatal exception or native fatal signal anywhere, which fail a smoke run.
+/// One shot, not a stream: `logcat_tail` below polls this into the RunLog;
+/// this stays for the dev loop and `just android-smoke`.
 pub fn logcat(device: Option<&str>, needle: &str) -> Result<Logcat, String> {
     logcat_with_adb(&adb_path(), device, needle)
 }
@@ -2916,6 +3253,8 @@ fn logcat_with_adb(adb: &Path, device: Option<&str>, needle: &str) -> Result<Log
         if lower.contains("panicked")
             || lower.contains("fatal exception")
             || lower.contains("fatal:")
+            || lower.contains("fatal signal")
+            || lower.contains("abort message")
         {
             panics.push(logcat_message(line).to_string());
         }
@@ -3383,7 +3722,7 @@ mod tests {
         let adb = stub_tool(
             &bin,
             "adb",
-            "#!/bin/sh\necho '01-01 00:00:01.000  123  123 I blockloom: run started'\necho '01-01 00:00:02.000  123  123 I blockloom: actors {\"a\":[1,2]}'\necho '01-01 00:00:03.000  123  123 E AndroidRuntime: FATAL EXCEPTION: main'\necho '01-01 00:00:04.000  123  123 I SomeTag: unrelated line'\necho '01-01 00:00:05.000  123  123 D nativeloader: Load /data/app/com.blockloom.game.pond/lib.so ok'\n",
+            "#!/bin/sh\necho '01-01 00:00:01.000  123  123 I blockloom: run started'\necho '01-01 00:00:02.000  123  123 I blockloom: actors {\"a\":[1,2]}'\necho '01-01 00:00:03.000  123  123 E AndroidRuntime: FATAL EXCEPTION: main'\necho '01-01 00:00:04.000  123  123 I SomeTag: unrelated line'\necho '01-01 00:00:05.000  123  123 D nativeloader: Load /data/app/com.blockloom.game.pond/lib.so ok'\necho '01-01 00:00:06.000  123  123 F DEBUG   : Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR)'\necho '01-01 00:00:07.000  123  123 F DEBUG   : Abort message: panicked at logic'\n",
         );
         // The stub ignores its argv and prints a fixed dump: what matters is
         // the filtering, not the adb invocation (covered by the install test).
@@ -3397,8 +3736,12 @@ mod tests {
             ],
             "{dumped:?}"
         );
-        assert_eq!(dumped.panics.len(), 1, "{dumped:?}");
+        assert_eq!(dumped.panics.len(), 3, "{dumped:?}");
         assert!(dumped.panics[0].contains("FATAL EXCEPTION"), "{dumped:?}");
+        // A native crash is debuggerd lines, not exceptions: without these
+        // the tail, the smoke test and the Devices log all miss it.
+        assert!(dumped.panics[1].contains("Fatal signal"), "{dumped:?}");
+        assert!(dumped.panics[2].contains("Abort message"), "{dumped:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -3434,6 +3777,35 @@ mod tests {
         // A missing binary names the install flow, not a crash.
         let missing = bin.join("no-emulator");
         assert!(list_avds_with(&missing).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fresh_avds_are_sized_like_phones() {
+        let root = temp_root("avd-size");
+        let config = root
+            .join(".android")
+            .join("avd")
+            .join("blockloom.avd")
+            .join("config.ini");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&config, "hw.lcd.width=320\nhw.cpu.arch=x86_64\n").unwrap();
+        // SAFETY: no other test reads ANDROID_SDK_HOME; set and removed
+        // within this test only.
+        unsafe {
+            std::env::set_var("ANDROID_SDK_HOME", &root);
+        }
+        size_avd("blockloom");
+        unsafe {
+            std::env::remove_var("ANDROID_SDK_HOME");
+        }
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert!(text.contains("hw.lcd.width=1080"), "{text}");
+        assert!(text.contains("hw.lcd.height=2400"), "{text}");
+        assert!(text.contains("hw.lcd.density=420"), "{text}");
+        assert!(text.contains("hw.cpu.arch=x86_64"), "{text}");
+        // A missing AVD is not an error: there is nothing to size.
+        size_avd("nobody-here");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -3515,6 +3887,34 @@ mod tests {
     }
 
     #[test]
+    fn screenshots_decode_raw_and_crlf_mangled() {
+        use image::GenericImageView;
+        // A real encoder's bytes, CRs and all: blanket CR-stripping breaks
+        // the PNG signature, which is what every mirror showed.
+        let shot = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([9, 13, 10, 255]),
+        ));
+        let mut raw = Vec::new();
+        shot.write_to(&mut std::io::Cursor::new(&mut raw), image::ImageFormat::Png)
+            .unwrap();
+        assert!(raw.contains(&b'\r'));
+        assert_eq!(decode_screenshot(&raw).unwrap().dimensions(), (2, 2));
+        // A host that mangles LF into CRLF: raw fails, normalized decodes.
+        let mut mangled = Vec::with_capacity(raw.len());
+        for byte in &raw {
+            if *byte == b'\n' {
+                mangled.push(b'\r');
+            }
+            mangled.push(*byte);
+        }
+        assert!(image::load_from_memory(&mangled).is_err());
+        assert_eq!(decode_screenshot(&mangled).unwrap().dimensions(), (2, 2));
+        assert!(decode_screenshot(b"not a screenshot").is_err());
+    }
+
+    #[test]
     fn cargo_failures_keep_the_error_not_the_progress() {
         let stderr = "   Compiling cfg-if v1.0.5\n   Compiling log v0.4.34\nerror: linker `x86_64-linux-android29-clang` not found\n  |\n  = note: No such file\nerror: could not compile `blockloom-runtime` due to 1 previous error\n";
         let trimmed = trim_cargo_output(stderr);
@@ -3535,6 +3935,33 @@ mod tests {
         let tail = trim_cargo_output(&long);
         assert!(tail.lines().count() <= 40, "{}", tail.lines().count());
         assert!(tail.contains("problem 99"), "{tail}");
+    }
+
+    #[test]
+    fn sdkmanager_logs_lose_progress_and_fold_warnings() {
+        let raw = "Warning: IO exception while downloading manifest\r\nWarning: IO exception while downloading manifest\nWarning: Still waiting for package manifests to be fetched remotely.\nLoading local repository...\n[=========             ] 25% Loading local repository...\n[=========             ] 25% Fetch remote repository...\n\x1b[32m[=========             ] 26% Fetch remote repository...\x1b[0m\nWarning: Failed to find package 'system-images;android-35;google_apis;x86_64'\n";
+        let cleaned = sanitize_sdkmanager_output(raw);
+        assert!(!cleaned.contains('%'), "{cleaned}");
+        assert!(!cleaned.contains("Loading local repository"), "{cleaned}");
+        assert!(!cleaned.contains("\x1b"), "{cleaned}");
+        assert!(cleaned.contains("could not be fetched"), "{cleaned}");
+        assert!(cleaned.contains("repeated 2x"), "{cleaned}");
+        assert!(
+            cleaned
+                .contains("Failed to find package 'system-images;android-35;google_apis;x86_64'"),
+            "{cleaned}"
+        );
+        // The error tail keeps the failure, not the progress.
+        let tail = sdkmanager_error_tail(raw);
+        assert!(tail.contains("Failed to find package"), "{tail}");
+        assert!(!tail.contains('%'), "{tail}");
+        // Pure progress with no error still answers something short.
+        let progress = (0..50)
+            .map(|n| format!("[=========] {}% Fetch remote repository...", n))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(sanitize_sdkmanager_output(&progress).is_empty());
+        assert!(sdkmanager_error_tail(&progress).is_empty());
     }
 
     #[test]
@@ -3576,7 +4003,12 @@ mod tests {
             image.push(part);
         }
         std::fs::create_dir_all(&image).unwrap();
+        // Skeletons probe absent until the payload files land: an
+        // interrupted download leaves the dirs behind with nothing in them.
         assert!(package_present(&root, "emulator"));
+        assert!(!package_present(&root, EMULATOR_IMAGE));
+        std::fs::write(image.join("package.xml"), b"fake").unwrap();
+        std::fs::write(image.join("system.img"), b"fake").unwrap();
         assert!(package_present(&root, EMULATOR_IMAGE));
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -4006,7 +4438,27 @@ cmake;3.22.1 | 3.22.1 | CMake\n";
         assert!(package_present(&sdk, "platform-tools"));
         assert!(!package_present(&sdk, "platforms;android-35"));
         std::fs::create_dir_all(sdk.join("platforms").join(PLATFORM)).unwrap();
+        // The bare dir still counts nothing: only android.jar does, since
+        // a stopped download leaves the skeleton behind.
+        assert!(!package_present(&sdk, "platforms;android-35"));
+        std::fs::write(
+            sdk.join("platforms").join(PLATFORM).join("android.jar"),
+            b"fake",
+        )
+        .unwrap();
         assert!(package_present(&sdk, "platforms;android-35"));
+        // A system-image skeleton with no payload counts nothing either.
+        let image = sdk
+            .join("system-images")
+            .join("android-35")
+            .join("google_apis")
+            .join("x86_64");
+        std::fs::create_dir_all(&image).unwrap();
+        assert!(!package_present(&sdk, EMULATOR_IMAGE));
+        std::fs::write(image.join("package.xml"), b"fake").unwrap();
+        assert!(!package_present(&sdk, EMULATOR_IMAGE));
+        std::fs::write(image.join("system.img"), b"fake").unwrap();
+        assert!(package_present(&sdk, EMULATOR_IMAGE));
         assert!(!package_present(&sdk, "no-such-package"));
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -4061,6 +4513,115 @@ cmake;3.22.1 | 3.22.1 | CMake\n";
         let row = ndk_status(&config);
         assert!(!row.ok, "{row:?}");
         assert!(row.detail.contains("clang"), "{row:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_ndk_revision_comes_from_its_properties() {
+        let root = temp_root("ndk-rev");
+        let config = AppConfig {
+            sdk_path: Some(root.join("sdk")),
+            ndk_path: Some(root.join("ndk")),
+            ..AppConfig::default()
+        };
+        assert_eq!(ndk_revision(&config), "unknown");
+        std::fs::create_dir_all(config.ndk_path.as_ref().unwrap()).unwrap();
+        std::fs::write(
+            config.ndk_path.as_ref().unwrap().join("source.properties"),
+            b"Pkg.Revision = 27.1.12297006\n",
+        )
+        .unwrap();
+        assert_eq!(ndk_revision(&config), "27.1.12297006");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_runtime_stamp_sits_beside_its_so() {
+        let so = PathBuf::from("/tmp/target/aarch64-linux-android/release/libblockloom_runtime.so");
+        assert_eq!(
+            runtime_stamp_path(&so),
+            PathBuf::from(
+                "/tmp/target/aarch64-linux-android/release/libblockloom_runtime.so.stamp"
+            )
+        );
+    }
+
+    #[test]
+    fn touched_sources_beat_an_old_so() {
+        let root = temp_root("runtime-fresh");
+        for crate_dir in ["blockloom-runtime", "blockloom-core", "blockloom-protocol"] {
+            std::fs::create_dir_all(root.join(crate_dir).join("src")).unwrap();
+            std::fs::write(root.join(crate_dir).join("src/lib.rs"), b"// lib").unwrap();
+        }
+        std::fs::write(root.join("Cargo.toml"), b"[workspace]").unwrap();
+        let so = root.join("libblockloom_runtime.so");
+        std::fs::write(&so, b"fake-so").unwrap();
+        // Give the filesystem a beat so mtimes order deterministically.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let mtime = std::fs::metadata(&so).unwrap().modified().unwrap();
+        assert!(!runtime_sources_newer_than(mtime, &root));
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(
+            root.join("blockloom-core").join("src/lib.rs"),
+            b"// changed",
+        )
+        .unwrap();
+        assert!(runtime_sources_newer_than(mtime, &root));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn touched_patch_inputs_beat_an_old_so() {
+        for (index, input) in [
+            "patches/dependencies.txt",
+            "patches/wgpu-hal/mali-workarounds.patch",
+            "scripts/prepare-patched-deps.sh",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let root = temp_root(&format!("runtime-patch-input-{index}"));
+            for dir in ["blockloom-runtime", "blockloom-core", "blockloom-protocol"] {
+                std::fs::create_dir_all(root.join(dir).join("src")).unwrap();
+                std::fs::write(root.join(dir).join("src/lib.rs"), b"// lib").unwrap();
+            }
+            let input = root.join(input);
+            std::fs::create_dir_all(input.parent().unwrap()).unwrap();
+            std::fs::write(&input, b"original").unwrap();
+            let so = root.join("libblockloom_runtime.so");
+            std::fs::write(&so, b"fake-so").unwrap();
+            let mtime = std::fs::metadata(&so).unwrap().modified().unwrap();
+            assert!(!runtime_sources_newer_than(mtime, &root));
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::fs::write(input, b"changed").unwrap();
+            assert!(runtime_sources_newer_than(mtime, &root));
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn touched_patched_sources_beat_an_old_so() {
+        let root = temp_root("runtime-patched-fresh");
+        for dir in [
+            "blockloom-runtime",
+            "blockloom-core",
+            "blockloom-protocol",
+            ".patched-deps/wgpu-hal",
+        ] {
+            std::fs::create_dir_all(root.join(dir).join("src")).unwrap();
+            std::fs::write(root.join(dir).join("src/lib.rs"), b"// lib").unwrap();
+        }
+        let so = root.join("libblockloom_runtime.so");
+        std::fs::write(&so, b"fake-so").unwrap();
+        let mtime = std::fs::metadata(&so).unwrap().modified().unwrap();
+        assert!(!runtime_sources_newer_than(mtime, &root));
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(
+            root.join(".patched-deps/wgpu-hal/src/lib.rs"),
+            b"// changed",
+        )
+        .unwrap();
+        assert!(runtime_sources_newer_than(mtime, &root));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

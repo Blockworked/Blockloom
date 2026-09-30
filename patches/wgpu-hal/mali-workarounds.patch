@@ -1,0 +1,138 @@
+--- a/src/vulkan/descriptor.rs
++++ b/src/vulkan/descriptor.rs
+@@ -173,41 +173,39 @@
+         // Prefer smaller/older/fuller pools for new allocations to prevent
+         // fragmentation and possibly fragmentation of hardware resources
+         // (VK_ERROR_FRAGMENTATION)
+-        let pool = bucket
+-            .pools
+-            .iter_mut()
+-            .enumerate()
+-            .find(|(_, pool)| pool.available != 0);
+-
+-        let (pool_index, pool) = if let Some(pool) = pool {
+-            pool
+-        } else {
+-            let capacity_hint = bucket.allocated_sets;
+-            bucket.create_pool(device, &key, capacity_hint)?
++        let mut pool_index = match bucket.pools.iter().position(|pool| pool.available != 0) {
++            Some(index) => index,
++            None => {
++                let capacity_hint = bucket.allocated_sets;
++                bucket.create_pool(device, &key, capacity_hint)?.0
++            }
+         };
+ 
+-        let vk_info = vk::DescriptorSetAllocateInfo::default()
+-            .descriptor_pool(pool.raw)
+-            .set_layouts(core::slice::from_ref(&layout.raw));
+-
+-        let raw = match unsafe { device.allocate_descriptor_sets(&vk_info) } {
+-            Ok(sets) => Ok(sets[0]),
+-            // We make sure not to exceed the size of the pool.
+-            Err(vk::Result::ERROR_OUT_OF_POOL_MEMORY) => unreachable!(),
+-            // We only allocate from a pool if the nr and type of descriptors
+-            // used by a layout is the same as those specified at pool
+-            // creation time.
+-            //
+-            // > Additionally, if all sets allocated from the pool since it was
+-            // created or most recently reset use the same number of
+-            // descriptors (of each type) and the requested allocation also
+-            // uses that same number of descriptors (of each type),
+-            // then fragmentation must not cause an allocation failure.
+-            //
+-            // from https://docs.vulkan.org/refpages/latest/refpages/source/VkDescriptorPoolCreateInfo.html#_description
+-            Err(vk::Result::ERROR_FRAGMENTED_POOL) => unreachable!(),
+-            Err(err) => Err(super::map_host_device_oom_err(err)),
+-        }?;
++        // Blockloom vendor patch: some drivers (notably ARM Mali) report a
++        // pool fragmented or out of memory for an allocation it should
++        // satisfy. Retry once in a fresh pool, which has no history to
++        // fragment, instead of panicking; a genuine shortage still returns
++        // OutOfMemory below.
++        let allocate = |device: &ash::Device, pool: vk::DescriptorPool| unsafe {
++            device.allocate_descriptor_sets(
++                &vk::DescriptorSetAllocateInfo::default()
++                    .descriptor_pool(pool)
++                    .set_layouts(core::slice::from_ref(&layout.raw)),
++            )
++        };
++        let raw = match allocate(device, bucket.pools[pool_index].raw) {
++            Ok(sets) => sets[0],
++            Err(vk::Result::ERROR_OUT_OF_POOL_MEMORY | vk::Result::ERROR_FRAGMENTED_POOL) => {
++                let capacity_hint = bucket.allocated_sets.max(1);
++                pool_index = bucket.create_pool(device, &key, capacity_hint)?.0;
++                match allocate(device, bucket.pools[pool_index].raw) {
++                    Ok(sets) => sets[0],
++                    Err(err) => return Err(super::map_host_device_oom_err(err)),
++                }
++            }
++            Err(err) => return Err(super::map_host_device_oom_err(err)),
++        };
++        let pool = &mut bucket.pools[pool_index];
+ 
+         pool.available -= 1;
+         bucket.available_sets -= 1;
+--- a/src/vulkan/device.rs
++++ b/src/vulkan/device.rs
+@@ -1400,6 +1400,8 @@
+             temp_texture_views: Default::default(),
+             counters: Arc::clone(&self.counters),
+             current_pipeline_is_multiview: false,
++            #[cfg(target_os = "android")]
++            pool_reset_count: 0,
+         })
+     }
+ 
+@@ -1653,9 +1655,9 @@
+         >,
+     ) -> Result<super::BindGroup, crate::DeviceError> {
+         let set = unsafe {
+-            self.desc_allocator
+-                .lock()
+-                .alloc(&self.shared.raw, desc.layout)?
++            let mut allocator = self.desc_allocator.lock();
++            let set = allocator.alloc(&self.shared.raw, desc.layout)?;
++            set
+         };
+ 
+         if let Some(label) = desc.label {
+--- a/src/vulkan/command.rs
++++ b/src/vulkan/command.rs
+@@ -185,10 +185,23 @@
+         for (_, framebuffer) in self.framebuffers.drain() {
+             unsafe { self.device.raw.destroy_framebuffer(framebuffer, None) };
+         }
++        let reset_flags = vk::CommandPoolResetFlags::default();
++        #[cfg(target_os = "android")]
++        let reset_flags = if self.device.vendor_id == 0x13B5 {
++            self.pool_reset_count = self.pool_reset_count.wrapping_add(1);
++            // Bound Mali's retained command storage without reallocating every frame.
++            if self.pool_reset_count % 64 == 0 {
++                vk::CommandPoolResetFlags::RELEASE_RESOURCES
++            } else {
++                reset_flags
++            }
++        } else {
++            reset_flags
++        };
+         let _ = unsafe {
+             self.device
+                 .raw
+-                .reset_command_pool(self.raw, vk::CommandPoolResetFlags::default())
++                .reset_command_pool(self.raw, reset_flags)
+         };
+     }
+ 
+--- a/src/vulkan/mod.rs
++++ b/src/vulkan/mod.rs
+@@ -1086,6 +1086,9 @@
+     counters: Arc<wgt::HalCounters>,
+ 
+     current_pipeline_is_multiview: bool,
++
++    #[cfg(target_os = "android")]
++    pool_reset_count: u8,
+ }
+ 
+ impl Drop for CommandEncoder {

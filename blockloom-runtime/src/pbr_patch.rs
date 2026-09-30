@@ -93,6 +93,11 @@ const PATCHES: &[Patch] = &[
         key: no_key,
     },
     Patch {
+        module: "bevy_pbr/ssr/raymarch.wesl",
+        edit: patch_raymarch,
+        key: no_key,
+    },
+    Patch {
         module: "bevy_pbr/render/pbr_lighting.wesl",
         edit: patch_lighting,
         key: no_key,
@@ -427,7 +432,7 @@ fn patch_functions(source: &str, _: &PbrPatches) -> Result<String, &'static str>
         ),
         "the point light loop",
     )?;
-    replace_once(
+    let source = replace_once(
         &source,
         "        let light_contrib = lighting::rect_light(&light, &lighting_input, enable_diffuse);
         direct_light += light_contrib;
@@ -452,7 +457,64 @@ fn patch_functions(source: &str, _: &PbrPatches) -> Result<String, &'static str>
         direct_light += light_contrib * area_shadow;
 ",
         "the rect light loop",
-    )
+    )?;
+    // Contact-shadow blue noise without vector casts: same crash as the
+    // raymarch fetches below on Mali drivers (only builds with the
+    // blue-noise texture compile this arm).
+    let source = replace_once(
+        &source,
+        "        vec2<i32>(frag_coord) % vec2<i32>(noise_size),",
+        "        vec2<i32>(i32(frag_coord.x), i32(frag_coord.y)) % vec2<i32>(i32(noise_size.x), i32(noise_size.y)),",
+        "the contact shadow noise lookup",
+    )?;
+    // Dithering without a vector cast either, for the same drivers.
+    let source = replace_once(
+        &source,
+        "    let coords = vec2<u32>(floor(frag_coord.xy)) % 4u;",
+        "    let coords = vec2<u32>(u32(floor(frag_coord.x)), u32(floor(frag_coord.y))) % 4u;",
+        "the dither pattern lookup",
+    )?;
+    // Contact-shadow depth size without a vector cast either.
+    let source = replace_once(
+        &source,
+        "    let depth_size = vec2<f32>(textureDimensions(view_bindings::depth_prepass_texture));",
+        "    let depth_dims = textureDimensions(view_bindings::depth_prepass_texture);\n    let depth_size = vec2<f32>(f32(depth_dims.x), f32(depth_dims.y));",
+        "the contact shadow depth size",
+    )?;
+    Ok(source)
+}
+
+/// Contact-shadow depth fetches without vector casts: `vec2<i32>` out of
+/// a `vec2<f32>` crashes Mali's shader compiler (scalarizer) on some
+/// drivers, so each lane converts on its own. Same texels, same math.
+fn patch_raymarch(source: &str, _: &PbrPatches) -> Result<String, &'static str> {
+    let source = replace_once(
+        source,
+        "    return depth_texel_clamped(vec2<i32>(floor(coord + vec2(0.5))));",
+        "    let snap_x = i32(floor(coord.x + 0.5));\n    let snap_y = i32(floor(coord.y + 0.5));\n    return depth_texel_clamped(vec2<i32>(snap_x, snap_y));",
+        "the nearest depth fetch",
+    )?;
+    let source = replace_once(
+        &source,
+        "    let base = vec2<i32>(floor(coord));",
+        "    let base_x = i32(floor(coord.x));\n    let base_y = i32(floor(coord.y));\n    let base = vec2<i32>(base_x, base_y);",
+        "the bilinear depth fetch",
+    )?;
+    // Frustum clipping without vector-condition selects: per-lane picks
+    // crash Mali's scalarizer on some drivers, one lane at a time does not.
+    let source = replace_once(
+        &source,
+        "    let near_edge = select(vec3(-1.0, -1.0, 0.0), vec3(1.0, 1.0, 1.0), delta_cs < vec3(0.0));",
+        "    let near_x = select(-1.0, 1.0, delta_cs.x < 0.0);\n    let near_y = select(-1.0, 1.0, delta_cs.y < 0.0);\n    let near_z = select(0.0, 1.0, delta_cs.z < 0.0);\n    let near_edge = vec3<f32>(near_x, near_y, near_z);",
+        "the near frustum edge",
+    )?;
+    let out = replace_once(
+        &source,
+        "    let far_edge = select(vec3(-1.0, -1.0, 0.0), vec3(1.0, 1.0, 1.0), delta_cs >= vec3(0.0));",
+        "    let far_x = select(-1.0, 1.0, delta_cs.x >= 0.0);\n    let far_y = select(-1.0, 1.0, delta_cs.y >= 0.0);\n    let far_z = select(0.0, 1.0, delta_cs.z >= 0.0);\n    let far_edge = vec3<f32>(far_x, far_y, far_z);",
+        "the far frustum edge",
+    )?;
+    Ok(out)
 }
 
 /// The sun's shadow fades out over the last `fade` of the last cascade.
@@ -519,5 +581,18 @@ mod tests {
         // Longer names and fields that only start the same are untouched.
         assert!(patched.contains("uv, texture_2d_size, view.texture).rgb;"));
         assert!(patch_handle_lets("fn f() {}", &PbrPatches::default()).is_err());
+    }
+
+    #[test]
+    fn contact_depth_fetches_convert_each_lane_on_its_own() {
+        let source = "    return depth_texel_clamped(vec2<i32>(floor(coord + vec2(0.5))));\n    let base = vec2<i32>(floor(coord));\n    let near_edge = select(vec3(-1.0, -1.0, 0.0), vec3(1.0, 1.0, 1.0), delta_cs < vec3(0.0));\n    let far_edge = select(vec3(-1.0, -1.0, 0.0), vec3(1.0, 1.0, 1.0), delta_cs >= vec3(0.0));\nfn depth_sample_linear(uv: vec2<f32>, tex_size: vec2<f32>) -> f32 {\n    @if(USE_DEPTH_SAMPLERS)\n    return textureSampleLevel(depth_prepass_texture, depth_linear_sampler, uv, 0u);\n    @else\n    return depth_sample_bilinear_clamped(uv, tex_size);\n}\nfn depth_sample_nearest(uv: vec2<f32>, tex_size: vec2<f32>) -> f32 {\n    @if(USE_DEPTH_SAMPLERS)\n    return textureSampleLevel(depth_prepass_texture, depth_nearest_sampler, uv, 0u);\n    @else\n    return depth_sample_nearest_clamped(uv, tex_size);\n}";
+        let patched = patch_raymarch(source, &PbrPatches::default()).unwrap();
+        assert!(!patched.contains("vec2<i32>(floor("));
+        assert!(!patched.contains(", delta_cs < vec3(0.0))"));
+        assert!(!patched.contains(", delta_cs >= vec3(0.0))"));
+        assert!(patched.contains("let snap_x = i32(floor(coord.x + 0.5));"));
+        assert!(patched.contains("let base_x = i32(floor(coord.x));"));
+        assert!(patched.contains("let near_x = select(-1.0, 1.0, delta_cs.x < 0.0);"));
+        assert!(patch_raymarch("fn f() {}", &PbrPatches::default()).is_err());
     }
 }

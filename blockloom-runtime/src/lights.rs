@@ -20,6 +20,7 @@ use bevy::camera::primitives::CubemapLayout;
 use bevy::light::{PointLightTexture, RectLight, SpotLightTexture};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::render::renderer::RenderAdapter;
 use blockloom_core::components::{LightKind, LightSpec};
 use blockloom_core::pipeline::{self, ies::IesProfile};
 use blockloom_core::vm::Effect;
@@ -63,6 +64,10 @@ struct MaskKey {
 const MASK_SIZE: u32 = 256;
 const POINT_MASK_SIZE: u32 = 64;
 
+/// ARM's PCI vendor id, matching the Mali denylists in `shadows.rs` and the
+/// render bind-group cache. Only a known-broken GPU loses the effect.
+const MALI_VENDOR: u32 = 0x13B5;
+
 /// `set my light to`, `turn my light's shadows`, `set shadow distance` and
 /// `capture probes` for the rest of the run. Cleared with everything else
 /// live on a rebuild.
@@ -104,6 +109,11 @@ fn wanted(engine: &Engine, actor: &str) -> Option<LightSpec> {
     if let Some(shadows) = engine.light_shadows.get(actor) {
         spec.shadows = *shadows;
     }
+    // Mali never gets point or spot shadow maps (see `no_point_shadow_maps`):
+    // `turn my light's shadows` still records intent, but nothing is built.
+    if engine.no_point_shadow_maps && matches!(spec.kind, LightKind::Point | LightKind::Spot) {
+        spec.shadows = false;
+    }
     Some(spec)
 }
 
@@ -116,11 +126,29 @@ pub fn casts_shadows(engine: &Engine, actor: &str) -> bool {
 /// Builds, rebuilds or takes away each actor's light child to match.
 pub fn sync_lights(
     mut commands: Commands,
-    engine: NonSend<Engine>,
+    mut engine: NonSendMut<Engine>,
+    adapter: Option<Res<RenderAdapter>>,
+    mut warned_mali: Local<bool>,
     mut masks: ResMut<LightMasks>,
     mut images: ResMut<Assets<Image>>,
     actors: Query<(Entity, &ActorId, Option<&Lit>)>,
 ) {
+    // Mali holds per-shadow-view memory to OOM, so point and spot lights
+    // never get shadow maps there (the sun keeps its own). Latched on first
+    // sight of the adapter; every other GPU keeps the setting. Warned once.
+    if !engine.no_point_shadow_maps
+        && adapter
+            .as_deref()
+            .is_some_and(|adapter| adapter.get_info().vendor == MALI_VENDOR)
+    {
+        engine.no_point_shadow_maps = true;
+    }
+    if engine.no_point_shadow_maps && !*warned_mali {
+        *warned_mali = true;
+        tracing::warn!(
+            "Point and spot shadow maps are off on this Mali GPU: its driver holds shadow-view memory to OOM. The game runs without those shadows."
+        );
+    }
     for (entity, id, lit) in &actors {
         let spec = wanted(&engine, &id.0);
         if spec.as_ref() == lit.map(|lit| &lit.spec) {

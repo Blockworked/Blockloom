@@ -233,6 +233,10 @@ pub struct Engine {
     pub cine_time: f32,
     /// Actor id -> whether `turn my light's shadows` left its light casting.
     pub light_shadows: HashMap<String, bool>,
+    /// Set once on Mali GPUs: their driver holds per-shadow-view memory to
+    /// OOM, so point and spot lights never get shadow maps there. Latched
+    /// by `lights::sync_lights`; the sun keeps its own maps.
+    pub no_point_shadow_maps: bool,
     /// `set shadow distance` this run, over the project's.
     pub shadow_distance: Option<f32>,
     /// A `capture probes` waiting for the probes to pick it up.
@@ -362,6 +366,7 @@ impl Engine {
             cine_name: String::new(),
             cine_time: 0.0,
             light_shadows: HashMap::new(),
+            no_point_shadow_maps: false,
             shadow_distance: None,
             capture_probes: false,
             hdr_output: None,

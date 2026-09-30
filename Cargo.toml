@@ -73,3 +73,9 @@ strip = "symbols"
 # bevy_rapier's git master depends on Bevy's main; build it against the RC.
 [patch."https://github.com/bevyengine/bevy"]
 bevy = "0.20.0-rc.1"
+
+# Generated from pinned release archives and patches/ by
+# `just prepare-patched-deps`. See patches/README.md for the Mali workarounds.
+[patch.crates-io]
+wgpu-hal = { path = ".patched-deps/wgpu-hal" }
+bevy_pbr = { path = ".patched-deps/bevy-pbr" }

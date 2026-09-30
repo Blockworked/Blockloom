@@ -88,6 +88,53 @@ pub fn data_file(relative: &str) -> PathBuf {
     path
 }
 
+/// Whether a shipped `.so` is beside this library in the app's lib dir.
+/// A VM-only build ships no logic library, and opening a missing file
+/// would log a `dlopen` failure on every run for nothing.
+pub fn native_lib_found(file_name: &str) -> bool {
+    own_lib_dir().is_some_and(|dir| dir.join(file_name).is_file())
+}
+
+/// Sends Rust panics to logcat with the `blockloom` tag: stderr never
+/// reliably arrives there, so a crash without this leaves no log at all.
+/// Runs before anything else on boot, std-only through liblog.
+pub fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let message = format!("blockloom: panic: {info}");
+        eprintln!("{message}");
+        ndk_log(&message);
+        let trace = std::backtrace::Backtrace::force_capture();
+        for (i, line) in format!("{trace}").lines().take(40).enumerate() {
+            let message = format!("blockloom: bt[{i}] {line}");
+            eprintln!("{message}");
+            ndk_log(&message);
+        }
+    }));
+}
+
+/// One line to logcat through liblog, or nothing when the string won't
+/// cross the C boundary. stderr already tried above; this is the copy the
+/// device can't swallow.
+fn ndk_log(message: &str) {
+    use std::ffi::CString;
+    use std::os::raw::{c_char, c_int};
+    #[link(name = "log")]
+    unsafe extern "C" {
+        fn __android_log_write(prio: c_int, tag: *const c_char, text: *const c_char) -> c_int;
+    }
+    const ERROR: c_int = 6;
+    let (Ok(tag), Ok(text)) = (
+        CString::new("blockloom"),
+        CString::new(message.replace('\0', "")),
+    ) else {
+        return;
+    };
+    // SAFETY: liblog is on every device, and both pointers outlive the call.
+    unsafe {
+        __android_log_write(ERROR, tag.as_ptr(), text.as_ptr());
+    }
+}
+
 /// Finds a shipped `.so` by its file name: beside this library in the app's
 /// lib dir when `/proc/self/maps` names it, else the bare name, which the
 /// linker resolves through the app's own library path.

@@ -1,0 +1,3 @@
+patches/** text eol=lf
+patches/**/*.patch whitespace=-blank-at-eol
+scripts/*patched-deps.sh text eol=lf

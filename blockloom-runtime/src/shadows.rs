@@ -14,6 +14,7 @@ use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightTexture, ShadowFil
 use bevy::pbr::ContactShadows;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::render::renderer::RenderAdapter;
 use blockloom_core::scene::{ShadowFilter, ShadowSettings};
 use blockloom_protocol::RuntimeMessage;
 
@@ -45,6 +46,8 @@ pub fn apply_shadows(
     mut applied: Local<Option<Applied>>,
     patches: Option<ResMut<PbrPatches>>,
     mut cookie: Local<SunCookie>,
+    adapter: Option<Res<RenderAdapter>>,
+    mut warned_mali: Local<bool>,
     mut suns: Query<(
         Entity,
         Ref<WorldLight>,
@@ -127,7 +130,18 @@ pub fn apply_shadows(
     for (entity, _) in &cameras {
         let mut camera = commands.entity(entity);
         camera.insert(filter_of(s.filter));
-        if s.contact {
+        // Contact shadows stay off on Mali: its shader compiler crashes
+        // compiling Bevy's screen-space raymarch (scalarizer SEGV), so a
+        // Mali game runs without that darkening rather than not at all.
+        // Every other GPU keeps the setting. Warned once per run.
+        let mali = mali_without_contact(adapter.as_deref());
+        if mali && s.contact && !*warned_mali {
+            *warned_mali = true;
+            tracing::warn!(
+                "Contact shadows are off on this Mali GPU: its driver crashes compiling them. The game runs without that darkening."
+            );
+        }
+        if s.contact && !mali {
             camera.insert(ContactShadows {
                 linear_steps: CONTACT_STEPS,
                 thickness: s.contact_thickness,
@@ -138,6 +152,14 @@ pub fn apply_shadows(
         }
     }
     *applied = Some(now);
+}
+
+/// Whether contact shadows must stay off: ARM Mali GPUs, whose shader
+/// compiler crashes (MaliScalarizer SEGV) compiling the raymarch. Unknown
+/// GPUs keep them; only a known-broken one loses the effect.
+fn mali_without_contact(adapter: Option<&RenderAdapter>) -> bool {
+    const ARM: u32 = 0x13B5;
+    adapter.is_some_and(|adapter| adapter.get_info().vendor == ARM)
 }
 
 fn filter_of(filter: ShadowFilter) -> ShadowFilteringMethod {
@@ -274,5 +296,12 @@ mod tests {
         // No contact shadows unless the project asks.
         let camera = camera(&mut app);
         assert!(app.world().get::<ContactShadows>(camera).is_none());
+    }
+
+    #[test]
+    fn contact_shadows_stay_on_when_the_gpu_is_unknown() {
+        // Fail open: without adapter info (headless tests, unrecognized
+        // GPUs) the setting stands. Only a known Mali loses the effect.
+        assert!(!mali_without_contact(None));
     }
 }

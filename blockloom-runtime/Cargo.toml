@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 blockloom-core = { path = "../blockloom-core" }
 blockloom-protocol = { path = "../blockloom-protocol" }
+tracing-log = { workspace = true }
 polyanya.workspace = true
 half = "2"
 # The key set Bevy hands a schedule build pass (see `hdr::ToneInputs`).

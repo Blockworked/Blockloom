@@ -1,0 +1,3 @@
+# crate version archive-sha256 output-directory
+wgpu-hal 30.0.1 b6b7fb58561a792bc237628ba0792e332de418fefe145f13b5ed8201e6d52f58 wgpu-hal
+bevy_pbr 0.20.0-rc.1 1af98f47d1a1337f709e762ed07fcae5a4db8fad5c25813b33e986bbef7490ea bevy-pbr
