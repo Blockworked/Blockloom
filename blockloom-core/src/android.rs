@@ -164,11 +164,18 @@ pub fn default_sdk_dir() -> PathBuf {
 
 /// The SDK row, or the default when the user never pointed it elsewhere.
 pub fn sdk_dir(config: &AppConfig) -> PathBuf {
+    // Hub paths apply to this editor process without changing saved settings.
+    if let Some(path) = std::env::var_os("BLOCKLOOM_HUB_ANDROID_SDK") {
+        return PathBuf::from(path);
+    }
     config.sdk_path.clone().unwrap_or_else(default_sdk_dir)
 }
 
 /// The NDK row, or the pinned NDK inside the SDK when unset.
 pub fn ndk_dir(config: &AppConfig) -> PathBuf {
+    if let Some(path) = std::env::var_os("BLOCKLOOM_HUB_ANDROID_NDK") {
+        return PathBuf::from(path);
+    }
     config.ndk_path.clone().unwrap_or_else(|| {
         // The exact patch dir varies per install; prefer a matching major.
         let root = sdk_dir(config).join("ndk");
@@ -351,10 +358,6 @@ pub fn jdk_status() -> ToolStatus {
     }
 }
 
-fn has(path: &Path) -> bool {
-    path.is_file() || path.is_dir()
-}
-
 /// The SDK rows: cmdline-tools, the pinned platform and build-tools, and
 /// platform-tools for adb. Pointing at an existing install reuses it; only
 /// missing pieces download.
@@ -367,9 +370,7 @@ pub fn sdk_status(config: &AppConfig) -> ToolStatus {
         ));
     }
     let mut absent: Vec<String> = Vec::new();
-    if !has(&sdk.join("cmdline-tools/latest/bin/sdkmanager"))
-        && !has(&sdk.join("cmdline-tools/latest/bin/sdkmanager.bat"))
-    {
+    if script_tool(&sdk.join("cmdline-tools/latest/bin"), "sdkmanager").is_none() {
         absent.push("cmdline-tools (sdkmanager)".to_string());
     }
     if !sdk.join("platforms").join(PLATFORM).is_dir() {
@@ -377,14 +378,16 @@ pub fn sdk_status(config: &AppConfig) -> ToolStatus {
     }
     // An empty build-tools dir probes as present but assembles nothing: a
     // stopped download leaves exactly that behind. The APK assembly needs
-    // these three, so each is named on its own.
+    // these three, so each is named on its own (`apksigner.bat` on Windows).
+    let build_tools = sdk.join("build-tools").join(BUILD_TOOLS);
     for tool in ["aapt2", "zipalign", "apksigner"] {
-        if !sdk
-            .join("build-tools")
-            .join(BUILD_TOOLS)
-            .join(exe(tool))
-            .is_file()
-        {
+        let present = script_tool(&build_tools, tool)
+            .or_else(|| {
+                let native = build_tools.join(exe(tool));
+                native.is_file().then_some(native)
+            })
+            .is_some();
+        if !present {
             absent.push(format!("build-tools {BUILD_TOOLS} ({tool})"));
         }
     }
@@ -415,6 +418,73 @@ fn exe(stem: &str) -> String {
     } else {
         stem.to_string()
     }
+}
+
+/// Resolves a script-like SDK tool inside `dir`: `sdkmanager`, `avdmanager`,
+/// `apksigner` and the NDK clang wrappers ship as `.bat`/`.cmd` on Windows
+/// and as extensionless scripts elsewhere. All spellings are tried on every
+/// host (Windows order first), so a Windows SDK unpacked on disk probes the
+/// same however it is read, and tests cover the `.bat` layout on Linux too.
+fn script_tool(dir: &Path, stem: &str) -> Option<PathBuf> {
+    [
+        dir.join(format!("{stem}.bat")),
+        dir.join(format!("{stem}.cmd")),
+        dir.join(exe(stem)),
+        dir.join(stem),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_file())
+}
+
+/// Builds a `Command` for an SDK tool path. `.bat`/`.cmd` files don't run
+/// through `CreateProcess` directly, so on Windows they are invoked as
+/// `cmd /C <tool> <args>`.
+fn tool_command(tool: &Path) -> Command {
+    let is_script = matches!(
+        tool.extension().and_then(|ext| ext.to_str()),
+        Some(ext) if ext.eq_ignore_ascii_case("bat") || ext.eq_ignore_ascii_case("cmd")
+    );
+    if cfg!(windows) && is_script {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg(tool);
+        command
+    } else {
+        Command::new(tool)
+    }
+}
+
+/// Finds `bash` the way `scripts/run-bash.py` does: PATH first, then the
+/// default Git for Windows spots. The Android runtime build needs it for
+/// `scripts/prepare-patched-deps.sh`, and a plain `Command::new("bash")`
+/// fails on Windows where Git Bash isn't on PATH.
+fn bash_program() -> PathBuf {
+    // `bash --version` succeeding means PATH already resolves it.
+    let on_path = std::process::Command::new("bash")
+        .arg("--version")
+        .output()
+        .is_ok();
+    if on_path {
+        return PathBuf::from("bash");
+    }
+    #[cfg(windows)]
+    {
+        let program_files = std::env::var_os("ProgramFiles")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+        let program_files_x86 = std::env::var_os("ProgramFiles(x86)")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Program Files (x86)"));
+        for candidate in [
+            program_files.join("Git/bin/bash.exe"),
+            program_files.join("Git/usr/bin/bash.exe"),
+            program_files_x86.join("Git/bin/bash.exe"),
+        ] {
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+    PathBuf::from("bash")
 }
 
 /// The NDK row: the directory, its `source.properties` pin, and the clang
@@ -468,18 +538,26 @@ pub fn host_tag() -> &'static str {
 }
 
 /// The NDK clang wrapper Rust links Android targets through, if present.
+/// On Windows these wrappers are `.cmd` files (`...-clang.cmd`), not the
+/// `.exe` `exe()` would name, so both spellings are probed.
+fn ndk_wrapper(bin: &Path, stem: &str) -> Option<PathBuf> {
+    script_tool(bin, stem).or_else(|| {
+        let native = bin.join(exe(stem));
+        native.is_file().then_some(native)
+    })
+}
+
+/// The NDK clang wrapper Rust links Android targets through, if present.
 pub fn ndk_clang(ndk: &Path, host: &str) -> Option<PathBuf> {
     let prebuilt = ndk.join("toolchains/llvm/prebuilt").join(host).join("bin");
     // Either triple's wrapper probes whether this machine can link at all;
     // per-triple builds take `ndk_clang_for` below instead.
-    let candidates = [
+    [
         format!("{ARM64_TRIPLE}{MIN_SDK}-clang"),
         format!("{EMULATOR_TRIPLE}{MIN_SDK}-clang"),
-    ];
-    candidates
-        .iter()
-        .map(|name| prebuilt.join(exe(name)))
-        .find(|path| path.is_file())
+    ]
+    .iter()
+    .find_map(|name| ndk_wrapper(&prebuilt, name))
 }
 
 /// The NDK clang wrapper for one triple: its own `{triple}{MIN_SDK}-clang`
@@ -488,12 +566,8 @@ pub fn ndk_clang(ndk: &Path, host: &str) -> Option<PathBuf> {
 /// link - an arm64 wrapper cannot link x86_64 objects, so each triple must
 /// take its own.
 pub fn ndk_clang_for(ndk: &Path, host: &str, triple: &str) -> Option<PathBuf> {
-    let own = ndk
-        .join("toolchains/llvm/prebuilt")
-        .join(host)
-        .join("bin")
-        .join(exe(&format!("{triple}{MIN_SDK}-clang")));
-    if own.is_file() {
+    let bin = ndk.join("toolchains/llvm/prebuilt").join(host).join("bin");
+    if let Some(own) = ndk_wrapper(&bin, &format!("{triple}{MIN_SDK}-clang")) {
         return Some(own);
     }
     ndk_clang(ndk, host)
@@ -723,10 +797,8 @@ fn emulator_bin(config: &AppConfig) -> PathBuf {
 }
 
 fn avdmanager_bin(config: &AppConfig) -> Option<PathBuf> {
-    let path = sdk_dir(config)
-        .join("cmdline-tools/latest/bin")
-        .join(exe("avdmanager"));
-    path.is_file().then_some(path)
+    let dir = sdk_dir(config).join("cmdline-tools/latest/bin");
+    script_tool(&dir, "avdmanager")
 }
 
 /// The system image dir on disk: `system-images/android-35/google_apis/x86_64`.
@@ -929,7 +1001,7 @@ fn create_avd_with(
     }
     // Decline the custom hardware profile prompt on stdin: the pinned
     // image's defaults are the dev loop.
-    let mut child = Command::new(manager)
+    let mut child = tool_command(manager)
         .arg("create")
         .arg("avd")
         .arg("-n")
@@ -1016,7 +1088,7 @@ fn manage_avd_with(
             return Err(format!("{new_name} already exists."));
         }
     }
-    let mut command = Command::new(manager);
+    let mut command = tool_command(manager);
     command.args([
         if new_name.is_some() { "move" } else { "delete" },
         "avd",
@@ -1144,8 +1216,7 @@ fn start_emulator_with(
         let manager = emulator
             .parent()
             .and_then(|bin| bin.parent())
-            .map(|sdk| sdk.join("cmdline-tools/latest/bin").join(exe("avdmanager")))
-            .filter(|path| path.is_file())
+            .and_then(|sdk| script_tool(&sdk.join("cmdline-tools/latest/bin"), "avdmanager"))
             .ok_or_else(|| "No avdmanager: run Install / update SDK to fetch it.".to_string())?;
         create_avd_with(emulator, &manager, true, None)?;
     } else if !names.iter().any(|name| name == avd) {
@@ -1642,11 +1713,11 @@ pub fn host_cmdline_tools_url() -> &'static str {
     cmdline_tools_url(std::env::consts::OS)
 }
 
-/// `sdkmanager`, wherever the SDK row keeps it.
+/// `sdkmanager`, wherever the SDK row keeps it (`sdkmanager.bat` on
+/// Windows, extensionless elsewhere).
 pub fn sdkmanager_path(config: &AppConfig) -> Option<PathBuf> {
     let root = sdk_dir(config).join("cmdline-tools/latest/bin");
-    let path = root.join(exe("sdkmanager"));
-    path.is_file().then_some(path)
+    script_tool(&root, "sdkmanager")
 }
 
 fn run_sdkmanager(
@@ -1654,7 +1725,7 @@ fn run_sdkmanager(
     args: &[&str],
     stdin: std::process::Stdio,
 ) -> Result<std::process::Output, String> {
-    Command::new(manager)
+    tool_command(manager)
         .args(args)
         .stdin(stdin)
         .output()
@@ -1797,12 +1868,55 @@ pub fn newest_ndk_package(manager: &Path) -> Result<String, String> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    if !output.status.success() {
+        let tail = sdkmanager_error_tail(&listing);
+        if tail.is_empty() {
+            return Err(format!(
+                "sdkmanager --list failed. {}",
+                jdk_hint_for_sdkmanager_failure(&listing)
+            ));
+        }
+        return Err(format!(
+            "sdkmanager --list failed.\n{tail}\n{}",
+            jdk_hint_for_sdkmanager_failure(&listing)
+        ));
+    }
     available_ndk_revisions_from(&listing)
         .pop()
         .map(|rev| format!("ndk;{rev}"))
         .ok_or_else(|| {
-            "sdkmanager lists no NDK on major 27. Check the network or proxy.".to_string()
+            let tail = sdkmanager_error_tail(&listing);
+            if tail.is_empty() {
+                format!(
+                    "sdkmanager lists no NDK on major {NDK_MAJOR}. Check the network or proxy. {}",
+                    jdk_hint_for_sdkmanager_failure(&listing)
+                )
+            } else {
+                format!(
+                    "sdkmanager lists no NDK on major {NDK_MAJOR}.\n{tail}\n{}",
+                    jdk_hint_for_sdkmanager_failure(&listing)
+                )
+            }
         })
+}
+
+/// What to append when `sdkmanager` fails: it needs `java` on PATH, and
+/// without it every call fails the same way. Names JDK 25 when the output
+/// looks like a missing Java, else a generic network-or-JDK pointer.
+fn jdk_hint_for_sdkmanager_failure(output: &str) -> String {
+    let lower = output.to_lowercase();
+    if lower.contains("java")
+        || lower.contains("jdk")
+        || lower.contains("not recognized")
+        || lower.contains("not found")
+        || output.trim().is_empty()
+    {
+        format!(
+            "sdkmanager needs Java to run at all: install JDK {JDK_MAJOR} (the latest LTS) and put `java` on PATH first."
+        )
+    } else {
+        "If Java works, check the network or proxy.".to_string()
+    }
 }
 
 /// Whether an sdkmanager package name is already on disk under `sdk`.
@@ -1977,6 +2091,13 @@ pub fn install_sdk() -> Result<InstallReport, String> {
     let fetched = ensure_cmdline_tools(&config)?;
     let manager = sdkmanager_path(&config)
         .ok_or_else(|| "No sdkmanager even after the bootstrap. See above.".to_string())?;
+    // sdkmanager itself runs on Java: without it every `--list` and
+    // `--install` below fails the same opaque way, so stop here with the
+    // JDK fix instead of a misleading NDK-or-network error.
+    let jdk = jdk_status();
+    if !jdk.ok {
+        return Err(format!("sdkmanager needs Java first: {}", jdk.detail));
+    }
 
     let mut installed = Vec::new();
     let mut already_present = Vec::new();
@@ -2103,6 +2224,10 @@ pub fn accept_licenses(accept: bool) -> Result<LicenseReport, String> {
     let config = load();
     let manager = sdkmanager_path(&config)
         .ok_or_else(|| "No sdkmanager yet. Run android-install-sdk first.".to_string())?;
+    let jdk = jdk_status();
+    if !jdk.ok {
+        return Err(format!("sdkmanager needs Java first: {}", jdk.detail));
+    }
     if !accept {
         let output = run_sdkmanager(&manager, &["--licenses"], std::process::Stdio::null())?;
         let raw = format!(
@@ -2122,7 +2247,7 @@ pub fn accept_licenses(accept: bool) -> Result<LicenseReport, String> {
     }
     // The user has read the texts above and opted in: answer every prompt
     // with yes, then stamp the config.
-    let mut child = Command::new(&manager)
+    let mut child = tool_command(&manager)
         .arg("--licenses")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -2275,15 +2400,17 @@ pub fn build_tools_dir(config: &AppConfig) -> PathBuf {
 }
 
 fn build_tool(config: &AppConfig, name: &str) -> Result<PathBuf, String> {
-    let path = build_tools_dir(config).join(exe(name));
-    if path.is_file() {
-        Ok(path)
-    } else {
-        Err(format!(
-            "{} isn't installed. Run android-install-sdk to repair build-tools {BUILD_TOOLS}.",
-            path.display()
-        ))
+    let dir = build_tools_dir(config);
+    if let Some(path) = script_tool(&dir, name).or_else(|| {
+        let native = dir.join(exe(name));
+        native.is_file().then_some(native)
+    }) {
+        return Ok(path);
     }
+    Err(format!(
+        "{} isn't installed. Run android-install-sdk to repair build-tools {BUILD_TOOLS}.",
+        dir.join(exe(name)).display()
+    ))
 }
 
 /// `android.jar` for the pinned platform, which aapt2 links against.
@@ -2749,7 +2876,7 @@ pub struct ApkReport {
 }
 
 fn run_tool(tool: &Path, args: &[String]) -> Result<String, String> {
-    let output = crate::build_control::output(std::process::Command::new(tool).args(args))
+    let output = crate::build_control::output(tool_command(tool).args(args))
         .map_err(|e| format!("Couldn't run {}: {e}", tool.display()))?;
     if !output.status.success() {
         return Err(format!(
@@ -2990,8 +3117,10 @@ pub fn ndk_cargo_env(config: &AppConfig, triple: &str) -> Option<Vec<(String, St
     let (_, clang) = cargo_linker_env(config, triple)?;
     let prebuilt = clang.parent()?;
     let lower = triple.replace('-', "_");
-    let cc = prebuilt.join(exe(&format!("{triple}{MIN_SDK}-clang")));
-    let cxx = prebuilt.join(exe(&format!("{triple}{MIN_SDK}-clang++")));
+    let cc = ndk_wrapper(prebuilt, &format!("{triple}{MIN_SDK}-clang"))
+        .unwrap_or_else(|| prebuilt.join(exe(&format!("{triple}{MIN_SDK}-clang"))));
+    let cxx = ndk_wrapper(prebuilt, &format!("{triple}{MIN_SDK}-clang++"))
+        .unwrap_or_else(|| prebuilt.join(exe(&format!("{triple}{MIN_SDK}-clang++"))));
     let ar = prebuilt.join(exe("llvm-ar"));
     let upper = triple.to_uppercase().replace('-', "_");
     let mut env = vec![(
@@ -3140,11 +3269,15 @@ pub fn build_runtime_so(config: &AppConfig, triple: &str) -> Result<PathBuf, Str
     let (_, linker) = cargo_linker_env(config, triple)
         .ok_or_else(|| format!("No NDK linker for {triple}. Run android-install-sdk first."))?;
     let prepared = crate::build_control::output(
-        std::process::Command::new("bash")
+        std::process::Command::new(bash_program())
             .arg(root.join("scripts/prepare-patched-deps.sh"))
             .current_dir(&root),
     )
-    .map_err(|e| format!("Couldn't prepare patched dependencies (Bash is required): {e}"))?;
+    .map_err(|e| {
+        format!(
+            "Couldn't prepare patched dependencies (Bash is required; on Windows install Git for Windows): {e}"
+        )
+    })?;
     if !prepared.status.success() {
         return Err(format!(
             "Couldn't prepare patched dependencies:\n{}\n{}",
@@ -4788,6 +4921,65 @@ cmake;3.22.1 | 3.22.1 | CMake\n";
         )
         .unwrap();
         assert_eq!(ndk_revision(&config), "27.1.12297006");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn windows_script_spellings_resolve_like_unix_ones() {
+        // Google ships sdkmanager/avdmanager/apksigner as `.bat` and the NDK
+        // clang wrappers as `.cmd` on Windows. The probes must find those,
+        // which is what the Windows "holds no sdkmanager" bootstrap failure
+        // was about.
+        let root = temp_root("win-tools");
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("sdkmanager.bat"), b"fake").unwrap();
+        assert_eq!(
+            script_tool(&bin, "sdkmanager").unwrap(),
+            bin.join("sdkmanager.bat")
+        );
+        assert!(
+            sdkmanager_path(&AppConfig {
+                sdk_path: Some(root.clone()),
+                ..AppConfig::default()
+            })
+            .is_none()
+        );
+        let sdk = root.join("sdk");
+        std::fs::create_dir_all(sdk.join("cmdline-tools/latest/bin")).unwrap();
+        std::fs::write(sdk.join("cmdline-tools/latest/bin/sdkmanager.bat"), b"fake").unwrap();
+        assert!(
+            sdkmanager_path(&AppConfig {
+                sdk_path: Some(sdk.clone()),
+                ..AppConfig::default()
+            })
+            .is_some()
+        );
+        std::fs::write(bin.join("apksigner.bat"), b"fake").unwrap();
+        let config = AppConfig {
+            sdk_path: Some(root.clone()),
+            ..AppConfig::default()
+        };
+        std::fs::create_dir_all(root.join("build-tools").join(BUILD_TOOLS)).unwrap();
+        std::fs::write(
+            root.join("build-tools")
+                .join(BUILD_TOOLS)
+                .join("apksigner.bat"),
+            b"fake",
+        )
+        .unwrap();
+        assert!(build_tool(&config, "apksigner").is_ok());
+        let ndk_bin = root.join("ndk/toolchains/llvm/prebuilt/windows-x86_64/bin");
+        std::fs::create_dir_all(&ndk_bin).unwrap();
+        std::fs::write(
+            ndk_bin.join(format!("{ARM64_TRIPLE}{MIN_SDK}-clang.cmd")),
+            b"fake",
+        )
+        .unwrap();
+        assert!(ndk_wrapper(&ndk_bin, &format!("{ARM64_TRIPLE}{MIN_SDK}-clang")).is_some());
+        // `.bat`/`.cmd` tools run through `cmd /C` on Windows.
+        let command = tool_command(&bin.join("sdkmanager.bat"));
+        let _ = command;
         let _ = std::fs::remove_dir_all(&root);
     }
 

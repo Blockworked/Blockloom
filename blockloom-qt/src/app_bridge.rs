@@ -29,6 +29,7 @@ pub mod qobject {
         #[qproperty(QString, preview_frame, cxx_name = "previewFrame")]
         #[qproperty(QString, screen_json, cxx_name = "screenJson")]
         #[qproperty(QString, app_version, cxx_name = "appVersion")]
+        #[qproperty(QString, startup_project, cxx_name = "startupProject")]
         type AppBridge = super::AppBridgeRust;
 
         /// Starts the backend. Safe to call more than once.
@@ -98,6 +99,7 @@ pub struct AppBridgeRust {
     preview_frame: QString,
     screen_json: QString,
     app_version: QString,
+    startup_project: QString,
     backend: Option<Backend>,
     jobs: Option<mpsc::Sender<Job>>,
     preview: Option<preview::Watch>,
@@ -113,6 +115,11 @@ impl Default for AppBridgeRust {
             preview_frame: QString::default(),
             screen_json: QString::default(),
             app_version: QString::from(env!("CARGO_PKG_VERSION")),
+            startup_project: std::env::args_os()
+                .skip_while(|arg| arg != "--project")
+                .nth(1)
+                .map(|path| QString::from(path.to_string_lossy().as_ref()))
+                .unwrap_or_default(),
             backend: None,
             jobs: None,
             preview: None,

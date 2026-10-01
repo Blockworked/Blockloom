@@ -66,6 +66,10 @@ prune-target *args:
 run: build
     {{TARGET}}
 
+# Hub inspection and installation commands do not need an editor build.
+hub *args:
+    {{if os() == "windows" { "python" } else { "python3" }}} scripts/hub.py {{args}}
+
 # Build the editor and runtime, then watch QML edits through Qt 6.12.
 qml-preview *args: prepare-patched-deps
     {{if os() == "windows" { "python" } else { "python3" }}} scripts/qml-preview.py {{args}}
@@ -394,6 +398,11 @@ _stage-release-player:
 _stage-release-player:
     {{mkdir-players}}
     copy /Y target\release\blockloom-runtime.exe "{{players-dir}}\"
+
+[macos]
+_stage-release-player:
+    {{mkdir-players}}
+    cp target/release/blockloom-runtime "{{players-dir}}/"
 
 # Build the editor and web player concurrently, then reinstall on success.
 # The optional jobs argument sets each build's Cargo job limit.

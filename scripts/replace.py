@@ -20,6 +20,8 @@ import threading
 import time
 from pathlib import Path
 
+from hub_install import stage
+
 
 BUILDS = (("Editor", "build"), ("Native", "player"), ("Web", "web-player"))
 
@@ -380,7 +382,11 @@ def main(argv):
     if failed:
         print("A build failed; skipping reinstall.", file=sys.stderr)
         return 1
-    if sys.platform in ("linux", "win32"):
+    if destination := os.environ.get("BLOCKLOOM_INSTALL_DIR"):
+        directory = Path(os.environ.get("CARGO_TARGET_DIR", "target")) / "release"
+        stage(directory, Path(destination), replace=True, build_output=True)
+        print(f"Staged Blockloom in {destination}")
+    elif sys.platform in ("linux", "win32"):
         check([just_exe(), "uninstall", "install"])
     else:
         # No system install on macOS: the editor, runtime and staged players

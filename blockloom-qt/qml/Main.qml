@@ -150,7 +150,11 @@ ApplicationWindow {
             else { console.warn((call ? call.command : "command") + " failed:", reply.error); root.showError(reply.error); }
         }
     }
-    Component.onCompleted: bridge.start()
+    Component.onCompleted: {
+        bridge.start();
+        if (bridge.startupProject.length > 0)
+            invoke("open_project", { path: bridge.startupProject });
+    }
     onClosing: bridge.shutdown()
 
     // Undo and redo, unless a text field wants the keys for itself.

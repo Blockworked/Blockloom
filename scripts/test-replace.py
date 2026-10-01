@@ -164,6 +164,20 @@ class RunnerTests(unittest.TestCase):
         ):
             self.assertEqual(replace.main([]), 1)
 
+    def test_hub_destination_skips_system_install(self):
+        calls = []
+        with (
+            patch.object(replace, "check", calls.append),
+            patch.object(replace, "run_builds", lambda profile: 0),
+            patch.object(replace, "stage") as stage,
+            patch.dict(os.environ, {"BLOCKLOOM_NATIVE_PROFILE": "release",
+                                    "BLOCKLOOM_INSTALL_DIR": str(self.marker)}),
+        ):
+            self.assertEqual(replace.main([]), 0)
+        stage.assert_called_once_with(Path("target") / "release", self.marker,
+                                      replace=True, build_output=True)
+        self.assertFalse(any("uninstall" in call or "install" in call for call in calls))
+
 
 if __name__ == "__main__":
     unittest.main()
