@@ -404,8 +404,12 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   the snapshot slot.
 - **Builds**: a pack that carries plugins is `PACK_VERSION` 2 (without them it
   is still written as 1), each plugin's `plugin.json` and shipped files go to
-  `game/plugins/<id>/`, and web and Android builds refuse plugins that have
-  code. The desktop player hosts that code: `Launch::Player` hands the world
+  `game/plugins/<id>/`, and Android builds refuse plugins that have code. A web
+  build ships portable ones (the page's mounted files hold `plugins/<id>/`,
+  `Launch::Web` sends the same `Plugins` loadout for target
+  `wasm32-unknown-unknown`, and `blockloom_plugin_host::files::set_reader` points
+  package reads at `vfs`); a code plugin with no portable module is refused for
+  web by the ship plan. The desktop player hosts that code: `Launch::Player` hands the world
   an `EditorMessage::Plugins` before `Start`, built by
   `plugins::shipped_loadout` from the pack's `PackedPlugin`s through
   `blockloom_plugin_host::shipped` (`Package::load_shipped` checks the manifest
@@ -450,7 +454,7 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
 - **Plugin code in the game world** (`blockloom-runtime/src/plugins.rs`,
   `blockloom-plugin-host/src/world.rs`, `blockloom-plugin-api/src/loadout.rs`).
   Play sends `EditorMessage::Plugins { loadout }` between `Load` and `Start`
-  (`PROTOCOL_VERSION` 22): per plugin its code runtime, hooks and the blocks
+  (`PROTOCOL_VERSION` 23): per plugin its code runtime, hooks and the blocks
   whose commands are module ops (`ActivePlugins::loadout`). `world::begin_run`
   opens each module (`WorldPlugins::load`) and calls `world.start` with the
   plugin's records and resources; `end_run` calls `world.stop` and drops them,
@@ -466,8 +470,18 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   run. A plugin block whose command is a module op runs in the world
   (`plugins::run_block`); any other still goes to the editor as
   `RuntimeMessage::PluginCall`. The runtime's `plugins` feature (default) pulls
-  in the host crate; web and Android build without it and ignore the loadout.
+  in the host crate, which builds for wasm32 without `libloading` (a browser
+  has no native libraries; the portable executor is wasmi running inside the
+  player's wasm). The web player is built with `--features plugins`; Android
+  builds without it and ignores the loadout.
   `plugins/examples/tally` answers `world.stop` with a final tally line.
+  A plugin whose manifest says `editor.preview` is also hosted while nothing
+  plays (`plugins::preview`, 3D only): the world opens it on `Load`, `Plugins`
+  and the end of a run, starts it with `preview: true` and draws what it
+  answers, but runs no hooks or blocks and drops `say`s. The module is kept
+  while its loadout and records are unchanged and started over when they
+  change; Play replaces it with the run's own. The editor resends the loadout
+  with every idle sync, so installing or removing a plugin updates the view.
 - **Plugin reporters and hats** are generic like the statement. A reporter is
   the value `Op::Ext("PluginRead")` (`value::PLUGIN_READ`) with args `[plugin,
   block, ...slots]`; its operator calls `sense::plugin_read`, which asks a
@@ -546,10 +560,12 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   too). Measured: the default 64x32x64 island is drawn from the wasm module in
   under a second, inside its 10 s call budget. Not yet: smooth terrain, shaped
   cells, edits saved or applied to the project, streaming and LOD, instancing,
-  GPU meshing, fracture, a scene-view preview outside Play (the module only
-  runs while a game does), editor brushes.
-- **Not yet**: plugin code in a web or Android build, in the script
-  ABI, a browser host for portable modules, an HTTP registry, dynamic QML for
+  GPU meshing, fracture, editor brushes. Its manifest asks for `editor.preview`,
+  so the scene view shows the generated world without Play (edits made by
+  blocks still last only for a run).
+- **Not yet**: plugin code in an Android build, in the script
+  ABI, a faster browser host (the page's own WebAssembly instead of wasmi in
+  wasm), a headless browser proof, an HTTP registry, dynamic QML for
   plugin editor panels.
   `plugins/examples/com.example.health` is the sealed proof package;
   `plugins/examples/tally` is the SDK one, with code.

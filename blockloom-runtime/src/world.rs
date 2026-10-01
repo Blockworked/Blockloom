@@ -299,6 +299,11 @@ pub fn pump_editor(
                 if let Some(scene) = scene.as_mut() {
                     scene.loaded = true;
                 }
+                crate::plugins::preview(&mut engine);
+            }
+            EditorMessage::Plugins { loadout } => {
+                engine.plugins.loadout = loadout;
+                crate::plugins::preview(&mut engine);
             }
             EditorMessage::InterfaceDesign { design: request } => {
                 if let Some(design) = design.as_mut() {
@@ -312,7 +317,6 @@ pub fn pump_editor(
                     }
                 }
             }
-            EditorMessage::Plugins { loadout } => engine.plugins.loadout = loadout,
             EditorMessage::Start => {
                 if let Some(design) = design.as_mut() {
                     design.clear();
@@ -464,6 +468,7 @@ pub fn end_run(engine: &mut Engine, manager: &mut crate::ui::UiManager) {
     engine.paused = false;
     engine.pause_began = None;
     engine.rebuild = true;
+    crate::plugins::preview(engine);
 }
 
 /// Presses the green flag: the run's clock starts now.

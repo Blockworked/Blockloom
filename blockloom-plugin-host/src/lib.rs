@@ -16,6 +16,7 @@
 
 pub mod active;
 pub mod cache;
+pub mod files;
 pub mod hooks;
 pub mod install;
 pub mod lifecycle;

@@ -116,7 +116,8 @@ ray_tracing = ["bevy/bevy_solari"]
 # it out and ship PNG/JPEG instead (see `just web-check`).
 compressed_textures = ["bevy/ktx2", "bevy/basis-universal"]
 # Hosts plugin code (native libraries and WebAssembly modules) in the world.
-# The web and Android players leave it out and refuse plugins with code.
+# The web player turns it on (portable modules only, run by wasmi); the
+# Android player leaves it out and refuses plugins with code.
 plugins = ["dep:blockloom-plugin-host"]
 # NVIDIA DLSS Super Resolution (and Ray Reconstruction for Solari) through
 # Bevy's `dlss` path. Off by default: building it needs the DLSS SDK

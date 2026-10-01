@@ -75,7 +75,7 @@ jobs:
           key: wasm32
       - name: Clippy (wasm32)
         run: >
-          cargo clippy -p blockloom-runtime --no-default-features
+          cargo clippy -p blockloom-runtime --no-default-features --features plugins
           --target wasm32-unknown-unknown
       - name: Scripts compile for the web
         run: >

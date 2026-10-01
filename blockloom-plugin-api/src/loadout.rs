@@ -74,6 +74,9 @@ pub struct LoadoutPlugin {
     pub hooks: Vec<HookSchema>,
     #[serde(default)]
     pub blocks: Vec<LoadoutBlock>,
+    /// The plugin draws a preview in the scene view while nothing plays.
+    #[serde(default)]
+    pub preview: bool,
 }
 
 /// Every plugin the world hosts, in dependency order.
@@ -93,7 +96,9 @@ impl Loadout {
 /// the world treats as "nothing to do".
 pub mod ops {
     /// The world was built and the run began. Input: `{"plugin", "records",
-    /// "resources"}`, the plugin's own records from the project.
+    /// "resources", "preview"}`, the plugin's own records from the project.
+    /// `preview` is true when the scene view hosts the module while nothing
+    /// plays: it may draw, but hooks and blocks do not run.
     pub const START: &str = "world.start";
     /// The run ended; the module stays loaded until the world is dropped.
     pub const STOP: &str = "world.stop";

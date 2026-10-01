@@ -12,5 +12,6 @@
   "runtime": {
     "portable": {"module": "portable/voxel.wasm", "memory_limit_mib": 256, "call_limit_ms": 10000}
   },
+  "editor": {"preview": true},
   "contributions": ["schemas/voxel.json"]
 }

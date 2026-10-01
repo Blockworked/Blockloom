@@ -66,6 +66,10 @@ pub struct PluginHost {
     world: Option<Rc<RefCell<WorldPlugins>>>,
     #[cfg(feature = "plugins")]
     ticks: u64,
+    /// What the scene-view preview was started from, when the open modules
+    /// are a preview and not a run.
+    #[cfg(feature = "plugins")]
+    previewing: Option<String>,
 }
 
 impl PluginHost {
@@ -190,7 +194,7 @@ fn event_arg(value: &Value) -> String {
 
 /// A plugin's share of the project: its records on actors and its resources.
 #[cfg(feature = "plugins")]
-fn records_for(engine: &Engine, plugin: &str) -> Value {
+fn records_for(engine: &Engine, plugin: &str, preview: bool) -> Value {
     let records: Vec<Value> = engine
         .project
         .actors
@@ -223,7 +227,7 @@ fn records_for(engine: &Engine, plugin: &str) -> Value {
             })
         })
         .collect();
-    json!({"records": records, "resources": resources})
+    json!({"records": records, "resources": resources, "preview": preview})
 }
 
 /// What a built game's player hosts, from the plugins its pack records and
@@ -247,6 +251,9 @@ pub fn shipped_loadout(
                 files: &p.files,
             })
             .collect();
+        #[cfg(target_arch = "wasm32")]
+        let target = "wasm32-unknown-unknown";
+        #[cfg(not(target_arch = "wasm32"))]
         let target = blockloom_core::build::host().map_or("unknown", |t| t.triple);
         shipped_loadout(&shipped, target)
     }
@@ -281,7 +288,7 @@ pub fn begin(engine: &mut Engine) {
 /// Starts the opened modules and hosts them for the run.
 #[cfg(feature = "plugins")]
 fn install(engine: &mut Engine, mut world: WorldPlugins) {
-    let started = world.start(&|plugin| records_for(engine, plugin));
+    let started = world.start(&|plugin| records_for(engine, plugin, false));
     let world = Rc::new(RefCell::new(world));
     let reader = Rc::clone(&world);
     sense::set_plugin_reader(Some(Box::new(move |plugin, block, args| {
@@ -290,6 +297,70 @@ fn install(engine: &mut Engine, mut world: WorldPlugins) {
     engine.plugins.world = Some(world);
     engine.plugins.ticks = 0;
     apply(engine, applied(started));
+}
+
+/// Hosts the plugins that draw a preview while nothing plays, so their meshes
+/// show in the scene view. Called whenever the world is loaded, the loadout
+/// changes or a run ends; the modules are kept while what they were started
+/// from is unchanged. Hooks and blocks stay off: only the start is run.
+pub fn preview(engine: &mut Engine) {
+    #[cfg(feature = "plugins")]
+    preview_with(engine, |wanted| {
+        WorldPlugins::load(wanted, env!("CARGO_PKG_VERSION"))
+    });
+    #[cfg(not(feature = "plugins"))]
+    let _ = engine;
+}
+
+/// `preview`, with the way modules are opened handed in so a test can host
+/// one without a package on disk.
+#[cfg(feature = "plugins")]
+fn preview_with(engine: &mut Engine, open: impl FnOnce(&Loadout) -> WorldPlugins) {
+    {
+        // A built game has no scene view: its run is all there is.
+        if engine.running || engine.starting || engine.link.is_some() {
+            return;
+        }
+        let wanted = Loadout {
+            plugins: engine
+                .plugins
+                .loadout
+                .plugins
+                .iter()
+                .filter(|p| p.preview)
+                .cloned()
+                .collect(),
+        };
+        if wanted.is_empty() || !engine.project.active_scene().world.mode.is_3d() {
+            if engine.plugins.previewing.is_some() {
+                end(engine);
+            }
+            return;
+        }
+        let key = json!([
+            &wanted,
+            wanted
+                .plugins
+                .iter()
+                .map(|p| records_for(engine, &p.id, true))
+                .collect::<Vec<_>>()
+        ])
+        .to_string();
+        if engine.plugins.previewing.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        end(engine);
+        let mut world = open(&wanted);
+        let started = world.start(&|plugin| records_for(engine, plugin, true));
+        engine.plugins.world = Some(Rc::new(RefCell::new(world)));
+        engine.plugins.previewing = Some(key);
+        // A preview draws; what it says belongs to a run's log.
+        let drawn = applied(started)
+            .into_iter()
+            .filter(|a| !matches!(a, Applied::Say(_) | Applied::Log(_) | Applied::Broadcast(_)))
+            .collect();
+        apply(engine, drawn);
+    }
 }
 
 /// The run ends: tell the modules, then unload them.
@@ -301,6 +372,7 @@ pub fn end(engine: &mut Engine) {
         let stopped = world.borrow_mut().stop();
         drop(world);
         engine.plugins.ticks = 0;
+        engine.plugins.previewing = None;
         apply(engine, applied(stopped));
         engine.plugins.meshes.push(MeshOp::Clear);
     }
@@ -369,6 +441,9 @@ pub fn run_block(
 ) -> bool {
     #[cfg(feature = "plugins")]
     {
+        if engine.plugins.previewing.is_some() {
+            return false;
+        }
         let Some(world) = engine.plugins.world.clone() else {
             return false;
         };
@@ -414,7 +489,7 @@ pub fn stage(stage: Stage) -> impl FnMut(NonSendMut<Engine>, Res<Time>) {
     move |mut engine: NonSendMut<Engine>, time: Res<Time>| {
         #[cfg(feature = "plugins")]
         {
-            if !engine.plugins.active() || !engine.running {
+            if !engine.plugins.active() || !engine.running || engine.plugins.previewing.is_some() {
                 return;
             }
             let frame_stage = matches!(stage, Stage::RenderExtraction | Stage::Presentation);
@@ -535,5 +610,106 @@ mod tests {
         assert!(!engine.plugins.active());
         app.update();
         assert!(app.world().resource::<PluginMeshes>().is_empty());
+    }
+
+    /// The scene view hosts a preview plugin while nothing plays, keeps it
+    /// while nothing it was started from changes, and hands over to the run.
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_preview_plugin_draws_while_nothing_plays() {
+        use blockloom_plugin_api::loadout::{CodeRuntime, LoadoutPlugin, NativeLibrary};
+        use blockloom_plugin_api::record::PluginRecord;
+        use blockloom_plugin_host::module::CodeModule;
+        use blockloom_plugin_host::native::NativeModule;
+        use blockloom_plugin_host::world::Preloaded;
+
+        const ID: &str = "com.blockworked.voxel";
+        let opened = std::cell::Cell::new(0);
+        let open = |_: &Loadout| {
+            opened.set(opened.get() + 1);
+            let module = unsafe {
+                NativeModule::from_entry(
+                    blockloom_voxel::blockloom_plugin_entry_v1,
+                    Default::default(),
+                    blockloom_plugin_host::native::default_services("0.0.1".to_string()),
+                )
+            }
+            .unwrap();
+            WorldPlugins::with_modules(vec![Preloaded {
+                id: ID.to_string(),
+                module: CodeModule::Native(module),
+                hooks: vec![],
+                blocks: vec![],
+            }])
+            .unwrap()
+        };
+        let plugin = |preview| LoadoutPlugin {
+            id: ID.to_string(),
+            runtime: CodeRuntime::Native(NativeLibrary {
+                path: "voxel".into(),
+                hash: "h".into(),
+                capabilities: Default::default(),
+            }),
+            hooks: vec![],
+            blocks: vec![],
+            preview,
+        };
+        let world = |size: u32| {
+            PluginRecord::new(
+                ID,
+                "world",
+                1,
+                json!({"preset": "flat", "size": [size, 16, size]}),
+            )
+        };
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(rx, Mode::ThreeD);
+        engine.project.plugin_resources.push(world(32));
+
+        // A plugin that did not ask for a preview stays unloaded.
+        engine.plugins.loadout.plugins = vec![plugin(false)];
+        preview_with(&mut engine, open);
+        assert!(!engine.plugins.active());
+        assert_eq!(opened.get(), 0);
+
+        // One that did draws its world, without saying anything.
+        engine.plugins.loadout.plugins = vec![plugin(true)];
+        preview_with(&mut engine, open);
+        assert!(engine.plugins.active());
+        assert_eq!(engine.plugins.meshes.len(), 4);
+        assert_eq!(opened.get(), 1);
+        // Hooks and blocks stay off: a preview is not a run.
+        assert!(!run_block(&mut engine, "a", ID, "set_voxel", &[]));
+
+        // The same world again keeps the module.
+        engine.plugins.meshes.clear();
+        preview_with(&mut engine, open);
+        assert_eq!(opened.get(), 1);
+        assert!(engine.plugins.meshes.is_empty());
+
+        // Editing the resource starts it over: the old meshes go, new ones come.
+        engine.project.plugin_resources.clear();
+        engine.project.plugin_resources.push(world(16));
+        preview_with(&mut engine, open);
+        assert_eq!(opened.get(), 2);
+        assert!(matches!(engine.plugins.meshes[0], MeshOp::Clear));
+        assert_eq!(
+            engine
+                .plugins
+                .meshes
+                .iter()
+                .filter(|op| matches!(op, MeshOp::Put { .. }))
+                .count(),
+            1
+        );
+
+        // A run in progress is left alone, and the plugin going takes it away.
+        engine.running = true;
+        engine.plugins.loadout.plugins.clear();
+        preview_with(&mut engine, open);
+        assert!(engine.plugins.active());
+        engine.running = false;
+        preview_with(&mut engine, open);
+        assert!(!engine.plugins.active());
     }
 }

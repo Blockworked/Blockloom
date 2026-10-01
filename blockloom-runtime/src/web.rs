@@ -70,6 +70,9 @@ pub fn start_game(
             Some((path, bytes.dyn_into::<Uint8Array>().ok()?.to_vec()))
         }));
     }
+    // Shipped plugins read their files from what the page mounted.
+    #[cfg(feature = "plugins")]
+    blockloom_plugin_host::files::set_reader(blockloom_core::vfs::read);
     if let Some(scripts) = scripts.dyn_ref::<Object>() {
         SCRIPTS.with_borrow_mut(|known| {
             known.extend(entries(scripts).filter_map(|(path, module)| {

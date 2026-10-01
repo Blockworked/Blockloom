@@ -2264,12 +2264,13 @@ pub(crate) fn open_world(
     let dir = s
         .project_dir()
         .map(|dir| dir.to_string_lossy().into_owned());
+    let loadout = plugins::loadout(&s);
     let alive = greet(&mut s)
         && s.runtime.as_mut().is_some_and(|runtime| {
             runtime.send(&blockloom_protocol::EditorMessage::Load {
                 project: Box::new(project),
                 dir,
-            })
+            }) && runtime.send(&blockloom_protocol::EditorMessage::Plugins { loadout })
         });
     if !alive {
         s.runtime = None;
@@ -4003,11 +4004,12 @@ fn sync_runtime(s: &mut AppState) {
     let dir = s
         .project_dir()
         .map(|dir| dir.to_string_lossy().into_owned());
+    let loadout = plugins::loadout(s);
     if let Some(runtime) = s.runtime.as_mut()
-        && !runtime.send(&blockloom_protocol::EditorMessage::Load {
+        && !(runtime.send(&blockloom_protocol::EditorMessage::Load {
             project: Box::new(project),
             dir,
-        })
+        }) && runtime.send(&blockloom_protocol::EditorMessage::Plugins { loadout }))
     {
         s.runtime = None;
     }

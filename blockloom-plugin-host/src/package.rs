@@ -32,6 +32,12 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The hash of a shipped file, read the way the player reads files.
+fn hash_shipped(path: &Path) -> Result<String, String> {
+    let bytes = crate::files::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(hex(&Sha256::digest(&bytes)))
+}
+
 pub fn hash_file(path: &Path) -> Result<String, String> {
     let mut file = fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut hasher = Sha256::new();
@@ -157,8 +163,8 @@ impl Package {
     /// `expected`, which is what the game was built with.
     pub fn load_shipped(root: &Path, files: &[String], expected: &str) -> Result<Package, String> {
         let manifest_path = root.join(MANIFEST_FILE);
-        let bytes =
-            fs::read(&manifest_path).map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+        let bytes = crate::files::read(&manifest_path)
+            .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
         let text = std::str::from_utf8(&bytes).map_err(|e| format!("{MANIFEST_FILE}: {e}"))?;
         let manifest = PluginManifest::from_json(text)?;
         manifest.validate()?;
@@ -173,7 +179,7 @@ impl Package {
         for path in files {
             match manifest.files.get(path) {
                 None => problems.push(format!("{path} is shipped but not declared")),
-                Some(declared) => match hash_file(&root.join(path)) {
+                Some(declared) => match hash_shipped(&root.join(path)) {
                     Ok(found) if &found == declared => {}
                     Ok(_) => problems.push(format!("{path} does not match its declared hash")),
                     Err(e) => problems.push(e),
@@ -188,7 +194,8 @@ impl Package {
             if !files.contains(path) {
                 return Err(format!("{}: {path} was not shipped", manifest.id));
             }
-            let text = fs::read_to_string(root.join(path)).map_err(|e| format!("{path}: {e}"))?;
+            let text = crate::files::read_to_string(&root.join(path))
+                .map_err(|e| format!("{path}: {e}"))?;
             let part: Contributions =
                 serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
             contributions.merge(part);

@@ -480,7 +480,7 @@ pub fn build(
     parent: &Path,
     options: BuildOptions,
 ) -> Result<Build, String> {
-    if (target.is_web() || target.is_android())
+    if target.is_android()
         && let Some(plugin) = options
             .plugins
             .iter()
@@ -492,7 +492,14 @@ pub fn build(
         ));
     }
     if target.is_web() {
-        return build_web(project, project_dir, target, player, parent);
+        return build_web(
+            project,
+            project_dir,
+            target,
+            player,
+            parent,
+            &options.plugins,
+        );
     }
     if target.is_android() {
         return build_android(project, project_dir, target, player, parent, options);
@@ -652,6 +659,7 @@ fn build_web(
     target: &'static Target,
     player: &Path,
     parent: &Path,
+    plugins: &[PluginPayload],
 ) -> Result<Build, String> {
     crate::build_control::step("Checking shaders")?;
     let shaders = check_shaders(project, project_dir)?;
@@ -668,7 +676,8 @@ fn build_web(
 
     let game = dir.join(".game");
     std::fs::create_dir_all(&game).map_err(|e| format!("{}: {e}", game.display()))?;
-    let mut game_pack = GamePack::new(project.clone());
+    let mut game_pack = GamePack::new(project.clone())
+        .with_plugins(plugins.iter().map(|p| p.entry.clone()).collect());
     game_pack.hdr = false;
     game_pack.write(&pack::pack_path(&game))?;
     crate::build_control::step("Copying game assets")?;
@@ -681,6 +690,7 @@ fn build_web(
     crate::build_control::step("Packing terrain and scripts")?;
     copy_terrain(project, project_dir, &game)?;
     let scripts = copy_scripts(project, project_dir, &game, target)?;
+    copy_plugins(plugins, &game)?;
 
     let mut paths = Vec::new();
     distribution::collect_files(&game, &mut paths)?;
@@ -1938,6 +1948,70 @@ mod tests {
         .unwrap();
         // A browser has no HDR output.
         assert!(!pack.hdr);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_web_build_ships_a_portable_plugin_and_records_it() {
+        let root = temp("web-plugin");
+        let (project, project_dir, _) = a_project(&root);
+        let player = root.join(crate::web_build::PLAYER_WASM);
+        std::fs::write(&player, b"\0asm-player").unwrap();
+        std::fs::write(
+            root.join(crate::web_build::PLAYER_GLUE),
+            b"export default 1",
+        )
+        .unwrap();
+        let source = root.join("plugin-src");
+        std::fs::create_dir_all(source.join("portable")).unwrap();
+        std::fs::write(source.join("plugin.json"), "{}").unwrap();
+        std::fs::write(source.join("portable/a.wasm"), b"\0asm-plugin").unwrap();
+        let entry = pack::PackedPlugin {
+            id: "com.example.a".to_string(),
+            version: "1.0.0".to_string(),
+            hash: "h".to_string(),
+            tier: "portable".to_string(),
+            dir: "plugins/com.example.a".to_string(),
+            files: vec!["portable/a.wasm".to_string()],
+        };
+        let options = BuildOptions {
+            plugins: vec![PluginPayload {
+                entry: entry.clone(),
+                root: source,
+            }],
+            ..BuildOptions::default()
+        };
+        let built = build(
+            &project,
+            &project_dir,
+            target("wasm32-unknown-unknown").unwrap(),
+            &player,
+            &root.join("out"),
+            options,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&built.binary).unwrap();
+        let open = "id=\"blockloom-data\">";
+        let start = html.find(open).unwrap() + open.len();
+        let end = start + html[start..].find("</script>").unwrap();
+        use base64::Engine;
+        let gzipped = base64::engine::general_purpose::STANDARD
+            .decode(&html[start..end])
+            .unwrap();
+        let entries = crate::web_build::unarchive(&gzipped);
+        let find = |name: &str| entries.iter().find(|(n, _)| n == name).map(|(_, b)| b);
+        assert_eq!(
+            find("game/plugins/com.example.a/portable/a.wasm").unwrap(),
+            b"\0asm-plugin"
+        );
+        assert!(find("game/plugins/com.example.a/plugin.json").is_some());
+        let pack = GamePack::from_json(
+            std::str::from_utf8(find("game/game.pack").unwrap()).unwrap(),
+            "game.pack",
+        )
+        .unwrap();
+        assert_eq!(pack.plugins, vec![entry]);
         let _ = std::fs::remove_dir_all(&root);
     }
 

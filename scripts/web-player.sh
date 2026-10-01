@@ -14,7 +14,7 @@ case "$(uname -s)" in
 esac
 # prune-target.py --run wraps the build so the cache is cleaned around it;
 # elsewhere the build runs on its own.
-set -- cargo build -p blockloom-runtime --lib --no-default-features \
+set -- cargo build -p blockloom-runtime --lib --no-default-features --features plugins \
     --target wasm32-unknown-unknown --profile "$profile" --target-dir "$web_target_dir"
 if [ -n "$PY" ]; then
     set -- "$PY" scripts/prune-target.py --target-dir "${CARGO_TARGET_DIR:-target}" --run "$@"

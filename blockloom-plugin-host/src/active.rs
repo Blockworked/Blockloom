@@ -569,6 +569,7 @@ pub(crate) fn loadout_plugin(id: &str, package: &Package, runtime: CodeRuntime) 
         runtime,
         hooks: contributions.hooks.clone(),
         blocks,
+        preview: package.manifest.editor.preview,
     }
 }
 

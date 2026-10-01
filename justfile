@@ -198,7 +198,7 @@ stage-player target file:
 # scripts compile to wasm modules of their own. Needs, once:
 # `rustup target add wasm32-unknown-unknown` and `just web-tools`.
 web-check: prepare-patched-deps
-    cargo check -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown
+    cargo check -p blockloom-runtime --no-default-features --features plugins --target wasm32-unknown-unknown
 
 # The wasm-bindgen CLI matching Cargo.lock's wasm-bindgen, which the glue
 # generator has to match exactly.

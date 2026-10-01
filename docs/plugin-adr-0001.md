@@ -163,9 +163,9 @@ library for the host target runs its `module` commands here
   hot paths must still batch, and anything per-voxel belongs to a native
   module or a compiled-in service. No JIT was tried.
 
-Not done: a browser host that runs the same modules (it needs the player to
-load a wasm and cross a second boundary), the portable tier in a built game,
-and cancellation of a call from outside (only the fuel budget stops one).
+Not done at the time: a browser host that runs the same modules (it needs the
+player to load a wasm and cross a second boundary), the portable tier in a
+built game (since added, see the browser host batch), and cancellation of a call from outside (only the fuel budget stops one).
 
 ## Plugin SDK (fourth batch)
 
@@ -328,6 +328,13 @@ and `com.blockworked.voxel` uses it. Decisions:
   cells whose chunk meshes have not been rebuilt, and it works without a
   collider (`solid` off). `place` builds only against a face, so a ray that
   starts inside a cube does nothing.
+- The scene-view preview is opt-in (`editor.preview` in the manifest) and runs
+  only `world.start` with `preview: true`: no hooks, no blocks, no reporters,
+  and anything the module says is dropped. A plugin that would act on the world
+  must not do so from a preview, so the flag is in the manifest where a
+  reviewer sees it. It is keyed by the loadout plus the plugin's records, so
+  an unrelated edit does not pay the module's start again, and it is 3D only
+  since the mesh service is.
 - Portable first: the default 64x32x64 island is generated, meshed and
   serialised by the wasm module in about 0.9 s on this machine (release wasm,
   debug host), with a 10 s manifest budget. A larger world wants the native
@@ -341,3 +348,34 @@ runtime test takes a real voxel module through `plugins::install` to meshes
 with colliders in the ECS and back to none at the end of the run. The pixels
 (a window, lighting on the meshes) are unrun here.
 
+## Browser host for portable modules (tenth batch)
+
+A web build now ships portable plugins and the web player hosts them. The
+choice was to run the module under wasmi inside the player's own wasm, not on
+the page's `WebAssembly`:
+
+- One executor, one set of limits. Fuel, the memory cap, the import whitelist
+  and the stop-on-fault rule are the code the editor and the desktop player
+  already run, so a module cannot behave differently in a browser by
+  construction, and no JS glue or second ABI shim exists to keep in step.
+- The host crate builds for wasm32 by leaving out `libloading`; a native
+  library in a browser is a plain error. Files go through
+  `files::set_reader`, which the web player points at `vfs`, so
+  `Package::load_shipped` verifies a plugin against its pack hash exactly as
+  on desktop.
+- The cost is speed: an interpreter inside an interpreter. The browser's own
+  engine would run the same module several times faster, and a plugin that
+  does per-voxel work should not rely on wasmi in a page. That is the next
+  step, behind the same `CodeModule` handle; this batch settles the semantics
+  first, as the plan asks.
+- The ship plan already says which targets a plugin supports: a native plugin
+  with a portable fallback ships its portable module for web, and one without
+  is refused with the reason. Android still refuses code.
+
+Checked: the web build test (plugin files and pack record in the page's
+archive), an integration test that loads the sealed voxel package for the web
+target from an in-memory table with the package gone from disk and draws its
+world, and clippy for the runtime on wasm32 with the feature. Not run here:
+the page in a browser (WebGPU has no software path in this container), so
+`just web-build` on a project with a portable plugin and `just web-smoke` are
+the remaining proof.

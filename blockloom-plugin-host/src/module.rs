@@ -20,7 +20,7 @@ impl CodeModule {
                 NativeModule::load(&library.path, library.capabilities.clone(), services)
                     .map(CodeModule::Native)
             }
-            CodeRuntime::Portable(library) => std::fs::read(&library.path)
+            CodeRuntime::Portable(library) => crate::files::read(&library.path)
                 .map_err(|e| format!("{}: {e}", library.path.display()))
                 .and_then(|wasm| {
                     PortableModule::load(

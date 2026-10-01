@@ -504,6 +504,7 @@ pub(crate) fn plugin_change(
         install::apply(&env, &project, plan)?;
         let mut s = lock(state)?;
         reload(&mut s);
+        sync_runtime(&mut s);
         emit(app, &s);
     }
     Ok(json!({
@@ -612,6 +613,7 @@ pub(crate) fn plugin_rollback(state: &SharedState, app: &AppHandle) -> Result<Va
     let changes = install::rollback(&env, &ProjectPlugins::new(&dir))?;
     let mut s = lock(state)?;
     reload(&mut s);
+    sync_runtime(&mut s);
     emit(app, &s);
     Ok(json!({ "changes": changes_json(&changes) }))
 }

@@ -170,6 +170,19 @@ impl Launch {
                     project: Box::new(pack.project),
                     dir: Some(String::new()),
                 });
+                // Plugin code the page shipped, read from the mounted files.
+                if !pack.plugins.is_empty() {
+                    match crate::plugins::shipped_loadout(Path::new(""), &pack.plugins) {
+                        Ok(loadout) if !loadout.is_empty() => {
+                            let _ = tx.send(EditorMessage::Plugins { loadout });
+                        }
+                        Ok(_) => {}
+                        Err(problems) => fatal(&format!(
+                            "this game's plugins can't run:\n- {}",
+                            problems.join("\n- ")
+                        )),
+                    }
+                }
                 let _ = tx.send(EditorMessage::Start);
                 let mut engine = Engine::new(rx, mode);
                 engine.link = Some(tx);

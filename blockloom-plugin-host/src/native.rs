@@ -11,7 +11,13 @@ use blockloom_plugin_api::abi::{
     ABI_VERSION, Buffer, ENTRY_SYMBOL, EntryFn, HostApi, LOG_ERROR, PluginApi, Slice, Status,
 };
 use blockloom_plugin_api::manifest::Capability;
+#[cfg(not(target_arch = "wasm32"))]
 use libloading::Library;
+
+/// A browser has no dynamic libraries: only a module started from an entry
+/// function in the same program can be native there.
+#[cfg(target_arch = "wasm32")]
+enum Library {}
 use std::collections::BTreeSet;
 use std::ffi::c_void;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -123,6 +129,24 @@ impl NativeModule {
     /// # Trust
     /// The library runs arbitrary native code in this process.
     pub fn load(
+        path: &Path,
+        capabilities: BTreeSet<Capability>,
+        services: Box<ServiceFn>,
+    ) -> Result<NativeModule, String> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (capabilities, services);
+            return Err(format!(
+                "{}: a browser can't load a native library",
+                path.display()
+            ));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        Self::open(path, capabilities, services)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn open(
         path: &Path,
         capabilities: BTreeSet<Capability>,
         services: Box<ServiceFn>,

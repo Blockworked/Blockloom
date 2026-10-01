@@ -168,6 +168,10 @@ pub struct Editor {
     /// QML or other editor modules, relative to the package root.
     #[serde(default)]
     pub modules: Vec<String>,
+    /// Whether the world hosts the plugin's code while nothing plays, so its
+    /// meshes show in the scene view. It starts with `preview: true`.
+    #[serde(default)]
+    pub preview: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
