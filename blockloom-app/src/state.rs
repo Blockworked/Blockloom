@@ -133,6 +133,7 @@ impl AppState {
     pub(crate) fn actor_id(&self) -> Option<String> {
         let project = self.project()?;
         match &self.selected_actor {
+            Some(id) if id.is_empty() => None,
             Some(id) if project.actor(id).is_some() => Some(id.clone()),
             _ => project.actors.first().map(|actor| actor.id.clone()),
         }

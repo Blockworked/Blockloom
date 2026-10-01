@@ -40,6 +40,17 @@ ApplicationWindow {
     // The tray entry being dragged onto an asset box, and the boxes that take one.
     property string inspectedLighting: ""
     property bool inspectScene: false
+    property string inspectedScene: ""
+    function selectScene(id) {
+        if (appState.selected_actor) invoke("select_actor", { actorId: "" });
+        inspectedLighting = "";
+        inspectedScene = id || (appState.project ? appState.project.active_scene : "");
+        inspectScene = true;
+    }
+    function selectLighting(path) {
+        if (appState.selected_actor) invoke("select_actor", { actorId: "" });
+        inspectedScene = ""; inspectScene = false; inspectedLighting = path;
+    }
     property var assetDrag: null
     property var assetTargets: []
 
@@ -54,7 +65,7 @@ ApplicationWindow {
     // Runs a backend command. `done(result)` on success; a failure goes to
     // `failed(error)`, or to the error bar when no handler was given.
     function invoke(command, args, done, failed) {
-        if (command === "select_actor") { inspectScene = false; inspectedLighting = ""; }
+        if (command === "select_actor") { inspectScene = false; inspectedScene = ""; inspectedLighting = ""; }
         const token = nextToken++;
         pending[token] = { command: command, done: done, failed: failed };
         bridge.invokeCommand(token, command, JSON.stringify(args || {}));

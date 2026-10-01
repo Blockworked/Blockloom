@@ -34,6 +34,65 @@ fn lighting_assets_are_shared_saved_and_keep_a_missing_file_fallback() {
         "create_asset",
         json!({"parent": "assets", "name": "Second.blockscene"}),
     );
+    let second = invoke("get_state", json!({}))["project"]["active_scene"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let actor = invoke("add_actor", json!({"shape": "Sphere", "name": "Ball"}));
+    invoke("select_actor", json!({"actorId": ""}));
+    assert!(invoke("get_state", json!({}))["selected_actor"].is_null());
+    invoke("set_active_scene", json!({"sceneId": first}));
+    invoke(
+        "set_scene_component",
+        json!({"sceneId": second, "component": {
+            "component": "Dimension", "mode": "TwoD"
+        }}),
+    );
+    invoke(
+        "set_scene_component",
+        json!({"sceneId": second, "component": {
+            "component": "Physics", "gravity": [0, -300, 0], "fixed_rate": 90
+        }}),
+    );
+    assert!(
+        backend
+            .dispatch(
+                "set_scene_component",
+                json!({"sceneId": second, "component": {
+                    "component": "Background", "color": "invalid"
+                }})
+            )
+            .is_err()
+    );
+    let saved = blockloom_core::project::read_project_dir(&dir).unwrap();
+    let scene = saved.scene(&second).unwrap();
+    assert_eq!(saved.active_scene, first);
+    assert_eq!(scene.world.fixed_rate, 90.0);
+    assert_eq!(scene.world.gravity, [0.0, -300.0, 0.0]);
+    assert!(matches!(
+        scene.actor(actor.as_str().unwrap()).unwrap().visual(),
+        Some(blockloom_core::scene::Visual::Circle { .. })
+    ));
+    invoke(
+        "set_scene_lighting_asset",
+        json!({"path": path, "sceneId": second}),
+    );
+    let state = invoke("get_state", json!({}));
+    assert_eq!(state["project"]["active_scene"], first);
+    assert_eq!(
+        state["project"]["scenes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == second)
+            .unwrap()["world"]["lighting"]["asset"],
+        path
+    );
+    invoke("set_active_scene", json!({"sceneId": second}));
+    assert!(invoke("get_state", json!({}))["selected_actor"].is_null());
+    invoke("select_actor", json!({"actorId": actor}));
+    assert_eq!(invoke("get_state", json!({}))["selected_actor"], actor);
+    invoke("set_active_scene", json!({"sceneId": first}));
     invoke("set_scene_lighting_asset", json!({"path": path}));
     invoke(
         "write_lighting_asset",

@@ -25,6 +25,7 @@ fn main() {
                 "qml/ActorList.qml",
                 "qml/BlockSidebar.qml",
                 "qml/InspectorPanel.qml",
+                "qml/InspectorComponentCard.qml",
                 "qml/InspectorRow.qml",
                 "qml/SurfaceDetailRows.qml",
                 "qml/EmitterGraphRows.qml",
@@ -85,6 +86,9 @@ fn main() {
         builder
             .cc_builder(|cc| {
                 cc.include("src");
+                if std::env::var_os("CARGO_FEATURE_QML_PREVIEW").is_some() {
+                    cc.define("QT_QML_DEBUG", None);
+                }
                 cc.file("src/qt_diagnostics.cpp");
                 cc.file("src/app_icon.cpp");
                 cc.file("src/pointer_lock.cpp");

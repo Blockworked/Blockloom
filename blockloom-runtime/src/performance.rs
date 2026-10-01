@@ -249,11 +249,8 @@ impl RenderCache {
     }
 
     /// Spheres and capsules swap to coarser meshes at range; boxes and
-    /// planes get a cull-only level. A model placeholder gets a full level
-    /// and a simplified level, so a distant prop first draws its decimated
-    /// scene (`model::sync_model_lod`) and only then leaves the view under
-    /// the props throttle instead of never thinning out. Cull-only levels never swap meshes; while visible the prop still
-    /// merges, and once culled batching leaves it out of merges entirely.
+    /// planes and models get a cull-only level, preserving visible surfaces.
+    /// Visible props can still merge; culled props stay out of batches.
     pub fn lod(
         &mut self,
         visual: &Visual,
@@ -268,9 +265,7 @@ impl RenderCache {
             let cull_radius = Vec3::from(*scale).length() * 0.5;
             if cull_radius > 0.0 {
                 return Some(
-                    crate::culling::LodGroup::new(cull_radius)
-                        .level(crate::model::SIMPLIFY_SCREEN, None)
-                        .level(PROP_CULL_SCREEN, None),
+                    crate::culling::LodGroup::new(cull_radius).level(PROP_CULL_SCREEN, None),
                 );
             }
             return None;
@@ -435,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn boxes_planes_get_cull_only_lods_models_get_a_simplified_level() {
+    fn boxes_planes_and_models_get_cull_only_lods() {
         let mut cache = RenderCache::default();
         let mut meshes = Assets::<Mesh>::default();
         let high = meshes.add(Mesh::new(
@@ -458,8 +453,7 @@ mod tests {
             assert_eq!(group.levels()[0].mesh, Some(high.clone()));
             assert!(group.levels()[0].min_screen > 0.0);
         }
-        // A model placeholder gets a full level plus a simplified one,
-        // so `sync_model_lod` thins the scene before it culls.
+        // Models keep their meshes until the entire scene is culled.
         let model = Visual::Model {
             path: "box.glb".into(),
             tint: "#fff".into(),
@@ -467,12 +461,10 @@ mod tests {
             animation: String::new(),
         };
         let group = cache.lod(&model, &high, &mut meshes).unwrap();
-        assert_eq!(group.levels().len(), 2);
+        assert_eq!(group.levels().len(), 1);
         assert!(!group.swaps_meshes());
         assert!(group.levels()[0].mesh.is_none());
-        assert_eq!(group.levels()[0].min_screen, crate::model::SIMPLIFY_SCREEN);
-        assert!(group.levels()[1].min_screen > 0.0);
-        assert!(group.levels()[1].min_screen < group.levels()[0].min_screen);
+        assert_eq!(group.levels()[0].min_screen, 0.01);
         let sphere = Visual::Sphere {
             color: "#fff".into(),
             radius: 1.0,

@@ -4,6 +4,7 @@
 #include <QtCore/QString>
 #include <QtCore/QtLogging>
 #include <QtQuickControls2/QQuickStyle>
+#include <QtQml/QQmlDebuggingEnabler>
 
 #include <cstdio>
 

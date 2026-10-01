@@ -116,9 +116,31 @@ Rectangle {
         visible: root.open
         RowLayout {
             Layout.fillWidth: true; Layout.margins: 8; spacing: 4
+            BwButton {
+                id: sceneHeader
+                objectName: "hierarchy-scene"
+                readonly property var project: root.appState.project
+                readonly property string sceneId: project ? project.active_scene : ""
+                readonly property bool ready: !!root.app.assetDrag && root.app.assetDrag.kind === "lighting"
+                Layout.fillWidth: true; implicitHeight: 28; iconName: ready ? "sun" : "map"
+                text: project ? (project.scenes.find(s => s.id === sceneId) || {}).name || "Scene" : "Scene"
+                primary: ready || (root.app.inspectScene && root.app.inspectedScene === sceneId)
+                onClicked: root.app.selectScene(sceneId)
+                function takeDrop(entry, sx, sy) {
+                    if (!visible || !entry || entry.kind !== "lighting" || !sceneId) return false;
+                    const p = mapFromItem(null, sx, sy);
+                    if (p.x < 0 || p.y < 0 || p.x > width || p.y > height) return false;
+                    root.app.invoke("set_scene_lighting_asset", { path: entry.path, sceneId: sceneId });
+                    root.app.selectScene(sceneId);
+                    return true;
+                }
+                Component.onCompleted: root.app.assetTargets.push(sceneHeader)
+                Component.onDestruction: { const i = root.app.assetTargets.indexOf(sceneHeader); if (i >= 0) root.app.assetTargets.splice(i, 1); }
+                ToolTip.text: ready ? "Drop to assign this scene's Lighting" : "Select scene components"
+            }
             BwComboBox {
                 id: sceneBox
-                Layout.fillWidth: true; implicitHeight: 28; font.pixelSize: 12
+                Layout.preferredWidth: 28; implicitHeight: 28; font.pixelSize: 12
                 readonly property var scenes: root.appState.project ? root.appState.project.scenes : []
                 readonly property string active: root.appState.project ? root.appState.project.active_scene : ""
                 model: scenes
@@ -127,12 +149,10 @@ Rectangle {
                     const at = scenes.findIndex(s => s.id === active);
                     return at >= 0 ? at : -1;
                 }
-                displayText: {
-                    const s = scenes.find(s => s.id === active);
-                    return s ? s.name : "Scene";
-                }
+                displayText: ""
                 onActivated: index => {
                     const s = scenes[index];
+                    if (s) root.app.selectScene(s.id);
                     if (s && s.id !== active) root.app.invoke("set_active_scene", { sceneId: s.id });
                     currentIndex = Qt.binding(() => {
                         const at = sceneBox.scenes.findIndex(s => s.id === sceneBox.active);
@@ -166,7 +186,7 @@ Rectangle {
                 id: row
                 required property var modelData
                 readonly property string actorId: modelData.actor.id
-                readonly property bool selected: actorId === root.appState.selected_actor
+                readonly property bool selected: !root.app.inspectScene && !root.app.inspectedLighting && actorId === root.appState.selected_actor
                 width: list.width; height: 32
                 color: selected ? "#2b4a6b" : (rowHover.hovered ? "#303134" : "transparent")
                 border.color: root.hintId === actorId && root.hintPos === "in" ? Theme.accent : "transparent"

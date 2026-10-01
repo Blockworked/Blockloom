@@ -26,7 +26,7 @@ them.
 - `just`, Git, a C/C++ compiler and the platform's native linker.
   On Windows, use the MSVC Rust toolchain and Visual Studio C++ build tools;
   on macOS, install the Xcode command-line tools.
-- Qt **6.10 or newer**, including development headers and build tools for
+- Qt **6.12 or newer**, including development headers and build tools for
   Core, Gui, Qml, Quick, Quick Controls 2, Quick Dialogs 2 and Multimedia.
   QtGui private headers are needed for the Linux Wayland HDR integration.
   Use a Qt kit matching your compiler and architecture. Set `QMAKE` to its
@@ -68,11 +68,41 @@ just qml-test               # Qt Quick interaction/layout tests, after building
 ```
 
 See [patches/README.md](patches/README.md) for patch preparation and maintenance.
-QML is compiled into the editor, so QML changes also require a rebuild.
+QML is compiled into the editor for normal builds. For live QML iteration,
+use the preview workflow below.
 For QML tests, put Qt 6's `qmltestrunner` on PATH or set `QMLTESTRUNNER`
 to its executable.
 The legacy `ui/` and `src-tauri/` applications are not part of this build;
 Node.js is not needed to build the Qt editor.
+
+### QML Hot Reload
+
+With Python 3 and Qt 6.12's QML tooling installed, run:
+
+```bash
+just qml-preview                       # build the workspace, then watch QML edits
+just qml-preview --profile dev         # use the debug build instead
+just qml-preview --output session.qtd  # record input for a later session
+just qml-preview --replay session.qtd  # restore a recorded session
+just qml-preview --build-only          # build and print the preview command
+```
+
+The launcher uses `QMAKE` (or `qmake6`/`qmake` on PATH) to select Qt and runs
+that kit's `qmlpreview`, avoiding older tools on PATH. It passes the active
+resource manifests for Blockloom and Blockstitch so embedded `qrc:` URLs map
+to source files. Local Blockstitch QML edits work after `just blockstitch-local`.
+Pass application arguments after `--`.
+
+Save an existing QML file to update the running editor. Colors, dimensions,
+bindings and function bodies can update while preserving UI state. Structural
+changes can recreate objects; use `restart` at the preview prompt if needed.
+Use `help` for commands and `quit` to end the session. Set
+`QMLPREVIEW_HOTRELOAD=0` to compare with full scene reloads.
+
+The opt-in `blockloom/qml-preview` Cargo feature enables QML debugging.
+Only use it for development. Run `just build` again before installing or
+distributing the editor. Rust/C++ edits and new QML module files still need a
+rebuild. Verify final changes with a normal build and fresh launch.
 
 ### Game Players
 

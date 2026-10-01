@@ -269,6 +269,7 @@ impl Backend {
                 state,
                 app,
                 arg(&args, "path")?,
+                arg(&args, "sceneId").ok(),
             )?),
             "set_lighting" => {
                 let lighting: Lighting = arg(&args, "lighting")?;

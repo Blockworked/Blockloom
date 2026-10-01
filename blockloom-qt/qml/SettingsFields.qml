@@ -9,17 +9,19 @@ Item {
     id: root
     required property var app
     property string page: "scene"
+    property string sceneId: ""
+    readonly property bool activeScene: !sceneId || !project || sceneId === project.active_scene
     property string lightingPath: ""
     property var lightingData: null
     property string lightingError: ""
     readonly property var project: app.appState.project
     readonly property var world: lightingPath && lightingData
         ? Object.assign({}, project ? project.world : {}, { mode: "ThreeD", lighting: lightingData })
-        : project ? project.world : null
+        : project ? (sceneId ? (project.scenes.find(s => s.id === sceneId) || {}).world || project.world : project.world) : null
     readonly property bool is3d: !!world && world.mode === "ThreeD"
     function componentFor(heading) {
         return ({ "Performance and scaling": "Quality", "Dimension": "Dimension", "Background": "Background", "Physics": "Physics", "Camera": "Camera",
-            "Navigation": "Navigation", "Lighting asset": "Lighting", "Sky": "Sky", "Volumetric clouds": "Clouds", "Cloud layers": "CloudLayers",
+            "Navigation": "Navigation", "Lighting": "Lighting", "Sky": "Sky", "Volumetric clouds": "Clouds", "Cloud layers": "CloudLayers",
             "Fog": "Fog", "Lightning": "Lightning", "Wind": "Wind", "Time of day and weather": "Director", "Particles": "Vfx",
             "Post-process": "Post", "Display": "Display", "Sound": "Sound", "Input actions": "Input" })[heading] || "";
     }
@@ -27,13 +29,35 @@ Item {
         if (page === "project") return heading === "Project";
         if (page === "publishing") return heading === "App Info";
         if (page === "android") return heading === "Android";
-        const lighting = ["Lighting", "Shadows", "Ray tracing"];
+        const lighting = ["Sun and ambient", "Shadows", "Ray tracing"];
         if (page === "lighting") return lighting.indexOf(heading) >= 0;
         return ["Project", "App Info", "Android"].indexOf(heading) < 0
             && lighting.indexOf(heading) < 0;
     }
 
+    function sceneComponent(command, args) {
+        const fields = {
+            set_quality: ["Quality", "settings", "quality"], set_camera: ["Camera", "camera", "camera"],
+            set_navigation: ["Navigation", "settings", "navigation"], set_sky: ["Sky", "sky", "sky"],
+            set_fog: ["Fog", "fog", "fog"], set_clouds: ["Clouds", "clouds", "clouds"],
+            set_cloud_layers: ["CloudLayers", "layers", "layers"], set_lightning: ["Lightning", "lightning", "lightning"],
+            set_wind: ["Wind", "wind", "wind"], set_director: ["Director", "director", "director"],
+            set_vfx: ["Vfx", "settings", "vfx"], set_post_process: ["Post", "post", "post"],
+            set_display_output: ["Display", "display", "display"], set_sound_mixer: ["Sound", "mixer", "mixer"]
+        };
+        if (fields[command]) { const f = fields[command]; const c = { component: f[0] }; c[f[1]] = args[f[2]]; return c; }
+        if (command === "set_mode") return { component: "Dimension", mode: args.mode };
+        if (command === "set_background") return { component: "Background", color: args.color };
+        if (command === "set_gravity" || command === "set_fixed_rate") return {
+            component: "Physics", gravity: args.gravity || world.gravity, fixed_rate: args.fixedRate === undefined ? world.fixed_rate : args.fixedRate
+        };
+        return null;
+    }
     function invoke(command, args) {
+        if (!activeScene) {
+            const component = sceneComponent(command, args);
+            if (component) { command = "set_scene_component"; args = { sceneId: sceneId, component: component }; }
+        }
         app.invoke(command, args, null, e => app.invoke("push_log", { kind: "error", text: String(e) }));
     }
     function loadLighting() {
@@ -47,10 +71,13 @@ Item {
     }
     function createLighting() {
         app.invoke("create_asset", { parent: "assets", name: "Scene Lighting.blocklighting" }, path => {
-            app.invoke("set_scene_lighting_asset", { path: path }, () => { app.inspectedLighting = path; },
-                e => invoke("push_log", { kind: "error", text: String(e) }));
+            app.invoke("write_lighting_asset", { path: path, lighting: world.lighting }, () => {
+                app.invoke("set_scene_lighting_asset", { path: path, sceneId: sceneId }, () => loadAssignedLighting(path),
+                    e => invoke("push_log", { kind: "error", text: String(e) }));
+            }, e => invoke("push_log", { kind: "error", text: String(e) }));
         }, e => invoke("push_log", { kind: "error", text: String(e) }));
     }
+    function loadAssignedLighting(path) { app.selectLighting(path); }
     onLightingPathChanged: loadLighting()
     Component.onCompleted: loadLighting()
     function withIndex(array, index, value) { const next = array.slice(); next[index] = value; return next; }
@@ -116,29 +143,12 @@ Item {
         }
     }
 
-    component Section: ColumnLayout {
-        property string heading: ""
-        default property alias content: body.data
-        property bool expanded: root.page === "project" || root.page === "publishing" || root.page === "android"
-        objectName: "settings-" + heading
+    component Section: InspectorComponentCard {
         property bool available: true
+        objectName: "settings-" + heading
         visible: root.showSection(heading) && available && (!root.lightingPath || !!root.lightingData)
-        Layout.fillWidth: true; spacing: 6
-        RowLayout {
-            Layout.fillWidth: true; Layout.topMargin: 8
-            BwButton {
-                Layout.fillWidth: true
-                text: parent.parent.heading
-                iconName: parent.parent.expanded ? "chevron-down" : "chevron-right"
-                onClicked: parent.parent.expanded = !parent.parent.expanded
-            }
-            IconButton {
-                visible: root.page === "scene" && parent.parent.heading !== "Dimension" && !!root.componentFor(parent.parent.heading)
-                iconName: "rotate-ccw"; tip: "Reset component"
-                onClicked: root.invoke("remove_scene_component", { name: root.componentFor(parent.parent.heading) })
-            }
-        }
-        ColumnLayout { id: body; visible: parent.expanded; Layout.fillWidth: true; spacing: 6 }
+        removable: root.page === "scene" && heading !== "Dimension" && !!root.componentFor(heading)
+        onRemoveRequested: root.invoke("remove_scene_component", { name: root.componentFor(heading), sceneId: root.sceneId })
     }
     component Note: Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11 }
     component SubHeading: Text { color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold; Layout.topMargin: 4 }
@@ -149,21 +159,26 @@ Item {
         contentWidth: availableWidth
         ColumnLayout {
             width: scroll.availableWidth - 16; x: 8; spacing: 6
+            RowLayout {
+                visible: root.page === "scene" && !root.activeScene; Layout.fillWidth: true
+                Note { text: "Open this scene to edit input bindings, paint clouds or generate baked data." }
+                BwButton { text: "Open scene"; onClicked: root.invoke("set_active_scene", { sceneId: root.sceneId }) }
+            }
             Note {
                 visible: !!root.lightingPath && !root.lightingData
                 text: root.lightingError || "Loading lighting..."
             }
             Section {
-                heading: "Lighting asset"; available: !!root.world && root.is3d
+                heading: "Lighting"; available: !!root.world && root.is3d
                 InspectorRow { label: "Lighting"; labelWidth: 110; Layout.fillWidth: true
-                    AssetField { app: root.app; accept: ["lighting"]; value: root.world ? root.world.lighting.asset || "" : "";
-                        placeholderText: "Drag a Lighting asset here"
-                        onCommitted: p => root.invoke("set_scene_lighting_asset", { path: p }) }
+                    AssetField { objectName: "scene-lighting-field"; app: root.app; accept: ["lighting"]; value: root.world ? root.world.lighting.asset || "" : "";
+                        placeholderText: "None (Lighting) - drag asset here"
+                        onCommitted: p => root.invoke("set_scene_lighting_asset", { path: p, sceneId: root.sceneId }) }
                 }
                 BwButton { visible: !!root.world && !root.world.lighting.asset; text: "Create Lighting asset";
                     onClicked: root.createLighting() }
                 BwButton { visible: !!root.world && !!root.world.lighting.asset; text: "Edit lighting"; enabled: !!root.world && !!root.world.lighting.asset;
-                    onClicked: root.app.inspectedLighting = root.world.lighting.asset }
+                    onClicked: root.app.selectLighting(root.world.lighting.asset) }
                 Note { text: "Select a Lighting asset in the tray to edit its components. Scenes sharing it use the same settings." }
             }
             Section {
@@ -309,7 +324,7 @@ Item {
                     } }
             }
             Section {
-                heading: "Lighting"; available: !!root.world && root.is3d
+                heading: "Sun and ambient"; available: !!root.world && root.is3d
                 InspectorRow { label: "Light direction"; labelWidth: 110; Layout.fillWidth: true
                     Repeater { model: 3; delegate: NumberField { required property int index; value: root.world.lighting.light_direction[index]; onCommitted: n => root.writeLighting({ light_direction: root.withIndex(root.world.lighting.light_direction, index, n) }) } } }
                 InspectorRow { label: "Light color"; labelWidth: 110; Layout.fillWidth: true
@@ -560,7 +575,7 @@ Item {
                     AssetField { app: root.app; accept: ["image", "volume"]; value: cloudSection.c.detail_volume || ""; placeholderText: "Baked from the seed"; onCommitted: p => root.writeVolumetricClouds({ detail_volume: p }) }
                     IconButton { iconName: "x"; tip: "Bake from the seed"; enabled: !!cloudSection.c.detail_volume; onClicked: root.writeVolumetricClouds({ detail_volume: "" }) } }
                 InspectorRow { label: ""; labelWidth: 110; Layout.fillWidth: true
-                    BwButton { text: "Bake noise to assets"; iconName: "download"; implicitHeight: 30; onClicked: root.invoke("bake_cloud_noise", {}) } Item { Layout.fillWidth: true } }
+                    BwButton { text: "Bake noise to assets"; enabled: root.activeScene; iconName: "download"; implicitHeight: 30; onClicked: root.invoke("bake_cloud_noise", {}) } Item { Layout.fillWidth: true } }
                 Note { text: "Thickness is top minus bottom, in metres. Clouds ride the Wind section's cloud drift and seed. Quality controls view and light march steps: Low 16/3, Medium 32/5, High 48/6, Ultra 64/8. Noise volumes are image strips of square slices (e.g. 16384x128) or .cube files: shape reads red as its Perlin-Worley base, erosion reads red, green and blue as Worley octaves. Bake noise to assets writes the seed's own noise into assets/clouds to edit or swap." }
             }
             Section {
@@ -655,7 +670,7 @@ Item {
                                 onPressed: mouse => { strokeCanvas.points = [at(mouse)]; strokeCanvas.requestPaint(); }
                                 onPositionChanged: mouse => { const next = strokeCanvas.points.slice(); next.push(at(mouse)); strokeCanvas.points = next; strokeCanvas.requestPaint(); }
                                 onReleased: {
-                                    root.invoke("paint_cloud_layer", { layer: layerCard.index, points: strokeCanvas.points,
+                                    if (root.activeScene) root.invoke("paint_cloud_layer", { layer: layerCard.index, points: strokeCanvas.points,
                                         brush: { tool: layerSection.tool, radius: layerSection.radius, strength: layerSection.strength, falloff: 0.7 } });
                                     strokeCanvas.points = []; strokeCanvas.requestPaint();
                                 }
@@ -904,7 +919,7 @@ Item {
                 InspectorRow { visible: !!directorSection.d.enabled; label: "Loop day"; labelWidth: 110; Layout.fillWidth: true
                     SwitchField { value: directorSection.d.loop_enabled !== false; onToggled: on => root.writeDirector({ loop_enabled: on }) } Item { Layout.fillWidth: true } }
                 InspectorRow { visible: !!directorSection.d.enabled; label: "Keyframe"; labelWidth: 110; Layout.fillWidth: true
-                    Repeater { model: ["dawn", "noon", "dusk", "midnight"]; delegate: BwButton { required property string modelData; text: modelData[0].toUpperCase() + modelData.slice(1); implicitHeight: 30; onClicked: root.invoke("apply_director_preset", { preset: modelData }) } } }
+                    Repeater { model: ["dawn", "noon", "dusk", "midnight"]; delegate: BwButton { required property string modelData; text: modelData[0].toUpperCase() + modelData.slice(1); enabled: root.activeScene; implicitHeight: 30; onClicked: root.invoke("apply_director_preset", { preset: modelData }) } } }
                 InspectorRow { visible: !!directorSection.d.enabled; label: "Track"; labelWidth: 110; Layout.fillWidth: true
                     ChoiceField { options: directorSection.dials(); value: directorSection.dial; onChosen: v => directorSection.dial = v } }
                 DirectorTrackField {
@@ -933,6 +948,7 @@ Item {
                     BwButton { text: "Save copy"; implicitHeight: 30; onClicked: {
                         const name = presetNameField.text.trim();
                         if (!name) return;
+                        if (!root.activeScene) return;
                         root.app.invoke("save_director_preset", { name: name, from: directorSection.copyFrom }, saved => {
                             directorSection.presetName = saved;
                             presetNameField.text = "";
@@ -1174,7 +1190,7 @@ Item {
                 Note { text: "The saved mix every voice plays through: master scales everything, music and effects scale their own bus on top of it. A `set bus volume` block moves the live mix without changing this. Applies on the next run of the game." }
             }
             Section {
-                heading: "Input actions"; available: !!root.world
+                heading: "Input actions"; enabled: root.activeScene; available: !!root.world
                 Repeater {
                     model: root.world && root.world.input ? root.world.input.actions : []
                     delegate: ColumnLayout {

@@ -58,15 +58,15 @@ Rectangle {
         error = "";
         app.invoke(command, args, result => {
             if (command === "create_asset" && /\.blocklighting$/i.test(String(result))) {
-                app.inspectedLighting = result; app.inspectScene = false; selected = result;
+                app.selectLighting(result); selected = result;
             } else if (command === "create_asset" && /\.blockscene$/i.test(String(result))) {
-                app.inspectedLighting = ""; app.inspectScene = true; selected = result;
+                app.selectScene(root.appState.project.active_scene); selected = result;
             } else if ((command === "rename_asset" || command === "move_asset") && app.inspectedLighting
                 && (app.inspectedLighting === args.path || app.inspectedLighting.startsWith(args.path + "/"))) {
                 app.inspectedLighting = result + app.inspectedLighting.slice(args.path.length);
             } else if (command === "delete_asset" && app.inspectedLighting
                 && (app.inspectedLighting === args.path || app.inspectedLighting.startsWith(args.path + "/"))) {
-                app.inspectedLighting = ""; app.inspectScene = true;
+                app.selectScene(root.appState.project.active_scene);
             }
             refresh();
         }, e => { error = String(e); refresh(); });
@@ -104,8 +104,6 @@ Rectangle {
     function report(entry) { return reports[entry.path] || null; }
     // Double-clicking a scene file opens it; its filename is the scene name.
     function openSceneAsset(entry) {
-        root.app.inspectedLighting = "";
-        root.app.inspectScene = true;
         const scenes = root.appState.project ? root.appState.project.scenes : [];
         const active = root.appState.project ? root.appState.project.active_scene : "";
         let found = scenes.find(s => s.path === entry.path);
@@ -113,8 +111,19 @@ Rectangle {
             const stem = entry.name.replace(/\.blockscene$/i, "");
             found = scenes.find(s => s.name === stem);
         }
-        if (found && found.id !== active) root.app.invoke("set_active_scene", { sceneId: found.id });
-        else if (!found) root.app.invoke("import_scene", { path: entry.path });
+        if (found) {
+            root.app.selectScene(found.id);
+            if (found.id !== active) root.app.invoke("set_active_scene", { sceneId: found.id });
+        } else root.app.invoke("import_scene", { path: entry.path }, id => root.app.selectScene(id));
+    }
+    function selectEntry(entry) {
+        if (entry.kind === "lighting") app.selectLighting(entry.path);
+        else if (entry.kind === "scene") {
+            const scenes = appState.project ? appState.project.scenes : [];
+            const found = scenes.find(s => s.path === entry.path);
+            if (found) app.selectScene(found.id);
+            else openSceneAsset(entry);
+        }
     }
     // An image can be re-roled; offer every role it isn't already.
     function canRole(role) {
@@ -123,6 +132,7 @@ Rectangle {
         return (r && r.role ? r.role : "texture") !== role;
     }
     function togglePreview(entry) {
+        if (!sound.item) sound.source = "SoundPreview.qml";
         if (!sound.item) return;
         if (previewing === entry.path) { sound.item.stop(); previewing = ""; return; }
         sound.item.play(app.assetUrl(entry.path));
@@ -269,6 +279,7 @@ Rectangle {
                         model: root.entries
                         delegate: Tile {
                             id: tile
+                            objectName: "asset-" + modelData.path
                             required property var modelData
                             readonly property var folderPath: modelData.kind === "folder" ? modelData.path : undefined
                             readonly property bool renaming: !!root.draft && root.draft.mode === "rename" && root.draft.path === modelData.path
@@ -309,10 +320,6 @@ Rectangle {
                                 property bool dragging: false
                                 onPressed: mouse => {
                                     root.selected = tile.modelData.path;
-                                    if (mouse.button === Qt.LeftButton && tile.modelData.kind === "lighting") {
-                                        root.app.inspectedLighting = tile.modelData.path;
-                                        root.app.inspectScene = false;
-                                    }
                                     press = mapToItem(null, mouse.x, mouse.y); dragging = false;
                                     if (mouse.button === Qt.RightButton && !tile.modelData.protected) { root.menuEntry = tile.modelData; trayMenu.popup(); }
                                 }
@@ -327,7 +334,10 @@ Rectangle {
                                     if (dragging) root.moveDrag(tile.modelData, p.x, p.y);
                                 }
                                 onReleased: mouse => {
-                                    if (!dragging) return;
+                                    if (!dragging) {
+                                        if (mouse.button === Qt.LeftButton) root.selectEntry(tile.modelData);
+                                        return;
+                                    }
                                     dragging = false; ghost.entry = null;
                                     const p = mapToItem(null, mouse.x, mouse.y);
                                     root.endDrag(tile.modelData, p.x, p.y);
@@ -417,7 +427,7 @@ Rectangle {
         fileMode: FileDialog.OpenFiles
         onAccepted: root.run("import_assets", { parent: root.path, paths: selectedFiles.map(u => root.app.fromFileUrl(u)) })
     }
-    Loader { id: sound; source: "SoundPreview.qml" }
+    Loader { id: sound }
     Connections { target: sound.item; ignoreUnknownSignals: true; function onPlayingChanged() { if (!sound.item.playing) root.previewing = ""; } }
 
     // The tile following the pointer while an asset is dragged.

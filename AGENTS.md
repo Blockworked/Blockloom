@@ -20,15 +20,25 @@ See `patches/README.md` for prerequisites and updating patches.
 ```bash
 just build              # cargo build --release --workspace (the normal build)
 just run                # build, then launch target/release/blockloom
+just qml-preview        # Qt 6.12 live QML edits, with the real backend
+just replace-fast       # Linux: rebuild/reinstall editor and runtime, reuse staged players
+just replace [jobs]     # Linux: build editor/native/web concurrently, then reinstall
 cargo build --workspace && target/debug/blockloom   # debug build/run - faster iteration
 just test               # cargo test --workspace (blockloom-core has the bulk of them)
 cargo bench -p blockloom-core --bench vm   # block VM ns/tick over a few canvases
 just player             # stage the hard-optimized player a built game ships
 just web-check          # runtime check-build for wasm32-unknown-unknown (Phase 8)
 just web-player [profile]            # stage the WebGPU player the Web build target ships
+just web-player release              # faster web development build without dist's fat LTO
 just web-build <project> [out]       # a project as one self-contained .html
 just web-smoke <page.html> [--scripts N] [--moves ACTOR]  # headless run of a built page
 ```
+
+`just replace` divides the CPU count across its three builds by default;
+`just replace 4` uses four Cargo jobs per build. `CARGO_BUILD_JOBS` overrides
+the default per-build limit. Web players use `target/web-build` for intermediate
+artifacts to avoid locking the native player's host-tool cache; their first build
+with this cache recompiles dependencies. Staged player paths stay the same.
 
 Build the whole workspace, not just `-p blockloom`: off Linux (or with
 `BLOCKLOOM_RUNTIME=process`) the editor starts the `blockloom-runtime` binary
@@ -49,9 +59,15 @@ defaults.
 
 The QML is compiled into the binary by `blockloom-qt/build.rs` (cxx-qt's
 `CxxQtBuilder` + qmlcachegen), so a plain `cargo build` picks up every edit.
-It needs Qt 6.10 or newer with Quick, QuickControls2, QuickDialogs2 and Multimedia; use
+It needs Qt 6.12 or newer with Quick, QuickControls2, QuickDialogs2 and Multimedia; use
 Qt 6's `qml`/`qmlls` (`/usr/lib/qt6/bin` on Arch), not Qt 5's. A new `.qml`
 file must also be listed in `build.rs`'s `QmlModule`.
+
+For live edits, `just qml-preview` builds the workspace with the development-only
+`blockloom/qml-preview` feature and watches both QML modules through the selected
+Qt kit's `qmlpreview`. It needs Python 3. Use `restart` for structural edits that
+lose state; Rust/C++ changes and new QML files still need a rebuild. Run `just
+build` before installing or shipping. See README.md's QML Hot Reload section.
 
 ### Local `blockstitch` development
 
@@ -490,11 +506,9 @@ Props have a local LOD-distance throttle too (`budget/props/distance_scale`),
 applied to every prop level. Spheres and capsules swap to coarser meshes and
 then leave the view far out; cuboids and planes carry a
 cull-only level, so visible ones still merge into batches while culled ones
-stay out of merges entirely. Model placeholders carry a full level plus a
-simplified one: at mid range `model::sync_model_lod` swaps every mesh under
-the `ModelChild` subtree for a decimated copy (`model::simplify_mesh`, every
-fourth triangle, cached per mesh and cleared on file reload), and far out a
-culled group hides the subtree instead, which sheds the scene's draws. If props stay over budget at the local
+stay out of merges entirely. Model placeholders carry a cull-only level:
+`model::sync_model_lod` keeps visible meshes intact and hides the `ModelChild`
+subtree when culled, shedding the scene's draws. If props stay over budget at the local
 floor, shared preset feedback takes over. Draw groups serving more than one
 visible mesh count as `quality/instanced_draws`, with the absorbed meshes in
 `quality/batched_instances`. The render world also counts what batching

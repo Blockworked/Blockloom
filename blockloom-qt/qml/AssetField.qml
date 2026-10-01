@@ -11,14 +11,23 @@ BwTextField {
     property string value: ""
     // Asset kinds this box takes; empty takes any file.
     property var accept: []
+    readonly property var icons: ({ image: "image", audio: "music", font: "file-type", model: "box", script: "file-code",
+        shader: "sparkles", text: "file-text", hdr: "sun", volume: "layers", light: "zap", height: "trending-up", scene: "map", lighting: "sun" })
+    property string assetKind: accept.length ? accept[0] : "other"
+    readonly property string iconName: icons[ready ? app.assetDrag.kind : assetKind] || "file"
     signal committed(string path)
     Layout.fillWidth: true
-    implicitHeight: 30; font.pixelSize: 12
+    implicitHeight: 30; font.pixelSize: 12; leftPadding: 34
     text: value
     onEditingFinished: if (text !== value) committed(text)
 
     function wants(entry) { return !!entry && entry.kind !== "folder" && (!accept.length || accept.indexOf(entry.kind) >= 0); }
     readonly property bool ready: wants(app.assetDrag)
+    LucideIcon {
+        objectName: "asset-type-icon"
+        name: root.iconName; color: root.ready ? Theme.accent : Theme.textDim
+        width: 16; height: 16; anchors.left: parent.left; anchors.leftMargin: 10; anchors.verticalCenter: parent.verticalCenter
+    }
     background: Rectangle {
         radius: 5; color: root.enabled ? Theme.field : "#27282a"
         border.color: root.ready ? Theme.accent : (root.activeFocus ? Theme.accent : Theme.border)

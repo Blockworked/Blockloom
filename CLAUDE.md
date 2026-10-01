@@ -44,9 +44,13 @@ defaults.
 
 The QML is compiled into the binary by `blockloom-qt/build.rs` (cxx-qt's
 `CxxQtBuilder` + qmlcachegen), so a plain `cargo build` picks up every edit.
-It needs Qt 6.10 or newer with Quick, QuickControls2, QuickDialogs2 and Multimedia; use
+It needs Qt 6.12 or newer with Quick, QuickControls2, QuickDialogs2 and Multimedia; use
 Qt 6's `qml`/`qmlls` (`/usr/lib/qt6/bin` on Arch), not Qt 5's. A new `.qml`
 file must also be listed in `build.rs`'s `QmlModule`.
+
+Use `just qml-preview` (Python 3 required) for live QML edits through Qt 6.12.
+This enables the development-only `blockloom/qml-preview` feature. Run `just
+build` before installing or shipping; Rust/C++ edits still require a rebuild.
 
 ### Local `blockstitch` development
 

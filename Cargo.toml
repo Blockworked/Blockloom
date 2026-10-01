@@ -60,12 +60,17 @@ crc32fast = "1.5.2"
 [profile.dev.package."*"]
 opt-level = 3
 
+# Reuse compiled work across the editor's release edit-run cycle.
+[profile.release]
+incremental = true
+
 # The player a built game ships. It is compiled once and run for hours, so it
 # is worth the slow link that would make `just build`'s edit-run loop painful.
 # Panics stay unwound: `blockloom::export!` catches a script's panic rather
 # than letting it cross the C boundary and abort the window.
 [profile.dist]
 inherits = "release"
+incremental = false
 lto = "fat"
 codegen-units = 1
 strip = "symbols"

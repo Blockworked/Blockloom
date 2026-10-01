@@ -1131,7 +1131,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "select-actor",
         cmd: "select_actor",
         aliases: &["select_actor"],
-        summary: "Choose whose canvas the editor shows.",
+        summary: "Choose whose canvas the editor shows; an empty id clears selection.",
         args: &[A],
     },
     CommandSpec {
@@ -1449,12 +1449,19 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "set-scene-lighting-asset",
         cmd: "set_scene_lighting_asset",
         aliases: &["set_scene_lighting_asset"],
-        summary: "Assign a Lighting asset to the active scene; empty detaches it.",
-        args: &[ArgSpec {
-            name: "path",
-            ty: "asset path",
-            required: true,
-        }],
+        summary: "Assign a Lighting asset to a scene (active by default); empty detaches it.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+            ArgSpec {
+                name: "sceneId",
+                ty: "id",
+                required: false,
+            },
+        ],
     },
     CommandSpec {
         name: "read-asset",

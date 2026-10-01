@@ -32,6 +32,7 @@ Item {
     Connections {
         target: root.app
         function onInspectedLightingChanged() { if (root.app.inspectedLighting) panels.rightOpen = true; }
+        function onInspectedSceneChanged() { if (root.app.inspectedScene) panels.rightOpen = true; }
         function onInspectSceneChanged() { if (root.app.inspectScene) panels.rightOpen = true; }
     }
     readonly property bool running: appState.running === true

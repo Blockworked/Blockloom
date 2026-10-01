@@ -370,7 +370,6 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         bevy::audio::SpatialScale::new_2d(1.0 / 500.0)
     }));
     app.init_resource::<model::ModelCache>();
-    app.init_resource::<model::ModelLodCache>();
     app.init_resource::<lights::LightMasks>();
     app.add_plugins(
         bevy_rapier2d::prelude::RapierPhysicsPlugin::<dim2::OneWayHooks>::pixels_per_meter(

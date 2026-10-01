@@ -18,8 +18,8 @@ Rectangle {
     readonly property var actor: settingsVisible ? null : app.openActor
     readonly property string selectedActorId: appState.selected_actor || ""
     readonly property string projectPath: appState.project_path || ""
-    onSelectedActorIdChanged: if (selectedActorId) { app.inspectScene = false; app.inspectedLighting = ""; }
-    onProjectPathChanged: { app.inspectScene = false; app.inspectedLighting = ""; }
+    onSelectedActorIdChanged: if (selectedActorId) { app.inspectScene = false; app.inspectedScene = ""; app.inspectedLighting = ""; }
+    onProjectPathChanged: { app.inspectScene = false; app.inspectedScene = ""; app.inspectedLighting = ""; }
     readonly property string mode: appState.project ? appState.project.world.mode : "TwoD"
     readonly property bool is3d: mode === "ThreeD"
     // Where the actor is right now, while a run is going.
@@ -373,27 +373,22 @@ Rectangle {
         anchors.fill: parent; spacing: 0
         visible: root.open
         RowLayout {
-            Layout.fillWidth: true; Layout.margins: 6
-            BwButton { text: "Actor"; primary: !root.settingsVisible;
-                onClicked: { root.app.inspectScene = false; root.app.inspectedLighting = ""; } }
-            BwButton { text: "Scene"; primary: root.app.inspectScene;
-                onClicked: { root.app.inspectedLighting = ""; root.app.inspectScene = true; } }
-            Item { Layout.fillWidth: true }
-            IconButton { iconName: "panel-right-close"; tip: "Hide inspector"; onClicked: root.openRequested(false) }
-        }
-        Text {
             visible: root.settingsVisible; Layout.fillWidth: true; Layout.margins: 8
-            text: {
-                if (root.app.inspectedLighting) return root.app.inspectedLighting.split("/").pop().replace(/\.blocklighting$/i, "");
-                const project = root.appState.project;
-                const scene = project ? project.scenes.find(s => s.id === project.active_scene) : null;
-                return scene ? scene.name : "Scene";
+            SectionLabel {
+                Layout.fillWidth: true; topPadding: 0; elide: Text.ElideRight
+                label: {
+                    if (root.app.inspectedLighting) return root.app.inspectedLighting.split("/").pop().replace(/\.blocklighting$/i, "");
+                    const project = root.appState.project;
+                    const scene = project ? project.scenes.find(s => s.id === (root.app.inspectedScene || project.active_scene)) : null;
+                    return scene ? scene.name : "Scene";
+                }
             }
-            color: Theme.text; font.pixelSize: 14; font.weight: Font.DemiBold; elide: Text.ElideRight
+            IconButton { iconName: "chevron-right"; tip: "Hide the components"; implicitWidth: 26; implicitHeight: 26; onClicked: root.openRequested(false) }
         }
         SettingsFields {
             visible: root.settingsVisible; Layout.fillWidth: true; Layout.fillHeight: true
             app: root.app; page: root.app.inspectedLighting ? "lighting" : "scene"
+            sceneId: root.app.inspectedScene
             lightingPath: root.app.inspectedLighting
         }
         ColumnLayout {
@@ -422,17 +417,14 @@ Rectangle {
                     // components updates the cards in place instead of rebuilding them.
                     Repeater {
                         model: root.actor ? root.actor.components.length : 0
-                        delegate: ColumnLayout {
+                        delegate: InspectorComponentCard {
                             id: card
                             required property int index
                             readonly property var c: root.actor && root.actor.components[index] ? root.actor.components[index] : ({ component: "" })
                             Layout.fillWidth: true; spacing: 6
-                            Rectangle { Layout.fillWidth: true; Layout.topMargin: 6; height: 1; color: Theme.borderSoft }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Text { Layout.fillWidth: true; text: root.componentName(card.c); color: Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold }
-                                IconButton { visible: card.c.component !== "Place"; iconName: "x"; tip: "Remove the " + root.componentName(card.c) + " component"; implicitWidth: 24; implicitHeight: 24; onClicked: root.remove(root.componentName(card.c)) }
-                            }
+                            heading: root.componentName(card.c)
+                            removable: card.c.component !== "Place"
+                            onRemoveRequested: root.remove(root.componentName(card.c))
                             Loader {
                                 Layout.fillWidth: true
                                 readonly property var c: card.c
@@ -601,7 +593,7 @@ Rectangle {
                         + ", " + root.tileStats.colliding_rects + " colliding rects" + (root.tileStats.animated ? ", " + root.tileStats.animated + " animated" : "")
                         + (root.tileStats.region_tiles ? ", " + root.tileStats.region_tiles + " in regions" : "") : "" }
                 InspectorRow { label: "Import Tiled"; Layout.fillWidth: true
-                    AssetField { app: root.app; value: ""; placeholderText: "Drag a .tsj tileset here"
+                    AssetField { app: root.app; assetKind: "text"; value: ""; placeholderText: "Drag a .tsj tileset here"
                         onCommitted: p => { if (p.trim() === "") return;
                             root.app.invoke("import_tileset", { actorId: root.actor.id, path: p.trim() },
                                 skipped => { text = ""; if (skipped && skipped.length) root.app.invoke("push_log", { kind: "warning", text: "Tileset import skipped: " + skipped.join("; ") }); },
@@ -1115,7 +1107,7 @@ Rectangle {
             InspectorRow { label: "Collision"; Layout.fillWidth: true
                 SwitchField { value: ter.t.collision; onToggled: on => root.writeTerrain(ter.c, { collision: on }) } Item { Layout.fillWidth: true } }
             InspectorRow { label: "Heightmap"; Layout.fillWidth: true
-                AssetField { app: root.app; value: ""; placeholderText: "Import PNG, .r16 or .r32"
+                AssetField { app: root.app; assetKind: "height"; value: ""; placeholderText: "Import PNG, .r16 or .r32"
                     onCommitted: p => { if (p.trim() !== "") root.app.invoke("import_terrain_heightmap", { actorId: root.actor.id, path: p.trim() }); } } }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Sculpt and paint with the Brush tool in the scene view. A heightmap is resampled to the resolution and replaces the heights." }

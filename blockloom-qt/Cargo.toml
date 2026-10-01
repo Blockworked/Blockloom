@@ -10,6 +10,10 @@ name = "blockloom"
 path = "src/main.rs"
 test = false
 
+[features]
+# Development only: enables the QML preview debug service.
+qml-preview = []
+
 [dependencies]
 blockloom-app = { path = "../blockloom-app" }
 blockstitch-qml.workspace = true
@@ -32,7 +36,7 @@ blockloom-protocol = { path = "../blockloom-protocol" }
 [build-dependencies]
 cxx-qt-build = { version = "0.10", features = ["link_qt_object_files"] }
 qt-build-utils = { version = "0.10", features = ["qt_minimal"] }
-qt-version = { version = "0.1", features = ["qt_version_at_least_6_10"] }
+qt-version = { version = "0.1.5", features = ["qt_version_at_least_6_12"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"

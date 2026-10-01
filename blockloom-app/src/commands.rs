@@ -849,7 +849,7 @@ pub(crate) fn set_active_scene(
         };
         project.set_active_scene(&scene_id)?;
     }
-    s.selected_actor = None;
+    s.selected_actor = Some(String::new());
     auto_save(&s);
     sync_runtime(&mut s);
     emit(app, &s);
@@ -890,6 +890,48 @@ pub(crate) fn set_scene_component(
     scene_id: Option<String>,
     component: SceneComponent,
 ) -> Result<String, String> {
+    let mut component = component;
+    match &mut component {
+        SceneComponent::Quality { settings } => settings.normalize(),
+        SceneComponent::Physics { fixed_rate, .. } => *fixed_rate = fixed_rate.clamp(1.0, 1000.0),
+        SceneComponent::Background { color } => {
+            *color = normalize_block_color(color).ok_or("Choose a valid color")?;
+        }
+        SceneComponent::Lighting { lighting } => *lighting = sanitize_lighting(lighting.clone())?,
+        SceneComponent::Navigation { settings } => validate_navigation(settings)?,
+        SceneComponent::Sky { sky } => {
+            sky.normalize();
+            for (name, color) in sky.colors_mut() {
+                *color =
+                    normalize_block_color(color).ok_or(format!("Choose a valid {name} color"))?;
+            }
+        }
+        SceneComponent::Fog { fog } => {
+            fog.normalize();
+            for (name, color) in fog.colors_mut() {
+                *color =
+                    normalize_block_color(color).ok_or(format!("Choose a valid {name} color"))?;
+            }
+        }
+        SceneComponent::Clouds { clouds } => clouds.normalize(),
+        SceneComponent::CloudLayers { layers } => blockloom_core::cloud_layers::normalize(layers),
+        SceneComponent::Lightning { lightning } => {
+            lightning.normalize();
+            lightning.color =
+                normalize_block_color(&lightning.color).ok_or("Choose a valid lightning color")?;
+        }
+        SceneComponent::Wind { wind } => wind.normalize(),
+        SceneComponent::Director { director } => director.normalize(),
+        SceneComponent::Vfx { settings } => settings.normalize(),
+        SceneComponent::Post { post } => post.normalize(),
+        SceneComponent::Display { display } => display.normalize(),
+        SceneComponent::Sound { mixer } => {
+            mixer.master_volume = blockloom_core::sound::clamp_gain(mixer.master_volume);
+            mixer.music_volume = blockloom_core::sound::clamp_gain(mixer.music_volume);
+            mixer.sfx_volume = blockloom_core::sound::clamp_gain(mixer.sfx_volume);
+        }
+        _ => {}
+    }
     let mut s = lock(state)?;
     let target = {
         let project = s.project().ok_or("No project is open".to_string())?;
@@ -904,7 +946,6 @@ pub(crate) fn set_scene_component(
         }
     };
     let old_mode = s.project().map(|p| p.world.mode);
-    let is_active = s.project().is_some_and(|p| p.active_scene == target);
     push_undo(&mut s);
     let name = component.name().to_string();
     let new_mode = {
@@ -914,12 +955,13 @@ pub(crate) fn set_scene_component(
         let Some(scene) = project.scene_mut(&target) else {
             return Err("Scene not found".to_string());
         };
-        SceneComponents(vec![component]).apply_to_world(&mut scene.world);
+        if let SceneComponent::Dimension { mode } = component {
+            scene.switch_mode(mode);
+        } else {
+            SceneComponents(vec![component]).apply_to_world(&mut scene.world);
+        }
         scene.world.mode
     };
-    if is_active {
-        s.selected_actor = None;
-    }
     auto_save(&s);
     {
         let _ = (old_mode, new_mode);
@@ -1089,11 +1131,7 @@ pub(crate) fn set_fixed_rate(
     Ok(())
 }
 
-pub(crate) fn set_navigation(
-    state: &SharedState,
-    app: &AppHandle,
-    navigation: NavSettings,
-) -> Result<(), String> {
+fn validate_navigation(navigation: &NavSettings) -> Result<(), String> {
     if navigation.links.len() > 16 || navigation.areas.len() > 8 {
         return Err("Too many navigation links or areas".into());
     }
@@ -1107,6 +1145,15 @@ pub(crate) fn set_navigation(
     {
         return Err("Navigation coordinates and costs must be finite and costs nonnegative".into());
     }
+    Ok(())
+}
+
+pub(crate) fn set_navigation(
+    state: &SharedState,
+    app: &AppHandle,
+    navigation: NavSettings,
+) -> Result<(), String> {
+    validate_navigation(&navigation)?;
     let mut s = lock(state)?;
     push_undo(&mut s);
     if let Some(project) = s.project_mut() {
@@ -1162,20 +1209,30 @@ pub(crate) fn set_scene_lighting_asset(
     state: &SharedState,
     app: &AppHandle,
     path: String,
+    scene_id: Option<String>,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
-    let mut lighting = if path.is_empty() {
+    let target = scene_id.filter(|id| !id.is_empty()).unwrap_or_else(|| {
         s.project()
-            .ok_or("No project is open")?
-            .world
-            .lighting
-            .clone()
+            .map(|p| p.active_scene.clone())
+            .unwrap_or_default()
+    });
+    let current = s
+        .project()
+        .and_then(|p| p.scene(&target))
+        .ok_or("Scene not found")?;
+    let mut lighting = if path.is_empty() {
+        current.world.lighting.clone()
     } else {
         assets::read_lighting(&project_dir(&s)?, &path)?
     };
     lighting.asset = assets::normalize(&path).ok_or("Invalid asset path")?;
     push_undo(&mut s);
-    s.project_mut().ok_or("No project is open")?.world.lighting = lighting;
+    s.project_mut()
+        .and_then(|p| p.scene_mut(&target))
+        .ok_or("Scene not found")?
+        .world
+        .lighting = lighting;
     auto_save(&s);
     sync_runtime(&mut s);
     emit(app, &s);
@@ -1214,6 +1271,7 @@ pub(crate) fn set_lighting(
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     push_undo(&mut s);
+    let sanitized = sanitize_lighting(lighting.clone())?;
     if let Some(project) = s.project_mut() {
         // A sky path here is the old spelling of an HDRI sky.
         if !lighting.sky.trim().is_empty() {
@@ -1223,7 +1281,7 @@ pub(crate) fn set_lighting(
             sky.hdri.brightness = lighting.sky_brightness;
             sky.normalize();
         }
-        project.world.lighting = sanitize_lighting(lighting)?;
+        project.world.lighting = sanitized;
         // Editing inline settings detaches them from the shared asset.
         project.world.lighting.asset.clear();
     }

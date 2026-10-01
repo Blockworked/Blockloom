@@ -61,6 +61,10 @@ build *args: prepare-patched-deps
 run: build
     {{TARGET}}
 
+# Build the editor and runtime, then watch QML edits through Qt 6.12.
+qml-preview *args: prepare-patched-deps
+    {{if os() == "windows" { "python" } else { "python3" }}} scripts/qml-preview.py {{args}}
+
 # The browser dev loop: the real backend behind an HTTP bridge, plus Vite.
 # Run these in two terminals, then open http://localhost:1420.
 dev-backend: prepare-patched-deps
@@ -173,6 +177,8 @@ web-tools: prepare-patched-deps
 web-player profile="dist": prepare-patched-deps
     #!/usr/bin/env bash
     set -euo pipefail
+    # Keep host tools separate from native dist builds so both can run at once.
+    export CARGO_BUILD_BUILD_DIR="${CARGO_BUILD_BUILD_DIR:-${CARGO_TARGET_DIR:-target}/web-build}"
     cargo build -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown --profile {{profile}}
     command -v wasm-bindgen >/dev/null || { echo "need wasm-bindgen-cli: just web-tools"; exit 1; }
     out="${CARGO_TARGET_DIR:-target}/release/players/wasm32-unknown-unknown"
@@ -369,7 +375,43 @@ uninstall:
     sudo rm -rf {{LIBDIR}}
     sudo rm -f /usr/bin/blockloom /usr/share/applications/com.blockworked.Blockloom.desktop /usr/share/applications/blockloom.desktop /usr/share/icons/hicolor/256x256/apps/blockloom.png
 
-# Reinstall the editor plus the players a built game ships, so an installed
-# Build dialog can offer this machine's native target and the web target.
+# Reinstall the editor and runtime, keeping the already staged game players.
 [linux]
-replace: build player web-player uninstall install
+replace-fast: build install
+
+# Build the editor and both players concurrently, then reinstall on success.
+# The optional jobs argument sets each build's Cargo job limit.
+[linux]
+replace jobs="": prepare-patched-deps
+    #!/usr/bin/env bash
+    set -euo pipefail
+    jobs="{{jobs}}"
+    if [ -z "$jobs" ]; then
+        jobs="${CARGO_BUILD_JOBS:-$(( ($(nproc) + 2) / 3 ))}"
+    fi
+    if [[ ! "$jobs" =~ ^[1-9][0-9]*$ ]]; then
+        echo "jobs must be a positive integer (per build)" >&2
+        exit 1
+    fi
+    export CARGO_BUILD_JOBS="$jobs"
+    echo "Building editor, native player and web player concurrently ($jobs Cargo jobs each)."
+    # Preparation already ran above; parallel prerequisites would share its lock.
+    just --no-deps build &
+    editor_pid=$!
+    just --no-deps player &
+    native_pid=$!
+    just --no-deps web-player &
+    web_pid=$!
+    failed=0
+    for pid in "$editor_pid" "$native_pid" "$web_pid"; do
+        if wait "$pid"; then
+            :
+        else
+            failed=1
+        fi
+    done
+    if [ "$failed" -ne 0 ]; then
+        echo "A build failed; skipping reinstall." >&2
+        exit 1
+    fi
+    just uninstall install
