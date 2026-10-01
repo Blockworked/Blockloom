@@ -4958,7 +4958,7 @@ mod shm_tests {
             }) {
                 panic!("the world reported an error: {transcripts:?}");
             }
-            if waited % 100 == 0 {
+            if waited.is_multiple_of(100) {
                 let frame = exchange.shm();
                 eprintln!(
                     "still waiting: shm generation {}, {}x{}, {} reports so far",
