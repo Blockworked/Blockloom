@@ -8,8 +8,10 @@
 //! the authority, its meshes are disposable.
 //!
 //! Ops: `world.start`, `world.stop`, `set`, `fill`, `sphere`, `generate`,
-//! `get`, `height`, `count`. Cell coordinates are whole numbers from one
-//! corner of the world; a material is its id or its name (`air` or 0 clears).
+//! `get`, `height`, `count`, `cast`, `break`, `place`. Cell coordinates are
+//! whole numbers from one corner of the world; a material is its id or its
+//! name (`air` or 0 clears). A ray (`cast`, `break`, `place`) is given in
+//! world units, like the cubes are drawn.
 //!
 //! Edits last as long as the run: stopping the game starts the next from the
 //! generated world again.
@@ -17,6 +19,7 @@
 mod grid;
 mod mesher;
 mod palette;
+mod ray;
 mod terrain;
 
 use blockloom_plugin_api::mesh::MeshData;
@@ -206,6 +209,21 @@ fn cell(args: &Value) -> Result<[i32; 3], Error> {
     Ok([int(args, "x")?, int(args, "y")?, int(args, "z")?])
 }
 
+fn number(args: &Value, key: &str) -> Result<f64, Error> {
+    args[key]
+        .as_f64()
+        .filter(|v| v.is_finite() && v.abs() < 1e9)
+        .ok_or_else(|| Error::bad_argument(format!("{key} must be a number")))
+}
+
+fn triple(args: &Value, keys: [&str; 3]) -> Result<[f64; 3], Error> {
+    Ok([
+        number(args, keys[0])?,
+        number(args, keys[1])?,
+        number(args, keys[2])?,
+    ])
+}
+
 impl Voxel {
     fn world(&mut self) -> Result<&mut World, Error> {
         self.world
@@ -311,6 +329,74 @@ impl Voxel {
         Ok(Voxel::edited(world, changed))
     }
 
+    /// Casts the ray an op's arguments describe, in world units.
+    fn cast_ray(&mut self, args: &Value) -> Result<(Option<ray::Hit>, f32), Error> {
+        let origin = triple(args, ["x", "y", "z"])?;
+        let dir = triple(args, ["dx", "dy", "dz"])?;
+        let reach = args
+            .get("reach")
+            .filter(|r| !r.is_null())
+            .map_or(Ok(32.0), |_| number(args, "reach"))?;
+        let world = self.world()?;
+        let voxel = f64::from(world.voxel);
+        let cells = [0, 1, 2].map(|a| ((origin[a] - f64::from(world.origin[a])) / voxel) as f32);
+        let hit = ray::cast(
+            &world.grid,
+            cells,
+            dir.map(|d| d as f32),
+            (reach / voxel) as f32,
+        );
+        Ok((hit, world.voxel))
+    }
+
+    fn cast(&mut self, args: &Value) -> Result<Value, Error> {
+        let (hit, voxel) = self.cast_ray(args)?;
+        let world = self.world()?;
+        Ok(match hit {
+            None => json!({"hit": false, "distance": -1.0, "value": -1.0}),
+            Some(hit) => {
+                let distance = round(hit.distance * voxel);
+                json!({
+                    "hit": true,
+                    "cell": hit.cell,
+                    "before": hit.before(),
+                    "normal": hit.normal,
+                    "material": world.grid.get(hit.cell),
+                    "distance": distance,
+                    "value": distance,
+                })
+            }
+        })
+    }
+
+    /// Breaks the first solid cell along a ray, or builds on the empty one
+    /// in front of it.
+    fn dig(&mut self, args: &Value, place: bool) -> Result<Value, Error> {
+        let material = if place {
+            let world = self.world()?;
+            Some(
+                world
+                    .palette
+                    .id_of(&args["material"])
+                    .map_err(Error::bad_argument)?,
+            )
+        } else {
+            None
+        };
+        let (hit, _) = self.cast_ray(args)?;
+        let world = self.world()?;
+        let target = hit.and_then(|hit| match material {
+            None => Some(hit.cell),
+            // A ray that starts inside a cell has no face to build against.
+            Some(_) => (hit.normal != [0; 3]).then(|| hit.before()),
+        });
+        let changed = target.map_or(0, |at| u64::from(world.grid.set(at, material.unwrap_or(0))));
+        let mut answer = Voxel::edited(world, changed);
+        answer["hit"] = json!(hit.is_some());
+        answer["cell"] = json!(target);
+        Ok(answer)
+    }
+
     fn regenerate(&mut self, args: &Value) -> Result<Value, Error> {
         let world = self.world()?;
         let preset = args["preset"].as_str().unwrap_or("island");
@@ -352,6 +438,9 @@ impl Plugin for Voxel {
                 let top = self.world()?.grid.height_at(x, z).map_or(-1, i64::from);
                 Ok(json!({"height": top, "value": top}))
             }
+            "cast" => self.cast(&args),
+            "break" => self.dig(&args, false),
+            "place" => self.dig(&args, true),
             "count" => {
                 let world = self.world()?;
                 Ok(json!({

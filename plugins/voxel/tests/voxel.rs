@@ -133,10 +133,12 @@ fn the_package_schema_is_valid_and_its_blocks_resolve() {
     let contributions = contributions();
     contributions.check_definition().unwrap();
     assert_eq!(contributions.resources.len(), 1);
-    assert_eq!(blocks().len(), 6);
+    assert_eq!(blocks().len(), 9);
     // Every statement and reporter has the op it names.
     let ops: BTreeSet<_> = blocks().into_iter().map(|b| b.op).collect();
-    for op in ["set", "fill", "sphere", "generate", "get", "height"] {
+    for op in [
+        "set", "fill", "sphere", "generate", "get", "height", "cast", "break", "place",
+    ] {
         assert!(ops.contains(op), "{op}");
     }
 }
@@ -251,6 +253,52 @@ fn a_run_draws_the_world_and_edits_redraw_only_what_they_touch() {
             .unwrap(),
         json!(-1)
     );
+}
+
+#[test]
+fn rays_measure_break_and_build_in_world_units() {
+    let mut world = hosted(CodeModule::Native(module()));
+    let mut scene = Scene::default();
+    scene.apply(world.start(&resources(small_flat())));
+    // Cells are half a unit from (10, 0, -4); the floor's top is y 2.5.
+    let ray = |reach: f64| {
+        [
+            json!(12.2),
+            json!(6),
+            json!(0.2),
+            json!(0),
+            json!(-1),
+            json!(0),
+            json!(reach),
+        ]
+    };
+    let distance = world
+        .read(ID, "voxel_distance", &ray(10.0), "me")
+        .unwrap()
+        .as_f64()
+        .unwrap();
+    assert!((distance - 3.5).abs() < 0.01, "{distance}");
+    let short = world.read(ID, "voxel_distance", &ray(2.0), "me").unwrap();
+    assert_eq!(short.as_f64().unwrap(), -1.0);
+
+    // Breaking opens the cell the ray hit: x (12.2-10)/0.5 = 4, z 8.
+    scene.apply(world.run_block(ID, "break_voxel", &ray(10.0), "me"));
+    let at = |world: &mut WorldPlugins, y: i64| {
+        world
+            .read(ID, "voxel_at", &[json!(4), json!(y), json!(8)], "me")
+            .unwrap()
+    };
+    assert_eq!(at(&mut world, 4), json!(0));
+    assert_eq!(at(&mut world, 3), json!(2));
+    // Building puts a cube on the cell now in front of the ray.
+    let mut place = ray(10.0).to_vec();
+    place.push(json!("wood"));
+    scene.apply(world.run_block(ID, "place_voxel", &place, "me"));
+    assert_eq!(at(&mut world, 4), json!(5));
+    assert_eq!(at(&mut world, 3), json!(2));
+    // A ray that meets nothing changes nothing.
+    place[0] = json!(500);
+    assert!(world.run_block(ID, "place_voxel", &place, "me").is_empty());
 }
 
 #[test]
@@ -375,7 +423,7 @@ fn the_sealed_package_runs_in_the_portable_executor() {
     package::seal(&root).unwrap();
     let package = Package::load(&root).unwrap();
     assert_eq!(package.manifest.id, ID);
-    assert_eq!(package.contributions.blocks.len(), 6);
+    assert_eq!(package.contributions.blocks.len(), 9);
 
     let entry = package.manifest.runtime.portable.clone().unwrap();
     let wasm_module = portable(&root.join(&entry.module), &entry);

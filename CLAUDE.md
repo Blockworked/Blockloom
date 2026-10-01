@@ -464,9 +464,11 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `lib.rs` answers every op with the meshes that changed (`chunk/x/y/z`, and
   `.../glow<id>` for emissive ones, whose mesh `emission` is color times the
   palette's intensity) plus `remove_mesh` for ones that went away. Ops `set`,
-  `fill`, `sphere`, `generate` (blocks and commands), reporters `get`/`height`;
-  edits last for the run. The package schema declares the resource, commands
-  and six blocks (a material is a dropdown of the built-in names; ids work
+  `fill`, `sphere`, `generate` (blocks and commands), reporters `get`/`height`,
+  and rays in world units (`ray.rs`, a cell-grid walk: `cast` reports the cell,
+  the empty cell before it, the face normal and distance; `break` and `place`
+  edit along one); edits last for the run. The package schema declares the
+  resource, commands and nine blocks (a material is a dropdown of the built-in names; ids work
   too). Measured: the default 64x32x64 island is drawn from the wasm module in
   under a second, inside its 10 s call budget. Not yet: smooth terrain, shaped
   cells, edits saved or applied to the project, streaming and LOD, instancing,

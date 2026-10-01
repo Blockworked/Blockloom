@@ -322,6 +322,12 @@ and `com.blockworked.voxel` uses it. Decisions:
 - Generation is deterministic from (seed, coordinates) only, so load order
   cannot change a world. Edits are run-local and the next Play starts from the
   generated base, matching how the engine treats play mutations.
+- Rays take world units, not cells: a block author aims from an actor's
+  position, so the plugin converts through the origin and voxel size. A cell
+  walk (not a physics query) keeps the answer exact for the grid, including
+  cells whose chunk meshes have not been rebuilt, and it works without a
+  collider (`solid` off). `place` builds only against a face, so a ray that
+  starts inside a cube does nothing.
 - Portable first: the default 64x32x64 island is generated, meshed and
   serialised by the wasm module in about 0.9 s on this machine (release wasm,
   debug host), with a 10 s manifest budget. A larger world wants the native

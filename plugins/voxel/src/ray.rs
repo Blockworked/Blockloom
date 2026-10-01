@@ -1,0 +1,169 @@
+//! Ray casts through the cells: a grid walk (Amanatides and Woo) in cell
+//! units, so every cell the ray crosses is visited once, in order.
+
+use crate::grid::Grid;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Hit {
+    /// The first solid cell the ray enters.
+    pub cell: [i32; 3],
+    /// The face it entered through, pointing back at the ray (zero when the
+    /// ray starts inside the cell).
+    pub normal: [i32; 3],
+    /// How far along the ray, in cell units.
+    pub distance: f32,
+}
+
+impl Hit {
+    /// The empty cell the ray was in just before the hit.
+    pub fn before(&self) -> [i32; 3] {
+        [0, 1, 2].map(|a| self.cell[a] + self.normal[a])
+    }
+}
+
+/// Casts from `origin` along `dir` (both in cell units, `dir` need not be
+/// unit length) for at most `reach` cells of distance.
+pub fn cast(grid: &Grid, origin: [f32; 3], dir: [f32; 3], reach: f32) -> Option<Hit> {
+    let len = dir.iter().map(|d| d * d).sum::<f32>().sqrt();
+    if len.is_nan() || len <= 0.0 || !reach.is_finite() || reach <= 0.0 {
+        return None;
+    }
+    let dir = dir.map(|d| d / len);
+    let size = grid.size().map(|s| s as f32);
+    // Clip to the world's box, so a ray from outside still finds it.
+    let (mut near, mut far) = (0.0f32, reach);
+    for a in 0..3 {
+        if dir[a].abs() < 1e-9 {
+            if origin[a] < 0.0 || origin[a] >= size[a] {
+                return None;
+            }
+            continue;
+        }
+        let (t0, t1) = ((0.0 - origin[a]) / dir[a], (size[a] - origin[a]) / dir[a]);
+        near = near.max(t0.min(t1));
+        far = far.min(t0.max(t1));
+    }
+    if near > far {
+        return None;
+    }
+    // Start a hair inside so the first cell is the one the ray enters.
+    let start = [0, 1, 2].map(|a| origin[a] + dir[a] * (near + 1e-4));
+    let max = grid.size().map(|s| s - 1);
+    let mut cell = [0, 1, 2].map(|a| (start[a].floor() as i32).clamp(0, max[a]));
+    let step = dir.map(|d| if d > 0.0 { 1 } else { -1 });
+    let mut next = [0.0f32; 3];
+    let mut delta = [f32::INFINITY; 3];
+    for a in 0..3 {
+        if dir[a].abs() >= 1e-9 {
+            let edge = if step[a] > 0 { cell[a] + 1 } else { cell[a] } as f32;
+            next[a] = (edge - origin[a]) / dir[a];
+            delta[a] = 1.0 / dir[a].abs();
+        } else {
+            next[a] = f32::INFINITY;
+        }
+    }
+    let mut t = near;
+    let mut normal = [0; 3];
+    loop {
+        if grid.get(cell) != 0 {
+            return Some(Hit {
+                cell,
+                normal,
+                distance: t,
+            });
+        }
+        let axis = (0..3)
+            .min_by(|&a, &b| next[a].total_cmp(&next[b]))
+            .expect("three axes");
+        t = next[axis];
+        if t > far {
+            return None;
+        }
+        cell[axis] += step[axis];
+        if !grid.contains(cell) {
+            return None;
+        }
+        next[axis] += delta[axis];
+        normal = [0; 3];
+        normal[axis] = -step[axis];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::palette::STONE;
+
+    fn floor() -> Grid {
+        let mut grid = Grid::new([32, 32, 32]);
+        for x in 0..32 {
+            for z in 0..32 {
+                grid.set([x, 4, z], STONE);
+            }
+        }
+        grid
+    }
+
+    #[test]
+    fn a_ray_down_hits_the_floor_top() {
+        let hit = cast(&floor(), [5.5, 20.0, 7.5], [0.0, -1.0, 0.0], 100.0).unwrap();
+        assert_eq!(hit.cell, [5, 4, 7]);
+        assert_eq!(hit.normal, [0, 1, 0]);
+        assert_eq!(hit.before(), [5, 5, 7]);
+        assert!((hit.distance - 15.0).abs() < 0.01, "{}", hit.distance);
+    }
+
+    #[test]
+    fn reach_cuts_a_ray_short() {
+        assert!(cast(&floor(), [5.5, 20.0, 7.5], [0.0, -1.0, 0.0], 10.0).is_none());
+        assert!(cast(&floor(), [5.5, 20.0, 7.5], [0.0, -1.0, 0.0], 15.5).is_some());
+    }
+
+    #[test]
+    fn a_ray_from_below_enters_through_the_underside() {
+        let hit = cast(&floor(), [5.5, 0.5, 7.5], [0.0, 1.0, 0.0], 100.0).unwrap();
+        assert_eq!(hit.cell, [5, 4, 7]);
+        assert_eq!(hit.normal, [0, -1, 0]);
+    }
+
+    #[test]
+    fn a_slanted_ray_and_a_ray_from_outside_the_world() {
+        let hit = cast(&floor(), [-10.0, 20.0, 8.5], [1.0, -1.0, 0.0], 100.0).unwrap();
+        // Down 16 from y 20 to the floor's top at y 5: x has moved to 6.
+        assert_eq!(hit.cell[1], 4);
+        assert_eq!(hit.cell[0], 5);
+        assert_eq!(hit.cell[2], 8);
+        // Pointing away from the world, nothing.
+        assert!(cast(&floor(), [-10.0, 20.0, 8.5], [-1.0, 0.0, 0.0], 100.0).is_none());
+    }
+
+    #[test]
+    fn a_wall_gives_a_sideways_normal() {
+        let mut grid = Grid::new([16, 16, 16]);
+        grid.set([10, 3, 3], STONE);
+        let hit = cast(&grid, [1.5, 3.5, 3.5], [1.0, 0.0, 0.0], 50.0).unwrap();
+        assert_eq!(hit.cell, [10, 3, 3]);
+        assert_eq!(hit.normal, [-1, 0, 0]);
+        assert_eq!(hit.before(), [9, 3, 3]);
+        let back = cast(&grid, [15.5, 3.5, 3.5], [-1.0, 0.0, 0.0], 50.0).unwrap();
+        assert_eq!(back.normal, [1, 0, 0]);
+    }
+
+    #[test]
+    fn starting_inside_a_cell_hits_it_at_once() {
+        let hit = cast(&floor(), [5.5, 4.5, 7.5], [0.3, -0.2, 0.9], 10.0).unwrap();
+        assert_eq!(hit.cell, [5, 4, 7]);
+        assert_eq!(hit.normal, [0, 0, 0]);
+        assert_eq!(hit.distance, 0.0);
+    }
+
+    #[test]
+    fn empty_worlds_and_bad_directions_miss() {
+        let grid = Grid::new([16, 16, 16]);
+        assert!(cast(&grid, [1.0, 1.0, 1.0], [1.0, 0.2, 0.1], 100.0).is_none());
+        assert!(cast(&floor(), [1.0, 9.0, 1.0], [0.0, 0.0, 0.0], 100.0).is_none());
+        assert!(cast(&floor(), [1.0, 9.0, 1.0], [0.0, -1.0, 0.0], 0.0).is_none());
+        // Parallel to the floor and above it, never meets it.
+        assert!(cast(&floor(), [1.0, 9.0, 1.0], [1.0, 0.0, 0.0], 100.0).is_none());
+    }
+}

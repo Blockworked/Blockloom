@@ -93,6 +93,49 @@
       "action": {"do": "module", "op": "height"}
     },
     {
+      "name": "voxel_distance",
+      "summary": "Answer how far along a ray the first solid cube is, or -1.",
+      "args": [
+        {"name": "x", "type": "number", "default": 0},
+        {"name": "y", "type": "number", "default": 0},
+        {"name": "z", "type": "number", "default": 0},
+        {"name": "dx", "type": "number", "default": 0},
+        {"name": "dy", "type": "number", "default": -1},
+        {"name": "dz", "type": "number", "default": 0},
+        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8}
+      ],
+      "action": {"do": "module", "op": "cast"}
+    },
+    {
+      "name": "break_voxel",
+      "summary": "Remove the first solid cube along a ray.",
+      "args": [
+        {"name": "x", "type": "number", "default": 0},
+        {"name": "y", "type": "number", "default": 0},
+        {"name": "z", "type": "number", "default": 0},
+        {"name": "dx", "type": "number", "default": 0},
+        {"name": "dy", "type": "number", "default": -1},
+        {"name": "dz", "type": "number", "default": 0},
+        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8}
+      ],
+      "action": {"do": "module", "op": "break"}
+    },
+    {
+      "name": "place_voxel",
+      "summary": "Build a cube against the first solid cube a ray meets.",
+      "args": [
+        {"name": "x", "type": "number", "default": 0},
+        {"name": "y", "type": "number", "default": 0},
+        {"name": "z", "type": "number", "default": 0},
+        {"name": "dx", "type": "number", "default": 0},
+        {"name": "dy", "type": "number", "default": -1},
+        {"name": "dz", "type": "number", "default": 0},
+        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8},
+        {"name": "material", "type": "text", "default": "stone"}
+      ],
+      "action": {"do": "module", "op": "place"}
+    },
+    {
       "name": "voxel_stats",
       "summary": "Answer how many cells are solid and how many chunks are drawn.",
       "action": {"do": "module", "op": "count"}
@@ -181,6 +224,59 @@
       "returns": {"type": "int"},
       "command": "ground_height",
       "help": "The highest solid cell in that column, or -1 when it is all air."
+    },
+    {
+      "type_id": "break_voxel",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "break voxel from x {x} y {y} z {z} toward x {dx} y {dy} z {dz} within {reach}",
+      "slots": [
+        {"name": "x", "type": "number", "default": 0},
+        {"name": "y", "type": "number", "default": 0},
+        {"name": "z", "type": "number", "default": 0},
+        {"name": "dx", "type": "number", "default": 0},
+        {"name": "dy", "type": "number", "default": -1},
+        {"name": "dz", "type": "number", "default": 0},
+        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8}
+      ],
+      "command": "break_voxel",
+      "help": "Removes the first solid cube the ray meets; the chunk is redrawn."
+    },
+    {
+      "type_id": "place_voxel",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "place {material} from x {x} y {y} z {z} toward x {dx} y {dy} z {dz} within {reach}",
+      "slots": [
+        {"name": "x", "type": "number", "default": 0},
+        {"name": "y", "type": "number", "default": 0},
+        {"name": "z", "type": "number", "default": 0},
+        {"name": "dx", "type": "number", "default": 0},
+        {"name": "dy", "type": "number", "default": -1},
+        {"name": "dz", "type": "number", "default": 0},
+        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8},
+        {"name": "material", "type": "choice", "options": ["stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}
+      ],
+      "command": "place_voxel",
+      "help": "Builds in the empty cell in front of the first solid cube the ray meets."
+    },
+    {
+      "type_id": "voxel_distance",
+      "kind": "reporter",
+      "category": "Voxels",
+      "label": "distance to voxel from x {x} y {y} z {z} toward x {dx} y {dy} z {dz} within {reach}",
+      "slots": [
+        {"name": "x", "type": "number", "default": 0},
+        {"name": "y", "type": "number", "default": 0},
+        {"name": "z", "type": "number", "default": 0},
+        {"name": "dx", "type": "number", "default": 0},
+        {"name": "dy", "type": "number", "default": -1},
+        {"name": "dz", "type": "number", "default": 0},
+        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8}
+      ],
+      "returns": {"type": "number"},
+      "command": "voxel_distance",
+      "help": "How far the first solid cube is along the ray, in world units, or -1 when the ray meets none."
     }
   ]
 }
