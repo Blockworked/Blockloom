@@ -9,7 +9,7 @@
 use crate::input::ActionSense;
 use crate::sound::SoundBus;
 use crate::value::Evaluated;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 /// One actor, as its own blocks, its script, and other actors can see it.
@@ -182,6 +182,60 @@ pub struct Sensors {
     pub cutscene_name: String,
     /// Seconds into the playing cutscene. What `cutscene time` reads.
     pub cutscene_time: f32,
+    /// Actors by name, built on demand. Leave it to `Default`.
+    pub names: NameIndex,
+}
+
+/// How many name lookups a snapshot answers by scanning before it builds an
+/// index: one lookup is cheaper walked than hashed, a crowd of actors each
+/// asking about one is not.
+const SCAN_LOOKUPS: u32 = 2;
+
+/// The actors of one snapshot by lower-cased name: how many answer to it, and
+/// the smallest id among them, so a name shared by clones picks one actor
+/// every time. Rebuilt when the number of actors changes.
+#[derive(Debug, Clone, Default)]
+pub struct NameIndex {
+    lookups: Cell<u32>,
+    built: RefCell<Option<(usize, NamedActors)>>,
+}
+
+/// Lower-cased name -> (how many answer to it, the smallest id among them).
+type NamedActors = HashMap<String, (usize, String)>;
+
+impl NameIndex {
+    /// Runs `f` on the index of `actors`, or `None` while scanning is still
+    /// the cheaper way to answer.
+    fn with<R>(
+        &self,
+        actors: &HashMap<String, ActorSense>,
+        f: impl FnOnce(&NamedActors) -> R,
+    ) -> Option<R> {
+        let seen = self.lookups.get();
+        self.lookups.set(seen.saturating_add(1));
+        let mut built = self.built.borrow_mut();
+        if built.as_ref().is_none_or(|(len, _)| *len != actors.len()) {
+            if seen < SCAN_LOOKUPS {
+                return None;
+            }
+            let mut index = NamedActors::new();
+            for (id, actor) in actors {
+                match index.get_mut(&actor.name.to_ascii_lowercase()) {
+                    Some((count, first)) => {
+                        *count += 1;
+                        if id < first {
+                            first.clone_from(id);
+                        }
+                    }
+                    None => {
+                        index.insert(actor.name.to_ascii_lowercase(), (1, id.clone()));
+                    }
+                }
+            }
+            *built = Some((actors.len(), index));
+        }
+        built.as_ref().map(|(_, index)| f(index))
+    }
 }
 
 /// The shape of [`AtmosphereSense`]. Bumped when a field changes meaning or
@@ -418,10 +472,17 @@ impl Sensors {
         if name.is_empty() {
             return self.actors.len();
         }
-        self.actors
-            .values()
-            .filter(|actor| actor.name.eq_ignore_ascii_case(name))
-            .count()
+        let indexed = self.names.with(&self.actors, |index| {
+            index
+                .get(&name.to_ascii_lowercase())
+                .map_or(0, |(count, _)| *count)
+        });
+        indexed.unwrap_or_else(|| {
+            self.actors
+                .values()
+                .filter(|actor| actor.name.eq_ignore_ascii_case(name))
+                .count()
+        })
     }
 
     /// Looks an actor up by id first, then by name (case-insensitively), so a
@@ -430,9 +491,18 @@ impl Sensors {
         if let Some(actor) = self.actors.get(id_or_name) {
             return Some(actor);
         }
-        self.actors
-            .values()
-            .find(|actor| actor.name.eq_ignore_ascii_case(id_or_name))
+        let indexed = self.names.with(&self.actors, |index| {
+            index
+                .get(&id_or_name.to_ascii_lowercase())
+                .and_then(|(_, id)| self.actors.get(id))
+        });
+        match indexed {
+            Some(found) => found,
+            None => self
+                .actors
+                .values()
+                .find(|actor| actor.name.eq_ignore_ascii_case(id_or_name)),
+        }
     }
 
     /// The clock a script should read: the world's, or the wall's when the
@@ -449,8 +519,10 @@ thread_local! {
     /// only ever let unrelated threads (or tests) interfere with each other.
     static SENSORS: RefCell<Sensors> = RefCell::new(Sensors::default());
 
-    /// Actor id whose script is currently being stepped.
-    static CURRENT_ACTOR: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// Ids of the scripts being stepped, innermost last. Only the first
+    /// `depth` are live; the rest keep their buffers so entering a script
+    /// allocates nothing once warm.
+    static CURRENT_ACTOR: RefCell<ActorStack> = const { RefCell::new(ActorStack::new()) };
 
     /// Whether that script was started by the interface. Kept beside the
     /// actor for the same reason: the operators are plain `fn`s with no
@@ -458,10 +530,53 @@ thread_local! {
     static UI_STRAND: RefCell<bool> = const { RefCell::new(false) };
 }
 
+/// Actor ids of nested `with_script` calls, buffers reused across calls.
+struct ActorStack {
+    ids: Vec<String>,
+    depth: usize,
+}
+
+impl ActorStack {
+    const fn new() -> Self {
+        Self {
+            ids: Vec::new(),
+            depth: 0,
+        }
+    }
+
+    fn push(&mut self, id: &str) {
+        if let Some(slot) = self.ids.get_mut(self.depth) {
+            slot.clear();
+            slot.push_str(id);
+        } else {
+            self.ids.push(id.to_string());
+        }
+        self.depth += 1;
+    }
+
+    fn pop(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
+    }
+
+    fn top(&self) -> Option<&str> {
+        self.depth
+            .checked_sub(1)
+            .and_then(|i| self.ids.get(i))
+            .map(String::as_str)
+    }
+}
+
 /// Replaces this thread's snapshot - the host calls it once a frame, before
 /// stepping any script.
 pub fn publish(sensors: Sensors) {
     SENSORS.with(|slot| *slot.borrow_mut() = sensors);
+}
+
+/// Hands the published actors back to the host, leaving none, so a frame's
+/// snapshot can be refreshed in place instead of rebuilt from nothing. The
+/// next [`publish`] puts them back.
+pub fn take_actors() -> HashMap<String, ActorSense> {
+    SENSORS.with(|slot| std::mem::take(&mut slot.borrow_mut().actors))
 }
 
 /// Samples the retained interface before either block scheduler runs.
@@ -519,17 +634,34 @@ pub fn with_actor<R>(actor_id: &str, f: impl FnOnce() -> R) -> R {
 /// The same, also saying whether the interface started this script - which
 /// is what decides the clock `timer` answers with.
 pub fn with_script<R>(actor_id: &str, ui: bool, f: impl FnOnce() -> R) -> R {
-    let previous = CURRENT_ACTOR.with(|cell| cell.replace(Some(actor_id.to_string())));
+    CURRENT_ACTOR.with(|cell| cell.borrow_mut().push(actor_id));
     let was_ui = UI_STRAND.with(|cell| cell.replace(ui));
     let result = f();
-    CURRENT_ACTOR.with(|cell| *cell.borrow_mut() = previous);
+    CURRENT_ACTOR.with(|cell| cell.borrow_mut().pop());
     UI_STRAND.with(|cell| *cell.borrow_mut() = was_ui);
     result
 }
 
 /// The actor whose script is being stepped, if any.
 pub fn current_actor() -> Option<String> {
-    CURRENT_ACTOR.with(|cell| cell.borrow().clone())
+    CURRENT_ACTOR.with(|cell| cell.borrow().top().map(str::to_string))
+}
+
+/// Runs `f` on the stepping actor's own snapshot entry, borrowed rather than
+/// copied. Errors say why there is none: a reporter previewed in the editor
+/// has no actor, and a deleted one is gone from the world.
+pub fn with_me<R>(f: impl FnOnce(&ActorSense) -> R) -> Result<R, String> {
+    CURRENT_ACTOR.with(|current| {
+        let current = current.borrow();
+        let id = current.top().ok_or("no actor is running this script")?;
+        read(|sensors| {
+            sensors
+                .actors
+                .get(id)
+                .map(f)
+                .ok_or_else(|| "this actor isn't in the running world".to_string())
+        })
+    })
 }
 
 /// Whether the script being stepped was started by the interface.
@@ -624,6 +756,86 @@ mod tests {
         assert!(sensors.find("a1").is_some());
         assert!(sensors.find("player").is_some());
         assert!(sensors.find("Enemy").is_none());
+    }
+
+    fn crowd(names: &[(&str, &str)]) -> Sensors {
+        let mut sensors = Sensors::default();
+        for (id, name) in names {
+            sensors.actors.insert(
+                id.to_string(),
+                ActorSense {
+                    name: name.to_string(),
+                    ..Default::default()
+                },
+            );
+        }
+        sensors
+    }
+
+    #[test]
+    fn the_name_index_answers_what_a_scan_does() {
+        let sensors = crowd(&[
+            ("c2", "Ball"),
+            ("c1", "ball"),
+            ("a1", "Player"),
+            ("c3", "Ball"),
+        ]);
+        // The first lookups scan, the later ones go through the index; the
+        // answers stay the same, and a shared name always picks one actor.
+        for round in 0..6 {
+            assert_eq!(sensors.count_named("BALL"), 3, "round {round}");
+            assert_eq!(sensors.count_named("nobody"), 0, "round {round}");
+            assert_eq!(sensors.count_named(""), 4, "round {round}");
+            assert_eq!(
+                sensors.find("player").map(|a| a.name.as_str()),
+                Some("Player")
+            );
+            assert!(sensors.find("nobody").is_none(), "round {round}");
+            if round >= 2 {
+                assert_eq!(sensors.find("ball").unwrap().name, "ball", "smallest id");
+            }
+        }
+        assert_eq!(sensors.find("c3").unwrap().name, "Ball", "ids win");
+    }
+
+    #[test]
+    fn the_name_index_follows_actors_added_after_it_was_built() {
+        let mut sensors = crowd(&[("a1", "Player")]);
+        for _ in 0..4 {
+            assert!(sensors.find("Enemy").is_none());
+        }
+        sensors.actors.insert(
+            "a2".to_string(),
+            ActorSense {
+                name: "Enemy".to_string(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            sensors.find("enemy").map(|a| a.name.as_str()),
+            Some("Enemy")
+        );
+        assert_eq!(sensors.count_named("enemy"), 1);
+    }
+
+    #[test]
+    fn with_me_reads_the_stepping_actor_in_place() {
+        let mut sensors = crowd(&[("a1", "Player")]);
+        sensors.actors.get_mut("a1").unwrap().position = [1.0, 2.0, 3.0];
+        publish(sensors);
+        assert!(with_me(|_| ()).is_err(), "nobody is stepping");
+        let at = with_script("a1", false, || with_me(|me| me.position));
+        assert_eq!(at, Ok([1.0, 2.0, 3.0]));
+        let gone = with_script("a9", false, || with_me(|me| me.position));
+        assert!(gone.is_err());
+        // Nested scripts see their own actor, and leave the outer one behind.
+        with_script("a1", false, || {
+            with_script("a9", false, || {
+                assert_eq!(current_actor().as_deref(), Some("a9"))
+            });
+            assert_eq!(current_actor().as_deref(), Some("a1"));
+        });
+        assert_eq!(current_actor(), None);
     }
 
     #[test]

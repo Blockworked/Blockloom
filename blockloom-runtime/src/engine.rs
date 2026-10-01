@@ -208,6 +208,9 @@ pub struct Engine {
     /// `create actor` block conjured. Looked up before the project, so the
     /// rest of the runtime asks one question to find any actor at all.
     pub spawned: HashMap<String, Actor>,
+    /// Where `project.actors` last held each id looked up. Checked against the
+    /// actor found there, so a stale slot is a miss, never a wrong answer.
+    actor_slots: std::cell::RefCell<HashMap<String, usize>>,
     /// Clone id -> the authored actor it was copied from. Only clones are in
     /// here, which is what "am I a clone?" reads.
     pub clones: HashMap<String, String>,
@@ -396,6 +399,7 @@ impl Engine {
             pending_scene: None,
             veil: crate::transition::SceneVeil::default(),
             survivor_keep: Default::default(),
+            actor_slots: Default::default(),
         }
     }
 
@@ -404,7 +408,26 @@ impl Engine {
     /// physics or components goes through here, so a clone answers the same
     /// questions the actor it was copied from does.
     pub fn actor(&self, id: &str) -> Option<&Actor> {
-        self.spawned.get(id).or_else(|| self.project.actor(id))
+        self.spawned.get(id).or_else(|| self.authored(id))
+    }
+
+    /// An authored actor by id. The document keeps actors in a list, so each
+    /// hit is remembered by position; every frame asks about every actor.
+    fn authored(&self, id: &str) -> Option<&Actor> {
+        let actors = &self.project.actors;
+        let mut slots = self.actor_slots.borrow_mut();
+        if let Some(actor) = slots.get(id).and_then(|&i| actors.get(i))
+            && actor.id == id
+        {
+            return Some(actor);
+        }
+        let found = actors.iter().position(|actor| actor.id == id)?;
+        // Ids that left the document would pile up over a long run.
+        if slots.len() > actors.len() * 2 + 64 {
+            slots.clear();
+        }
+        slots.insert(id.to_string(), found);
+        actors.get(found)
     }
 
     /// The per-axis stretch an actor was authored with, which no block moves.
