@@ -26,6 +26,7 @@ use blockloom_core::value::{Evaluated, evaluated_from_json, json_of};
 #[cfg(feature = "plugins")]
 use blockloom_core::vm::Event;
 use blockloom_plugin_api::loadout::Loadout;
+use blockloom_plugin_api::mesh::MeshData;
 use blockloom_plugin_api::schema::Stage;
 #[cfg(feature = "plugins")]
 use blockloom_protocol::RuntimeMessage;
@@ -40,10 +41,27 @@ use blockloom_plugin_host::world::{Effect, Outcome, WorldPlugins};
 #[cfg(feature = "plugins")]
 use std::{cell::RefCell, rc::Rc};
 
+/// A change to the meshes plugins have drawn, waiting for
+/// `plugin_meshes::sync` to carry it out.
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
+pub enum MeshOp {
+    Put {
+        plugin: String,
+        mesh: MeshData,
+    },
+    Remove {
+        plugin: String,
+        name: String,
+    },
+    /// The run ended: every plugin's meshes go.
+    Clear,
+}
+
 /// The loadout the editor sent, and the modules a run has open.
 #[derive(Default)]
 pub struct PluginHost {
     pub loadout: Loadout,
+    pub meshes: Vec<MeshOp>,
     #[cfg(feature = "plugins")]
     world: Option<Rc<RefCell<WorldPlugins>>>,
     #[cfg(feature = "plugins")]
@@ -76,6 +94,14 @@ enum Applied {
         actor: Option<String>,
         args: Vec<String>,
     },
+    Mesh {
+        plugin: String,
+        mesh: MeshData,
+    },
+    RemoveMesh {
+        plugin: String,
+        name: String,
+    },
 }
 
 #[cfg(feature = "plugins")]
@@ -103,6 +129,8 @@ fn applied(outcomes: Vec<Outcome>) -> Vec<Applied> {
                     actor,
                     args: args.iter().map(event_arg).collect(),
                 },
+                Effect::Mesh(mesh) => Applied::Mesh { plugin, mesh },
+                Effect::RemoveMesh { name } => Applied::RemoveMesh { plugin, name },
             },
         })
         .collect()
@@ -132,6 +160,20 @@ fn apply(engine: &mut Engine, outcomes: Vec<Applied>) {
                 args,
                 actor,
             }),
+            Applied::Mesh { .. } | Applied::RemoveMesh { .. }
+                if !engine.project.active_scene().world.mode.is_3d() =>
+            {
+                bridge::send(&RuntimeMessage::Error {
+                    actor: String::new(),
+                    message: "a plugin drew a mesh, which only a 3D game can show".to_string(),
+                });
+            }
+            Applied::Mesh { plugin, mesh } => {
+                engine.plugins.meshes.push(MeshOp::Put { plugin, mesh })
+            }
+            Applied::RemoveMesh { plugin, name } => {
+                engine.plugins.meshes.push(MeshOp::Remove { plugin, name })
+            }
         }
     }
 }
@@ -229,19 +271,25 @@ pub fn begin(engine: &mut Engine) {
         if engine.plugins.loadout.is_empty() {
             return;
         }
-        let mut world = WorldPlugins::load(&engine.plugins.loadout, env!("CARGO_PKG_VERSION"));
-        let started = world.start(&|plugin| records_for(engine, plugin));
-        let world = Rc::new(RefCell::new(world));
-        let reader = Rc::clone(&world);
-        sense::set_plugin_reader(Some(Box::new(move |plugin, block, args| {
-            read(&reader, plugin, block, args)
-        })));
-        engine.plugins.world = Some(world);
-        engine.plugins.ticks = 0;
-        apply(engine, applied(started));
+        let world = WorldPlugins::load(&engine.plugins.loadout, env!("CARGO_PKG_VERSION"));
+        install(engine, world);
     }
     #[cfg(not(feature = "plugins"))]
     let _ = engine;
+}
+
+/// Starts the opened modules and hosts them for the run.
+#[cfg(feature = "plugins")]
+fn install(engine: &mut Engine, mut world: WorldPlugins) {
+    let started = world.start(&|plugin| records_for(engine, plugin));
+    let world = Rc::new(RefCell::new(world));
+    let reader = Rc::clone(&world);
+    sense::set_plugin_reader(Some(Box::new(move |plugin, block, args| {
+        read(&reader, plugin, block, args)
+    })));
+    engine.plugins.world = Some(world);
+    engine.plugins.ticks = 0;
+    apply(engine, applied(started));
 }
 
 /// The run ends: tell the modules, then unload them.
@@ -254,6 +302,7 @@ pub fn end(engine: &mut Engine) {
         drop(world);
         engine.plugins.ticks = 0;
         apply(engine, applied(stopped));
+        engine.plugins.meshes.push(MeshOp::Clear);
     }
     #[cfg(not(feature = "plugins"))]
     let _ = engine;
@@ -424,5 +473,67 @@ mod tests {
                 (stage(Stage::Input), stage(Stage::Presentation)).chain(),
             );
         app.update();
+    }
+
+    /// A real voxel module, through the effect path to meshes in the ECS.
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_voxel_world_becomes_solid_meshes() {
+        use crate::plugin_meshes::{PluginMesh, PluginMeshes, sync};
+        use bevy_rapier3d::prelude as rp;
+        use blockloom_plugin_api::record::PluginRecord;
+        use blockloom_plugin_host::module::CodeModule;
+        use blockloom_plugin_host::native::NativeModule;
+        use blockloom_plugin_host::world::Preloaded;
+
+        const ID: &str = "com.blockworked.voxel";
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(rx, Mode::ThreeD);
+        engine.project.plugin_resources.push(PluginRecord::new(
+            ID,
+            "world",
+            1,
+            json!({"preset": "flat", "size": [32, 16, 32]}),
+        ));
+        let module = unsafe {
+            NativeModule::from_entry(
+                blockloom_voxel::blockloom_plugin_entry_v1,
+                Default::default(),
+                blockloom_plugin_host::native::default_services("0.0.1".to_string()),
+            )
+        }
+        .unwrap();
+        let world = WorldPlugins::with_modules(vec![Preloaded {
+            id: ID.to_string(),
+            module: CodeModule::Native(module),
+            hooks: vec![],
+            blocks: vec![],
+        }])
+        .unwrap();
+        install(&mut engine, world);
+        assert!(engine.plugins.active());
+        // A flat 32x16x32 world is four chunks with ground in each.
+        assert_eq!(engine.plugins.meshes.len(), 4);
+
+        let mut app = App::new();
+        app.insert_non_send(engine)
+            .init_resource::<PluginMeshes>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_systems(Update, sync);
+        app.update();
+        let drawn = app
+            .world_mut()
+            .query_filtered::<&Transform, (With<PluginMesh>, With<rp::Collider>)>()
+            .iter(app.world())
+            .count();
+        assert_eq!(drawn, 4);
+
+        // The run ending takes them all away again.
+        let mut engine = app.world_mut().non_send_mut::<Engine>();
+        end(&mut engine);
+        assert!(!engine.plugins.active());
+        app.update();
+        assert!(app.world().resource::<PluginMeshes>().is_empty());
     }
 }

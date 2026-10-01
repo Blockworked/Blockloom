@@ -296,3 +296,42 @@ loads it through the player's path, reads a reporter and runs a block, and
 checks a wrong hash and an altered file are refused. The player's launch path
 itself (a window, a real game folder) is unrun here.
 
+## Mesh service and the voxel plugin (ninth batch)
+
+The first piece of the plan's phase 3: plugins can put geometry in the world,
+and `com.blockworked.voxel` uses it. Decisions:
+
+- A mesh is flat arrays in an effect, not a handle to GPU memory. It is the
+  simplest thing a portable module can build, it crosses the ABI as JSON like
+  everything else, and the world stays the owner of the entity and its buffers.
+  The cost is the JSON size: numbers are rounded to five decimals, and a
+  greedy-meshed chunk is a few hundred floats. The plan's compute-to-buffer
+  and instanced paths are later services, not replacements.
+- A mesh is identified by (plugin, name) so an edit replaces one chunk's
+  entity. A plugin that wants fewer entities merges before it submits.
+- Collision is the mesh's own triangles on a fixed body. The plan's pending
+  barrier and collision-ready events wait for revisioned jobs.
+- Emission is per mesh, not per vertex: a standard material has one emissive
+  color. The voxel plugin therefore splits each glowing material into its own
+  group. A per-vertex emissive channel needs a custom material and is left for
+  the render service.
+- The voxel plugin keeps the cells on the CPU in 16-cell chunks of material
+  ids. The plan's 32-cell bricks, halos and quantised density belong with
+  smooth terrain; 16 keeps a remesh to 4096 cells, and measuring 16/32/64
+  stays an open item.
+- Generation is deterministic from (seed, coordinates) only, so load order
+  cannot change a world. Edits are run-local and the next Play starts from the
+  generated base, matching how the engine treats play mutations.
+- Portable first: the default 64x32x64 island is generated, meshed and
+  serialised by the wasm module in about 0.9 s on this machine (release wasm,
+  debug host), with a 10 s manifest budget. A larger world wants the native
+  tier or streaming.
+
+The plugin's tests cover the mesher (face counts, chunk borders, winding,
+glow groups), terrain determinism, the palette, the host path (a run draws the
+world, edits redraw only touched chunks, bad input is refused with a reason)
+and the sealed wasm package producing the same meshes as the native build. The
+runtime test takes a real voxel module through `plugins::install` to meshes
+with colliders in the ECS and back to none at the end of the run. The pixels
+(a window, lighting on the meshes) are unrun here.
+

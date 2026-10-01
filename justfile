@@ -434,6 +434,16 @@ _stage-release-player:
 replace jobs="": prepare-patched-deps
     {{if os() == "windows" { "python" } else { "python3" }}} scripts/replace.py {{jobs}}
 
+# Stage and seal the voxel plugin (com.blockworked.voxel) into target/plugins
+voxel-plugin:
+    rustup target add wasm32-unknown-unknown
+    cargo build --release -p blockloom-voxel --target wasm32-unknown-unknown
+    rm -rf target/plugins/com.blockworked.voxel
+    mkdir -p target/plugins/com.blockworked.voxel/portable
+    cp -r plugins/voxel/package/. target/plugins/com.blockworked.voxel/
+    cp target/wasm32-unknown-unknown/release/blockloom_voxel.wasm target/plugins/com.blockworked.voxel/portable/voxel.wasm
+    cargo run -p blockloom-app --bin blockloom-shell -- --no-state --eval 'plugin-seal path=target/plugins/com.blockworked.voxel'
+
 # The SDK example plugin (com.example.tally) as a sealed portable package in
 # target/plugins/, ready for `plugin-install source=path:...`.
 example-plugin:

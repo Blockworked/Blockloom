@@ -9,6 +9,7 @@
 //!   kept losslessly even when its plugin is missing.
 //! - [`abi`] is the native C boundary: fixed-width, versioned, no Rust types.
 //! - [`loadout`] is what a running world needs to host a plugin's code.
+//! - [`mesh`] is a mesh a plugin submits for the world to draw.
 //! - [`wasm`] is the same contract over a WebAssembly module's linear memory.
 //!
 //! Engine, SDK, plugin ABI, editor API, schema and shader API versions are
@@ -19,6 +20,7 @@ pub mod abi;
 pub mod id;
 pub mod loadout;
 pub mod manifest;
+pub mod mesh;
 pub mod record;
 pub mod schema;
 pub mod wasm;

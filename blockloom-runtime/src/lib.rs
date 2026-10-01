@@ -65,6 +65,7 @@ mod passes;
 mod pbr_patch;
 mod performance;
 pub mod player;
+mod plugin_meshes;
 mod plugins;
 mod post;
 mod preview;
@@ -301,7 +302,9 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // unconditionally; an unused plugin costs nothing at runtime.
     materials::register(app);
     sprites::register(app);
-    app.init_resource::<anim2d::RigCache>();
+    app.init_resource::<anim2d::RigCache>()
+        .init_resource::<plugin_meshes::PluginMeshes>()
+        .add_systems(Update, plugin_meshes::sync.run_if(is_3d));
     passes::register(app);
     hdr::register(app);
     luminance::register(app);

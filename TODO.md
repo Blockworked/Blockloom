@@ -1505,7 +1505,10 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Plugin reporters and hats: `PluginRead` values answered on demand by the world's modules, `WhenPlugin` hats started by `event` effects; palette, canvas, preflight, tally example (needs blockstitch's operator `layout`).
     - [ ] Codegen and the script ABI for plugin blocks; importer/build hooks; per-plugin MCP tools.
     - [ ] HTTP registry transport; revision bump for attached copies on package changes.
-    - [ ] Phases 3-7 (voxel plugin `com.blockworked.voxel`, procedural worlds, GPU path, fracture, ecosystem).
+    - [x] Mesh submission service: `mesh`/`remove_mesh` effects become named 3D entities with an optional trimesh collider.
+    - [x] Voxel plugin first slice (`plugins/voxel`): finite cube world, seeded terrain presets, greedy chunk mesher, glowing materials, live set/fill/sphere/generate, reporters, schema and sealed package (`just voxel-plugin`).
+    - [ ] Voxel next: edit persistence, editor brushes and a scene-view preview, shaped cells, smooth terrain, streaming/LOD, instancing, GPU meshing, fracture.
+    - [ ] Phases 4-7 (procedural graph, GPU path, fracture, ecosystem).
 
 ### Phase 8 - Web player via WebGPU (single-file build, do before Phase 9)
 

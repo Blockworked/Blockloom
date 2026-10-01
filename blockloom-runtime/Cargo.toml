@@ -128,6 +128,7 @@ dlss = ["bevy/dlss"]
 
 [dev-dependencies]
 naga.workspace = true
+blockloom-voxel = { path = "../plugins/voxel" }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libc = "0.2"

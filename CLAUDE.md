@@ -438,6 +438,40 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   same `plugin_*` commands the shell does (install with a dry-run preview,
   update, remove, sync, undo the last change, clean the cache). It has a QML
   test (`tests/qml/tst_Plugins.qml`) but no inspector or contribution host yet.
+- **Mesh service** (`blockloom-plugin-api/src/mesh.rs`, `blockloom-runtime/src/
+  plugin_meshes.rs`): a module answers with `{"effect": "mesh", name,
+  positions, normals, colors, indices, origin, emission, roughness, collider}`
+  (flat arrays, so any tier builds one) or `{"effect": "remove_mesh", name}`.
+  The host checks a mesh (`MeshData::check`: array lengths agree, indices in
+  range, finite, at most `MAX_VERTICES`) and reports a bad one as an error.
+  `plugins::apply` queues a `MeshOp` on `engine.plugins.meshes` (a 2D game
+  reports that only 3D can show one) and `plugin_meshes::sync` (Update, 3D)
+  carries them out: one entity per (plugin, name) with `Mesh3d`, a standard
+  material shared by roughness and emission (vertex colors multiply the base),
+  and a fixed trimesh collider when `collider` is set. A same-named mesh
+  replaces the old entity, and `plugins::end` queues `Clear`. These are not
+  actors: no batching, LOD or occlusion, and nothing else reads them yet.
+- **Voxel plugin** (`plugins/voxel`, `com.blockworked.voxel`, phase 3's first
+  slice): a finite world of cubes, SDK-built so one source is a native library
+  and the portable module (`just voxel-plugin` seals the wasm). Its `world`
+  resource (preset `island|caves|flat|empty`, seed, size, voxel size, origin,
+  solid, palette colors/emission) is read at `world.start`; `grid.rs` holds
+  16-cell chunks of `u8` material ids (air chunks unallocated, a boundary edit
+  dirties the neighbour), `terrain.rs` generates from hashes of each cell's own
+  coordinates (the same seed always gives the same cells, trees and ore
+  included), `mesher.rs` is the greedy cube mesher (visible faces only, faces
+  across chunk borders ask the grid, each glowing material its own group), and
+  `lib.rs` answers every op with the meshes that changed (`chunk/x/y/z`, and
+  `.../glow<id>` for emissive ones, whose mesh `emission` is color times the
+  palette's intensity) plus `remove_mesh` for ones that went away. Ops `set`,
+  `fill`, `sphere`, `generate` (blocks and commands), reporters `get`/`height`;
+  edits last for the run. The package schema declares the resource, commands
+  and six blocks (a material is a dropdown of the built-in names; ids work
+  too). Measured: the default 64x32x64 island is drawn from the wasm module in
+  under a second, inside its 10 s call budget. Not yet: smooth terrain, shaped
+  cells, edits saved or applied to the project, streaming and LOD, instancing,
+  GPU meshing, fracture, a scene-view preview outside Play (the module only
+  runs while a game does), editor brushes.
 - **Not yet**: plugin code in a web or Android build, in the script
   ABI, a browser host for portable modules, an HTTP registry, dynamic QML for
   plugin editor panels.

@@ -13,7 +13,8 @@
 //! world asks (a lifecycle call it does not care about) is simply skipped.
 //!
 //! An op's answer may carry `{"effects": [...]}`, each `{"effect": "say" |
-//! "broadcast" | "event" | "error", ...}`; see [`Effect`].
+//! "broadcast" | "event" | "mesh" | "remove_mesh" | "error", ...}`; see
+//! [`Effect`].
 //!
 //! A reporter block is answered on demand by [`WorldPlugins::read`]: the
 //! module's op returns `{"value": ...}`. Reads are memoized until anything
@@ -24,6 +25,7 @@
 use crate::hooks::{HookRef, order_hooks};
 use crate::module::{CodeModule, is_unsupported};
 use blockloom_plugin_api::loadout::{Loadout, LoadoutBlock, ops};
+use blockloom_plugin_api::mesh::MeshData;
 use blockloom_plugin_api::schema::{FieldSchema, FieldType, HookSchema, Stage};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -49,6 +51,10 @@ pub enum Effect {
         #[serde(default)]
         args: Vec<Value>,
     },
+    /// Draws a mesh, replacing the plugin's mesh of the same name.
+    Mesh(MeshData),
+    /// Takes the plugin's mesh of that name out of the world.
+    RemoveMesh { name: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -465,6 +471,10 @@ fn effects_of(plugin: &str, op: &str, answer: &Value) -> Vec<Outcome> {
     list.iter()
         .map(
             |item| match serde_json::from_value::<Effect>(item.clone()) {
+                Ok(Effect::Mesh(mesh)) if mesh.check().is_err() => Outcome::Error {
+                    plugin: plugin.to_string(),
+                    message: format!("{op}: {}", mesh.check().unwrap_err()),
+                },
                 Ok(effect) => Outcome::Effect {
                     plugin: plugin.to_string(),
                     effect,
@@ -894,6 +904,41 @@ mod tests {
                     args: vec![json!("coins")],
                 }
             }]
+        );
+    }
+
+    #[test]
+    fn mesh_effects_are_read_and_checked() {
+        let triangle = json!({
+            "effect": "mesh", "name": "t",
+            "positions": [0, 0, 0, 1, 0, 0, 0, 1, 0],
+            "normals": [0, 0, 1, 0, 0, 1, 0, 0, 1],
+            "colors": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            "indices": [0, 1, 2], "collider": true,
+        });
+        let mut bad = triangle.clone();
+        bad["indices"] = json!([0, 1, 9]);
+        let outcomes = effects_of(
+            "p",
+            "build",
+            &json!({"effects": [triangle, bad, {"effect": "remove_mesh", "name": "t"}]}),
+        );
+        assert!(matches!(
+            &outcomes[0],
+            Outcome::Effect { effect: Effect::Mesh(mesh), .. } if mesh.collider
+        ));
+        assert!(
+            errors(&outcomes[1..2])[0].contains("past 3"),
+            "{outcomes:?}"
+        );
+        assert_eq!(
+            outcomes[2],
+            Outcome::Effect {
+                plugin: "p".to_string(),
+                effect: Effect::RemoveMesh {
+                    name: "t".to_string()
+                }
+            }
         );
     }
 

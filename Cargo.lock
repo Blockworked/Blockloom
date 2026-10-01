@@ -2507,6 +2507,7 @@ dependencies = [
  "blockloom-plugin-api",
  "blockloom-plugin-host",
  "blockloom-protocol",
+ "blockloom-voxel",
  "bytemuck",
  "getrandom 0.4.3",
  "half",
@@ -2526,6 +2527,18 @@ dependencies = [
  "web-time",
  "wgpu",
  "windows",
+]
+
+[[package]]
+name = "blockloom-voxel"
+version = "0.0.1"
+dependencies = [
+ "blockloom-plugin-api",
+ "blockloom-plugin-host",
+ "blockloom-plugin-sdk",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
