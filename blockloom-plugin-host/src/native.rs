@@ -113,6 +113,10 @@ pub struct NativeModule {
     library: Option<Library>,
 }
 
+// The plugin's handle is a raw pointer. The ABI lets a module be called from
+// any thread but never from two at once, so owners wrap it in a Mutex.
+unsafe impl Send for NativeModule {}
+
 impl NativeModule {
     /// Loads `path`, negotiates the ABI and returns the live module.
     ///
@@ -244,8 +248,9 @@ pub fn log_error(module: &NativeModule, message: &str) {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod fixture {
+/// A tiny C-layout plugin compiled with rustc, for tests here and in the app.
+#[cfg(any(test, feature = "test-fixtures"))]
+pub mod fixture {
     use std::path::{Path, PathBuf};
     use std::process::Command;
 

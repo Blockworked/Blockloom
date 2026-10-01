@@ -404,8 +404,14 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
 - **Builds**: a pack that carries plugins is `PACK_VERSION` 2 (without them it
   is still written as 1), the plugin files go to `game/plugins/<id>/`, and web
   and Android builds refuse plugins that have code.
-- **Not yet**: QML Plugin Manager, WASM executor, loading native modules into
-  the editor or runtime, plugin blocks in the VM/codegen/script ABI, an HTTP
+- **Native modules** load in the editor on a command's first use
+  (`commands::plugins::Modules` on `OpenProject`, keyed by package hash, dropped
+  when the package changes or the project closes): a `module` command action
+  calls `NativeModule::call_json`, the module's logs go to the run log, and a
+  panic is an error, not a crash. A module may be called from any thread but
+  one at a time, hence the `Mutex`.
+- **Not yet**: QML Plugin Manager, WASM executor, native modules in the
+  runtime (a run's world), plugin blocks in the VM/codegen/script ABI, an HTTP
   registry. `plugins/examples/com.example.health` is the sealed proof package.
 
 ### Scripts

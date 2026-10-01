@@ -14,5 +14,8 @@ libloading.workspace = true
 dirs.workspace = true
 zip = { version = "7.2", default-features = false, features = ["deflate"] }
 
+[features]
+test-fixtures = []
+
 [dev-dependencies]
 tempfile.workspace = true

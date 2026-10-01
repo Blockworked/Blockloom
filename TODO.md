@@ -1493,7 +1493,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Phase 0/1: api and host crates, manifests, resolver, lock file, immutable cache, transactional install/rollback/sync/gc, folder registries, C ABI v1 with measured call cost, sealed proof package.
     - [x] Phase 2 data path: namespaced records on actors and the project (lossless when the plugin is missing), schema validation and migrations, declarative components/resources/commands, shell and MCP access, Play/Build preflight, pack v2 plugin payload.
     - [ ] Plugin Manager and contribution host in QML.
-    - [ ] Load native modules into the editor and runtime (the `module` command action, lifecycle wiring); portable (WASM) executor and a browser proof.
+    - [x] Native modules load in the editor for `module` commands (`Modules` cache, run-log output, panic containment).
+    - [ ] Native modules in the runtime world and built player, lifecycle wiring; portable (WASM) executor and a browser proof.
     - [ ] Plugin blocks in the VM, codegen and script ABI; importer/build hooks; per-plugin MCP tools.
     - [ ] HTTP registry transport; revision bump for attached copies on package changes.
     - [ ] Phases 3-7 (voxel plugin `com.blockworked.voxel`, procedural worlds, GPU path, fracture, ecosystem).

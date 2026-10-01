@@ -42,6 +42,7 @@ pub(crate) struct OpenProject {
     /// What the project's locked plugins contribute, loaded when it opens
     /// and again after every package change.
     pub(crate) plugins: blockloom_plugin_host::active::ActivePlugins,
+    pub(crate) modules: crate::commands::plugins::Modules,
 }
 
 impl OpenProject {
@@ -62,6 +63,7 @@ impl OpenProject {
             attached,
             touched: AtomicU64::new(0),
             plugins,
+            modules: Default::default(),
         }
     }
 

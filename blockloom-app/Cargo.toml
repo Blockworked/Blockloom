@@ -43,5 +43,6 @@ tonic-prost = "0.14"
 prost = "0.14"
 
 [dev-dependencies]
+blockloom-plugin-host = { path = "../blockloom-plugin-host", features = ["test-fixtures"] }
 tonic = { version = "0.14", default-features = false, features = ["channel", "codegen", "server", "router"] }
 tokio-stream = "0.1"

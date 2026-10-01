@@ -25,6 +25,15 @@ pub struct PluginProblem {
     pub message: String,
 }
 
+/// A native plugin's library, ready for `NativeModule::load`.
+#[derive(Debug, Clone)]
+pub struct NativeLibrary {
+    pub path: std::path::PathBuf,
+    /// The package's content hash; a changed package is a different module.
+    pub hash: String,
+    pub capabilities: std::collections::BTreeSet<blockloom_plugin_api::manifest::Capability>,
+}
+
 #[derive(Debug, Clone)]
 pub struct LoadedPlugin {
     pub package: Package,
@@ -249,6 +258,27 @@ impl ActivePlugins {
 
     pub fn get(&self, plugin: &str) -> Option<&LoadedPlugin> {
         self.plugins.get(plugin)
+    }
+
+    /// The verified shared library a native plugin runs from on this
+    /// machine, and the capabilities it asked for.
+    pub fn native_library(&self, plugin: &str) -> Result<NativeLibrary, String> {
+        let loaded = self
+            .plugins
+            .get(plugin)
+            .ok_or_else(|| format!("{plugin} is not installed"))?;
+        let manifest = &loaded.package.manifest;
+        let entry = manifest.runtime.native.get(&self.target).ok_or_else(|| {
+            format!(
+                "{plugin} has no native library for {} (only declarative parts work here)",
+                self.target
+            )
+        })?;
+        Ok(NativeLibrary {
+            path: loaded.package.root.join(&entry.library),
+            hash: loaded.package.content_hash.clone(),
+            capabilities: manifest.capabilities.clone(),
+        })
     }
 
     pub fn manifest(&self, plugin: &str) -> Option<&PluginManifest> {

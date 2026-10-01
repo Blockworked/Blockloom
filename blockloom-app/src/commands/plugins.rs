@@ -9,12 +9,13 @@
 
 use super::{auto_save, emit, lock, push_undo, push_undo_for, sync_runtime};
 use crate::AppHandle;
-use crate::state::{AppState, EditSession, SharedState};
+use crate::state::{AppState, EditSession, LogLine, SharedState};
 use blockloom_core::build::{self, PluginPayload, Target};
 use blockloom_core::components::ActorComponent;
 use blockloom_core::library;
 use blockloom_core::pack::{PLUGINS_DIR, PackedPlugin};
 use blockloom_core::project::Project;
+use blockloom_plugin_api::abi::LOG_WARN;
 use blockloom_plugin_api::id::{self, validate_plugin_id};
 use blockloom_plugin_api::manifest::TargetSupport;
 use blockloom_plugin_api::record::PluginRecord;
@@ -24,6 +25,7 @@ use blockloom_plugin_host::active::{ActivePlugins, RecordIssue, RecordStatus, mi
 use blockloom_plugin_host::cache::{self, Cache};
 use blockloom_plugin_host::install::{self, Change, Environment, PlanChange};
 use blockloom_plugin_host::lock::ProjectPlugins;
+use blockloom_plugin_host::native::{NativeModule, default_services};
 use blockloom_plugin_host::package;
 use blockloom_plugin_host::registry::DirRegistry;
 use blockloom_plugin_host::source::Source;
@@ -31,6 +33,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 /// The engine version plugins are checked against.
 fn engine_version() -> Version {
@@ -100,6 +103,48 @@ fn active(s: &AppState) -> Result<&ActivePlugins, String> {
 fn reload(s: &mut AppState) {
     if let Some(open) = s.open.as_mut() {
         open.plugins = load_active(&open.dir);
+        open.modules.retain(&open.plugins);
+    }
+}
+
+/// The native modules the open project has loaded, by plugin id. A module
+/// is loaded on its first call and unloaded when its package changes or goes.
+#[derive(Default)]
+pub(crate) struct Modules {
+    loaded: std::collections::BTreeMap<String, (String, Arc<Mutex<NativeModule>>)>,
+}
+
+impl Modules {
+    /// Drops every module whose package is gone or changed.
+    pub(crate) fn retain(&mut self, active: &ActivePlugins) {
+        self.loaded.retain(|id, (hash, _)| {
+            active
+                .native_library(id)
+                .is_ok_and(|library| &library.hash == hash)
+        });
+    }
+
+    fn get(
+        &mut self,
+        active: &ActivePlugins,
+        id: &str,
+    ) -> Result<Arc<Mutex<NativeModule>>, String> {
+        let library = active.native_library(id)?;
+        if let Some((hash, module)) = self.loaded.get(id)
+            && *hash == library.hash
+        {
+            return Ok(module.clone());
+        }
+        let module = NativeModule::load(
+            &library.path,
+            library.capabilities,
+            default_services(engine_version().to_string()),
+        )
+        .map_err(|e| format!("{id}: {e}"))?;
+        let module = Arc::new(Mutex::new(module));
+        self.loaded
+            .insert(id.to_string(), (library.hash, module.clone()));
+        Ok(module)
     }
 }
 
@@ -778,9 +823,29 @@ pub(crate) fn plugin_call(
             set_plugin_resource(state, app, name.clone(), args)?;
             Ok(json!({ "resource": name }))
         }
-        CommandAction::Module { op } => Err(format!(
-            "{command} runs \"{op}\" in the plugin's code module, and this build does not load plugin modules into the editor yet"
-        )),
+        CommandAction::Module { op } => {
+            let module = {
+                let mut s = lock(state)?;
+                let open = s.open.as_mut().ok_or("No project is open")?;
+                open.modules.get(&open.plugins, &plugin)?
+            };
+            let module = module.lock().map_err(|_| "the plugin module is poisoned")?;
+            let answer = module.call_json(&op, &args);
+            let logs = module.take_logs();
+            drop(module);
+            if !logs.is_empty() {
+                let mut s = lock(state)?;
+                for (level, message) in logs {
+                    s.push_log(LogLine {
+                        kind: if level <= LOG_WARN { "error" } else { "say" }.to_string(),
+                        actor: plugin.clone(),
+                        text: message,
+                    });
+                }
+                emit(app, &s);
+            }
+            answer
+        }
     }
 }
 

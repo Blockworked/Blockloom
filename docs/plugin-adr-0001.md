@@ -90,10 +90,9 @@ and tracked in `TODO.md`:
 - No Plugin Manager or contribution UI in QML. The surface is the backend
   commands, the state snapshot (`plugins`) and the shell/MCP.
 - No WASM executor and no browser proof; the portable tier only validates.
-- Native modules load in the host crate and its tests but the editor and
-  runtime do not load them yet, so a `module` command action returns an
-  explicit "not loaded into the editor yet" error rather than silently
-  doing nothing.
+- Native modules load in the editor (a `module` command action calls them,
+  tested with a rustc-built C-layout fixture) but not yet in the runtime's
+  world or the built player, so plugin code cannot act on a running game.
 - No bridge from plugin blocks into the VM, codegen or script ABI: a plugin
   block is registered in the schema but has no run-time effect yet.
 - Registry transport is a local folder (`DirRegistry`); no HTTP registry.

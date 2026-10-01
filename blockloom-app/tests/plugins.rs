@@ -2,6 +2,20 @@ use blockloom_app::{AppHandle, Backend};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
+/// One data dir for every test here: it is a process-wide env var.
+fn data_root() -> PathBuf {
+    static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        let root = std::env::temp_dir().join(format!("blockloom-plugins-{}", uuid::Uuid::new_v4()));
+        unsafe {
+            std::env::set_var("BLOCKLOOM_DATA_DIR", root.join("data"));
+            std::env::set_var("BLOCKLOOM_PLUGINS_OFFLINE", "0");
+        }
+        root
+    })
+    .clone()
+}
+
 fn example() -> String {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../plugins/examples/com.example.health")
@@ -11,11 +25,7 @@ fn example() -> String {
 
 #[test]
 fn a_plugin_installs_owns_records_and_leaves_them_when_removed() {
-    let root = std::env::temp_dir().join(format!("blockloom-plugins-{}", uuid::Uuid::new_v4()));
-    unsafe {
-        std::env::set_var("BLOCKLOOM_DATA_DIR", root.join("data"));
-        std::env::set_var("BLOCKLOOM_PLUGINS_OFFLINE", "0");
-    }
+    let root = data_root().join("plugged");
     let backend = Backend::start(AppHandle::new(|_| {}));
     let call = |cmd: &str, args: Value| backend.dispatch(cmd, args);
     let invoke = |cmd: &str, args: Value| call(cmd, args).unwrap();
@@ -84,4 +94,71 @@ fn a_plugin_installs_owns_records_and_leaves_them_when_removed() {
     assert_eq!(saved.plugin_ids().len(), 1);
     invoke("plugin_rollback", json!({}));
     assert_eq!(invoke("plugin_check", json!({}))["canRun"], true);
+}
+
+#[test]
+fn a_native_plugin_command_runs_in_its_module() {
+    use blockloom_plugin_host::native::fixture;
+    let root = data_root().join("native");
+    let triple = blockloom_core::build::host()
+        .expect("a supported host")
+        .triple
+        .to_string();
+    let pkg = root.join("pkg");
+    std::fs::create_dir_all(pkg.join("lib")).unwrap();
+    std::fs::create_dir_all(pkg.join("schemas")).unwrap();
+    let built = fixture::build(&root, fixture::SOURCE);
+    let library = format!("lib/{}", built.file_name().unwrap().to_string_lossy());
+    std::fs::copy(&built, pkg.join(&library)).unwrap();
+    std::fs::write(
+        pkg.join("schemas/commands.json"),
+        json!({"commands": [{
+            "name": "echo", "summary": "Answer with the arguments.",
+            "args": [{"name": "word", "type": "text", "default": "hi"}],
+            "action": {"do": "module", "op": "echo"}
+        }, {
+            "name": "boom", "summary": "A module call that fails.",
+            "action": {"do": "module", "op": "panic"}
+        }]})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        pkg.join("plugin.json"),
+        json!({
+            "format": 1, "id": "com.example.native", "name": "Native", "version": "1.0.0",
+            "engine": ">=0.0.1", "tier": "native", "abi": 1, "sdk": "^0.1",
+            "capabilities": ["native-execution"],
+            "runtime": {"native": {triple: {"library": library}}},
+            "contributions": ["schemas/commands.json"]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let backend = Backend::start(AppHandle::new(|_| {}));
+    let invoke = |cmd: &str, args: Value| backend.dispatch(cmd, args).unwrap();
+    invoke("plugin_seal", json!({"path": pkg.to_string_lossy()}));
+    invoke(
+        "create_project",
+        json!({"name": "Native", "mode": "TwoD", "location": root.join("projects")}),
+    );
+    invoke(
+        "plugin_install",
+        json!({"id": "com.example.native", "source": format!("path:{}", pkg.display())}),
+    );
+    let answer = invoke(
+        "plugin_call",
+        json!({"command": "com.example.native/echo", "args": {"word": "loom"}}),
+    );
+    assert_eq!(answer["word"], "loom");
+    // A panic in the module comes back as an error, not a dead editor.
+    assert!(
+        backend
+            .dispatch("plugin_call", json!({"command": "com.example.native/boom"}))
+            .is_err()
+    );
+    // And the module is still usable afterwards.
+    let again = invoke("plugin_call", json!({"command": "com.example.native/echo"}));
+    assert_eq!(again["word"], "hi");
 }
