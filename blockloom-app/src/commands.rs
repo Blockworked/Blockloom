@@ -2704,20 +2704,19 @@ pub(crate) fn run_build_game(
     let mut failed = false;
     for actor in &project.actors {
         blockloom_core::build_control::check()?;
-        if let Some(path) = actor.components.script() {
-            if let Err(error) =
+        if let Some(path) = actor.components.script()
+            && let Err(error) =
                 script::compile_for_with_linker(&dir, path, script_target, linker.as_deref())
-            {
-                blockloom_core::build_control::check()?;
-                failed = true;
-                let mut s = lock(state)?;
-                s.push_log(LogLine {
-                    kind: "error".to_string(),
-                    actor: actor.name.clone(),
-                    text: format!("{path} didn't compile:\n{error}"),
-                });
-                emit(app, &s);
-            }
+        {
+            blockloom_core::build_control::check()?;
+            failed = true;
+            let mut s = lock(state)?;
+            s.push_log(LogLine {
+                kind: "error".to_string(),
+                actor: actor.name.clone(),
+                text: format!("{path} didn't compile:\n{error}"),
+            });
+            emit(app, &s);
         }
     }
     if failed {
