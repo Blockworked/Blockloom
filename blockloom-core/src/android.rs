@@ -907,6 +907,82 @@ fn create_avd_with(
     Ok(name.to_string())
 }
 
+/// Renames a stopped virtual device through the SDK's AVD manager.
+pub fn rename_avd(name: &str, new_name: &str) -> Result<String, String> {
+    manage_avd(&load(), name, Some(new_name))
+}
+
+/// Deletes a stopped virtual device and its saved data.
+pub fn delete_avd(name: &str) -> Result<String, String> {
+    manage_avd(&load(), name, None)
+}
+
+fn manage_avd(config: &AppConfig, name: &str, new_name: Option<&str>) -> Result<String, String> {
+    let manager = avdmanager_bin(config)
+        .ok_or_else(|| "No avdmanager: run Install / update SDK to fetch it.".to_string())?;
+    let adb = sdk_dir(config).join("platform-tools").join(exe("adb"));
+    for device in devices_with_adb(&adb)? {
+        if device.emulator {
+            let running = avd_name_with_adb(&adb, &device.serial).ok_or_else(|| {
+                "Wait for connected emulators to finish booting first.".to_string()
+            })?;
+            if running == name {
+                return Err(format!("Stop {name} before renaming or deleting it."));
+            }
+        }
+    }
+    manage_avd_with(&emulator_bin(config), &manager, name, new_name)
+}
+
+fn manage_avd_with(
+    emulator: &Path,
+    manager: &Path,
+    name: &str,
+    new_name: Option<&str>,
+) -> Result<String, String> {
+    let names = list_avds_with(emulator)?;
+    if !names.iter().any(|avd| avd == name) {
+        return Err(format!("No AVD named {name}."));
+    }
+    let new_name = new_name.map(str::trim);
+    if let Some(new_name) = new_name {
+        if new_name.is_empty()
+            || !new_name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+        {
+            return Err(
+                "Use letters, digits, dots, dashes and underscores for the device name."
+                    .to_string(),
+            );
+        }
+        if names.iter().any(|avd| avd == new_name) {
+            return Err(format!("{new_name} already exists."));
+        }
+    }
+    let mut command = Command::new(manager);
+    command.args([
+        if new_name.is_some() { "move" } else { "delete" },
+        "avd",
+        "-n",
+        name,
+    ]);
+    if let Some(new_name) = new_name {
+        command.args(["-r", new_name]);
+    }
+    let output = command
+        .output()
+        .map_err(|e| format!("Couldn't run {}: {e}", manager.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Couldn't update {name}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(new_name.unwrap_or(name).to_string())
+}
+
 /// Sizes a fresh AVD to a phone screen (1080x2400): what avdmanager writes
 /// by default is far too small to test a game on. Best effort after the
 /// fact; a running emulator picks it up on its next boot.
@@ -2588,9 +2664,7 @@ pub struct ApkReport {
 }
 
 fn run_tool(tool: &Path, args: &[String]) -> Result<String, String> {
-    let output = std::process::Command::new(tool)
-        .args(args)
-        .output()
+    let output = crate::build_control::output(std::process::Command::new(tool).args(args))
         .map_err(|e| format!("Couldn't run {}: {e}", tool.display()))?;
     if !output.status.success() {
         return Err(format!(
@@ -2729,7 +2803,9 @@ pub fn assemble_apk(
     }
 
     let compiled_res = work.join("compiled_res.zip");
+    crate::build_control::step("Compiling Android resources")?;
     run_tool(&tools.aapt2, &aapt2_compile_args(&res, &compiled_res))?;
+    crate::build_control::step("Packaging APK")?;
     let unaligned = work.join("unaligned.apk");
     run_tool(
         &tools.aapt2,
@@ -2741,12 +2817,15 @@ pub fn assemble_apk(
             &unaligned,
         ),
     )?;
+    crate::build_control::step("Adding native libraries to APK")?;
     inject_native_libs(&unaligned, &contents.native_libs)?;
     let aligned = work.join("aligned.apk");
+    crate::build_control::step("Aligning APK")?;
     run_tool(&tools.zipalign, &zipalign_args(&unaligned, &aligned))?;
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
+    crate::build_control::step("Signing APK")?;
     run_tool(&tools.apksigner, &apksigner_args(signing, &aligned, dest))?;
 
     let mut abis: Vec<String> = contents
@@ -2790,19 +2869,32 @@ pub fn runtime_so_override(triple: &str) -> Option<PathBuf> {
     None
 }
 
-/// The workspace root: the ancestor of the working dir holding
-/// `blockloom-runtime/Cargo.toml`. A packaged install has no source tree,
-/// so there the env override above is the only way.
+/// Finds source beside the working directory, executable, or original build.
 pub fn workspace_root() -> Option<PathBuf> {
-    let mut dir = std::env::current_dir().ok()?;
-    loop {
-        if dir.join("blockloom-runtime/Cargo.toml").is_file() {
-            return Some(dir);
-        }
-        if !dir.pop() {
-            return None;
+    workspace_root_from(
+        [
+            std::env::current_dir().ok(),
+            std::env::current_exe()
+                .ok()
+                .and_then(|path| path.parent().map(Path::to_path_buf)),
+            Some(PathBuf::from(env!("CARGO_MANIFEST_DIR"))),
+        ]
+        .into_iter()
+        .flatten(),
+    )
+}
+
+fn workspace_root_from(paths: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    for path in paths {
+        for dir in path.ancestors() {
+            if dir.join("Cargo.toml").is_file()
+                && dir.join("blockloom-runtime/Cargo.toml").is_file()
+            {
+                return Some(dir.to_path_buf());
+            }
         }
     }
+    None
 }
 
 /// Linker plus C toolchain for `triple`, from the installed NDK: rustc
@@ -2951,8 +3043,9 @@ fn abi_stamp() -> u32 {
 /// second launch costs no cargo run at all. First run needs the network
 /// for the target's crates, like the SDK install did.
 pub fn build_runtime_so(config: &AppConfig, triple: &str) -> Result<PathBuf, String> {
+    crate::build_control::step("Preparing Android runtime")?;
     let root = workspace_root().ok_or_else(|| {
-        "The Blockloom source tree wasn't found above the working dir, so the runtime can't be cross-built. Set BLOCKLOOM_ANDROID_RUNTIME_SO to a prebuilt libblockloom_runtime.so instead.".to_string()
+        "The Blockloom source tree wasn't found near the working directory, executable or original build location, so the runtime can't be cross-built. Set BLOCKLOOM_ANDROID_RUNTIME_SO to a prebuilt libblockloom_runtime.so instead.".to_string()
     })?;
     let Some(env) = ndk_cargo_env(config, triple) else {
         return Err(format!(
@@ -2961,11 +3054,12 @@ pub fn build_runtime_so(config: &AppConfig, triple: &str) -> Result<PathBuf, Str
     };
     let (_, linker) = cargo_linker_env(config, triple)
         .ok_or_else(|| format!("No NDK linker for {triple}. Run android-install-sdk first."))?;
-    let prepared = std::process::Command::new("bash")
-        .arg(root.join("scripts/prepare-patched-deps.sh"))
-        .current_dir(&root)
-        .output()
-        .map_err(|e| format!("Couldn't prepare patched dependencies (Bash is required): {e}"))?;
+    let prepared = crate::build_control::output(
+        std::process::Command::new("bash")
+            .arg(root.join("scripts/prepare-patched-deps.sh"))
+            .current_dir(&root),
+    )
+    .map_err(|e| format!("Couldn't prepare patched dependencies (Bash is required): {e}"))?;
     if !prepared.status.success() {
         return Err(format!(
             "Couldn't prepare patched dependencies:\n{}\n{}",
@@ -2994,6 +3088,8 @@ pub fn build_runtime_so(config: &AppConfig, triple: &str) -> Result<PathBuf, Str
             return Ok(so);
         }
     }
+    let _ = std::fs::remove_file(runtime_stamp_path(&so));
+    crate::build_control::step("Compiling Android runtime")?;
     let mut command = std::process::Command::new("cargo");
     command
         .arg("build")
@@ -3014,8 +3110,7 @@ pub fn build_runtime_so(config: &AppConfig, triple: &str) -> Result<PathBuf, Str
     for (key, value) in &env {
         command.env(key, value);
     }
-    let output = command
-        .output()
+    let output = crate::build_control::output(&mut command)
         .map_err(|e| format!("Couldn't run cargo: {e}"))?;
     if !output.status.success() {
         return Err(format!(
@@ -3117,15 +3212,12 @@ fn install_apk_with_adb(
     application_id: &str,
     device: Option<&str>,
 ) -> Result<ApkInstall, String> {
+    crate::build_control::step("Installing APK on device")?;
     let mut install = std::process::Command::new(adb);
     if let Some(serial) = device {
         install.arg("-s").arg(serial);
     }
-    let output = install
-        .arg("install")
-        .arg("-r")
-        .arg(apk)
-        .output()
+    let output = crate::build_control::output(install.arg("install").arg("-r").arg(apk))
         .map_err(|e| format!("Couldn't run {}: {e}", adb.display()))?;
     if !output.status.success() {
         return Err(format!(
@@ -3133,19 +3225,21 @@ fn install_apk_with_adb(
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
+    crate::build_control::step("Launching game on device")?;
     let component = format!("{application_id}/android.app.NativeActivity");
     let mut start = std::process::Command::new(adb);
     if let Some(serial) = device {
         start.arg("-s").arg(serial);
     }
-    let output = start
-        .arg("shell")
-        .arg("am")
-        .arg("start")
-        .arg("-n")
-        .arg(&component)
-        .output()
-        .map_err(|e| format!("Couldn't run {}: {e}", adb.display()))?;
+    let output = crate::build_control::output(
+        start
+            .arg("shell")
+            .arg("am")
+            .arg("start")
+            .arg("-n")
+            .arg(&component),
+    )
+    .map_err(|e| format!("Couldn't run {}: {e}", adb.display()))?;
     if !output.status.success() {
         return Err(format!(
             "The APK installed but wouldn't start: {}",
@@ -4108,6 +4202,62 @@ mod tests {
         );
         assert!(ndk_linker_for_config(&config, ARM64_TRIPLE).is_some());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn workspace_lookup_works_outside_the_source_tree() {
+        let root = temp_root("workspace-lookup");
+        let source = root.join("source");
+        std::fs::create_dir_all(source.join("blockloom-runtime")).unwrap();
+        std::fs::write(source.join("Cargo.toml"), "").unwrap();
+        std::fs::write(source.join("blockloom-runtime/Cargo.toml"), "").unwrap();
+        assert_eq!(
+            workspace_root_from([root.join("elsewhere"), source.join("target/debug")]),
+            Some(source.clone())
+        );
+        assert_eq!(
+            workspace_root_from([root.join("elsewhere"), source.join("blockloom-core")]),
+            Some(source)
+        );
+        assert_eq!(workspace_root_from([root.join("elsewhere")]), None);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn avd_management_validates_names_and_invokes_the_sdk() {
+        let root = temp_root("avd-manage");
+        std::fs::create_dir_all(&root).unwrap();
+        let emulator = stub_tool(&root, "emulator", "#!/bin/sh\necho old\necho taken\n");
+        let manager = stub_tool(
+            &root,
+            "manager",
+            "#!/bin/sh\necho \"$@\" > \"$(dirname \"$0\")/args\"\n",
+        );
+        assert!(manage_avd_with(&emulator, &manager, "missing", None).is_err());
+        for name in ["", "bad name", "taken"] {
+            assert!(manage_avd_with(&emulator, &manager, "old", Some(name)).is_err());
+        }
+        assert_eq!(
+            manage_avd_with(&emulator, &manager, "old", Some("new")).unwrap(),
+            "new"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("args")).unwrap().trim(),
+            "move avd -n old -r new"
+        );
+        manage_avd_with(&emulator, &manager, "old", None).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("args")).unwrap().trim(),
+            "delete avd -n old"
+        );
+        let failing = stub_tool(&root, "failing", "#!/bin/sh\necho locked >&2\nexit 1\n");
+        assert!(
+            manage_avd_with(&emulator, &failing, "old", None)
+                .unwrap_err()
+                .contains("locked")
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

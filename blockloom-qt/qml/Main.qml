@@ -38,6 +38,8 @@ ApplicationWindow {
     property var log: ({ total: 0, lines: [] })
     readonly property var openActor: Blocks.actor
     // The tray entry being dragged onto an asset box, and the boxes that take one.
+    property string inspectedLighting: ""
+    property bool inspectScene: false
     property var assetDrag: null
     property var assetTargets: []
 
@@ -52,6 +54,7 @@ ApplicationWindow {
     // Runs a backend command. `done(result)` on success; a failure goes to
     // `failed(error)`, or to the error bar when no handler was given.
     function invoke(command, args, done, failed) {
+        if (command === "select_actor") { inspectScene = false; inspectedLighting = ""; }
         const token = nextToken++;
         pending[token] = { command: command, done: done, failed: failed };
         bridge.invokeCommand(token, command, JSON.stringify(args || {}));

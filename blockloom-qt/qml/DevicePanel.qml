@@ -136,15 +136,22 @@ ColumnLayout {
         text: root.error; color: Theme.danger; font.pixelSize: 12; wrapMode: Text.WrapAnywhere
     }
     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.borderSoft }
-    RowLayout {
-        Layout.fillWidth: true; Layout.margins: 12
+    Item {
+        Layout.fillWidth: true; Layout.margins: 12; implicitHeight: navigation.implicitHeight
         Text {
-            Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: 11; color: Theme.textDim
+            anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+            width: Math.max(0, (parent.width - navigation.width) / 2 - 12)
+            elide: Text.ElideRight; font.pixelSize: 11; color: Theme.textDim
             text: root.watching ? "Live preview" : "Preview paused"
         }
-        IconButton { iconName: "arrow-left"; tip: "Android Back"; enabled: root.watching && !root.inputBusy; onClicked: root.key("back") }
-        IconButton { iconName: "house"; tip: "Android Home"; enabled: root.watching && !root.inputBusy; onClicked: root.key("home") }
-        IconButton { iconName: "panels-top-left"; tip: "Android recent apps"; enabled: root.watching && !root.inputBusy; onClicked: root.key("recents") }
+        RowLayout {
+            id: navigation
+            objectName: "deviceNavigation"
+            anchors.centerIn: parent
+            IconButton { iconName: "arrow-left"; tip: "Android Back"; enabled: root.watching && !root.inputBusy; onClicked: root.key("back") }
+            IconButton { iconName: "house"; tip: "Android Home"; enabled: root.watching && !root.inputBusy; onClicked: root.key("home") }
+            IconButton { iconName: "panels-top-left"; tip: "Android recent apps"; enabled: root.watching && !root.inputBusy; onClicked: root.key("recents") }
+        }
     }
     Timer { interval: 1000; running: root.watching && root.active; repeat: true; onTriggered: root.pollFrame() }
 }

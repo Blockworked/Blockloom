@@ -33,7 +33,7 @@ Rectangle {
     property string previewing: ""
     property var dropTarget: null  // A folder path while an asset drag hovers one, else null - null rather than "" so the project root ("") stays hoverable without reading as hovered.
 
-    readonly property var icons: ({ folder: "folder", image: "image", audio: "music", font: "file-type", model: "box", script: "file-code", shader: "sparkles", text: "file-text", hdr: "sun", volume: "layers", light: "zap", height: "trending-up", scene: "map", other: "file" })
+    readonly property var icons: ({ folder: "folder", image: "image", audio: "music", font: "file-type", model: "box", script: "file-code", shader: "sparkles", text: "file-text", hdr: "sun", volume: "layers", light: "zap", height: "trending-up", scene: "map", lighting: "sun", other: "file" })
     function parentOf(p) { const cut = p.lastIndexOf("/"); return cut === -1 ? "" : p.slice(0, cut); }
     readonly property var crumbs: { const parts = path.split("/").filter(p => p.length); return parts.map((name, i) => ({ name: name, path: parts.slice(0, i + 1).join("/") })); }
     function fileSize(bytes) {
@@ -54,15 +54,32 @@ Rectangle {
             if (path) path = ""; else error = String(e);
         });
     }
-    function run(command, args) { error = ""; app.invoke(command, args, () => refresh(), e => { error = String(e); refresh(); }); }
+    function run(command, args) {
+        error = "";
+        app.invoke(command, args, result => {
+            if (command === "create_asset" && /\.blocklighting$/i.test(String(result))) {
+                app.inspectedLighting = result; app.inspectScene = false; selected = result;
+            } else if (command === "create_asset" && /\.blockscene$/i.test(String(result))) {
+                app.inspectedLighting = ""; app.inspectScene = true; selected = result;
+            } else if ((command === "rename_asset" || command === "move_asset") && app.inspectedLighting
+                && (app.inspectedLighting === args.path || app.inspectedLighting.startsWith(args.path + "/"))) {
+                app.inspectedLighting = result + app.inspectedLighting.slice(args.path.length);
+            } else if (command === "delete_asset" && app.inspectedLighting
+                && (app.inspectedLighting === args.path || app.inspectedLighting.startsWith(args.path + "/"))) {
+                app.inspectedLighting = ""; app.inspectScene = true;
+            }
+            refresh();
+        }, e => { error = String(e); refresh(); });
+    }
     function goTo(p) { path = p; selected = ""; }
     onPathChanged: refresh()
     Connections { target: root.app; function onAppStateChanged() { if (root.lastProject !== root.appState.project_path) { root.lastProject = root.appState.project_path; root.path = ""; root.refresh(); } } }
+    Connections { target: root.app; function onInspectedLightingChanged() { root.refresh(); } }
     property var lastProject: null
     Component.onCompleted: { lastProject = appState.project_path; refresh(); }
 
     function startDraft(mode) {
-        const name = mode === "folder" ? "New folder" : mode === "scene" ? "New Scene" : "notes.txt";
+        const name = mode === "folder" ? "New folder" : mode === "scene" ? "New Scene" : mode === "lighting" ? "New Lighting" : "notes.txt";
         draft = { mode: mode, path: "", name: name };
     }
     function startRename(entry) { if (!entry.protected) draft = { mode: "rename", path: entry.path, name: entry.name }; }
@@ -72,6 +89,11 @@ Rectangle {
         if (!d || !name.trim().length) return;
         if (d.mode === "folder") run("create_asset_folder", { parent: path, name: name });
         else if (d.mode === "file") run("create_asset", { parent: path, name: name });
+        else if (d.mode === "lighting") {
+            let file = name.trim();
+            if (!/\.blocklighting$/i.test(file)) file += ".blocklighting";
+            run("create_asset", { parent: path, name: file });
+        }
         else if (d.mode === "scene") {
             let file = name.trim();
             if (!/\.blockscene$/i.test(file)) file += ".blockscene";
@@ -82,6 +104,8 @@ Rectangle {
     function report(entry) { return reports[entry.path] || null; }
     // Double-clicking a scene file opens it; its filename is the scene name.
     function openSceneAsset(entry) {
+        root.app.inspectedLighting = "";
+        root.app.inspectScene = true;
         const scenes = root.appState.project ? root.appState.project.scenes : [];
         const active = root.appState.project ? root.appState.project.active_scene : "";
         let found = scenes.find(s => s.path === entry.path);
@@ -178,7 +202,7 @@ Rectangle {
             }
             Item { Layout.fillWidth: true; visible: !remembered.open }
             IconButton { visible: remembered.open; iconName: "folder-plus"; tip: "New folder"; implicitWidth: 28; implicitHeight: 28; onClicked: root.startDraft("folder") }
-            IconButton { visible: remembered.open; iconName: "file-plus"; tip: "New file - the extension says what it is, and a .rs gets the script template"; implicitWidth: 28; implicitHeight: 28; onClicked: root.startDraft("file") }
+            IconButton { visible: remembered.open; iconName: "file-plus"; tip: "New asset"; implicitWidth: 28; implicitHeight: 28; onClicked: createMenu.popup() }
             IconButton { visible: remembered.open; iconName: "download"; tip: "Import files into this folder"; implicitWidth: 28; implicitHeight: 28; onClicked: importDialog.open() }
             IconButton { visible: remembered.open; iconName: "refresh-cw"; tip: "Re-read this folder"; enabled: !root.busy; implicitWidth: 28; implicitHeight: 28; onClicked: root.refresh() }
         }
@@ -285,6 +309,10 @@ Rectangle {
                                 property bool dragging: false
                                 onPressed: mouse => {
                                     root.selected = tile.modelData.path;
+                                    if (mouse.button === Qt.LeftButton && tile.modelData.kind === "lighting") {
+                                        root.app.inspectedLighting = tile.modelData.path;
+                                        root.app.inspectScene = false;
+                                    }
                                     press = mapToItem(null, mouse.x, mouse.y); dragging = false;
                                     if (mouse.button === Qt.RightButton && !tile.modelData.protected) { root.menuEntry = tile.modelData; trayMenu.popup(); }
                                 }
@@ -330,11 +358,18 @@ Rectangle {
     }
 
     BwMenu {
+        id: createMenu
+        BwMenuItem { iconName: "file-plus"; text: "File"; onTriggered: root.startDraft("file") }
+        BwMenuItem { iconName: "map"; text: "Scene"; onTriggered: root.startDraft("scene") }
+        BwMenuItem { iconName: "sun"; text: "Lighting"; onTriggered: root.startDraft("lighting") }
+    }
+    BwMenu {
         id: trayMenu
         BwMenuItem { iconName: "external-link"; text: "Open File Location"; onTriggered: root.app.invoke("open_asset_location", { path: root.menuEntry ? root.menuEntry.path : root.path }) }
         BwMenuItem { visible: !root.menuEntry; iconName: "folder-plus"; text: "New folder"; onTriggered: root.startDraft("folder") }
         BwMenuItem { visible: !root.menuEntry; iconName: "file-plus"; text: "New file"; onTriggered: root.startDraft("file") }
         BwMenuItem { visible: !root.menuEntry; iconName: "map"; text: "New scene"; onTriggered: root.startDraft("scene") }
+        BwMenuItem { visible: !root.menuEntry; iconName: "sun"; text: "New Lighting"; onTriggered: root.startDraft("lighting") }
         BwMenuItem { visible: !root.menuEntry; iconName: "download"; text: "Import files here"; onTriggered: importDialog.open() }
         BwMenuItem { visible: !root.menuEntry; iconName: "refresh-cw"; text: "Re-read this folder"; onTriggered: root.refresh() }
         BwMenuItem {

@@ -184,17 +184,34 @@ fn stamp_path(project_dir: &Path, relative: &str, target: Option<&str>) -> PathB
     build_dir_for(project_dir, target).join(format!("{}.stamp", crate_name(relative)))
 }
 
+/// Uses the workspace toolchain even when the editor starts elsewhere.
+pub(crate) fn rustc_command() -> Command {
+    let mut command = Command::new("rustc");
+    if std::env::var_os("RUSTUP_TOOLCHAIN").is_none()
+        && let Some(root) = crate::android::workspace_root()
+    {
+        // Preserve relative source paths when selecting rustup's toolchain.
+        if let Ok(text) = std::fs::read_to_string(root.join("rust-toolchain.toml")) {
+            if let Some(channel) = text.lines().find_map(|line| {
+                line.trim()
+                    .strip_prefix("channel = ")
+                    .map(|value| value.trim().trim_matches('"'))
+            }) {
+                command.env("RUSTUP_TOOLCHAIN", channel);
+            }
+        }
+    }
+    command
+}
+
 /// The rustc this machine has, or why there isn't one.
 pub fn toolchain_version() -> Result<String, String> {
-    let output = Command::new("rustc")
-        .arg("--version")
-        .output()
-        .map_err(|e| {
-            format!(
-                "Scripts need a Rust toolchain, and `rustc` couldn't be run ({e}). \
+    let output = crate::build_control::output(rustc_command().arg("--version")).map_err(|e| {
+        format!(
+            "Scripts need a Rust toolchain, and `rustc` couldn't be run ({e}). \
              Install one from https://rustup.rs and reopen Blockloom."
-            )
-        })?;
+        )
+    })?;
     if !output.status.success() {
         return Err("`rustc --version` failed, so scripts can't be built".to_string());
     }
@@ -206,20 +223,33 @@ pub fn toolchain_version() -> Result<String, String> {
 /// A linker for it is a third thing nothing here can check - that one shows
 /// up as rustc's own error when the build runs.
 pub fn target_installed(triple: &str) -> Result<(), String> {
-    let output = Command::new("rustc")
-        .arg("--print")
-        .arg("target-libdir")
-        .arg("--target")
-        .arg(triple)
-        .output()
-        .map_err(|e| format!("`rustc` couldn't be run ({e})"))?;
+    let output = crate::build_control::output(
+        rustc_command()
+            .arg("--print")
+            .arg("target-libdir")
+            .arg("--target")
+            .arg(triple),
+    )
+    .map_err(|e| format!("`rustc` couldn't be run ({e})"))?;
     if !output.status.success() {
         return Err(format!("rustc doesn't know the target {triple}"));
     }
     let libdir = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if !Path::new(&libdir).is_dir() {
+        let command = rustc_command();
+        let toolchain = command
+            .get_envs()
+            .find_map(|(key, value)| {
+                (key == "RUSTUP_TOOLCHAIN")
+                    .then(|| value.map(|value| value.to_string_lossy().into_owned()))
+                    .flatten()
+            })
+            .or_else(|| std::env::var("RUSTUP_TOOLCHAIN").ok());
+        let toolchain = toolchain
+            .map(|name| format!(" --toolchain {name}"))
+            .unwrap_or_default();
         return Err(format!(
-            "the standard library for {triple} isn't installed - `rustup target add {triple}`"
+            "the standard library for {triple} isn't installed - `rustup target add {triple}{toolchain}`"
         ));
     }
     Ok(())
@@ -300,7 +330,7 @@ pub fn compile_for_with_linker(
     }
 
     let rlib = build_prelude(&build, &toolchain, target)?;
-    let mut command = Command::new("rustc");
+    let mut command = rustc_command();
     if let Some(triple) = target {
         command.arg("--target").arg(triple);
         if let Some(linker) = linker {
@@ -318,22 +348,24 @@ pub fn compile_for_with_linker(
             command.arg("--remap-path-prefix").arg(prefix);
         }
     }
-    let status = command
-        .arg("--edition")
-        .arg(EDITION)
-        .arg("--crate-type")
-        .arg("cdylib")
-        .arg("--crate-name")
-        .arg(crate_name(relative))
-        .arg("--extern")
-        .arg(format!("blockloom={}", rlib.display()))
-        .arg("-C")
-        .arg("opt-level=2")
-        .arg("-o")
-        .arg(&library)
-        .arg(&source_path)
-        .output()
-        .map_err(|e| format!("couldn't run rustc: {e}"))?;
+    let _ = std::fs::remove_file(&stamp);
+    let status = crate::build_control::output(
+        command
+            .arg("--edition")
+            .arg(EDITION)
+            .arg("--crate-type")
+            .arg("cdylib")
+            .arg("--crate-name")
+            .arg(crate_name(relative))
+            .arg("--extern")
+            .arg(format!("blockloom={}", rlib.display()))
+            .arg("-C")
+            .arg("opt-level=2")
+            .arg("-o")
+            .arg(&library)
+            .arg(&source_path),
+    )
+    .map_err(|e| format!("couldn't run rustc: {e}"))?;
     if !status.status.success() {
         // Let the compiler speak for itself: its diagnostics point at the
         // script's own lines, which is what a script author needs to see.
@@ -358,24 +390,26 @@ fn build_prelude(build: &Path, toolchain: &str, target: Option<&str>) -> Result<
 
     std::fs::write(&source_path, PRELUDE_SOURCE)
         .map_err(|e| format!("{}: {e}", source_path.display()))?;
-    let mut command = Command::new("rustc");
+    let mut command = rustc_command();
     if let Some(triple) = target {
         command.arg("--target").arg(triple);
     }
-    let status = command
-        .arg("--edition")
-        .arg(EDITION)
-        .arg("--crate-type")
-        .arg("rlib")
-        .arg("--crate-name")
-        .arg("blockloom")
-        .arg("-C")
-        .arg("opt-level=2")
-        .arg("-o")
-        .arg(&rlib)
-        .arg(&source_path)
-        .output()
-        .map_err(|e| format!("couldn't run rustc: {e}"))?;
+    let _ = std::fs::remove_file(&stamp);
+    let status = crate::build_control::output(
+        command
+            .arg("--edition")
+            .arg(EDITION)
+            .arg("--crate-type")
+            .arg("rlib")
+            .arg("--crate-name")
+            .arg("blockloom")
+            .arg("-C")
+            .arg("opt-level=2")
+            .arg("-o")
+            .arg(&rlib)
+            .arg(&source_path),
+    )
+    .map_err(|e| format!("couldn't run rustc: {e}"))?;
     if !status.status.success() {
         // A failure here is Blockloom's bug, not the script author's, so say
         // so rather than showing them somebody else's compiler errors.
@@ -437,6 +471,30 @@ pub fn unused_path(project_dir: &Path, actor: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn compiler_uses_workspace_toolchain_without_an_override() {
+        if std::env::var_os("RUSTUP_TOOLCHAIN").is_some() {
+            return;
+        }
+        let Some(root) = crate::android::workspace_root() else {
+            return;
+        };
+        let text = std::fs::read_to_string(root.join("rust-toolchain.toml")).unwrap();
+        let channel = text
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("channel = "))
+            .unwrap()
+            .trim()
+            .trim_matches('"');
+        let command = super::rustc_command();
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == "RUSTUP_TOOLCHAIN"
+                    && value == Some(std::ffi::OsStr::new(channel)))
+        );
+    }
     use super::*;
 
     #[test]

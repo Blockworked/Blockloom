@@ -41,6 +41,8 @@ pub enum AssetKind {
     Height,
     /// A scene asset (`.blockscene`): actors plus its settings as components.
     Scene,
+    /// Reusable sun, ambient, shadows and ray tracing settings.
+    Lighting,
     Other,
 }
 
@@ -150,8 +152,36 @@ pub fn kind_of(name: &str) -> AssetKind {
         "ies" => AssetKind::Light,
         "r16" | "r32" | "raw" => AssetKind::Height,
         "blockscene" => AssetKind::Scene,
+        "blocklighting" => AssetKind::Lighting,
         _ => AssetKind::Other,
     }
+}
+
+/// Reads a reusable lighting asset without carrying a reference to itself.
+pub fn read_lighting(project_dir: &Path, relative: &str) -> Result<crate::scene::Lighting, String> {
+    if kind_of(relative) != AssetKind::Lighting {
+        return Err("Choose a .blocklighting asset".into());
+    }
+    let full = resolve_or_err(project_dir, relative)?;
+    let text = std::fs::read_to_string(&full).map_err(|e| format!("{}: {e}", full.display()))?;
+    let mut lighting: crate::scene::Lighting =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", full.display()))?;
+    lighting.asset.clear();
+    Ok(lighting)
+}
+
+/// Updates an existing asset. Project references keep their own fallback copy.
+pub fn write_lighting(
+    project_dir: &Path,
+    relative: &str,
+    lighting: &crate::scene::Lighting,
+) -> Result<(), String> {
+    read_lighting(project_dir, relative)?;
+    let full = resolve_or_err(project_dir, relative)?;
+    let mut value = lighting.clone();
+    value.asset.clear();
+    let text = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
+    std::fs::write(&full, text).map_err(|e| format!("{}: {e}", full.display()))
 }
 
 /// The media type a preview data URL carries. Only the kinds the editor

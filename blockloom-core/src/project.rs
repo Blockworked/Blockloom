@@ -1773,6 +1773,19 @@ impl Project {
         removed
     }
 
+    /// Refreshes shared lighting while preserving inline fallback for missing assets.
+    pub fn resolve_lighting_assets(&mut self, dir: &Path) {
+        for scene in &mut self.scenes {
+            let path = scene.world.lighting.asset.clone();
+            if !path.is_empty()
+                && let Ok(mut lighting) = crate::assets::read_lighting(dir, &path)
+            {
+                lighting.asset = path;
+                scene.world.lighting = lighting;
+            }
+        }
+    }
+
     /// Points every asset path that named `from` at `to` instead, so renaming
     /// a sprite in the asset tray doesn't leave the actor using it blank.
     /// `from` may be a folder, in which case everything under it follows.
@@ -1788,6 +1801,7 @@ impl Project {
         repoint(&mut self.icon);
         for scene in &mut self.scenes {
             let world = &mut scene.world;
+            repoint(&mut world.lighting.asset);
             for style in world.interface.styles.values_mut() {
                 for paint in [
                     &mut style.normal,
@@ -2134,6 +2148,7 @@ pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
         let mut project: Project =
             serde_json::from_value(value).map_err(|e| format!("{}: {e}", path.display()))?;
         project.normalize();
+        project.resolve_lighting_assets(dir);
         return Ok(project);
     }
     let file: ProjectFile =
@@ -2194,6 +2209,7 @@ pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
         global_dicts: file.global_dicts,
     };
     project.normalize();
+    project.resolve_lighting_assets(dir);
     Ok(project)
 }
 

@@ -13,10 +13,13 @@ TestCase {
     property var panel: null
     property var calls: []
     property var deferred: ({})
+    property bool deferStart: false
     property bool deferBuild: false
     property bool deferFrame: false
     property bool failInstall: false
     property bool deferLog: false
+    property var buildStatus: ({})
+    property var avds: [{ name: "blockloom", serial: "emulator-5554", booted: true }]
     property var status: [
         { serial: "phone-1", state: "device", emulator: false },
         { serial: "emulator-5554", state: "device", emulator: true }
@@ -27,14 +30,19 @@ TestCase {
         function invoke(command, args, done, failed) {
             test.calls = test.calls.concat([{ command: command, args: args }]);
             if (command === "android_device_status") done(test.status);
-            else if (command === "android_emulator_status") done({ available: true, avds: [
-                { name: "blockloom", serial: "emulator-5554", booted: true }
-            ] });
-            else if (command === "build_game" && test.deferBuild) test.deferred.build = done;
+            else if (command === "android_emulator_status") done({ available: true, avds: test.avds });
+            else if (command === "android_start_emulator" && test.deferStart) test.deferred.start = done;
+            else if (command === "start_build_game") {
+                test.buildStatus = { id: 1, state: "running", step: "Compiling Android runtime", detail: "Compiling blockloom-runtime", device: args.device };
+                if (test.deferBuild) {
+                    test.deferred.build = built => { test.buildStatus = { id: 1, state: "complete", step: "Running on device", built: built, device: args.device }; };
+                } else if (test.failInstall) test.buildStatus = { id: 1, state: "failed", error: "Device disconnected" };
+                else test.buildStatus = { id: 1, state: "complete", built: { binary: "/tmp/Demo.apk" }, device: args.device };
+                done(test.buildStatus);
+            }
+            else if (command === "build_job_status") done(test.buildStatus);
+            else if (command === "cancel_build_job") { test.buildStatus = { id: 1, state: "cancelled", step: "Cancelled" }; done({}); }
             else if (command === "android_mirror_frame" && test.deferFrame) test.deferred.frame = done;
-            else if (command === "build_game") done({ binary: "/tmp/Demo.apk", application_id: "com.blockloom.game.demo" });
-            else if (command === "android_install" && test.failInstall) failed("Device disconnected");
-            else if (command === "android_install") done({ component: "NativeActivity", device: args.device });
             else if (command === "android_logcat_tail" && test.deferLog) test.deferred.log = done;
             else if (command === "android_logcat_tail") done({ lines: [], panics: [] });
             else if (command === "android_mirror_frame") done({ image: "", width: 360, height: 800 });
@@ -45,7 +53,8 @@ TestCase {
     Component { id: imageFactory; Rectangle { width: 360; height: 800; color: "#219b76" } }
     function init() {
         test.Window.window.width = 1000; test.Window.window.height = 720;
-        calls = []; deferred = {}; deferBuild = false; deferFrame = false; failInstall = false; deferLog = false;
+        calls = []; deferred = {}; deferStart = false; deferBuild = false; deferFrame = false; failInstall = false; deferLog = false;
+        avds = [{ name: "blockloom", serial: "emulator-5554", booted: true }];
         status = [
             { serial: "phone-1", state: "device", emulator: false },
             { serial: "emulator-5554", state: "device", emulator: true }
@@ -73,19 +82,34 @@ TestCase {
         deferBuild = true;
         const deploy = findChild(panel, "deployButton");
         mouseClick(deploy); mouseClick(deploy);
-        compare(matching("build_game").length, 1);
-        compare(matching("build_game")[0].args.target, "aarch64-linux-android");
+        compare(matching("start_build_game").length, 1);
+        compare(matching("start_build_game")[0].args.target, "aarch64-linux-android");
         verify(panel.busy);
         verify(!findChild(panel, "deployButton").enabled);
         panel.device = "emulator-5554";
         deferred.build({ binary: "/tmp/Demo.apk", application_id: "com.blockloom.game.demo" });
-        compare(matching("android_install")[0].args.device, "phone-1");
+        findChild(panel, "deviceBuildProgress").poll();
+        compare(matching("start_build_game")[0].args.device, "phone-1");
         verify(!panel.busy);
+    }
+    function test_deploymentProgressAndCancel() {
+        panel.device = "emulator-5554"; deferBuild = true;
+        panel.buildAndRun();
+        const progress = findChild(panel, "deviceBuildProgress");
+        verify(progress.visible);
+        verify(findChild(progress, "buildProgressBar").indeterminate);
+        compare(progress.step, "Compiling Android runtime");
+        grabImage(panel).save("/tmp/blockloom-deploy-progress.png");
+        mouseClick(findChild(progress, "cancelBuildButton"));
+        compare(matching("cancel_build_job").length, 1);
+        verify(!panel.busy);
+        compare(panel.buildState, "Deployment cancelled.");
+        verify(!panel.polling);
     }
     function test_emulatorTargetAndInstallFailure() {
         panel.device = "emulator-5554"; failInstall = true;
         panel.buildAndRun();
-        compare(matching("build_game")[0].args.target, "x86_64-linux-android");
+        compare(matching("start_build_game")[0].args.target, "x86_64-linux-android");
         verify(!panel.busy);
         compare(panel.buildError, "Device disconnected");
         verify(!panel.polling);
@@ -98,7 +122,7 @@ TestCase {
         verify(panel.booting);
         verify(!findChild(panel, "deployButton").enabled);
         panel.buildAndRun();
-        compare(matching("build_game").length, 0);
+        compare(matching("start_build_game").length, 0);
     }
     function test_mirrorIgnoresStaleFrameAndNoOverlappingPolls() {
         panel.device = "phone-1"; deferFrame = true;
@@ -129,7 +153,7 @@ TestCase {
     function test_emulatorLifecycleAndDialog() {
         panel.startAvd("blockloom");
         compare(matching("android_start_emulator").length, 1);
-        compare(matching("android_start_emulator")[0].args.wait_secs, 0);
+        compare(matching("android_start_emulator")[0].args.waitSecs, 0);
         compare(matching("android_start_emulator")[0].args.headless, true);
         panel.stopEmu("emulator-5554");
         compare(matching("android_stop_emulator")[0].args.serial, "emulator-5554");
@@ -144,6 +168,55 @@ TestCase {
         panel.createAvd();
         compare(matching("android_create_avd")[0].args.name, "test-device");
         verify(!panel.emuBusy);
+        tryCompare(dialog, "opened", false);
+    }
+    function test_startIndicatorAndDuplicateGuard() {
+        deferStart = true;
+        avds = [{ name: "blockloom", serial: "", booted: false }];
+        panel.refresh();
+        panel.startAvd("blockloom");
+        compare(panel.pendingAvd, "blockloom");
+        verify(findChild(panel, "startup_blockloom").running);
+        panel.startAvd("blockloom");
+        compare(matching("android_start_emulator").length, 1);
+        deferred.start({ avd: "blockloom", serial: "", booted: false });
+        compare(panel.pendingAvd, "blockloom");
+        verify(!panel.emuBusy);
+        avds = [{ name: "blockloom", serial: "emulator-5554", booted: false }];
+        panel.refresh();
+        compare(panel.device, "emulator-5554");
+        verify(panel.booting);
+        verify(findChild(panel, "startup_blockloom").running);
+        avds = [{ name: "blockloom", serial: "emulator-5554", booted: true }];
+        panel.refresh();
+        compare(panel.pendingAvd, "");
+        verify(!findChild(panel, "startup_blockloom").running);
+        verify(panel.ready);
+    }
+    function test_manageStoppedAvd() {
+        verify(!findChild(panel, "manage_blockloom").enabled);
+        avds = [{ name: "test-device", serial: "", booted: false }];
+        panel.refresh();
+        const menu = findChild(panel, "manage_test-device");
+        verify(menu.enabled);
+        mouseClick(menu);
+        const rename = findChild(test.Window.window.contentItem, "rename_test-device");
+        tryCompare(rename, "visible", true);
+        mouseClick(rename);
+        const dialog = findChild(panel, "manageAvdDialog");
+        tryCompare(dialog, "opened", true);
+        compare(panel.editAvd, "test-device");
+        compare(panel.renamedAvd, "test-device");
+        panel.renamedAvd = "renamed";
+        panel.manageAvd();
+        compare(matching("android_rename_avd")[0].args.newName, "renamed");
+        tryCompare(dialog, "opened", false);
+        mouseClick(menu);
+        mouseClick(findChild(test.Window.window.contentItem, "delete_test-device"));
+        tryCompare(dialog, "opened", true);
+        verify(panel.deletingAvd);
+        panel.manageAvd();
+        compare(matching("android_delete_avd")[0].args.name, "test-device");
         tryCompare(dialog, "opened", false);
     }
     function test_staleLogsAndPollingGuard() {
@@ -201,6 +274,9 @@ TestCase {
         const screen = findChild(panel, "deviceScreen");
         verify(screen.width > 0);
         verify(screen.height > 0);
+        const navigation = findChild(panel, "deviceNavigation");
+        const midpoint = navigation.mapToItem(screen, navigation.width / 2, 0);
+        fuzzyCompare(midpoint.x, screen.width / 2, 1);
         const deploy = findChild(panel, "deployButton");
         verify(deploy.width > 150);
         verify(deploy.mapToItem(panel, 0, 0).y < panel.height);

@@ -29,6 +29,11 @@ Item {
         property int tab: 0
     }
 
+    Connections {
+        target: root.app
+        function onInspectedLightingChanged() { if (root.app.inspectedLighting) panels.rightOpen = true; }
+        function onInspectSceneChanged() { if (root.app.inspectScene) panels.rightOpen = true; }
+    }
     readonly property bool running: appState.running === true
     // Play shows the game it started.
     onRunningChanged: if (running) panels.tab = 1

@@ -427,6 +427,9 @@ impl Default for SpeechBubbleStyle {
 /// scenery (one bright directional light, modest ambient, AO off).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Lighting {
+    /// Reusable lighting asset; inline values remain the fallback if it is missing.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub asset: String,
     /// Where the directional light shines from, aimed at the origin.
     #[serde(default = "default_light_direction")]
     pub light_direction: [f32; 3],
@@ -736,6 +739,7 @@ fn default_sky_brightness() -> f32 {
 impl Default for Lighting {
     fn default() -> Self {
         Self {
+            asset: String::new(),
             light_direction: default_light_direction(),
             light_color: default_light_color(),
             illuminance: default_illuminance(),
@@ -1424,7 +1428,7 @@ pub struct World {
     #[serde(default)]
     pub lighting: Lighting,
     /// The saved mix: one gain per bus. What a `play sound` block's volumes
-    /// scale against, and what the project settings dialog edits.
+    /// scale against, and what the scene inspector edits.
     #[serde(default)]
     pub sound: SoundMixer,
     /// Named input actions and the bindings that drive them. What the

@@ -43,6 +43,12 @@ impl Backend {
     /// Runs the command named `cmd` with `args` (a JSON object keyed by
     /// camelCase argument name) and returns its result as JSON.
     pub fn dispatch(&self, cmd: &str, args: Value) -> Result<Value, String> {
+        // Job controls must stay responsive while any other command holds state.
+        match cmd {
+            "build_job_status" => return to_json(self.builds.status(arg(&args, "id")?)?),
+            "cancel_build_job" => return to_json(self.builds.cancel(arg(&args, "id")?)?),
+            _ => {}
+        }
         let state = &self.state;
         let app = &self.app;
         // Heartbeat first, then live reload: an idle backend follows the
@@ -88,20 +94,17 @@ impl Backend {
             "export_project" => to_json(commands::export_project(state, arg(&args, "path")?)?),
             "import_project" => to_json(commands::import_project(state, app, arg(&args, "path")?)?),
             "list_build_targets" => to_json(commands::list_build_targets(state)?),
-            "build_game" => to_json(commands::build_game(
-                state,
-                app,
-                arg(&args, "path")?,
-                arg(&args, "target").ok().flatten(),
-                arg(&args, "fast").ok().flatten(),
-                arg(&args, "hdr").ok().flatten(),
-                arg(&args, "storePass").ok().flatten(),
-                arg(&args, "keyPass").ok().flatten(),
-                arg(&args, "rememberPasswords")
-                    .ok()
-                    .flatten()
-                    .unwrap_or(false),
+            "start_build_game" => to_json(self.builds.start(
+                self,
+                serde_json::from_value(args).map_err(|e| e.to_string())?,
             )?),
+            "build_game" => {
+                let mut params: crate::build_jobs::BuildParams =
+                    serde_json::from_value(args).map_err(|e| e.to_string())?;
+                params.device = None;
+                let job = self.builds.start(self, params)?;
+                to_json(self.builds.wait(job.id)?)
+            }
             "android_status" => to_json(commands::android_status()?),
             "android_device_status" => to_json(commands::android_device_status()?),
             "android_install_sdk" => to_json(commands::android_install_sdk()?),
@@ -127,6 +130,11 @@ impl Backend {
             "android_create_avd" => to_json(commands::android_create_avd(
                 arg(&args, "name").ok().flatten(),
             )?),
+            "android_rename_avd" => to_json(commands::android_rename_avd(
+                arg(&args, "name")?,
+                arg(&args, "newName")?,
+            )?),
+            "android_delete_avd" => to_json(commands::android_delete_avd(arg(&args, "name")?)?),
             "android_start_emulator" => to_json(commands::android_start_emulator(
                 arg(&args, "avd").ok().flatten(),
                 arg(&args, "waitSecs").ok().flatten(),
@@ -248,6 +256,20 @@ impl Backend {
                 let camera: Camera = arg(&args, "camera")?;
                 to_json(commands::set_camera(state, app, camera)?)
             }
+            "read_lighting_asset" => {
+                to_json(commands::read_lighting_asset(state, arg(&args, "path")?)?)
+            }
+            "write_lighting_asset" => to_json(commands::write_lighting_asset(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg(&args, "lighting")?,
+            )?),
+            "set_scene_lighting_asset" => to_json(commands::set_scene_lighting_asset(
+                state,
+                app,
+                arg(&args, "path")?,
+            )?),
             "set_lighting" => {
                 let lighting: Lighting = arg(&args, "lighting")?;
                 to_json(commands::set_lighting(state, app, lighting)?)

@@ -228,10 +228,18 @@ pub fn archive(root: &Path, destination: &Path, executables: &[PathBuf]) -> Resu
     collect_files(root, &mut files)?;
     let parent = root.parent().unwrap_or_else(|| Path::new(""));
     let partial = destination.with_extension("zip.part");
+    struct PartialArchive(PathBuf);
+    impl Drop for PartialArchive {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let _partial = PartialArchive(partial.clone());
     let mut output =
         File::create(&partial).map_err(|error| format!("{}: {error}", partial.display()))?;
     let mut central = Vec::new();
     for path in files {
+        crate::build_control::check()?;
         let relative = path.strip_prefix(parent).unwrap_or(&path);
         let name = relative.to_string_lossy().replace('\\', "/").into_bytes();
         if name.len() > usize::from(u16::MAX) {
@@ -245,9 +253,12 @@ pub fn archive(root: &Path, destination: &Path, executables: &[PathBuf]) -> Resu
         hasher.update(&data);
         let crc = hasher.finalize();
         let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
-        encoder
-            .write_all(&data)
-            .map_err(|error| format!("couldn't compress {}: {error}", path.display()))?;
+        for chunk in data.chunks(64 * 1024) {
+            crate::build_control::check()?;
+            encoder
+                .write_all(chunk)
+                .map_err(|error| format!("couldn't compress {}: {error}", path.display()))?;
+        }
         let compressed = encoder
             .finish()
             .map_err(|error| format!("couldn't compress {}: {error}", path.display()))?;
@@ -299,10 +310,12 @@ pub fn archive(root: &Path, destination: &Path, executables: &[PathBuf]) -> Resu
     // Closed before the rename, which Windows needs. A no-op in a browser.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::drop_non_drop))]
     drop(output);
+    crate::build_control::check()?;
     if destination.exists() {
         std::fs::remove_file(destination)
             .map_err(|error| format!("{}: {error}", destination.display()))?;
     }
+    crate::build_control::check()?;
     std::fs::rename(&partial, destination).map_err(|error| {
         format!(
             "{} -> {}: {error}",

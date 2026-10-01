@@ -39,7 +39,7 @@ use blockloom_core::wind::Wind;
 use blockstitch_core::editor::{ValueEdit, prune_value_buffers};
 use blockstitch_core::value::operator_kind;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
 use std::sync::atomic::Ordering;
 
@@ -1021,6 +1021,7 @@ pub(crate) fn import_scene(
     let id = scene.id.clone();
     let dest_relative = scene.asset_path();
     project.scenes.push(scene);
+    project.resolve_lighting_assets(&dir);
     project.active_scene = id.clone();
     s.selected_actor = None;
     // A staged file under a different name served its turn; the save below
@@ -1133,6 +1134,79 @@ pub(crate) fn set_camera(
     Ok(())
 }
 
+pub(crate) fn read_lighting_asset(state: &SharedState, path: String) -> Result<Lighting, String> {
+    let s = lock(state)?;
+    assets::read_lighting(&project_dir(&s)?, &path)
+}
+
+pub(crate) fn write_lighting_asset(
+    state: &SharedState,
+    app: &AppHandle,
+    path: String,
+    lighting: Lighting,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let dir = project_dir(&s)?;
+    let lighting = sanitize_lighting(lighting)?;
+    assets::write_lighting(&dir, &path, &lighting)?;
+    if let Some(project) = s.project_mut() {
+        project.resolve_lighting_assets(&dir);
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+pub(crate) fn set_scene_lighting_asset(
+    state: &SharedState,
+    app: &AppHandle,
+    path: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let mut lighting = if path.is_empty() {
+        s.project()
+            .ok_or("No project is open")?
+            .world
+            .lighting
+            .clone()
+    } else {
+        assets::read_lighting(&project_dir(&s)?, &path)?
+    };
+    lighting.asset = assets::normalize(&path).ok_or("Invalid asset path")?;
+    push_undo(&mut s);
+    s.project_mut().ok_or("No project is open")?.world.lighting = lighting;
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+fn sanitize_lighting(lighting: Lighting) -> Result<Lighting, String> {
+    let light_color =
+        normalize_block_color(&lighting.light_color).ok_or("Choose a valid light color")?;
+    let ambient_color =
+        normalize_block_color(&lighting.ambient_color).ok_or("Choose a valid ambient color")?;
+    Ok(Lighting {
+        light_color,
+        ambient_color,
+        illuminance: lighting.illuminance.clamp(0.0, 200_000.0),
+        ambient_brightness: lighting.ambient_brightness.clamp(0.0, 1000.0),
+        shadow_map_size: lighting.shadow_map_size.clamp(512, 8192),
+        shadow_bias: lighting.shadow_bias.clamp(0.0, 0.5),
+        sky: String::new(),
+        shadows: lighting.shadows.clone().sanitized(),
+        ray_tracing: lighting.ray_tracing.clone().sanitized(),
+        sun_cookie: lighting.sun_cookie.trim().replace('\\', "/"),
+        sun_cookie_size: if lighting.sun_cookie_size.is_finite() {
+            lighting.sun_cookie_size.clamp(0.01, 100_000.0)
+        } else {
+            20.0
+        },
+        ..lighting
+    })
+}
+
 pub(crate) fn set_lighting(
     state: &SharedState,
     app: &AppHandle,
@@ -1140,10 +1214,6 @@ pub(crate) fn set_lighting(
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     push_undo(&mut s);
-    let light_color =
-        normalize_block_color(&lighting.light_color).ok_or("Choose a valid light color")?;
-    let ambient_color =
-        normalize_block_color(&lighting.ambient_color).ok_or("Choose a valid ambient color")?;
     if let Some(project) = s.project_mut() {
         // A sky path here is the old spelling of an HDRI sky.
         if !lighting.sky.trim().is_empty() {
@@ -1153,24 +1223,9 @@ pub(crate) fn set_lighting(
             sky.hdri.brightness = lighting.sky_brightness;
             sky.normalize();
         }
-        project.world.lighting = Lighting {
-            light_color,
-            ambient_color,
-            illuminance: lighting.illuminance.clamp(0.0, 200_000.0),
-            ambient_brightness: lighting.ambient_brightness.clamp(0.0, 1000.0),
-            shadow_map_size: lighting.shadow_map_size.clamp(512, 8192),
-            shadow_bias: lighting.shadow_bias.clamp(0.0, 0.5),
-            sky: String::new(),
-            shadows: lighting.shadows.clone().sanitized(),
-            ray_tracing: lighting.ray_tracing.clone().sanitized(),
-            sun_cookie: lighting.sun_cookie.trim().replace('\\', "/"),
-            sun_cookie_size: if lighting.sun_cookie_size.is_finite() {
-                lighting.sun_cookie_size.clamp(0.01, 100_000.0)
-            } else {
-                20.0
-            },
-            ..lighting
-        };
+        project.world.lighting = sanitize_lighting(lighting)?;
+        // Editing inline settings detaches them from the shared asset.
+        project.world.lighting.asset.clear();
     }
     auto_save(&s);
     sync_runtime(&mut s);
@@ -1179,7 +1234,7 @@ pub(crate) fn set_lighting(
 }
 
 /// Sets the 3D sky: its kind, the sun's position, each kind's settings and
-/// what it lights. What the project settings dialog's Sky section edits.
+/// what it lights. Edited on the scene's Sky component.
 pub(crate) fn set_sky(state: &SharedState, app: &AppHandle, sky: Sky) -> Result<(), String> {
     let mut s = lock(state)?;
     push_undo(&mut s);
@@ -2457,14 +2512,16 @@ fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
 /// whether it could be built for right now and why not when it couldn't.
 pub(crate) fn list_build_targets(state: &SharedState) -> Result<Vec<build::TargetStatus>, String> {
     let s = lock(state)?;
-    let has_scripts = s.project().is_some_and(|project| {
+    let project = s.project().cloned();
+    drop(s);
+    let has_scripts = project.as_ref().is_some_and(|project| {
         project
             .actors
             .iter()
             .any(|actor| actor.components.script().is_some())
     });
-    let fast_source = s
-        .project()
+    let fast_source = project
+        .as_ref()
         .ok_or_else(|| "No project is open".to_string())
         .and_then(|project| {
             codegen::compile(project)
@@ -2478,35 +2535,65 @@ pub(crate) fn list_build_targets(state: &SharedState) -> Result<Vec<build::Targe
     ))
 }
 
-/// Builds the open project for `target` (this machine when it isn't given)
-/// into a folder under `path` that runs without the editor: the player
-/// binary, the project's pack, its assets and its compiled scripts (see
-/// `blockloom_core::build`). Returns where it landed.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn build_game(
+pub(crate) struct BuildRequest {
+    project: Project,
+    dir: PathBuf,
+    target: &'static build::Target,
+    params: crate::build_jobs::BuildParams,
+}
+
+pub(crate) fn prepare_build_game(
     state: &SharedState,
-    app: &AppHandle,
-    path: String,
-    target: Option<String>,
-    fast: Option<bool>,
-    hdr: Option<bool>,
-    store_pass: Option<String>,
-    key_pass: Option<String>,
-    remember_passwords: bool,
-) -> Result<build::Build, String> {
-    let mut s = lock(state)?;
-    let Some(project) = s.project().cloned() else {
-        return Err("No project is open".to_string());
-    };
-    let Some(dir) = s.project_dir().map(Path::to_path_buf) else {
-        return Err("This project has no folder to build from".to_string());
-    };
-    let target = match target.as_deref() {
+    params: crate::build_jobs::BuildParams,
+) -> Result<BuildRequest, String> {
+    let s = lock(state)?;
+    let project = s
+        .project()
+        .cloned()
+        .ok_or_else(|| "No project is open".to_string())?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "This project has no folder to build from".to_string())?;
+    let target = match params.target.as_deref() {
         Some(triple) => build::target(triple)
             .ok_or_else(|| format!("Blockloom doesn't know how to build for {triple}"))?,
         None => build::host()
             .ok_or("Blockloom has no name for this platform, so it can't build for it")?,
     };
+    if params.device.is_some() && !target.is_android() {
+        return Err("Deploying to a device requires an Android target".to_string());
+    }
+    auto_save(&s);
+    Ok(BuildRequest {
+        project,
+        dir,
+        target,
+        params,
+    })
+}
+
+pub(crate) fn run_build_game(
+    state: &SharedState,
+    app: &AppHandle,
+    request: BuildRequest,
+) -> Result<build::Build, String> {
+    let BuildRequest {
+        project,
+        dir,
+        target,
+        params,
+    } = request;
+    let crate::build_jobs::BuildParams {
+        path,
+        fast,
+        hdr,
+        store_pass,
+        key_pass,
+        remember_passwords,
+        ..
+    } = params;
+    blockloom_core::build_control::step("Checking build requirements")?;
     let player = if target.is_android() {
         // Fail fast on a release row with no password, before the long NDK
         // cross-build below: the build would refuse it anyway.
@@ -2525,8 +2612,6 @@ pub(crate) fn build_game(
             )
         })?
     };
-    auto_save(&s);
-
     let fast_source = codegen::compile(&project)
         .map(|_| ())
         .map_err(|error| error.to_string());
@@ -2553,14 +2638,36 @@ pub(crate) fn build_game(
     // A script that won't compile can't be shipped around: the built game
     // would load an actor whose behaviour silently isn't there. Cross builds
     // compile their own copy, since a script is native code like the player.
-    if build_scripts_for(&mut s, build::script_target(target)) > 0 {
-        let dto = state_dto(&s);
-        drop(s);
-        app.emit_state(&dto);
+    blockloom_core::build_control::step("Compiling actor scripts")?;
+    let script_target = build::script_target(target);
+    let linker = script_target
+        .filter(|triple| android::is_android(triple))
+        .and_then(android::ndk_linker_for);
+    let mut failed = false;
+    for actor in &project.actors {
+        blockloom_core::build_control::check()?;
+        if let Some(path) = actor.components.script() {
+            if let Err(error) =
+                script::compile_for_with_linker(&dir, path, script_target, linker.as_deref())
+            {
+                blockloom_core::build_control::check()?;
+                failed = true;
+                let mut s = lock(state)?;
+                s.push_log(LogLine {
+                    kind: "error".to_string(),
+                    actor: actor.name.clone(),
+                    text: format!("{path} didn't compile:\n{error}"),
+                });
+                emit(app, &s);
+            }
+        }
+    }
+    if failed {
         return Err("A script didn't compile, so the game wasn't built - see the log".to_string());
     }
 
     if fast {
+        blockloom_core::build_control::step("Compiling blocks to native code")?;
         match build::script_target(target) {
             Some(triple) if target.is_android() => {
                 codegen::compile_for_with_linker(
@@ -2591,6 +2698,8 @@ pub(crate) fn build_game(
         Path::new(&path),
         options.clone(),
     )?;
+    blockloom_core::build_control::check()?;
+    let mut s = lock(state)?;
     // A cached Android build reused the previous APK, so say so instead of
     // claiming a fresh compile.
     let action = if built.cached { "Reusing" } else { "Built" };
@@ -2743,6 +2852,16 @@ pub(crate) fn android_emulator_status() -> Result<android::EmulatorStatus, Strin
 /// managed default. Needs no open project and no device.
 pub(crate) fn android_create_avd(name: Option<String>) -> Result<String, String> {
     android::create_avd(name.as_deref())
+}
+
+/// Renames a stopped AVD.
+pub(crate) fn android_rename_avd(name: String, new_name: String) -> Result<String, String> {
+    android::rename_avd(&name, &new_name)
+}
+
+/// Deletes a stopped AVD and its saved data.
+pub(crate) fn android_delete_avd(name: String) -> Result<String, String> {
+    android::delete_avd(&name)
 }
 
 /// Boots `avd` (the managed default when unset, created on the spot when no
@@ -2929,6 +3048,7 @@ pub(crate) fn android_create_keystore(
 fn asset_template(name: &str) -> String {
     match assets::kind_of(name) {
         assets::AssetKind::Script => script::starter("this actor"),
+        assets::AssetKind::Lighting => serde_json::to_string_pretty(&Lighting::default()).unwrap(),
         _ => String::new(),
     }
 }
@@ -2995,7 +3115,19 @@ pub(crate) fn create_asset(
     }
     let s = lock(state)?;
     let dir = project_dir(&s)?;
-    let made = assets::create_file(&dir, &parent, &name, &asset_template(&name))?;
+    let template = if assets::kind_of(&name) == assets::AssetKind::Lighting {
+        let mut lighting = s
+            .project()
+            .ok_or("No project is open")?
+            .world
+            .lighting
+            .clone();
+        lighting.asset.clear();
+        serde_json::to_string_pretty(&lighting).map_err(|e| e.to_string())?
+    } else {
+        asset_template(&name)
+    };
+    let made = assets::create_file(&dir, &parent, &name, &template)?;
     if touches_scripts(&made) {
         sync_ide(&dir);
     }

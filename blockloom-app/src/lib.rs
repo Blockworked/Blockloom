@@ -3,6 +3,7 @@
 //! editor window and the browser dev bridge host the same code.
 
 pub mod attach;
+mod build_jobs;
 mod commands;
 mod dispatch;
 mod runtime;
@@ -62,6 +63,7 @@ impl AppHandle {
 pub struct Backend {
     pub(crate) state: SharedState,
     pub(crate) app: AppHandle,
+    pub(crate) builds: build_jobs::BuildJobs,
 }
 
 impl Backend {
@@ -108,6 +110,7 @@ impl Backend {
         Backend {
             state: Arc::new(Mutex::new(state)),
             app,
+            builds: Default::default(),
         }
     }
 
@@ -122,6 +125,7 @@ impl Backend {
     /// a backend that goes away without closing its project doesn't look
     /// live to the next opener until its heartbeat runs out.
     pub fn shutdown(&self) {
+        self.builds.shutdown();
         if let Ok(mut s) = self.state.lock() {
             if let Some(open) = &s.open
                 && open.owns_lock

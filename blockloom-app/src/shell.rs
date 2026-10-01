@@ -260,6 +260,76 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        name: "start-build-game",
+        cmd: "start_build_game",
+        aliases: &["start_build_game"],
+        summary: "Start a background build. Poll build-job-status or cancel-build-job using its id. Optional device installs and launches an Android build. Build the open project into a folder under path that runs on its own.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "folder path",
+                required: true,
+            },
+            ArgSpec {
+                name: "target",
+                ty: "target triple (default: this machine)",
+                required: false,
+            },
+            ArgSpec {
+                name: "fast",
+                ty: "boolean (default: on when available)",
+                required: false,
+            },
+            ArgSpec {
+                name: "hdr",
+                ty: "bool",
+                required: false,
+            },
+            ArgSpec {
+                name: "storePass",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "keyPass",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "rememberPasswords",
+                ty: "boolean (default: off)",
+                required: false,
+            },
+            ArgSpec {
+                name: "device",
+                ty: "string",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "build-job-status",
+        cmd: "build_job_status",
+        aliases: &["build_job_status"],
+        summary: "Read a background build's stage, tool output and final result.",
+        args: &[ArgSpec {
+            name: "id",
+            ty: "number",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "cancel-build-job",
+        cmd: "cancel_build_job",
+        aliases: &["cancel_build_job"],
+        summary: "Cancel a background build and its active tools. Poll until cancelled before starting another.",
+        args: &[ArgSpec {
+            name: "id",
+            ty: "number",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "android-status",
         cmd: "android_status",
         aliases: &["android_status", "android-check"],
@@ -366,6 +436,35 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             name: "name",
             ty: "string",
             required: false,
+        }],
+    },
+    CommandSpec {
+        name: "android-rename-avd",
+        cmd: "android_rename_avd",
+        aliases: &["android_rename_avd"],
+        summary: "Rename a stopped virtual device.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "newName",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "android-delete-avd",
+        cmd: "android_delete_avd",
+        aliases: &["android_delete_avd"],
+        summary: "Delete a stopped virtual device and its saved data.",
+        args: &[ArgSpec {
+            name: "name",
+            ty: "string",
+            required: true,
         }],
     },
     CommandSpec {
@@ -1311,6 +1410,46 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         cmd: "delete_asset",
         aliases: &["delete_asset"],
         summary: "Delete a file or folder from the project.",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "asset path",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "read-lighting-asset",
+        cmd: "read_lighting_asset",
+        aliases: &["read_lighting_asset"],
+        summary: "Read a reusable Lighting asset.",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "asset path",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "write-lighting-asset",
+        cmd: "write_lighting_asset",
+        aliases: &["write_lighting_asset"],
+        summary: "Update a Lighting asset and all scenes using it.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+            ArgSpec {
+                name: "lighting",
+                ty: "JSON object",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "set-scene-lighting-asset",
+        cmd: "set_scene_lighting_asset",
+        aliases: &["set_scene_lighting_asset"],
+        summary: "Assign a Lighting asset to the active scene; empty detaches it.",
         args: &[ArgSpec {
             name: "path",
             ty: "asset path",

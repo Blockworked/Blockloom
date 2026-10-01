@@ -801,6 +801,7 @@ pub fn bake_atlas(
     let mut sprites = HashMap::new();
     let mut inputs = Vec::new();
     for path in paths {
+        crate::build_control::check()?;
         let relative = crate::assets::normalize(path)
             .ok_or_else(|| format!("\"{path}\" isn't a path in this project"))?;
         let full = crate::assets::resolve(project_dir, &relative)
@@ -823,6 +824,7 @@ pub fn bake_atlas(
         let sprite = &sprites[&entry.name];
         let (w, h) = (entry.width as i64, entry.height as i64);
         for dy in -pad..h + pad {
+            crate::build_control::check()?;
             for dx in -pad..w + pad {
                 let pixel = *sprite.get_pixel(dx.clamp(0, w - 1) as u32, dy.clamp(0, h - 1) as u32);
                 let (x, y) = (entry.x as i64 + dx, entry.y as i64 + dy);

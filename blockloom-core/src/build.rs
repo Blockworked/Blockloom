@@ -455,6 +455,7 @@ pub fn build(
         return build_android(project, project_dir, target, player, parent, options);
     }
     let fast = options.fast;
+    crate::build_control::step("Checking shaders")?;
     let shaders = check_shaders(project, project_dir)?;
     let dir = parent.join(build_name(project, target));
     clear_build_dir(&dir)?;
@@ -484,10 +485,14 @@ pub fn build(
     game_pack.hdr = !options.sdr_only;
     game_pack.write(&pack::pack_path(&game))?;
 
+    crate::build_control::step("Copying game assets")?;
     let assets = copy_assets(project_dir, &game)?;
+    crate::build_control::step("Baking sprite atlas")?;
     let atlas = bake_sprite_atlas(project, project_dir, &game)?;
+    crate::build_control::step("Baking sky")?;
     let sky = bake_sky(project, project_dir, &game)?;
     copy_probes(project, project_dir, &game)?;
+    crate::build_control::step("Packing terrain and scripts")?;
     copy_terrain(project, project_dir, &game)?;
     let scripts = copy_scripts(project, project_dir, &game, target)?;
     let compiled = if fast {
@@ -500,6 +505,7 @@ pub fn build(
     let icons = distribution::Icons::load(project_dir, &project.icon)?;
     decorate(project, target, &layout, &icons)?;
     let archive = parent.join(format!("{}.zip", build_name(project, target)));
+    crate::build_control::step("Creating shareable archive")?;
     distribution::archive(&dir, &archive, &layout.executables)?;
     let size = file_size(&archive);
 
@@ -602,6 +608,7 @@ fn build_web(
     player: &Path,
     parent: &Path,
 ) -> Result<Build, String> {
+    crate::build_control::step("Checking shaders")?;
     let shaders = check_shaders(project, project_dir)?;
     let glue_path = player.with_file_name(crate::web_build::PLAYER_GLUE);
     let player_wasm = std::fs::read(player).map_err(|e| format!("{}: {e}", player.display()))?;
@@ -619,10 +626,14 @@ fn build_web(
     let mut game_pack = GamePack::new(project.clone());
     game_pack.hdr = false;
     game_pack.write(&pack::pack_path(&game))?;
+    crate::build_control::step("Copying game assets")?;
     let assets = copy_assets(project_dir, &game)?;
+    crate::build_control::step("Baking sprite atlas")?;
     let atlas = bake_sprite_atlas(project, project_dir, &game)?;
+    crate::build_control::step("Baking sky")?;
     let sky = bake_sky(project, project_dir, &game)?;
     copy_probes(project, project_dir, &game)?;
+    crate::build_control::step("Packing terrain and scripts")?;
     copy_terrain(project, project_dir, &game)?;
     let scripts = copy_scripts(project, project_dir, &game, target)?;
 
@@ -638,6 +649,7 @@ fn build_web(
     }
     files.sort();
     let icons = distribution::Icons::load(project_dir, &project.icon)?;
+    crate::build_control::step("Packaging web page")?;
     let html = crate::web_build::page(crate::web_build::Page {
         title: &project.name,
         icon: &icons.png,
@@ -650,6 +662,7 @@ fn build_web(
     let binary = dir.join(format!("{}.html", project::folder_name(&project.name)));
     std::fs::write(&binary, &html).map_err(|e| format!("{}: {e}", binary.display()))?;
     let archive = parent.join(format!("{}.zip", build_name(project, target)));
+    crate::build_control::step("Creating shareable archive")?;
     distribution::archive(&dir, &archive, &[])?;
 
     Ok(Build {
@@ -746,6 +759,7 @@ fn build_android_with_config(
     // the build now, not after minutes of baking.
     let tools = android::apk_tools_for(config)?;
 
+    crate::build_control::step("Checking shaders")?;
     let shaders = check_shaders(project, project_dir)?;
     clear_build_dir(&dir)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -760,10 +774,14 @@ fn build_android_with_config(
     game_pack.hdr = false;
     game_pack.write(&pack::pack_path(&game))?;
 
+    crate::build_control::step("Copying game assets")?;
     let assets = copy_assets(project_dir, &game)?;
+    crate::build_control::step("Baking sprite atlas")?;
     let atlas = bake_sprite_atlas(project, project_dir, &game)?;
+    crate::build_control::step("Baking sky")?;
     let sky = bake_sky(project, project_dir, &game)?;
     copy_probes(project, project_dir, &game)?;
+    crate::build_control::step("Packing terrain and scripts")?;
     copy_terrain(project, project_dir, &game)?;
     let native_libs = android_native_libs(project, project_dir, target, runtime_so, options.fast)?;
 
@@ -794,6 +812,7 @@ fn build_android_with_config(
     }
 
     let archive = parent.join(format!("{}.zip", build_name(project, target)));
+    crate::build_control::step("Creating shareable archive")?;
     distribution::archive(&dir, &archive, &[])?;
     let built = Build {
         dir: dir.clone(),
@@ -1144,6 +1163,7 @@ pub fn check_shaders(project: &Project, project_dir: &Path) -> Result<usize, Str
     // Per scene, since a 2D scene and a 3D scene check against different heads.
     let mut sources: Vec<(&str, bool)> = Vec::new();
     for scene in &project.scenes {
+        crate::build_control::check()?;
         let dim3 = scene.world.mode.is_3d();
         for actor in &scene.actors {
             let Some(material) = actor.components.material() else {
@@ -1469,8 +1489,9 @@ fn bake_sky(project: &Project, project_dir: &Path, game: &Path) -> Result<bool, 
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
         }
-        std::fs::write(&out, bc6h::write_dds_cube_levels(&cube.mip_chain(4)))
-            .map_err(|e| format!("{}: {e}", out.display()))?;
+        let bytes = bc6h::write_dds_cube_levels(&cube.mip_chain(4));
+        crate::build_control::check()?;
+        std::fs::write(&out, bytes).map_err(|e| format!("{}: {e}", out.display()))?;
         if let Some(copied) = crate::assets::resolve(game, &relative) {
             let _ = std::fs::remove_file(copied);
         }
@@ -1604,6 +1625,7 @@ fn copy_tree(from: &Path, to: &Path, wanted: &dyn Fn(&Path) -> bool) -> Result<u
     let entries = std::fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))?;
     let mut copied = 0;
     for entry in entries {
+        crate::build_control::check()?;
         let entry = entry.map_err(|e| format!("{}: {e}", from.display()))?;
         let path = entry.path();
         if !wanted(&path) {

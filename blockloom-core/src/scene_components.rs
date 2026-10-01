@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 /// The scene components every project knows about by name.
 pub const BUILT_IN_SCENE_NAMES: &[&str] = &[
+    "Quality",
     "Dimension",
     "Background",
     "Physics",
@@ -57,58 +58,105 @@ pub const BUILT_IN_SCENE_NAMES: &[&str] = &[
 #[serde(tag = "component")]
 #[allow(clippy::large_enum_variant)]
 pub enum SceneComponent {
+    Quality {
+        settings: crate::quality::Settings,
+    },
     /// Which dimension the scene runs in.
-    Dimension { mode: Mode },
+    Dimension {
+        mode: Mode,
+    },
     /// The clear color behind everything.
-    Background { color: String },
+    Background {
+        color: String,
+    },
     /// Gravity and the fixed tick rate physics and blocks advance on.
-    Physics { gravity: [f32; 3], fixed_rate: f32 },
+    Physics {
+        gravity: [f32; 3],
+        fixed_rate: f32,
+    },
     /// Where the camera stands when nothing holds it.
-    Camera { camera: Camera },
+    Camera {
+        camera: Camera,
+    },
     /// The project-wide presentation of `say` bubbles.
-    SpeechBubble { style: SpeechBubbleStyle },
+    SpeechBubble {
+        style: SpeechBubbleStyle,
+    },
     /// Sun, ambient, shadows and ray tracing.
-    Lighting { lighting: Lighting },
+    Lighting {
+        lighting: Lighting,
+    },
     /// One gain per sound bus.
-    Sound { mixer: SoundMixer },
+    Sound {
+        mixer: SoundMixer,
+    },
     /// Named input actions and their bindings.
-    Input { config: InputConfig },
+    Input {
+        config: InputConfig,
+    },
     /// The post chain, exposure to grain.
-    Post { post: PostProcess },
+    Post {
+        post: PostProcess,
+    },
     /// The output signal, peak brightness and paper white.
-    Display { display: DisplayOutput },
+    Display {
+        display: DisplayOutput,
+    },
     /// Cost regions and explicit links in the navigation plane.
-    Navigation { settings: NavSettings },
+    Navigation {
+        settings: NavSettings,
+    },
     /// Background, ambient light and reflections, 3D only.
-    Sky { sky: Sky },
+    Sky {
+        sky: Sky,
+    },
     /// Height fog, volumetric fog and aerial perspective, 3D only.
-    Fog { fog: Fog },
+    Fog {
+        fog: Fog,
+    },
     /// Volumetric clouds.
-    Clouds { clouds: Clouds },
+    Clouds {
+        clouds: Clouds,
+    },
     /// Planar cloud layers, 3D only.
-    CloudLayers { layers: Vec<CloudLayer> },
+    CloudLayers {
+        layers: Vec<CloudLayer>,
+    },
     /// Strikes and the storm that throws them.
-    Lightning { lightning: Lightning },
+    Lightning {
+        lightning: Lightning,
+    },
     /// The wind everything that moves with the air reads.
-    Wind { wind: Wind },
+    Wind {
+        wind: Wind,
+    },
     /// The 24h clock, curve tracks and weather presets.
-    Director { director: Director },
+    Director {
+        director: Director,
+    },
     /// Snow cover and wetness, which surface masks scale by.
-    Surface { surface: SurfaceWeather },
+    Surface {
+        surface: SurfaceWeather,
+    },
     /// The particle budget and where emitters simulate.
-    Vfx { settings: VfxSettings },
+    Vfx {
+        settings: VfxSettings,
+    },
     /// Named camera reels that `play cutscene` runs.
     Cutscenes {
         cutscenes: Vec<crate::cinematic::Cutscene>,
     },
     /// The screen-space interface document.
-    Interface { document: UiDocument },
+    Interface {
+        document: UiDocument,
+    },
 }
 
 impl SceneComponent {
     /// What the inspector and the blocks call this component.
     pub fn name(&self) -> &'static str {
         match self {
+            SceneComponent::Quality { .. } => "Quality",
             SceneComponent::Dimension { .. } => "Dimension",
             SceneComponent::Background { .. } => "Background",
             SceneComponent::Physics { .. } => "Physics",
@@ -148,6 +196,9 @@ impl SceneComponents {
     /// simply reads as its default.
     pub fn from_world(world: &World) -> Self {
         Self(vec![
+            SceneComponent::Quality {
+                settings: world.quality.clone(),
+            },
             SceneComponent::Dimension { mode: world.mode },
             SceneComponent::Background {
                 color: world.background.clone(),
@@ -218,7 +269,19 @@ impl SceneComponents {
     /// component the list doesn't name reads as its default - which is what
     /// removing one in the inspector means.
     pub fn to_world(&self) -> World {
-        let mut world = World::default();
+        let mode = self
+            .0
+            .iter()
+            .find_map(|component| match component {
+                SceneComponent::Dimension { mode } => Some(*mode),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let mut world = World {
+            mode,
+            gravity: World::default_gravity(mode),
+            ..World::default()
+        };
         self.apply_to_world(&mut world);
         world
     }
@@ -229,6 +292,7 @@ impl SceneComponents {
     pub fn apply_to_world(&self, world: &mut World) {
         for component in &self.0 {
             match component {
+                SceneComponent::Quality { settings } => world.quality.clone_from(settings),
                 SceneComponent::Dimension { mode } => world.mode = *mode,
                 SceneComponent::Background { color } => world.background.clone_from(color),
                 SceneComponent::Physics {
@@ -305,6 +369,10 @@ mod tests {
         let world = World {
             background: "#102030".to_string(),
             fixed_rate: 120.0,
+            quality: crate::quality::Settings {
+                resolution_scale: 0.75,
+                ..Default::default()
+            },
             ..World::default()
         };
         let components = SceneComponents::from_world(&world);
@@ -318,6 +386,21 @@ mod tests {
         assert!(components.remove("Lighting"));
         assert!(!components.remove("Lighting"));
         assert_eq!(components.to_world(), World::default());
+    }
+
+    #[test]
+    fn resetting_physics_keeps_the_scenes_dimension_defaults() {
+        let world = World {
+            mode: Mode::ThreeD,
+            gravity: [1.0, -50.0, 2.0],
+            ..World::default()
+        };
+        let mut components = SceneComponents::from_world(&world);
+        assert!(components.remove("Physics"));
+        let reset = components.to_world();
+        assert_eq!(reset.mode, Mode::ThreeD);
+        assert_eq!(reset.gravity, World::default_gravity(Mode::ThreeD));
+        assert_eq!(reset.fixed_rate, crate::scene::DEFAULT_FIXED_RATE);
     }
 
     #[test]

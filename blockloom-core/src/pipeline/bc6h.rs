@@ -888,12 +888,20 @@ pub fn encode_face(texels: &[[f32; 3]], size: u32) -> Vec<u8> {
     let mut out = vec![0u8; blocks * row_bytes];
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
     let rows_each = blocks.div_ceil(threads).max(1);
+    let control = crate::build_control::current();
     std::thread::scope(|scope| {
         for (chunk, rows) in out.chunks_mut(rows_each * row_bytes).enumerate() {
+            let control = control.clone();
             scope.spawn(move || {
                 for (r, row) in rows.chunks_mut(row_bytes).enumerate() {
                     let by = chunk * rows_each + r;
                     for bx in 0..blocks {
+                        if control
+                            .as_ref()
+                            .is_some_and(crate::build_control::BuildControl::cancelled)
+                        {
+                            return;
+                        }
                         let block: [[f32; 3]; 16] = std::array::from_fn(|i| {
                             let (x, y) = (bx * 4 + i % 4, by * 4 + i / 4);
                             texels[y * size as usize + x]

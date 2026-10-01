@@ -97,7 +97,6 @@ use crate::vm::{Action, LoopKind, Program, Step, compile as compile_program};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// The support code every generated program is built on, pasted in whole -
 /// there is no Cargo behind the compile, so there is nothing to depend on.
@@ -272,7 +271,7 @@ pub fn compile_for_with_linker(
     }
     std::fs::write(&source_path, source)
         .map_err(|error| format!("{}: {error}", source_path.display()))?;
-    let mut command = Command::new("rustc");
+    let mut command = crate::script::rustc_command();
     if let Some(triple) = target {
         command.arg("--target").arg(triple);
         if let Some(linker) = linker {
@@ -281,24 +280,26 @@ pub fn compile_for_with_linker(
                 .arg(format!("linker={}", linker.display()));
         }
     }
-    let output = command
-        .arg("--edition")
-        .arg("2024")
-        .arg("--crate-type")
-        .arg("cdylib")
-        .arg("--crate-name")
-        .arg(LOGIC_STEM)
-        .arg("-C")
-        .arg("opt-level=3")
-        .arg("-C")
-        .arg("codegen-units=1")
-        .arg("-C")
-        .arg("lto=fat")
-        .arg("-o")
-        .arg(&library)
-        .arg(&source_path)
-        .output()
-        .map_err(|error| format!("couldn't run rustc: {error}"))?;
+    let _ = std::fs::remove_file(&stamp);
+    let output = crate::build_control::output(
+        command
+            .arg("--edition")
+            .arg("2024")
+            .arg("--crate-type")
+            .arg("cdylib")
+            .arg("--crate-name")
+            .arg(LOGIC_STEM)
+            .arg("-C")
+            .arg("opt-level=3")
+            .arg("-C")
+            .arg("codegen-units=1")
+            .arg("-C")
+            .arg("lto=fat")
+            .arg("-o")
+            .arg(&library)
+            .arg(&source_path),
+    )
+    .map_err(|error| format!("couldn't run rustc: {error}"))?;
     if !output.status.success() {
         let _ = std::fs::remove_file(&stamp);
         return Err(format!(

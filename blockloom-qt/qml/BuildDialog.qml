@@ -14,7 +14,9 @@ BwDialog {
     property string triple: ""
     property string error: ""
     property var built: null
-    property bool busy: false
+    readonly property bool busy: buildProgress.busy
+    property bool loadingTargets: false
+    property int targetGeneration: 0
     property bool fast: false
     property bool hdr: true
     // The browser build: one .html file, SDR and the VM only.
@@ -39,23 +41,29 @@ BwDialog {
 
     onChosenChanged: { fast = !!chosen && chosen.fast_ready; hdr = !chosen || chosen.hdr !== false; root.refreshKeyring(); }
     title: "Build a game"
+    showClose: !root.busy
+    closePolicy: root.busy ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
     standardButtons: Dialog.NoButton
     // Fixed width so long notes and target labels wrap instead of stretching
     // the dialog: the content column is 480 wide plus this dialog's padding.
     width: 524
 
     onOpened: {
-        error = ""; built = null; busy = false;
+        error = ""; built = null;
         storePass = ""; keyPass = ""; remember = false;
         keyring = ({available: false, store_saved: false, key_saved: false});
         locationField.text = app.appState.default_build_location || app.appState.default_project_location;
+        targets = []; triple = ""; loadingTargets = true;
+        const request = ++targetGeneration;
         app.invoke("list_build_targets", {}, list => {
-            targets = list;
+            if (request !== targetGeneration) return;
+            root.loadingTargets = false;
+            root.targets = list || [];
             // This machine comes first and can always build, so it is the default.
-            const ready = list.find(t => t.ready) || list[0];
+            const ready = root.targets.find(t => t.ready) || root.targets[0];
             triple = ready ? ready.triple : "";
             root.refreshKeyring();
-        }, e => error = String(e));
+        }, e => { if (request === targetGeneration) { root.loadingTargets = false; root.error = String(e); } });
     }
     function refreshKeyring() {
         if (!root.android) return;
@@ -66,7 +74,7 @@ BwDialog {
     }
     function submit() {
         if (busy || !chosen || !chosen.ready) return;
-        busy = true; error = ""; built = null;
+        error = ""; built = null;
         const args = { path: locationField.text.trim(), target: triple, fast: fast, hdr: root.android || root.web ? false : hdr };
         // Passwords ride this call only: a release row without them stops
         // the build with where to type them, and headless reads the env.
@@ -76,8 +84,7 @@ BwDialog {
             args.keyPass = keyPass;
             args.rememberPasswords = remember;
         }
-        app.invoke("build_game", args,
-            result => { busy = false; built = result; storePass = ""; keyPass = ""; remember = false; if (root.android) root.refreshKeyring(); }, e => { busy = false; error = String(e); });
+        buildProgress.start(args);
     }
 
     ColumnLayout {
@@ -100,20 +107,23 @@ BwDialog {
         }
         Text { text: "Platform"; color: Theme.textDim; font.pixelSize: 12 }
         ChoiceField {
+            objectName: "buildPlatform"
+            enabled: !root.loadingTargets && !root.busy
+            placeholder: root.loadingTargets ? "Loading platforms..." : "No platforms available"
             options: root.targets.map(t => ({ value: t.triple, label: t.label + (t.host ? " (this machine)" : "") + (t.ready ? "" : " - unavailable") }))
             value: root.triple; onChosen: v => root.triple = v
         }
         Text { visible: !!root.chosen; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: root.chosen ? root.chosen.note : "" }
-        BwCheckBox { text: "Compile blocks for maximum speed"; enabled: !!root.chosen && root.chosen.fast_ready; checked: root.fast; onToggled: root.fast = checked }
+        BwCheckBox { text: "Compile blocks for maximum speed"; enabled: !root.busy && !!root.chosen && root.chosen.fast_ready; checked: root.fast; onToggled: root.fast = checked }
         Text { visible: !!root.chosen; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: root.chosen ? root.chosen.fast_note : "" }
-        BwCheckBox { text: "HDR rendering and output"; enabled: !root.web && !root.android; checked: root.hdr && !root.web && !root.android; onToggled: root.hdr = checked }
+        BwCheckBox { text: "HDR rendering and output"; enabled: !root.busy && !root.web && !root.android; checked: root.hdr && !root.web && !root.android; onToggled: root.hdr = checked }
         Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
             text: (root.chosen ? root.chosen.hdr_note + " " : "") + "Off makes an SDR-only build: 8-bit frames and no HDR window, for weak GPUs and old displays." }
         Text { text: "Where to put it"; color: Theme.textDim; font.pixelSize: 12 }
         RowLayout {
             Layout.fillWidth: true
-            BwTextField { id: locationField; Layout.fillWidth: true; onAccepted: root.submit() }
-            IconButton { iconName: "folder-open"; tip: "Browse for a folder"; flat: false; implicitWidth: 34; implicitHeight: 34; onClicked: browse.open() }
+            BwTextField { id: locationField; enabled: !root.busy; Layout.fillWidth: true; onAccepted: root.submit() }
+            IconButton { enabled: !root.busy; iconName: "folder-open"; tip: "Browse for a folder"; flat: false; implicitWidth: 34; implicitHeight: 34; onClicked: browse.open() }
         }
         Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
             text: root.web
@@ -127,7 +137,7 @@ BwDialog {
             TextEdit { Layout.fillWidth: true; readOnly: true; selectByMouse: true; wrapMode: Text.WrapAnywhere; color: Theme.text; font.pixelSize: 12; text: root.built ? "Shareable ZIP: " + root.built.archive : "" }
         }
         ColumnLayout {
-            visible: root.android; Layout.fillWidth: true; spacing: 6
+            visible: root.android; enabled: !root.busy; Layout.fillWidth: true; spacing: 6
             Text { text: "Signing"; color: Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold }
             Text { visible: root.releaseKeystore === ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
                 text: "Debug-signed: fine for devices, refused by the Play store. Pick a release key file plus alias in Project settings for store uploads - or make one below." }
@@ -156,10 +166,19 @@ BwDialog {
             }
             BwButton { text: "Create a new release key..."; onClicked: { newKey.error = ""; newKey.open(); } }
         }
+        BuildProgress {
+            id: buildProgress
+            objectName: "gameBuildProgress"
+            app: root.app
+            Layout.fillWidth: true
+            onFinished: result => { root.built = result.built; root.storePass = ""; root.keyPass = ""; root.remember = false; if (root.android) root.refreshKeyring(); }
+            onFailed: message => root.error = message
+            onCancelled: root.error = "Build cancelled."
+        }
         RowLayout {
             Layout.alignment: Qt.AlignRight; Layout.topMargin: 8; spacing: 8
-            BwButton { text: root.built ? "Done" : "Cancel"; onClicked: root.close() }
-            BwButton { text: root.busy ? "Building..." : "Build"; primary: true; enabled: !root.busy && !!root.chosen && root.chosen.ready; onClicked: root.submit() }
+            BwButton { visible: !root.busy; text: root.built ? "Done" : "Cancel"; onClicked: root.close() }
+            BwButton { objectName: "buildGameButton"; text: root.busy ? "Building..." : "Build"; primary: true; enabled: !root.busy && !!root.chosen && root.chosen.ready; onClicked: root.submit() }
         }
     }
     BwDialog {

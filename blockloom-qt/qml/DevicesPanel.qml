@@ -15,7 +15,10 @@ RowLayout {
     property string pendingAvd: ""
     property double startDeadline: 0
     property string newAvd: ""
-    property bool busy: false
+    property string editAvd: ""
+    property string renamedAvd: ""
+    property bool deletingAvd: false
+    readonly property bool busy: deployProgress.busy
     property bool refreshing: false
     property bool logBusy: false
     property string buildState: ""
@@ -48,9 +51,10 @@ RowLayout {
                 emulator = status; refreshing = false;
                 if (pendingAvd) {
                     const avd = status.avds.find(a => a.name === pendingAvd && a.serial);
-                    if (avd) { device = avd.serial; pendingAvd = ""; }
+                    if (avd) device = avd.serial;
+                    if (avd && avd.booted) pendingAvd = "";
                     else if (Date.now() > startDeadline) {
-                        emulatorError = pendingAvd + " did not connect. Check the emulator, then retry.";
+                        emulatorError = pendingAvd + " did not finish starting. Check the emulator, then retry.";
                         pendingAvd = "";
                     }
                 }
@@ -58,14 +62,14 @@ RowLayout {
         }, e => { refreshing = false; emulatorError = String(e); });
     }
     function startAvd(name) {
-        if (locked || refreshing) return;
+        if (locked || refreshing || pendingAvd) return;
+        pendingAvd = name; startDeadline = Date.now() + 300000;
         emuBusy = true; emulatorError = "";
-        app.invoke("android_start_emulator", { avd: name, headless: embed, wait_secs: 0 }, result => {
+        app.invoke("android_start_emulator", { avd: name, headless: embed, waitSecs: 0 }, result => {
             emuBusy = false;
             if (result.serial) device = result.serial;
-            else { pendingAvd = result.avd || name; startDeadline = Date.now() + 60000; }
             refresh();
-        }, e => { emuBusy = false; emulatorError = String(e); });
+        }, e => { emuBusy = false; pendingAvd = ""; emulatorError = String(e); });
     }
     function stopEmu(serial) {
         if (locked || refreshing || !serial || !serial.startsWith("emulator-")) return;
@@ -73,6 +77,7 @@ RowLayout {
         app.invoke("android_stop_emulator", { serial: serial }, stopped => {
             emuBusy = false;
             if (stopped === device) device = "";
+            if (root.emulator && root.emulator.avds.some(a => a.serial === stopped && a.name === pendingAvd)) pendingAvd = "";
             refresh();
         }, e => { emuBusy = false; emulatorError = String(e); });
     }
@@ -84,22 +89,25 @@ RowLayout {
             emuBusy = false; newAvd = ""; avdDialog.close(); refresh();
         }, e => { emuBusy = false; emulatorError = String(e); });
     }
+    function manageAvd() {
+        if (locked || refreshing || !editAvd || (!deletingAvd && !renamedAvd.trim())) return;
+        emuBusy = true; emulatorError = "";
+        const command = deletingAvd ? "android_delete_avd" : "android_rename_avd";
+        app.invoke(command, { name: editAvd, newName: renamedAvd.trim() }, () => {
+            emuBusy = false; manageDialog.close(); refresh();
+        }, e => { emuBusy = false; emulatorError = String(e); });
+    }
     function buildAndRun() {
         if (locked || !ready || !app.appState.project) return;
         // Capture selection once: callbacks must not install onto a later selection.
         const serial = device;
         const target = selectedDevice.emulator ? "x86_64-linux-android" : "aarch64-linux-android";
-        busy = true; buildError = ""; buildState = "Building APK...";
+        buildError = ""; buildState = "";
         polling = false; logGeneration++; logLines = []; logcat = ""; logDevice = serial;
         const path = app.appState.default_build_location || app.appState.default_project_location;
-        app.invoke("build_game", { path: path, target: target, fast: false, hdr: false }, built => {
-            buildState = "Installing and launching...";
-            app.invoke("android_install", { apk: built.binary, app: built.application_id, device: serial }, launched => {
-                busy = false; buildState = "Running on " + serial;
-                if (device === serial) { logDevice = serial; polling = true; pollLogcat(); }
-            }, e => { busy = false; buildState = ""; buildError = String(e); });
-        }, e => { busy = false; buildState = ""; buildError = String(e); });
+        deployProgress.start({ path: path, target: target, fast: false, hdr: false, device: serial });
     }
+
     function pollLogcat() {
         if (!polling || logBusy || !visible || locked) return;
         const serial = logDevice;
@@ -158,7 +166,8 @@ RowLayout {
                                 Text {
                                     Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: 11
                                     color: modelData.state === "device" ? Theme.textDim : Theme.warning
-                                    text: modelData.state === "device" ? (modelData.emulator ? "Emulator connected" : "Phone connected")
+                                    text: modelData.emulator && root.emulator && root.emulator.avds.some(a => a.serial === modelData.serial && !a.booted) ? "Emulator booting..."
+                                        : modelData.state === "device" ? (modelData.emulator ? "Emulator connected" : "Phone connected")
                                         : modelData.state === "unauthorized" ? "Authorize USB debugging on phone" : modelData.state
                                 }
                             }
@@ -181,7 +190,18 @@ RowLayout {
                         enabled: root.ready && !root.locked && !!root.app.appState.project
                         onClicked: root.buildAndRun()
                     }
-                    BusyIndicator { visible: root.busy; running: visible; Layout.alignment: Qt.AlignHCenter; implicitWidth: 24; implicitHeight: 24 }
+                    BuildProgress {
+                        id: deployProgress
+                        objectName: "deviceBuildProgress"
+                        app: root.app
+                        Layout.fillWidth: true
+                        onFinished: result => {
+                            root.buildState = "Running on " + result.device;
+                            if (root.device === result.device) { root.logDevice = result.device; root.polling = true; root.pollLogcat(); }
+                        }
+                        onFailed: message => { root.buildState = ""; root.buildError = message; }
+                        onCancelled: { root.buildState = "Deployment cancelled."; root.polling = false; }
+                    }
                     Text { visible: !!root.buildState; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; text: root.buildState; color: Theme.textDim; font.pixelSize: 11 }
                     Text { visible: !!root.buildError; Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; text: root.buildError; color: Theme.danger; font.pixelSize: 12 }
                 }
@@ -208,17 +228,30 @@ RowLayout {
                         model: root.emulator ? root.emulator.avds : []
                         delegate: RowLayout {
                             required property var modelData
+                            readonly property bool starting: root.pendingAvd === modelData.name || (!!modelData.serial && !modelData.booted)
                             Layout.fillWidth: true
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 3
                                 Text { Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.name; color: Theme.text; font.pixelSize: 12 }
                                 Text { text: modelData.serial ? (modelData.booted ? "Running" : "Booting...") : root.pendingAvd === modelData.name ? "Starting..." : "Stopped"; color: Theme.textDim; font.pixelSize: 11 }
                             }
+                            BusyIndicator { objectName: "startup_" + modelData.name; visible: parent.starting; running: visible; implicitWidth: 22; implicitHeight: 22 }
                             IconButton {
                                 iconName: modelData.serial ? "square" : "play"
                                 tip: modelData.serial ? "Stop " + modelData.name : "Start " + modelData.name
-                                enabled: !root.locked && !root.refreshing && root.pendingAvd !== modelData.name
+                                enabled: !root.locked && !root.refreshing && (!!modelData.serial || !root.pendingAvd)
                                 onClicked: modelData.serial ? root.stopEmu(modelData.serial) : root.startAvd(modelData.name)
+                            }
+                            IconButton {
+                                objectName: "manage_" + modelData.name
+                                iconName: "ellipsis"; tip: modelData.serial ? "Stop " + modelData.name + " to rename or delete it" : "Manage " + modelData.name
+                                enabled: !root.locked && !root.refreshing && !modelData.serial && !parent.starting
+                                onClicked: avdMenu.popup()
+                                Menu {
+                                    id: avdMenu
+                                    MenuItem { objectName: "rename_" + modelData.name; text: "Rename"; onTriggered: { root.editAvd = modelData.name; root.renamedAvd = modelData.name; root.deletingAvd = false; root.emulatorError = ""; manageDialog.open(); } }
+                                    MenuItem { objectName: "delete_" + modelData.name; text: "Delete"; onTriggered: { root.editAvd = modelData.name; root.deletingAvd = true; root.emulatorError = ""; manageDialog.open(); } }
+                                }
                             }
                         }
                     }
@@ -277,6 +310,26 @@ RowLayout {
                 Layout.alignment: Qt.AlignRight
                 BwButton { text: "Cancel"; enabled: !root.emuBusy; onClicked: avdDialog.close() }
                 BwButton { text: root.emuBusy ? "Creating..." : "Create"; iconName: "plus"; primary: true; enabled: !root.locked && !!root.newAvd.trim(); onClicked: root.createAvd() }
+            }
+        }
+    }
+    BwDialog {
+        id: manageDialog
+        objectName: "manageAvdDialog"
+        title: root.deletingAvd ? "Delete virtual device" : "Rename virtual device"
+        implicitWidth: Math.min(380, root.width)
+        showClose: !root.emuBusy
+        standardButtons: Dialog.NoButton
+        closePolicy: root.emuBusy ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        contentItem: ColumnLayout {
+            spacing: 12
+            Text { visible: root.deletingAvd; Layout.fillWidth: true; text: "Delete " + root.editAvd + " and all its saved data?"; color: Theme.text; wrapMode: Text.WordWrap; font.pixelSize: 12 }
+            BwTextField { visible: !root.deletingAvd; Layout.fillWidth: true; text: root.renamedAvd; enabled: !root.emuBusy; onTextChanged: root.renamedAvd = text; onAccepted: root.manageAvd() }
+            Text { visible: !!root.emulatorError; Layout.fillWidth: true; text: root.emulatorError; color: Theme.danger; wrapMode: Text.WrapAnywhere; font.pixelSize: 12 }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                BwButton { text: "Cancel"; enabled: !root.emuBusy; onClicked: manageDialog.close() }
+                BwButton { text: root.emuBusy ? "Updating..." : root.deletingAvd ? "Delete" : "Rename"; primary: true; enabled: !root.locked && (root.deletingAvd || !!root.renamedAvd.trim()); onClicked: root.manageAvd() }
             }
         }
     }

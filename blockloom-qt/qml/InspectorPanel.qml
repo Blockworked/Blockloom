@@ -14,7 +14,12 @@ Rectangle {
     signal openRequested(bool open)
     signal resizeRequested(real width)
     readonly property var appState: app.appState
-    readonly property var actor: app.openActor
+    readonly property bool settingsVisible: app.inspectScene || !!app.inspectedLighting
+    readonly property var actor: settingsVisible ? null : app.openActor
+    readonly property string selectedActorId: appState.selected_actor || ""
+    readonly property string projectPath: appState.project_path || ""
+    onSelectedActorIdChanged: if (selectedActorId) { app.inspectScene = false; app.inspectedLighting = ""; }
+    onProjectPathChanged: { app.inspectScene = false; app.inspectedLighting = ""; }
     readonly property string mode: appState.project ? appState.project.world.mode : "TwoD"
     readonly property bool is3d: mode === "ThreeD"
     // Where the actor is right now, while a run is going.
@@ -366,61 +371,89 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent; spacing: 0
-        visible: root.open && !!root.actor
+        visible: root.open
         RowLayout {
-            Layout.fillWidth: true; Layout.margins: 8
-            SectionLabel { label: root.actor ? root.actor.name : ""; topPadding: 0; Layout.fillWidth: true; elide: Text.ElideRight }
-            IconButton { iconName: "chevron-right"; tip: "Hide the components"; implicitWidth: 26; implicitHeight: 26; onClicked: root.openRequested(false) }
+            Layout.fillWidth: true; Layout.margins: 6
+            BwButton { text: "Actor"; primary: !root.settingsVisible;
+                onClicked: { root.app.inspectScene = false; root.app.inspectedLighting = ""; } }
+            BwButton { text: "Scene"; primary: root.app.inspectScene;
+                onClicked: { root.app.inspectedLighting = ""; root.app.inspectScene = true; } }
+            Item { Layout.fillWidth: true }
+            IconButton { iconName: "panel-right-close"; tip: "Hide inspector"; onClicked: root.openRequested(false) }
         }
-        ScrollView {
-            id: scroll
-            Layout.fillWidth: true; Layout.fillHeight: true; clip: true
-            contentWidth: availableWidth
-            ColumnLayout {
-                width: scroll.availableWidth - 16; x: 8; spacing: 6
-                InspectorRow {
-                    label: "Name"; Layout.fillWidth: true
-                    BwTextField {
-                        Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12
-                        text: root.actor ? root.actor.name : ""
-                        onEditingFinished: if (root.actor && text !== root.actor.name) root.app.invoke("rename_actor", { actorId: root.actor.id, name: text })
-                    }
-                }
-                // A count rather than the array: a new snapshot with the same
-                // components updates the cards in place instead of rebuilding them.
-                Repeater {
-                    model: root.actor ? root.actor.components.length : 0
-                    delegate: ColumnLayout {
-                        id: card
-                        required property int index
-                        readonly property var c: root.actor && root.actor.components[index] ? root.actor.components[index] : ({ component: "" })
-                        Layout.fillWidth: true; spacing: 6
-                        Rectangle { Layout.fillWidth: true; Layout.topMargin: 6; height: 1; color: Theme.borderSoft }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Text { Layout.fillWidth: true; text: root.componentName(card.c); color: Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold }
-                            IconButton { visible: card.c.component !== "Place"; iconName: "x"; tip: "Remove the " + root.componentName(card.c) + " component"; implicitWidth: 24; implicitHeight: 24; onClicked: root.remove(root.componentName(card.c)) }
+        Text {
+            visible: root.settingsVisible; Layout.fillWidth: true; Layout.margins: 8
+            text: {
+                if (root.app.inspectedLighting) return root.app.inspectedLighting.split("/").pop().replace(/\.blocklighting$/i, "");
+                const project = root.appState.project;
+                const scene = project ? project.scenes.find(s => s.id === project.active_scene) : null;
+                return scene ? scene.name : "Scene";
+            }
+            color: Theme.text; font.pixelSize: 14; font.weight: Font.DemiBold; elide: Text.ElideRight
+        }
+        SettingsFields {
+            visible: root.settingsVisible; Layout.fillWidth: true; Layout.fillHeight: true
+            app: root.app; page: root.app.inspectedLighting ? "lighting" : "scene"
+            lightingPath: root.app.inspectedLighting
+        }
+        ColumnLayout {
+            Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
+            visible: !root.settingsVisible && !!root.actor
+            RowLayout {
+                Layout.fillWidth: true; Layout.margins: 8
+                SectionLabel { label: root.actor ? root.actor.name : ""; topPadding: 0; Layout.fillWidth: true; elide: Text.ElideRight }
+                IconButton { iconName: "chevron-right"; tip: "Hide the components"; implicitWidth: 26; implicitHeight: 26; onClicked: root.openRequested(false) }
+            }
+            ScrollView {
+                id: scroll
+                Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+                contentWidth: availableWidth
+                ColumnLayout {
+                    width: scroll.availableWidth - 16; x: 8; spacing: 6
+                    InspectorRow {
+                        label: "Name"; Layout.fillWidth: true
+                        BwTextField {
+                            Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12
+                            text: root.actor ? root.actor.name : ""
+                            onEditingFinished: if (root.actor && text !== root.actor.name) root.app.invoke("rename_actor", { actorId: root.actor.id, name: text })
                         }
-                        Loader {
-                            Layout.fillWidth: true
-                            readonly property var c: card.c
-                            sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard })[card.c.component] || null
+                    }
+                    // A count rather than the array: a new snapshot with the same
+                    // components updates the cards in place instead of rebuilding them.
+                    Repeater {
+                        model: root.actor ? root.actor.components.length : 0
+                        delegate: ColumnLayout {
+                            id: card
+                            required property int index
+                            readonly property var c: root.actor && root.actor.components[index] ? root.actor.components[index] : ({ component: "" })
+                            Layout.fillWidth: true; spacing: 6
+                            Rectangle { Layout.fillWidth: true; Layout.topMargin: 6; height: 1; color: Theme.borderSoft }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text { Layout.fillWidth: true; text: root.componentName(card.c); color: Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold }
+                                IconButton { visible: card.c.component !== "Place"; iconName: "x"; tip: "Remove the " + root.componentName(card.c) + " component"; implicitWidth: 24; implicitHeight: 24; onClicked: root.remove(root.componentName(card.c)) }
+                            }
+                            Loader {
+                                Layout.fillWidth: true
+                                readonly property var c: card.c
+                                sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
+                                                    Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard })[card.c.component] || null
+                            }
                         }
                     }
+                    Item { Layout.preferredHeight: 6 }
+                    ChoiceField {
+                        Layout.fillWidth: true
+                        options: root.addable; value: ""; placeholder: "Add component"
+                        onChosen: v => root.add(v)
+                    }
+                    Item { Layout.preferredHeight: 12 }
                 }
-                Item { Layout.preferredHeight: 6 }
-                ChoiceField {
-                    Layout.fillWidth: true
-                    options: root.addable; value: ""; placeholder: "Add component"
-                    onChosen: v => root.add(v)
-                }
-                Item { Layout.preferredHeight: 12 }
             }
         }
     }
     Text {
-        visible: root.open && !root.actor
+        visible: root.open && !root.actor && !root.settingsVisible
         anchors.centerIn: parent; width: parent.width - 32; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter
         text: "Select an actor to see its components."; color: Theme.textDim; font.pixelSize: 12
     }
@@ -1047,8 +1080,8 @@ Rectangle {
                 text: !root.is3d ? "Lights need a 3D world; in 2D this rests."
                     : li.area ? "An area light glows from a " + (li.l.kind === "Disk" ? "disc" : "rectangle") + " facing the actor's forward axis, with soft LTC highlights. It casts no shadow maps."
                     : li.l.unit === "Candela"
-                    ? "Candela down the brightest direction (an IES profile's peak). About " + Math.round(li.l.intensity * 4 * Math.PI) + " lumens. Contact shadows also need them on in Project Settings."
-                    : "About " + Math.round(li.l.intensity / (4 * Math.PI)) + " candela. A spot's cone doesn't gather the light, so narrowing it isn't brighter. Contact shadows also need them on in Project Settings." }
+                    ? "Candela down the brightest direction (an IES profile's peak). About " + Math.round(li.l.intensity * 4 * Math.PI) + " lumens. Enable contact shadows in the Lighting asset too."
+                    : "About " + Math.round(li.l.intensity / (4 * Math.PI)) + " candela. A spot's cone doesn't gather the light, so narrowing it isn't brighter. Enable contact shadows in the Lighting asset too." }
             Text { visible: li.beams && root.is3d; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "A beam is extra haze only this light scatters, thickening and thinning with `set fog density to`. Auto draws it in volumetric fog while that is on above Low quality, and as a cheap shaft cone otherwise; a point light's beam is a glow round it and needs volumetric fog. Motes drift in the light's reach." }
         }
