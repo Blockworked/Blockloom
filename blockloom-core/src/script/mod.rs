@@ -191,14 +191,14 @@ pub(crate) fn rustc_command() -> Command {
         && let Some(root) = crate::android::workspace_root()
     {
         // Preserve relative source paths when selecting rustup's toolchain.
-        if let Ok(text) = std::fs::read_to_string(root.join("rust-toolchain.toml")) {
-            if let Some(channel) = text.lines().find_map(|line| {
+        if let Ok(text) = std::fs::read_to_string(root.join("rust-toolchain.toml"))
+            && let Some(channel) = text.lines().find_map(|line| {
                 line.trim()
                     .strip_prefix("channel = ")
                     .map(|value| value.trim().trim_matches('"'))
-            }) {
-                command.env("RUSTUP_TOOLCHAIN", channel);
-            }
+            })
+        {
+            command.env("RUSTUP_TOOLCHAIN", channel);
         }
     }
     command
