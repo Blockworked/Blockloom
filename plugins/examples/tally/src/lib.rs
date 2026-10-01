@@ -4,7 +4,9 @@
 //! as a native library and as a WebAssembly module.
 //!
 //! Ops: `add` (`name`, `by`), `get` (`name`), `all`, `reset` and `engine`
-//! (what the host says about itself, through a host service).
+//! (what the host says about itself, through a host service). When a running
+//! game hosts the module it also hears `world.start` (a fresh run) and
+//! `world.stop`, whose answer carries an effect: a line in the run log.
 
 use blockloom_plugin_sdk::{Error, Host, Plugin, Value, export_plugin, json};
 use std::collections::BTreeMap;
@@ -48,6 +50,22 @@ impl Plugin for Tally {
                 Ok(Value::Null)
             }
             "engine" => host.call_json("host.version", &Value::Null),
+            "world.start" => {
+                self.counts.clear();
+                Ok(Value::Null)
+            }
+            "world.stop" if self.counts.is_empty() => Ok(Value::Null),
+            "world.stop" => {
+                let totals: Vec<String> = self
+                    .counts
+                    .iter()
+                    .map(|(name, count)| format!("{name} = {count}"))
+                    .collect();
+                Ok(json!({"effects": [{
+                    "effect": "say",
+                    "text": format!("final tally: {}", totals.join(", ")),
+                }]}))
+            }
             _ => Err(Error::unsupported(op)),
         }
     }

@@ -436,6 +436,27 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   the schema's `label` into label pieces and value pieces (`key: "args"`,
   `index: i`, field `PluginArg:i`), cached so the canvas keeps its controls.
   `head` as a function and `index` are blockstitch row features.
+- **Plugin code in the game world** (`blockloom-runtime/src/plugins.rs`,
+  `blockloom-plugin-host/src/world.rs`, `blockloom-plugin-api/src/loadout.rs`).
+  Play sends `EditorMessage::Plugins { loadout }` between `Load` and `Start`
+  (`PROTOCOL_VERSION` 22): per plugin its code runtime, hooks and the blocks
+  whose commands are module ops (`ActivePlugins::loadout`). `world::begin_run`
+  opens each module (`WorldPlugins::load`) and calls `world.start` with the
+  plugin's records and resources; `end_run` calls `world.stop` and drops them,
+  so a module lives exactly as long as a run. Hooks are named by a `Stage`
+  (`Input`, `PreSimulation`, `FixedSimulation`, `EffectApplication`,
+  `PostPhysics` in the fixed step, `RenderExtraction` and `Presentation` per
+  frame), ordered by their `before`/`after`, and called once per stage as op
+  `hook.<name>` with `{stage, hook, tick, dt}`; a paused world skips the fixed
+  stages. A module answers `{"effects": [...]}` of `say`, `broadcast` and
+  `error`, which the world applies in order - a plugin never touches the
+  world itself. An `Unsupported` answer means "nothing to do" (once, as an
+  error, for a hook). A faulted portable module is dropped for the rest of the
+  run. A plugin block whose command is a module op runs in the world
+  (`plugins::run_block`); any other still goes to the editor as
+  `RuntimeMessage::PluginCall`. The runtime's `plugins` feature (default) pulls
+  in the host crate; web and Android build without it and ignore the loadout.
+  `plugins/examples/tally` answers `world.stop` with a final tally line.
 - **Plugin SDK** (`blockloom-plugin-sdk`): a plugin author implements `Plugin`
   (`start`, then `call` over bytes or `call_json` over `serde_json::Value`) and
   names it with `export_plugin!`. The macro expands to the C entry symbol on a
@@ -455,10 +476,11 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   same `plugin_*` commands the shell does (install with a dry-run preview,
   update, remove, sync, undo the last change, clean the cache). It has a QML
   test (`tests/qml/tst_Plugins.qml`) but no inspector or contribution host yet.
-- **Not yet**: plugin reporters and hats (blocks only draw as statements),
-  plugin blocks in a built game or the script ABI, a browser host for portable modules, native or portable modules
-  in the runtime (a run's world) or a built game, an HTTP registry, dynamic QML
-  for plugin editor panels.
+- **Not yet**: plugin reporters (planned as published snapshots) and hats
+  (events), plugin code in a built game (a build still refuses plugin blocks
+  and the pack's plugin payload is not loaded by the player), in the script
+  ABI, a browser host for portable modules, an HTTP registry, dynamic QML for
+  plugin editor panels.
   `plugins/examples/com.example.health` is the sealed proof package;
   `plugins/examples/tally` is the SDK one, with code.
 

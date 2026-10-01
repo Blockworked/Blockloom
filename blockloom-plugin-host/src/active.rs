@@ -10,10 +10,11 @@ use crate::cache::Cache;
 use crate::lock::{LockFile, LockedPackage, ProjectPlugins};
 use crate::package::Package;
 use crate::source::Source;
+use blockloom_plugin_api::loadout::{Loadout, LoadoutBlock, LoadoutPlugin};
 use blockloom_plugin_api::manifest::{DependencyScope, PluginManifest, Tier};
 use blockloom_plugin_api::record::PluginRecord;
 use blockloom_plugin_api::schema::{
-    BlockSchema, CommandSchema, ComponentSchema, HookSchema, SchemaError,
+    BlockKind, BlockSchema, CommandAction, CommandSchema, ComponentSchema, HookSchema, SchemaError,
 };
 use blockloom_plugin_api::{Version, id};
 use serde::Serialize;
@@ -25,41 +26,7 @@ pub struct PluginProblem {
     pub message: String,
 }
 
-/// A native plugin's library, ready for `NativeModule::load`.
-#[derive(Debug, Clone)]
-pub struct NativeLibrary {
-    pub path: std::path::PathBuf,
-    /// The package's content hash; a changed package is a different module.
-    pub hash: String,
-    pub capabilities: std::collections::BTreeSet<blockloom_plugin_api::manifest::Capability>,
-}
-
-/// A portable plugin's verified module, ready for `PortableModule::load`.
-#[derive(Debug, Clone)]
-pub struct PortableLibrary {
-    pub path: std::path::PathBuf,
-    /// The package's content hash; a changed package is a different module.
-    pub hash: String,
-    pub capabilities: std::collections::BTreeSet<blockloom_plugin_api::manifest::Capability>,
-    pub entry: blockloom_plugin_api::manifest::PortableEntry,
-}
-
-/// The code a plugin runs on this machine: its native library when it has
-/// one for the target, else its portable module.
-#[derive(Debug, Clone)]
-pub enum CodeRuntime {
-    Native(NativeLibrary),
-    Portable(PortableLibrary),
-}
-
-impl CodeRuntime {
-    pub fn hash(&self) -> &str {
-        match self {
-            CodeRuntime::Native(n) => &n.hash,
-            CodeRuntime::Portable(p) => &p.hash,
-        }
-    }
-}
+pub use blockloom_plugin_api::loadout::{CodeRuntime, NativeLibrary, PortableLibrary};
 
 #[derive(Debug, Clone)]
 pub struct LoadedPlugin {
@@ -327,6 +294,44 @@ impl ActivePlugins {
             }));
         }
         self.native_library(plugin).map(CodeRuntime::Native)
+    }
+
+    /// What a running world needs to host the code of every plugin that has
+    /// any for this target. A plugin that has none here (declarative, or no
+    /// artifact for the target) is left out: its records and commands still
+    /// work, and Play's preflight already refuses a code plugin that failed.
+    pub fn loadout(&self) -> Loadout {
+        let mut plugins = Vec::new();
+        for (id, loaded) in &self.plugins {
+            let Ok(runtime) = self.code_runtime(id) else {
+                continue;
+            };
+            let contributions = &loaded.package.contributions;
+            let blocks = contributions
+                .blocks
+                .iter()
+                .filter(|b| b.kind == BlockKind::Statement)
+                .filter_map(|b| {
+                    let command = contributions.command(b.command.as_deref()?)?;
+                    let CommandAction::Module { op } = &command.action else {
+                        return None;
+                    };
+                    Some(LoadoutBlock {
+                        type_id: b.type_id.clone(),
+                        op: op.clone(),
+                        slots: b.slots.clone(),
+                        wants_actor: command.args.iter().any(|a| a.name == "actor"),
+                    })
+                })
+                .collect();
+            plugins.push(LoadoutPlugin {
+                id: id.clone(),
+                runtime,
+                hooks: contributions.hooks.clone(),
+                blocks,
+            });
+        }
+        Loadout { plugins }
     }
 
     pub fn manifest(&self, plugin: &str) -> Option<&PluginManifest> {
@@ -635,7 +640,7 @@ pub fn migrate_records(
 mod tests {
     use super::*;
     use crate::install::{Change, Environment, install};
-    use crate::package::fixtures::declarative;
+    use crate::package::fixtures::{declarative, portable};
     use crate::source::Source;
     use serde_json::json;
     use std::fs;
@@ -890,5 +895,44 @@ mod tests {
         assert_eq!(plan.len(), 1);
         assert!(plan[0].files.contains(&"schemas/main.json".to_string()));
         assert_eq!(plan[0].tier, Tier::Declarative);
+    }
+
+    #[test]
+    fn a_loadout_names_each_plugins_code_hooks_and_module_blocks() {
+        let rig = rig();
+        rig.add("com.example.plain", "1.0.0");
+        let pkg = portable(&rig.dir.path().join("code"), "com.example.code", "1.0.0");
+        install(
+            &rig.env,
+            &rig.project,
+            Change::Add {
+                id: "com.example.code".into(),
+                req: "*".parse().unwrap(),
+                source: Some(Source::Path(pkg)),
+                features: vec![],
+            },
+        )
+        .unwrap();
+        let loadout = rig.load().loadout();
+        // The declarative plugin has no code to host.
+        assert_eq!(loadout.plugins.len(), 1);
+        let code = &loadout.plugins[0];
+        assert_eq!(code.id, "com.example.code");
+        assert!(matches!(code.runtime, CodeRuntime::Portable(_)));
+        assert_eq!(code.hooks.len(), 1);
+        // Only blocks whose command is a module op run in the world.
+        let mut blocks: Vec<_> = code
+            .blocks
+            .iter()
+            .map(|b| (&b.type_id[..], &b.op[..], b.wants_actor))
+            .collect();
+        blocks.sort();
+        assert_eq!(
+            blocks,
+            [("echo_block", "echo", true), ("spin_block", "spin", false)]
+        );
+        let back: Loadout =
+            serde_json::from_value(serde_json::to_value(&loadout).unwrap()).unwrap();
+        assert_eq!(back, loadout);
     }
 }

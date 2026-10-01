@@ -2489,6 +2489,7 @@ name = "blockloom-protocol"
 version = "0.0.1"
 dependencies = [
  "blockloom-core",
+ "blockloom-plugin-api",
  "serde",
  "serde_json",
 ]
@@ -2503,6 +2504,8 @@ dependencies = [
  "bevy_rapier2d",
  "bevy_rapier3d",
  "blockloom-core",
+ "blockloom-plugin-api",
+ "blockloom-plugin-host",
  "blockloom-protocol",
  "bytemuck",
  "getrandom 0.4.3",

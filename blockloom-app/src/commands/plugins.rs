@@ -21,15 +21,12 @@ use blockloom_plugin_api::manifest::TargetSupport;
 use blockloom_plugin_api::record::PluginRecord;
 use blockloom_plugin_api::schema::{CommandAction, ComponentSchema, FieldType};
 use blockloom_plugin_api::{Version, VersionReq};
-use blockloom_plugin_host::active::{
-    ActivePlugins, CodeRuntime, RecordIssue, RecordStatus, migrate_records,
-};
+use blockloom_plugin_host::active::{ActivePlugins, RecordIssue, RecordStatus, migrate_records};
 use blockloom_plugin_host::cache::{self, Cache};
 use blockloom_plugin_host::install::{self, Change, Environment, PlanChange};
 use blockloom_plugin_host::lock::ProjectPlugins;
-use blockloom_plugin_host::native::{NativeModule, default_services};
+use blockloom_plugin_host::module::CodeModule;
 use blockloom_plugin_host::package;
-use blockloom_plugin_host::portable::PortableModule;
 use blockloom_plugin_host::registry::DirRegistry;
 use blockloom_plugin_host::source::Source;
 use serde::Serialize;
@@ -103,6 +100,15 @@ fn active(s: &AppState) -> Result<&ActivePlugins, String> {
         .ok_or_else(|| "No project is open".to_string())
 }
 
+/// The plugin code a run hosts in the game world: what the open project's
+/// active plugins have for this machine.
+pub(crate) fn loadout(s: &AppState) -> blockloom_plugin_api::loadout::Loadout {
+    s.open
+        .as_ref()
+        .map(|open| open.plugins.loadout())
+        .unwrap_or_default()
+}
+
 fn reload(s: &mut AppState) {
     if let Some(open) = s.open.as_mut() {
         open.plugins = load_active(&open.dir);
@@ -110,38 +116,11 @@ fn reload(s: &mut AppState) {
     }
 }
 
-/// A plugin's loaded code: a native library or a portable module.
-pub(crate) enum Module {
-    Native(NativeModule),
-    Portable(Box<PortableModule>),
-}
-
-impl Module {
-    fn call_json(&mut self, op: &str, input: &Value) -> Result<Value, String> {
-        match self {
-            Module::Native(m) => m.call_json(op, input),
-            Module::Portable(m) => m.call_json(op, input),
-        }
-    }
-
-    fn take_logs(&mut self) -> Vec<(u32, String)> {
-        match self {
-            Module::Native(m) => m.take_logs(),
-            Module::Portable(m) => m.take_logs(),
-        }
-    }
-
-    /// A portable module that ran out of budget or trapped is not reused.
-    fn is_stopped(&self) -> bool {
-        matches!(self, Module::Portable(m) if m.is_stopped())
-    }
-}
-
 /// The modules the open project has loaded, by plugin id. A module is loaded
 /// on its first call and unloaded when its package changes or goes.
 #[derive(Default)]
 pub(crate) struct Modules {
-    loaded: std::collections::BTreeMap<String, (String, Arc<Mutex<Module>>)>,
+    loaded: std::collections::BTreeMap<String, (String, Arc<Mutex<CodeModule>>)>,
 }
 
 impl Modules {
@@ -154,7 +133,7 @@ impl Modules {
         });
     }
 
-    fn get(&mut self, active: &ActivePlugins, id: &str) -> Result<Arc<Mutex<Module>>, String> {
+    fn get(&mut self, active: &ActivePlugins, id: &str) -> Result<Arc<Mutex<CodeModule>>, String> {
         let runtime = active.code_runtime(id)?;
         if let Some((hash, module)) = self.loaded.get(id)
             && hash == runtime.hash()
@@ -162,21 +141,9 @@ impl Modules {
         {
             return Ok(module.clone());
         }
-        let services = default_services(engine_version().to_string());
         let hash = runtime.hash().to_string();
-        let module = match runtime {
-            CodeRuntime::Native(library) => {
-                NativeModule::load(&library.path, library.capabilities, services)
-                    .map(Module::Native)
-            }
-            CodeRuntime::Portable(library) => std::fs::read(&library.path)
-                .map_err(|e| format!("{}: {e}", library.path.display()))
-                .and_then(|wasm| {
-                    PortableModule::load(&wasm, &library.entry, library.capabilities, services)
-                })
-                .map(|m| Module::Portable(Box::new(m))),
-        }
-        .map_err(|e| format!("{id}: {e}"))?;
+        let module = CodeModule::load(&runtime, &engine_version().to_string())
+            .map_err(|e| format!("{id}: {e}"))?;
         let module = Arc::new(Mutex::new(module));
         self.loaded.insert(id.to_string(), (hash, module.clone()));
         Ok(module)

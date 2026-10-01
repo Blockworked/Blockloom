@@ -6,5 +6,6 @@ description = "The editor-to-runtime wire format: newline-delimited JSON over th
 
 [dependencies]
 blockloom-core = { path = "../blockloom-core" }
+blockloom-plugin-api = { path = "../blockloom-plugin-api" }
 serde.workspace = true
 serde_json.workspace = true

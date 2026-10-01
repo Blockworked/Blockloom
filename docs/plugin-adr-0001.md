@@ -209,3 +209,28 @@ the blockstitch commit that has them; until it is merged to blockstitch's
 plugin's block still draws, as its `plugin/block` name with "(not installed)"
 and no slots, and Play refuses it (preflight). The QML half is unrun here (no
 Qt in the container); the Rust half pins the snapshot shape the QML reads.
+
+## Plugin code in the running world (sixth batch)
+
+A plugin's module now runs inside the game world, not only the editor. The
+editor sends a serializable `Loadout` (runtime, hooks, module-op blocks)
+before `Start`; the world opens the modules at `begin_run` and drops them at
+`end_run`, so state never outlives a run. Decisions:
+
+- Plugins reach the world only through effects in their answers (`say`,
+  `broadcast`, `error`). That keeps the ABI small and the world single-owner;
+  richer effects are added by name as the voxel plugin needs them.
+- Hooks are per `Stage` rather than per Bevy system, so a plugin cannot
+  depend on engine internals. Within a stage they are ordered by their own
+  `before`/`after`, and a cycle is reported once and the run goes without hooks.
+- A block whose command is a module op runs in the world with no editor round
+  trip; a block whose command edits the project still goes to the editor.
+- `world.start`/`world.stop` are ordinary ops: a module that does not know
+  them answers `Unsupported`, which the world treats as nothing to do.
+- Reporters and hats are not here yet. Reporters have to be answerable in the
+  fixed tick without a call per read, so they are planned as snapshots a
+  plugin publishes at a stage; hats are events the world fires.
+
+The GPU and windowed paths are unchecked here (no GPU in the container); the
+host crate's tests drive the lifecycle with native fixtures, and the runtime
+has no-op path tests.

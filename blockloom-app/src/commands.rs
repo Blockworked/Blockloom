@@ -2151,6 +2151,8 @@ pub(crate) fn run_project(
     let dir = s
         .project_dir()
         .map(|dir| dir.to_string_lossy().into_owned());
+    // The plugin code this run hosts in its world.
+    let loadout = plugins::loadout(&s);
 
     let wrong_dimension = s
         .runtime
@@ -2174,7 +2176,8 @@ pub(crate) fn run_project(
     let alive = runtime.send(&blockloom_protocol::EditorMessage::Load {
         project: Box::new(project),
         dir,
-    }) && runtime.send(&blockloom_protocol::EditorMessage::Start);
+    }) && runtime.send(&blockloom_protocol::EditorMessage::Plugins { loadout })
+        && runtime.send(&blockloom_protocol::EditorMessage::Start);
     if !alive {
         s.runtime = None;
         return Err("Lost the connection to the game runtime".to_string());

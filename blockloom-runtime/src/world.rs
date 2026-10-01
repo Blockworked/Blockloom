@@ -312,6 +312,7 @@ pub fn pump_editor(
                     }
                 }
             }
+            EditorMessage::Plugins { loadout } => engine.plugins.loadout = loadout,
             EditorMessage::Start => {
                 if let Some(design) = design.as_mut() {
                     design.clear();
@@ -452,6 +453,7 @@ pub fn pump_editor(
 /// Ends the run and puts the world back as the document authored it, so
 /// the editor's Game view never keeps what the run did to it.
 pub fn end_run(engine: &mut Engine, manager: &mut crate::ui::UiManager) {
+    crate::plugins::end(engine);
     engine.stop_program();
     engine.speech.clear();
     engine.pending_scene = None;
@@ -469,6 +471,7 @@ pub fn begin_run(engine: &mut Engine, now: f64) {
     engine.starting = false;
     engine.running = true;
     engine.started_at = now;
+    crate::plugins::begin(engine);
     engine.fire(Event::Started);
 }
 
@@ -2181,12 +2184,18 @@ pub fn step_vm(
                 plugin,
                 block,
                 args,
-            } => bridge::send(&RuntimeMessage::PluginCall {
-                actor: actor.clone(),
-                plugin: plugin.clone(),
-                block: block.clone(),
-                args: args.clone(),
-            }),
+            } => {
+                // A block whose command is a module op runs here, in the
+                // plugin's world module; the editor runs the rest.
+                if !crate::plugins::run_block(&mut engine, actor, plugin, block, args) {
+                    bridge::send(&RuntimeMessage::PluginCall {
+                        actor: actor.clone(),
+                        plugin: plugin.clone(),
+                        block: block.clone(),
+                        args: args.clone(),
+                    });
+                }
+            }
             Effect::SwitchScene {
                 actor,
                 scene,

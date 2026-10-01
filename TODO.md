@@ -1497,7 +1497,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Native modules load in the editor for `module` commands (`Modules` cache, run-log output, panic containment).
     - [x] Portable (WASM) executor in the editor: wasmi, linear-memory ABI, memory and work limits, stop-and-reload on a fault.
     - [x] Plugin SDK crate (`blockloom-plugin-sdk`): one `Plugin` trait and `export_plugin!` for native and WebAssembly, `NativeModule::from_entry`, and the `plugins/examples/tally` example (`just example-plugin`).
-    - [ ] Native and portable modules in the runtime world and built player, lifecycle wiring; a browser host for portable modules and a browser proof.
+    - [x] Native and portable modules in the running game world: loadout sent before Play, `world.start`/`world.stop` lifecycle, staged hooks, module-op blocks run in the world, effects (`say`, `broadcast`, `error`).
+    - [ ] Modules in the built player, a browser host for portable modules and a browser proof.
     - [x] Plugin statement blocks in the VM: `PluginBlock` instruction, `Effect::PluginCall`, the editor runs the block's command, `plugin-run-block`, Play preflight; codegen refuses by name and Build is refused while they exist.
     - [x] Plugin statement blocks in the palette and on the canvas (one `PluginBlock` row whose head follows the schema label; needs blockstitch's function `head` and `index` pieces).
     - [ ] Plugin reporters and hats, built games, codegen and the script ABI; importer/build hooks; per-plugin MCP tools.

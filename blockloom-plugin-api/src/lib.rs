@@ -8,6 +8,7 @@
 //! - [`record`] is a plugin-owned record as a project document stores it,
 //!   kept losslessly even when its plugin is missing.
 //! - [`abi`] is the native C boundary: fixed-width, versioned, no Rust types.
+//! - [`loadout`] is what a running world needs to host a plugin's code.
 //! - [`wasm`] is the same contract over a WebAssembly module's linear memory.
 //!
 //! Engine, SDK, plugin ABI, editor API, schema and shader API versions are
@@ -16,6 +17,7 @@
 
 pub mod abi;
 pub mod id;
+pub mod loadout;
 pub mod manifest;
 pub mod record;
 pub mod schema;

@@ -132,6 +132,15 @@ fn exercise(mut call: impl FnMut(&str, Value) -> Result<Value, String>) {
     );
     assert_eq!(call("reset", Value::Null).unwrap(), Value::Null);
     assert_eq!(call("all", Value::Null).unwrap(), json!({"counts": {}}));
+    // As a hosted world module: a run's end says what it counted.
+    call("add", json!({"name": "wins", "by": 2})).unwrap();
+    assert_eq!(
+        call("world.stop", Value::Null).unwrap(),
+        json!({"effects": [{"effect": "say", "text": "final tally: wins = 2"}]})
+    );
+    assert_eq!(call("world.start", Value::Null).unwrap(), Value::Null);
+    assert_eq!(call("all", Value::Null).unwrap(), json!({"counts": {}}));
+    assert_eq!(call("world.stop", Value::Null).unwrap(), Value::Null);
 }
 
 #[test]

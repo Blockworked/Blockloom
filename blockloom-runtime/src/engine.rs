@@ -148,6 +148,8 @@ pub struct Engine {
     /// A built game's native block program. Editor Play keeps using the VM so
     /// what is being edited always runs immediately.
     pub logic: Option<crate::logic::LoadedLogic>,
+    /// The plugin code the editor asked this run to host.
+    pub plugins: crate::plugins::PluginHost,
     /// How many actors the host itself has made this run. Only a compiled
     /// program's run needs them: it mints its own ids, so the host's carry a
     /// shape of their own and the two can never collide.
@@ -339,6 +341,7 @@ impl Engine {
             save_data: SaveData::default(),
             save_path: PathBuf::new(),
             logic: None,
+            plugins: Default::default(),
             made: 0,
             entities: HashMap::new(),
             running: false,

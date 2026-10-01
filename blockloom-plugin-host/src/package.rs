@@ -300,6 +300,65 @@ pub(crate) mod fixtures {
         seal(&root).unwrap();
         root
     }
+
+    /// Writes a sealed portable package around the test wasm module: two
+    /// module commands (`echo`, `spin`), a block for each, and one hook.
+    pub fn portable(dir: &Path, id: &str, version: &str) -> PathBuf {
+        let root = dir.join(format!("{id}-{version}"));
+        fs::create_dir_all(root.join("schemas")).unwrap();
+        fs::create_dir_all(root.join("portable")).unwrap();
+        fs::write(
+            root.join("portable/m.wasm"),
+            crate::portable::fixture::wasm(),
+        )
+        .unwrap();
+        fs::write(
+            root.join("schemas/main.json"),
+            serde_json::to_string(&json!({
+                "hooks": [{"name": "tick", "stage": "fixed_simulation"}],
+                "commands": [
+                    {"name": "echo", "summary": "Answer the arguments.",
+                     "args": [{"name": "actor", "type": "actor"}, {"name": "word", "type": "text", "default": "hi"}],
+                     "action": {"do": "module", "op": "echo"}},
+                    {"name": "spin", "summary": "Never returns.",
+                     "action": {"do": "module", "op": "spin"}},
+                    {"name": "set_hp", "summary": "Not a module op.",
+                     "args": [{"name": "actor", "type": "actor"}, {"name": "value", "type": "int"}],
+                     "action": {"do": "set_field", "component": "Health", "field": "hp"}}
+                ],
+                "components": [{
+                    "type_id": "Health", "display_name": "Health",
+                    "fields": [{"name": "hp", "type": "int", "min": 0, "max": 100, "default": 10}]
+                }],
+                "blocks": [
+                    {"type_id": "echo_block", "kind": "statement", "category": "Test",
+                     "label": "echo {word}", "slots": [{"name": "word", "type": "text", "default": "hi"}],
+                     "command": "echo"},
+                    {"type_id": "spin_block", "kind": "statement", "category": "Test",
+                     "label": "spin", "command": "spin"},
+                    {"type_id": "hp_block", "kind": "statement", "category": "Test",
+                     "label": "hp {actor} {value}",
+                     "slots": [{"name": "actor", "type": "actor"}, {"name": "value", "type": "int"}],
+                     "command": "set_hp"}
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            root.join(MANIFEST_FILE),
+            serde_json::to_string(&json!({
+                "format": 1, "id": id, "name": id, "version": version,
+                "engine": ">=0.0.1", "tier": "portable", "abi": 1, "sdk": "^0.1",
+                "runtime": {"portable": {"module": "portable/m.wasm", "call_limit_ms": 5}},
+                "contributions": ["schemas/main.json"]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        seal(&root).unwrap();
+        root
+    }
 }
 
 #[cfg(test)]

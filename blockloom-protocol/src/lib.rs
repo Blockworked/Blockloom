@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 24;
+pub const PROTOCOL_VERSION: u32 = 25;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -163,6 +163,12 @@ pub enum EditorMessage {
     /// Temporary authored UI preview. None returns to the scene view.
     InterfaceDesign {
         design: Option<InterfaceDesign>,
+    },
+    /// The plugin code the next run hosts: which modules to open, their
+    /// hooks, and the plugin blocks that run in the world. Sent before
+    /// `Start`; the world opens the modules when the run begins.
+    Plugins {
+        loadout: blockloom_plugin_api::loadout::Loadout,
     },
     /// The green flag.
     Start,
