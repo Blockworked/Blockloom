@@ -70,7 +70,7 @@ use std::path::Path;
 
 /// How many pixels make a physics metre - the scale rapier reasons about
 /// masses and forces in.
-pub const PIXELS_PER_METER: f32 = 100.0;
+pub const PIXELS_PER_METER: f32 = blockloom_core::scene::PIXELS_PER_METRE;
 
 /// The collider a visual implies, or `None` for a 3D visual in a 2D project.
 fn collider_for(visual: &Visual) -> Option<rp::Collider> {

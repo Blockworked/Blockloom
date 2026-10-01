@@ -389,7 +389,10 @@ pub fn sample_water(
         };
         // The fetch fit is in metres: a 2D pixel is a hundredth of one.
         let (air_m, gravity_m) = if flat {
-            (air / 100.0, gravity / 100.0)
+            (
+                air / blockloom_core::scene::PIXELS_PER_METRE,
+                gravity / blockloom_core::scene::PIXELS_PER_METRE,
+            )
         } else {
             (air, gravity)
         };

@@ -16,9 +16,24 @@ pub enum Mode {
     ThreeD,
 }
 
+/// How many 2D world units (pixels) make one metre. 3D works in metres, so
+/// this is the whole difference between the two scales; rapier's length unit
+/// and every 2D/3D conversion read it.
+pub const PIXELS_PER_METRE: f32 = 100.0;
+
 impl Mode {
     pub fn is_3d(self) -> bool {
         matches!(self, Mode::ThreeD)
+    }
+
+    /// World units in one metre: pixels in 2D, metres in 3D.
+    pub fn units_per_metre(self) -> f32 {
+        if self.is_3d() { 1.0 } else { PIXELS_PER_METRE }
+    }
+
+    /// What a length in `from`'s units becomes in this mode's.
+    pub fn length_from(self, from: Mode, length: f32) -> f32 {
+        length * self.units_per_metre() / from.units_per_metre()
     }
 }
 
@@ -1413,8 +1428,8 @@ pub struct World {
     pub mode: Mode,
     #[serde(default = "default_background")]
     pub background: String,
-    /// Metres per second squared. The default is 2D-friendly: -981 units,
-    /// since a 2D unit is a pixel.
+    /// World units per second squared: metres in 3D (-9.81), pixels in 2D
+    /// (-981, the same pull at 100 pixels a metre).
     #[serde(default = "default_gravity_2d")]
     pub gravity: [f32; 3],
     /// How many times a second the world's physics and blocks advance,
@@ -1525,8 +1540,8 @@ impl Default for World {
 }
 
 impl World {
-    /// The gravity a fresh project of this mode starts with - 2D works in
-    /// pixels, 3D in metres, so the two differ by roughly a hundredfold.
+    /// The gravity a fresh project of this mode starts with: Earth's, in the
+    /// mode's own units.
     pub fn default_gravity(mode: Mode) -> [f32; 3] {
         match mode {
             Mode::TwoD => default_gravity_2d(),
