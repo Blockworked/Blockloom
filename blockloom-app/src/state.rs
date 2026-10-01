@@ -39,6 +39,9 @@ pub(crate) struct OpenProject {
     /// Last heartbeat write, so the lock file is touched at most every few
     /// seconds no matter how chatty the command stream is.
     pub(crate) touched: AtomicU64,
+    /// What the project's locked plugins contribute, loaded when it opens
+    /// and again after every package change.
+    pub(crate) plugins: blockloom_plugin_host::active::ActivePlugins,
 }
 
 impl OpenProject {
@@ -49,6 +52,7 @@ impl OpenProject {
         owns_lock: bool,
         attached: bool,
     ) -> Self {
+        let plugins = crate::commands::plugins::load_active(&dir);
         Self {
             project,
             dir,
@@ -57,6 +61,7 @@ impl OpenProject {
             owns_lock,
             attached,
             touched: AtomicU64::new(0),
+            plugins,
         }
     }
 
@@ -221,6 +226,9 @@ pub(crate) struct StateDto {
     pub(crate) sync: SyncDto,
     /// The Tiles tool's last pick.
     pub(crate) picked_tile: Option<PickedTile>,
+    /// Installed plugins, the ones that failed to load and the records that
+    /// need attention. Null for a project that has never used a plugin.
+    pub(crate) plugins: serde_json::Value,
 }
 
 /// Where the open project stands against its folder: revisions, lock owner,
@@ -319,6 +327,7 @@ pub(crate) fn state_dto(s: &AppState) -> StateDto {
         ray_tracing: s.runtime.as_ref().and(s.ray_tracing.clone()),
         sync: sync_dto(s),
         picked_tile: s.picked_tile.clone(),
+        plugins: crate::commands::plugins::summary(s),
     }
 }
 

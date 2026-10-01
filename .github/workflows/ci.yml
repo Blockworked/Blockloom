@@ -46,6 +46,7 @@ jobs:
         run: >
           cargo clippy --all-targets
           -p blockloom-core -p blockloom-protocol -p blockloom-app -p blockloom-runtime
+          -p blockloom-plugin-api -p blockloom-plugin-host
       # GPU tests are #[ignore]d and stay manual. Tests that only start the
       # renderer run on lavapipe, Mesa's software Vulkan.
       - name: Test
@@ -55,6 +56,7 @@ jobs:
         run: >
           cargo test
           -p blockloom-core -p blockloom-protocol -p blockloom-app -p blockloom-runtime
+          -p blockloom-plugin-api -p blockloom-plugin-host
 
   # The browser player (Phase 8): the runtime has to keep building for wasm,
   # and a script has to keep compiling to a wasm module. The headless smoke

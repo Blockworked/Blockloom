@@ -1,0 +1,831 @@
+//! Plugin commands: installing and removing packages, editing the records
+//! they own, and checking a project before it runs or ships.
+//!
+//! Package changes touch only `plugins.json`, `plugins.lock` and the shared
+//! cache (see `blockloom-plugin-host`); a plugin's data lives in the document
+//! as opaque records the owning plugin's schema validates. Nothing here
+//! needs the plugin's code: declarative contributions are applied by the
+//! host itself.
+
+use super::{auto_save, emit, lock, push_undo, push_undo_for, sync_runtime};
+use crate::AppHandle;
+use crate::state::{AppState, EditSession, SharedState};
+use blockloom_core::build::{self, PluginPayload, Target};
+use blockloom_core::components::ActorComponent;
+use blockloom_core::library;
+use blockloom_core::pack::{PLUGINS_DIR, PackedPlugin};
+use blockloom_core::project::Project;
+use blockloom_plugin_api::id::{self, validate_plugin_id};
+use blockloom_plugin_api::manifest::TargetSupport;
+use blockloom_plugin_api::record::PluginRecord;
+use blockloom_plugin_api::schema::{CommandAction, ComponentSchema};
+use blockloom_plugin_api::{Version, VersionReq};
+use blockloom_plugin_host::active::{ActivePlugins, RecordIssue, RecordStatus, migrate_records};
+use blockloom_plugin_host::cache::{self, Cache};
+use blockloom_plugin_host::install::{self, Change, Environment, PlanChange};
+use blockloom_plugin_host::lock::ProjectPlugins;
+use blockloom_plugin_host::package;
+use blockloom_plugin_host::registry::DirRegistry;
+use blockloom_plugin_host::source::Source;
+use serde::Serialize;
+use serde_json::{Value, json};
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+/// The engine version plugins are checked against.
+fn engine_version() -> Version {
+    env!("CARGO_PKG_VERSION")
+        .parse()
+        .unwrap_or_else(|_| Version::new(0, 0, 0))
+}
+
+/// The target triple this editor runs and plays on.
+fn host_triple() -> String {
+    build::host().map_or_else(|| "unknown".to_string(), |t| t.triple.to_string())
+}
+
+/// How installs reach the cache and registries on this machine.
+/// `BLOCKLOOM_PLUGINS_OFFLINE=1` forces cache-only installs.
+pub(crate) fn environment(offline: bool) -> Environment {
+    let offline = offline
+        || std::env::var("BLOCKLOOM_PLUGINS_OFFLINE").is_ok_and(|v| !v.is_empty() && v != "0");
+    Environment {
+        cache: Cache::new(cache::default_root()),
+        engine: engine_version(),
+        target: host_triple(),
+        offline,
+        registries: Default::default(),
+    }
+}
+
+/// Loads what the project folder's lock names. Never fails: a package that
+/// can't load is reported by [`ActivePlugins::problems`].
+pub(crate) fn load_active(dir: &Path) -> ActivePlugins {
+    let env = environment(true);
+    ActivePlugins::load(
+        &ProjectPlugins::new(dir),
+        &env.cache,
+        &env.target,
+        &env.engine,
+    )
+}
+
+/// The open project's folder, refusing a copy that only shares another
+/// editor's files: package changes would race the owner's.
+fn owned_dir(s: &AppState) -> Result<PathBuf, String> {
+    let Some(open) = &s.open else {
+        return Err("No project is open".to_string());
+    };
+    if open.attached || !open.owns_lock {
+        return Err(
+            "This copy shares another editor's project folder; change plugins there".to_string(),
+        );
+    }
+    Ok(open.dir.clone())
+}
+
+fn open_dir(s: &AppState) -> Result<PathBuf, String> {
+    s.project_dir()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "No project is open".to_string())
+}
+
+fn active(s: &AppState) -> Result<&ActivePlugins, String> {
+    s.open
+        .as_ref()
+        .map(|open| &open.plugins)
+        .ok_or_else(|| "No project is open".to_string())
+}
+
+fn reload(s: &mut AppState) {
+    if let Some(open) = s.open.as_mut() {
+        open.plugins = load_active(&open.dir);
+    }
+}
+
+// ─── Reading ────────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct InstalledDto {
+    id: String,
+    name: String,
+    version: String,
+    description: String,
+    license: String,
+    tier: String,
+    source: String,
+    dev: bool,
+    /// How it runs on this machine.
+    support: TargetSupport,
+    capabilities: Vec<String>,
+    dependencies: Vec<String>,
+    components: Vec<String>,
+    blocks: usize,
+    commands: usize,
+}
+
+fn name_of<T: Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
+fn installed(active: &ActivePlugins) -> Vec<InstalledDto> {
+    active
+        .plugins
+        .values()
+        .map(|p| {
+            let m = &p.package.manifest;
+            let c = &p.package.contributions;
+            InstalledDto {
+                id: m.id.clone(),
+                name: m.name.clone(),
+                version: m.version.to_string(),
+                description: m.description.clone(),
+                license: m.license.clone(),
+                tier: name_of(&m.tier),
+                source: p.locked.source.to_string(),
+                dev: p.locked.dev,
+                support: m.support_for(active.target()),
+                capabilities: m.capabilities.iter().map(name_of).collect(),
+                dependencies: p.locked.dependencies.clone(),
+                components: c
+                    .components
+                    .iter()
+                    .chain(&c.resources)
+                    .map(|s| id::qualified(&m.id, &s.type_id))
+                    .collect(),
+                blocks: c.blocks.len(),
+                commands: c.commands.len(),
+            }
+        })
+        .collect()
+}
+
+/// The part of the snapshot the frontend reads: what is installed, what
+/// failed to load, and which records need attention.
+pub(crate) fn summary(s: &AppState) -> Value {
+    let (Some(open), Some(project)) = (&s.open, s.project()) else {
+        return Value::Null;
+    };
+    let active = &open.plugins;
+    if active.is_empty() && project.plugin_records().is_empty() {
+        return Value::Null;
+    }
+    json!({
+        "installed": installed(active),
+        "problems": active.problems,
+        "issues": active.audit(project.plugin_records()),
+    })
+}
+
+/// `plugin-list`: everything about the project's plugins, with the
+/// dependency tree.
+pub(crate) fn plugin_list(state: &SharedState) -> Result<Value, String> {
+    let s = lock(state)?;
+    let dir = open_dir(&s)?;
+    let project = ProjectPlugins::new(&dir);
+    let plugins = project.read_plugins()?;
+    let lock_file = project.read_lock()?;
+    let active = active(&s)?;
+    Ok(json!({
+        "installed": installed(active),
+        "problems": active.problems,
+        "direct": plugins.plugins,
+        "registries": plugins.registries,
+        "tree": install::tree(&plugins, &lock_file, None),
+        "history": project.history_len(),
+        "offline": environment(false).offline,
+    }))
+}
+
+/// `plugin-check`: every record that needs attention, and whether the
+/// project may run.
+pub(crate) fn plugin_check(state: &SharedState) -> Result<Value, String> {
+    let s = lock(state)?;
+    let project = s.project().ok_or("No project is open")?;
+    let active = active(&s)?;
+    let issues = active.audit(project.plugin_records());
+    let blocking = issues.iter().filter(|i| i.blocks_run).count();
+    Ok(json!({
+        "ok": issues.is_empty() && active.problems.is_empty(),
+        "canRun": preflight(active, project).is_ok(),
+        "blocking": blocking,
+        "issues": issues,
+        "problems": active.problems,
+    }))
+}
+
+/// `plugin-commands`: the registry of commands plugins contribute, shaped
+/// like the shell's own command specs so a client can list them the same way.
+pub(crate) fn plugin_commands(state: &SharedState) -> Result<Value, String> {
+    let s = lock(state)?;
+    let active = active(&s)?;
+    let commands: Vec<Value> = active
+        .commands()
+        .into_iter()
+        .map(|(name, plugin, c)| {
+            json!({
+                "name": name,
+                "plugin": plugin,
+                "summary": c.summary,
+                "args": c.args,
+            })
+        })
+        .collect();
+    Ok(json!({ "commands": commands }))
+}
+
+// ─── Run and build preflight ────────────────────────────────────────────────
+
+fn describe(issue: &RecordIssue) -> String {
+    let why = match &issue.status {
+        RecordStatus::Ok => "ok".to_string(),
+        RecordStatus::NeedsMigration { from, to } => {
+            format!("written at schema {from}, plugin is at {to}; run plugin-migrate")
+        }
+        RecordStatus::Missing { reason } => format!("{reason}; run plugin-install or plugin-sync"),
+        RecordStatus::UnknownType => "the plugin has no such type".to_string(),
+        RecordStatus::SchemaTooNew { found, supported } => format!(
+            "written at schema {found}, newer than the installed plugin's {supported}; update the plugin"
+        ),
+        RecordStatus::Invalid { errors } => errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("; "),
+    };
+    format!("{} ({}): {why}", issue.record, issue.location)
+}
+
+/// Refuses to run or ship a project whose plugin data has nothing behind
+/// it: missing runtime behavior is a report, never a silent no-op.
+pub(crate) fn preflight(active: &ActivePlugins, project: &Project) -> Result<(), String> {
+    let mut lines: Vec<String> = active
+        .audit(project.plugin_records())
+        .iter()
+        .filter(|i| i.blocks_run)
+        .map(describe)
+        .collect();
+    lines.extend(
+        active
+            .unavailable_code_plugins()
+            .iter()
+            .map(|p| format!("{} {}", p.id, p.message)),
+    );
+    if lines.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "The project's plugins aren't ready, so it won't run:\n- {}",
+            lines.join("\n- ")
+        ))
+    }
+}
+
+/// Checks the open project before Play.
+pub(crate) fn preflight_run(s: &AppState) -> Result<(), String> {
+    match (s.open.as_ref(), s.project()) {
+        (Some(open), Some(project)) => preflight(&open.plugins, project),
+        _ => Ok(()),
+    }
+}
+
+/// The plugins a build for `target` carries, freshly loaded from the lock so
+/// the build sees what is on disk, not what the editor last cached. Fails
+/// with the dependency report when a plugin the game needs can't be shipped.
+pub(crate) fn payloads(
+    dir: &Path,
+    project: &Project,
+    target: &Target,
+) -> Result<Vec<PluginPayload>, String> {
+    let active = load_active(dir);
+    if active.is_empty() && project.plugin_records().is_empty() {
+        return Ok(Vec::new());
+    }
+    preflight(&active, project).map_err(|e| e.replace("won't run", "won't build"))?;
+    let plan = active.ship_plan(target.triple)?;
+    Ok(plan
+        .into_iter()
+        .map(|entry| {
+            let root = active
+                .get(&entry.id)
+                .map(|p| p.package.root.clone())
+                .unwrap_or_default();
+            PluginPayload {
+                entry: PackedPlugin {
+                    dir: format!("{PLUGINS_DIR}/{}", entry.id),
+                    id: entry.id,
+                    version: entry.version.to_string(),
+                    hash: entry.hash,
+                    tier: name_of(&entry.tier),
+                    files: entry.files,
+                },
+                root,
+            }
+        })
+        .collect())
+}
+
+// ─── Package changes ────────────────────────────────────────────────────────
+
+fn changes_json(changes: &[PlanChange]) -> Value {
+    serde_json::to_value(changes).unwrap_or(Value::Null)
+}
+
+/// Plans a change, and unless `dry_run` applies it: fetch and verify into
+/// staging, publish into the cache, then rewrite the project's files. The
+/// state lock is not held while packages download.
+pub(crate) fn plugin_change(
+    state: &SharedState,
+    app: &AppHandle,
+    change: Change,
+    dry_run: bool,
+    offline: bool,
+) -> Result<Value, String> {
+    let dir = {
+        let s = lock(state)?;
+        owned_dir(&s)?
+    };
+    let env = environment(offline);
+    let project = ProjectPlugins::new(&dir);
+    let plan = install::plan(&env, &project, change)?;
+    let changes = plan.changes.clone();
+    // Anything that would leave records without their plugin is said up
+    // front; the data itself is never deleted.
+    let orphaned = {
+        let s = lock(state)?;
+        let removed: BTreeSet<&str> = changes
+            .iter()
+            .filter_map(|c| match c {
+                PlanChange::Removed { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        s.project()
+            .map(|p| {
+                p.plugin_records()
+                    .into_iter()
+                    .filter(|(_, r)| removed.contains(r.plugin.as_str()))
+                    .map(|(place, r)| format!("{} ({place})", r.name()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    if !dry_run {
+        install::apply(&env, &project, plan)?;
+        let mut s = lock(state)?;
+        reload(&mut s);
+        emit(app, &s);
+    }
+    Ok(json!({
+        "dryRun": dry_run,
+        "changes": changes_json(&changes),
+        "keptRecords": orphaned,
+    }))
+}
+
+pub(crate) fn plugin_install(
+    state: &SharedState,
+    app: &AppHandle,
+    id: String,
+    version: Option<String>,
+    source: Option<String>,
+    features: Vec<String>,
+    dry_run: bool,
+    offline: bool,
+) -> Result<Value, String> {
+    validate_plugin_id(&id)?;
+    let req: VersionReq = version
+        .as_deref()
+        .filter(|v| !v.is_empty())
+        .unwrap_or("*")
+        .parse()
+        .map_err(|e: blockloom_plugin_api::semver::Error| format!("invalid version: {e}"))?;
+    let source: Option<Source> = source
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse())
+        .transpose()?;
+    plugin_change(
+        state,
+        app,
+        Change::Add {
+            id,
+            req,
+            source,
+            features,
+        },
+        dry_run,
+        offline,
+    )
+}
+
+pub(crate) fn plugin_remove(
+    state: &SharedState,
+    app: &AppHandle,
+    id: String,
+    dry_run: bool,
+) -> Result<Value, String> {
+    plugin_change(state, app, Change::Remove(id), dry_run, true)
+}
+
+pub(crate) fn plugin_update(
+    state: &SharedState,
+    app: &AppHandle,
+    ids: Vec<String>,
+    dry_run: bool,
+    offline: bool,
+) -> Result<Value, String> {
+    plugin_change(state, app, Change::Update(ids), dry_run, offline)
+}
+
+pub(crate) fn plugin_pin(
+    state: &SharedState,
+    app: &AppHandle,
+    id: String,
+    version: String,
+    offline: bool,
+) -> Result<Value, String> {
+    let version: Version = version
+        .parse()
+        .map_err(|e: blockloom_plugin_api::semver::Error| format!("invalid version: {e}"))?;
+    plugin_change(state, app, Change::Pin { id, version }, false, offline)
+}
+
+pub(crate) fn plugin_sync(
+    state: &SharedState,
+    app: &AppHandle,
+    dry_run: bool,
+    offline: bool,
+) -> Result<Value, String> {
+    plugin_change(state, app, Change::Sync, dry_run, offline)
+}
+
+/// Restores the plugin files from before the last change.
+pub(crate) fn plugin_rollback(state: &SharedState, app: &AppHandle) -> Result<Value, String> {
+    let dir = {
+        let s = lock(state)?;
+        owned_dir(&s)?
+    };
+    let env = environment(true);
+    let changes = install::rollback(&env, &ProjectPlugins::new(&dir))?;
+    let mut s = lock(state)?;
+    reload(&mut s);
+    emit(app, &s);
+    Ok(json!({ "changes": changes_json(&changes) }))
+}
+
+/// Registers a folder registry in `plugins.json`.
+pub(crate) fn plugin_registry(
+    state: &SharedState,
+    app: &AppHandle,
+    name: String,
+    path: String,
+) -> Result<(), String> {
+    let dir = {
+        let s = lock(state)?;
+        owned_dir(&s)?
+    };
+    id::validate_type_id(&name.replace('-', "_"))?;
+    let project = ProjectPlugins::new(&dir);
+    let mut plugins = project.read_plugins()?;
+    plugins.registries.insert(name, path);
+    let lock_file = project.read_lock()?;
+    project.commit(&plugins, &lock_file)?;
+    let s = lock(state)?;
+    emit(app, &s);
+    Ok(())
+}
+
+/// Removes cached packages no project on this machine's Dashboard (or its
+/// history) still needs.
+pub(crate) fn plugin_gc(state: &SharedState) -> Result<Value, String> {
+    let mut keep: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut dirs: Vec<PathBuf> = library::list().into_iter().map(|e| e.path).collect();
+    {
+        let s = lock(state)?;
+        if let Some(dir) = s.project_dir() {
+            dirs.push(dir.to_path_buf());
+        }
+    }
+    for dir in dirs {
+        keep.extend(install::keep_set(&ProjectPlugins::new(dir))?);
+    }
+    let removed = Cache::new(cache::default_root()).collect_garbage(&keep)?;
+    Ok(json!({ "removed": removed }))
+}
+
+// ─── Author tooling ─────────────────────────────────────────────────────────
+
+/// Recomputes a package folder's file hashes in its `plugin.json` and
+/// verifies the result.
+pub(crate) fn plugin_seal(path: String) -> Result<Value, String> {
+    let root = PathBuf::from(&path);
+    package::seal(&root)?;
+    let package = package::Package::load(&root)?;
+    Ok(json!({
+        "id": package.manifest.id,
+        "version": package.manifest.version.to_string(),
+        "hash": package.content_hash,
+        "files": package.manifest.files.len(),
+    }))
+}
+
+/// Publishes a sealed package folder to a folder registry.
+pub(crate) fn plugin_publish(path: String, registry: String) -> Result<Value, String> {
+    let entry = DirRegistry::open(registry).publish(Path::new(&path))?;
+    Ok(json!({
+        "id": entry.manifest.id,
+        "version": entry.manifest.version.to_string(),
+        "hash": entry.content_hash,
+        "archive": entry.archive,
+    }))
+}
+
+// ─── Records ────────────────────────────────────────────────────────────────
+
+/// A validated record for `qualified` (`plugin/Type`), from `payload` over
+/// the schema's defaults.
+fn make_record(
+    active: &ActivePlugins,
+    qualified: &str,
+    payload: Option<Value>,
+    resource: bool,
+) -> Result<PluginRecord, String> {
+    let (plugin, type_id) = id::split_qualified(qualified)
+        .ok_or_else(|| format!("\"{qualified}\" is not a plugin/Type name"))?;
+    let schema = active
+        .schema(plugin, type_id)
+        .ok_or_else(|| match active.get(plugin) {
+            Some(_) => format!("{plugin} has no component or resource named {type_id}"),
+            None => format!("{plugin} is not installed in this project"),
+        })?;
+    if active.is_resource(plugin, type_id) != resource {
+        return Err(if resource {
+            format!("{qualified} is an actor component, not a project resource")
+        } else {
+            format!("{qualified} is a project resource, not an actor component")
+        });
+    }
+    validated(schema, plugin, payload.unwrap_or_else(|| json!({})))
+}
+
+fn validated(
+    schema: &ComponentSchema,
+    plugin: &str,
+    payload: Value,
+) -> Result<PluginRecord, String> {
+    let payload = schema.normalize(&payload);
+    schema.validate(&payload).map_err(|errors| {
+        format!(
+            "{}/{} is invalid: {}",
+            plugin,
+            schema.type_id,
+            errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
+    })?;
+    Ok(PluginRecord::new(
+        plugin,
+        &schema.type_id,
+        schema.version,
+        payload,
+    ))
+}
+
+/// Adds a plugin's component to an actor, or replaces the one of the same
+/// name. The payload is checked against the plugin's schema and starts from
+/// its defaults.
+pub(crate) fn add_plugin_component(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    component: String,
+    payload: Option<Value>,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    let record = make_record(active(&s)?, &component, payload, false)?;
+    if s.project().and_then(|p| p.actor(&actor_id)).is_none() {
+        return Err("Actor not found".to_string());
+    }
+    push_undo(&mut s);
+    if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
+        actor.components.insert(ActorComponent::Plugin { record });
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(component)
+}
+
+/// Replaces the payload of a plugin component an actor already has.
+pub(crate) fn set_plugin_component(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    component: String,
+    payload: Value,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    {
+        let project = s.project().ok_or("No project is open")?;
+        let actor = project.actor(&actor_id).ok_or("Actor not found")?;
+        if actor.components.plugin_record(&component).is_none() {
+            return Err(format!("This actor has no \"{component}\" component"));
+        }
+    }
+    let record = make_record(active(&s)?, &component, Some(payload), false)?;
+    push_undo_for(
+        &mut s,
+        Some(EditSession::Comment {
+            comment_id: format!("plugin-component:{actor_id}:{component}"),
+        }),
+    );
+    if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
+        actor.components.insert(ActorComponent::Plugin { record });
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Sets a project resource a plugin owns.
+pub(crate) fn set_plugin_resource(
+    state: &SharedState,
+    app: &AppHandle,
+    resource: String,
+    payload: Value,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let record = make_record(active(&s)?, &resource, Some(payload), true)?;
+    push_undo(&mut s);
+    if let Some(project) = s.project_mut() {
+        project.set_plugin_resource(record);
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+pub(crate) fn remove_plugin_resource(
+    state: &SharedState,
+    app: &AppHandle,
+    resource: String,
+) -> Result<bool, String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let removed = s
+        .project_mut()
+        .is_some_and(|p| p.remove_plugin_resource(&resource));
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(removed)
+}
+
+/// Runs a command a plugin declared, by `plugin/name`. Arguments are checked
+/// against its schema, then the declared action is applied to the project
+/// through the same validated paths the editor uses.
+pub(crate) fn plugin_call(
+    state: &SharedState,
+    app: &AppHandle,
+    command: String,
+    args: Value,
+) -> Result<Value, String> {
+    let (action, fields) = {
+        let s = lock(state)?;
+        let (_, schema) = active(&s)?
+            .command(&command)
+            .ok_or_else(|| format!("No plugin command named \"{command}\""))?;
+        (schema.action.clone(), schema.args.clone())
+    };
+    let args_schema = ComponentSchema {
+        type_id: "Arguments".to_string(),
+        display_name: String::new(),
+        version: 1,
+        fields,
+        editor_only: false,
+        migrations: Vec::new(),
+    };
+    let args = args_schema.normalize(&args);
+    args_schema.validate(&args).map_err(|errors| {
+        format!(
+            "{command}: {}",
+            errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
+    })?;
+    let plugin = id::split_qualified(&command)
+        .map_or("", |(p, _)| p)
+        .to_string();
+    let actor_of = |args: &Value| args["actor"].as_str().unwrap_or_default().to_string();
+    let rest = |args: &Value| {
+        let mut object = args.as_object().cloned().unwrap_or_default();
+        object.remove("actor");
+        Value::Object(object)
+    };
+    match action {
+        CommandAction::AddComponent { component } => {
+            let name = id::qualified(&plugin, &component);
+            add_plugin_component(state, app, actor_of(&args), name.clone(), Some(rest(&args)))?;
+            Ok(json!({ "component": name }))
+        }
+        CommandAction::SetField { component, field } => {
+            let name = id::qualified(&plugin, &component);
+            let actor_id = actor_of(&args);
+            let current = {
+                let s = lock(state)?;
+                let project = s.project().ok_or("No project is open")?;
+                let actor = project.actor(&actor_id).ok_or("Actor not found")?;
+                actor
+                    .components
+                    .plugin_record(&name)
+                    .map(|r| r.payload.clone())
+            };
+            let mut payload = current.clone().unwrap_or_else(|| json!({}));
+            payload[&field] = args["value"].clone();
+            if current.is_some() {
+                set_plugin_component(state, app, actor_id, name.clone(), payload)?;
+            } else {
+                add_plugin_component(state, app, actor_id, name.clone(), Some(payload))?;
+            }
+            Ok(json!({ "component": name, "field": field }))
+        }
+        CommandAction::SetResource { resource } => {
+            let name = id::qualified(&plugin, &resource);
+            set_plugin_resource(state, app, name.clone(), args)?;
+            Ok(json!({ "resource": name }))
+        }
+        CommandAction::Module { op } => Err(format!(
+            "{command} runs \"{op}\" in the plugin's code module, and this build does not load plugin modules into the editor yet"
+        )),
+    }
+}
+
+/// Upgrades every record of `plugin` to its schema's current version, on
+/// copies: all of them or none. A snapshot of what was replaced is kept under
+/// `.blockloom/plugin-migrations` beside the project's undo history.
+pub(crate) fn plugin_migrate(
+    state: &SharedState,
+    app: &AppHandle,
+    plugin: String,
+    dry_run: bool,
+) -> Result<Value, String> {
+    let mut s = lock(state)?;
+    let dir = open_dir(&s)?;
+    let project = s.project().ok_or("No project is open")?;
+    let old: Vec<PluginRecord> = project
+        .plugin_records()
+        .into_iter()
+        .filter(|(_, r)| r.plugin == plugin)
+        .map(|(_, r)| r.clone())
+        .filter(|r| {
+            matches!(
+                active(&s).map(|a| a.check_record(r)),
+                Ok(RecordStatus::NeedsMigration { .. })
+            )
+        })
+        .collect();
+    if old.is_empty() {
+        return Ok(json!({ "dryRun": dry_run, "migrated": 0 }));
+    }
+    let migrated = migrate_records(active(&s)?, &old).map_err(|errors| {
+        format!(
+            "Nothing was changed; migration failed for:\n- {}",
+            errors.join("\n- ")
+        )
+    })?;
+    let count = old.len();
+    if !dry_run {
+        let folder = dir.join(".blockloom").join("plugin-migrations");
+        std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+        let stamp = blockloom_core::sync::now_secs();
+        let snapshot = folder.join(format!("{plugin}-{stamp}.json"));
+        std::fs::write(
+            &snapshot,
+            serde_json::to_string_pretty(&old).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| format!("{}: {e}", snapshot.display()))?;
+        push_undo(&mut s);
+        if let Some(project) = s.project_mut() {
+            project.replace_plugin_records(&migrated);
+        }
+        auto_save(&s);
+        sync_runtime(&mut s);
+        emit(app, &s);
+    }
+    Ok(json!({
+        "dryRun": dry_run,
+        "migrated": count,
+        "records": migrated,
+    }))
+}

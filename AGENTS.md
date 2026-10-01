@@ -217,6 +217,9 @@ uploads those bytes as an image. Elsewhere it is a child process.
   `sense.rs` (the world state reporter blocks read), `ui.rs` (the screen-space
   interface a game builds out of blocks - see Interface below), and `wire.rs`
   (the one shape difference between documents and the frontend).
+- **`blockloom-plugin-api`**, **`blockloom-plugin-host`** - the plugin platform:
+  manifests, schemas, records and the C ABI (api, wasm-safe), resolver, cache,
+  install transactions and the native loader (host). See Plugins below.
 - **`blockstitch-core`** (sibling repo, see above) - the shared block-editor
   backend. `value` is the `Value`/`Op` expression system, extended by an app
   through `register_operators` (Blockloom registers its sensing reporters in
@@ -363,6 +366,47 @@ The local-position reporters (`my local x position`, `<actor>'s local x
 position`, and the matching script reads) answer that frame live: the
 parent's world transform inverted onto the child's world position, or the
 world position itself for an actor hanging off nothing.
+
+### Plugins
+
+Design: `docs/plugin-system-and-voxel-plan.md`; decisions, measurements and
+deviations of the first implementation: `docs/plugin-adr-0001.md`.
+
+- **`blockloom-plugin-api`** has no Qt, Bevy or I/O: `manifest.rs`
+  (`plugin.json`, tiers, capabilities, per-target runtime entries), `schema.rs`
+  (component/resource/block/command/hook schemas, field validation,
+  migrations), `record.rs` (`PluginRecord`), `abi.rs` (the C ABI v1) and `id.rs`.
+  `blockloom-core` depends on this crate and never on the host, which has
+  libloading and git and must not reach the wasm build. Bump
+  `versions::PLUGIN_ABI` only when `abi.rs` changes.
+- **`blockloom-plugin-host`** is everything that touches disk or code:
+  `package` (verify, seal, zip), `source` (`path:`, `archive:`, `git:url#commit`,
+  `registry:`), `registry` (folder registries), `cache` (immutable shared
+  cache), `lock` (`plugins.json`, `plugins.lock`, `plugins.local.json`,
+  `.blockloom/plugin-history`), `resolver`, `install` (plan/apply/rollback),
+  `active` (what a project loads, record audit, migrations, ship plan),
+  `hooks`, `lifecycle` and `native` (library loader, capability gate).
+- **Data**: a plugin's data is an opaque `PluginRecord` in the document, either
+  `ActorComponent::Plugin` on an actor or `Project.plugin_resources`. Core never
+  reads a payload, so a missing, newer or broken plugin loses nothing on open
+  and save. `ActivePlugins::audit` classifies each record, and
+  `commands::plugins::preflight` refuses Play and Build while one that is not
+  `editor_only` has no working plugin, naming the record and the fix. A
+  migration (`plugin-migrate`) is all records or none and snapshots first.
+- **Commands** live in `blockloom-app/src/commands/plugins.rs`: install, remove,
+  update, pin, sync, rollback, registry, gc, seal, publish, migrate, check,
+  list, plus `add_plugin_component`, `set_plugin_component`,
+  `set_plugin_resource` and `plugin_call`. Package changes are transactions on
+  `plugins.json` and `plugins.lock` only. A command a plugin declares is run as
+  `plugin-id/name key=value` in the shell (`Action::Plugin`, forwarded as
+  `plugin_call`) and through the MCP `plugin-call` tool. `StateDto.plugins` is
+  the snapshot slot.
+- **Builds**: a pack that carries plugins is `PACK_VERSION` 2 (without them it
+  is still written as 1), the plugin files go to `game/plugins/<id>/`, and web
+  and Android builds refuse plugins that have code.
+- **Not yet**: QML Plugin Manager, WASM executor, loading native modules into
+  the editor or runtime, plugin blocks in the VM/codegen/script ABI, an HTTP
+  registry. `plugins/examples/com.example.health` is the sealed proof package.
 
 ### Scripts
 

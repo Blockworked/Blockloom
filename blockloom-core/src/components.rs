@@ -26,6 +26,7 @@ use crate::tilemap::{ParallaxSpec, RoomSpec};
 use crate::value::Evaluated;
 use crate::volume::VolumeSpec;
 use crate::water::{BuoyancySpec, WaterSpec};
+use blockloom_plugin_api::record::PluginRecord;
 use serde::{Deserialize, Serialize};
 
 /// The components every project knows about by name. A custom component
@@ -385,6 +386,10 @@ pub enum ActorComponent {
     /// new scene instead of unloading it with the old one. Opt-in per actor,
     /// the DontDestroyOnLoad half of multi-scene support.
     Persist,
+    /// A component a plugin owns. The document stores its payload as the
+    /// plugin's schema describes it and never interprets it, so a project
+    /// whose plugin is missing still opens, saves and round-trips it intact.
+    Plugin { record: PluginRecord },
 }
 
 impl ActorComponent {
@@ -415,6 +420,7 @@ impl ActorComponent {
             ActorComponent::Parallax { .. } => "Parallax",
             ActorComponent::Room { .. } => "Room",
             ActorComponent::Persist => "Persist",
+            ActorComponent::Plugin { record } => record.name(),
             ActorComponent::Custom { name, .. } => name,
         }
     }
@@ -836,6 +842,21 @@ impl Components {
             return;
         };
         self.insert(ActorComponent::Parent { parent, offset });
+    }
+
+    // ─── Plugin components ──────────────────────────────────────────────────
+
+    /// Every component a plugin owns.
+    pub fn plugin_records(&self) -> impl Iterator<Item = &PluginRecord> {
+        self.0.iter().filter_map(|component| match component {
+            ActorComponent::Plugin { record } => Some(record),
+            _ => None,
+        })
+    }
+
+    /// One plugin component by its `plugin/type` name.
+    pub fn plugin_record(&self, name: &str) -> Option<&PluginRecord> {
+        self.plugin_records().find(|record| record.name() == name)
     }
 
     // ─── Custom components ─────────────────────────────────────────────────

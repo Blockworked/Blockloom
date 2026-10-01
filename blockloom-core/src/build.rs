@@ -380,6 +380,36 @@ pub struct BuildOptions {
     /// build, so the next one can skip typing them. Opt-in per build, and
     /// only written when the APK signed: a failed build remembers nothing.
     pub remember_passwords: bool,
+    /// The plugins the game ships with, resolved by the editor from the
+    /// project's lock: what to record in the pack and which files to copy.
+    pub plugins: Vec<PluginPayload>,
+}
+
+/// One plugin to ship: what the pack records and where its files are now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginPayload {
+    pub entry: pack::PackedPlugin,
+    /// The verified package folder the files are copied from.
+    pub root: PathBuf,
+}
+
+/// Copies each plugin's shipped files to `game/plugins/<id>/`. A file that
+/// is not where the verified package says it is fails the build.
+fn copy_plugins(plugins: &[PluginPayload], game: &Path) -> Result<usize, String> {
+    for plugin in plugins {
+        let dest = game.join(&plugin.entry.dir);
+        for file in &plugin.entry.files {
+            let from = plugin.root.join(file);
+            let to = dest.join(file);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("{}: {e}", parent.display()))?;
+            }
+            std::fs::copy(&from, &to)
+                .map_err(|e| format!("plugin {}: couldn't copy {file}: {e}", plugin.entry.id))?;
+        }
+    }
+    Ok(plugins.len())
 }
 
 /// Where a build landed, and what went into it.
@@ -448,6 +478,17 @@ pub fn build(
     parent: &Path,
     options: BuildOptions,
 ) -> Result<Build, String> {
+    if (target.is_web() || target.is_android())
+        && let Some(plugin) = options
+            .plugins
+            .iter()
+            .find(|p| p.entry.tier != "declarative")
+    {
+        return Err(format!(
+            "plugin {} has code, and plugin code is not supported on {} builds yet",
+            plugin.entry.id, target.label
+        ));
+    }
     if target.is_web() {
         return build_web(project, project_dir, target, player, parent);
     }
@@ -481,12 +522,14 @@ pub fn build(
 
     let game = layout.game.clone();
     std::fs::create_dir_all(&game).map_err(|e| format!("{}: {e}", game.display()))?;
-    let mut game_pack = GamePack::new(project.clone());
+    let mut game_pack = GamePack::new(project.clone())
+        .with_plugins(options.plugins.iter().map(|p| p.entry.clone()).collect());
     game_pack.hdr = !options.sdr_only;
     game_pack.write(&pack::pack_path(&game))?;
 
     crate::build_control::step("Copying game assets")?;
     let assets = copy_assets(project_dir, &game)?;
+    copy_plugins(&options.plugins, &game)?;
     crate::build_control::step("Baking sprite atlas")?;
     let atlas = bake_sprite_atlas(project, project_dir, &game)?;
     crate::build_control::step("Baking sky")?;

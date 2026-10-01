@@ -44,6 +44,7 @@ fn project_with(strands: Vec<Strand>) -> Project {
         globals: Vec::new(),
         global_lists: Vec::new(),
         global_dicts: Vec::new(),
+        plugin_resources: Vec::new(),
     }
 }
 
@@ -910,6 +911,7 @@ fn project_with_two(first: Vec<Strand>, second: Vec<Strand>) -> Project {
         globals: Vec::new(),
         global_lists: Vec::new(),
         global_dicts: Vec::new(),
+        plugin_resources: Vec::new(),
     }
 }
 

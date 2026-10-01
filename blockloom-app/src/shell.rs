@@ -2861,6 +2861,312 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             },
         ],
     },
+    // ── Plugins ───────────────────────────────────────────────────────────
+    CommandSpec {
+        name: "plugin-list",
+        cmd: "plugin_list",
+        aliases: &["plugins"],
+        summary: "The open project's plugins: what is installed, what failed to load, direct dependencies and the dependency tree.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "plugin-check",
+        cmd: "plugin_check",
+        aliases: &[],
+        summary: "Every plugin record that needs attention (missing plugin, unknown type, newer or older schema, invalid payload) and whether the project may run.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "plugin-commands",
+        cmd: "plugin_commands",
+        aliases: &[],
+        summary: "The commands installed plugins contribute, as plugin-id/name with their arguments. Run one as a shell command by that name, or through plugin-call.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "plugin-install",
+        cmd: "plugin_install",
+        aliases: &["plugin-add"],
+        summary: "Install a plugin and its dependencies into the project. The whole graph is resolved first and nothing changes if it fails. Sources: path:<dir>, archive:<zip>, git:<url>#<commit>, registry:<name>; none means the project's registries.",
+        args: &[
+            ArgSpec {
+                name: "id",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "version",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "source",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "features",
+                ty: "[plugin ids]",
+                required: false,
+            },
+            ArgSpec {
+                name: "dryRun",
+                ty: "bool",
+                required: false,
+            },
+            ArgSpec {
+                name: "offline",
+                ty: "bool",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "plugin-remove",
+        cmd: "plugin_remove",
+        aliases: &[],
+        summary: "Remove a direct plugin dependency. Records the plugin owned stay in the project; the answer lists them.",
+        args: &[
+            ArgSpec {
+                name: "id",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "dryRun",
+                ty: "bool",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "plugin-update",
+        cmd: "plugin_update",
+        aliases: &[],
+        summary: "Move plugins (all when ids is empty) to the newest versions their requirements allow. Nothing else ever changes a locked version.",
+        args: &[
+            ArgSpec {
+                name: "ids",
+                ty: "[plugin ids]",
+                required: false,
+            },
+            ArgSpec {
+                name: "dryRun",
+                ty: "bool",
+                required: false,
+            },
+            ArgSpec {
+                name: "offline",
+                ty: "bool",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "plugin-pin",
+        cmd: "plugin_pin",
+        aliases: &[],
+        summary: "Hold a direct dependency at exactly one version.",
+        args: &[
+            ArgSpec {
+                name: "id",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "version",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "offline",
+                ty: "bool",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "plugin-sync",
+        cmd: "plugin_sync",
+        aliases: &[],
+        summary: "Install exactly what plugins.lock says, fetching what the cache lacks and verifying every hash. Never upgrades.",
+        args: &[
+            ArgSpec {
+                name: "dryRun",
+                ty: "bool",
+                required: false,
+            },
+            ArgSpec {
+                name: "offline",
+                ty: "bool",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "plugin-rollback",
+        cmd: "plugin_rollback",
+        aliases: &[],
+        summary: "Undo the last plugin install, update or removal, restoring plugins.json and plugins.lock. Works offline.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "plugin-registry",
+        cmd: "plugin_registry",
+        aliases: &[],
+        summary: "Add a folder registry to plugins.json under a name.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "path",
+                ty: "folder path",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "plugin-gc",
+        cmd: "plugin_gc",
+        aliases: &[],
+        summary: "Delete cached packages no project on the Dashboard (or its plugin history) still needs.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "plugin-migrate",
+        cmd: "plugin_migrate",
+        aliases: &[],
+        summary: "Upgrade every record of a plugin to its schema's current version. All records or none; a snapshot of the old ones is kept.",
+        args: &[
+            ArgSpec {
+                name: "id",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "dryRun",
+                ty: "bool",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "plugin-call",
+        cmd: "plugin_call",
+        aliases: &[],
+        summary: "Run a command a plugin contributes, by plugin-id/name, with its arguments as an object.",
+        args: &[
+            ArgSpec {
+                name: "command",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "args",
+                ty: "object {...}",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "plugin-seal",
+        cmd: "plugin_seal",
+        aliases: &[],
+        summary: "Author tool: write the sha256 of every file into a package folder's plugin.json and verify the package.",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "folder path",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "plugin-publish",
+        cmd: "plugin_publish",
+        aliases: &[],
+        summary: "Author tool: publish a sealed package folder to a folder registry. A published version is immutable.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "folder path",
+                required: true,
+            },
+            ArgSpec {
+                name: "registry",
+                ty: "folder path",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "add-plugin-component",
+        cmd: "add_plugin_component",
+        aliases: &[],
+        summary: "Add a plugin's component (plugin-id/Type) to an actor, validated against the plugin's schema and starting from its defaults.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "component",
+                ty: "component name",
+                required: true,
+            },
+            ArgSpec {
+                name: "payload",
+                ty: "object {...}",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "set-plugin-component",
+        cmd: "set_plugin_component",
+        aliases: &[],
+        summary: "Replace the payload of a plugin component an actor already has.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "component",
+                ty: "component name",
+                required: true,
+            },
+            ArgSpec {
+                name: "payload",
+                ty: "object {...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "set-plugin-resource",
+        cmd: "set_plugin_resource",
+        aliases: &[],
+        summary: "Set a project resource a plugin owns (plugin-id/Type).",
+        args: &[
+            ArgSpec {
+                name: "resource",
+                ty: "component name",
+                required: true,
+            },
+            ArgSpec {
+                name: "payload",
+                ty: "object {...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-plugin-resource",
+        cmd: "remove_plugin_resource",
+        aliases: &[],
+        summary: "Remove a project resource a plugin owns.",
+        args: &[ArgSpec {
+            name: "resource",
+            ty: "component name",
+            required: true,
+        }],
+    },
     CommandSpec {
         name: "clear-log",
         cmd: "clear_log",
@@ -2886,6 +3192,12 @@ pub enum Action {
     /// Run `spec`'s backend command with these arguments.
     Run {
         spec: &'static CommandSpec,
+        args: Map<String, Value>,
+    },
+    /// Run a command an installed plugin contributes, named `plugin-id/name`.
+    /// Its arguments are checked against the plugin's own schema.
+    Plugin {
+        command: String,
         args: Map<String, Value>,
     },
 }
@@ -3006,6 +3318,12 @@ pub fn parse(line: &str) -> Result<Option<Action>, String> {
         }
         _ => {}
     }
+    if name.contains('/') {
+        return Ok(Some(Action::Plugin {
+            command: name.to_string(),
+            args: parse_args(rest)?,
+        }));
+    }
     let Some(spec) = command(name) else {
         return Err(format!(
             "Unknown command \"{name}\". Type \"help\" for the list."
@@ -3110,7 +3428,22 @@ pub fn run(backend: &Backend, line: &str, with_state: bool) -> Value {
             Ok(result) => json!({"ok": true, "result": result, "error": null, "state": state()}),
             Err(error) => json!({"ok": false, "result": null, "error": error, "state": state()}),
         },
+        Action::Plugin { command, args } => {
+            match backend.dispatch("plugin_call", plugin_call_args(command, args)) {
+                Ok(result) => {
+                    json!({"ok": true, "result": result, "error": null, "state": state()})
+                }
+                Err(error) => {
+                    json!({"ok": false, "result": null, "error": error, "state": state()})
+                }
+            }
+        }
     }
+}
+
+/// Arguments of a `plugin_call` made from a `plugin-id/name` shell line.
+fn plugin_call_args(command: String, args: Map<String, Value>) -> Value {
+    json!({"command": command, "args": Value::Object(args)})
 }
 
 /// Runs one shell line against an attached editor and returns the same JSON
@@ -3158,24 +3491,33 @@ pub fn run_forwarded(
             };
             json!({"ok": true, "result": result, "error": null, "state": state(forward)})
         }
-        Action::Run { spec, args } => match forward(spec.cmd, Value::Object(args)) {
-            Ok(response) => {
-                let state = if with_state {
-                    response.get("state").cloned().unwrap_or(Value::Null)
-                } else {
-                    Value::Null
-                };
-                json!({
-                    "ok": response.get("ok").cloned().unwrap_or(Value::Bool(false)),
-                    "result": response.get("result").cloned().unwrap_or(Value::Null),
-                    "error": response.get("error").cloned().unwrap_or(Value::Null),
-                    "state": state,
-                })
+        action @ (Action::Run { .. } | Action::Plugin { .. }) => {
+            let (cmd, args) = match action {
+                Action::Run { spec, args } => (spec.cmd, Value::Object(args)),
+                Action::Plugin { command, args } => {
+                    ("plugin_call", plugin_call_args(command, args))
+                }
+                _ => unreachable!(),
+            };
+            match forward(cmd, args) {
+                Ok(response) => {
+                    let state = if with_state {
+                        response.get("state").cloned().unwrap_or(Value::Null)
+                    } else {
+                        Value::Null
+                    };
+                    json!({
+                        "ok": response.get("ok").cloned().unwrap_or(Value::Bool(false)),
+                        "result": response.get("result").cloned().unwrap_or(Value::Null),
+                        "error": response.get("error").cloned().unwrap_or(Value::Null),
+                        "state": state,
+                    })
+                }
+                Err(error) => {
+                    json!({"ok": false, "result": null, "error": error, "state": state(forward)})
+                }
             }
-            Err(error) => {
-                json!({"ok": false, "result": null, "error": error, "state": state(forward)})
-            }
-        },
+        }
     }
 }
 
@@ -3318,6 +3660,21 @@ mod tests {
             parse("nonsense x=1")
                 .unwrap_err()
                 .contains("Unknown command")
+        );
+    }
+
+    #[test]
+    fn a_slash_names_a_plugin_command() {
+        let Ok(Some(Action::Plugin { command, args })) =
+            parse("com.example.health/set_hp actor=a value=3")
+        else {
+            panic!("not a plugin command");
+        };
+        assert_eq!(command, "com.example.health/set_hp");
+        assert_eq!(args["value"], 3);
+        assert_eq!(
+            plugin_call_args(command, args)["args"]["actor"],
+            Value::String("a".into())
         );
     }
 

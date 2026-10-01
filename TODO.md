@@ -1488,7 +1488,15 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 ### Phase 7 - Scale and ecosystem, do last
 - [ ] Multiplayer: headless server, replication, lobbies, rollback.
 - [ ] Deploy: Web/WASM (see Phase 8 player and Phase 9 editor), Android signing (see Phase 6.5), Windows Store signing (see Phase 6.6), iOS signing, console path, auto-updater/DLC/addressables.
-- [ ] Ecosystem: analytics/crash, achievements/IAP hooks, plugin API, asset store, collab/VCS, docs/LTS.
+- [ ] Ecosystem: analytics/crash, achievements/IAP hooks, asset store, collab/VCS, docs/LTS.
+- [ ] Plugin platform (`docs/plugin-system-and-voxel-plan.md`; decisions in `docs/plugin-adr-0001.md`):
+    - [x] Phase 0/1: api and host crates, manifests, resolver, lock file, immutable cache, transactional install/rollback/sync/gc, folder registries, C ABI v1 with measured call cost, sealed proof package.
+    - [x] Phase 2 data path: namespaced records on actors and the project (lossless when the plugin is missing), schema validation and migrations, declarative components/resources/commands, shell and MCP access, Play/Build preflight, pack v2 plugin payload.
+    - [ ] Plugin Manager and contribution host in QML.
+    - [ ] Load native modules into the editor and runtime (the `module` command action, lifecycle wiring); portable (WASM) executor and a browser proof.
+    - [ ] Plugin blocks in the VM, codegen and script ABI; importer/build hooks; per-plugin MCP tools.
+    - [ ] HTTP registry transport; revision bump for attached copies on package changes.
+    - [ ] Phases 3-7 (voxel plugin `com.blockworked.voxel`, procedural worlds, GPU path, fracture, ecosystem).
 
 ### Phase 8 - Web player via WebGPU (single-file build, do before Phase 9)
 

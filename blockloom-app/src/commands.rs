@@ -43,6 +43,8 @@ use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
 use std::sync::atomic::Ordering;
 
+pub(crate) mod plugins;
+
 type Guard<'a> = MutexGuard<'a, AppState>;
 
 fn lock(state: &SharedState) -> Result<Guard<'_>, String> {
@@ -2140,6 +2142,8 @@ pub(crate) fn run_project(
     let Some(project) = s.project().cloned() else {
         return Err("No project is open".to_string());
     };
+    // Missing plugin data is a report, not a game that quietly does less.
+    plugins::preflight_run(&s)?;
     auto_save(&s);
     // Built before the world is handed over, so a script that won't compile
     // shows its errors in the log instead of silently doing nothing.
@@ -2756,6 +2760,7 @@ pub(crate) fn run_build_game(
         store_pass,
         key_pass,
         remember_passwords,
+        plugins: plugins::payloads(&dir, &project, target)?,
     };
     let built = build::build(
         &project,

@@ -6,6 +6,8 @@ members = [
     "blockloom-core",
     "blockloom-protocol",
     "blockloom-runtime",
+    "blockloom-plugin-api",
+    "blockloom-plugin-host",
 ]
 resolver = "2"
 
@@ -14,6 +16,8 @@ default-members = [
     "blockloom-app",
     "blockloom-core",
     "blockloom-protocol",
+    "blockloom-plugin-api",
+    "blockloom-plugin-host",
 ]
 
 [workspace.package]
@@ -55,6 +59,9 @@ image = { version = "0.25.10", default-features = false, features = ["bmp", "dds
 ico = "0.5.0"
 flate2 = "1.1.10"
 crc32fast = "1.5.2"
+semver = { version = "1.0.28", features = ["serde"] }
+sha2 = "0.10.9"
+tempfile = "3.27.0"
 
 # The runtime process renders a live game world; a debug-speed Bevy is
 # unusable, so its dependencies stay optimized even in a debug build.

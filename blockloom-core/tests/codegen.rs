@@ -1674,6 +1674,7 @@ fn project_with_headers(
             .collect(),
         global_lists: Vec::new(),
         global_dicts: Vec::new(),
+        plugin_resources: Vec::new(),
     }
 }
 
