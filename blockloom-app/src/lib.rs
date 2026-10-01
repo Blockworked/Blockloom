@@ -7,6 +7,7 @@ mod build_jobs;
 mod commands;
 mod dispatch;
 mod runtime;
+pub mod screen;
 pub mod shell;
 mod state;
 

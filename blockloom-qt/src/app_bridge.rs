@@ -4,6 +4,7 @@
 //! publishes arrive the same way, coalesced so a burst parses once.
 
 use crate::preview;
+use blockloom_app::screen;
 use blockloom_app::{AppHandle as BackendHandle, Backend, Event};
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
@@ -26,6 +27,7 @@ pub mod qobject {
         #[qproperty(QString, status_json, cxx_name = "statusJson")]
         #[qproperty(QString, log_json, cxx_name = "logJson")]
         #[qproperty(QString, preview_frame, cxx_name = "previewFrame")]
+        #[qproperty(QString, screen_json, cxx_name = "screenJson")]
         #[qproperty(QString, app_version, cxx_name = "appVersion")]
         type AppBridge = super::AppBridgeRust;
 
@@ -49,6 +51,20 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "watchPreview"]
         fn watch_preview(self: Pin<&mut AppBridge>, port: i32);
+
+        /// Streams the screen of the Android device `serial` into
+        /// `screenJson`, frames at most `max_width` wide, until called again;
+        /// an empty serial stops. Frames arrive as pushed, not polled.
+        #[qinvokable]
+        #[cxx_name = "watchScreen"]
+        fn watch_screen(self: Pin<&mut AppBridge>, serial: &QString, max_width: i32);
+
+        /// Sends one input (`{type: "touch", phase, x, y}` or `{type: "key",
+        /// code}`, points as fractions of the frame) to the watched device.
+        /// Never waits on the backend's command queue.
+        #[qinvokable]
+        #[cxx_name = "screenInput"]
+        fn screen_input(self: &AppBridge, input: &QString);
 
         /// Closes the game window, if one is open. Called as the editor exits.
         #[qinvokable]
@@ -80,10 +96,12 @@ pub struct AppBridgeRust {
     status_json: QString,
     log_json: QString,
     preview_frame: QString,
+    screen_json: QString,
     app_version: QString,
     backend: Option<Backend>,
     jobs: Option<mpsc::Sender<Job>>,
     preview: Option<preview::Watch>,
+    screen: Option<screen::Session>,
 }
 
 impl Default for AppBridgeRust {
@@ -93,10 +111,12 @@ impl Default for AppBridgeRust {
             status_json: QString::default(),
             log_json: QString::default(),
             preview_frame: QString::default(),
+            screen_json: QString::default(),
             app_version: QString::from(env!("CARGO_PKG_VERSION")),
             backend: None,
             jobs: None,
             preview: None,
+            screen: None,
         }
     }
 }
@@ -245,6 +265,41 @@ impl qobject::AppBridge {
         self.as_mut().rust_mut().preview = Some(watch);
     }
 
+    pub fn watch_screen(mut self: Pin<&mut Self>, serial: &QString, max_width: i32) {
+        // Dropping the old session ends its stream.
+        self.as_mut().rust_mut().screen = None;
+        self.as_mut().set_screen_json(QString::default());
+        let serial = serial.to_string();
+        if serial.is_empty() {
+            return;
+        }
+        let thread = self.qt_thread();
+        let latest: Latest = Arc::new(Mutex::new(None));
+        let sink = Arc::new(move |event: screen::Event| {
+            let json = match event {
+                screen::Event::Frame(frame) => serde_json::to_string(&frame).ok(),
+                screen::Event::Failed(error) => Some(json!({ "error": error }).to_string()),
+            };
+            if let Some(json) = json {
+                post_latest(&latest, &thread, json, |bridge, json| {
+                    bridge.set_screen_json(QString::from(&json));
+                });
+            }
+        });
+        let width = u32::try_from(max_width).unwrap_or(screen::DEFAULT_WIDTH);
+        let session = screen::Session::start(&serial, width, sink);
+        self.as_mut().rust_mut().screen = Some(session);
+    }
+
+    pub fn screen_input(&self, input: &QString) {
+        let Some(session) = &self.rust().screen else {
+            return;
+        };
+        if let Ok(input) = serde_json::from_str::<screen::Input>(&input.to_string()) {
+            session.send(input);
+        }
+    }
+
     pub fn physical_key(&self, scan_code: i32) -> QString {
         let name = u32::try_from(scan_code)
             .ok()
@@ -254,6 +309,7 @@ impl qobject::AppBridge {
 
     pub fn shutdown(mut self: Pin<&mut Self>) {
         self.as_mut().rust_mut().preview = None;
+        self.as_mut().rust_mut().screen = None;
         if let Some(backend) = &self.rust().backend {
             backend.shutdown();
         }

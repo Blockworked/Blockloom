@@ -58,6 +58,11 @@ ApplicationWindow {
     readonly property string appVersion: bridge.appVersion
     function watchPreview(port) { bridge.watchPreview(port); }
     function physicalKey(scanCode) { return bridge.physicalKey(scanCode); }
+    // The watched Android device's newest frame (`{serial, image, width, height,
+    // transport, ...}`), or `{error}` once its stream ends. Pushed, not polled.
+    property var screenFrame: null
+    function watchScreen(serial, width) { bridge.watchScreen(serial || "", width || 0); }
+    function screenInput(input) { bridge.screenInput(JSON.stringify(input)); }
 
     // ─── Talking to the backend ────────────────────────────────────────────
     property var pending: ({})
@@ -130,6 +135,10 @@ ApplicationWindow {
         onLogJsonChanged: {
             try { root.log = JSON.parse(logJson); }
             catch (error) { console.warn("Invalid run log", error); }
+        }
+        onScreenJsonChanged: {
+            try { root.screenFrame = screenJson ? JSON.parse(screenJson) : null; }
+            catch (error) { console.warn("Invalid device frame", error); }
         }
         onReplied: (token, response) => {
             const call = root.pending[token];

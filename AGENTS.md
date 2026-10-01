@@ -1837,6 +1837,42 @@ close. In the Game view the editor holds it on the world's behalf (see Game
 view above). The one safety net is that showing a modal while the pointer is locked
 logs a warning, since a locked hidden cursor can't press anything.
 
+### Android devices and the emulator
+
+The Devices tab (`DevicesPanel.qml`, `DevicePanel.qml`) lists what adb sees,
+boots emulators and shows a device's screen. `blockloom-core/src/android.rs`
+holds the adb/AVD plumbing and `android_tuning.rs` what makes a boot fast.
+
+An embedded emulator boot is `-no-window`, and `-gpu auto` falls back to
+software drawing once the window is hidden, so `android::start_emulator`
+always passes `-gpu host` (`BLOCKLOOM_EMULATOR_GPU` picks another mode from
+`tuning::gpu_mode`'s list), plus `-cores`/`-memory` raised (never lowered)
+from the AVD's own `config.ini`, `-no-metrics`, and `-grpc <port>`. Its output
+goes to `emulator-<avd>.log` in the data dir and the child is tracked, so a
+boot that dies (no hypervisor, a bad GPU mode) shows up as
+`EmulatorState.failure` on the next status read instead of a five minute
+wait. `EmulatorStatus.acceleration` is `emulator -accel-check`'s answer
+(`/dev/kvm` hints on Linux), asked once when good and every 30 s when not.
+The x86_64 image can't be accelerated on an arm64 host; that is reported, not
+worked around.
+
+The screen is a push stream, not polled commands. `blockloom-app/src/screen/`
+is one `Session` per watched device, owned by `AppBridge` (`watchScreen`,
+`screenInput`, `screenJson`) rather than `Backend::dispatch`, so a slow command
+on the backend's single worker never delays a tap. A session picks its
+transport on its own thread: the emulator's gRPC service (`grpc.rs`:
+`streamScreenshot` scaled by the emulator, `sendTouch` for real pointers;
+messages are declared by hand with the field numbers of
+`emulator_controller.proto`) when the editor started that emulator and wrote
+its port (`android::emulator_grpc_port`), else one long-lived `screencap -p`
+loop over a single adb pipe (`stream.rs`, PNGs framed by their `IEND`, the
+newest kept and older dropped). Frames leave as JPEG data URLs
+(`frames.rs`). Touch reaches the device through `Routes`: gRPC once its stream
+is up, else one persistent `adb shell` (`shell.rs`) typing `input motionevent
+DOWN/MOVE/UP` (or tap/swipe where the device lacks it), which also takes keys
+and counts finished commands so moves coalesce instead of queueing. The
+`android_mirror_*` commands stay for the shell and MCP, one grab per call.
+
 ### Frontend (`blockloom-qt/qml/`)
 
 `Main.qml` holds the one copy of backend state (`appState`, parsed from

@@ -22,6 +22,10 @@ use std::process::Command;
 
 #[path = "android_keyring.rs"]
 mod keyring;
+#[path = "android_tuning.rs"]
+mod tuning;
+
+pub use tuning::Acceleration;
 
 /// arm64 phones and tablets, the v1 device target.
 pub const ARM64_TRIPLE: &str = "aarch64-linux-android";
@@ -685,6 +689,9 @@ pub struct EmulatorState {
     pub name: String,
     pub serial: String,
     pub booted: bool,
+    /// Why the last start of this AVD died, when it did. Empty otherwise.
+    #[serde(default)]
+    pub failure: String,
 }
 
 /// The emulator rows: whether this machine can boot anything, why not, and
@@ -694,6 +701,10 @@ pub struct EmulatorStatus {
     pub available: bool,
     pub detail: String,
     pub avds: Vec<EmulatorState>,
+    /// Whether the host can run the guest with a hypervisor. Unset (None)
+    /// until the emulator package is there to ask.
+    #[serde(default)]
+    pub acceleration: Option<Acceleration>,
 }
 
 /// What an emulator start did: the AVD, the adb serial once adb sees it
@@ -743,6 +754,7 @@ fn emulator_status_for(config: &AppConfig) -> EmulatorStatus {
             available: false,
             detail: "No emulator package: run Install / update SDK to fetch it.".to_string(),
             avds: vec![],
+            acceleration: None,
         };
     }
     if !system_image_dir(config).is_dir() {
@@ -751,6 +763,7 @@ fn emulator_status_for(config: &AppConfig) -> EmulatorStatus {
             detail: "No Android 35 x86_64 system image: run Install / update SDK to fetch it."
                 .to_string(),
             avds: vec![],
+            acceleration: None,
         };
     }
     let names = match list_avds_with(&emulator_bin(config)) {
@@ -760,6 +773,7 @@ fn emulator_status_for(config: &AppConfig) -> EmulatorStatus {
                 available: false,
                 detail: error,
                 avds: vec![],
+                acceleration: None,
             };
         }
     };
@@ -778,9 +792,22 @@ fn emulator_status_for(config: &AppConfig) -> EmulatorStatus {
             }
         }
     }
+    let failures = tuning::take_failures();
+    if !failures.is_empty() {
+        let mut kept = LAST_FAILURES.lock().unwrap_or_else(|e| e.into_inner());
+        for (avd, why) in failures {
+            kept.retain(|(name, _)| *name != avd);
+            kept.push((avd, why));
+        }
+    }
+    let kept = LAST_FAILURES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     EmulatorStatus {
         available: true,
         detail: "Emulator and the Android 35 x86_64 image are installed.".to_string(),
+        acceleration: Some(accel_cached(&emulator_bin(config))),
         avds: names
             .into_iter()
             .map(|name| {
@@ -789,14 +816,43 @@ fn emulator_status_for(config: &AppConfig) -> EmulatorStatus {
                     .find(|(avd, _, _)| avd == &name)
                     .map(|(_, serial, booted)| (serial.clone(), *booted))
                     .unwrap_or_default();
+                let failure = if serial.is_empty() {
+                    kept.iter()
+                        .find(|(avd, _)| *avd == name)
+                        .map(|(_, why)| why.clone())
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
                 EmulatorState {
                     name,
                     serial,
                     booted,
+                    failure,
                 }
             })
             .collect(),
     }
+}
+
+/// Why each AVD's last start died, until the AVD is started again.
+static LAST_FAILURES: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// The accelerator probe. It spawns the emulator binary, so a good answer is
+/// kept for the session; a bad one is asked again every half minute, since
+/// joining the kvm group or turning on virtualization fixes it.
+fn accel_cached(emulator: &Path) -> Acceleration {
+    static CACHE: std::sync::Mutex<Option<(std::time::Instant, Acceleration)>> =
+        std::sync::Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, accel)) = cache.as_ref()
+        && (accel.ok || at.elapsed() < std::time::Duration::from_secs(30))
+    {
+        return accel.clone();
+    }
+    let accel = tuning::acceleration(emulator);
+    *cache = Some((std::time::Instant::now(), accel.clone()));
+    accel
 }
 
 /// Every AVD the emulator binary knows, one name per line.
@@ -1102,13 +1158,36 @@ fn start_emulator_with(
         .into_iter()
         .map(|device| device.serial)
         .collect();
-    Command::new(emulator)
-        .args(emulator_spawn_args_with(avd, headless))
+    let mut args = emulator_spawn_args_with(avd, headless);
+    args.extend(tuning::tuning_for(avd).args());
+    // The editor's screen view talks to this port (see `emulator_grpc_port`).
+    let grpc_file = tuning::grpc_path(&project::data_dir(), avd);
+    let _ = std::fs::remove_file(&grpc_file);
+    if let Some(port) = tuning::free_port() {
+        args.extend(["-grpc".to_string(), port.to_string()]);
+        let _ = std::fs::create_dir_all(project::data_dir());
+        let _ = std::fs::write(&grpc_file, port.to_string());
+    }
+    // The emulator's output goes to a log so a boot that dies says why.
+    let log = tuning::log_path(&project::data_dir(), avd);
+    let _ = std::fs::create_dir_all(project::data_dir());
+    let sink = || {
+        std::fs::File::create(&log)
+            .map(std::process::Stdio::from)
+            .unwrap_or_else(|_| std::process::Stdio::null())
+    };
+    let child = Command::new(emulator)
+        .args(args)
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(sink())
+        .stderr(sink())
         .spawn()
         .map_err(|e| format!("Couldn't start the emulator: {e}"))?;
+    LAST_FAILURES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|(name, _)| name != avd);
+    tuning::track(avd, child, log);
     // The new serial is the emulator adb didn't know before the spawn.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait_secs);
     loop {
@@ -1490,11 +1569,10 @@ pub fn mirror_swipe(
     Ok(serial)
 }
 
-/// Presses a named key on `device`: back, home, recents, enter, delete,
-/// tab, power, or volume_up/volume_down/volume_mute. The embedded screen's
-/// hardware buttons.
-pub fn mirror_key(device: Option<&str>, code: &str) -> Result<String, String> {
-    let keycode = match code.trim().to_lowercase().as_str() {
+/// The Android keycode behind a mirror key name: back, home, recents,
+/// enter, delete, tab, power, or volume_up/volume_down/volume_mute.
+pub fn mirror_keycode(code: &str) -> Result<&'static str, String> {
+    Ok(match code.trim().to_lowercase().as_str() {
         "back" | "escape" => "KEYCODE_BACK",
         "home" => "KEYCODE_HOME",
         "recents" | "appswitch" => "KEYCODE_APP_SWITCH",
@@ -1510,7 +1588,13 @@ pub fn mirror_key(device: Option<&str>, code: &str) -> Result<String, String> {
                 "\"{other}\" isn't a mirror key: back, home, recents, enter, delete, tab, power, volume_up, volume_down, volume_mute."
             ));
         }
-    };
+    })
+}
+
+/// Presses a named key (see `mirror_keycode`) on `device`. The embedded
+/// screen's hardware buttons.
+pub fn mirror_key(device: Option<&str>, code: &str) -> Result<String, String> {
+    let keycode = mirror_keycode(code)?;
     let adb = adb_path();
     if !adb.is_file() {
         return Err("No adb: install platform-tools in App Settings first.".to_string());
@@ -3296,6 +3380,27 @@ fn logcat_tail_with_adb(adb: &Path, device: Option<&str>, needle: &str) -> Resul
 
 fn adb_path() -> PathBuf {
     sdk_dir(&load()).join("platform-tools").join(exe("adb"))
+}
+
+/// The SDK's adb, or why there is none.
+pub fn adb_binary() -> Result<PathBuf, String> {
+    let adb = adb_path();
+    if adb.is_file() {
+        Ok(adb)
+    } else {
+        Err("No adb: install platform-tools in App Settings first.".to_string())
+    }
+}
+
+/// The gRPC port `serial`'s emulator was started with, when this editor
+/// started it. An emulator started anywhere else has none the editor knows.
+pub fn emulator_grpc_port(serial: &str) -> Option<u16> {
+    let avd = avd_name_with_adb(&adb_binary().ok()?, serial)?;
+    std::fs::read_to_string(tuning::grpc_path(&project::data_dir(), &avd))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 fn clear_logcat_with_adb(adb: &Path, device: Option<&str>) -> Result<(), String> {

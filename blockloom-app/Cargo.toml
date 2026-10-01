@@ -7,7 +7,7 @@ description = "Blockloom's backend: every command the editor issues, and the sta
 [features]
 # A browser-reachable HTTP/WebSocket bridge onto the same commands, for
 # iterating on the frontend with `pnpm run dev` instead of relaunching CEF.
-dev-bridge = ["dep:axum", "dep:tower-http", "dep:tokio"]
+dev-bridge = ["dep:axum", "dep:tower-http"]
 
 [[bin]]
 name = "blockloom-devserver"
@@ -31,4 +31,15 @@ dirs.workspace = true
 uuid.workspace = true
 axum = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "process"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "process"] }
+image.workspace = true
+base64.workspace = true
+# The emulator's own screen and touch service (see `screen::grpc`): a
+# client only, no codegen, no TLS.
+tonic = { version = "0.14", default-features = false, features = ["channel", "codegen"] }
+tonic-prost = "0.14"
+prost = "0.14"
+
+[dev-dependencies]
+tonic = { version = "0.14", default-features = false, features = ["channel", "codegen", "server", "router"] }
+tokio-stream = "0.1"

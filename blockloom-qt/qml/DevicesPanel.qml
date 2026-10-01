@@ -50,6 +50,8 @@ RowLayout {
             app.invoke("android_emulator_status", {}, status => {
                 emulator = status; refreshing = false;
                 if (pendingAvd) {
+                    const dead = status.avds.find(a => a.name === pendingAvd && a.failure);
+                    if (dead) { emulatorError = dead.failure; pendingAvd = ""; return; }
                     const avd = status.avds.find(a => a.name === pendingAvd && a.serial);
                     if (avd) device = avd.serial;
                     if (avd && avd.booted) pendingAvd = "";
@@ -220,6 +222,12 @@ RowLayout {
                         BwButton { Layout.fillWidth: true; text: "Window"; primary: !root.embed; enabled: !root.locked; onClicked: root.embed = false }
                     }
                     Text {
+                        objectName: "accelerationNote"
+                        visible: !!root.emulator && !!root.emulator.acceleration && !root.emulator.acceleration.ok
+                        Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 11; color: Theme.warning
+                        text: root.emulator && root.emulator.acceleration ? "Slow emulation: " + root.emulator.acceleration.detail : ""
+                    }
+                    Text {
                         visible: !!root.emulator && (!root.emulator.available || !root.emulator.avds.length)
                         Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 12; color: Theme.textDim
                         text: root.emulator && !root.emulator.available ? root.emulator.detail : "No virtual devices"
@@ -233,7 +241,7 @@ RowLayout {
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 3
                                 Text { Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.name; color: Theme.text; font.pixelSize: 12 }
-                                Text { text: modelData.serial ? (modelData.booted ? "Running" : "Booting...") : root.pendingAvd === modelData.name ? "Starting..." : "Stopped"; color: Theme.textDim; font.pixelSize: 11 }
+                                Text { text: modelData.serial ? (modelData.booted ? "Running" : "Booting...") : root.pendingAvd === modelData.name ? "Starting..." : modelData.failure ? "Stopped unexpectedly" : "Stopped"; color: modelData.failure && !modelData.serial ? Theme.warning : Theme.textDim; font.pixelSize: 11 }
                             }
                             BusyIndicator { objectName: "startup_" + modelData.name; visible: parent.starting; running: visible; implicitWidth: 22; implicitHeight: 22 }
                             IconButton {
