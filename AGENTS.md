@@ -396,7 +396,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
 - **Commands** live in `blockloom-app/src/commands/plugins.rs`: install, remove,
   update, pin, sync, rollback, registry, gc, seal, publish, migrate, check,
   list, plus `add_plugin_component`, `set_plugin_component`,
-  `set_plugin_resource` and `plugin_call`. Package changes are transactions on
+  `set_plugin_resource`, `plugin_inspect` (verify a folder and say what it is)
+  and `plugin_call`. Package changes are transactions on
   `plugins.json` and `plugins.lock` only. A command a plugin declares is run as
   `plugin-id/name key=value` in the shell (`Action::Plugin`, forwarded as
   `plugin_call`) and through the MCP `plugin-call` tool. `StateDto.plugins` is
@@ -423,10 +424,15 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   refused while plugin blocks exist, since a built game has no editor to run
   them. `plugin-run-block` runs one from the shell and MCP, and the snapshot's
   `plugins.blocks` lists every available block for the palette.
-- **Not yet**: QML Plugin Manager and palette entries for plugin blocks (needs
-  dynamic block rows in blockstitch), plugin reporters and hats, plugin blocks
-  in a built game or the script ABI, WASM executor, native modules in the
-  runtime (a run's world), an HTTP registry.
+- **Plugin Manager**: `PluginManagerDialog.qml`, opened from the top bar's plug
+  button. It lists `plugin_list`/`plugin_check`/`plugin_commands` and runs the
+  same `plugin_*` commands the shell does (install with a dry-run preview,
+  update, remove, sync, undo the last change, clean the cache). It has a QML
+  test (`tests/qml/tst_Plugins.qml`) but no inspector or contribution host yet.
+- **Not yet**: palette entries for plugin blocks (needs dynamic block rows in
+  blockstitch), plugin reporters and hats, plugin blocks in a built game or the
+  script ABI, WASM executor, native modules in the runtime (a run's world), an
+  HTTP registry, dynamic QML for plugin editor panels.
   `plugins/examples/com.example.health` is the sealed proof package.
 
 ### Scripts

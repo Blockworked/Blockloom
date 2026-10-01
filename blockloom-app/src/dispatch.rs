@@ -485,6 +485,7 @@ impl Backend {
                 arg(&args, "path")?,
             )?),
             "plugin_gc" => to_json(commands::plugins::plugin_gc(state)?),
+            "plugin_inspect" => to_json(commands::plugins::plugin_inspect(arg(&args, "path")?)?),
             "plugin_seal" => to_json(commands::plugins::plugin_seal(arg(&args, "path")?)?),
             "plugin_publish" => to_json(commands::plugins::plugin_publish(
                 arg(&args, "path")?,

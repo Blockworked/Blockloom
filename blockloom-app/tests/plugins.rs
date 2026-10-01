@@ -36,6 +36,18 @@ fn a_plugin_installs_owns_records_and_leaves_them_when_removed() {
     let ball = invoke("add_actor", json!({"shape": "Circle", "name": "Ball"}));
     let ball = ball.as_str().unwrap_or_default().to_owned();
 
+    // Inspecting a folder verifies it and names it without installing.
+    let seen = invoke("plugin_inspect", json!({"path": example()}));
+    assert_eq!(seen["id"], "com.example.health");
+    assert_eq!(seen["blocks"], 1);
+    assert!(
+        invoke("plugin_list", json!({}))["installed"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(call("plugin_inspect", json!({"path": root.join("nowhere")})).is_err());
+
     // The example is sealed, so the dry run resolves and verifies it.
     let dry = invoke(
         "plugin_install",

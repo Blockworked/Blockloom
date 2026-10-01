@@ -3100,6 +3100,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        name: "plugin-inspect",
+        cmd: "plugin_inspect",
+        aliases: &[],
+        summary: "Verify a package folder and say what it is (id, version, tier, capabilities, what it contributes) without installing it.",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "folder path",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "plugin-seal",
         cmd: "plugin_seal",
         aliases: &[],

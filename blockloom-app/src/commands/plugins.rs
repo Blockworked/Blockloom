@@ -636,6 +636,26 @@ pub(crate) fn plugin_seal(path: String) -> Result<Value, String> {
     }))
 }
 
+/// What a package folder is, verified, before anything installs it.
+pub(crate) fn plugin_inspect(path: String) -> Result<Value, String> {
+    let package = package::Package::load(Path::new(&path))?;
+    let m = &package.manifest;
+    let c = &package.contributions;
+    Ok(json!({
+        "id": m.id,
+        "name": m.name,
+        "version": m.version.to_string(),
+        "description": m.description,
+        "license": m.license,
+        "tier": name_of(&m.tier),
+        "capabilities": m.capabilities.iter().map(name_of).collect::<Vec<_>>(),
+        "components": c.components.len() + c.resources.len(),
+        "blocks": c.blocks.len(),
+        "commands": c.commands.len(),
+        "source": format!("path:{path}"),
+    }))
+}
+
 /// Publishes a sealed package folder to a folder registry.
 pub(crate) fn plugin_publish(path: String, registry: String) -> Result<Value, String> {
     let entry = DirRegistry::open(registry).publish(Path::new(&path))?;

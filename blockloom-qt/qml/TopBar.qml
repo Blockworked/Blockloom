@@ -32,6 +32,7 @@ Rectangle {
         IconButton { iconName: "upload"; tip: "Import a project"; onClicked: importFile.open() }
         IconButton { iconName: "download"; tip: "Export this project"; onClicked: root.app.invoke("export_file_name", {}, name => { const base = root.appState.default_export_location || root.appState.default_project_location; exportFile.currentFile = root.app.toFileUrl(base + "/" + name); exportFile.open(); }) }
         IconButton { iconName: "package"; tip: "Build a standalone game"; onClicked: buildDialog.open() }
+        IconButton { iconName: "plug-zap"; tip: "Plugins"; onClicked: pluginManager.open() }
         IconButton { iconName: "settings"; tip: "Project settings"; onClicked: settingsDialog.open() }
         IconButton { iconName: "smartphone"; tip: "App settings (Android SDK)"; onClicked: appSettings.open() }
         Item { Layout.fillWidth: true }
@@ -302,6 +303,7 @@ Rectangle {
         onAccepted: root.report("export_project", { path: root.app.fromFileUrl(selectedFile) })
     }
     BuildDialog { id: buildDialog; app: root.app }
+    PluginManagerDialog { id: pluginManager; app: root.app }
     ProjectSettingsDialog { id: settingsDialog; app: root.app }
     AppSettingsDialog { id: appSettings; app: root.app }
 }

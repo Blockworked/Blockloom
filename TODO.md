@@ -1492,7 +1492,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 - [ ] Plugin platform (`docs/plugin-system-and-voxel-plan.md`; decisions in `docs/plugin-adr-0001.md`):
     - [x] Phase 0/1: api and host crates, manifests, resolver, lock file, immutable cache, transactional install/rollback/sync/gc, folder registries, C ABI v1 with measured call cost, sealed proof package.
     - [x] Phase 2 data path: namespaced records on actors and the project (lossless when the plugin is missing), schema validation and migrations, declarative components/resources/commands, shell and MCP access, Play/Build preflight, pack v2 plugin payload.
-    - [ ] Plugin Manager and contribution host in QML.
+    - [x] Plugin Manager dialog in QML (list, install with preview, update, remove, sync, undo, cache clean, record issues, commands).
+    - [ ] QML contribution host: schema-generated inspectors for plugin components, panels and dynamic loading of trusted editor modules.
     - [x] Native modules load in the editor for `module` commands (`Modules` cache, run-log output, panic containment).
     - [ ] Native modules in the runtime world and built player, lifecycle wiring; portable (WASM) executor and a browser proof.
     - [x] Plugin statement blocks in the VM: `PluginBlock` instruction, `Effect::PluginCall`, the editor runs the block's command, `plugin-run-block`, Play preflight; codegen refuses by name and Build is refused while they exist.

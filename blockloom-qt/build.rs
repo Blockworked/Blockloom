@@ -48,6 +48,7 @@ fn main() {
                 "qml/SettingsFields.qml",
                 "qml/AppSettingsDialog.qml",
                 "qml/BuildDialog.qml",
+                "qml/PluginManagerDialog.qml",
                 "qml/BuildProgress.qml",
                 "qml/DevicePanel.qml",
                 "qml/DevicesPanel.qml",

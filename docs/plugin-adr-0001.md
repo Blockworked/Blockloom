@@ -87,8 +87,11 @@ tools.
 Implemented from phase 2 only the data, command and migration parts. Not done,
 and tracked in `TODO.md`:
 
-- No Plugin Manager or contribution UI in QML. The surface is the backend
-  commands, the state snapshot (`plugins`) and the shell/MCP.
+- The Plugin Manager is a dialog over the backend commands. There is no
+  contribution host yet: no inspector sections for plugin components, no
+  panels, no dynamic loading of trusted editor modules. QML for those would
+  have to be loaded at run time, which the compile-time `QmlModule` list
+  cannot do.
 - No WASM executor and no browser proof; the portable tier only validates.
 - Native modules load in the editor (a `module` command action calls them,
   tested with a rustc-built C-layout fixture) but not yet in the runtime's
