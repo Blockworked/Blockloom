@@ -1336,6 +1336,14 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         2 s `android_logcat_tail` poll that dumps, clears and appends every
         line to the RunLog (markers as `say`, panics as `error`); emulators
         list as devices on either row.
+- [x] Devices tab speed: embedded emulators boot with the host GPU
+      (`-gpu host`), more cores/RAM, a log and a failure report; the screen
+      is a pushed stream (emulator gRPC, else one `screencap` loop) with
+      touch that follows the pointer, instead of 1 fps polled PNGs and an
+      `adb` process per tap. Follow-ups: scrcpy-style H.264 for phones
+      (`screencap -p` is PNG-compress-bound on the device), arm64 AVDs for
+      Apple silicon and arm64 Linux hosts, an Android Studio style
+      `-grpc-use-token` handshake.
 - [ ] Branding and manifest (`distribution.rs` neighborhood):
   - Adaptive icons generated from the project icon (foreground plus
         background plus monochrome, through the existing `Icons` pipeline),

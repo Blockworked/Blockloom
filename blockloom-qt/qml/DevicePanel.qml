@@ -12,67 +12,59 @@ ColumnLayout {
     property string frame: ""
     property int frameWidth: 0
     property int frameHeight: 0
+    property string transport: ""
     property bool watching: false
     property bool resumeWatching: false
-    property bool frameBusy: false
-    property bool inputBusy: false
-    property int generation: 0
+    property bool pressed: false
     property string error: ""
+    // Frames are as wide as the panel shows them, in device pixels.
+    readonly property int wantedWidth: Math.max(240, Math.min(1080, Math.round(Math.min(viewport.width - 40, (viewport.height - 32) * 9 / 16) * Screen.devicePixelRatio)))
     spacing: 0
 
+    function stopStream() { if (app) app.watchScreen("", 0); }
     function resetView() {
-        generation++;
-        frame = ""; error = "";
-        watching = false; resumeWatching = false;
+        frame = ""; error = ""; transport = "";
+        stopStream();
+        watching = false; resumeWatching = false; pressed = false;
     }
     onDeviceChanged: resetView()
     onConnectedChanged: { if (!connected) resetView(); }
     onActiveChanged: {
         if (!active) {
-            resumeWatching = watching; generation++; watching = false;
+            resumeWatching = watching; stopStream(); watching = false; pressed = false;
         } else if (resumeWatching) {
             resumeWatching = false; startWatching();
         }
     }
 
+    // The backend pushes each frame as the device finishes it; one for a
+    // device no longer shown, or after pausing, is not shown.
+    Connections {
+        target: root.app
+        function onScreenFrameChanged() { root.take(root.app.screenFrame); }
+    }
+    function take(update) {
+        if (!update || !watching) return;
+        if (update.error) { error = String(update.error); watching = false; return; }
+        if (update.serial !== device) return;
+        frame = update.image; frameWidth = update.width; frameHeight = update.height;
+        transport = update.transport || ""; error = "";
+    }
     function startWatching() {
         if (!connected || !device || !active) return;
         watching = true; error = "";
-        pollFrame();
+        app.watchScreen(device, wantedWidth);
     }
-    function stopWatching() { generation++; watching = false; resumeWatching = false; }
-    function pollFrame() {
-        if (!watching || frameBusy || !active || !connected) return;
-        const request = generation;
-        const serial = device;
-        frameBusy = true;
-        app.invoke("android_mirror_frame", { device: serial }, result => {
-            frameBusy = false;
-            if (request !== generation || serial !== device || !watching) return;
-            frame = result.image; frameWidth = result.width; frameHeight = result.height;
-            error = "";
-        }, e => {
-            frameBusy = false;
-            if (request !== generation || !watching) return;
-            error = String(e); watching = false;
-        });
+    function stopWatching() { stopStream(); watching = false; resumeWatching = false; pressed = false; }
+    // Points are fractions of the frame; the backend maps them to device pixels.
+    function touch(phase, x, y) {
+        if (!watching || !connected || !active) return;
+        app.screenInput({ type: "touch", phase: phase, x: x, y: y });
     }
-    function input(command, args) {
-        if (!watching || !connected || inputBusy || !active) return;
-        const request = generation;
-        args.device = device;
-        inputBusy = true;
-        app.invoke(command, args, () => {
-            inputBusy = false;
-            if (request === generation) pollFrame();
-        }, e => {
-            inputBusy = false;
-            if (request === generation) error = String(e);
-        });
+    function key(code) {
+        if (!watching || !connected || !active) return;
+        app.screenInput({ type: "key", code: code });
     }
-    function tap(x, y) { input("android_mirror_tap", { x: x, y: y }); }
-    function swipe(x1, y1, x2, y2) { input("android_mirror_swipe", { x1: x1, y1: y1, x2: x2, y2: y2 }); }
-    function key(code) { input("android_mirror_key", { code: code }); }
 
     RowLayout {
         Layout.fillWidth: true; Layout.margins: 16; spacing: 8
@@ -116,18 +108,14 @@ ColumnLayout {
             readonly property real ratio: root.frameWidth > 0 && root.frameHeight > 0 ? root.frameWidth / root.frameHeight : 9 / 16
             width: Math.max(0, Math.min(viewport.width - 40, (viewport.height - 32) * ratio))
             height: width / ratio
-            Image { anchors.fill: parent; source: root.frame; fillMode: Image.Stretch; cache: false; smooth: true }
+            Image { anchors.fill: parent; source: root.frame; fillMode: Image.Stretch; cache: false; smooth: true; asynchronous: true }
             MouseArea {
-                anchors.fill: parent; enabled: root.watching && !root.inputBusy
-                property real px: 0
-                property real py: 0
-                onPressed: m => { px = m.x; py = m.y; }
-                onReleased: m => {
-                    const x = Math.max(0, Math.min(1, m.x / width));
-                    const y = Math.max(0, Math.min(1, m.y / height));
-                    if (Math.hypot(m.x - px, m.y - py) < 8) root.tap(x, y);
-                    else root.swipe(px / width, py / height, x, y);
-                }
+                anchors.fill: parent; enabled: root.watching
+                function fraction(v, extent) { return Math.max(0, Math.min(1, v / extent)); }
+                onPressed: m => { root.pressed = true; root.touch("down", fraction(m.x, width), fraction(m.y, height)); }
+                onPositionChanged: m => { if (root.pressed) root.touch("move", fraction(m.x, width), fraction(m.y, height)); }
+                onReleased: m => { if (root.pressed) root.touch("up", fraction(m.x, width), fraction(m.y, height)); root.pressed = false; }
+                onCanceled: { if (root.pressed) root.touch("up", 0.5, 0.5); root.pressed = false; }
             }
         }
     }
@@ -142,16 +130,15 @@ ColumnLayout {
             anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
             width: Math.max(0, (parent.width - navigation.width) / 2 - 12)
             elide: Text.ElideRight; font.pixelSize: 11; color: Theme.textDim
-            text: root.watching ? "Live preview" : "Preview paused"
+            text: root.watching ? (root.transport === "grpc" ? "Live (emulator stream)" : root.transport ? "Live (adb capture)" : "Live preview") : "Preview paused"
         }
         RowLayout {
             id: navigation
             objectName: "deviceNavigation"
             anchors.centerIn: parent
-            IconButton { iconName: "arrow-left"; tip: "Android Back"; enabled: root.watching && !root.inputBusy; onClicked: root.key("back") }
-            IconButton { iconName: "house"; tip: "Android Home"; enabled: root.watching && !root.inputBusy; onClicked: root.key("home") }
-            IconButton { iconName: "panels-top-left"; tip: "Android recent apps"; enabled: root.watching && !root.inputBusy; onClicked: root.key("recents") }
+            IconButton { iconName: "arrow-left"; tip: "Android Back"; enabled: root.watching; onClicked: root.key("back") }
+            IconButton { iconName: "house"; tip: "Android Home"; enabled: root.watching; onClicked: root.key("home") }
+            IconButton { iconName: "panels-top-left"; tip: "Android recent apps"; enabled: root.watching; onClicked: root.key("recents") }
         }
     }
-    Timer { interval: 1000; running: root.watching && root.active; repeat: true; onTriggered: root.pollFrame() }
 }

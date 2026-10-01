@@ -15,7 +15,8 @@ TestCase {
     property var deferred: ({})
     property bool deferStart: false
     property bool deferBuild: false
-    property bool deferFrame: false
+    property var watches: []
+    property var inputs: []
     property bool failInstall: false
     property bool deferLog: false
     property var buildStatus: ({})
@@ -27,6 +28,9 @@ TestCase {
     QtObject {
         id: backend
         property var appState: ({ project: { name: "Demo" }, default_build_location: "/tmp/build" })
+        property var screenFrame: null
+        function watchScreen(serial, width) { test.watches = test.watches.concat([{ serial: serial, width: width }]); }
+        function screenInput(input) { test.inputs = test.inputs.concat([input]); }
         function invoke(command, args, done, failed) {
             test.calls = test.calls.concat([{ command: command, args: args }]);
             if (command === "android_device_status") done(test.status);
@@ -42,10 +46,8 @@ TestCase {
             }
             else if (command === "build_job_status") done(test.buildStatus);
             else if (command === "cancel_build_job") { test.buildStatus = { id: 1, state: "cancelled", step: "Cancelled" }; done({}); }
-            else if (command === "android_mirror_frame" && test.deferFrame) test.deferred.frame = done;
             else if (command === "android_logcat_tail" && test.deferLog) test.deferred.log = done;
             else if (command === "android_logcat_tail") done({ lines: [], panics: [] });
-            else if (command === "android_mirror_frame") done({ image: "", width: 360, height: 800 });
             else done({});
         }
     }
@@ -53,7 +55,7 @@ TestCase {
     Component { id: imageFactory; Rectangle { width: 360; height: 800; color: "#219b76" } }
     function init() {
         test.Window.window.width = 1000; test.Window.window.height = 720;
-        calls = []; deferred = {}; deferStart = false; deferBuild = false; deferFrame = false; failInstall = false; deferLog = false;
+        calls = []; watches = []; inputs = []; deferred = {}; deferStart = false; deferBuild = false; failInstall = false; deferLog = false;
         avds = [{ name: "blockloom", serial: "emulator-5554", booted: true }];
         status = [
             { serial: "phone-1", state: "device", emulator: false },
@@ -64,6 +66,8 @@ TestCase {
     }
     function cleanup() { panel.destroy(); panel = null; }
     function matching(command) { return calls.filter(c => c.command === command); }
+    // The streams actually opened: a stop is a watch of no serial.
+    function started() { return watches.filter(w => w.serial); }
     function test_selectionAndReadiness() {
         compare(panel.device, "");
         verify(!findChild(panel, "deployButton").enabled);
@@ -124,27 +128,60 @@ TestCase {
         panel.buildAndRun();
         compare(matching("start_build_game").length, 0);
     }
-    function test_mirrorIgnoresStaleFrameAndNoOverlappingPolls() {
-        panel.device = "phone-1"; deferFrame = true;
+    function test_screenStreamIgnoresStaleFramesAndStopsOnSwitch() {
+        panel.device = "phone-1";
         const screen = findChild(panel, "deviceScreen");
         tryCompare(screen, "connected", true);
         tryCompare(screen, "device", "phone-1");
-        screen.startWatching(); screen.pollFrame(); screen.pollFrame();
-        compare(matching("android_mirror_frame").length, 1);
+        screen.startWatching();
+        compare(started().length, 1);
+        compare(started()[0].serial, "phone-1");
+        backend.screenFrame = { serial: "phone-1", image: "first", width: 360, height: 800, transport: "adb" };
+        compare(screen.frame, "first");
+        compare(screen.transport, "adb");
+        // A frame for another device is not this one's screen.
+        backend.screenFrame = { serial: "emulator-5554", image: "other", width: 360, height: 800, transport: "grpc" };
+        compare(screen.frame, "first");
         panel.device = "emulator-5554";
         tryCompare(screen, "device", "emulator-5554");
-        deferred.frame({ image: "stale", width: 360, height: 800 });
         compare(screen.frame, "");
         verify(!screen.watching);
+        compare(watches[watches.length - 1].serial, "");
+        backend.screenFrame = { serial: "emulator-5554", image: "late", width: 360, height: 800, transport: "grpc" };
+        compare(screen.frame, "");
         screen.startWatching();
-        compare(matching("android_mirror_frame")[1].args.device, "emulator-5554");
+        compare(started().length, 2);
+        compare(started()[1].serial, "emulator-5554");
+        // Hiding the panel stops the stream; showing it again resumes.
         panel.visible = false;
-        deferred.frame({ image: "hidden", width: 360, height: 800 });
-        compare(screen.frame, "");
         verify(!screen.watching);
+        compare(watches[watches.length - 1].serial, "");
         panel.visible = true;
         tryCompare(screen, "watching", true);
-        compare(matching("android_mirror_frame").length, 3);
+        compare(started().length, 3);
+        // A stream that ends reports why and stops.
+        backend.screenFrame = { error: "The device stopped sending its screen." };
+        verify(!screen.watching);
+        compare(screen.error, "The device stopped sending its screen.");
+    }
+    function test_pointerAndKeysGoStraightToTheStream() {
+        panel.device = "phone-1";
+        const screen = findChild(panel, "deviceScreen");
+        tryCompare(screen, "connected", true);
+        screen.touch("down", 0.5, 0.5);
+        compare(inputs.length, 0);
+        screen.startWatching();
+        backend.screenFrame = { serial: "phone-1", image: "first", width: 360, height: 800, transport: "adb" };
+        screen.touch("down", 0.25, 0.5);
+        screen.touch("move", 0.3, 0.6);
+        screen.touch("up", 0.3, 0.6);
+        screen.key("back");
+        compare(inputs.length, 4);
+        compare(inputs[0].phase, "down");
+        compare(inputs[1].phase, "move");
+        compare(inputs[2].phase, "up");
+        compare(inputs[3].code, "back");
+        compare(matching("android_mirror_tap").length, 0);
     }
     function test_stopCannotKillPhone() {
         panel.stopEmu("phone-1");
@@ -235,13 +272,12 @@ TestCase {
         const show = findChild(panel, "showScreenButton");
         const toggle = findChild(panel, "mirrorToggle");
         verify(show.visible); verify(!toggle.visible);
-        deferFrame = true;
         mouseClick(show);
         verify(!show.visible); verify(toggle.visible);
         const sample = createTemporaryObject(imageFactory, test);
         grabImage(sample).save("/tmp/blockloom-qml-test-frame.png");
         sample.destroy();
-        deferred.frame({ image: "file:///tmp/blockloom-qml-test-frame.png", width: 360, height: 800 });
+        backend.screenFrame = { serial: "phone-1", image: "file:///tmp/blockloom-qml-test-frame.png", width: 360, height: 800, transport: "adb" };
         wait(50);
         const image = findChild(panel, "mirrorImage");
         verify(image.visible);
