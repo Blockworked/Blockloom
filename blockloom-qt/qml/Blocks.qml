@@ -152,7 +152,7 @@ QtObject {
         ChangeVariable:"trending-up", SaveVariable:"save", ClearSavedVariable:"trash-2", AddToList:"plus", DeleteOfList:"trash-2",
         DeleteAllOfList:"trash-2", ShiftList:"arrow-left", InsertIntoList:"plus", ReplaceItemOfList:"repeat", ReverseList:"rotate-cw",
         LoadJsonIntoList:"braces", SetDictValue:"book-plus", DeleteDictKey:"trash-2", DeleteAllOfDict:"trash-2", LoadJsonIntoDict:"braces",
-        CallBlock:"blocks", Return:"corner-down-right"
+        CallBlock:"blocks", Return:"corner-down-right", PluginBlock:"plug-zap"
     })
 
     function buildRows() {
@@ -345,10 +345,71 @@ QtObject {
             DeleteDictKey: row([lb("delete"), slot("DeleteDictKey", "key"), lb("of"), dictD()]),
             DeleteAllOfDict: row([lb("delete all of"), dictD()]),
             LoadJsonIntoDict: row([lb("load JSON"), slot("LoadJsonIntoDictText", "json"), lb("into"), dictD()]),
-            Return: cap([lb("return"), slot("ReturnValue", "value")])
+            Return: cap([lb("return"), slot("ReturnValue", "value")]),
+            // One generic type for every plugin block: its row is the schema's label.
+            PluginBlock: { head: pluginHead }
         };
         for (const type in r) r[type].icon = icons[type] || "blocks";
         return r;
+    }
+
+    // ─── Plugin blocks ─────────────────────────────────────────────────────
+    // The statement blocks installed plugins add, from the snapshot's
+    // `plugins.blocks`: [{ plugin, block: BlockSchema }]. Reporters and hats
+    // are not drawn yet.
+    readonly property var pluginBlocks: ((appState && appState.plugins ? appState.plugins.blocks : null) || []).filter(b => b.block.kind === "statement")
+    readonly property string pluginSource: JSON.stringify(pluginBlocks.map(b => [b.plugin, b.block.type_id, b.block.label, b.block.category, b.block.slots.map(sl => [sl.name, sl.type, sl.default === undefined ? null : sl.default])]))
+    onPluginSourceChanged: { pluginPieces = ({}); BlockRegistry.revision++; }
+    // The row's pieces per block. The canvas rebuilds a row's controls when
+    // the array changes, so the same objects come back until the plugins do.
+    property var pluginPieces: ({})
+    function pluginSchema(plugin, block) {
+        for (const b of pluginBlocks) if (b.plugin === plugin && b.block.type_id === block) return b.block;
+        return null;
+    }
+    function pluginHead(ins) {
+        const key = ins.plugin + "/" + ins.block;
+        if (pluginPieces[key]) return pluginPieces[key];
+        const schema = pluginSchema(ins.plugin, ins.block);
+        let pieces;
+        if (!schema) {
+            pieces = [lb(key + " (not installed)")];
+        } else {
+            // "set {actor} health to {value}": text between braces is a slot.
+            pieces = [];
+            schema.label.split(/\{([^}]*)\}/).forEach((part, i) => {
+                if (i % 2 === 0) {
+                    if (part.trim().length) pieces.push(lb(part.trim()));
+                    return;
+                }
+                const index = schema.slots.findIndex(sl => sl.name === part);
+                if (index >= 0) pieces.push({ kind: "value", field: "PluginArg:" + index, key: "args", index: index });
+            });
+        }
+        pluginPieces[key] = pieces;
+        return pieces;
+    }
+    function pluginDefault(slot) {
+        const d = slot.default;
+        switch (slot.type) {
+        case "bool": return { kind: "Bool" };
+        case "int": case "number": return num(d !== undefined && d !== null ? d : (slot.min !== undefined ? slot.min : 0));
+        case "choice": return txt(d !== undefined && d !== null ? d : (slot.options.length ? slot.options[0] : ""));
+        default: return txt(d !== undefined && d !== null && typeof d === "string" ? d : "");
+        }
+    }
+    function pluginFresh(entry) {
+        return { id: uuid(), type: "PluginBlock", plugin: entry.plugin, block: entry.block.type_id, args: entry.block.slots.map(pluginDefault) };
+    }
+    // The palette's sections, one per category the plugins name.
+    readonly property var pluginGroups: {
+        const groups = [];
+        for (const entry of pluginBlocks) {
+            let g = groups.find(x => x.label === entry.block.category);
+            if (!g) { g = { label: entry.block.category, entries: [] }; groups.push(g); }
+            g.entries.push(entry);
+        }
+        return groups;
     }
 
     // ─── Fresh palette blocks (paletteState.ts) ────────────────────────────
@@ -470,6 +531,7 @@ QtObject {
         case "SetVariable": return { name: variableNames()[0] || "", value: num(0) };
         case "ChangeVariable": return { name: variableNames()[0] || "", value: num(1) };
         case "CallBlock": return { block_id: "", args: [] };
+        case "PluginBlock": return { plugin: "", block: "", args: [] };
         case "Return": return { value: num(0) };
         case "SetMouseLocked": return { locked: true };
         case "RumbleGamepad": return { strength: num(100), duration: num(0.5) };
@@ -694,7 +756,7 @@ QtObject {
         SaveVariable:"save a variable", ClearSavedVariable:"clear a saved variable", AddToList:"add to a list", DeleteOfList:"delete a list item",
         DeleteAllOfList:"clear a list", ShiftList:"shift a list", InsertIntoList:"insert into a list", ReplaceItemOfList:"replace a list item",
         ReverseList:"reverse a list", LoadJsonIntoList:"load JSON into a list", SetDictValue:"set a dict value", DeleteDictKey:"delete a dict key",
-        DeleteAllOfDict:"clear a dict", LoadJsonIntoDict:"load JSON into a dict", CallBlock:"my block", Return:"return"
+        DeleteAllOfDict:"clear a dict", LoadJsonIntoDict:"load JSON into a dict", CallBlock:"my block", Return:"return", PluginBlock:"plugin block"
     })
 
     Component.onCompleted: {

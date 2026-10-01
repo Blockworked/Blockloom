@@ -76,6 +76,19 @@ Rectangle {
         onActivated: root.entryActivated(spec)
         onDetailsRequested: type => root.detailsRequested(Blocks.labels[type] || type, type, "")
     }
+    component PluginEntry: PaletteBlock {
+        id: entry
+        required property var modelData
+        Component.onCompleted: instruction = Blocks.pluginFresh(modelData)
+        spec: ({ kind: "instruction", type: "PluginBlock", instruction: instruction })
+        blockDefinitions: root.blockDefs
+        onDragStarted: (sp, sx, sy, ox, oy) => root.dragStarted(sp, sx, sy, ox, oy)
+        onDragMoved: (sx, sy) => root.dragMoved(sx, sy)
+        onDragEnded: (sx, sy) => root.dragEnded(sx, sy)
+        onDragCanceled: root.dragCanceled()
+        onActivated: root.entryActivated(spec)
+        onDetailsRequested: root.detailsRequested(modelData.block.type_id, "PluginBlock", modelData.block.help || ("A block from the " + modelData.plugin + " plugin."))
+    }
     component OperatorEntry: PaletteValue {
         id: entry
         required property string modelData
@@ -159,6 +172,15 @@ Rectangle {
                         spacing: 6
                         SectionLabel { label: modelData.label }
                         Repeater { model: modelData.types; delegate: PaletteEntry {} }
+                    }
+                }
+                Repeater {
+                    model: Blocks.pluginGroups
+                    delegate: Column {
+                        required property var modelData
+                        spacing: 6
+                        SectionLabel { label: modelData.label }
+                        Repeater { model: modelData.entries; delegate: PluginEntry {} }
                     }
                 }
                 Repeater {

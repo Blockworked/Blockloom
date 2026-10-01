@@ -356,7 +356,12 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   block no installed plugin provides or whose slot count changed. A Build is
   refused while plugin blocks exist, since a built game has no editor to run
   them. `plugin-run-block` runs one from the shell and MCP, and the snapshot's
-  `plugins.blocks` lists every available block for the palette.
+  `plugins.blocks` lists every available block. The palette draws the
+  statement ones (`Blocks.qml`'s plugin section, grouped by category): the
+  one `PluginBlock` row's `head` is a function of the instruction that splits
+  the schema's `label` into label pieces and value pieces (`key: "args"`,
+  `index: i`, field `PluginArg:i`), cached so the canvas keeps its controls.
+  `head` as a function and `index` are blockstitch row features.
 - **Plugin SDK** (`blockloom-plugin-sdk`): a plugin author implements `Plugin`
   (`start`, then `call` over bytes or `call_json` over `serde_json::Value`) and
   names it with `export_plugin!`. The macro expands to the C entry symbol on a
@@ -376,9 +381,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   same `plugin_*` commands the shell does (install with a dry-run preview,
   update, remove, sync, undo the last change, clean the cache). It has a QML
   test (`tests/qml/tst_Plugins.qml`) but no inspector or contribution host yet.
-- **Not yet**: palette entries for plugin blocks (needs dynamic block rows in
-  blockstitch), plugin reporters and hats, plugin blocks in a built game or the
-  script ABI, a browser host for portable modules, native or portable modules
+- **Not yet**: plugin reporters and hats (blocks only draw as statements),
+  plugin blocks in a built game or the script ABI, a browser host for portable modules, native or portable modules
   in the runtime (a run's world) or a built game, an HTTP registry, dynamic QML
   for plugin editor panels.
   `plugins/examples/com.example.health` is the sealed proof package;

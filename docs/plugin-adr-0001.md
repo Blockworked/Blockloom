@@ -195,3 +195,17 @@ single instance on a single thread.
   that builds and stages both tiers, typed op helpers, and crates.io
   publication of the SDK (it is a path dependency for now, so the manifest's
   `sdk` range has nothing to check against yet).
+
+## Plugin blocks in the palette (fifth batch)
+
+A plugin's statement blocks show in the sidebar under their schema `category`
+and draw on the canvas from the schema `label`. There is still one
+`PluginBlock` instruction type, so blockstitch's one-row-per-type registry
+needed two small additions on the blockstitch side: a row's `head` may be a
+function of the instruction, and a value piece may carry `index` to read and
+write one entry of an array held under its key (here `args`). Blockloom pins
+the blockstitch commit that has them; until it is merged to blockstitch's
+`qml` branch the pin points at the thread branch's commit. An uninstalled
+plugin's block still draws, as its `plugin/block` name with "(not installed)"
+and no slots, and Play refuses it (preflight). The QML half is unrun here (no
+Qt in the container); the Rust half pins the snapshot shape the QML reads.

@@ -199,6 +199,19 @@ fn a_plugin_block_runs_its_command_with_its_slots() {
         "plugin_install",
         json!({"id": "com.example.health", "source": format!("path:{}", example())}),
     );
+    // The palette draws blocks from this shape (`Blocks.qml`'s plugin section).
+    let shown = invoke("get_state", json!({}))["plugins"]["blocks"].clone();
+    let block = &shown[0]["block"];
+    assert_eq!(shown[0]["plugin"], "com.example.health");
+    assert_eq!(block["type_id"], "set_hp");
+    assert_eq!(block["kind"], "statement");
+    assert_eq!(block["category"], "Health");
+    assert_eq!(block["label"], "set {actor} health to {value}");
+    assert_eq!(block["slots"][0]["name"], "actor");
+    assert_eq!(block["slots"][0]["type"], "actor");
+    assert_eq!(block["slots"][1]["type"], "int");
+    assert_eq!(block["slots"][1]["default"], 100);
+    assert_eq!(block["slots"][1]["min"], 0);
     // The actor slot takes a name; a whole number satisfies an int field.
     invoke(
         "plugin_run_block",
