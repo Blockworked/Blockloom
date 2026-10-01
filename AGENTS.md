@@ -227,6 +227,42 @@ it is a child process.
   for `InstructionKind` (`blocks.rs`), names its value slots in `fields.rs`, and
   gives every actor a `BlockGraph` of its own.
 
+### Coordinates and units
+
+World space is right-handed and Y-up in both dimensions (Bevy's, which glTF
+shares, so models import without a flip). Rotations are degrees, positive
+counterclockwise about +Z in 2D; a 2D actor faces +x and a 3D one -Z (a spot
+light's forward). A 2D `z` is only draw order (`Place` z plus the Render
+layer) and means nothing to physics.
+
+The scale is the one deliberate difference: **3D is in metres, 2D is in
+pixels**, a hundred to the metre (`scene::PIXELS_PER_METRE`, also rapier's
+physics scale in 2D). At zoom 1 one 2D unit is one logical screen pixel
+(`Camera2d`'s projection scale is `1 / zoom`), so a sprite's size is its
+image's size and pixel art lines up. That is why 2D defaults are bigger
+numbers: gravity -981 against -9.81, a 60 px starter player against a 0.5 m
+ball, `PIXELS_PER_CELL_UNIT` 16, audio falloff `1/500`. Physical settings
+(gravity, wind speed, fetch for the sea state) are in world units a second,
+so in 2D they read in pixels; metre-based maths (`sea_target`, thunder delay)
+divide by `PIXELS_PER_METRE` first.
+
+Why it isn't Unity's or Unreal's: 3D already is Unity's (1 unit = 1 m, Y-up),
+and Unreal's centimetres and Z-up would only add a conversion at every glTF
+and Bevy boundary. Unity's left-handedness is not worth fighting Bevy's maths
+and glTF for. For 2D, Godot, GameMaker and Scratch work in pixels too;
+Unity's 2D is the outlier (metres plus a pixels-per-unit on each
+sprite), and moving to it would change every saved position and size, plus
+numbers typed into blocks and scripts that can't be migrated automatically.
+
+Crossing dimensions converts lengths and nothing else. `Mode::length_from`
+is the arithmetic; `Actor::convert_units` applies it to an actor's position,
+look, parent offset and joint, and runs on a scene's `switch_mode` and on
+`Persist` survivors carried by `switch scene to` (their live position is in
+the old scene's units). Not converted, since the right answer isn't a plain
+scale: tilemap tile sizes (32 px by default, never under 1), emitters, water,
+volumes, rooms, parallax and the 3D camera component. Re-tune those after
+switching.
+
 ### Components
 
 An actor is a list of components, not a fixed set of fields

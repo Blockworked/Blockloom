@@ -2262,6 +2262,14 @@ fn perform_scene_switch(
             }
         }
     }
+    // Survivors carry live pixels or metres: put them in the new scene's.
+    let from = engine.project.active_scene().world.mode;
+    let to = engine.project.scene(&target).map_or(from, |s| s.world.mode);
+    for id in &keep {
+        if let Some(actor) = engine.spawned.get_mut(id) {
+            actor.convert_units(from, to);
+        }
+    }
     engine.project.active_scene = target.clone();
     // Run-made actors die with the scene they were made in, survivors
     // excepted; a clone's template lives in the new scene's document or in

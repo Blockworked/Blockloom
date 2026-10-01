@@ -188,6 +188,37 @@ impl Actor {
         self.components.visual()
     }
 
+    /// Re-expresses everything here that is a length (where it stands, what
+    /// it looks like, where it hangs off its parent, its joint) in `to`'s
+    /// units, when `from` is the other dimension. A 2D z is only a draw
+    /// order, so it does not survive the way a 3D one does.
+    pub fn convert_units(&mut self, from: Mode, to: Mode) {
+        if from == to {
+            return;
+        }
+        let length = |value: f32| to.length_from(from, value);
+        let flatten = |position: [f32; 3]| {
+            [
+                length(position[0]),
+                length(position[1]),
+                if to.is_3d() { length(position[2]) } else { 0.0 },
+            ]
+        };
+        let placement = self.components.placement_mut();
+        placement.position = flatten(placement.position);
+        if let Some(visual) = self.components.visual() {
+            let converted = visual_for_mode(visual, to);
+            self.components.set_visual(converted);
+        }
+        if let Some(offset) = self.components.parent_offset() {
+            self.components.set_parent_offset(Some(flatten(offset)));
+        }
+        if let Some(ActorComponent::Joint { joint }) = self.components.get_mut("Joint") {
+            joint.anchor = joint.anchor.map(length);
+            joint.length = length(joint.length);
+        }
+    }
+
     /// The actor this one hangs off, by id.
     pub fn parent(&self) -> Option<&str> {
         self.components.parent()
@@ -285,23 +316,13 @@ impl Scene {
             return;
         }
 
-        if self.world.gravity == World::default_gravity(previous) {
-            self.world.gravity = World::default_gravity(mode);
-        }
-        let scale = if mode.is_3d() { 0.01 } else { 100.0 };
+        self.world.gravity = if self.world.gravity == World::default_gravity(previous) {
+            World::default_gravity(mode)
+        } else {
+            self.world.gravity.map(|g| mode.length_from(previous, g))
+        };
         for actor in &mut self.actors {
-            let placement = actor.components.placement_mut();
-            placement.position[0] *= scale;
-            placement.position[1] *= scale;
-            placement.position[2] = if mode.is_3d() {
-                placement.position[2] * scale
-            } else {
-                0.0
-            };
-            if let Some(visual) = actor.components.visual() {
-                let converted = visual_for_mode(visual, mode);
-                actor.components.set_visual(converted);
-            }
+            actor.convert_units(previous, mode);
         }
         self.world.mode = mode;
     }
@@ -1941,7 +1962,7 @@ fn moved_path(path: &str, from: &str, to: &str) -> Option<String> {
 }
 
 pub fn visual_for_mode(visual: &Visual, mode: Mode) -> Visual {
-    const PIXELS_PER_METRE: f32 = 100.0;
+    use crate::scene::PIXELS_PER_METRE;
 
     if visual.is_3d() == mode.is_3d() {
         return visual.clone();
@@ -2641,6 +2662,50 @@ mod tests {
             project.actors[1].physics().body,
             crate::scene::BodyKind::Static
         );
+    }
+
+    #[test]
+    fn switching_dimensions_converts_every_length_an_actor_carries() {
+        let mut project = Project::starter("Untitled", Mode::TwoD);
+        project.world.gravity = [0.0, -500.0, 0.0];
+        let id = project.actors[0].id.clone();
+        let other = project.actors[1].id.clone();
+        let actor = &mut project.actors[0];
+        actor.components.insert(ActorComponent::Parent {
+            parent: other,
+            offset: Some([200.0, 100.0, 5.0]),
+        });
+        actor.components.insert(ActorComponent::Joint {
+            joint: crate::components::JointSpec {
+                anchor: [50.0, 0.0, 0.0],
+                length: 300.0,
+                ..Default::default()
+            },
+        });
+
+        project.switch_mode(Mode::ThreeD);
+        assert!((project.world.gravity[1] + 5.0).abs() < 1e-4);
+        let actor = project.actor(&id).unwrap();
+        let [x, y, z] = actor.parent_offset().unwrap();
+        assert!((x - 2.0).abs() < 1e-4 && (y - 1.0).abs() < 1e-4 && (z - 0.05).abs() < 1e-4);
+        let joint = actor.components.joint().unwrap();
+        assert!((joint.anchor[0] - 0.5).abs() < 1e-4);
+        assert!((joint.length - 3.0).abs() < 1e-4);
+
+        project.switch_mode(Mode::TwoD);
+        let actor = project.actor(&id).unwrap();
+        // A 2D z is only a draw order, so it doesn't come back.
+        assert_eq!(actor.parent_offset().unwrap()[2], 0.0);
+        assert!((actor.parent_offset().unwrap()[0] - 200.0).abs() < 1e-2);
+        assert!((actor.components.joint().unwrap().length - 300.0).abs() < 1e-2);
+        assert!((project.world.gravity[1] + 500.0).abs() < 1e-2);
+    }
+
+    #[test]
+    fn a_length_converts_by_a_hundred_between_pixels_and_metres() {
+        assert_eq!(Mode::ThreeD.length_from(Mode::TwoD, 250.0), 2.5);
+        assert_eq!(Mode::TwoD.length_from(Mode::ThreeD, 2.5), 250.0);
+        assert_eq!(Mode::TwoD.length_from(Mode::TwoD, 7.0), 7.0);
     }
 
     #[test]
