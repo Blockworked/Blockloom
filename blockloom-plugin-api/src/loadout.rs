@@ -7,7 +7,7 @@
 //! Paths are whatever the sender could resolve; the world opens them as given.
 
 use crate::manifest::{Capability, PortableEntry};
-use crate::schema::{FieldSchema, HookSchema};
+use crate::schema::{FieldSchema, FieldType, HookSchema};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -50,7 +50,7 @@ impl CodeRuntime {
 }
 
 /// A block whose command is a module op: the world calls the op itself, with
-/// the block's slots as the arguments.
+/// the block's slots as the arguments. A reporter also says what it answers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LoadoutBlock {
     pub type_id: String,
@@ -60,6 +60,9 @@ pub struct LoadoutBlock {
     /// Whether the command takes the running actor as `actor`.
     #[serde(default)]
     pub wants_actor: bool,
+    /// Set for a reporter: what its answer is read as.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub returns: Option<FieldType>,
 }
 
 /// One plugin as the world loads it.

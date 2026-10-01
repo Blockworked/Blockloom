@@ -1501,7 +1501,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [ ] Modules in the built player, a browser host for portable modules and a browser proof.
     - [x] Plugin statement blocks in the VM: `PluginBlock` instruction, `Effect::PluginCall`, the editor runs the block's command, `plugin-run-block`, Play preflight; codegen refuses by name and Build is refused while they exist.
     - [x] Plugin statement blocks in the palette and on the canvas (one `PluginBlock` row whose head follows the schema label; needs blockstitch's function `head` and `index` pieces).
-    - [ ] Plugin reporters and hats, built games, codegen and the script ABI; importer/build hooks; per-plugin MCP tools.
+    - [x] Plugin reporters and hats: `PluginRead` values answered on demand by the world's modules, `WhenPlugin` hats started by `event` effects; palette, canvas, preflight, tally example (needs blockstitch's operator `layout`).
+    - [ ] Built games, codegen and the script ABI for plugin blocks; importer/build hooks; per-plugin MCP tools.
     - [ ] HTTP registry transport; revision bump for attached copies on package changes.
     - [ ] Phases 3-7 (voxel plugin `com.blockworked.voxel`, procedural worlds, GPU path, fracture, ecosystem).
 

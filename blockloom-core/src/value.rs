@@ -13,6 +13,37 @@ use crate::scene::Axis;
 use crate::sense;
 use crate::sound::{SoundBus, normalize_sound};
 
+/// The one operator every plugin reporter is stored as: `args` are the
+/// plugin's id, the block's type id, then the block's slots in schema order.
+pub const PLUGIN_READ: &str = "PluginRead";
+
+/// A slot's value as a plugin sees it. A whole number is an integer, so it
+/// satisfies an integer field as well as a number one.
+pub fn json_of(value: &Evaluated) -> serde_json::Value {
+    match value {
+        Evaluated::Number(n) if n.fract() == 0.0 && n.abs() < 9.0e15 => {
+            serde_json::Value::from(*n as i64)
+        }
+        Evaluated::Number(n) => serde_json::Number::from_f64(*n)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        Evaluated::Text(s) => serde_json::Value::String(s.clone()),
+        Evaluated::Bool(b) => serde_json::Value::Bool(*b),
+    }
+}
+
+/// What a plugin answered, as a value: lists and vectors come out as their
+/// JSON text, and nothing at all is an error.
+pub fn evaluated_from_json(value: &serde_json::Value) -> Result<Evaluated, String> {
+    match value {
+        serde_json::Value::Null => Err("answered nothing".to_string()),
+        serde_json::Value::Bool(b) => Ok(Evaluated::Bool(*b)),
+        serde_json::Value::Number(n) => Ok(Evaluated::Number(n.as_f64().unwrap_or(0.0))),
+        serde_json::Value::String(s) => Ok(Evaluated::Text(s.clone())),
+        other => Ok(Evaluated::Text(other.to_string())),
+    }
+}
+
 fn text(value: &str) -> Value {
     Value::text(value)
 }
@@ -648,6 +679,18 @@ static OPERATORS: &[ExtOperator] = &[
             sense::read(|sensors| sensors.atmosphere.field(&name))
                 .map(Evaluated::Number)
                 .ok_or_else(|| format!("the atmosphere has no \"{name}\" reading"))
+        },
+    },
+    ExtOperator {
+        kind: PLUGIN_READ,
+        op: PLUGIN_READ,
+        arity: 2,
+        default_args: || vec![text(""), text("")],
+        // Asks the plugin's module while a game runs; there is nothing to
+        // ask in the editor, so a preview says so rather than guessing.
+        eval: |args| {
+            let (plugin, block) = (args[0].as_text(), args[1].as_text());
+            sense::plugin_read(&plugin, &block, &args[2..])
         },
     },
     ExtOperator {

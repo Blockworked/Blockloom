@@ -1034,6 +1034,14 @@ impl<'de> Deserialize<'de> for Project {
     }
 }
 
+/// What shape of plugin block a canvas uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginBlockShape {
+    Statement,
+    Reporter,
+    Hat,
+}
+
 /// One plugin block on a canvas, as [`Project::plugin_blocks`] reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginBlockUse {
@@ -1041,6 +1049,30 @@ pub struct PluginBlockUse {
     pub plugin: String,
     pub block: String,
     pub slots: usize,
+    pub shape: PluginBlockShape,
+}
+
+/// Plugin reporters inside `value`: plugin, block id, slot count.
+fn plugin_reads(value: &crate::value::Value, found: &mut Vec<(String, String, usize)>) {
+    use crate::value::{Op, PLUGIN_READ, Value};
+    if let Value::Op { op, args, .. } = value {
+        if let Op::Ext(name) = op
+            && &**name == PLUGIN_READ
+        {
+            let text = |i: usize| match args.get(i) {
+                Some(Value::Text { value }) => value.clone(),
+                _ => String::new(),
+            };
+            found.push((text(0), text(1), args.len().saturating_sub(2)));
+        }
+        for arg in args {
+            plugin_reads(arg, found);
+        }
+    } else if let Value::Call { args, .. } = value {
+        for arg in args {
+            plugin_reads(arg, found);
+        }
+    }
 }
 
 impl Project {
@@ -1069,33 +1101,62 @@ impl Project {
         out
     }
 
-    /// Every plugin block placed on a canvas: where it sits, its plugin, its
-    /// block id and how many slots the instruction carries.
+    /// Every plugin block placed on a canvas (statements, reporters and
+    /// hats): where it sits, its plugin, its block id and how many slots the
+    /// instruction carries.
     pub fn plugin_blocks(&self) -> Vec<PluginBlockUse> {
+        use crate::blocks::InstructionKind as K;
         let several = self.scenes.len() > 1;
         let mut out = Vec::new();
         for scene in &self.scenes {
             for actor in &scene.actors {
-                actor.graph.walk_instructions(&mut |instruction| {
-                    if let crate::blocks::InstructionKind::PluginBlock {
-                        plugin,
-                        block,
-                        args,
-                    } = &instruction.kind
-                    {
-                        let place = if several {
-                            format!("actor {} in scene {}", actor.name, scene.name)
-                        } else {
-                            format!("actor {}", actor.name)
-                        };
-                        out.push(PluginBlockUse {
-                            place,
+                let place = if several {
+                    format!("actor {} in scene {}", actor.name, scene.name)
+                } else {
+                    format!("actor {}", actor.name)
+                };
+                actor
+                    .graph
+                    .walk_instructions(&mut |instruction| match &instruction.kind {
+                        K::PluginBlock {
+                            plugin,
+                            block,
+                            args,
+                        } => out.push(PluginBlockUse {
+                            place: place.clone(),
                             plugin: plugin.clone(),
                             block: block.clone(),
                             slots: args.len(),
-                        });
-                    }
-                });
+                            shape: PluginBlockShape::Statement,
+                        }),
+                        K::WhenPlugin {
+                            plugin,
+                            block,
+                            args,
+                            ..
+                        } => out.push(PluginBlockUse {
+                            place: place.clone(),
+                            plugin: plugin.clone(),
+                            block: block.clone(),
+                            slots: args.len(),
+                            shape: PluginBlockShape::Hat,
+                        }),
+                        _ => {}
+                    });
+                let mut reads = Vec::new();
+                let mut graph = actor.graph.clone();
+                graph.visit_values_mut(&mut |value, _| plugin_reads(value, &mut reads));
+                out.extend(
+                    reads
+                        .into_iter()
+                        .map(|(plugin, block, slots)| PluginBlockUse {
+                            place: place.clone(),
+                            plugin,
+                            block,
+                            slots,
+                            shape: PluginBlockShape::Reporter,
+                        }),
+                );
             }
         }
         out

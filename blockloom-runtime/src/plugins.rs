@@ -6,6 +6,11 @@
 //! module ops. A plugin answers with effects the world applies in order; it
 //! never touches the world itself. The modules go when the run ends.
 //!
+//! A plugin reporter is answered on demand: while a run has modules open, the
+//! world installs a reader on `sense` that calls the reporter's op, so a
+//! value slot asks the module the moment the VM evaluates it. A plugin hat
+//! starts on an `event` effect a module answers with.
+//!
 //! Without the `plugins` feature (the web and Android players) the loadout is
 //! ignored and every call here does nothing; a project with plugin code is
 //! refused for those targets at build time.
@@ -14,6 +19,10 @@
 use crate::bridge;
 use crate::engine::Engine;
 use bevy::prelude::*;
+#[cfg(feature = "plugins")]
+use blockloom_core::sense;
+#[cfg(feature = "plugins")]
+use blockloom_core::value::{Evaluated, evaluated_from_json, json_of};
 #[cfg(feature = "plugins")]
 use blockloom_core::vm::Event;
 use blockloom_plugin_api::loadout::Loadout;
@@ -25,14 +34,18 @@ use serde_json::Value;
 use serde_json::json;
 
 #[cfg(feature = "plugins")]
+use blockloom_plugin_api::schema::FieldType;
+#[cfg(feature = "plugins")]
 use blockloom_plugin_host::world::{Effect, Outcome, WorldPlugins};
+#[cfg(feature = "plugins")]
+use std::{cell::RefCell, rc::Rc};
 
 /// The loadout the editor sent, and the modules a run has open.
 #[derive(Default)]
 pub struct PluginHost {
     pub loadout: Loadout,
     #[cfg(feature = "plugins")]
-    world: Option<WorldPlugins>,
+    world: Option<Rc<RefCell<WorldPlugins>>>,
     #[cfg(feature = "plugins")]
     ticks: u64,
 }
@@ -57,6 +70,12 @@ enum Applied {
     Error(String),
     Say(String),
     Broadcast(String),
+    Event {
+        plugin: String,
+        name: String,
+        actor: Option<String>,
+        args: Vec<String>,
+    },
 }
 
 #[cfg(feature = "plugins")]
@@ -78,6 +97,12 @@ fn applied(outcomes: Vec<Outcome>) -> Vec<Applied> {
                 Effect::Say { text } => Applied::Say(format!("[{plugin}] {text}")),
                 Effect::Broadcast { message } => Applied::Broadcast(message),
                 Effect::Error { message } => Applied::Error(format!("{plugin}: {message}")),
+                Effect::Event { name, actor, args } => Applied::Event {
+                    plugin,
+                    name,
+                    actor,
+                    args: args.iter().map(event_arg).collect(),
+                },
             },
         })
         .collect()
@@ -96,7 +121,28 @@ fn apply(engine: &mut Engine, outcomes: Vec<Applied>) {
                 message,
             }),
             Applied::Broadcast(message) => engine.fire(Event::Message(message)),
+            Applied::Event {
+                plugin,
+                name,
+                actor,
+                args,
+            } => engine.fire(Event::Plugin {
+                plugin,
+                event: name,
+                args,
+                actor,
+            }),
         }
+    }
+}
+
+/// What a plugin's event carries for a hat's slot to match, as text.
+#[cfg(feature = "plugins")]
+fn event_arg(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
     }
 }
 
@@ -148,6 +194,11 @@ pub fn begin(engine: &mut Engine) {
         }
         let mut world = WorldPlugins::load(&engine.plugins.loadout, env!("CARGO_PKG_VERSION"));
         let started = world.start(&|plugin| records_for(engine, plugin));
+        let world = Rc::new(RefCell::new(world));
+        let reader = Rc::clone(&world);
+        sense::set_plugin_reader(Some(Box::new(move |plugin, block, args| {
+            read(&reader, plugin, block, args)
+        })));
         engine.plugins.world = Some(world);
         engine.plugins.ticks = 0;
         apply(engine, applied(started));
@@ -159,14 +210,66 @@ pub fn begin(engine: &mut Engine) {
 /// The run ends: tell the modules, then unload them.
 pub fn end(engine: &mut Engine) {
     #[cfg(feature = "plugins")]
-    if let Some(mut world) = engine.plugins.world.take() {
-        let stopped = world.stop();
+    if let Some(world) = engine.plugins.world.take() {
+        // Reporters stop answering before the modules are told to stop.
+        sense::set_plugin_reader(None);
+        let stopped = world.borrow_mut().stop();
         drop(world);
         engine.plugins.ticks = 0;
         apply(engine, applied(stopped));
     }
     #[cfg(not(feature = "plugins"))]
     let _ = engine;
+}
+
+/// Answers a plugin reporter: slot values in as JSON, the module's `value`
+/// out as the type the schema says it returns.
+#[cfg(feature = "plugins")]
+fn read(
+    world: &Rc<RefCell<WorldPlugins>>,
+    plugin: &str,
+    block: &str,
+    args: &[Evaluated],
+) -> Result<Evaluated, String> {
+    let mut world = world
+        .try_borrow_mut()
+        .map_err(|_| format!("{plugin}/{block} was asked while its plugin was busy"))?;
+    let Some(slots) = world.block_slots(plugin, block) else {
+        return Err(format!("{plugin}/{block} doesn't answer in this run"));
+    };
+    let json: Vec<Value> = slots
+        .iter()
+        .zip(args)
+        .map(|(slot, value)| match (&slot.ty, value) {
+            (FieldType::Actor, Evaluated::Text(name)) => {
+                let id = sense::read(|s| {
+                    if s.actors.contains_key(name) {
+                        return Some(name.clone());
+                    }
+                    s.actors
+                        .iter()
+                        .filter(|(_, a)| a.name.eq_ignore_ascii_case(name))
+                        .map(|(id, _)| id.clone())
+                        .min()
+                });
+                Value::String(id.unwrap_or_else(|| name.clone()))
+            }
+            (_, value) => json_of(value),
+        })
+        .collect();
+    let returns = world.returns(plugin, block).cloned();
+    let actor = sense::current_actor().unwrap_or_default();
+    let answer = world.read(plugin, block, &json, &actor)?;
+    let value = evaluated_from_json(&answer).map_err(|e| format!("{plugin}/{block} {e}"))?;
+    match (returns, &value) {
+        (Some(FieldType::Bool), Evaluated::Bool(_)) => Ok(value),
+        (Some(FieldType::Int { .. } | FieldType::Number { .. }), Evaluated::Number(_)) => Ok(value),
+        (Some(FieldType::Bool | FieldType::Int { .. } | FieldType::Number { .. }), _) => Err(
+            format!("{plugin}/{block} answered {answer}, which isn't what it reports"),
+        ),
+        (_, Evaluated::Number(n)) => Ok(Evaluated::Text(Evaluated::Number(*n).as_text())),
+        _ => Ok(value),
+    }
 }
 
 /// Runs a plugin block here when its command is a module op; returns false
@@ -180,9 +283,10 @@ pub fn run_block(
 ) -> bool {
     #[cfg(feature = "plugins")]
     {
-        let Some(world) = engine.plugins.world.as_mut() else {
+        let Some(world) = engine.plugins.world.clone() else {
             return false;
         };
+        let mut world = world.borrow_mut();
         if !world.has_block(plugin, block) {
             return false;
         }
@@ -206,10 +310,8 @@ pub fn run_block(
             })
             .chain(args.iter().skip(slots.len()).cloned())
             .collect();
-        let Some(world) = engine.plugins.world.as_mut() else {
-            return false;
-        };
         let outcomes = world.run_block(plugin, block, &args, actor);
+        drop(world);
         apply(engine, applied(outcomes));
         true
     }
@@ -238,10 +340,17 @@ pub fn stage(stage: Stage) -> impl FnMut(NonSendMut<Engine>, Res<Time>) {
             }
             let tick = engine.plugins.ticks;
             let dt = f64::from(time.delta_secs());
-            let Some(world) = engine.plugins.world.as_mut() else {
+            let Some(world) = engine.plugins.world.clone() else {
                 return;
             };
-            let outcomes = world.run_stage(stage, tick, dt);
+            let outcomes = {
+                let mut world = world.borrow_mut();
+                // What a reporter answered last step may have moved.
+                if matches!(stage, Stage::Input | Stage::Presentation) {
+                    world.forget_reads();
+                }
+                world.run_stage(stage, tick, dt)
+            };
             apply(&mut engine, applied(outcomes));
         }
         #[cfg(not(feature = "plugins"))]

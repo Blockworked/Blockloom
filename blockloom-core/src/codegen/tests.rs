@@ -460,6 +460,37 @@ fn a_plugin_block_is_refused_by_name() {
     assert!(error.what.contains("com.example.health/heal"), "{error}");
 }
 
+/// A plugin's reporter is answered by a module inside the editor's world, and
+/// its hat starts on that module's events, so both keep a project on the VM.
+#[test]
+fn a_plugin_reporter_and_hat_are_refused_by_name() {
+    let read = Value::op(
+        Op::from_name(crate::value::PLUGIN_READ),
+        vec![
+            Value::text("com.example.tally"),
+            Value::text("count"),
+            Value::text("coins"),
+        ],
+    );
+    let error = compile(&started(vec![Instruction::new(K::Say { text: read })]))
+        .expect_err("plugin reporters run in the world");
+    assert!(error.what.contains("plugin reporter"), "{error}");
+
+    let error = compile(&project_with(vec![
+        Instruction::new(K::WhenPlugin {
+            plugin: "com.example.tally".to_string(),
+            block: "changed".to_string(),
+            event: "changed".to_string(),
+            args: vec![],
+        }),
+        Instruction::new(K::Say {
+            text: Value::text("hi"),
+        }),
+    ]))
+    .expect_err("plugin hats start on a module's events");
+    assert!(error.what.contains("com.example.tally/changed"), "{error}");
+}
+
 /// A reporter, though, may: each call builds a state of its own, exactly as
 /// the VM builds a fresh script for one.
 #[test]

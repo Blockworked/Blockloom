@@ -190,6 +190,16 @@ pub enum InstructionKind {
     WhenUiChanged {
         element: String,
     },
+    /// Runs when a plugin fires `event` (a hat its `BlockSchema` adds). An
+    /// empty entry of `args` matches anything; the others must equal what the
+    /// plugin fired, as text, in the schema's slot order.
+    WhenPlugin {
+        plugin: String,
+        block: String,
+        event: String,
+        #[serde(default)]
+        args: Vec<String>,
+    },
     /// Marks a strand as a custom block's body; `block_id` is its
     /// [`BlockDef::id`]. Never runs on its own.
     BlockHeader {
@@ -1514,6 +1524,7 @@ impl BlockKind for InstructionKind {
             | K::WhenSceneEnds
             | K::WhenCutsceneSignal { .. }
             | K::WhenCutsceneEnds
+            | K::WhenPlugin { .. }
             | K::SkipCutscene
             | K::BlockHeader { .. }
             | K::CreateClone { .. }
@@ -1575,6 +1586,7 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenSceneEnds
                 | InstructionKind::WhenCutsceneSignal { .. }
                 | InstructionKind::WhenCutsceneEnds
+                | InstructionKind::WhenPlugin { .. }
                 | InstructionKind::WhenUiEvent { .. }
                 | InstructionKind::WhenUiClicked { .. }
                 | InstructionKind::WhenUiChanged { .. }

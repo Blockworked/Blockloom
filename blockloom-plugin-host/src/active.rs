@@ -310,7 +310,7 @@ impl ActivePlugins {
             let blocks = contributions
                 .blocks
                 .iter()
-                .filter(|b| b.kind == BlockKind::Statement)
+                .filter(|b| matches!(b.kind, BlockKind::Statement | BlockKind::Reporter))
                 .filter_map(|b| {
                     let command = contributions.command(b.command.as_deref()?)?;
                     let CommandAction::Module { op } = &command.action else {
@@ -321,6 +321,7 @@ impl ActivePlugins {
                         op: op.clone(),
                         slots: b.slots.clone(),
                         wants_actor: command.args.iter().any(|a| a.name == "actor"),
+                        returns: b.returns.clone(),
                     })
                 })
                 .collect();

@@ -364,6 +364,9 @@ pub fn compile(project: &Project) -> Emit<String> {
 
             let counters = canvas.plan.counters.len();
             for entry in &program.entries {
+                if let crate::vm::Trigger::Plugin { plugin, event, .. } = &entry.trigger {
+                    return Err(Unsupported::new(format!("the plugin hat {plugin}/{event}")));
+                }
                 entries.push(format!(
                     "    Entry {{ actor: {}, strand: {}, trigger: {}, detail: {}, \
                      start: {}, counters: {counters}, run: actor_{index} }},",
@@ -439,6 +442,7 @@ fn trigger_name(trigger: &crate::vm::Trigger) -> &'static str {
         Trigger::UiEvent { .. } => "UiEvent",
         Trigger::UiClicked(_) => "UiClicked",
         Trigger::UiChanged(_) => "UiChanged",
+        Trigger::Plugin { .. } => "Plugin",
     }
 }
 
@@ -464,7 +468,8 @@ fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
         | Trigger::CutsceneEnded
         | Trigger::Clicked
         | Trigger::Cloned
-        | Trigger::Touched => String::new(),
+        | Trigger::Touched
+        | Trigger::Plugin { .. } => String::new(),
     }
 }
 
@@ -1929,6 +1934,11 @@ impl<'a> Pass<'a> {
                 "{{ let a = vec![{}]; sense(h, &me, \"CurrentTime\", a) }}",
                 arg(0)?
             )),
+            // A plugin's code runs in the editor's world, which no compiled
+            // program can reach.
+            Op::Ext(name) if &**name == crate::value::PLUGIN_READ => {
+                Err(Unsupported::new("a plugin reporter".to_string()))
+            }
             Op::Ext(name) => Ok(format!(
                 "{{ let a = vec![{}]; sense(h, &me, {}, a) }}",
                 parts.join(", "),

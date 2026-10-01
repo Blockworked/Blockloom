@@ -232,7 +232,7 @@ impl ScriptEvent {
     ) -> Option<(Option<String>, ScriptEvent)> {
         use blockloom_core::vm::Event;
         Some(match event {
-            Event::Started | Event::Cloned { .. } => return None,
+            Event::Started | Event::Cloned { .. } | Event::Plugin { .. } => return None,
             Event::QualityDropped => (None, ScriptEvent::new(abi::EVENT_QUALITY_DROPPED, "")),
             Event::SceneStarted => (None, ScriptEvent::new(abi::EVENT_SCENE_STARTED, "")),
             Event::SceneEnded => (None, ScriptEvent::new(abi::EVENT_SCENE_ENDED, "")),

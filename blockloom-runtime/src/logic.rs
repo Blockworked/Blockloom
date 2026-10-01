@@ -247,6 +247,9 @@ impl LoadedLogic {
             // itself, so nothing outside it queues one. A script's clone
             // comes through `cloned` below instead.
             Event::Cloned { .. } => {}
+            // A plugin hat has no compiled form, so a project with one stays
+            // on the VM and nothing here would start it.
+            Event::Plugin { .. } => {}
         }
     }
 

@@ -14,12 +14,12 @@ use blockloom_core::build::{self, PluginPayload, Target};
 use blockloom_core::components::ActorComponent;
 use blockloom_core::library;
 use blockloom_core::pack::{PLUGINS_DIR, PackedPlugin};
-use blockloom_core::project::Project;
+use blockloom_core::project::{PluginBlockShape, Project};
 use blockloom_plugin_api::abi::LOG_WARN;
 use blockloom_plugin_api::id::{self, validate_plugin_id};
 use blockloom_plugin_api::manifest::TargetSupport;
 use blockloom_plugin_api::record::PluginRecord;
-use blockloom_plugin_api::schema::{CommandAction, ComponentSchema, FieldType};
+use blockloom_plugin_api::schema::{BlockKind, CommandAction, ComponentSchema, FieldType};
 use blockloom_plugin_api::{Version, VersionReq};
 use blockloom_plugin_host::active::{ActivePlugins, RecordIssue, RecordStatus, migrate_records};
 use blockloom_plugin_host::cache::{self, Cache};
@@ -317,6 +317,14 @@ fn describe(issue: &RecordIssue) -> String {
     format!("{} ({}): {why}", issue.record, issue.location)
 }
 
+fn shape_name(shape: PluginBlockShape) -> &'static str {
+    match shape {
+        PluginBlockShape::Statement => "block",
+        PluginBlockShape::Reporter => "reporter",
+        PluginBlockShape::Hat => "hat",
+    }
+}
+
 /// Refuses to run or ship a project whose plugin data has nothing behind
 /// it: missing runtime behavior is a report, never a silent no-op.
 pub(crate) fn preflight(active: &ActivePlugins, project: &Project) -> Result<(), String> {
@@ -326,15 +334,28 @@ pub(crate) fn preflight(active: &ActivePlugins, project: &Project) -> Result<(),
         .filter(|i| i.blocks_run)
         .map(describe)
         .collect();
+    let loadout = active.loadout();
     for used in project.plugin_blocks() {
         let found = active
             .blocks()
             .into_iter()
             .find(|(plugin, schema)| *plugin == used.plugin && schema.type_id == used.block);
+        let want = match used.shape {
+            PluginBlockShape::Statement => BlockKind::Statement,
+            PluginBlockShape::Reporter => BlockKind::Reporter,
+            PluginBlockShape::Hat => BlockKind::Hat,
+        };
         match found {
             None => lines.push(format!(
                 "{}: the block {}/{} isn't provided by an installed plugin",
                 used.place, used.plugin, used.block
+            )),
+            Some((_, schema)) if schema.kind != want => lines.push(format!(
+                "{}: the block {}/{} is no longer a {}",
+                used.place,
+                used.plugin,
+                used.block,
+                shape_name(used.shape)
             )),
             Some((_, schema)) if schema.slots.len() != used.slots => lines.push(format!(
                 "{}: the block {}/{} has {} slots, the installed plugin's has {}",
@@ -344,6 +365,18 @@ pub(crate) fn preflight(active: &ActivePlugins, project: &Project) -> Result<(),
                 used.slots,
                 schema.slots.len()
             )),
+            // A reporter is answered inside the world, so only a module op can.
+            Some(_)
+                if used.shape == PluginBlockShape::Reporter
+                    && !loadout.plugins.iter().any(|p| {
+                        p.id == used.plugin && p.blocks.iter().any(|b| b.type_id == used.block)
+                    }) =>
+            {
+                lines.push(format!(
+                    "{}: the reporter {}/{} needs a plugin with code, and its command isn't a module op",
+                    used.place, used.plugin, used.block
+                ))
+            }
             Some(_) => {}
         }
     }
@@ -393,7 +426,15 @@ pub(crate) fn payloads(
         return Err(format!(
             "Plugin blocks only run in the editor so far, so the project won't build:\n- {}",
             uses.iter()
-                .map(|u| format!("{}: {}/{}", u.place, u.plugin, u.block))
+                .map(|u| {
+                    format!(
+                        "{}: {} {}/{}",
+                        u.place,
+                        shape_name(u.shape),
+                        u.plugin,
+                        u.block
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("\n- ")
         ));
@@ -1093,5 +1134,55 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn reporters_and_hats_are_found_wherever_they_sit() {
+        use blockloom_core::value::{Op, PLUGIN_READ, Value as Slot};
+        let read = |block: &str| {
+            Slot::op(
+                Op::from_name(PLUGIN_READ),
+                vec![
+                    Slot::text("com.example.tally"),
+                    Slot::text(block),
+                    Slot::text("coins"),
+                ],
+            )
+        };
+        let mut project = Project::starter("Blocks", Mode::TwoD);
+        project.actors[0]
+            .graph
+            .strands
+            .push(Strand::with_instructions(
+                0,
+                0,
+                vec![
+                    Instruction::new(InstructionKind::WhenPlugin {
+                        plugin: "com.example.tally".to_string(),
+                        block: "changed".to_string(),
+                        event: "changed".to_string(),
+                        args: vec!["coins".to_string()],
+                    }),
+                    // Nested in an operator, inside another block's slot.
+                    Instruction::new(InstructionKind::Say {
+                        text: Slot::op(Op::Add, vec![Slot::number(1.0), read("count")]),
+                    }),
+                ],
+            ));
+        let uses = project.plugin_blocks();
+        let shapes: Vec<_> = uses
+            .iter()
+            .map(|u| (u.block.as_str(), u.shape, u.slots))
+            .collect();
+        assert_eq!(
+            shapes,
+            [
+                ("changed", PluginBlockShape::Hat, 1),
+                ("count", PluginBlockShape::Reporter, 1),
+            ]
+        );
+        let error = preflight(&ActivePlugins::default(), &project).unwrap_err();
+        assert!(error.contains("com.example.tally/changed"), "{error}");
+        assert!(error.contains("com.example.tally/count"), "{error}");
     }
 }

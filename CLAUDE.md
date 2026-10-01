@@ -344,7 +344,7 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   or traps stops the module and `Modules::get` loads a fresh one next time.
   `Modules` holds a `Module::{Native, Portable}`; a plugin with a native library
   for the target uses it, else its portable module. Editor only so far.
-- **Plugin blocks** are statements only so far. The document holds one generic
+- **Plugin statement blocks**: the document holds one generic
   `InstructionKind::PluginBlock { plugin, block, args }` (args in the block
   schema's slot order, `FieldId::PluginArg(i)`), compiled to
   `Action::PluginCall` and run by the VM as `Effect::PluginCall`, whole numbers
@@ -383,6 +383,31 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `RuntimeMessage::PluginCall`. The runtime's `plugins` feature (default) pulls
   in the host crate; web and Android build without it and ignore the loadout.
   `plugins/examples/tally` answers `world.stop` with a final tally line.
+- **Plugin reporters and hats** are generic like the statement. A reporter is
+  the value `Op::Ext("PluginRead")` (`value::PLUGIN_READ`) with args `[plugin,
+  block, ...slots]`; its operator calls `sense::plugin_read`, which asks a
+  thread-local reader that the world installs while a run has modules open
+  (`plugins::begin`/`end`). The editor has none, so there a reporter errors
+  with "only answers while the game is running". `plugins::read` turns the
+  slots into JSON by the schema (an actor slot's name into its id), calls the
+  block's module op as the asking actor (`sense::current_actor`) and takes the
+  answer's `value` as the schema's `returns` type; a mismatch is an error.
+  `WorldPlugins::read` remembers answers per module until the module is called
+  for anything else or a frame starts (`forget_reads`, from the Input and
+  Presentation stages), and a read may log but not act. A hat is
+  `InstructionKind::WhenPlugin { plugin, block, event, args }`, compiled to
+  `Trigger::Plugin` and started by `Event::Plugin { plugin, event, args, actor
+  }`, which a module raises with an `event` effect (`{name, actor?, args}`).
+  Hat slots are literal text, blank for any, and match as text or as numbers.
+  Both are VM only: codegen refuses them by name, scripts do not hear plugin
+  events, and `Project::plugin_blocks` reports all three shapes
+  (`PluginBlockShape`) so `preflight` checks each one (kind, slot count, and
+  that a reporter's command is a module op) and a Build is refused. In the
+  palette the operator `PluginRead` has a `layout` and `result` that are
+  functions of the value, and the `WhenPlugin` header's `head` uses text pieces
+  with an `index` (both blockstitch features). `plugins/examples/tally` has
+  "tally of" and "when tally changes" blocks; its `add` raises `changed` once
+  a run hosts it.
 - **Plugin SDK** (`blockloom-plugin-sdk`): a plugin author implements `Plugin`
   (`start`, then `call` over bytes or `call_json` over `serde_json::Value`) and
   names it with `export_plugin!`. The macro expands to the C entry symbol on a
@@ -402,8 +427,7 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   same `plugin_*` commands the shell does (install with a dry-run preview,
   update, remove, sync, undo the last change, clean the cache). It has a QML
   test (`tests/qml/tst_Plugins.qml`) but no inspector or contribution host yet.
-- **Not yet**: plugin reporters (planned as published snapshots) and hats
-  (events), plugin code in a built game (a build still refuses plugin blocks
+- **Not yet**: plugin code in a built game (a build still refuses plugin blocks
   and the pack's plugin payload is not loaded by the player), in the script
   ABI, a browser host for portable modules, an HTTP registry, dynamic QML for
   plugin editor panels.

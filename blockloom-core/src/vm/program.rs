@@ -71,6 +71,12 @@ pub enum Trigger {
     UiClicked(String),
     /// An input element was changed, by its id.
     UiChanged(String),
+    /// A plugin fired one of its events. Empty `args` entries match anything.
+    Plugin {
+        plugin: String,
+        event: String,
+        args: Vec<String>,
+    },
 }
 
 impl Trigger {
@@ -625,6 +631,16 @@ pub fn compile(graph: &ActorGraph) -> Program {
             InstructionKind::WhenUiChanged { element } => {
                 Some(Trigger::UiChanged(element.trim().to_string()))
             }
+            InstructionKind::WhenPlugin {
+                plugin,
+                event,
+                args,
+                ..
+            } => Some(Trigger::Plugin {
+                plugin: plugin.clone(),
+                event: event.clone(),
+                args: args.iter().map(|a| a.trim().to_string()).collect(),
+            }),
             InstructionKind::BlockHeader { .. } => None,
             // Not a header at all: a loose stack nothing can start.
             _ => continue,
@@ -1590,6 +1606,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenUiEvent { .. }
         | K::WhenUiClicked { .. }
         | K::WhenUiChanged { .. }
+        | K::WhenPlugin { .. }
         | K::BlockHeader { .. } => {}
 
         K::Move { steps: amount } => steps.push(Step::Action(Action::Move(amount.clone()))),

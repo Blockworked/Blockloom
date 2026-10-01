@@ -104,11 +104,11 @@ fn exercise(mut call: impl FnMut(&str, Value) -> Result<Value, String>) {
     call("add", json!({"name": "lives", "by": 2})).unwrap();
     assert_eq!(
         call("get", json!({"name": "coins"})).unwrap(),
-        json!({"count": 4})
+        json!({"count": 4, "value": 4})
     );
     assert_eq!(
         call("get", json!({"name": "nothing"})).unwrap(),
-        json!({"count": 0})
+        json!({"count": 0, "value": 0})
     );
     assert_eq!(
         call("all", Value::Null).unwrap(),
@@ -140,7 +140,14 @@ fn exercise(mut call: impl FnMut(&str, Value) -> Result<Value, String>) {
     );
     assert_eq!(call("world.start", Value::Null).unwrap(), Value::Null);
     assert_eq!(call("all", Value::Null).unwrap(), json!({"counts": {}}));
-    assert_eq!(call("world.stop", Value::Null).unwrap(), Value::Null);
+    // Once a run hosts it, a change fires the event the hat listens for.
+    assert_eq!(
+        call("add", json!({"name": "wins", "by": 5})).unwrap(),
+        json!({"count": 5, "effects": [
+            {"effect": "event", "name": "changed", "args": ["wins", 5]}
+        ]})
+    );
+    assert!(call("world.stop", Value::Null).unwrap()["effects"].is_array());
 }
 
 #[test]
@@ -201,13 +208,95 @@ fn the_package_seals_and_verifies_with_its_wasm() {
     let package = Package::load(&root).unwrap();
     assert_eq!(package.manifest.id, "com.example.tally");
     assert_eq!(package.contributions.commands.len(), 4);
-    assert_eq!(package.contributions.blocks.len(), 1);
+    assert_eq!(package.contributions.blocks.len(), 3);
     assert!(package.target_hashes().contains_key("portable"));
     // The sealed module is the one the manifest names, and it runs.
     let entry = package.manifest.runtime.portable.as_ref().unwrap();
     let mut module = portable(&root.join(&entry.module));
     assert_eq!(
         module.call_json("get", &json!({"name": "x"})).unwrap(),
-        json!({"count": 0})
+        json!({"count": 0, "value": 0})
+    );
+}
+
+/// The package's own schema, run the way a game hosts it: the reporter is
+/// asked on demand and the hat's event comes back from `add`.
+#[test]
+fn the_reporter_and_hat_work_in_a_hosted_world() {
+    use blockloom_plugin_api::loadout::LoadoutBlock;
+    use blockloom_plugin_api::schema::{BlockKind, CommandAction, Contributions};
+    use blockloom_plugin_host::module::CodeModule;
+    use blockloom_plugin_host::world::{Effect, Outcome, Preloaded, WorldPlugins};
+
+    let schema = Path::new(env!("CARGO_MANIFEST_DIR")).join("package/schemas/tally.json");
+    let contributions: Contributions =
+        serde_json::from_str(&std::fs::read_to_string(schema).unwrap()).unwrap();
+    contributions.check_definition().unwrap();
+    let blocks: Vec<LoadoutBlock> = contributions
+        .blocks
+        .iter()
+        .filter(|b| matches!(b.kind, BlockKind::Statement | BlockKind::Reporter))
+        .map(|b| {
+            let command = contributions
+                .command(b.command.as_deref().unwrap())
+                .unwrap();
+            let CommandAction::Module { op } = &command.action else {
+                panic!("the tally's commands are module ops");
+            };
+            LoadoutBlock {
+                type_id: b.type_id.clone(),
+                op: op.clone(),
+                slots: b.slots.clone(),
+                wants_actor: false,
+                returns: b.returns.clone(),
+            }
+        })
+        .collect();
+    let hat = contributions
+        .blocks
+        .iter()
+        .find(|b| b.type_id == "changed")
+        .unwrap();
+    assert_eq!(hat.event.as_deref(), Some("changed"));
+
+    let module = unsafe {
+        NativeModule::from_entry(
+            entry(),
+            BTreeSet::new(),
+            default_services("0.0.1".to_string()),
+        )
+    }
+    .unwrap();
+    let mut world = WorldPlugins::with_modules(vec![Preloaded {
+        id: "com.example.tally".to_string(),
+        module: CodeModule::Native(module),
+        hooks: vec![],
+        blocks,
+    }])
+    .unwrap();
+    let id = "com.example.tally";
+    world.start(&|_| json!({"records": [], "resources": []}));
+
+    // The reporter answers an integer, and the same question twice is one call.
+    assert_eq!(
+        world.read(id, "count", &[json!("coins")], "me").unwrap(),
+        json!(0)
+    );
+    let outcomes = world.run_block(id, "add", &[json!(4), json!("coins")], "me");
+    assert_eq!(
+        outcomes,
+        [Outcome::Effect {
+            plugin: id.to_string(),
+            effect: Effect::Event {
+                name: "changed".to_string(),
+                actor: None,
+                args: vec![json!("coins"), json!(4)],
+            }
+        }]
+    );
+    // The add forgot what had been read.
+    assert_eq!(
+        world.read(id, "count", &[json!("coins")], "me").unwrap(),
+        json!(4)
     );
 }

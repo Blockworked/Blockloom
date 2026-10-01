@@ -6,7 +6,10 @@
 //! Ops: `add` (`name`, `by`), `get` (`name`), `all`, `reset` and `engine`
 //! (what the host says about itself, through a host service). When a running
 //! game hosts the module it also hears `world.start` (a fresh run) and
-//! `world.stop`, whose answer carries an effect: a line in the run log.
+//! `world.stop`, whose answer carries an effect: a line in the run log. In a
+//! run, `add` also fires the `changed` event (its `name` and new count) for the
+//! "when tally changes" hat, and `get` answers `value` for the "tally of"
+//! reporter.
 
 use blockloom_plugin_sdk::{Error, Host, Plugin, Value, export_plugin, json};
 use std::collections::BTreeMap;
@@ -14,6 +17,8 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 struct Tally {
     counts: BTreeMap<String, i64>,
+    /// A running game hosts this module, so it has hats to start.
+    hosted: bool,
 }
 
 impl Tally {
@@ -36,13 +41,21 @@ impl Plugin for Tally {
             "add" => {
                 let name = Tally::name(&args)?;
                 let by = args["by"].as_i64().unwrap_or(1);
-                let count = self.counts.entry(name).or_insert(0);
+                let count = self.counts.entry(name.clone()).or_insert(0);
                 *count = count.saturating_add(by);
-                Ok(json!({ "count": *count }))
+                let count = *count;
+                if !self.hosted {
+                    return Ok(json!({ "count": count }));
+                }
+                Ok(json!({
+                    "count": count,
+                    "effects": [{"effect": "event", "name": "changed", "args": [name, count]}],
+                }))
             }
             "get" => {
                 let name = Tally::name(&args)?;
-                Ok(json!({ "count": self.counts.get(&name).copied().unwrap_or(0) }))
+                let count = self.counts.get(&name).copied().unwrap_or(0);
+                Ok(json!({ "count": count, "value": count }))
             }
             "all" => Ok(json!({ "counts": self.counts })),
             "reset" => {
@@ -52,6 +65,7 @@ impl Plugin for Tally {
             "engine" => host.call_json("host.version", &Value::Null),
             "world.start" => {
                 self.counts.clear();
+                self.hosted = true;
                 Ok(Value::Null)
             }
             "world.stop" if self.counts.is_empty() => Ok(Value::Null),

@@ -37,6 +37,23 @@
         {"name": "name", "type": "text", "default": "score"}
       ],
       "command": "add"
+    },
+    {
+      "type_id": "count",
+      "kind": "reporter",
+      "category": "Tally",
+      "label": "tally of {name}",
+      "slots": [{"name": "name", "type": "text", "default": "score"}],
+      "returns": {"type": "int"},
+      "command": "get"
+    },
+    {
+      "type_id": "changed",
+      "kind": "hat",
+      "category": "Tally",
+      "label": "when tally {name} changes",
+      "slots": [{"name": "name", "type": "text", "default": ""}],
+      "event": "changed"
     }
   ]
 }

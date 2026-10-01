@@ -373,6 +373,25 @@ pub enum Event {
         id: String,
         value: Evaluated,
     },
+    /// A plugin fired one of its events, for every actor or only `actor`.
+    Plugin {
+        plugin: String,
+        event: String,
+        args: Vec<String>,
+        actor: Option<String>,
+    },
+}
+
+/// Whether a plugin hat's slots take what a plugin fired: an empty slot takes
+/// anything, the rest must be equal as text or as numbers.
+fn plugin_args_match(want: &[String], got: &[String]) -> bool {
+    want.iter().enumerate().all(|(i, want)| {
+        want.is_empty()
+            || got.get(i).is_some_and(|got| {
+                got == want
+                    || matches!((got.parse::<f64>(), want.parse::<f64>()), (Ok(a), Ok(b)) if a == b)
+            })
+    })
 }
 
 impl Event {
@@ -387,6 +406,7 @@ impl Event {
             | Event::Particles { actor, .. }
             | Event::AnimationMarker { actor, .. }
             | Event::EnteredRoom { actor, .. } => Some(actor),
+            Event::Plugin { actor, .. } => actor.as_deref(),
             _ => None,
         }
     }
@@ -874,6 +894,19 @@ impl Vm {
             ) => want == id && kind == event,
             (Trigger::UiClicked(want), Event::UiClicked { id }) => want == id,
             (Trigger::UiChanged(want), Event::UiChanged { id, .. }) => want == id,
+            (
+                Trigger::Plugin {
+                    plugin: want_plugin,
+                    event: want_event,
+                    args: want,
+                },
+                Event::Plugin {
+                    plugin,
+                    event,
+                    args,
+                    ..
+                },
+            ) => want_plugin == plugin && want_event == event && plugin_args_match(want, args),
             _ => false,
         }
     }
@@ -2172,7 +2205,7 @@ impl Vm {
             } => {
                 let args = args
                     .iter()
-                    .map(|arg| json_of(&self.eval(arg, actor, params, temps, out)))
+                    .map(|arg| crate::value::json_of(&self.eval(arg, actor, params, temps, out)))
                     .collect();
                 out.push(Effect::PluginCall {
                     actor: actor.to_string(),
@@ -2708,21 +2741,6 @@ fn current_params(frames: &[Frame]) -> Option<&Params> {
         Frame::Call { params, .. } => Some(params),
         Frame::Loop { .. } => None,
     })
-}
-
-/// A slot's value as a plugin sees it. A whole number is an integer, so it
-/// satisfies an integer field as well as a number one.
-fn json_of(value: &Evaluated) -> serde_json::Value {
-    match value {
-        Evaluated::Number(n) if n.fract() == 0.0 && n.abs() < 9.0e15 => {
-            serde_json::Value::from(*n as i64)
-        }
-        Evaluated::Number(n) => serde_json::Number::from_f64(*n)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
-        Evaluated::Text(s) => serde_json::Value::String(s.clone()),
-        Evaluated::Bool(b) => serde_json::Value::Bool(*b),
-    }
 }
 
 fn store_temp(temps: &mut Vec<Evaluated>, temp: usize, value: Evaluated) {

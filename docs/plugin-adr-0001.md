@@ -227,10 +227,41 @@ before `Start`; the world opens the modules at `begin_run` and drops them at
   trip; a block whose command edits the project still goes to the editor.
 - `world.start`/`world.stop` are ordinary ops: a module that does not know
   them answers `Unsupported`, which the world treats as nothing to do.
-- Reporters and hats are not here yet. Reporters have to be answerable in the
-  fixed tick without a call per read, so they are planned as snapshots a
-  plugin publishes at a stage; hats are events the world fires.
+- Reporters and hats were not here yet; the seventh batch adds them.
 
 The GPU and windowed paths are unchecked here (no GPU in the container); the
 host crate's tests drive the lifecycle with native fixtures, and the runtime
 has no-op path tests.
+
+## Plugin reporters and hats (seventh batch)
+
+A reporter is a value, a hat is a header. Decisions:
+
+- The plan was to publish reporter answers as snapshots at a stage, so the
+  fixed tick never paid a call per read. That is replaced by on-demand reads:
+  the VM already evaluates a slot only when a block runs, a read is one op call
+  on a module that is already open, and a snapshot would have forced every
+  plugin to guess which values a project reads. The cost is bounded instead by
+  memoizing a module's answers until it is called for anything else or a
+  frame starts, which makes a loop asking the same question each step one
+  call. Modules are the same single-threaded objects the hooks use, so a read
+  mid-tick cannot race a hook.
+- A read may log but not act: effects in a reporter's answer are reported as
+  an error and dropped, so evaluating a slot can never change the world.
+- A reporter in the editor, outside a run, is an error that says so. There is
+  no module to ask, and answering a stale or default value would hide that.
+- One generic operator (`PluginRead`) and one generic header (`WhenPlugin`)
+  stand for every plugin block, as `PluginBlock` does for statements, so the
+  document stays readable when the plugin is missing and the VM, wire format
+  and blockstitch need no per-plugin knowledge. The cost is two blockstitch
+  features (an operator `layout` and `result` that are functions of the value,
+  and `index` on text and dropdown pieces).
+- A hat's slots are literal text, blank for any, because a header has no value
+  slots. A module raises its event with an `event` effect naming the plugin's
+  own event, optionally an actor, and the args the slots match.
+- Both are VM only. Codegen refuses them by name, and scripts do not hear
+  plugin events yet.
+
+The tally example gains a "tally of" reporter and a "when tally changes" hat;
+the host and example tests drive both through the real ABI, the VM tests
+through a fake reader, and the QML half is unrun here (no Qt in the container).

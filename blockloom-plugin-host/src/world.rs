@@ -13,12 +13,18 @@
 //! world asks (a lifecycle call it does not care about) is simply skipped.
 //!
 //! An op's answer may carry `{"effects": [...]}`, each `{"effect": "say" |
-//! "broadcast" | "error", ...}`; see [`Effect`].
+//! "broadcast" | "event" | "error", ...}`; see [`Effect`].
+//!
+//! A reporter block is answered on demand by [`WorldPlugins::read`]: the
+//! module's op returns `{"value": ...}`. Reads are memoized until anything
+//! else calls into the module or the world starts a new frame
+//! ([`WorldPlugins::forget_reads`]), so a loop asking the same question every
+//! step costs one call. A read is a question, so it may log but not act.
 
 use crate::hooks::{HookRef, order_hooks};
 use crate::module::{CodeModule, is_unsupported};
 use blockloom_plugin_api::loadout::{Loadout, LoadoutBlock, ops};
-use blockloom_plugin_api::schema::{FieldSchema, HookSchema, Stage};
+use blockloom_plugin_api::schema::{FieldSchema, FieldType, HookSchema, Stage};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,6 +39,16 @@ pub enum Effect {
     Broadcast { message: String },
     /// Reports a problem in the run log; the run carries on.
     Error { message: String },
+    /// Fires the plugin's own event: the hats naming it start, on `actor`
+    /// when one is named and on every actor otherwise. `args` are what the
+    /// hat's slots match against.
+    Event {
+        name: String,
+        #[serde(default)]
+        actor: Option<String>,
+        #[serde(default)]
+        args: Vec<Value>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,6 +78,8 @@ struct Hosted {
     blocks: BTreeMap<String, LoadoutBlock>,
     /// Hooks whose op the module does not have; not asked again.
     missing_hooks: BTreeSet<String>,
+    /// Answers to reads since the module last did anything else.
+    reads: BTreeMap<String, Value>,
 }
 
 #[derive(Default)]
@@ -118,6 +136,7 @@ impl WorldPlugins {
                     .map(|b| (b.type_id.clone(), b.clone()))
                     .collect(),
                 missing_hooks: BTreeSet::new(),
+                reads: BTreeMap::new(),
             },
         );
     }
@@ -218,6 +237,83 @@ impl WorldPlugins {
             .map(|b| b.slots.as_slice())
     }
 
+    /// What a reporter of this world answers, when it is one.
+    pub fn returns(&self, plugin: &str, block: &str) -> Option<&FieldType> {
+        self.modules
+            .get(plugin)?
+            .blocks
+            .get(block)?
+            .returns
+            .as_ref()
+    }
+
+    /// Asks a reporter's op with `args` in slot order and the asking
+    /// `actor`; answers the `value` it returns.
+    pub fn read(
+        &mut self,
+        plugin: &str,
+        block: &str,
+        args: &[Value],
+        actor: &str,
+    ) -> Result<Value, String> {
+        let Some(spec) = self
+            .modules
+            .get(plugin)
+            .and_then(|h| h.blocks.get(block))
+            .cloned()
+        else {
+            return Err(format!("{plugin}/{block} doesn't answer in this run"));
+        };
+        if spec.slots.len() != args.len() {
+            return Err(format!(
+                "{plugin}/{block}: the block has {} slots, the project's has {}",
+                spec.slots.len(),
+                args.len()
+            ));
+        }
+        let input = block_input(&spec, args, actor);
+        let key = format!("{block}\u{1f}{input}");
+        if let Some(hosted) = self.modules.get(plugin)
+            && let Some(known) = hosted.reads.get(&key)
+        {
+            return Ok(known.clone());
+        }
+        let (outcomes, answer, missing) = self.call_answer(plugin, &spec.op, &input, false, false);
+        for outcome in outcomes {
+            match outcome {
+                Outcome::Effect { .. } => self.error(
+                    plugin,
+                    format!("{}: a reporter can only answer, not act", spec.op),
+                ),
+                other => self.pending.push(other),
+            }
+        }
+        if missing {
+            return Err(format!(
+                "{plugin}/{block}: the module has no op {}",
+                spec.op
+            ));
+        }
+        let Some(answer) = answer else {
+            return Err(format!("{plugin}/{block} could not answer"));
+        };
+        let Some(value) = answer.get("value") else {
+            return Err(format!("{plugin}/{block}: the answer has no value"));
+        };
+        if let Some(hosted) = self.modules.get_mut(plugin) {
+            hosted.reads.insert(key, value.clone());
+        }
+        Ok(value.clone())
+    }
+
+    /// Drops every remembered read. The world calls this at the start of
+    /// each frame, since what a module reports may move with it.
+    pub fn forget_reads(&mut self) {
+        for hosted in self.modules.values_mut() {
+            hosted.reads.clear();
+        }
+    }
+
     /// Runs a block's op with `args` in slot order and the running `actor`.
     pub fn run_block(
         &mut self,
@@ -251,14 +347,8 @@ impl WorldPlugins {
             });
             return out;
         }
-        let mut object = Map::new();
-        for (slot, value) in spec.slots.iter().zip(args) {
-            object.insert(slot.name.clone(), value.clone());
-        }
-        if spec.wants_actor && !object.contains_key("actor") {
-            object.insert("actor".to_string(), json!(actor));
-        }
-        out.extend(self.call(plugin, &spec.op, &Value::Object(object), false));
+        let input = block_input(&spec, args, actor);
+        out.extend(self.call(plugin, &spec.op, &input, false));
         out
     }
 
@@ -282,9 +372,26 @@ impl WorldPlugins {
         input: &Value,
         quiet_unsupported: bool,
     ) -> (Vec<Outcome>, bool) {
+        let (out, _, missing) = self.call_answer(plugin, op, input, quiet_unsupported, true);
+        (out, missing)
+    }
+
+    /// One call, handing back the module's answer too. A call that is not a
+    /// read (`acts`) may change what the module reports, so it forgets reads.
+    fn call_answer(
+        &mut self,
+        plugin: &str,
+        op: &str,
+        input: &Value,
+        quiet_unsupported: bool,
+        acts: bool,
+    ) -> (Vec<Outcome>, Option<Value>, bool) {
         let Some(hosted) = self.modules.get_mut(plugin) else {
-            return (Vec::new(), false);
+            return (Vec::new(), None, false);
         };
+        if acts {
+            hosted.reads.clear();
+        }
         let mut missing = false;
         let answer = hosted.module.call_json(op, input);
         let mut out: Vec<Outcome> = hosted
@@ -297,8 +404,12 @@ impl WorldPlugins {
                 text,
             })
             .collect();
+        let mut value = None;
         match answer {
-            Ok(answer) => out.extend(effects_of(plugin, op, &answer)),
+            Ok(answer) => {
+                out.extend(effects_of(plugin, op, &answer));
+                value = Some(answer);
+            }
             Err(error) if is_unsupported(&error) => {
                 missing = true;
                 if !quiet_unsupported {
@@ -324,8 +435,21 @@ impl WorldPlugins {
                 }
             }
         }
-        (out, missing)
+        (out, value, missing)
     }
+}
+
+/// The JSON a block's op is called with: its slots by name, plus the actor
+/// when the command asks for one.
+fn block_input(spec: &LoadoutBlock, args: &[Value], actor: &str) -> Value {
+    let mut object = Map::new();
+    for (slot, value) in spec.slots.iter().zip(args) {
+        object.insert(slot.name.clone(), value.clone());
+    }
+    if spec.wants_actor && !object.contains_key("actor") {
+        object.insert("actor".to_string(), json!(actor));
+    }
+    Value::Object(object)
 }
 
 fn effects_of(plugin: &str, op: &str, answer: &Value) -> Vec<Outcome> {
@@ -366,10 +490,11 @@ mod tests {
     use crate::source::Source;
     use blockloom_plugin_api::Version;
     use blockloom_plugin_api::abi::{Buffer, HostApi, PluginApi, Slice};
-    use blockloom_plugin_api::schema::FieldType;
     use std::cell::RefCell;
 
     thread_local! {
+        // How many times the scripted plugin has been asked to `count`.
+        static ASKED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
         // One host table per module started on this thread; a module's handle
         // is its index plus one.
         static HOSTS: RefCell<Vec<*const HostApi>> = const { RefCell::new(Vec::new()) };
@@ -417,6 +542,18 @@ mod tests {
                         "effect": "say",
                         "text": format!("{} {} {}", input["name"], input["by"], input["actor"]),
                     }]}),
+                ),
+                "count" => {
+                    let n = ASKED.with(|asked| {
+                        asked.set(asked.get() + 1);
+                        asked.get()
+                    });
+                    answer(out, json!({"value": n}))
+                }
+                "bare" => answer(out, json!({})),
+                "ping" => answer(
+                    out,
+                    json!({"effects": [{"effect": "event", "name": "pinged", "args": [input["by"]]}]}),
                 ),
                 "dance" => answer(out, json!({"effects": [{"effect": "dance"}]})),
                 "list" => answer(out, json!({"effects": 3})),
@@ -490,6 +627,7 @@ mod tests {
                 })
                 .collect(),
             wants_actor,
+            returns: None,
         }
     }
 
@@ -668,6 +806,94 @@ mod tests {
             said(&world.run_block("a", "fine", &[], "")).len(),
             1,
             "still hosted"
+        );
+    }
+
+    fn reading_world() -> WorldPlugins {
+        let mut counted = block(
+            "count",
+            "count",
+            &[("by", FieldType::Text { max_len: None })],
+            false,
+        );
+        counted.returns = Some(FieldType::Int {
+            min: None,
+            max: None,
+        });
+        WorldPlugins::with_modules(vec![Preloaded {
+            id: "a".to_string(),
+            module: scripted(),
+            hooks: vec![hook("tick", Stage::FixedSimulation, &[])],
+            blocks: vec![
+                counted,
+                block("bare", "bare", &[], false),
+                block(
+                    "ping",
+                    "ping",
+                    &[("by", FieldType::Text { max_len: None })],
+                    false,
+                ),
+            ],
+        }])
+        .unwrap()
+    }
+
+    #[test]
+    fn a_reporter_is_asked_once_until_something_else_runs() {
+        ASKED.with(|asked| asked.set(0));
+        let mut world = reading_world();
+        assert!(world.returns("a", "count").is_some());
+        let first = world.read("a", "count", &[json!("x")], "me").unwrap();
+        assert_eq!(first, json!(1));
+        // The same question is remembered, a different one is asked.
+        assert_eq!(
+            world.read("a", "count", &[json!("x")], "me").unwrap(),
+            json!(1)
+        );
+        assert_eq!(
+            world.read("a", "count", &[json!("y")], "me").unwrap(),
+            json!(2)
+        );
+        // A hook runs, so the answers may have moved.
+        world.run_stage(Stage::FixedSimulation, 1, 0.02);
+        assert_eq!(
+            world.read("a", "count", &[json!("x")], "me").unwrap(),
+            json!(3)
+        );
+        world.forget_reads();
+        assert_eq!(
+            world.read("a", "count", &[json!("x")], "me").unwrap(),
+            json!(4)
+        );
+    }
+
+    #[test]
+    fn a_read_that_cannot_answer_says_why() {
+        let mut world = reading_world();
+        let wrong = world.read("a", "count", &[], "me").unwrap_err();
+        assert!(wrong.contains("1 slots"), "{wrong}");
+        let none = world.read("a", "bare", &[], "me").unwrap_err();
+        assert!(none.contains("no value"), "{none}");
+        let ghost = world.read("a", "ghost", &[], "me").unwrap_err();
+        assert!(ghost.contains("doesn't answer"), "{ghost}");
+        let missing = world.read("zzz", "count", &[], "me").unwrap_err();
+        assert!(missing.contains("doesn't answer"), "{missing}");
+    }
+
+    #[test]
+    fn a_block_can_fire_the_plugins_own_event() {
+        let mut world = reading_world();
+        let outcomes = world.run_block("a", "ping", &[json!("coins")], "me");
+        assert_eq!(
+            outcomes,
+            [Outcome::Effect {
+                plugin: "a".to_string(),
+                effect: Effect::Event {
+                    name: "pinged".to_string(),
+                    actor: None,
+                    args: vec![json!("coins")],
+                }
+            }]
         );
     }
 
