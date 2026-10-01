@@ -22,7 +22,7 @@ just build              # cargo build --release --workspace (the normal build)
 just run                # build, then launch target/release/blockloom
 just qml-preview        # Qt 6.12 live QML edits, with the real backend
 just replace-fast       # Linux: rebuild/reinstall editor and runtime, reuse staged players
-just replace [jobs]     # build editor/web concurrently, reuse runtime, reinstall on Linux
+just replace [jobs]     # build editor/web concurrently, reuse runtime, reinstall
 just prune-target --dry-run          # inspect the 20 GiB build-cache budget
 cargo build --workspace && target/debug/blockloom   # debug build/run - faster iteration
 just test               # cargo test --workspace (blockloom-core has the bulk of them)

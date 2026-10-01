@@ -370,6 +370,16 @@ uninstall:
     sudo rm -rf {{LIBDIR}}
     sudo rm -f /usr/bin/blockloom /usr/share/applications/com.blockworked.Blockloom.desktop /usr/share/applications/blockloom.desktop /usr/share/icons/hicolor/256x256/apps/blockloom.png
 
+# Install the editor, runtime and staged players for the current Windows
+# user, with a Start Menu shortcut and a PATH entry. No admin rights needed.
+[windows]
+install:
+    python scripts/install-windows.py install
+
+[windows]
+uninstall:
+    python scripts/install-windows.py uninstall
+
 # Reinstall the editor and runtime, keeping the already staged game players.
 [linux]
 replace-fast: build install

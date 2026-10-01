@@ -380,10 +380,10 @@ def main(argv):
     if failed:
         print("A build failed; skipping reinstall.", file=sys.stderr)
         return 1
-    if sys.platform == "linux":
+    if sys.platform in ("linux", "win32"):
         check([just_exe(), "uninstall", "install"])
     else:
-        # No system install elsewhere: the editor, runtime and staged players
+        # No system install on macOS: the editor, runtime and staged players
         # are used from target/release as built.
         directory = Path(os.environ.get("CARGO_TARGET_DIR", "target")) / "release"
         print(f"Replacement builds are in {directory} - run the editor from there.")
