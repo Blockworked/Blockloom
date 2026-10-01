@@ -2,7 +2,10 @@
 """Exercise cache cleanup on small fixtures without compiling Rust."""
 
 from contextlib import redirect_stdout, redirect_stderr
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 import importlib.util
 import io
 import os
@@ -20,13 +23,33 @@ cleaner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cleaner)
 
 
+def lock_exclusive(path):
+    """Hold an exclusive lock on a file, the way a running Cargo does."""
+    handle = path.open("a+b")
+    if fcntl is not None:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+    else:
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+    return handle
+
+
 class CleanupTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.target = Path(self.temp.name) / "target"
         self.profile = self.target / "release"
-        self.env = patch.dict(os.environ, {}, clear=True)
+        # Isolate from the developer's Cargo environment. Windows cannot
+        # spawn a child process without its system variables, so those stay.
+        keep = {}
+        if os.name == "nt":
+            for name in ("SystemRoot", "SystemDrive", "PATH", "PATHEXT", "TEMP", "TMP"):
+                if name in os.environ:
+                    keep[name] = os.environ[name]
+        self.env = patch.dict(os.environ, keep, clear=True)
         self.env.start()
         self.addCleanup(self.env.stop)
 
@@ -72,16 +95,14 @@ class CleanupTests(unittest.TestCase):
 
     def test_busy_profile_is_untouched(self):
         file = self.write(self.profile / "incremental/old/data")
-        with (self.profile / ".cargo-build-lock").open("a+b") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with lock_exclusive(self.profile / ".cargo-build-lock"):
             output = self.prune(1)
         self.assertTrue(file.exists())
         self.assertIn("active builds", output)
 
     def test_legacy_cargo_lock_is_respected(self):
         file = self.write(self.profile / "incremental/old/data")
-        with (self.profile / ".cargo-lock").open("a+b") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with lock_exclusive(self.profile / ".cargo-lock"):
             self.prune(1)
         self.assertTrue(file.exists())
 
@@ -108,7 +129,10 @@ class CleanupTests(unittest.TestCase):
     def test_symlink_is_not_followed(self):
         file = self.write(Path(self.temp.name) / "outside/data")
         (self.target).mkdir()
-        (self.target / "linked").symlink_to(file.parent, target_is_directory=True)
+        try:
+            (self.target / "linked").symlink_to(file.parent, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(f"cannot create symlinks here: {error}")
         self.prune(1)
         self.assertTrue(file.exists())
 
@@ -117,8 +141,10 @@ class CleanupTests(unittest.TestCase):
         alias = self.profile / "deps/blockloom"
         alias.parent.mkdir()
         os.link(binary, alias)
-        expected = binary.stat().st_blocks * 512
-        expected += sum(path.stat().st_blocks * 512 for path in (self.target, self.profile, alias.parent))
+        expected = cleaner.allocated(binary.stat())
+        if os.name != "nt":
+            # Directories count toward the budget everywhere else (see usage).
+            expected += sum(cleaner.allocated(path.stat()) for path in (self.target, self.profile, alias.parent))
         self.assertEqual(cleaner.usage(self.target)[0], expected)
         self.prune(1)
         self.assertTrue(binary.exists())

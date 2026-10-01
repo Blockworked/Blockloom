@@ -11,7 +11,8 @@ just build
 Cargo recipes in the justfile prepare dependencies automatically, as does the
 editor's Android runtime cross-build. Before running Cargo directly on a fresh
 checkout, run `just prepare-patched-deps`. Preparation requires Bash, curl, tar,
-patch, and either sha256sum or shasum. On Windows, use Git Bash tools on PATH.
+patch, and either sha256sum or shasum. On Windows the justfile finds Git Bash
+itself (PATH first, then the default install location).
 
 `dependencies.txt` pins the crate name, version, archive SHA-256 and generated
 directory name. Preparation first checks Cargo's archive cache, then downloads

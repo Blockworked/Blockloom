@@ -22,8 +22,8 @@ just build              # cargo build --release --workspace (the normal build)
 just run                # build, then launch target/release/blockloom
 just qml-preview        # Qt 6.12 live QML edits, with the real backend
 just replace-fast       # Linux: rebuild/reinstall editor and runtime, reuse staged players
-just replace [jobs]     # Linux: build editor/web concurrently, reuse runtime, reinstall
-just prune-target --dry-run          # Linux: inspect the 20 GiB build-cache budget
+just replace [jobs]     # build editor/web concurrently, reuse runtime, reinstall on Linux
+just prune-target --dry-run          # inspect the 20 GiB build-cache budget
 cargo build --workspace && target/debug/blockloom   # debug build/run - faster iteration
 just test               # cargo test --workspace (blockloom-core has the bulk of them)
 cargo bench -p blockloom-core --bench vm   # block VM ns/tick over a few canvases
@@ -53,7 +53,7 @@ Replacement uses the incremental `release` profile for web builds by default;
 `just web-player` still defaults to `dist`. Web builds compile only the library
 that wasm-bindgen loads, skipping the unused runtime executable.
 
-Linux build recipes use `scripts/prune-target.py` before and after compilation
+Build recipes use `scripts/prune-target.py` before and after compilation
 to keep the whole target tree within a 20 GiB budget. Python 3 is required.
 `BLOCKLOOM_TARGET_LIMIT_GIB` changes the budget. Cleanup evicts old incremental
 caches first, then older profile caches, preserving binaries and staged players.
@@ -167,8 +167,9 @@ Build/test with `cd mcp && pnpm install && pnpm run build && pnpm test`.
 ### Cargo workspace
 
 The editor, and the game world. On Linux the world runs on a thread inside the
-editor and draws straight into its Game view (see Game view below); elsewhere
-it is a child process.
+editor and draws straight into its Game view (see Game view below); on
+Windows it runs on a thread too, but reads its target back and the view
+uploads those bytes as an image. Elsewhere it is a child process.
 
 - **`blockloom-qt`** (package `blockloom`) - the editor window and the app's
   entry point: Qt Quick over cxx-qt. It owns `blockloom-app` directly - there
@@ -470,7 +471,7 @@ draw on top. That is why the window has an alpha buffer on Wayland.
 `BLOCKLOOM_HDR_VIEW=0` turns the plane off.
 
 `BLOCKLOOM_RUNTIME=process` forces the child process and MJPEG preview on
-Linux too. Windows and macOS have no GPU sharing yet.
+Linux and Windows too. macOS has no embedded world yet.
 
 ### Scene view
 

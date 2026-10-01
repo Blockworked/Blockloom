@@ -70,6 +70,7 @@ fn main() {
                 .file(QResourceFile::new("../res/icons/blockloom.png").alias("blockloom.png")),
         ),
     )
+    .qt_module("Quick")
     .qt_module("QuickControls2")
     .qt_module("QuickDialogs2");
 

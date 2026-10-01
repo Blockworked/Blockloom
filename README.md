@@ -78,8 +78,9 @@ Node.js is not needed to build the Qt editor.
 
 ### Build Cache Budget
 
-On Linux, `just build`, `just player`, `just web-player`, `just test`,
-`just replace` and `just qml-preview` clean build caches around compilation.
+On Linux and Windows, `just build`, `just player`, `just web-player`,
+`just test`, `just replace` and `just qml-preview` clean build caches around
+compilation.
 The default budget is **20 GiB** for the whole `target` tree, including the
 web build. Set `BLOCKLOOM_TARGET_LIMIT_GIB` to change it.
 

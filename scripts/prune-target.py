@@ -3,7 +3,6 @@
 
 import argparse
 from contextlib import ExitStack
-import fcntl
 import math
 import os
 from pathlib import Path
@@ -11,9 +10,36 @@ import shutil
 import subprocess
 import sys
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+if fcntl is None and os.name == "nt":
+    import msvcrt
+
 
 GIB = 1024 ** 3
 CACHES = {"incremental", "deps", "build", ".fingerprint", "examples"}
+
+
+def _remove_tree(path):
+    # Windows refuses to delete read-only files; Cargo caches shouldn't have
+    # any, but a stray one must not abort the cleanup.
+    if os.name == "nt":
+        shutil.rmtree(path, onerror=_readonly_handler)
+    else:
+        shutil.rmtree(path)
+
+
+def _readonly_handler(function, path, excinfo):
+    os.chmod(path, 0o666)
+    function(path)
+
+
+def allocated(info):
+    # st_blocks is Unix-only; elsewhere the logical size is close enough for
+    # a cache budget.
+    return info.st_blocks * 512 if hasattr(info, "st_blocks") else info.st_size
 
 
 def usage(path):
@@ -21,10 +47,13 @@ def usage(path):
     newest = 0
     seen = set()
     for directory, dirs, files in os.walk(path):
-        try:
-            size += Path(directory).stat().st_blocks * 512
-        except FileNotFoundError:
-            continue
+        if os.name != "nt":
+            # NTFS reports a directory's entry list as its size, which shifts
+            # whenever files come and go; it is not cache cost worth counting.
+            try:
+                size += allocated(Path(directory).stat())
+            except FileNotFoundError:
+                continue
         dirs[:] = [name for name in dirs if not (Path(directory) / name).is_symlink()]
         for name in files:
             try:
@@ -33,7 +62,7 @@ def usage(path):
                 continue
             key = (info.st_dev, info.st_ino)
             if key not in seen:
-                size += info.st_blocks * 512
+                size += allocated(info)
                 seen.add(key)
             newest = max(newest, info.st_mtime)
     return size, newest
@@ -57,11 +86,24 @@ def lock_profile(profile, stack):
         for name in (".cargo-lock", ".cargo-build-lock"):
             handle = (profile / name).open("a+b")
             handles.append(handle)
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if fcntl is not None:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                # msvcrt locks a byte range; Cargo's whole-file lock overlaps
+                # it, and so does another probe, so a held lock reads as busy.
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
     except BlockingIOError:
         for handle in handles:
             handle.close()
         return False
+    except OSError:
+        for handle in handles:
+            handle.close()
+        if fcntl is None:
+            # Windows reports lock contention as OSError, not BlockingIOError.
+            return False
+        raise
     except BaseException:
         for handle in handles:
             handle.close()
@@ -105,7 +147,7 @@ def prune(target, limit, dry_run=False, keep_profiles=()):
                 break
             print(f"{'Would remove' if dry_run else 'Removing'} incremental cache: {crate}")
             if not dry_run:
-                shutil.rmtree(crate)
+                _remove_tree(crate)
             remaining = remaining - size if dry_run else sum(usage(root)[0] for root in roots)
         if remaining > limit:
             old_profiles = []
@@ -122,7 +164,7 @@ def prune(target, limit, dry_run=False, keep_profiles=()):
                 print(f"{'Would remove' if dry_run else 'Removing'} profile caches: {profile}")
                 for cache in caches:
                     if not dry_run:
-                        shutil.rmtree(cache)
+                        _remove_tree(cache)
                 remaining = (remaining - sum(usage(cache)[0] for cache in caches)) if dry_run else sum(usage(root)[0] for root in roots)
         if not dry_run:
             remaining = sum(usage(root)[0] for root in roots)

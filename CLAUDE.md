@@ -129,8 +129,9 @@ Build/test with `cd mcp && pnpm install && pnpm run build && pnpm test`.
 ### Cargo workspace
 
 The editor, and the game world. On Linux the world runs on a thread inside the
-editor and draws straight into its Game view (see Game view below); elsewhere
-it is a child process.
+editor and draws straight into its Game view (see Game view below); on
+Windows it runs on a thread too, but reads its target back and the view
+uploads those bytes as an image. Elsewhere it is a child process.
 
 - **`blockloom-qt`** (package `blockloom`) - the editor window and the app's
   entry point: Qt Quick over cxx-qt. It owns `blockloom-app` directly - there
@@ -396,7 +397,7 @@ draw on top. That is why the window has an alpha buffer on Wayland.
 `BLOCKLOOM_HDR_VIEW=0` turns the plane off.
 
 `BLOCKLOOM_RUNTIME=process` forces the child process and MJPEG preview on
-Linux too. Windows and macOS have no GPU sharing yet.
+Linux and Windows too. macOS has no embedded world yet.
 
 ### Scene view
 
