@@ -386,16 +386,29 @@ pub(crate) fn plugin_change(
     }))
 }
 
+/// What `plugin-install` was asked for.
+pub(crate) struct InstallRequest {
+    pub id: String,
+    pub version: Option<String>,
+    pub source: Option<String>,
+    pub features: Vec<String>,
+    pub dry_run: bool,
+    pub offline: bool,
+}
+
 pub(crate) fn plugin_install(
     state: &SharedState,
     app: &AppHandle,
-    id: String,
-    version: Option<String>,
-    source: Option<String>,
-    features: Vec<String>,
-    dry_run: bool,
-    offline: bool,
+    request: InstallRequest,
 ) -> Result<Value, String> {
+    let InstallRequest {
+        id,
+        version,
+        source,
+        features,
+        dry_run,
+        offline,
+    } = request;
     validate_plugin_id(&id)?;
     let req: VersionReq = version
         .as_deref()

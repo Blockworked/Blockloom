@@ -442,12 +442,14 @@ impl Backend {
             "plugin_install" => to_json(commands::plugins::plugin_install(
                 state,
                 app,
-                arg(&args, "id")?,
-                arg(&args, "version")?,
-                arg(&args, "source")?,
-                arg(&args, "features").unwrap_or_default(),
-                arg(&args, "dryRun").unwrap_or_default(),
-                arg(&args, "offline").unwrap_or_default(),
+                commands::plugins::InstallRequest {
+                    id: arg(&args, "id")?,
+                    version: arg(&args, "version")?,
+                    source: arg(&args, "source")?,
+                    features: arg(&args, "features").unwrap_or_default(),
+                    dry_run: arg(&args, "dryRun").unwrap_or_default(),
+                    offline: arg(&args, "offline").unwrap_or_default(),
+                },
             )?),
             "plugin_remove" => to_json(commands::plugins::plugin_remove(
                 state,

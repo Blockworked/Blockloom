@@ -107,6 +107,7 @@ fn project(actor: impl Fn(usize) -> Actor) -> Project {
         globals: Vec::new(),
         global_lists: Vec::new(),
         global_dicts: Vec::new(),
+        plugin_resources: Vec::new(),
     }
 }
 
