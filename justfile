@@ -177,14 +177,15 @@ web-tools: prepare-patched-deps
 web-player profile="dist": prepare-patched-deps
     #!/usr/bin/env bash
     set -euo pipefail
-    # Keep host tools separate from native dist builds so both can run at once.
-    export CARGO_BUILD_BUILD_DIR="${CARGO_BUILD_BUILD_DIR:-${CARGO_TARGET_DIR:-target}/web-build}"
-    cargo build -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown --profile {{profile}}
+    # Separate host-tool outputs as well as intermediates from native builds.
+    web_target_dir="${CARGO_TARGET_DIR:-target}/web-build"
+    export CARGO_BUILD_BUILD_DIR="${CARGO_BUILD_BUILD_DIR:-$web_target_dir}"
+    cargo build -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown --profile {{profile}} --target-dir "$web_target_dir"
     command -v wasm-bindgen >/dev/null || { echo "need wasm-bindgen-cli: just web-tools"; exit 1; }
     out="${CARGO_TARGET_DIR:-target}/release/players/wasm32-unknown-unknown"
     mkdir -p "$out"
     wasm-bindgen --target web --no-typescript --remove-name-section --remove-producers-section \
-        --out-dir "$out" "${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/{{ if profile == "dev" { "debug" } else { profile } }}/blockloom_runtime.wasm"
+        --out-dir "$out" "$web_target_dir/wasm32-unknown-unknown/{{ if profile == "dev" { "debug" } else { profile } }}/blockloom_runtime.wasm"
     ls -l "$out"
 
 # Builds a project folder for the browser: one self-contained .html under
@@ -394,6 +395,12 @@ replace jobs="": prepare-patched-deps
         exit 1
     fi
     export CARGO_BUILD_JOBS="$jobs"
+    export JUST_COLOR=never
+    export CARGO_TERM_PROGRESS_WHEN=never
+    # Resolve and download once before parallel builds contend for the cache.
+    echo "Fetching native and web dependencies before compiling."
+    cargo fetch --locked --target {{host-target}} --target wasm32-unknown-unknown
+    export CARGO_NET_OFFLINE=true
     echo "Building editor, native player and web player concurrently ($jobs Cargo jobs each)."
     # Preparation already ran above; parallel prerequisites would share its lock.
     just --no-deps build &

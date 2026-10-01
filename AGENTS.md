@@ -36,9 +36,12 @@ just web-smoke <page.html> [--scripts N] [--moves ACTOR]  # headless run of a bu
 
 `just replace` divides the CPU count across its three builds by default;
 `just replace 4` uses four Cargo jobs per build. `CARGO_BUILD_JOBS` overrides
-the default per-build limit. Web players use `target/web-build` for intermediate
-artifacts to avoid locking the native player's host-tool cache; their first build
-with this cache recompiles dependencies. Staged player paths stay the same.
+the default per-build limit. Web players use `target/web-build` for both final
+and intermediate artifacts to avoid the native player's host-tool output locks;
+their first build with this cache recompiles dependencies. Staged player paths
+stay the same.
+Replacement fetches native and web dependencies once before starting the builds
+offline, so network access does not serialize the parallel compilation steps.
 
 Build the whole workspace, not just `-p blockloom`: off Linux (or with
 `BLOCKLOOM_RUNTIME=process`) the editor starts the `blockloom-runtime` binary
