@@ -33,17 +33,10 @@ fn num(arg: Option<&Evaluated>) -> f64 {
     arg.and_then(|value| value.as_number().ok()).unwrap_or(0.0)
 }
 
-/// The running actor, or an error naming the reason there isn't one - a
-/// reporter previewed in the editor has no actor context.
-fn me() -> Result<sense::ActorSense, String> {
-    let id = sense::current_actor().ok_or("no actor is running this script")?;
-    sense::read(|sensors| {
-        sensors
-            .actors
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| "this actor isn't in the running world".to_string())
-    })
+/// Reads the running actor's snapshot in place, or errors with the reason
+/// there isn't one - a reporter previewed in the editor has no actor context.
+fn with_me<R>(f: impl FnOnce(&sense::ActorSense) -> R) -> Result<R, String> {
+    sense::with_me(f)
 }
 
 /// One interface element, or an error naming the id nothing answers to -
@@ -288,7 +281,7 @@ static OPERATORS: &[ExtOperator] = &[
         default_args: Vec::new,
         // Whether any tween (a glide or a `tween ...` block) is still moving
         // me. What a strand waits on before starting the next hop.
-        eval: |_| Ok(Evaluated::Bool(me()?.tweening)),
+        eval: |_| with_me(|me| Evaluated::Bool(me.tweening)),
     },
     ExtOperator {
         kind: "CurrentClip",
@@ -298,7 +291,7 @@ static OPERATORS: &[ExtOperator] = &[
         // The clip the animation player is holding, or empty for none. The
         // state name in a clip-per-state project, which is what a state
         // machine transition switches on.
-        eval: |_| Ok(Evaluated::Text(me()?.anim_clip)),
+        eval: |_| with_me(|me| Evaluated::Text(me.anim_clip.clone())),
     },
     ExtOperator {
         kind: "CurrentFrame",
@@ -306,7 +299,7 @@ static OPERATORS: &[ExtOperator] = &[
         arity: 0,
         default_args: Vec::new,
         // The 1-based frame showing right now. Zero with no clip.
-        eval: |_| Ok(Evaluated::Number(me()?.anim_frame as f64)),
+        eval: |_| with_me(|me| Evaluated::Number(me.anim_frame as f64)),
     },
     ExtOperator {
         kind: "AnimationPlaying",
@@ -315,7 +308,7 @@ static OPERATORS: &[ExtOperator] = &[
         default_args: Vec::new,
         // Whether the player's clip is still advancing. A `Once` clip at
         // its end reads as false, which is when `when animation ends` fires.
-        eval: |_| Ok(Evaluated::Bool(me()?.anim_playing)),
+        eval: |_| with_me(|me| Evaluated::Bool(me.anim_playing)),
     },
     ExtOperator {
         kind: "ParticleCount",
@@ -323,7 +316,7 @@ static OPERATORS: &[ExtOperator] = &[
         arity: 0,
         default_args: Vec::new,
         // My emitter's live particles, as of the last frame drawn.
-        eval: |_| Ok(Evaluated::Number(me()?.particles.alive as f64)),
+        eval: |_| with_me(|me| Evaluated::Number(me.particles.alive as f64)),
     },
     ExtOperator {
         kind: "ParticleEventCount",
@@ -335,7 +328,7 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |args| {
             let event = crate::vfx::ParticleEvent::parse(&args[0].as_text())
                 .ok_or_else(|| format!("particles can't \"{}\"", args[0].as_text()))?;
-            Ok(Evaluated::Number(me()?.particles.count(event) as f64))
+            with_me(|me| Evaluated::Number(me.particles.count(event) as f64))
         },
     },
     ExtOperator {
@@ -349,9 +342,10 @@ static OPERATORS: &[ExtOperator] = &[
             let event = crate::vfx::ParticleEvent::parse(&args[0].as_text())
                 .ok_or_else(|| format!("particles can't \"{}\"", args[0].as_text()))?;
             let axis = axis_of(args.get(1));
-            let me = me()?;
-            let at = me.particles.at(event).unwrap_or(me.position);
-            Ok(Evaluated::Number(at[axis.index()] as f64))
+            with_me(|me| {
+                let at = me.particles.at(event).unwrap_or(me.position);
+                Evaluated::Number(at[axis.index()] as f64)
+            })
         },
     },
     ExtOperator {
@@ -453,10 +447,8 @@ static OPERATORS: &[ExtOperator] = &[
         arity: 1,
         default_args: || vec![text("X")],
         eval: |args| {
-            let me = me()?;
-            Ok(Evaluated::Number(
-                me.position[axis_of(args.first()).index()] as f64,
-            ))
+            let axis = axis_of(args.first());
+            with_me(|me| Evaluated::Number(me.position[axis.index()] as f64))
         },
     },
     ExtOperator {
@@ -465,10 +457,8 @@ static OPERATORS: &[ExtOperator] = &[
         arity: 1,
         default_args: || vec![text("Z")],
         eval: |args| {
-            let me = me()?;
-            Ok(Evaluated::Number(
-                me.rotation[axis_of(args.first()).index()] as f64,
-            ))
+            let axis = axis_of(args.first());
+            with_me(|me| Evaluated::Number(me.rotation[axis.index()] as f64))
         },
     },
     ExtOperator {
@@ -479,10 +469,8 @@ static OPERATORS: &[ExtOperator] = &[
         // Where I stand in my parent's frame - the world position itself
         // when I hang off nothing, so this never needs a parent to answer.
         eval: |args| {
-            let me = me()?;
-            Ok(Evaluated::Number(
-                me.local_position[axis_of(args.first()).index()] as f64,
-            ))
+            let axis = axis_of(args.first());
+            with_me(|me| Evaluated::Number(me.local_position[axis.index()] as f64))
         },
     },
     ExtOperator {
@@ -491,21 +479,22 @@ static OPERATORS: &[ExtOperator] = &[
         arity: 1,
         default_args: || vec![text("")],
         eval: |args| {
-            let me = me()?;
             let target = args[0].as_text();
-            // An empty target asks "touching anything at all?".
-            if target.trim().is_empty() {
-                return Ok(Evaluated::Bool(!me.touching.is_empty()));
-            }
-            Ok(Evaluated::Bool(sense::read(|sensors| {
-                me.touching.iter().any(|id| {
-                    id == &target
-                        || sensors
-                            .actors
-                            .get(id)
-                            .is_some_and(|other| other.name.eq_ignore_ascii_case(&target))
-                })
-            })))
+            with_me(|me| {
+                // An empty target asks "touching anything at all?".
+                if target.trim().is_empty() {
+                    return Evaluated::Bool(!me.touching.is_empty());
+                }
+                Evaluated::Bool(sense::read(|sensors| {
+                    me.touching.iter().any(|id| {
+                        id == &target
+                            || sensors
+                                .actors
+                                .get(id)
+                                .is_some_and(|other| other.name.eq_ignore_ascii_case(&target))
+                    })
+                }))
+            })
         },
     },
     ExtOperator {
@@ -514,19 +503,20 @@ static OPERATORS: &[ExtOperator] = &[
         arity: 1,
         default_args: || vec![text("")],
         eval: |args| {
-            let me = me()?;
             let target = args[0].as_text();
-            sense::read(|sensors| {
-                // "mouse" is a valid target here, same as for `point towards`.
-                if target.eq_ignore_ascii_case("mouse") {
-                    let mouse = [sensors.mouse[0], sensors.mouse[1], me.position[2]];
-                    return Ok(Evaluated::Number(distance(me.position, mouse)));
-                }
-                let other = sensors
-                    .find(&target)
-                    .ok_or_else(|| format!("there's no actor named \"{target}\""))?;
-                Ok(Evaluated::Number(distance(me.position, other.position)))
-            })
+            with_me(|me| {
+                sense::read(|sensors| {
+                    // "mouse" is a valid target here, same as for `point towards`.
+                    if target.eq_ignore_ascii_case("mouse") {
+                        let mouse = [sensors.mouse[0], sensors.mouse[1], me.position[2]];
+                        return Ok(Evaluated::Number(distance(me.position, mouse)));
+                    }
+                    let other = sensors
+                        .find(&target)
+                        .ok_or_else(|| format!("there's no actor named \"{target}\""))?;
+                    Ok(Evaluated::Number(distance(me.position, other.position)))
+                })
+            })?
         },
     },
     ExtOperator {
@@ -537,12 +527,13 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |args| {
             let component = args[0].as_text();
             let field = args[1].as_text();
-            let me = me()?;
-            me.components
-                .get(component.trim())
-                .and_then(|fields| fields.get(field.trim()))
-                .cloned()
-                .ok_or_else(|| format!("I have no \"{component}\" component with a \"{field}\""))
+            with_me(|me| {
+                me.components
+                    .get(component.trim())
+                    .and_then(|fields| fields.get(field.trim()))
+                    .cloned()
+            })?
+            .ok_or_else(|| format!("I have no \"{component}\" component with a \"{field}\""))
         },
     },
     ExtOperator {
@@ -550,7 +541,7 @@ static OPERATORS: &[ExtOperator] = &[
         op: "IsClone",
         arity: 0,
         default_args: Vec::new,
-        eval: |_| Ok(Evaluated::Bool(me()?.is_clone)),
+        eval: |_| with_me(|me| Evaluated::Bool(me.is_clone)),
     },
     ExtOperator {
         kind: "MyParent",
@@ -559,14 +550,14 @@ static OPERATORS: &[ExtOperator] = &[
         default_args: Vec::new,
         // The id rather than the name: clones share a name, and this is what
         // `set my parent to` and `delete` want handed back to them.
-        eval: |_| Ok(Evaluated::Text(me()?.parent)),
+        eval: |_| with_me(|me| Evaluated::Text(me.parent.clone())),
     },
     ExtOperator {
         kind: "NewActor",
         op: "NewActor",
         arity: 0,
         default_args: Vec::new,
-        eval: |_| Ok(Evaluated::Text(me()?.last_created)),
+        eval: |_| with_me(|me| Evaluated::Text(me.last_created.clone())),
     },
     ExtOperator {
         kind: "ActorCount",
@@ -787,7 +778,7 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |args| {
             let target = args[0].as_text();
             let position = if target.trim().is_empty() {
-                me()?.position
+                with_me(|me| me.position)?
             } else {
                 sense::read(|sensors| sensors.find(&target).map(|actor| actor.position))
                     .ok_or_else(|| format!("there's no actor named \"{target}\""))?
@@ -827,7 +818,7 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |args| {
             let target = args[0].as_text();
             let position = if target.trim().is_empty() {
-                me()?.position
+                with_me(|me| me.position)?
             } else {
                 sense::read(|sensors| sensors.find(&target).map(|actor| actor.position))
                     .ok_or_else(|| format!("there's no actor named \"{target}\""))?
@@ -851,7 +842,7 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |args| {
             let target = args[0].as_text();
             if target.trim().is_empty() {
-                return Ok(Evaluated::Bool(me()?.trigger));
+                return with_me(|me| Evaluated::Bool(me.trigger));
             }
             sense::read(|sensors| {
                 let actor = sensors
@@ -871,7 +862,7 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |args| {
             let target = args[0].as_text();
             if target.trim().is_empty() {
-                return Ok(Evaluated::Bool(me()?.casts_shadows));
+                return with_me(|me| Evaluated::Bool(me.casts_shadows));
             }
             sense::read(|sensors| {
                 let actor = sensors
@@ -890,7 +881,7 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |args| {
             let target = args[0].as_text();
             if target.trim().is_empty() {
-                return Ok(Evaluated::Number(me()?.layer as f64));
+                return with_me(|me| Evaluated::Number(me.layer as f64));
             }
             sense::read(|sensors| {
                 let actor = sensors
