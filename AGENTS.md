@@ -1194,13 +1194,23 @@ read through `pipeline::load_volume`; `clouds::bake_noise` is the CPU twin of
 `cloud_bake.wesl` (hash included), which `bake_cloud_noise` writes out as
 strips. Change the two together.
 Each view keeps two color/depth histories, invalidated on edits, resize,
-skipped frames and fast motion. Sun and moon have separate shadow switches.
+skipped frames and fast motion. The march writes a raw frame and a second pass
+(`cloud_resolve.wesl`) folds it into the history: the history is clipped to the
+mean and spread of the pixel's depth-matching 3x3 neighbours, so a jittered
+noisy march converges rather than snapping back to its latest sample, and far
+clouds also take a spatial blur. Far rays cross slabs thousands of metres long,
+so the march gets up to double its steps there and `density` takes a footprint
+(the step or the pixel's width at that distance, whichever is wider): past
+what it resolves, the shape's edges soften and erosion settles to its mean
+(`lost`), rather than aliasing into per-pixel speckle. The ground shadow map
+passes a footprint of 0. Sun and moon have separate shadow switches.
 The 2048² ground transmittance map is a screen-space approximation over the
 combined surface lighting; it does not isolate the PBR direct-light term.
 Profiler readback reports primary steps and contributing samples per pixel;
 render diagnostics time the march. GPU tests cover sky, terrain preservation
 and ground shadows (`cargo test -p blockloom-runtime volumetric_clouds --lib
--- --ignored`).
+-- --ignored`); `distant_clouds_neither_crawl_nor_alias` holds the horizon band's
+speckle down.
 
 ### World-space texturing
 

@@ -2843,6 +2843,59 @@ mod tests {
         );
     }
 
+    /// How much a band of sky changes across `rows`: between neighbouring
+    /// pixels, and from one frame to the next.
+    fn grain(frames: &[Vec<[u8; 3]>], size: UVec2, rows: std::ops::Range<usize>) -> (f32, f32) {
+        let luma = |frame: &[[u8; 3]], x: usize, y: usize| {
+            let [r, g, b] = frame[y * size.x as usize + x];
+            0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32
+        };
+        let (mut spatial, mut temporal, mut count) = (0.0, 0.0, 0.0);
+        for pair in frames.windows(2) {
+            for y in rows.clone() {
+                for x in 0..size.x as usize - 1 {
+                    spatial += (luma(&pair[1], x + 1, y) - luma(&pair[1], x, y)).abs();
+                    temporal += (luma(&pair[1], x, y) - luma(&pair[0], x, y)).abs();
+                    count += 1.0;
+                }
+            }
+        }
+        (spatial / count, temporal / count)
+    }
+
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn distant_clouds_neither_crawl_nor_alias() {
+        let size = UVec2::new(320, 180);
+        let mut room = dark_room(false);
+        room.world.camera.position = [0.0, 1.0, 0.0];
+        room.world.camera.look_at = [0.0, 60.0, 1000.0];
+        room.world.background = "#002080".into();
+        room.world.lighting.illuminance = 10000.0;
+        room.world.clouds.enabled = true;
+        room.world.clouds.coverage = 0.6;
+        room.world.clouds.density = 1.5;
+        room.world.clouds.quality = blockloom_core::clouds::CloudQuality::Low;
+        let frames = run_world_frames(room, size, game_camera(), 120, 8);
+        for (index, frame) in frames.iter().enumerate() {
+            let bytes: Vec<u8> = frame.iter().flatten().copied().collect();
+            if let (Some(dir), Some(image)) = (
+                std::env::var_os("BLOCKLOOM_TEST_DUMP"),
+                image::RgbImage::from_raw(size.x, size.y, bytes),
+            ) {
+                let _ =
+                    image.save(std::path::Path::new(&dir).join(format!("far-clouds-{index}.png")));
+            }
+        }
+        // Rows from just above the horizon to a quarter of the way up.
+        let (spatial, temporal) = grain(&frames, size, 30..110);
+        // The old march read 2.3 on both here (lavapipe); filtered, about 1.3.
+        assert!(
+            spatial < 1.8 && temporal < 1.8,
+            "far clouds speckle: spatial {spatial:.3}, temporal {temporal:.3}"
+        );
+    }
+
     #[test]
     #[ignore = "needs a GPU"]
     fn volumetric_clouds_read_an_authored_shape_volume() {
@@ -4209,6 +4262,73 @@ mod tests {
         assert!(exchange.slots().is_none());
         let (set, index) = seen.map_or((None, 0), |(set, index)| (Some(set), index));
         (set, index, reports)
+    }
+
+    /// Runs a project for `settle` frames, then keeps the next `keep`, each
+    /// read out whole: what `run_world` can't give, a run of frames to
+    /// compare.
+    fn run_world_frames(
+        project: blockloom_core::project::Project,
+        size: UVec2,
+        view: SceneView,
+        settle: usize,
+        keep: usize,
+    ) -> Vec<Vec<[u8; 3]>> {
+        blockloom_core::init();
+        let (to_world, incoming) = std::sync::mpsc::channel();
+        let (outgoing, _reports) = std::sync::mpsc::channel();
+        let exchange = FrameExchange::new(|| {});
+        exchange.resize(size.x, size.y, 1.0);
+        let frames = exchange.clone();
+        let project_mode = project.world.mode;
+        static STARTING: Mutex<()> = Mutex::new(());
+        let mut starting = Some(STARTING.lock().unwrap_or_else(|e| e.into_inner()));
+        let world = std::thread::spawn(move || {
+            run(Embedded {
+                mode: project_mode,
+                incoming,
+                outgoing,
+                frames,
+            })
+        });
+        to_world.send(EditorMessage::SceneView(view)).unwrap();
+        to_world
+            .send(EditorMessage::Load {
+                project: Box::new(project),
+                dir: None,
+            })
+            .unwrap();
+        let (mut last_frame, mut seen, mut kept) = (None, 0, Vec::new());
+        let started = std::time::Instant::now();
+        while kept.len() < keep && started.elapsed() < Duration::from_secs(1800) {
+            if exchange.slots().is_some() {
+                starting = None;
+            }
+            if let (Some(set), Some((generation, index))) = (exchange.slots(), exchange.latest())
+                && set.width == size.x
+                && set.generation == generation
+                && last_frame != Some((generation, index))
+            {
+                last_frame = Some((generation, index));
+                exchange.hold(generation, index);
+                exchange.presented();
+                seen += 1;
+                assert_eq!(set.modifier, MODIFIER_LINEAR, "needs a linear ring");
+                if seen > settle {
+                    kept.push(frame_pixels(
+                        &set.images[index],
+                        size.x as usize,
+                        size.y as usize,
+                    ));
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        drop(starting);
+        to_world.send(EditorMessage::Shutdown).unwrap();
+        drop(to_world);
+        world.join().unwrap();
+        kept
     }
 
     /// Reads a whole frame out of a linear dma-buf, row by row.

@@ -10,7 +10,7 @@ fn optical_depth(xz:vec2<f32>,light:vec4<f32>)->f32 {
         for(var i=0u;i<8u;i++){
             let y=c.layer.x+(f32(i)+0.5)*step;
             let p=vec3<f32>(xz.x,0.0,xz.y)+sun*y/sun.y;
-            optical+=density(p,c,noise_tex,repeat)*step/sun.y;
+            optical+=density(p,c,noise_tex,repeat,0.0)*step/sun.y;
         }
     }
     return exp(-optical);
