@@ -261,18 +261,7 @@ impl ActivePlugins {
             .plugins
             .get(plugin)
             .ok_or_else(|| format!("{plugin} is not installed"))?;
-        let manifest = &loaded.package.manifest;
-        let entry = manifest.runtime.native.get(&self.target).ok_or_else(|| {
-            format!(
-                "{plugin} has no native library for {} (only declarative parts work here)",
-                self.target
-            )
-        })?;
-        Ok(NativeLibrary {
-            path: loaded.package.root.join(&entry.library),
-            hash: loaded.package.content_hash.clone(),
-            capabilities: manifest.capabilities.clone(),
-        })
+        native_library_of(plugin, &loaded.package, &self.target)
     }
 
     /// What runs a plugin's `module` commands here: the native library for
@@ -282,18 +271,7 @@ impl ActivePlugins {
             .plugins
             .get(plugin)
             .ok_or_else(|| format!("{plugin} is not installed"))?;
-        let manifest = &loaded.package.manifest;
-        if !manifest.runtime.native.contains_key(&self.target)
-            && let Some(entry) = &manifest.runtime.portable
-        {
-            return Ok(CodeRuntime::Portable(PortableLibrary {
-                path: loaded.package.root.join(&entry.module),
-                hash: loaded.package.content_hash.clone(),
-                capabilities: manifest.capabilities.clone(),
-                entry: entry.clone(),
-            }));
-        }
-        self.native_library(plugin).map(CodeRuntime::Native)
+        code_runtime_of(plugin, &loaded.package, &self.target)
     }
 
     /// What a running world needs to host the code of every plugin that has
@@ -303,34 +281,10 @@ impl ActivePlugins {
     pub fn loadout(&self) -> Loadout {
         let mut plugins = Vec::new();
         for (id, loaded) in &self.plugins {
-            let Ok(runtime) = self.code_runtime(id) else {
+            let Ok(runtime) = code_runtime_of(id, &loaded.package, &self.target) else {
                 continue;
             };
-            let contributions = &loaded.package.contributions;
-            let blocks = contributions
-                .blocks
-                .iter()
-                .filter(|b| matches!(b.kind, BlockKind::Statement | BlockKind::Reporter))
-                .filter_map(|b| {
-                    let command = contributions.command(b.command.as_deref()?)?;
-                    let CommandAction::Module { op } = &command.action else {
-                        return None;
-                    };
-                    Some(LoadoutBlock {
-                        type_id: b.type_id.clone(),
-                        op: op.clone(),
-                        slots: b.slots.clone(),
-                        wants_actor: command.args.iter().any(|a| a.name == "actor"),
-                        returns: b.returns.clone(),
-                    })
-                })
-                .collect();
-            plugins.push(LoadoutPlugin {
-                id: id.clone(),
-                runtime,
-                hooks: contributions.hooks.clone(),
-                blocks,
-            });
+            plugins.push(loadout_plugin(id, &loaded.package, runtime));
         }
         Loadout { plugins }
     }
@@ -388,6 +342,27 @@ impl ActivePlugins {
                     .map(move |b| (plugin.as_str(), b))
             })
             .collect()
+    }
+
+    /// Whether a running game, with no editor, can run `plugin`'s block
+    /// `type_id`: its command is a module op. A hat has no command and
+    /// answers to a module's events, so it always can.
+    pub fn block_runs_in_world(&self, plugin: &str, type_id: &str) -> bool {
+        let Some(loaded) = self.plugins.get(plugin) else {
+            return false;
+        };
+        let contributions = &loaded.package.contributions;
+        let Some(block) = contributions.blocks.iter().find(|b| b.type_id == type_id) else {
+            return false;
+        };
+        if block.kind == BlockKind::Hat {
+            return true;
+        }
+        block
+            .command
+            .as_deref()
+            .and_then(|name| contributions.command(name))
+            .is_some_and(|c| matches!(c.action, CommandAction::Module { .. }))
     }
 
     pub fn hooks(&self) -> Vec<(&str, &HookSchema)> {
@@ -528,6 +503,72 @@ impl ActivePlugins {
             });
         }
         Ok(out)
+    }
+}
+
+/// The verified shared library `package` runs from on `target`.
+pub(crate) fn native_library_of(
+    plugin: &str,
+    package: &Package,
+    target: &str,
+) -> Result<NativeLibrary, String> {
+    let manifest = &package.manifest;
+    let entry = manifest.runtime.native.get(target).ok_or_else(|| {
+        format!("{plugin} has no native library for {target} (only declarative parts work here)")
+    })?;
+    Ok(NativeLibrary {
+        path: package.root.join(&entry.library),
+        hash: package.content_hash.clone(),
+        capabilities: manifest.capabilities.clone(),
+    })
+}
+
+/// The native library for `target`, or the portable module when there is none.
+pub(crate) fn code_runtime_of(
+    plugin: &str,
+    package: &Package,
+    target: &str,
+) -> Result<CodeRuntime, String> {
+    let manifest = &package.manifest;
+    if !manifest.runtime.native.contains_key(target)
+        && let Some(entry) = &manifest.runtime.portable
+    {
+        return Ok(CodeRuntime::Portable(PortableLibrary {
+            path: package.root.join(&entry.module),
+            hash: package.content_hash.clone(),
+            capabilities: manifest.capabilities.clone(),
+            entry: entry.clone(),
+        }));
+    }
+    native_library_of(plugin, package, target).map(CodeRuntime::Native)
+}
+
+/// One plugin as a world loads it: its code, hooks and module-op blocks.
+pub(crate) fn loadout_plugin(id: &str, package: &Package, runtime: CodeRuntime) -> LoadoutPlugin {
+    let contributions = &package.contributions;
+    let blocks = contributions
+        .blocks
+        .iter()
+        .filter(|b| matches!(b.kind, BlockKind::Statement | BlockKind::Reporter))
+        .filter_map(|b| {
+            let command = contributions.command(b.command.as_deref()?)?;
+            let CommandAction::Module { op } = &command.action else {
+                return None;
+            };
+            Some(LoadoutBlock {
+                type_id: b.type_id.clone(),
+                op: op.clone(),
+                slots: b.slots.clone(),
+                wants_actor: command.args.iter().any(|a| a.name == "actor"),
+                returns: b.returns.clone(),
+            })
+        })
+        .collect();
+    LoadoutPlugin {
+        id: id.to_string(),
+        runtime,
+        hooks: contributions.hooks.clone(),
+        blocks,
     }
 }
 

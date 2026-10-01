@@ -141,6 +141,20 @@ impl Launch {
                     project: Box::new(pack.project),
                     dir: Some(dir.to_string_lossy().into_owned()),
                 });
+                // The plugin code the build shipped, hosted as the editor's
+                // Play would host it.
+                if !pack.plugins.is_empty() {
+                    match crate::plugins::shipped_loadout(&dir, &pack.plugins) {
+                        Ok(loadout) if !loadout.is_empty() => {
+                            let _ = tx.send(EditorMessage::Plugins { loadout });
+                        }
+                        Ok(_) => {}
+                        Err(problems) => fatal(&format!(
+                            "this game's plugins can't run:\n- {}",
+                            problems.join("\n- ")
+                        )),
+                    }
+                }
                 let _ = tx.send(EditorMessage::Start);
                 let mut engine = Engine::new(rx, mode);
                 engine.link = Some(tx);

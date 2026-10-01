@@ -334,7 +334,6 @@ pub(crate) fn preflight(active: &ActivePlugins, project: &Project) -> Result<(),
         .filter(|i| i.blocks_run)
         .map(describe)
         .collect();
-    let loadout = active.loadout();
     for used in project.plugin_blocks() {
         let found = active
             .blocks()
@@ -368,9 +367,7 @@ pub(crate) fn preflight(active: &ActivePlugins, project: &Project) -> Result<(),
             // A reporter is answered inside the world, so only a module op can.
             Some(_)
                 if used.shape == PluginBlockShape::Reporter
-                    && !loadout.plugins.iter().any(|p| {
-                        p.id == used.plugin && p.blocks.iter().any(|b| b.type_id == used.block)
-                    }) =>
+                    && !active.block_runs_in_world(&used.plugin, &used.block) =>
             {
                 lines.push(format!(
                     "{}: the reporter {}/{} needs a plugin with code, and its command isn't a module op",
@@ -420,23 +417,19 @@ pub(crate) fn payloads(
         return Ok(Vec::new());
     }
     preflight(&active, project).map_err(|e| e.replace("won't run", "won't build"))?;
-    // A built game has no editor to run a block's command in.
-    let uses = project.plugin_blocks();
-    if !uses.is_empty() {
+    // A built game has no editor to run a block's command in, so a statement
+    // has to be a module op the world runs itself.
+    let editor_only: Vec<String> = project
+        .plugin_blocks()
+        .iter()
+        .filter(|u| u.shape == PluginBlockShape::Statement)
+        .filter(|u| !active.block_runs_in_world(&u.plugin, &u.block))
+        .map(|u| format!("{}: {}/{}", u.place, u.plugin, u.block))
+        .collect();
+    if !editor_only.is_empty() {
         return Err(format!(
-            "Plugin blocks only run in the editor so far, so the project won't build:\n- {}",
-            uses.iter()
-                .map(|u| {
-                    format!(
-                        "{}: {} {}/{}",
-                        u.place,
-                        shape_name(u.shape),
-                        u.plugin,
-                        u.block
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n- ")
+            "These plugin blocks run their command in the editor, so the project won't build:\n- {}",
+            editor_only.join("\n- ")
         ));
     }
     let plan = active.ship_plan(target.triple)?;

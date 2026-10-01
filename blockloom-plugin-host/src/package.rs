@@ -149,6 +149,61 @@ impl Package {
         })
     }
 
+    /// Loads what a built game shipped of a package: the manifest and the
+    /// `files` copied beside it, each checked against the hash the manifest
+    /// declares. The files a player does not need (editor modules, docs, other
+    /// targets' libraries) are legitimately absent, so what is declared but
+    /// not shipped is not an error here; the whole package must still hash to
+    /// `expected`, which is what the game was built with.
+    pub fn load_shipped(root: &Path, files: &[String], expected: &str) -> Result<Package, String> {
+        let manifest_path = root.join(MANIFEST_FILE);
+        let bytes =
+            fs::read(&manifest_path).map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+        let text = std::str::from_utf8(&bytes).map_err(|e| format!("{MANIFEST_FILE}: {e}"))?;
+        let manifest = PluginManifest::from_json(text)?;
+        manifest.validate()?;
+        let hash = content_hash(&bytes, &manifest.files);
+        if hash != expected {
+            return Err(format!(
+                "{}: is not the package the game was built with",
+                manifest.id
+            ));
+        }
+        let mut problems = Vec::new();
+        for path in files {
+            match manifest.files.get(path) {
+                None => problems.push(format!("{path} is shipped but not declared")),
+                Some(declared) => match hash_file(&root.join(path)) {
+                    Ok(found) if &found == declared => {}
+                    Ok(_) => problems.push(format!("{path} does not match its declared hash")),
+                    Err(e) => problems.push(e),
+                },
+            }
+        }
+        if !problems.is_empty() {
+            return Err(format!("{}: {}", manifest.id, problems.join("; ")));
+        }
+        let mut contributions = Contributions::default();
+        for path in &manifest.contributions {
+            if !files.contains(path) {
+                return Err(format!("{}: {path} was not shipped", manifest.id));
+            }
+            let text = fs::read_to_string(root.join(path)).map_err(|e| format!("{path}: {e}"))?;
+            let part: Contributions =
+                serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+            contributions.merge(part);
+        }
+        contributions
+            .check_definition()
+            .map_err(|e| format!("{}: {e}", manifest.id))?;
+        Ok(Package {
+            root: root.to_path_buf(),
+            manifest,
+            contributions,
+            content_hash: hash,
+        })
+    }
+
     /// The artifact hashes a lockfile records per target: each native library
     /// by triple, the portable module as `portable`.
     pub fn target_hashes(&self) -> BTreeMap<String, String> {

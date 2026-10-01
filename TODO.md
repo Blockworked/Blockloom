@@ -1498,11 +1498,12 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Portable (WASM) executor in the editor: wasmi, linear-memory ABI, memory and work limits, stop-and-reload on a fault.
     - [x] Plugin SDK crate (`blockloom-plugin-sdk`): one `Plugin` trait and `export_plugin!` for native and WebAssembly, `NativeModule::from_entry`, and the `plugins/examples/tally` example (`just example-plugin`).
     - [x] Native and portable modules in the running game world: loadout sent before Play, `world.start`/`world.stop` lifecycle, staged hooks, module-op blocks run in the world, effects (`say`, `broadcast`, `error`).
-    - [ ] Modules in the built player, a browser host for portable modules and a browser proof.
+    - [x] Modules in the built desktop player: the build ships each plugin's manifest and files, the player verifies them against the pack and hosts the loadout; module-op blocks, reporters and hats build.
+    - [ ] A browser host for portable modules and a browser proof (web and Android builds still refuse plugin code).
     - [x] Plugin statement blocks in the VM: `PluginBlock` instruction, `Effect::PluginCall`, the editor runs the block's command, `plugin-run-block`, Play preflight; codegen refuses by name and Build is refused while they exist.
     - [x] Plugin statement blocks in the palette and on the canvas (one `PluginBlock` row whose head follows the schema label; needs blockstitch's function `head` and `index` pieces).
     - [x] Plugin reporters and hats: `PluginRead` values answered on demand by the world's modules, `WhenPlugin` hats started by `event` effects; palette, canvas, preflight, tally example (needs blockstitch's operator `layout`).
-    - [ ] Built games, codegen and the script ABI for plugin blocks; importer/build hooks; per-plugin MCP tools.
+    - [ ] Codegen and the script ABI for plugin blocks; importer/build hooks; per-plugin MCP tools.
     - [ ] HTTP registry transport; revision bump for attached copies on package changes.
     - [ ] Phases 3-7 (voxel plugin `com.blockworked.voxel`, procedural worlds, GPU path, fracture, ecosystem).
 

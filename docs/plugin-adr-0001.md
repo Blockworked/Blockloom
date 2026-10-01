@@ -265,3 +265,34 @@ A reporter is a value, a hat is a header. Decisions:
 The tally example gains a "tally of" reporter and a "when tally changes" hat;
 the host and example tests drive both through the real ABI, the VM tests
 through a fake reader, and the QML half is unrun here (no Qt in the container).
+
+## Plugin code in a built game (eighth batch)
+
+The desktop player now hosts the plugin code a build ships. Decisions:
+
+- The build ships `plugin.json` with the files. The manifest was never
+  copied, so a player could not tell what it had; it is the one file the player
+  needs to check everything else.
+- The player does not resolve or install anything. It trusts only the pack's
+  record: `Package::load_shipped` requires the manifest to hash (with its
+  declared file table) to the pack's `hash`, and each shipped file to match the
+  hash the manifest declares. Files a player has no use for are legitimately
+  absent, so unlike an installed package a shipped one is not required to
+  contain every declared file.
+- A plugin that cannot load (damaged, wrong target, no artifact) stops the
+  game with the reasons. Running without it would play a different game.
+- The editor's Play and the player build the same `Loadout` from the same
+  per-plugin code (`loadout_plugin`, `code_runtime_of`), so what runs in a
+  build is what ran in Play.
+- A build accepts what the world can run by itself: statements and reporters
+  whose commands are module ops, and hats. A statement whose command edits the
+  project still needs the editor and still stops the build. A project with
+  plugin blocks stays on the VM, so it ships no native logic.
+- Web and Android builds still refuse plugin code: the first needs a browser
+  host for portable modules, the second a player built with the host crate.
+
+The tally example's test seals the package, lays it out as the build does,
+loads it through the player's path, reads a reporter and runs a block, and
+checks a wrong hash and an altered file are refused. The player's launch path
+itself (a window, a real game folder) is unrun here.
+

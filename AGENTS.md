@@ -403,8 +403,19 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `plugin_call`) and through the MCP `plugin-call` tool. `StateDto.plugins` is
   the snapshot slot.
 - **Builds**: a pack that carries plugins is `PACK_VERSION` 2 (without them it
-  is still written as 1), the plugin files go to `game/plugins/<id>/`, and web
-  and Android builds refuse plugins that have code.
+  is still written as 1), each plugin's `plugin.json` and shipped files go to
+  `game/plugins/<id>/`, and web and Android builds refuse plugins that have
+  code. The desktop player hosts that code: `Launch::Player` hands the world
+  an `EditorMessage::Plugins` before `Start`, built by
+  `plugins::shipped_loadout` from the pack's `PackedPlugin`s through
+  `blockloom_plugin_host::shipped` (`Package::load_shipped` checks the manifest
+  against the pack's content hash and each shipped file against its declared
+  hash; a missing or altered file, or no artifact for the target, stops the
+  game with the reasons, since it must not run without its plugin). A Build
+  accepts plugin blocks the world can run itself (`block_runs_in_world`: a
+  module-op statement or reporter, any hat) and refuses a statement whose
+  command runs in the editor. Plugin blocks keep a project on the VM, so a
+  build with them has no native logic.
 - **Native modules** load in the editor on a command's first use
   (`commands::plugins::Modules` on `OpenProject`, keyed by package hash, dropped
   when the package changes or the project closes): a `module` command action
@@ -428,8 +439,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   resolved to an id, then the same `plugin_call` path). Codegen refuses it by
   name, so such a project stays on the VM, and `preflight` stops Play on a
   block no installed plugin provides or whose slot count changed. A Build is
-  refused while plugin blocks exist, since a built game has no editor to run
-  them. `plugin-run-block` runs one from the shell and MCP, and the snapshot's
+  refused for a statement whose command runs in the editor, since a built game
+  has none (module-op blocks ship, see Builds). `plugin-run-block` runs one from the shell and MCP, and the snapshot's
   `plugins.blocks` lists every available block. The palette draws the
   statement ones (`Blocks.qml`'s plugin section, grouped by category): the
   one `PluginBlock` row's `head` is a function of the instruction that splits
@@ -501,8 +512,7 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   same `plugin_*` commands the shell does (install with a dry-run preview,
   update, remove, sync, undo the last change, clean the cache). It has a QML
   test (`tests/qml/tst_Plugins.qml`) but no inspector or contribution host yet.
-- **Not yet**: plugin code in a built game (a build still refuses plugin blocks
-  and the pack's plugin payload is not loaded by the player), in the script
+- **Not yet**: plugin code in a web or Android build, in the script
   ABI, a browser host for portable modules, an HTTP registry, dynamic QML for
   plugin editor panels.
   `plugins/examples/com.example.health` is the sealed proof package;

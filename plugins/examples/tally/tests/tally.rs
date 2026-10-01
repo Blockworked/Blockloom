@@ -300,3 +300,80 @@ fn the_reporter_and_hat_work_in_a_hosted_world() {
         json!(4)
     );
 }
+
+/// What a build does and the player undoes: the sealed package's files and
+/// manifest copied under a game folder, then loaded from there by the pack's
+/// record of them and hosted like a run.
+#[test]
+fn a_shipped_copy_loads_into_a_world_and_a_damaged_one_does_not() {
+    use blockloom_plugin_host::shipped::{Shipped, shipped_loadout};
+    use blockloom_plugin_host::world::WorldPlugins;
+
+    let Some(wasm) = wasm() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("sealed");
+    package::copy_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("package"),
+        &root,
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("portable")).unwrap();
+    std::fs::copy(&wasm, root.join("portable/tally.wasm")).unwrap();
+    package::seal(&root).unwrap();
+    let sealed = Package::load(&root).unwrap();
+
+    // The game folder, as `build::copy_plugins` lays it out.
+    let game = dir.path().join("game/plugins/com.example.tally");
+    let files: Vec<String> = sealed.manifest.files.keys().cloned().collect();
+    for file in files.iter().map(String::as_str).chain(["plugin.json"]) {
+        let to = game.join(file);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::copy(root.join(file), to).unwrap();
+    }
+    fn shipped<'a>(game: &'a Path, files: &'a [String], hash: &'a str) -> Vec<Shipped<'a>> {
+        vec![Shipped {
+            id: "com.example.tally",
+            dir: game,
+            hash,
+            files,
+        }]
+    }
+    let target = "x86_64-unknown-linux-gnu";
+    let loadout = shipped_loadout(&shipped(&game, &files, &sealed.content_hash), target).unwrap();
+    assert_eq!(loadout.plugins.len(), 1);
+    let blocks: Vec<_> = loadout.plugins[0]
+        .blocks
+        .iter()
+        .map(|b| b.type_id.as_str())
+        .collect();
+    assert_eq!(
+        blocks,
+        ["add", "count"],
+        "statements and reporters that are module ops"
+    );
+
+    let mut world = WorldPlugins::load(&loadout, "0.0.1");
+    let id = "com.example.tally";
+    world.start(&|_| json!({"records": [], "resources": []}));
+    world.run_block(id, "add", &[json!(3), json!("coins")], "me");
+    assert_eq!(
+        world.read(id, "count", &[json!("coins")], "me").unwrap(),
+        json!(3)
+    );
+    assert!(world.drain().is_empty(), "nothing went wrong");
+
+    // Not the package the game was built with.
+    let wrong = shipped_loadout(&shipped(&game, &files, "0000"), target).unwrap_err();
+    assert!(
+        wrong[0].contains("not the package the game was built with"),
+        "{wrong:?}"
+    );
+    // A file changed after the build.
+    std::fs::write(game.join("portable/tally.wasm"), b"\0asm tampered").unwrap();
+    let damaged =
+        shipped_loadout(&shipped(&game, &files, &sealed.content_hash), target).unwrap_err();
+    assert!(
+        damaged[0].contains("does not match its declared hash"),
+        "{damaged:?}"
+    );
+}

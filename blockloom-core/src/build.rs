@@ -393,12 +393,14 @@ pub struct PluginPayload {
     pub root: PathBuf,
 }
 
-/// Copies each plugin's shipped files to `game/plugins/<id>/`. A file that
-/// is not where the verified package says it is fails the build.
+/// Copies each plugin's manifest and shipped files to `game/plugins/<id>/`.
+/// A file that is not where the verified package says it is fails the build.
 fn copy_plugins(plugins: &[PluginPayload], game: &Path) -> Result<usize, String> {
     for plugin in plugins {
         let dest = game.join(&plugin.entry.dir);
-        for file in &plugin.entry.files {
+        // The player verifies the rest against the manifest, so it ships too.
+        let manifest = blockloom_plugin_api::manifest::MANIFEST_FILE;
+        for file in std::iter::once(manifest).chain(plugin.entry.files.iter().map(String::as_str)) {
             let from = plugin.root.join(file);
             let to = dest.join(file);
             if let Some(parent) = to.parent() {
@@ -1708,6 +1710,33 @@ fn make_executable(_path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::scene::Mode;
+
+    #[test]
+    fn a_shipped_plugin_carries_its_manifest_beside_its_files() {
+        let root = temp("plugin-src");
+        let game = temp("plugin-game");
+        std::fs::create_dir_all(root.join("schemas")).unwrap();
+        std::fs::write(root.join("plugin.json"), "{}").unwrap();
+        std::fs::write(root.join("schemas/a.json"), "{}").unwrap();
+        let payload = PluginPayload {
+            entry: pack::PackedPlugin {
+                id: "com.example.a".to_string(),
+                version: "1.0.0".to_string(),
+                hash: "h".to_string(),
+                tier: "portable".to_string(),
+                dir: "plugins/com.example.a".to_string(),
+                files: vec!["schemas/a.json".to_string()],
+            },
+            root,
+        };
+        copy_plugins(&[payload], &game).unwrap();
+        let there = game.join("plugins/com.example.a");
+        assert!(
+            there.join("plugin.json").is_file(),
+            "the player verifies against it"
+        );
+        assert!(there.join("schemas/a.json").is_file());
+    }
 
     fn temp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

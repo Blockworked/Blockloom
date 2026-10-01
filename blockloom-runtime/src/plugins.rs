@@ -184,6 +184,43 @@ fn records_for(engine: &Engine, plugin: &str) -> Value {
     json!({"records": records, "resources": resources})
 }
 
+/// What a built game's player hosts, from the plugins its pack records and
+/// the files the build copied beside it. Fails with every problem found; a
+/// player that cannot load a plugin's code must not run the game without it.
+pub fn shipped_loadout(
+    game: &std::path::Path,
+    plugins: &[blockloom_core::pack::PackedPlugin],
+) -> Result<Loadout, Vec<String>> {
+    #[cfg(feature = "plugins")]
+    {
+        use blockloom_plugin_host::shipped::{Shipped, shipped_loadout};
+        let dirs: Vec<std::path::PathBuf> = plugins.iter().map(|p| game.join(&p.dir)).collect();
+        let shipped: Vec<Shipped> = plugins
+            .iter()
+            .zip(&dirs)
+            .map(|(p, dir)| Shipped {
+                id: &p.id,
+                dir,
+                hash: &p.hash,
+                files: &p.files,
+            })
+            .collect();
+        let target = blockloom_core::build::host().map_or("unknown", |t| t.triple);
+        shipped_loadout(&shipped, target)
+    }
+    #[cfg(not(feature = "plugins"))]
+    {
+        let _ = game;
+        match plugins.iter().find(|p| p.tier != "declarative") {
+            Some(p) => Err(vec![format!(
+                "{} has code, and this player was built without plugin support",
+                p.id
+            )]),
+            None => Ok(Loadout::default()),
+        }
+    }
+}
+
 /// The run begins: open the modules and tell each its records.
 pub fn begin(engine: &mut Engine) {
     #[cfg(feature = "plugins")]
