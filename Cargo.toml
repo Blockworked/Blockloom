@@ -53,6 +53,11 @@ wesl = { version = "0.4.4" }
 wgsl-parse = { version = "0.4.4" }
 polyanya = { version = "0.17", default-features = false }
 libloading = "0.9.0"
+# Portable dispatch keeps the interpreter loop-based: the default tail-call
+# dispatch relies on LLVM sibling-call optimisation and overflowed the stack
+# on a runaway module in a debug-assertions build.
+wasmi = { version = "2.0.0", default-features = false, features = ["stable", "std", "validate", "memory64", "portable-dispatch"] }
+wat = "1.260.0"
 axum = { version = "0.8.9", features = ["ws"] }
 tower-http = { version = "0.7.1", features = ["cors"] }
 image = { version = "0.25.10", default-features = false, features = ["bmp", "dds", "exr", "gif", "hdr", "jpeg", "png", "tga", "webp"] }

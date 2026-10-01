@@ -228,3 +228,84 @@ fn a_plugin_block_runs_its_command_with_its_slots() {
             .is_err()
     );
 }
+
+#[test]
+fn a_portable_plugin_command_runs_in_its_wasm_module() {
+    let root = data_root().join("portable");
+    let pkg = root.join("pkg");
+    std::fs::create_dir_all(pkg.join("portable")).unwrap();
+    std::fs::create_dir_all(pkg.join("schemas")).unwrap();
+    std::fs::write(
+        pkg.join("portable/m.wasm"),
+        blockloom_plugin_host::portable::fixture::wasm(),
+    )
+    .unwrap();
+    std::fs::write(
+        pkg.join("schemas/commands.json"),
+        json!({"commands": [{
+            "name": "echo", "summary": "Answer with the arguments.",
+            "args": [{"name": "word", "type": "text", "default": "hi"}],
+            "action": {"do": "module", "op": "echo"}
+        }, {
+            "name": "spin", "summary": "A module call that never returns.",
+            "action": {"do": "module", "op": "spin"}
+        }, {
+            "name": "chatter", "summary": "A module call that logs.",
+            "action": {"do": "module", "op": "log"}
+        }]})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        pkg.join("plugin.json"),
+        json!({
+            "format": 1, "id": "com.example.portable", "name": "Portable", "version": "1.0.0",
+            "engine": ">=0.0.1", "tier": "portable", "abi": 1, "sdk": "^0.1",
+            "runtime": {"portable": {"module": "portable/m.wasm", "call_limit_ms": 10}},
+            "contributions": ["schemas/commands.json"]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let backend = Backend::start(AppHandle::new(|_| {}));
+    let invoke = |cmd: &str, args: Value| backend.dispatch(cmd, args).unwrap();
+    invoke("plugin_seal", json!({"path": pkg.to_string_lossy()}));
+    invoke(
+        "create_project",
+        json!({"name": "Portable", "mode": "TwoD", "location": root.join("projects")}),
+    );
+    invoke(
+        "plugin_install",
+        json!({"id": "com.example.portable", "source": format!("path:{}", pkg.display())}),
+    );
+    let answer = invoke(
+        "plugin_call",
+        json!({"command": "com.example.portable/echo", "args": {"word": "loom"}}),
+    );
+    assert_eq!(answer["word"], "loom");
+    // A runaway call is stopped by its budget and says so.
+    let error = backend
+        .dispatch(
+            "plugin_call",
+            json!({"command": "com.example.portable/spin"}),
+        )
+        .unwrap_err();
+    assert!(error.contains("10 ms of work"), "{error}");
+    // The stopped module is replaced by a fresh one for the next call.
+    let again = invoke(
+        "plugin_call",
+        json!({"command": "com.example.portable/echo"}),
+    );
+    assert_eq!(again["word"], "hi");
+    // What it logs reaches the run log.
+    invoke(
+        "plugin_call",
+        json!({"command": "com.example.portable/chatter"}),
+    );
+    assert!(
+        invoke("get_state", json!({}))
+            .to_string()
+            .contains("hello from wasm")
+    );
+}

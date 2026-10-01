@@ -11,11 +11,14 @@ serde_json.workspace = true
 semver.workspace = true
 sha2.workspace = true
 libloading.workspace = true
+wasmi.workspace = true
+wat = { workspace = true, optional = true }
 dirs.workspace = true
 zip = { version = "7.2", default-features = false, features = ["deflate"] }
 
 [features]
-test-fixtures = []
+test-fixtures = ["dep:wat"]
 
 [dev-dependencies]
 tempfile.workspace = true
+wat.workspace = true

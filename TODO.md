@@ -1495,7 +1495,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Plugin Manager dialog in QML (list, install with preview, update, remove, sync, undo, cache clean, record issues, commands).
     - [ ] QML contribution host: schema-generated inspectors for plugin components, panels and dynamic loading of trusted editor modules.
     - [x] Native modules load in the editor for `module` commands (`Modules` cache, run-log output, panic containment).
-    - [ ] Native modules in the runtime world and built player, lifecycle wiring; portable (WASM) executor and a browser proof.
+    - [x] Portable (WASM) executor in the editor: wasmi, linear-memory ABI, memory and work limits, stop-and-reload on a fault.
+    - [ ] Native and portable modules in the runtime world and built player, lifecycle wiring; a browser host for portable modules and a browser proof.
     - [x] Plugin statement blocks in the VM: `PluginBlock` instruction, `Effect::PluginCall`, the editor runs the block's command, `plugin-run-block`, Play preflight; codegen refuses by name and Build is refused while they exist.
     - [ ] Plugin blocks in the palette (needs dynamic block rows in blockstitch), reporters and hats, built games, codegen and the script ABI; importer/build hooks; per-plugin MCP tools.
     - [ ] HTTP registry transport; revision bump for attached copies on package changes.

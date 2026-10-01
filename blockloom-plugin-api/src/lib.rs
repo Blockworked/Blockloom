@@ -8,6 +8,7 @@
 //! - [`record`] is a plugin-owned record as a project document stores it,
 //!   kept losslessly even when its plugin is missing.
 //! - [`abi`] is the native C boundary: fixed-width, versioned, no Rust types.
+//! - [`wasm`] is the same contract over a WebAssembly module's linear memory.
 //!
 //! Engine, SDK, plugin ABI, editor API, schema and shader API versions are
 //! separate numbers (see [`versions`]) so a change to one does not look like a
@@ -18,6 +19,7 @@ pub mod id;
 pub mod manifest;
 pub mod record;
 pub mod schema;
+pub mod wasm;
 
 pub use semver::{self, Version, VersionReq};
 

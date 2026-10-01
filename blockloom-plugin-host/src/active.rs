@@ -34,6 +34,33 @@ pub struct NativeLibrary {
     pub capabilities: std::collections::BTreeSet<blockloom_plugin_api::manifest::Capability>,
 }
 
+/// A portable plugin's verified module, ready for `PortableModule::load`.
+#[derive(Debug, Clone)]
+pub struct PortableLibrary {
+    pub path: std::path::PathBuf,
+    /// The package's content hash; a changed package is a different module.
+    pub hash: String,
+    pub capabilities: std::collections::BTreeSet<blockloom_plugin_api::manifest::Capability>,
+    pub entry: blockloom_plugin_api::manifest::PortableEntry,
+}
+
+/// The code a plugin runs on this machine: its native library when it has
+/// one for the target, else its portable module.
+#[derive(Debug, Clone)]
+pub enum CodeRuntime {
+    Native(NativeLibrary),
+    Portable(PortableLibrary),
+}
+
+impl CodeRuntime {
+    pub fn hash(&self) -> &str {
+        match self {
+            CodeRuntime::Native(n) => &n.hash,
+            CodeRuntime::Portable(p) => &p.hash,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LoadedPlugin {
     pub package: Package,
@@ -279,6 +306,27 @@ impl ActivePlugins {
             hash: loaded.package.content_hash.clone(),
             capabilities: manifest.capabilities.clone(),
         })
+    }
+
+    /// What runs a plugin's `module` commands here: the native library for
+    /// this target, or the portable module when there is none.
+    pub fn code_runtime(&self, plugin: &str) -> Result<CodeRuntime, String> {
+        let loaded = self
+            .plugins
+            .get(plugin)
+            .ok_or_else(|| format!("{plugin} is not installed"))?;
+        let manifest = &loaded.package.manifest;
+        if !manifest.runtime.native.contains_key(&self.target)
+            && let Some(entry) = &manifest.runtime.portable
+        {
+            return Ok(CodeRuntime::Portable(PortableLibrary {
+                path: loaded.package.root.join(&entry.module),
+                hash: loaded.package.content_hash.clone(),
+                capabilities: manifest.capabilities.clone(),
+                entry: entry.clone(),
+            }));
+        }
+        self.native_library(plugin).map(CodeRuntime::Native)
     }
 
     pub fn manifest(&self, plugin: &str) -> Option<&PluginManifest> {

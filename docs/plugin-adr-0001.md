@@ -43,8 +43,9 @@ copy, all records or none, and snapshot the old payloads first.
 everywhere and need no code. Native packages are C-ABI shared libraries per
 target triple; a build that cannot carry a package's code for the target is
 refused (web and Android builds refuse code plugins for now). Portable (WASM)
-and source-linked adapter tiers are described in the manifest and validated,
-but nothing executes them yet.
+packages run in the editor under an interpreter (see "Portable modules"
+below). The source-linked adapter tier is described in the manifest and
+validated, but nothing executes it yet.
 
 **Native ABI v1.** One exported symbol, `blockloom_plugin_entry_v1`. Every
 struct is size and version prefixed so fields can be added; buffers are
@@ -69,8 +70,8 @@ rustc-compiled C-layout fixture library.
 
 That is a 200x spread, which settles the plan's open question: any plugin hot
 path (voxel pages, mesh jobs) must be a bulk API, and per-item calls are for
-rare events. GPU, browser and WASM costs were not measured: there is no GPU in
-the build container and no WASM executor exists yet.
+rare events. GPU and browser costs were not measured: there is no GPU in the
+build container. The portable executor's costs are under "Portable modules".
 
 ## Proof package
 
@@ -92,7 +93,9 @@ and tracked in `TODO.md`:
   panels, no dynamic loading of trusted editor modules. QML for those would
   have to be loaded at run time, which the compile-time `QmlModule` list
   cannot do.
-- No WASM executor and no browser proof; the portable tier only validates.
+- The portable tier runs through a native interpreter in the editor only. There
+  is no browser host, so no browser proof, and a built game does not carry the
+  executor.
 - Native modules load in the editor (a `module` command action calls them,
   tested with a rustc-built C-layout fixture) but not yet in the runtime's
   world or the built player, so plugin code cannot act on a running game.
@@ -128,3 +131,38 @@ Deviations: codegen returns `Unsupported` naming the block, so a project with
 plugin blocks plays on the VM, and a Build refuses them until the player can
 run plugin code. Palette entries need blockstitch to draw a row from a schema
 at run time, which this batch does not touch.
+
+## Portable modules (third batch)
+
+`blockloom-plugin-api/src/wasm.rs` is the contract and
+`blockloom-plugin-host/src/portable.rs` the executor, on `wasmi` 2.0. It is the
+native ABI's contract over one linear memory: a core module with no WASI that
+imports `blockloom.log` and `blockloom.call` and exports `memory`,
+`blockloom_abi`, `blockloom_alloc`, `blockloom_free` and `blockloom_call`.
+Payloads are JSON or raw little-endian bytes, copied in and out through the
+module's own allocator. A package with a `runtime.portable` entry and no native
+library for the host target runs its `module` commands here
+(`ActivePlugins::code_runtime`).
+
+- **Isolation.** The module gets one memory capped at `memory_limit_mib` (a grow
+  past it answers -1, a start past it refuses to load), one instance, and only
+  the two host functions, so a module that imports anything else fails to
+  start. Host services pass the same capability gate as native modules.
+- **Time.** A call has `call_limit_ms * FUEL_PER_MS` units of interpreter fuel
+  (about one per instruction, 500,000 per ms). It is a budget of work, not a
+  clock. A call that spends it, or traps, stops the module: the owner drops it
+  and the next call loads a fresh one, since its memory may be half-updated.
+- **Dispatch.** wasmi's default tail-call dispatch relies on LLVM sibling-call
+  optimisation and overflowed the stack on a runaway module under a
+  debug-assertions build, so the workspace asks for `portable-dispatch`.
+- **Cost** (container, release build): about 790 ns per empty call, against
+  about 43 ns through the C ABI, and about 20 ns per item for a naive summing
+  loop over a batch (that is interpreted work, not boundary cost). The spin
+  loop burns fuel at about 530 million per second, which is where
+  `FUEL_PER_MS` comes from. Run `wasm_call_cost` to repeat it. So portable
+  hot paths must still batch, and anything per-voxel belongs to a native
+  module or a compiled-in service. No JIT was tried.
+
+Not done: a browser host that runs the same modules (it needs the player to
+load a wasm and cross a second boundary), the portable tier in a built game,
+and cancellation of a call from outside (only the fuel budget stops one).

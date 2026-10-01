@@ -411,6 +411,13 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   calls `NativeModule::call_json`, the module's logs go to the run log, and a
   panic is an error, not a crash. A module may be called from any thread but
   one at a time, hence the `Mutex`.
+- **Portable modules** (`runtime.portable`, `blockloom-plugin-host/src/portable.rs`,
+  contract in `blockloom-plugin-api/src/wasm.rs`) run a `.wasm` through wasmi
+  with portable dispatch: one capped memory, only the `blockloom.log`/`call`
+  imports, and `call_limit_ms * FUEL_PER_MS` fuel per call. A call that runs out
+  or traps stops the module and `Modules::get` loads a fresh one next time.
+  `Modules` holds a `Module::{Native, Portable}`; a plugin with a native library
+  for the target uses it, else its portable module. Editor only so far.
 - **Plugin blocks** are statements only so far. The document holds one generic
   `InstructionKind::PluginBlock { plugin, block, args }` (args in the block
   schema's slot order, `FieldId::PluginArg(i)`), compiled to
@@ -431,8 +438,9 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   test (`tests/qml/tst_Plugins.qml`) but no inspector or contribution host yet.
 - **Not yet**: palette entries for plugin blocks (needs dynamic block rows in
   blockstitch), plugin reporters and hats, plugin blocks in a built game or the
-  script ABI, WASM executor, native modules in the runtime (a run's world), an
-  HTTP registry, dynamic QML for plugin editor panels.
+  script ABI, a browser host for portable modules, native or portable modules
+  in the runtime (a run's world) or a built game, an HTTP registry, dynamic QML
+  for plugin editor panels.
   `plugins/examples/com.example.health` is the sealed proof package.
 
 ### Scripts
