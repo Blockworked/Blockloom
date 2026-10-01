@@ -1526,6 +1526,11 @@ impl<'a> Pass<'a> {
             Action::SetMouseLocked(locked) => {
                 act(format!("Act::SetMouseLocked {{ locked: {locked} }}"))
             }
+            Action::PluginCall { plugin, block, .. } => {
+                return Err(Unsupported::new(format!(
+                    "the plugin block {plugin}/{block}"
+                )));
+            }
             Action::RumbleGamepad { strength, duration } => format!(
                 "    let strength = ({} as f32).clamp(0.0, 100.0);\n    \
                  let duration = ({} as f32).max(0.0);\n    \

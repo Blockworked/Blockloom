@@ -2176,6 +2176,17 @@ pub fn step_vm(
                 actor: actor.clone(),
                 message: message.clone(),
             }),
+            Effect::PluginCall {
+                actor,
+                plugin,
+                block,
+                args,
+            } => bridge::send(&RuntimeMessage::PluginCall {
+                actor: actor.clone(),
+                plugin: plugin.clone(),
+                block: block.clone(),
+                args: args.clone(),
+            }),
             Effect::SwitchScene {
                 actor,
                 scene,
@@ -4472,6 +4483,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetUiTheme { .. }
         | Effect::SetPaused { .. }
         | Effect::SaveVariable { .. }
+        | Effect::PluginCall { .. }
         | Effect::SetParent { .. }
         | Effect::CreateClone { .. }
         | Effect::CreateActor { .. }

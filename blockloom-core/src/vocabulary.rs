@@ -3180,6 +3180,22 @@ pub const BLOCKS: &[BlockSpec] = &[
         bodies: NO_BODIES,
     },
     BlockSpec {
+        r#type: "PluginBlock",
+        category: "Plugins",
+        purpose: "Runs a plugin block's command in the editor, one arg per slot of the block's schema.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "args",
+            id: "PluginArg:n",
+            value: "Any",
+        }],
+        dropdowns: NO_DROPDOWNS,
+        strings: &["plugin", "block"],
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
         r#type: "Return",
         category: "Custom Blocks",
         purpose: "Evaluates and returns value; only meaningful in a reporter body.",
@@ -3251,7 +3267,7 @@ mod tests {
         for spec in BLOCKS {
             for slot in spec.slots {
                 let id = slot.id;
-                if id == "CallArg:n" {
+                if id == "CallArg:n" || id == "PluginArg:n" {
                     continue; // call sites carry one arg per declared input
                 }
                 assert!(

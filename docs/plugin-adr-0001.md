@@ -93,8 +93,9 @@ and tracked in `TODO.md`:
 - Native modules load in the editor (a `module` command action calls them,
   tested with a rustc-built C-layout fixture) but not yet in the runtime's
   world or the built player, so plugin code cannot act on a running game.
-- No bridge from plugin blocks into the VM, codegen or script ABI: a plugin
-  block is registered in the schema but has no run-time effect yet.
+- Plugin statement blocks run in the editor only (see "Plugin blocks" below).
+  Reporters, hats, the script ABI, palette entries and built games are not
+  done.
 - Registry transport is a local folder (`DirRegistry`); no HTTP registry.
 - Shell and MCP expose plugin commands through `plugin-id/command` shell lines
   and the `plugin-call` tool. MCP does not yet list each plugin command as a
@@ -106,3 +107,21 @@ and tracked in `TODO.md`:
   do not exist yet.
 - Pack format is v2 only for packs that carry plugins; others are still
   written as v1 so older players read them.
+
+## Plugin blocks (second batch)
+
+A plugin's `BlockSchema` becomes one generic instruction,
+`PluginBlock { plugin, block, args }`, rather than a variant per block, so a
+document holding one loads in an editor that lacks the plugin. The VM lowers it
+to `Effect::PluginCall`; the world forwards it to the editor
+(`RuntimeMessage::PluginCall`, protocol 21), because the editor already owns the
+plugin host, and the editor runs the block's command through `plugin_call`.
+That keeps native modules out of the world for now, at the price of a message
+round trip, so these blocks are for rare events, not per-frame work. The result
+of the command is dropped (a statement has none), failures reach the run log,
+and Play is refused when a block's plugin is missing or its slot count changed.
+
+Deviations: codegen returns `Unsupported` naming the block, so a project with
+plugin blocks plays on the VM, and a Build refuses them until the player can
+run plugin code. Palette entries need blockstitch to draw a row from a schema
+at run time, which this batch does not touch.

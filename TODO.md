@@ -1495,7 +1495,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [ ] Plugin Manager and contribution host in QML.
     - [x] Native modules load in the editor for `module` commands (`Modules` cache, run-log output, panic containment).
     - [ ] Native modules in the runtime world and built player, lifecycle wiring; portable (WASM) executor and a browser proof.
-    - [ ] Plugin blocks in the VM, codegen and script ABI; importer/build hooks; per-plugin MCP tools.
+    - [x] Plugin statement blocks in the VM: `PluginBlock` instruction, `Effect::PluginCall`, the editor runs the block's command, `plugin-run-block`, Play preflight; codegen refuses by name and Build is refused while they exist.
+    - [ ] Plugin blocks in the palette (needs dynamic block rows in blockstitch), reporters and hats, built games, codegen and the script ABI; importer/build hooks; per-plugin MCP tools.
     - [ ] HTTP registry transport; revision bump for attached copies on package changes.
     - [ ] Phases 3-7 (voxel plugin `com.blockworked.voxel`, procedural worlds, GPU path, fracture, ecosystem).
 

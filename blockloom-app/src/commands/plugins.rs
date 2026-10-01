@@ -19,7 +19,7 @@ use blockloom_plugin_api::abi::LOG_WARN;
 use blockloom_plugin_api::id::{self, validate_plugin_id};
 use blockloom_plugin_api::manifest::TargetSupport;
 use blockloom_plugin_api::record::PluginRecord;
-use blockloom_plugin_api::schema::{CommandAction, ComponentSchema};
+use blockloom_plugin_api::schema::{CommandAction, ComponentSchema, FieldType};
 use blockloom_plugin_api::{Version, VersionReq};
 use blockloom_plugin_host::active::{ActivePlugins, RecordIssue, RecordStatus, migrate_records};
 use blockloom_plugin_host::cache::{self, Cache};
@@ -208,6 +208,15 @@ fn installed(active: &ActivePlugins) -> Vec<InstalledDto> {
         .collect()
 }
 
+/// Every block the installed plugins add, with the plugin that owns it.
+fn blocks_json(active: &ActivePlugins) -> Vec<Value> {
+    active
+        .blocks()
+        .into_iter()
+        .map(|(plugin, block)| json!({ "plugin": plugin, "block": block }))
+        .collect()
+}
+
 /// The part of the snapshot the frontend reads: what is installed, what
 /// failed to load, and which records need attention.
 pub(crate) fn summary(s: &AppState) -> Value {
@@ -220,6 +229,7 @@ pub(crate) fn summary(s: &AppState) -> Value {
     }
     json!({
         "installed": installed(active),
+        "blocks": blocks_json(active),
         "problems": active.problems,
         "issues": active.audit(project.plugin_records()),
     })
@@ -236,6 +246,7 @@ pub(crate) fn plugin_list(state: &SharedState) -> Result<Value, String> {
     let active = active(&s)?;
     Ok(json!({
         "installed": installed(active),
+        "blocks": blocks_json(active),
         "problems": active.problems,
         "direct": plugins.plugins,
         "registries": plugins.registries,
@@ -313,6 +324,27 @@ pub(crate) fn preflight(active: &ActivePlugins, project: &Project) -> Result<(),
         .filter(|i| i.blocks_run)
         .map(describe)
         .collect();
+    for used in project.plugin_blocks() {
+        let found = active
+            .blocks()
+            .into_iter()
+            .find(|(plugin, schema)| *plugin == used.plugin && schema.type_id == used.block);
+        match found {
+            None => lines.push(format!(
+                "{}: the block {}/{} isn't provided by an installed plugin",
+                used.place, used.plugin, used.block
+            )),
+            Some((_, schema)) if schema.slots.len() != used.slots => lines.push(format!(
+                "{}: the block {}/{} has {} slots, the installed plugin's has {}",
+                used.place,
+                used.plugin,
+                used.block,
+                used.slots,
+                schema.slots.len()
+            )),
+            Some(_) => {}
+        }
+    }
     lines.extend(
         active
             .unavailable_code_plugins()
@@ -346,10 +378,24 @@ pub(crate) fn payloads(
     target: &Target,
 ) -> Result<Vec<PluginPayload>, String> {
     let active = load_active(dir);
-    if active.is_empty() && project.plugin_records().is_empty() {
+    if active.is_empty()
+        && project.plugin_records().is_empty()
+        && project.plugin_blocks().is_empty()
+    {
         return Ok(Vec::new());
     }
     preflight(&active, project).map_err(|e| e.replace("won't run", "won't build"))?;
+    // A built game has no editor to run a block's command in.
+    let uses = project.plugin_blocks();
+    if !uses.is_empty() {
+        return Err(format!(
+            "Plugin blocks only run in the editor so far, so the project won't build:\n- {}",
+            uses.iter()
+                .map(|u| format!("{}: {}/{}", u.place, u.plugin, u.block))
+                .collect::<Vec<_>>()
+                .join("\n- ")
+        ));
+    }
     let plan = active.ship_plan(target.triple)?;
     Ok(plan
         .into_iter()
@@ -849,6 +895,84 @@ pub(crate) fn plugin_call(
     }
 }
 
+/// Runs the plugin block a running game reached: the block's command, its
+/// slots named by the schema. A command that wants an `actor` the block has
+/// no slot for gets the actor that ran the block, and a named actor is
+/// resolved to its id.
+pub(crate) fn run_block(
+    state: &SharedState,
+    app: &AppHandle,
+    actor: &str,
+    plugin: &str,
+    block: &str,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let (command, mut object) = {
+        let s = lock(state)?;
+        let active = active(&s)?;
+        let schema = active
+            .blocks()
+            .into_iter()
+            .find(|(p, b)| *p == plugin && b.type_id == block)
+            .map(|(_, b)| b)
+            .ok_or_else(|| format!("{plugin}/{block}: no installed plugin provides this block"))?;
+        if schema.slots.len() != args.len() {
+            return Err(format!(
+                "{plugin}/{block}: the block has {} slots, the project's has {}",
+                schema.slots.len(),
+                args.len()
+            ));
+        }
+        let command = schema
+            .command
+            .clone()
+            .ok_or_else(|| format!("{plugin}/{block}: the block runs no command"))?;
+        let qualified = id::qualified(plugin, &command);
+        let wants_actor = active
+            .command(&qualified)
+            .is_some_and(|(_, c)| c.args.iter().any(|a| a.name == "actor"));
+        let mut object = serde_json::Map::new();
+        for (slot, value) in schema.slots.iter().zip(args) {
+            let value = match (&slot.ty, &value) {
+                (FieldType::Actor, Value::String(name)) => Value::String(actor_id(&s, actor, name)),
+                _ => value,
+            };
+            object.insert(slot.name.clone(), value);
+        }
+        if wants_actor && !object.contains_key("actor") {
+            object.insert("actor".to_string(), Value::String(actor.to_string()));
+        }
+        (qualified, object)
+    };
+    plugin_call(
+        state,
+        app,
+        command,
+        Value::Object(std::mem::take(&mut object)),
+    )
+}
+
+/// An actor slot's text as an id: an id as it stands, else the first actor
+/// of that name in the open scene, else `name` unchanged for the command to
+/// report.
+fn actor_id(s: &AppState, running: &str, name: &str) -> String {
+    let Some(project) = s.project() else {
+        return name.to_string();
+    };
+    if project.actor(name).is_some() {
+        return name.to_string();
+    }
+    // The scene the running actor belongs to answers first.
+    project
+        .scenes
+        .iter()
+        .filter(|scene| scene.actors.iter().any(|a| a.id == running))
+        .chain(project.scenes.iter())
+        .flat_map(|scene| scene.actors.iter())
+        .find(|a| a.name == name)
+        .map_or_else(|| name.to_string(), |a| a.id.clone())
+}
+
 /// Upgrades every record of `plugin` to its schema's current version, on
 /// copies: all of them or none. A snapshot of what was replaced is kept under
 /// `.blockloom/plugin-migrations` beside the project's undo history.
@@ -906,4 +1030,46 @@ pub(crate) fn plugin_migrate(
         "migrated": count,
         "records": migrated,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blockloom_core::blocks::{Instruction, InstructionKind, Strand};
+    use blockloom_core::scene::Mode;
+
+    fn with_block() -> Project {
+        let mut project = Project::starter("Blocks", Mode::TwoD);
+        project.actors[0]
+            .graph
+            .strands
+            .push(Strand::with_instructions(
+                0,
+                0,
+                vec![
+                    Instruction::new(InstructionKind::WhenStarted),
+                    Instruction::new(InstructionKind::PluginBlock {
+                        plugin: "com.example.health".to_string(),
+                        block: "set_hp".to_string(),
+                        args: Vec::new(),
+                    }),
+                ],
+            ));
+        project
+    }
+
+    #[test]
+    fn a_plugin_block_with_no_plugin_stops_play_and_build() {
+        let project = with_block();
+        let error = preflight(&ActivePlugins::default(), &project).unwrap_err();
+        assert!(error.contains("com.example.health/set_hp"), "{error}");
+        assert!(error.contains("isn't provided"), "{error}");
+        assert!(
+            preflight(
+                &ActivePlugins::default(),
+                &Project::starter("None", Mode::TwoD)
+            )
+            .is_ok()
+        );
+    }
 }

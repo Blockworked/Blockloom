@@ -3072,6 +3072,34 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        name: "plugin-run-block",
+        cmd: "plugin_run_block",
+        aliases: &[],
+        summary: "Run a plugin block as a game strand would: its command with the slot values in the schema's slot order. The actor is who a command that wants one defaults to.",
+        args: &[
+            ArgSpec {
+                name: "plugin",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "block",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "args",
+                ty: "[slot values]",
+                required: false,
+            },
+            ArgSpec {
+                name: "actor",
+                ty: "id",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
         name: "plugin-seal",
         cmd: "plugin_seal",
         aliases: &[],

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 23;
+pub const PROTOCOL_VERSION: u32 = 24;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -280,6 +280,14 @@ pub enum RuntimeMessage {
     },
     /// The Tiles tool's pick read a cell: which sheet tile it shows.
     TilePicked { actor: String, tile: i32 },
+    /// A plugin block ran. The editor owns the plugins, so it looks the block
+    /// up and runs its command; `args` follow the block's slot order.
+    PluginCall {
+        actor: String,
+        plugin: String,
+        block: String,
+        args: Vec<serde_json::Value>,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

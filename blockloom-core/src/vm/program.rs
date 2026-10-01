@@ -349,6 +349,13 @@ pub enum Action {
     FadeScreen {
         color: Value,
     },
+    /// A plugin block: the editor runs the block's command with `args` in the
+    /// schema's slot order.
+    PluginCall {
+        plugin: String,
+        block: String,
+        args: Vec<Value>,
+    },
     /// Grabs or frees the pointer; window-global, like gravity.
     SetMouseLocked(bool),
     /// Rumbles connected gamepads: 0-100 strength for seconds.
@@ -865,6 +872,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
             values
         }
         Action::RumbleGamepad { strength, duration } => vec![strength, duration],
+        Action::PluginCall { args, .. } => args.iter().collect(),
         Action::BindAction { action, binding } => vec![action, binding],
         Action::SwitchScene { scene, transition } => vec![scene, transition],
         Action::SetVariable { value, .. } | Action::ChangeVariable { value, .. } => vec![value],
@@ -1296,6 +1304,15 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         Action::RumbleGamepad { strength, duration } => Action::RumbleGamepad {
             strength: lift_one(strength, ctx),
             duration: lift_one(duration, ctx),
+        },
+        Action::PluginCall {
+            plugin,
+            block,
+            args,
+        } => Action::PluginCall {
+            plugin,
+            block,
+            args: args.into_iter().map(|v| lift_one(v, ctx)).collect(),
         },
         Action::BindAction { action, binding } => Action::BindAction {
             action: lift_one(action, ctx),
@@ -2281,6 +2298,15 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             args: args.clone(),
         }),
         K::Return { value } => steps.push(Step::Return(value.clone())),
+        K::PluginBlock {
+            plugin,
+            block,
+            args,
+        } => steps.push(Step::Action(Action::PluginCall {
+            plugin: plugin.clone(),
+            block: block.clone(),
+            args: args.clone(),
+        })),
         K::StopAll => steps.push(Step::StopAll),
         K::EscapeLoop => steps.push(Step::Break),
         K::ContinueLoop => steps.push(Step::Continue),

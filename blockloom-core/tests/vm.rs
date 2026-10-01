@@ -2372,3 +2372,39 @@ fn the_cutscene_reporters_read_the_published_snapshot() {
     let playing = Value::op(Op::from_name("IsCutscenePlaying"), vec![]);
     assert_eq!(playing.eval(), Ok(Evaluated::Bool(false)));
 }
+
+#[test]
+fn a_plugin_block_asks_the_editor_to_run_its_command_with_its_slots() {
+    let project = project_with(vec![started(vec![
+        InstructionKind::SetVariable {
+            name: "n".to_string(),
+            value: Value::number(4.0),
+        },
+        InstructionKind::PluginBlock {
+            plugin: "com.example.health".to_string(),
+            block: "heal".to_string(),
+            args: vec![
+                Value::text("Hero"),
+                Value::Var {
+                    name: "n".to_string(),
+                },
+                Value::number(1.5),
+                Value::Bool,
+            ],
+        },
+    ])]);
+    let actor = project.actors[0].id.clone();
+    let effects = Harness::started(&project).run(1);
+    assert!(effects.contains(&Effect::PluginCall {
+        actor,
+        plugin: "com.example.health".to_string(),
+        block: "heal".to_string(),
+        // A whole number is an integer; a bare bool slot reads false.
+        args: vec![
+            serde_json::json!("Hero"),
+            serde_json::json!(4),
+            serde_json::json!(1.5),
+            serde_json::json!(false),
+        ],
+    }));
+}

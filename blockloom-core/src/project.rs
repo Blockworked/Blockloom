@@ -1034,6 +1034,15 @@ impl<'de> Deserialize<'de> for Project {
     }
 }
 
+/// One plugin block on a canvas, as [`Project::plugin_blocks`] reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginBlockUse {
+    pub place: String,
+    pub plugin: String,
+    pub block: String,
+    pub slots: usize,
+}
+
 impl Project {
     /// Every record a plugin owns in the whole document, each with where it
     /// lives (`actor Player`, `actor Player in scene Level 1`, `resource`).
@@ -1057,6 +1066,38 @@ impl Project {
                 .iter()
                 .map(|record| ("resource".to_string(), record)),
         );
+        out
+    }
+
+    /// Every plugin block placed on a canvas: where it sits, its plugin, its
+    /// block id and how many slots the instruction carries.
+    pub fn plugin_blocks(&self) -> Vec<PluginBlockUse> {
+        let several = self.scenes.len() > 1;
+        let mut out = Vec::new();
+        for scene in &self.scenes {
+            for actor in &scene.actors {
+                actor.graph.walk_instructions(&mut |instruction| {
+                    if let crate::blocks::InstructionKind::PluginBlock {
+                        plugin,
+                        block,
+                        args,
+                    } = &instruction.kind
+                    {
+                        let place = if several {
+                            format!("actor {} in scene {}", actor.name, scene.name)
+                        } else {
+                            format!("actor {}", actor.name)
+                        };
+                        out.push(PluginBlockUse {
+                            place,
+                            plugin: plugin.clone(),
+                            block: block.clone(),
+                            slots: args.len(),
+                        });
+                    }
+                });
+            }
+        }
         out
     }
 

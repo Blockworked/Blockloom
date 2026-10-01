@@ -2165,6 +2165,22 @@ impl Vm {
                 clear: *clear,
             }),
             Action::SetMouseLocked(locked) => out.push(Effect::SetMouseLocked { locked: *locked }),
+            Action::PluginCall {
+                plugin,
+                block,
+                args,
+            } => {
+                let args = args
+                    .iter()
+                    .map(|arg| json_of(&self.eval(arg, actor, params, temps, out)))
+                    .collect();
+                out.push(Effect::PluginCall {
+                    actor: actor.to_string(),
+                    plugin: plugin.clone(),
+                    block: block.clone(),
+                    args,
+                });
+            }
             Action::RumbleGamepad { strength, duration } => {
                 let strength = self
                     .eval_f32(strength, actor, params, temps, out)
@@ -2692,6 +2708,21 @@ fn current_params(frames: &[Frame]) -> Option<&Params> {
         Frame::Call { params, .. } => Some(params),
         Frame::Loop { .. } => None,
     })
+}
+
+/// A slot's value as a plugin sees it. A whole number is an integer, so it
+/// satisfies an integer field as well as a number one.
+fn json_of(value: &Evaluated) -> serde_json::Value {
+    match value {
+        Evaluated::Number(n) if n.fract() == 0.0 && n.abs() < 9.0e15 => {
+            serde_json::Value::from(*n as i64)
+        }
+        Evaluated::Number(n) => serde_json::Number::from_f64(*n)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        Evaluated::Text(s) => serde_json::Value::String(s.clone()),
+        Evaluated::Bool(b) => serde_json::Value::Bool(*b),
+    }
 }
 
 fn store_temp(temps: &mut Vec<Evaluated>, temp: usize, value: Evaluated) {

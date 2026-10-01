@@ -1069,6 +1069,16 @@ pub enum InstructionKind {
     Return {
         value: Value,
     },
+
+    // ─── Plugin blocks ──────────────────────────────────────────────────────
+    /// A statement a plugin's `BlockSchema`
+    /// adds. `args` follow the schema's slot order; the editor runs the
+    /// block's command with them when the instruction executes.
+    PluginBlock {
+        plugin: String,
+        block: String,
+        args: Vec<Value>,
+    },
 }
 
 /// Blockloom's half of the block-editor contract: where its instructions
@@ -1468,6 +1478,11 @@ impl BlockKind for InstructionKind {
             // A call site's declared Boolean inputs live on the `BlockDef`,
             // not here - `BlockGraph::migrate_bool_slots` handles those.
             K::CallBlock { args, .. } => {
+                for arg in args {
+                    f(arg, InputValueType::Any);
+                }
+            }
+            K::PluginBlock { args, .. } => {
                 for arg in args {
                     f(arg, InputValueType::Any);
                 }

@@ -502,6 +502,14 @@ impl Backend {
                 arg(&args, "command")?,
                 arg(&args, "args").unwrap_or(Value::Null),
             )?),
+            "plugin_run_block" => to_json(commands::plugins::run_block(
+                state,
+                app,
+                &arg::<String>(&args, "actor").unwrap_or_default(),
+                &arg::<String>(&args, "plugin")?,
+                &arg::<String>(&args, "block")?,
+                arg(&args, "args").unwrap_or_default(),
+            )?),
             "add_plugin_component" => to_json(commands::plugins::add_plugin_component(
                 state,
                 app,

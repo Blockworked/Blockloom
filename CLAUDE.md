@@ -336,9 +336,24 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   calls `NativeModule::call_json`, the module's logs go to the run log, and a
   panic is an error, not a crash. A module may be called from any thread but
   one at a time, hence the `Mutex`.
-- **Not yet**: QML Plugin Manager, WASM executor, native modules in the
-  runtime (a run's world), plugin blocks in the VM/codegen/script ABI, an HTTP
-  registry. `plugins/examples/com.example.health` is the sealed proof package.
+- **Plugin blocks** are statements only so far. The document holds one generic
+  `InstructionKind::PluginBlock { plugin, block, args }` (args in the block
+  schema's slot order, `FieldId::PluginArg(i)`), compiled to
+  `Action::PluginCall` and run by the VM as `Effect::PluginCall`, whole numbers
+  as JSON integers. The world forwards it as `RuntimeMessage::PluginCall`, and
+  the editor runs it (`commands::plugins::run_block`: slots named by the schema,
+  an `actor` argument filled from the running actor, an actor slot's name
+  resolved to an id, then the same `plugin_call` path). Codegen refuses it by
+  name, so such a project stays on the VM, and `preflight` stops Play on a
+  block no installed plugin provides or whose slot count changed. A Build is
+  refused while plugin blocks exist, since a built game has no editor to run
+  them. `plugin-run-block` runs one from the shell and MCP, and the snapshot's
+  `plugins.blocks` lists every available block for the palette.
+- **Not yet**: QML Plugin Manager and palette entries for plugin blocks (needs
+  dynamic block rows in blockstitch), plugin reporters and hats, plugin blocks
+  in a built game or the script ABI, WASM executor, native modules in the
+  runtime (a run's world), an HTTP registry.
+  `plugins/examples/com.example.health` is the sealed proof package.
 
 ### Scripts
 

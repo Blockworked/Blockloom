@@ -162,3 +162,57 @@ fn a_native_plugin_command_runs_in_its_module() {
     let again = invoke("plugin_call", json!({"command": "com.example.native/echo"}));
     assert_eq!(again["word"], "hi");
 }
+
+#[test]
+fn a_plugin_block_runs_its_command_with_its_slots() {
+    let root = data_root().join("blocks");
+    let backend = Backend::start(AppHandle::new(|_| {}));
+    let invoke = |cmd: &str, args: Value| backend.dispatch(cmd, args).unwrap();
+    invoke(
+        "create_project",
+        json!({"name": "Blocks", "mode": "TwoD", "location": root.join("projects")}),
+    );
+    let ball = invoke("add_actor", json!({"shape": "Circle", "name": "Ball"}));
+    let ball = ball.as_str().unwrap_or_default().to_owned();
+    // No plugin yet: a block with nothing behind it is an error, not a no-op.
+    assert!(
+        backend
+            .dispatch(
+                "plugin_run_block",
+                json!({"plugin": "com.example.health", "block": "set_hp", "args": ["Ball", 25]}),
+            )
+            .is_err()
+    );
+    invoke(
+        "plugin_install",
+        json!({"id": "com.example.health", "source": format!("path:{}", example())}),
+    );
+    // The actor slot takes a name; a whole number satisfies an int field.
+    invoke(
+        "plugin_run_block",
+        json!({"plugin": "com.example.health", "block": "set_hp", "args": ["Ball", 25], "actor": ball}),
+    );
+    let state = invoke("get_state", json!({}));
+    let dir = PathBuf::from(state["project_path"].as_str().unwrap());
+    let saved = blockloom_core::project::read_project_dir(&dir).unwrap();
+    let hp = saved
+        .plugin_records()
+        .into_iter()
+        .find(|(_, r)| r.type_id == "Health")
+        .map(|(_, r)| r.payload["hp"].clone());
+    assert_eq!(hp, Some(json!(25)));
+    // The wrong number of slots, and an unknown block, are refused by name.
+    let few = backend.dispatch(
+        "plugin_run_block",
+        json!({"plugin": "com.example.health", "block": "set_hp", "args": ["Ball"]}),
+    );
+    assert!(few.unwrap_err().contains("2 slots"));
+    assert!(
+        backend
+            .dispatch(
+                "plugin_run_block",
+                json!({"plugin": "com.example.health", "block": "nope", "args": []}),
+            )
+            .is_err()
+    );
+}

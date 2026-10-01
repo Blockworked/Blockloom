@@ -447,6 +447,19 @@ fn a_custom_block_that_calls_itself_compiles_with_a_budget() {
     assert!(source.contains("let mut budget = STEP_BUDGET;"), "{source}");
 }
 
+/// The editor runs a plugin block's command, which no compiled program can
+/// reach, so the project stays on the VM and the refusal names the block.
+#[test]
+fn a_plugin_block_is_refused_by_name() {
+    let error = compile(&started(vec![Instruction::new(K::PluginBlock {
+        plugin: "com.example.health".to_string(),
+        block: "heal".to_string(),
+        args: vec![Value::text("Hero")],
+    })]))
+    .expect_err("plugin blocks run in the editor");
+    assert!(error.what.contains("com.example.health/heal"), "{error}");
+}
+
 /// A reporter, though, may: each call builds a state of its own, exactly as
 /// the VM builds a fresh script for one.
 #[test]
