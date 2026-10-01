@@ -170,15 +170,16 @@ Item {
             }
             Section {
                 heading: "Lighting"; available: !!root.world && root.is3d
-                InspectorRow { label: "Lighting"; labelWidth: 110; Layout.fillWidth: true
+                RowLayout { Layout.fillWidth: true; spacing: 6
                     AssetField { objectName: "scene-lighting-field"; app: root.app; accept: ["lighting"]; value: root.world ? root.world.lighting.asset || "" : "";
                         placeholderText: "None (Lighting) - drag asset here"
                         onCommitted: p => root.invoke("set_scene_lighting_asset", { path: p, sceneId: root.sceneId }) }
+                    BwButton { objectName: "scene-lighting-edit"; visible: !!root.world && !!root.world.lighting.asset;
+                        text: "Edit lighting"; implicitHeight: 30
+                        onClicked: root.app.selectLighting(root.world.lighting.asset) }
                 }
                 BwButton { visible: !!root.world && !root.world.lighting.asset; text: "Create Lighting asset";
                     onClicked: root.createLighting() }
-                BwButton { visible: !!root.world && !!root.world.lighting.asset; text: "Edit lighting"; enabled: !!root.world && !!root.world.lighting.asset;
-                    onClicked: root.app.selectLighting(root.world.lighting.asset) }
                 Note { text: "Select a Lighting asset in the tray to edit its components. Scenes sharing it use the same settings." }
             }
             Section {

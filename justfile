@@ -56,7 +56,12 @@ prepare-patched-deps:
 # Build everything. The editor launches `blockloom-runtime` from beside itself,
 # so the whole workspace has to be built, not just the `blockloom` package.
 build *args: prepare-patched-deps
-    cargo build --release --workspace {{args}}
+    {{if os() == "linux" { "python3 scripts/prune-target.py --run" } else { "" }}} cargo build --release --workspace {{args}}
+
+# Trim old caches, preserving final binaries and staged players. Linux only.
+[linux]
+prune-target *args:
+    python3 scripts/prune-target.py {{args}}
 
 run: build
     {{TARGET}}
@@ -85,7 +90,7 @@ shell *args: prepare-patched-deps
 # keeps its quicker link, so this is a deliberate step before shipping games.
 # Other platforms' payloads come from running this there - see `stage-player`.
 player: prepare-patched-deps
-    cargo build --profile dist -p blockloom-runtime
+    {{if os() == "linux" { "python3 scripts/prune-target.py --run" } else { "" }}} cargo build --profile dist -p blockloom-runtime
     {{mkdir-players}}
     {{copy-player}}
 
@@ -180,13 +185,14 @@ web-player profile="dist": prepare-patched-deps
     # Separate host-tool outputs as well as intermediates from native builds.
     web_target_dir="${CARGO_TARGET_DIR:-target}/web-build"
     export CARGO_BUILD_BUILD_DIR="${CARGO_BUILD_BUILD_DIR:-$web_target_dir}"
-    cargo build -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown --profile {{profile}} --target-dir "$web_target_dir"
+    {{if os() == "linux" { 'python3 scripts/prune-target.py --target-dir "${CARGO_TARGET_DIR:-target}" --run' } else { "" }}} cargo build -p blockloom-runtime --lib --no-default-features --target wasm32-unknown-unknown --profile {{profile}} --target-dir "$web_target_dir"
     command -v wasm-bindgen >/dev/null || { echo "need wasm-bindgen-cli: just web-tools"; exit 1; }
     out="${CARGO_TARGET_DIR:-target}/release/players/wasm32-unknown-unknown"
     mkdir -p "$out"
     wasm-bindgen --target web --no-typescript --remove-name-section --remove-producers-section \
         --out-dir "$out" "$web_target_dir/wasm32-unknown-unknown/{{ if profile == "dev" { "debug" } else { profile } }}/blockloom_runtime.wasm"
     ls -l "$out"
+    {{if os() == "linux" { "just prune-target" } else { "" }}}
 
 # Builds a project folder for the browser: one self-contained .html under
 # out/, exactly what the Build dialog's Web target makes. Open it from disk
@@ -322,7 +328,7 @@ android-smoke apk app device="":
     bash scripts/android-smoke.sh "{{apk}}" "{{app}}" "{{device}}"
 
 test: prepare-patched-deps
-    cargo test --workspace
+    {{if os() == "linux" { "python3 scripts/prune-target.py --run" } else { "" }}} cargo test --workspace
 
 # Qt Quick interaction and layout tests use the staged blockstitch controls.
 qml-test: build
@@ -380,43 +386,46 @@ uninstall:
 [linux]
 replace-fast: build install
 
-# Build the editor and both players concurrently, then reinstall on success.
+# Reuse the workspace runtime as the native player without another build.
+[linux]
+_stage-release-player:
+    {{mkdir-players}}
+    cp target/release/blockloom-runtime "{{players-dir}}/"
+
+# Build the editor and web player concurrently, then reinstall on success.
 # The optional jobs argument sets each build's Cargo job limit.
 [linux]
 replace jobs="": prepare-patched-deps
     #!/usr/bin/env bash
     set -euo pipefail
+    native_profile="${BLOCKLOOM_NATIVE_PROFILE-release}"
+    case "$native_profile" in
+        release) build_count=2 ;;
+        dist) build_count=3 ;;
+        *) echo "BLOCKLOOM_NATIVE_PROFILE must be release or dist" >&2; exit 1 ;;
+    esac
     jobs="{{jobs}}"
     if [ -z "$jobs" ]; then
-        jobs="${CARGO_BUILD_JOBS:-$(( ($(nproc) + 2) / 3 ))}"
+        jobs="${CARGO_BUILD_JOBS:-$(( ($(nproc) + build_count - 1) / build_count ))}"
     fi
     if [[ ! "$jobs" =~ ^[1-9][0-9]*$ ]]; then
         echo "jobs must be a positive integer (per build)" >&2
         exit 1
     fi
     export CARGO_BUILD_JOBS="$jobs"
-    export JUST_COLOR=never
     export CARGO_TERM_PROGRESS_WHEN=never
+    just prune-target
     # Resolve and download once before parallel builds contend for the cache.
     echo "Fetching native and web dependencies before compiling."
     cargo fetch --locked --target {{host-target}} --target wasm32-unknown-unknown
     export CARGO_NET_OFFLINE=true
-    echo "Building editor, native player and web player concurrently ($jobs Cargo jobs each)."
-    # Preparation already ran above; parallel prerequisites would share its lock.
-    just --no-deps build &
-    editor_pid=$!
-    just --no-deps player &
-    native_pid=$!
-    just --no-deps web-player &
-    web_pid=$!
-    failed=0
-    for pid in "$editor_pid" "$native_pid" "$web_pid"; do
-        if wait "$pid"; then
-            :
-        else
-            failed=1
-        fi
-    done
+    echo "Building $build_count targets concurrently ($jobs Cargo jobs each)."
+    if [ "$native_profile" = release ]; then
+        echo "Native player will reuse the editor's optimized runtime."
+    fi
+    # Preparation already ran above; the runner skips recipe dependencies.
+    if python3 scripts/replace-builds.py; then failed=0; else failed=1; fi
+    just prune-target
     if [ "$failed" -ne 0 ]; then
         echo "A build failed; skipping reinstall." >&2
         exit 1

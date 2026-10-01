@@ -82,7 +82,14 @@ def main():
     args = parser.parse_args()
     os.chdir(Path(__file__).resolve().parent.parent)
     qmake, preview = qt_tool()
-    executable, resources = build(args.profile, qmake)
+    if sys.platform == "linux":
+        subprocess.run([sys.executable, "scripts/prune-target.py"], check=True)
+    try:
+        executable, resources = build(args.profile, qmake)
+    finally:
+        if sys.platform == "linux":
+            profile = "debug" if args.profile == "dev" else args.profile
+            subprocess.run([sys.executable, "scripts/prune-target.py", "--keep-profile", profile], check=True)
     command = [str(preview), "--interactive"]
     for resource in resources:
         command.extend(["--resource", str(resource)])

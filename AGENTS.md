@@ -22,7 +22,8 @@ just build              # cargo build --release --workspace (the normal build)
 just run                # build, then launch target/release/blockloom
 just qml-preview        # Qt 6.12 live QML edits, with the real backend
 just replace-fast       # Linux: rebuild/reinstall editor and runtime, reuse staged players
-just replace [jobs]     # Linux: build editor/native/web concurrently, then reinstall
+just replace [jobs]     # Linux: build editor/web concurrently, reuse runtime, reinstall
+just prune-target --dry-run          # Linux: inspect the 20 GiB build-cache budget
 cargo build --workspace && target/debug/blockloom   # debug build/run - faster iteration
 just test               # cargo test --workspace (blockloom-core has the bulk of them)
 cargo bench -p blockloom-core --bench vm   # block VM ns/tick over a few canvases
@@ -34,14 +35,31 @@ just web-build <project> [out]       # a project as one self-contained .html
 just web-smoke <page.html> [--scripts N] [--moves ACTOR]  # headless run of a built page
 ```
 
-`just replace` divides the CPU count across its three builds by default;
+`just replace` divides the CPU count across its two builds by default;
 `just replace 4` uses four Cargo jobs per build. `CARGO_BUILD_JOBS` overrides
 the default per-build limit. Web players use `target/web-build` for both final
 and intermediate artifacts to avoid the native player's host-tool output locks;
 their first build with this cache recompiles dependencies. Staged player paths
-stay the same.
+stay the same. The native player reuses the optimized runtime from the workspace
+build, avoiding a second native compilation.
+`BLOCKLOOM_NATIVE_PROFILE=dist just replace` builds the fat-LTO native player alongside the editor and
+web player, dividing CPUs across three builds. `just player` still uses `dist`.
 Replacement fetches native and web dependencies once before starting the builds
 offline, so network access does not serialize the parallel compilation steps.
+It keeps one status row below build output in an interactive terminal, showing
+each build's state and elapsed time. Redirected output gets periodic plain lines.
+Replacement uses the incremental `release` profile for web builds by default;
+`BLOCKLOOM_WEB_PROFILE=dist just replace` requests the fat-LTO shipping profile.
+`just web-player` still defaults to `dist`. Web builds compile only the library
+that wasm-bindgen loads, skipping the unused runtime executable.
+
+Linux build recipes use `scripts/prune-target.py` before and after compilation
+to keep the whole target tree within a 20 GiB budget. Python 3 is required.
+`BLOCKLOOM_TARGET_LIMIT_GIB` changes the budget. Cleanup evicts old incremental
+caches first, then older profile caches, preserving binaries and staged players.
+It locks Cargo profile directories and skips active builds. Temporary overshoot
+and protected outputs are allowed; this is not a filesystem quota. Direct Cargo
+commands need `just prune-target` afterward. See README.md's Build Cache Budget.
 
 Build the whole workspace, not just `-p blockloom`: off Linux (or with
 `BLOCKLOOM_RUNTIME=process`) the editor starts the `blockloom-runtime` binary

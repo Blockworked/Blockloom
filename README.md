@@ -34,7 +34,8 @@ them.
 - Bash, curl, tar, patch, and `sha256sum` (or `shasum`) for preparing patched
   dependencies. On Windows, put the Git Bash tools on PATH.
 - On Linux: `pkg-config` and development libraries for ALSA, udev, Wayland,
-  xkbcommon and EGL, plus a working Vulkan loader and GPU driver.
+  xkbcommon and EGL, plus a working Vulkan loader and GPU driver. Python 3
+  is needed for automatic build-cache cleanup.
 
 The first build needs network access for Rust dependencies, the pinned
 `blockstitch` Git dependency, and patched dependency archives. A sibling
@@ -75,6 +76,32 @@ to its executable.
 The legacy `ui/` and `src-tauri/` applications are not part of this build;
 Node.js is not needed to build the Qt editor.
 
+### Build Cache Budget
+
+On Linux, `just build`, `just player`, `just web-player`, `just test`,
+`just replace` and `just qml-preview` clean build caches around compilation.
+The default budget is **20 GiB** for the whole `target` tree, including the
+web build. Set `BLOCKLOOM_TARGET_LIMIT_GIB` to change it.
+
+Cleanup removes the oldest incremental crate caches first. If that is not
+enough, it removes older profile caches (`deps`, `build`, `.fingerprint` and
+`examples`). Final binaries and staged players are preserved. Evicted caches
+are recreated by the next build, which may take longer.
+
+```bash
+just prune-target --dry-run          # inspect usage and proposed cleanup
+just prune-target                   # clean without building
+BLOCKLOOM_TARGET_LIMIT_GIB=30 just replace
+```
+
+This is a cleanup budget, not a filesystem quota: builds may temporarily exceed
+it. Locked profiles are skipped and retried on the next cleanup. Protected
+outputs can also keep usage above the budget; the cleaner reports this.
+QML preview keeps its current profile's resource manifests. Direct Cargo
+commands need a separate `just prune-target` afterward. `CARGO_TARGET_DIR` and
+`CARGO_BUILD_BUILD_DIR` are respected; an external build directory counts
+toward the same budget.
+
 ### QML Hot Reload
 
 With Python 3 and Qt 6.12's QML tooling installed, run:
@@ -109,6 +136,11 @@ rebuild. Verify final changes with a normal build and fresh launch.
 `just player` builds the optimized native player and stages it under
 `target/release/players/<host-target>/` for exporting games from the editor.
 Build and stage other native platforms' players on those platforms.
+`just replace` reuses the optimized release runtime built with the editor as
+the native player, avoiding a separate compilation and fat LTO. Use
+`BLOCKLOOM_NATIVE_PROFILE=dist just replace` for the full shipping optimization,
+or stage it separately with `just player`. The status row shows Native waiting
+for the editor build, then staging the runtime.
 The optional DLSS build is `just player-dlss`; it requires the separately
 downloaded NVIDIA SDK and additional Vulkan/clang tooling.
 
@@ -135,6 +167,13 @@ rustup target add wasm32-unknown-unknown
 just web-tools
 just web-player
 ```
+
+`just replace` uses `just web-player release` for faster optimized web rebuilds.
+The first release build creates its own dependency cache; subsequent builds use
+incremental compilation. For the fat-LTO shipping build, run `just web-player`
+or `BLOCKLOOM_WEB_PROFILE=dist just replace`. Both profiles build only the wasm
+library, avoiding an unused executable. Runtime speed and file size may differ
+between profiles; choose `dist` for final shipping builds.
 
 Then select the Web target in the Build dialog. `just web-tools` installs the
 `wasm-bindgen` CLI matching Cargo.lock. Built web games require a browser
