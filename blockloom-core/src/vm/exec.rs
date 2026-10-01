@@ -105,6 +105,19 @@ impl Lists {
         merged
     }
 
+    /// A list reporter over evaluated arguments, reading only the one list
+    /// its name picks. What the VM and compiled logic both answer through.
+    pub fn read(
+        &self,
+        actor: &str,
+        op: &str,
+        args: Vec<Result<Evaluated, String>>,
+    ) -> Result<Evaluated, String> {
+        let (name, args) = stores::literal_args(op, args)?;
+        let name = name.unwrap_or_default();
+        resolve_list_reporter(op, args, &self.scope_of(actor, &name))?.eval()
+    }
+
     /// The one list `name` means to `actor`, as the only entry of a scope -
     /// what a list reporter reads when its name is a plain literal, without
     /// copying every other list along with it.
@@ -213,6 +226,19 @@ impl Dicts {
             merged.extend(own.clone());
         }
         merged
+    }
+
+    /// A dict reporter over evaluated arguments, reading only the one dict
+    /// its name picks.
+    pub fn read(
+        &self,
+        actor: &str,
+        op: &str,
+        args: Vec<Result<Evaluated, String>>,
+    ) -> Result<Evaluated, String> {
+        let (name, args) = stores::literal_args(op, args)?;
+        let name = name.unwrap_or_default();
+        resolve_dict_reporter(op, args, &self.scope_of(actor, &name))?.eval()
     }
 
     /// The one dict `name` means to `actor`, as the only entry of a scope.
@@ -350,6 +376,21 @@ pub enum Event {
 }
 
 impl Event {
+    /// The one actor whose strands this event can start, for the events that
+    /// are about somebody in particular.
+    fn actor(&self) -> Option<&str> {
+        match self {
+            Event::Click { actor }
+            | Event::Collision { actor, .. }
+            | Event::Cloned { actor }
+            | Event::AnimationEnded { actor, .. }
+            | Event::Particles { actor, .. }
+            | Event::AnimationMarker { actor, .. }
+            | Event::EnteredRoom { actor, .. } => Some(actor),
+            _ => None,
+        }
+    }
+
     /// True for an event the interface raised. A strand one of these starts
     /// keeps running while the game is paused.
     pub fn is_ui(&self) -> bool {
@@ -736,20 +777,37 @@ impl Vm {
         let ui = event.is_ui()
             || (self.paused
                 && matches!(&event, Event::Key(key) if key == "escape" || key == "back"));
-        let matches: Vec<(String, String, usize)> = self
-            .programs
-            .iter()
-            .flat_map(|(actor, program)| {
-                program
-                    .entries
-                    .iter()
-                    .filter(|entry| self.entry_matches(actor, &entry.trigger, &event))
-                    .map(|entry| (actor.clone(), entry.strand_id.clone(), entry.pc))
-            })
-            .collect();
+        // An event about one actor can only start that actor's strands, so a
+        // crowd's worth of collisions doesn't walk every program each.
+        let matches: Vec<(String, String, usize)> = match event.actor() {
+            Some(target) => self
+                .programs
+                .get_key_value(target)
+                .into_iter()
+                .flat_map(|(actor, program)| self.matching_entries(actor, program, &event))
+                .collect(),
+            None => self
+                .programs
+                .iter()
+                .flat_map(|(actor, program)| self.matching_entries(actor, program, &event))
+                .collect(),
+        };
         for (actor, strand_id, pc) in matches {
             self.start(actor, strand_id, pc, ui);
         }
+    }
+
+    fn matching_entries<'a>(
+        &'a self,
+        actor: &'a str,
+        program: &'a Loaded,
+        event: &'a Event,
+    ) -> impl Iterator<Item = (String, String, usize)> + 'a {
+        program
+            .entries
+            .iter()
+            .filter(move |entry| self.entry_matches(actor, &entry.trigger, event))
+            .map(move |entry| (actor.to_string(), entry.strand_id.clone(), entry.pc))
     }
 
     fn entry_matches(&self, actor: &str, trigger: &Trigger, event: &Event) -> bool {
@@ -2548,14 +2606,11 @@ impl Vm {
         list: bool,
         args: Vec<Result<Evaluated, String>>,
     ) -> Result<Evaluated, String> {
-        let (name, args) = stores::literal_args(op, args)?;
-        let name = name.unwrap_or_default();
-        let value = if list {
-            resolve_list_reporter(op, args, &self.lists.scope_of(actor, &name))?
+        if list {
+            self.lists.read(actor, op, args)
         } else {
-            resolve_dict_reporter(op, args, &self.dicts.scope_of(actor, &name))?
-        };
-        value.eval()
+            self.dicts.read(actor, op, args)
+        }
     }
 
     /// Runs a reporter-shaped custom block's body to completion, right here,

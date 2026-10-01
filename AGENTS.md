@@ -1536,6 +1536,22 @@ The VM holds `Rc`s, so it is a `!Send` Bevy resource - which is exactly right:
 every system touching it is therefore scheduled on the main thread, the same
 thread the thread-local sensor snapshot lives on. Keep it that way.
 
+### Per-frame cost
+
+`publish_sensors` rebuilds the snapshot every frame, so it is the first thing
+a crowded scene pays for. It refreshes last frame's `ActorSense` entries in
+place (`sense::take_actors`, then `clone_from`) rather than building new ones,
+and `Engine::actor` remembers each authored actor's slot in the document list
+so per-actor lookups stay O(1). Own-actor reporters read through
+`sense::with_me`, which borrows the entry; never clone an `ActorSense` to read
+one field. By-name lookups (`Sensors::find`, `count_named`) scan twice and
+then use a lazily built `NameIndex` for the rest of the snapshot, and a name
+shared by clones answers with the smallest id. Writes through `&mut Transform`
+mark it changed, so `interpolate_poses` and `restore_poses` assign only when the
+value differs. `docs/performance.md` has the measurements, how to rerun them
+(`cargo bench -p blockloom-core --bench vm`, the ignored `sensor_publish_cost`
+test) and the open list; GPU numbers there are inferred until profiled.
+
 ### Sound
 
 `blockloom-core/src/sound.rs` is the model: a `SoundBus` (`Master`, `Music`,

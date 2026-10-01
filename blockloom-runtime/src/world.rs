@@ -73,8 +73,8 @@ pub fn sync_navmesh(
     if !engine.running || engine.paused {
         return;
     }
-    let mut signature = Vec::new();
-    let mut actors = Vec::new();
+    // Borrowed, so a tick where nothing moved clones nothing.
+    let mut signature: Vec<(&String, [f32; 3], &Visual)> = Vec::new();
     for (id, entity) in &engine.entities {
         if !engine.has_component(id, "Body") || !engine.has_component(id, "Look") {
             continue;
@@ -88,20 +88,33 @@ pub fn sync_navmesh(
         let Ok(transform) = transforms.get(*entity) else {
             continue;
         };
-        let Some(visual) = actor.visual().cloned() else {
+        let Some(visual) = actor.visual() else {
             continue;
         };
-        let position = transform.translation.to_array();
-        signature.push((id.clone(), position, visual));
-        let mut live = actor.clone();
-        live.components.placement_mut().position = position;
-        actors.push(live);
+        signature.push((id, transform.translation.to_array(), visual));
     }
-    signature.sort_by(|a, b| a.0.cmp(&b.0));
-    if signature == navmesh.signature {
+    signature.sort_by(|a, b| a.0.cmp(b.0));
+    let unchanged = signature.len() == navmesh.signature.len()
+        && signature
+            .iter()
+            .zip(&navmesh.signature)
+            .all(|(now, then)| *now.0 == then.0 && now.1 == then.1 && *now.2 == then.2);
+    if unchanged {
         return;
     }
-    navmesh.signature = signature;
+    let mut actors = Vec::with_capacity(signature.len());
+    for (id, position, _) in &signature {
+        let Some(actor) = engine.actor(id) else {
+            continue;
+        };
+        let mut live = actor.clone();
+        live.components.placement_mut().position = *position;
+        actors.push(live);
+    }
+    navmesh.signature = signature
+        .into_iter()
+        .map(|(id, position, visual)| (id.clone(), position, visual.clone()))
+        .collect();
     let mut project = engine.project.clone();
     project.actors = actors;
     navmesh.mesh = nav::build_mesh(&project, nav::DEFAULT_AGENT_RADIUS)
@@ -1247,68 +1260,90 @@ pub fn publish_sensors(
         mouse_delta = [0.0; 2];
     }
 
-    let mut senses: HashMap<String, ActorSense> = HashMap::new();
-    // Every actor's world transform, so a child can be answered about its
-    // place in its parent's frame below.
-    let posed: HashMap<&str, Transform> = actors
-        .iter()
-        .map(|(id, transform, ..)| (id.0.as_str(), *transform))
-        .collect();
+    // Last frame's entries are refreshed in place: most of an actor's strings
+    // and sets are unchanged, so `clone_from` keeps their allocations.
+    let mut senses = blockloom_core::sense::take_actors();
+    let mut seen = 0usize;
     for (id, transform, visibility, custom, glide, scale, rotation, color, player) in &actors {
+        seen += 1;
         // The parent's world transform inverted onto this actor's own: the
         // world position itself when it hangs off nothing, or its parent is
         // gone. The inverse of `world_of`, which places an offset.
-        let local_position = engine
-            .parents
-            .get(&id.0)
-            .and_then(|parent| posed.get(parent.as_str()))
-            .map(|parent| local_of(parent, transform.translation))
+        let parent = engine.parents.get(&id.0);
+        let local_position = parent
+            .and_then(|parent| engine.entities.get(parent))
+            .and_then(|&entity| actors.get(entity).ok())
+            .map(|(_, parent, ..)| local_of(parent, transform.translation))
             .unwrap_or(transform.translation.to_array());
         let (rx, ry, rz) = transform.rotation.to_euler(EulerRot::XYZ);
         let (layer, mask, trigger) = engine.filter_of(&id.0);
         let has_body = engine.has_component(&id.0, "Body");
         let shape = collider_shape(&engine, &id.0, dimension.0, transform);
-        let (anim_clip, anim_frame, anim_playing) = match player {
-            Some(player) => (player.clip.clone(), player.frame, player.playing),
-            None => (String::new(), 0, false),
+        if !senses.contains_key(id.0.as_str()) {
+            senses.insert(id.0.clone(), ActorSense::default());
+        }
+        let Some(sense) = senses.get_mut(id.0.as_str()) else {
+            continue;
         };
-        senses.insert(
-            id.0.clone(),
-            ActorSense {
-                name: engine
-                    .actor(&id.0)
-                    .map(|actor| actor.name.clone())
-                    .unwrap_or_default(),
-                position: transform.translation.to_array(),
-                local_position,
-                rotation: [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()],
-                scale: size_of(transform, engine.stretch_of(&id.0)),
-                visible: *visibility != Visibility::Hidden,
-                parent: engine.parents.get(&id.0).cloned().unwrap_or_default(),
-                is_clone: engine.clones.contains_key(&id.0),
-                tweening: glide.is_some()
-                    || scale.is_some()
-                    || rotation.is_some()
-                    || color.is_some(),
-                anim_clip,
-                anim_frame,
-                anim_playing,
-                last_created: engine.last_created.get(&id.0).cloned().unwrap_or_default(),
-                touching: engine.touching.get(&id.0).cloned().unwrap_or_default(),
-                attached: engine.attached.get(&id.0).cloned().unwrap_or_default(),
-                components: custom.map(|custom| custom.0.clone()).unwrap_or_default(),
-                has_body,
-                trigger,
-                casts_shadows: crate::lights::casts_shadows(&engine, &id.0),
-                layer,
-                mask,
-                shape,
-                particles: particles
-                    .as_ref()
-                    .and_then(|particles| particles.0.get(&id.0).cloned())
-                    .unwrap_or_default(),
-            },
-        );
+        match engine.actor(&id.0) {
+            Some(actor) => sense.name.clone_from(&actor.name),
+            None => sense.name.clear(),
+        }
+        sense.position = transform.translation.to_array();
+        sense.local_position = local_position;
+        sense.rotation = [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()];
+        sense.scale = size_of(transform, engine.stretch_of(&id.0));
+        sense.visible = *visibility != Visibility::Hidden;
+        match parent {
+            Some(parent) => sense.parent.clone_from(parent),
+            None => sense.parent.clear(),
+        }
+        sense.is_clone = engine.clones.contains_key(&id.0);
+        sense.tweening =
+            glide.is_some() || scale.is_some() || rotation.is_some() || color.is_some();
+        match player {
+            Some(player) => {
+                sense.anim_clip.clone_from(&player.clip);
+                sense.anim_frame = player.frame;
+                sense.anim_playing = player.playing;
+            }
+            None => {
+                sense.anim_clip.clear();
+                sense.anim_frame = 0;
+                sense.anim_playing = false;
+            }
+        }
+        match engine.last_created.get(&id.0) {
+            Some(made) => sense.last_created.clone_from(made),
+            None => sense.last_created.clear(),
+        }
+        match engine.touching.get(&id.0) {
+            Some(touching) => sense.touching.clone_from(touching),
+            None => sense.touching.clear(),
+        }
+        match engine.attached.get(&id.0) {
+            Some(attached) => sense.attached.clone_from(attached),
+            None => sense.attached.clear(),
+        }
+        match custom {
+            Some(custom) => sense.components.clone_from(&custom.0),
+            None => sense.components.clear(),
+        }
+        sense.has_body = has_body;
+        sense.trigger = trigger;
+        sense.casts_shadows = crate::lights::casts_shadows(&engine, &id.0);
+        sense.layer = layer;
+        sense.mask = mask;
+        sense.shape = shape;
+        sense.particles = particles
+            .as_ref()
+            .and_then(|particles| particles.0.get(&id.0).copied())
+            .unwrap_or_default();
+    }
+    // Actors that left the world since last frame.
+    if senses.len() != seen {
+        let live: HashSet<&str> = actors.iter().map(|(id, ..)| id.0.as_str()).collect();
+        senses.retain(|id, _| live.contains(id.as_str()));
     }
 
     // Wanted and focused reads as held: the component alone would still say
@@ -1468,6 +1503,7 @@ pub fn publish_sensors(
             .collect(),
         cutscene_name: engine.cine_name.clone(),
         cutscene_time: engine.cine_time,
+        names: Default::default(),
     });
 
     // No world event queues while paused, so resuming never bursts.
@@ -2842,18 +2878,34 @@ pub fn interpolate_poses(
     fixed: Res<Time<Fixed>>,
     mut posed: Query<(&mut Transform, &PhysicsPose, &PrevPose)>,
 ) {
+    // Writes only what differs: an assignment through `DerefMut` marks the
+    // transform changed, and a frame of that on every actor makes Bevy
+    // propagate, re-bound and re-extract the whole scene.
     if !engine.running || engine.paused {
         // Frozen: put each actor back exactly where its last step left it.
         for (mut transform, current, _) in &mut posed {
-            *transform = current.0;
+            if *transform != current.0 {
+                *transform = current.0;
+            }
         }
         return;
     }
     let alpha = fixed.overstep_fraction();
     for (mut transform, current, previous) in &mut posed {
-        transform.translation = previous.0.translation.lerp(current.0.translation, alpha);
-        transform.rotation = previous.0.rotation.slerp(current.0.rotation, alpha);
-        transform.scale = previous.0.scale.lerp(current.0.scale, alpha);
+        // At rest there is nothing to blend, and a slerp of equal rotations
+        // can still come back an ulp off.
+        let next = if previous.0 == current.0 {
+            current.0
+        } else {
+            Transform {
+                translation: previous.0.translation.lerp(current.0.translation, alpha),
+                rotation: previous.0.rotation.slerp(current.0.rotation, alpha),
+                scale: previous.0.scale.lerp(current.0.scale, alpha),
+            }
+        };
+        if *transform != next {
+            *transform = next;
+        }
     }
 }
 
@@ -7024,5 +7076,136 @@ mod tests {
         assert!(blockloom_core::sense::read(|sensors| sensors
             .keys
             .is_empty()));
+    }
+    /// A running app that does nothing but publish the sensors each update,
+    /// over `count` rect actors named `A0`, `A1`, ... standing in a row.
+    fn sensing_app(count: usize) -> App {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.running = true;
+        let ids: Vec<String> = (0..count).map(|i| format!("A{i}")).collect();
+        let placed: Vec<(&str, blockloom_core::scene::Placement)> = ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), at(i as f32, 0.0)))
+            .collect();
+        engine.project = project_of(&placed, &[]);
+        engine.parents.clear();
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(Dimension(Mode::TwoD));
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<ButtonInput<MouseButton>>();
+        app.init_resource::<Messages<MouseMotion>>();
+        app.init_resource::<Messages<WindowFocused>>();
+        app.init_resource::<crate::ui::UiManager>();
+        app.init_resource::<crate::sound::SoundState>();
+        app.init_resource::<bevy::input::touch::Touches>();
+        for (i, id) in ids.iter().enumerate() {
+            let entity = app
+                .world_mut()
+                .spawn((
+                    ActorId(id.clone()),
+                    Transform::from_xyz(i as f32, 0.0, 0.0),
+                    Visibility::Inherited,
+                ))
+                .id();
+            engine.entities.insert(id.clone(), entity);
+        }
+        app.insert_non_send(engine);
+        app.world_mut().spawn((Window::default(), PrimaryWindow));
+        app.add_systems(Update, publish_sensors);
+        app
+    }
+
+    #[test]
+    fn the_snapshot_is_refreshed_in_place_as_actors_change() {
+        let mut app = sensing_app(3);
+        app.update();
+        let (position, name) = blockloom_core::sense::read(|sensors| {
+            let a2 = &sensors.actors["A2"];
+            (a2.position, a2.name.clone())
+        });
+        assert_eq!(position, [2.0, 0.0, 0.0]);
+        assert_eq!(name, "A2");
+
+        // A moves, gains a parent and a contact; B goes away; a new one comes.
+        let (a1, a2) = {
+            let engine = app.world().non_send::<Engine>();
+            (engine.entities["A1"], engine.entities["A2"])
+        };
+        app.world_mut()
+            .entity_mut(a2)
+            .get_mut::<Transform>()
+            .unwrap()
+            .translation = Vec3::new(10.0, 4.0, 0.0);
+        app.world_mut().despawn(a1);
+        {
+            let mut engine = app.world_mut().non_send_mut::<Engine>();
+            engine.entities.remove("A1");
+            engine.parents.insert("A2".into(), "A0".into());
+            engine
+                .touching
+                .insert("A2".into(), ["A0".to_string()].into_iter().collect());
+            engine.last_created.insert("A2".into(), "~1".into());
+        }
+        app.update();
+        blockloom_core::sense::read(|sensors| {
+            assert!(!sensors.actors.contains_key("A1"), "A1 left the world");
+            let a2 = &sensors.actors["A2"];
+            assert_eq!(a2.position, [10.0, 4.0, 0.0]);
+            assert_eq!(a2.parent, "A0");
+            assert_eq!(
+                a2.local_position,
+                [10.0, 4.0, 0.0],
+                "A0 stands at the origin"
+            );
+            assert!(a2.touching.contains("A0"));
+            assert_eq!(a2.last_created, "~1");
+            assert_eq!(sensors.actors["A0"].parent, "");
+        });
+
+        // Everything set above is gone again once the engine forgets it.
+        {
+            let mut engine = app.world_mut().non_send_mut::<Engine>();
+            engine.parents.clear();
+            engine.touching.clear();
+            engine.last_created.clear();
+        }
+        app.update();
+        blockloom_core::sense::read(|sensors| {
+            let a2 = &sensors.actors["A2"];
+            assert_eq!(a2.parent, "");
+            assert!(a2.touching.is_empty());
+            assert_eq!(a2.last_created, "");
+            assert_eq!(
+                sensors.find("a2").map(|a| a.position),
+                Some([10.0, 4.0, 0.0])
+            );
+        });
+    }
+
+    /// `cargo test --release -p blockloom-runtime -- --ignored --nocapture
+    /// sensor_publish_cost`: what one frame's snapshot costs per actor.
+    #[test]
+    #[ignore = "timing, run by hand"]
+    fn sensor_publish_cost() {
+        for count in [100, 1000, 4000] {
+            let mut app = sensing_app(count);
+            for _ in 0..3 {
+                app.update();
+            }
+            let frames = 50;
+            let start = std::time::Instant::now();
+            for _ in 0..frames {
+                app.update();
+            }
+            let each = start.elapsed().as_secs_f64() / frames as f64;
+            println!(
+                "{count:>5} actors  {:>8.1} us/frame  {:>6.0} ns/actor",
+                each * 1e6,
+                each * 1e9 / count as f64
+            );
+        }
     }
 }

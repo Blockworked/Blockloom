@@ -286,19 +286,93 @@ fn lists() -> Project {
     p
 }
 
-fn bench(name: &str, project: Project) {
+/// Strands that ask the world about themselves and each other, the way a
+/// game's per-actor logic does: where am I, am I touching anything, how far
+/// is the player. The world around them is `crowd` actors big.
+fn sensing() -> Project {
+    project(|i| {
+        let me = |axis: &str| op(Op::Ext("MyPosition".into()), vec![Value::text(axis)]);
+        actor(
+            i,
+            vec![forever(vec![
+                set("x", me("X")),
+                set("y", me("Y")),
+                set("z", me("Z")),
+                set(
+                    "d",
+                    op(
+                        Op::Ext("DistanceTo".into()),
+                        vec![Value::text(format!("A{}", (i + 1) % ACTORS))],
+                    ),
+                ),
+                set(
+                    "hit",
+                    op(Op::Ext("Touching".into()), vec![Value::text("A0")]),
+                ),
+                set(
+                    "n",
+                    op(Op::Ext("ActorCount".into()), vec![Value::text("A3")]),
+                ),
+            ])],
+        )
+    })
+}
+
+/// The snapshot the host would publish for `project`, with `crowd` extra
+/// actors around it so lookups by name have something to walk past.
+fn world_of(project: &Project, crowd: usize) -> Sensors {
+    let mut sensors = Sensors::default();
+    let scene = project.active_scene();
+    for (i, actor) in scene.actors.iter().enumerate() {
+        sensors.actors.insert(
+            actor.id.clone(),
+            sense::ActorSense {
+                name: actor.name.clone(),
+                position: [i as f32, 2.0, 3.0],
+                touching: [format!("other{i}")].into_iter().collect(),
+                attached: ["Place", "Look", "Render", "Body"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+                anim_clip: "idle".to_string(),
+                parent: String::new(),
+                ..Default::default()
+            },
+        );
+    }
+    for i in 0..crowd {
+        sensors.actors.insert(
+            format!("crowd{i}"),
+            sense::ActorSense {
+                name: format!("Crowd {i}"),
+                ..Default::default()
+            },
+        );
+    }
+    sensors
+}
+
+fn bench(name: &str, project: Project, crowd: Option<usize>) {
     let mut vm = Vm::new();
     vm.load(&project);
     vm.fire(Event::Started);
     let mut out = Vec::new();
     let mut now = 0.0;
+    // Cases that read the world get one snapshot, published once: a clone per
+    // tick would be measured as the VM's cost.
+    let fixed = crowd.map(|crowd| world_of(&project, crowd));
+    if let Some(world) = &fixed {
+        sense::publish(world.clone());
+    }
     let mut tick = |vm: &mut Vm, out: &mut Vec<_>| {
         now += 1.0 / 60.0;
-        sense::publish(Sensors {
-            time: now,
-            wall_time: now,
-            ..Default::default()
-        });
+        if fixed.is_none() {
+            sense::publish(Sensors {
+                time: now,
+                wall_time: now,
+                ..Default::default()
+            });
+        }
         vm.tick(now, out);
         out.clear();
     };
@@ -328,16 +402,18 @@ fn main() {
     blockloom_core::init();
     // `cargo bench` passes `--bench`; a filter argument picks cases by name.
     let filter = std::env::args().skip(1).find(|arg| !arg.starts_with('-'));
-    type Case = (&'static str, fn() -> Project);
-    let cases: [Case; 4] = [
-        ("arithmetic", arithmetic),
-        ("effects", effects),
-        ("custom_blocks", custom_blocks),
-        ("lists", lists),
+    type Case = (&'static str, fn() -> Project, Option<usize>);
+    let cases: [Case; 6] = [
+        ("arithmetic", arithmetic, None),
+        ("effects", effects, None),
+        ("custom_blocks", custom_blocks, None),
+        ("lists", lists, None),
+        ("sensing", sensing, Some(0)),
+        ("sensing_crowd", sensing, Some(1000)),
     ];
-    for (name, make) in cases {
+    for (name, make, crowd) in cases {
         if filter.as_deref().is_none_or(|f| name.contains(f)) {
-            bench(name, make());
+            bench(name, make(), crowd);
         }
     }
 }

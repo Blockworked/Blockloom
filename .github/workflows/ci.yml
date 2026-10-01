@@ -101,5 +101,8 @@ jobs:
           unzip -q /tmp/ndk.zip -d /tmp
           ls /tmp/android-ndk-r27d/toolchains/llvm/prebuilt/linux-x86_64/bin/ \
             | grep -E "29-clang$|llvm-ar"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - name: Check the shipped shape
         run: just android-runtime-check /tmp/android-ndk-r27d

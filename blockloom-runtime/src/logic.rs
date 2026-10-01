@@ -2,7 +2,7 @@
 
 use blockloom_core::blocks::{
     DictItem, ListItem, dict_remove, dict_set, is_dict_reporter, is_list_reporter, list_index,
-    parse_json_array, parse_json_object, resolve_dict_reporter, resolve_list_reporter,
+    parse_json_array, parse_json_object,
 };
 use blockloom_core::codegen::{
     ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_ADVANCE_TIME, ACT_APPLY_IMPULSE, ACT_ATTACH,
@@ -400,13 +400,10 @@ extern "C" fn read(
             // List reporters arrive here like any other `Op::Ext` sensing
             // reporter, but read the run's lists rather than the world.
             if is_list_reporter(&Op::from_name(name)) {
-                let args: Vec<Value> = args
-                    .iter()
-                    .map(|arg| value_from_abi(arg).into_value())
-                    .collect();
-                let lists = context.lists.snapshot_for(actor);
+                let args: Vec<Result<Evaluated, String>> =
+                    args.iter().map(|arg| Ok(value_from_abi(arg))).collect();
                 return write_answer(
-                    resolve_list_reporter(name, args, &lists).and_then(|value| value.eval()),
+                    context.lists.read(actor, name, args),
                     out,
                     text,
                     capacity,
@@ -415,13 +412,10 @@ extern "C" fn read(
             }
             // Dict reporters likewise, against the run's dicts.
             if is_dict_reporter(&Op::from_name(name)) {
-                let args: Vec<Value> = args
-                    .iter()
-                    .map(|arg| value_from_abi(arg).into_value())
-                    .collect();
-                let dicts = context.dicts.snapshot_for(actor);
+                let args: Vec<Result<Evaluated, String>> =
+                    args.iter().map(|arg| Ok(value_from_abi(arg))).collect();
                 return write_answer(
-                    resolve_dict_reporter(name, args, &dicts).and_then(|value| value.eval()),
+                    context.dicts.read(actor, name, args),
                     out,
                     text,
                     capacity,
