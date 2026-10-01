@@ -166,3 +166,32 @@ library for the host target runs its `module` commands here
 Not done: a browser host that runs the same modules (it needs the player to
 load a wasm and cross a second boundary), the portable tier in a built game,
 and cancellation of a call from outside (only the fuel budget stops one).
+
+## Plugin SDK (fourth batch)
+
+`blockloom-plugin-sdk` is what an author depends on instead of the two ABI
+documents. `Plugin::start` runs once per loaded module; `call` takes raw bytes
+and by default hands JSON to `call_json`, so a bulk op overrides `call` and
+keeps its own layout. The macro is the only target-specific thing a plugin
+sees: the native expansion calls `sdk::entry::<P>` and fills the `PluginApi`
+table with `call`, `free_buffer` and `shutdown` over a boxed instance (the
+handle is its address, so one library can hold several modules); the wasm
+expansion defines the four exports over one `static` slot, since a module is a
+single instance on a single thread.
+
+- **Panics.** Native catches them at the boundary, logs the message and answers
+  `Panicked`; the module stays usable. A wasm std build aborts, so a panic hook
+  logs first and the trap then stops the module (which the host reloads).
+- **Errors.** `Error { status, message }` returns the status and logs the
+  message at error level, so a failing command's reason reaches the run log.
+- **Example.** `plugins/examples/tally` is one struct and one macro call, run
+  four ways in its tests: the entry in-process, the built `cdylib`, the built
+  wasm in the portable executor, and the sealed package (`Package::load`). Its
+  wasm is about 140 KB with the default release profile (no `opt-level = "s"`
+  or LTO tried). The wasm tests skip without the `wasm32-unknown-unknown`
+  target unless `BLOCKLOOM_REQUIRE_WASM` is set, which CI does.
+- **Not done:** a manifest generator (the author still writes `plugin.json`
+  and the schemas by hand and seals with `plugin-seal`), a `cargo` subcommand
+  that builds and stages both tiers, typed op helpers, and crates.io
+  publication of the SDK (it is a path dependency for now, so the manifest's
+  `sdk` range has nothing to check against yet).

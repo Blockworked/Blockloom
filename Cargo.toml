@@ -8,6 +8,8 @@ members = [
     "blockloom-runtime",
     "blockloom-plugin-api",
     "blockloom-plugin-host",
+    "blockloom-plugin-sdk",
+    "plugins/examples/tally",
 ]
 resolver = "2"
 
@@ -18,6 +20,7 @@ default-members = [
     "blockloom-protocol",
     "blockloom-plugin-api",
     "blockloom-plugin-host",
+    "blockloom-plugin-sdk",
 ]
 
 [workspace.package]

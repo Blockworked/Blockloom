@@ -433,3 +433,14 @@ _stage-release-player:
 # The optional jobs argument sets each build's Cargo job limit.
 replace jobs="": prepare-patched-deps
     {{if os() == "windows" { "python" } else { "python3" }}} scripts/replace.py {{jobs}}
+
+# The SDK example plugin (com.example.tally) as a sealed portable package in
+# target/plugins/, ready for `plugin-install source=path:...`.
+example-plugin:
+    rustup target add wasm32-unknown-unknown
+    cargo build --release -p blockloom-example-tally --target wasm32-unknown-unknown
+    rm -rf target/plugins/com.example.tally
+    mkdir -p target/plugins/com.example.tally/portable
+    cp -r plugins/examples/tally/package/. target/plugins/com.example.tally/
+    cp target/wasm32-unknown-unknown/release/blockloom_example_tally.wasm target/plugins/com.example.tally/portable/tally.wasm
+    cargo run -p blockloom-app --bin blockloom-shell -- --no-state --eval 'plugin-seal path=target/plugins/com.example.tally'

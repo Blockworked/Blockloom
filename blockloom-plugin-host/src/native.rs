@@ -138,6 +138,29 @@ impl NativeModule {
                 )
             })?
         };
+        Self::start(entry, capabilities, services, Some(library))
+    }
+
+    /// Starts a module from an entry function already in this process, such
+    /// as one a crate's own `export_plugin!` defined. For tests and tools that
+    /// want the real ABI without a library on disk.
+    ///
+    /// # Safety
+    /// `entry` must honour the ABI contract in [`blockloom_plugin_api::abi`].
+    pub unsafe fn from_entry(
+        entry: EntryFn,
+        capabilities: BTreeSet<Capability>,
+        services: Box<ServiceFn>,
+    ) -> Result<NativeModule, String> {
+        Self::start(entry, capabilities, services, None)
+    }
+
+    fn start(
+        entry: EntryFn,
+        capabilities: BTreeSet<Capability>,
+        services: Box<ServiceFn>,
+        library: Option<Library>,
+    ) -> Result<NativeModule, String> {
         let state = Box::new(HostState {
             gate: CapabilityGate::new(capabilities),
             services,
@@ -164,7 +187,7 @@ impl NativeModule {
             api,
             state,
             _host: host,
-            library: Some(library),
+            library,
         })
     }
 

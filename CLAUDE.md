@@ -179,7 +179,7 @@ uploads those bytes as an image. Elsewhere it is a child process.
   `sense.rs` (the world state reporter blocks read), `ui.rs` (the screen-space
   interface a game builds out of blocks - see Interface below), and `wire.rs`
   (the one shape difference between documents and the frontend).
-- **`blockloom-plugin-api`**, **`blockloom-plugin-host`** - the plugin platform:
+- **`blockloom-plugin-api`**, **`blockloom-plugin-host`**, **`blockloom-plugin-sdk`** - the plugin platform:
   manifests, schemas, records and the C ABI (api, wasm-safe), resolver, cache,
   install transactions and the native loader (host). See Plugins below.
 - **`blockstitch-core`** (sibling repo, see above) - the shared block-editor
@@ -357,6 +357,20 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   refused while plugin blocks exist, since a built game has no editor to run
   them. `plugin-run-block` runs one from the shell and MCP, and the snapshot's
   `plugins.blocks` lists every available block for the palette.
+- **Plugin SDK** (`blockloom-plugin-sdk`): a plugin author implements `Plugin`
+  (`start`, then `call` over bytes or `call_json` over `serde_json::Value`) and
+  names it with `export_plugin!`. The macro expands to the C entry symbol on a
+  desktop target and to the portable module's four exports on
+  `wasm32-unknown-unknown`, so one source builds as a `cdylib` or a `.wasm`
+  with no pointers in sight. `Host` gives `log` and `call` (host services); an
+  `Error` carries the `Status` the host sees and is logged. A panic is caught
+  on native and answers `Panicked`; on wasm a panic hook logs it before the
+  module traps. `NativeModule::from_entry` starts a plugin's entry function
+  in-process, which is how the SDK's tests (`blockloom-plugin-sdk/tests`) and
+  `plugins/examples/tally` run the real ABI without a library on disk. The
+  tally example's package source is `plugins/examples/tally/package`; `just
+  example-plugin` stages and seals it with its wasm into `target/plugins/`.
+  A change to `abi.rs` or `wasm.rs` goes through the SDK too.
 - **Plugin Manager**: `PluginManagerDialog.qml`, opened from the top bar's plug
   button. It lists `plugin_list`/`plugin_check`/`plugin_commands` and runs the
   same `plugin_*` commands the shell does (install with a dry-run preview,
@@ -367,7 +381,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   script ABI, a browser host for portable modules, native or portable modules
   in the runtime (a run's world) or a built game, an HTTP registry, dynamic QML
   for plugin editor panels.
-  `plugins/examples/com.example.health` is the sealed proof package.
+  `plugins/examples/com.example.health` is the sealed proof package;
+  `plugins/examples/tally` is the SDK one, with code.
 
 ### Scripts
 

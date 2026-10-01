@@ -1,0 +1,13 @@
+[package]
+name = "blockloom-plugin-sdk"
+version.workspace = true
+edition.workspace = true
+description = "Write a Blockloom plugin once; build it as a native library or a WebAssembly module."
+
+[dependencies]
+blockloom-plugin-api = { path = "../blockloom-plugin-api" }
+serde_json.workspace = true
+
+[dev-dependencies]
+blockloom-plugin-host = { path = "../blockloom-plugin-host" }
+serde_json.workspace = true
