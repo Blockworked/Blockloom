@@ -7,6 +7,7 @@
 #include <QtGui/QOpenGLContext>
 #include <QtGui/QOpenGLExtraFunctions>
 #include <QtGui/QOpenGLFunctions>
+#include <QtGui/QGuiApplication>
 #include <QtQuick/QQuickWindow>
 #include <QtQuick/QSGRendererInterface>
 #include <QtQuick/QSGSimpleTextureNode>
@@ -14,6 +15,10 @@
 
 #include <atomic>
 #include <vector>
+#ifdef _WIN32
+#include <QtQuick/QQuickGraphicsConfiguration>
+#include "game_view_vulkan.h"
+#endif
 
 #ifdef __linux__
 // Keep Xlib's macros (None, Bool, Status) out of a file that includes Qt.
@@ -284,10 +289,7 @@ QRectF fit(const QRectF &bounds, const QSize &frame)
 class GameViewNode : public QSGNode
 {
 public:
-    explicit GameViewNode(GameViewNode **owner)
-        : owner(owner)
-    {
-    }
+    GameViewNode() = default;
 
     ~GameViewNode() override
     {
@@ -297,10 +299,6 @@ public:
             context->functions()->glDeleteProgram(program);
         if (context && vertices)
             context->functions()->glDeleteBuffers(1, &vertices);
-        // The scene graph can drop nodes on its own; the item mustn't keep
-        // drawing through a dead one.
-        if (*owner == this)
-            *owner = nullptr;
     }
 
     struct Slot {
@@ -312,7 +310,13 @@ public:
     };
 
     QSize size;
+#ifdef _WIN32
+    GameVulkanRing vulkan;
+#endif
     std::vector<Slot> ring;
+    // A read-back frame's uploaded texture, on any renderer.
+    QSGTexture *shm = nullptr;
+    QSize shmSize;
     // External-only rings are drawn through `copy` rather than shown direct.
     bool external = false;
     int pending = -1;
@@ -368,10 +372,44 @@ public:
         image = nullptr;
     }
 
+    // Shows a read-back frame: uploaded as an image, so it works on any
+    // renderer, not just OpenGL. The bytes are tightly packed sRGB RGBA;
+    // the alpha is ignored, the way the dma-buf ring's is.
+    QString showShm(const GameImage &frame, QQuickWindow *window, const QRectF &rect)
+    {
+        const QSize frameSize(int(frame.width), int(frame.height));
+        if (frameSize.isEmpty() || frame.pixels.size() != size_t(frame.width) * frame.height * 4)
+            return QStringLiteral("an empty frame arrived");
+        const QImage image(frame.pixels.data(), frameSize.width(), frameSize.height(),
+                           qsizetype(frameSize.width()) * 4, QImage::Format_RGBX8888);
+        if (image.isNull())
+            return QStringLiteral("a frame has the wrong size");
+        // Qt may defer the upload until after this Rust buffer is gone.
+        QSGTexture *texture = window->createTextureFromImage(image.copy());
+        if (!texture)
+            return QStringLiteral("uploading a frame failed");
+        delete shm;
+        shm = texture;
+        shmSize = frameSize;
+        show(shm, rect);
+        return {};
+    }
+
+    void hideShm()
+    {
+        delete shm;
+        shm = nullptr;
+        shmSize = {};
+    }
+
     void release()
     {
         // Before the textures go, so nothing is left pointing at them.
         hide();
+        hideShm();
+#ifdef _WIN32
+        vulkan.release();
+#endif
         QOpenGLContext *context = QOpenGLContext::currentContext();
         QOpenGLFunctions *gl = context ? context->functions() : nullptr;
         for (Slot &slot : ring)
@@ -564,7 +602,6 @@ private:
         return {};
     }
 
-    GameViewNode **owner;
     QSGSimpleTextureNode *image = nullptr;
     Slot copy;
     Slot hole;
@@ -658,7 +695,7 @@ void GameView::sendSize()
 
 void GameView::wake()
 {
-    const bool has = game_view_latest().valid || game_view_hdr_live();
+    const bool has = game_view_latest().valid || game_view_hdr_live() || game_view_shm_live();
     if (has != m_hasFrame) {
         m_hasFrame = has;
         Q_EMIT hasFrameChanged();
@@ -709,6 +746,21 @@ void GameView::hook(QQuickWindow *window)
     if (m_hooked)
         disconnect(m_hooked, nullptr, this, nullptr);
     m_hooked = window;
+#ifdef _WIN32
+    auto config = window->graphicsConfiguration();
+    auto extensions = config.deviceExtensions();
+    if (!extensions.contains("VK_KHR_external_memory_win32"))
+        extensions.append("VK_KHR_external_memory_win32");
+    config.setDeviceExtensions(extensions);
+    window->setGraphicsConfiguration(config);
+#endif
+    connect(window, &QQuickWindow::sceneGraphInvalidated, this, [this] {
+        m_node = nullptr;
+        m_generation = 0;
+        m_shmGeneration = 0;
+        m_sharingOffered = false;
+        game_view_enable_sharing(false);
+    }, Qt::DirectConnection);
     connect(window, &QQuickWindow::beforeRendering, this, &GameView::renderExternal, Qt::DirectConnection);
     connect(window, &QQuickWindow::frameSwapped, this, &GameView::framePresented, Qt::DirectConnection);
 }
@@ -722,21 +774,91 @@ void GameView::framePresented()
         QMetaObject::invokeMethod(this, [this] { if (window()) makePlane(window()); }, Qt::QueuedConnection);
 #endif
     // A running world draws a frame per present, so keep presenting.
-    if (m_generation)
+    if (m_generation || game_view_shm_live())
         QMetaObject::invokeMethod(this, [this] { update(); }, Qt::QueuedConnection);
 }
 
 QSGNode *GameView::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
 {
     auto *node = static_cast<GameViewNode *>(old);
-    if (!window() || window()->rendererInterface()->graphicsApi() != QSGRendererInterface::OpenGL) {
+    if (!node) {
+        node = new GameViewNode;
+        m_node = node;
+    }
+    if (!window())
+        return node;
+#ifdef _WIN32
+    const bool vulkan = window()->rendererInterface()->graphicsApi() == QSGRendererInterface::Vulkan;
+    if (!m_sharingOffered) {
+        m_sharingOffered = true;
+        game_view_enable_sharing(vulkan);
+    }
+    GameFrames shared;
+    if (game_view_slots(m_generation, shared)) {
+        m_generation = shared.generation;
+        node->release();
+        if (shared.generation) {
+            const QString error = node->vulkan.import(shared, window());
+            if (!error.isEmpty()) {
+                node->vulkan.release();
+                qWarning("Game view: %s; using readback", qPrintable(error));
+                game_view_refuse(shared.generation);
+            } else {
+                m_shmGeneration = 0;
+                qInfo("Game view: imported %zu zero-copy Vulkan images (%ux%u)",
+                    node->vulkan.count(), shared.width, shared.height);
+                fail(QString{});
+            }
+        }
+    }
+    const GameFrame latest = game_view_latest();
+    if (latest.valid && latest.generation == m_generation && latest.index < node->vulkan.count()) {
+        if (!game_view_reserve(latest.generation, latest.index))
+            return node;
+        const QString error = node->vulkan.select(int(latest.index));
+        if (error.isEmpty()) {
+            node->show(node->vulkan.texture(int(latest.index)), fit(boundingRect(), node->vulkan.size));
+            game_view_hold(latest.generation, latest.index);
+            return node;
+        }
+        fail(error);
+        game_view_refuse(latest.generation);
+    }
+#endif
+    // Read-back frames upload as an image, on any renderer. New ones replace
+    // the texture; while the world runs with none newer, the last one stays.
+    GameImage frame;
+    if (game_view_shm(m_shmGeneration, frame)) {
+        m_shmGeneration = frame.generation;
+        node->release();
+        const QRectF rect = fit(boundingRect(), QSize(int(frame.width), int(frame.height)));
+        const QString error = node->showShm(frame, window(), rect);
+        if (!error.isEmpty())
+            fail(error);
+        else
+            fail(QString{});
+        return node;
+    }
+    if (m_shmGeneration) {
+        if (!game_view_shm_live()) {
+            // The world went away: nothing to show any more.
+            m_shmGeneration = 0;
+            node->hideShm();
+            node->hide();
+        } else if (node->shm) {
+            node->show(node->shm, fit(boundingRect(), node->shmSize));
+        }
+        return node;
+    }
+#ifndef __linux__
+    // No shared frame yet: keep the view empty until a frame arrives.
+    return node;
+#else
+    if (window()->rendererInterface()->graphicsApi() != QSGRendererInterface::OpenGL) {
         fail(QStringLiteral("the Game view needs Qt's OpenGL renderer"));
         delete node;
+        m_node = nullptr;
         return nullptr;
-    }
-    if (!node) {
-        node = new GameViewNode(&m_node);
-        m_node = node;
     }
     // Tried once per ring: a failed import waits for the next one.
     GameFrames frames;
@@ -776,9 +898,12 @@ QSGNode *GameView::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
             node->hide();
         return node;
     }
+    if (!game_view_reserve(latest.generation, latest.index))
+        return node;
     node->show(node->textureFor(int(latest.index)), fit(boundingRect(), node->size));
     game_view_hold(latest.generation, latest.index);
     return node;
+#endif
 }
 
 void game_view_wake()
@@ -800,9 +925,14 @@ void game_view_wake()
     }, Qt::QueuedConnection);
 }
 
-void game_view_prefer_opengl()
+void game_view_prefer_renderer()
 {
+#ifdef _WIN32
+    if (!qEnvironmentVariableIsSet("QSG_RHI_BACKEND"))
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+#else
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+#endif
 #ifdef __linux__
     // On Wayland the Game view may show through to an HDR plane under the
     // window, which needs the window to carry alpha. It stays opaque elsewhere.
@@ -810,5 +940,24 @@ void game_view_prefer_opengl()
     if (qEnvironmentVariableIsSet("WAYLAND_DISPLAY") && !platform.startsWith("xcb")
         && qEnvironmentVariable("BLOCKLOOM_HDR_VIEW") != QLatin1String("0"))
         QQuickWindow::setDefaultAlphaBuffer(true);
+#endif
+}
+
+void game_view_configure_windows()
+{
+#ifdef _WIN32
+    // The Game tab is created after the dashboard has initialized the device.
+    // Request the import extension on the root window before its first frame.
+    for (QWindow *window : QGuiApplication::allWindows()) {
+        auto *quick = qobject_cast<QQuickWindow *>(window);
+        if (!quick)
+            continue;
+        auto config = quick->graphicsConfiguration();
+        auto extensions = config.deviceExtensions();
+        if (!extensions.contains("VK_KHR_external_memory_win32"))
+            extensions.append("VK_KHR_external_memory_win32");
+        config.setDeviceExtensions(extensions);
+        quick->setGraphicsConfiguration(config);
+    }
 #endif
 }

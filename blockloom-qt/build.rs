@@ -87,6 +87,18 @@ fn main() {
         builder
             .cc_builder(|cc| {
                 cc.include("src");
+                if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+                    let headers = std::env::var_os("VULKAN_SDK")
+                        .map(|sdk| std::path::PathBuf::from(sdk).join("Include"))
+                        .filter(|path| path.join("vulkan/vulkan.h").is_file())
+                        .unwrap_or_else(|| "../.patched-deps/vulkan-headers/include".into());
+                    assert!(
+                        headers.join("vulkan/vulkan.h").is_file(),
+                        "Vulkan headers missing; run just prepare-patched-deps"
+                    );
+                    cc.include(headers);
+                    cc.file("src/game_view_vulkan.cpp");
+                }
                 if std::env::var_os("CARGO_FEATURE_QML_PREVIEW").is_some() {
                     cc.define("QT_QML_DEBUG", None);
                 }

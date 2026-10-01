@@ -1,11 +1,15 @@
 //! The world embedded in the editor: no window and no pipes.
 //!
 //! The editor calls [`run`] on a thread of its own. Messages travel over
-//! channels. Every world camera draws straight into a small ring of dma-bufs
-//! the editor's Game view imports through EGL, laid out in a tiled DRM format
-//! modifier the viewer said it can sample. With no such modifier, frames are
-//! copied into linear system-memory images instead - the CPU never touches a
-//! pixel either way.
+//! channels. On Linux every world camera draws straight into a small ring of
+//! dma-bufs the editor's Game view imports through EGL, laid out in a tiled
+//! DRM format modifier the viewer said it can sample. With no such modifier,
+//! frames are copied into linear system-memory images instead - the CPU never
+//! touches a pixel either way.
+//!
+//! Windows shares dedicated Vulkan images through Win32 handles. When
+//! sharing is unavailable, the world reads its target back
+//! to the CPU and publishes RGBA bytes the Game view uploads as an image.
 //!
 //! The ring is 8-bit, so an HDR frame can't travel through it. On Wayland the
 //! viewer also offers a surface of its own, under its window, and a frame the
@@ -13,25 +17,40 @@
 //! presented straight to the compositor while the view shows through to it.
 
 use crate::bridge;
+#[cfg(target_os = "linux")]
 use crate::display::{self, Formats};
 use crate::engine::Engine;
+#[cfg(target_os = "linux")]
 use crate::hdr::{DisplayOffers, HdrFrame, HdrMetadata};
 use crate::world::WorldCamera;
 use bevy::app::{PluginsState, TerminalCtrlCHandlerPlugin};
+#[cfg(target_os = "linux")]
+use bevy::camera::ManualTextureViewHandle;
+#[cfg(target_os = "linux")]
 use bevy::camera::NormalizedRenderTarget;
-use bevy::camera::{ManualTextureViewHandle, RenderTarget, ScalingMode};
+use bevy::camera::{RenderTarget, ScalingMode};
 use bevy::prelude::*;
+#[cfg(target_os = "linux")]
 use bevy::render::camera::ExtractedCamera;
+#[cfg(target_os = "linux")]
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
+#[cfg(target_os = "linux")]
 use bevy::render::render_resource::TextureView;
+#[cfg(target_os = "linux")]
 use bevy::render::renderer::{RenderAdapter, RenderDevice, RenderInstance, RenderQueue};
+#[cfg(target_os = "linux")]
 use bevy::render::texture::{ManualTextureView, ManualTextureViews, OutputColorAttachment};
+#[cfg(target_os = "linux")]
 use bevy::render::view::{ViewTargetAttachments, clear_view_attachments, prepare_view_attachments};
+#[cfg(target_os = "linux")]
 use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::ui::UiScale;
 use bevy::window::ExitCondition;
-use blockloom_core::scene::{Mode, OutputSpace};
+use blockloom_core::scene::Mode;
+#[cfg(target_os = "linux")]
+use blockloom_core::scene::OutputSpace;
 use blockloom_protocol::{EditorMessage, GAME_SIZE, RuntimeMessage};
+#[cfg(unix)]
 use std::os::fd::OwnedFd;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -39,10 +58,16 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 /// How many shared images the ring holds: one the viewer shows, one ready
-/// behind it, one being copied into.
+/// behind it, one being copied into. Linux only.
+#[cfg(target_os = "linux")]
 const SLOTS: usize = 3;
-/// The camera target every world camera points at.
+/// The camera target every world camera points at. Linux only.
+#[cfg(target_os = "linux")]
 const VIEW: ManualTextureViewHandle = ManualTextureViewHandle(0xB10C);
+
+#[cfg(target_os = "windows")]
+#[path = "embed_windows.rs"]
+mod windows;
 /// What the world draws at until the view says how big it is.
 const SIZE: UVec2 = UVec2::new(GAME_SIZE.0, GAME_SIZE.1);
 /// Bounds on a requested size, so a collapsed or huge view can't ask for
@@ -91,9 +116,15 @@ pub fn run(embedded: Embedded) {
     app.insert_resource(bevy::anti_alias::dlss::DlssProjectId(
         bevy::asset::uuid::uuid!("259f6fa9-7a86-42c3-a74a-91643c0b9c7b"),
     ));
-    let mut vulkan = dmabuf::vulkan_settings();
-    display::add_vulkan_extensions(&mut vulkan);
-    app.insert_resource(vulkan);
+    // Linux enables tiled dma-bufs; Windows enables Win32 Vulkan handles.
+    #[cfg(target_os = "linux")]
+    {
+        let mut vulkan = dmabuf::vulkan_settings();
+        display::add_vulkan_extensions(&mut vulkan);
+        app.insert_resource(vulkan);
+    }
+    #[cfg(target_os = "windows")]
+    app.insert_resource(windows::vulkan_settings());
     // No winit: the editor owns the display. No log plugin or Ctrl-C
     // handler either, since both are process-wide and the editor has its own.
     app.add_plugins(
@@ -110,6 +141,12 @@ pub fn run(embedded: Embedded) {
             // thread - racing the editor's own exit.
             .set(bevy::render::RenderPlugin {
                 synchronous_pipeline_compilation: true,
+                #[cfg(target_os = "windows")]
+                render_creation: bevy::render::settings::WgpuSettings {
+                    backends: Some(wgpu::Backends::VULKAN),
+                    ..default()
+                }
+                .into(),
                 ..default()
             })
             .disable::<bevy::winit::WinitPlugin>()
@@ -163,7 +200,16 @@ impl Drop for Detach {
 
 /// One shared image, as the viewer imports it.
 pub struct SharedImage {
+    #[cfg(unix)]
     pub fd: OwnedFd,
+    #[cfg(target_os = "windows")]
+    pub handle: std::os::windows::io::OwnedHandle,
+    #[cfg(target_os = "windows")]
+    pub allocation_size: u64,
+    #[cfg(target_os = "windows")]
+    pub memory_type: u32,
+    #[cfg(target_os = "windows")]
+    pub device_uuid: [u8; 16],
     pub offset: u32,
     pub stride: u32,
 }
@@ -180,11 +226,23 @@ pub struct SlotSet {
     pub images: Vec<SharedImage>,
 }
 
+/// One read-back frame for viewers without GPU sharing: sRGB-encoded RGBA
+/// bytes, tightly packed, ready to upload as an image.
+#[derive(Clone, Default)]
+pub struct ShmFrame {
+    pub generation: u64,
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Option<Arc<Vec<u8>>>,
+}
+
 /// The hand-off between the world, which draws into slots, and the viewer,
 /// which shows the newest finished one and says which it is still reading.
 /// Outlives any one world, so a restart keeps the same viewer.
 pub struct FrameExchange {
     ring: Mutex<Ring>,
+    /// Read-back frames for viewers without GPU sharing.
+    shm: Mutex<ShmFrame>,
     wake: Box<dyn Fn() + Send + Sync>,
     /// How many frames the view has put on screen, and its waiter.
     presented: Mutex<u64>,
@@ -196,6 +254,8 @@ pub struct FrameExchange {
     hdr_target: Mutex<Option<(usize, usize)>>,
     /// Whether a world is presenting there rather than into the ring.
     hdr_live: AtomicBool,
+    #[cfg(target_os = "windows")]
+    sharing: AtomicBool,
 }
 
 /// What the view shows the game at: physical pixels, and how many of them
@@ -230,7 +290,10 @@ struct Ring {
     busy: Vec<bool>,
     ready: Option<usize>,
     held: Option<usize>,
+    reserved: Option<usize>,
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     last: usize,
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     generations: u64,
 }
 
@@ -240,6 +303,7 @@ impl FrameExchange {
     pub fn new(wake: impl Fn() + Send + Sync + 'static) -> Arc<Self> {
         Arc::new(Self {
             ring: Mutex::new(Ring::default()),
+            shm: Mutex::new(ShmFrame::default()),
             wake: Box::new(wake),
             presented: Mutex::new(0),
             shown: Condvar::new(),
@@ -247,6 +311,8 @@ impl FrameExchange {
             wanted: Mutex::new(Viewport::default()),
             hdr_target: Mutex::new(None),
             hdr_live: AtomicBool::new(false),
+            #[cfg(target_os = "windows")]
+            sharing: AtomicBool::new(false),
         })
     }
 
@@ -258,6 +324,7 @@ impl FrameExchange {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn hdr_target(&self) -> Option<(usize, usize)> {
         self.hdr_target.lock().ok().and_then(|target| *target)
     }
@@ -268,6 +335,7 @@ impl FrameExchange {
         self.hdr_live.load(Ordering::Acquire)
     }
 
+    #[cfg(target_os = "linux")]
     fn set_hdr_live(&self, live: bool) {
         if self.hdr_live.swap(live, Ordering::AcqRel) != live {
             (self.wake)();
@@ -324,6 +392,7 @@ impl FrameExchange {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn offer(&self) -> Offer {
         self.offer
             .lock()
@@ -376,11 +445,34 @@ impl FrameExchange {
                 .set
                 .as_ref()
                 .is_some_and(|set| set.generation == generation)
+            && index < ring.busy.len()
         {
             ring.held = Some(index);
+            ring.reserved = None;
         }
     }
 
+    /// Reserves a finished slot before the viewer starts using its GPU image.
+    pub fn reserve(&self, generation: u64, index: usize) -> bool {
+        let Ok(mut ring) = self.ring.lock() else {
+            return false;
+        };
+        if ring
+            .set
+            .as_ref()
+            .is_none_or(|set| set.generation != generation)
+            || index >= ring.busy.len()
+            || ring.busy[index]
+            || (ring.ready != Some(index) && ring.held != Some(index))
+        {
+            return false;
+        }
+        ring.reserved = Some(index);
+        true
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[allow(dead_code)]
     fn install(&self, width: u32, height: u32, modifier: u64, images: Vec<SharedImage>) -> u64 {
         let generation = {
             let Ok(mut ring) = self.ring.lock() else {
@@ -391,6 +483,7 @@ impl FrameExchange {
             ring.busy = vec![false; images.len()];
             ring.ready = None;
             ring.held = None;
+            ring.reserved = None;
             ring.set = Some(Arc::new(SlotSet {
                 generation,
                 width,
@@ -407,6 +500,7 @@ impl FrameExchange {
 
     /// A slot nobody is reading or drawing, taken round-robin so the one
     /// just let go gets the most time to finish being read.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn claim(&self, generation: u64) -> Option<usize> {
         let mut ring = self.ring.lock().ok()?;
         if ring.set.as_ref()?.generation != generation {
@@ -415,12 +509,18 @@ impl FrameExchange {
         let count = ring.busy.len();
         let index = (1..=count)
             .map(|step| (ring.last + step) % count)
-            .find(|&i| !ring.busy[i] && ring.ready != Some(i) && ring.held != Some(i))?;
+            .find(|&i| {
+                !ring.busy[i]
+                    && ring.ready != Some(i)
+                    && ring.held != Some(i)
+                    && ring.reserved != Some(i)
+            })?;
         ring.busy[index] = true;
         ring.last = index;
         Some(index)
     }
 
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn finished(&self, generation: u64, index: usize) {
         {
             let Ok(mut ring) = self.ring.lock() else {
@@ -445,9 +545,39 @@ impl FrameExchange {
             ring.busy.clear();
             ring.ready = None;
             ring.held = None;
+            ring.reserved = None;
+        }
+        if let Ok(mut shm) = self.shm.lock() {
+            shm.pixels = None;
         }
         self.hdr_live.store(false, Ordering::Release);
         (self.wake)();
+    }
+
+    /// Publishes one read-back frame for viewers without GPU sharing. The
+    /// pixels are tightly packed sRGB RGBA, `width * height * 4` bytes.
+    /// Any thread; the render world calls it once a frame lands.
+    pub fn publish_shm(&self, width: u32, height: u32, pixels: Vec<u8>) {
+        if pixels.len() != width as usize * height as usize * 4 {
+            return;
+        }
+        if let Ok(mut shm) = self.shm.lock() {
+            shm.generation += 1;
+            shm.width = width;
+            shm.height = height;
+            shm.pixels = Some(Arc::new(pixels));
+        }
+        (self.wake)();
+    }
+
+    /// The newest read-back frame, if any.
+    pub fn shm(&self) -> ShmFrame {
+        self.shm.lock().map(|shm| shm.clone()).unwrap_or_default()
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn enable_sharing(&self, enabled: bool) {
+        self.sharing.store(enabled, Ordering::Release);
     }
 }
 
@@ -457,11 +587,14 @@ impl FrameExchange {
 #[derive(Resource)]
 pub struct GameSurface {
     exchange: Arc<FrameExchange>,
-    /// The offer version the ring was last reconsidered against.
+    /// The offer version the ring was last reconsidered against. Linux only.
+    #[cfg(target_os = "linux")]
     seen: Option<u64>,
     /// What the ring is allocated at.
     viewport: Viewport,
     /// Sharing failed outright; the world runs unseen rather than retrying.
+    /// Linux only.
+    #[cfg(target_os = "linux")]
     failed: bool,
 }
 
@@ -474,7 +607,9 @@ impl GameSurface {
 
 /// The shared ring, as the render world sees it. `direct` rings are tiled
 /// images the cameras draw into themselves; otherwise each frame lands in
-/// `scratch` and is copied into a linear slot.
+/// `scratch` and is copied into a linear slot. Linux only: elsewhere the
+/// cameras draw into a Bevy image that is read back to the CPU.
+#[cfg(target_os = "linux")]
 #[derive(Resource, Clone, ExtractResource)]
 #[extract_app(RenderApp)]
 struct FrameCopy {
@@ -492,44 +627,67 @@ struct FrameCopy {
 }
 
 /// The slot this frame's cameras are drawing into, render world only.
+#[cfg(target_os = "linux")]
 #[derive(Resource, Default)]
 struct Drawing(Option<usize>);
+
+/// The read-back target, where there is no GPU sharing: one Bevy image the
+/// cameras draw into, read back every frame. Any backend can do this.
+#[cfg(not(target_os = "linux"))]
+#[derive(Resource, Default)]
+struct ShmTarget {
+    image: Option<Handle<Image>>,
+    size: UVec2,
+    reader: Option<Entity>,
+}
 
 fn add_surface(app: &mut App, exchange: Arc<FrameExchange>) {
     app.insert_resource(GameSurface {
         exchange: exchange.clone(),
+        #[cfg(target_os = "linux")]
         seen: None,
         viewport: Viewport::default(),
+        #[cfg(target_os = "linux")]
         failed: false,
     })
-    .insert_resource(FrameCopy {
-        exchange,
-        generation: 0,
-        direct: false,
-        modifier: MODIFIER_LINEAR,
-        scratch: None,
-        ring: Vec::new(),
-        views: Vec::new(),
-        hdr: None,
-    })
-    .add_plugins(ExtractResourcePlugin::<FrameCopy>::default())
-    .add_systems(Update, (target_cameras, fit_cameras))
-    .add_systems(Last, build_surface);
-    if let Some(render) = app.get_sub_app_mut(RenderApp) {
-        render
-            .init_resource::<Drawing>()
-            .init_resource::<HdrPlane>()
-            .add_systems(
-                Render,
-                (
-                    (aim_plane, aim_cameras)
-                        .in_set(RenderSystems::PrepareViews)
-                        .after(clear_view_attachments)
-                        .before(prepare_view_attachments),
-                    finish_frame.in_set(RenderSystems::Cleanup),
-                ),
-            );
+    .add_systems(Update, (target_cameras, fit_cameras));
+    #[cfg(target_os = "linux")]
+    {
+        app.insert_resource(FrameCopy {
+            exchange,
+            generation: 0,
+            direct: false,
+            modifier: MODIFIER_LINEAR,
+            scratch: None,
+            ring: Vec::new(),
+            views: Vec::new(),
+            hdr: None,
+        })
+        .add_plugins(ExtractResourcePlugin::<FrameCopy>::default())
+        .add_systems(Last, build_surface);
+        if let Some(render) = app.get_sub_app_mut(RenderApp) {
+            render
+                .init_resource::<Drawing>()
+                .init_resource::<HdrPlane>()
+                .add_systems(
+                    Render,
+                    (
+                        (aim_plane, aim_cameras)
+                            .in_set(RenderSystems::PrepareViews)
+                            .after(clear_view_attachments)
+                            .before(prepare_view_attachments),
+                        finish_frame.in_set(RenderSystems::Cleanup),
+                    ),
+                );
+        }
     }
+    #[cfg(not(target_os = "linux"))]
+    {
+        app.init_resource::<ShmTarget>()
+            .add_systems(Last, build_shm_target);
+    }
+    #[cfg(target_os = "windows")]
+    windows::add(app);
 }
 
 /// Points every world camera at the shared view. Quality scaling chooses
@@ -537,13 +695,40 @@ fn add_surface(app: &mut App, exchange: Arc<FrameExchange>) {
 fn target_cameras(
     mut commands: Commands,
     cameras: Query<(Entity, &RenderTarget), With<WorldCamera>>,
+    #[cfg(not(target_os = "linux"))] target: Res<ShmTarget>,
+    #[cfg(target_os = "windows")] shared: Res<windows::WindowsSurface>,
 ) {
+    #[cfg(target_os = "windows")]
+    if shared.generation != 0 {
+        for (entity, current) in &cameras {
+            if !matches!(current, RenderTarget::TextureView(handle) if *handle == windows::VIEW) {
+                commands
+                    .entity(entity)
+                    .insert(RenderTarget::TextureView(windows::VIEW));
+            }
+        }
+        return;
+    }
+    #[cfg(target_os = "linux")]
     for (entity, target) in &cameras {
         let aimed = matches!(target, RenderTarget::TextureView(handle) if *handle == VIEW);
         if !aimed {
             commands
                 .entity(entity)
                 .insert(RenderTarget::TextureView(VIEW));
+        }
+    }
+    // Without GPU sharing the cameras draw into the read-back image, once
+    // it exists. Before that they draw nowhere.
+    #[cfg(not(target_os = "linux"))]
+    if let Some(image) = &target.image {
+        for (entity, current) in &cameras {
+            let aimed = matches!(current, RenderTarget::Image(target) if target.handle == *image);
+            if !aimed {
+                commands
+                    .entity(entity)
+                    .insert(RenderTarget::from(image.clone()));
+            }
         }
     }
 }
@@ -571,10 +756,92 @@ fn fit_cameras(
     }
 }
 
+// ─── Read-back frames (no GPU sharing) ──────────────────────────────────────
+
+/// Keeps the read-back target at the size the view asks for, on worlds
+/// without GPU sharing. Runs in `Last`, after the cameras exist.
+#[cfg(not(target_os = "linux"))]
+fn build_shm_target(
+    mut commands: Commands,
+    mut surface: ResMut<GameSurface>,
+    mut target: ResMut<ShmTarget>,
+    mut images: ResMut<Assets<Image>>,
+    mut target_bytes: ResMut<crate::performance::GameViewTargetBytes>,
+) {
+    use bevy::render::gpu_readback::{Readback, ReadbackComplete};
+    use bevy::render::render_resource::TextureUsages;
+
+    #[cfg(target_os = "windows")]
+    if surface.exchange.sharing.load(Ordering::Acquire) {
+        if let Some(reader) = target.reader.take() {
+            commands.entity(reader).try_despawn();
+        }
+        target.image = None;
+        return;
+    }
+
+    let wanted = surface.exchange.wanted();
+    surface.viewport.scale = wanted.scale;
+    if target.image.is_some() && target.size == wanted.size {
+        return;
+    }
+    surface.viewport.size = wanted.size;
+    let size = wanted.size;
+    let mut image = Image::new_target_texture(size.x, size.y, TARGET_FORMAT, None);
+    // Read-back copies out of the target, which the constructor doesn't ask for.
+    image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
+    image.texture_descriptor.label = Some("game view target");
+    let handle = images.add(image);
+    if let Some(reader) = target.reader.take() {
+        commands.entity(reader).try_despawn();
+    }
+    // One persistent read-back: every frame lands on the CPU and is
+    // published to the viewer.
+    let exchange = surface.exchange.clone();
+    let reader = commands
+        .spawn(Readback::texture(handle.clone()))
+        .observe(move |event: On<ReadbackComplete>| {
+            #[cfg(target_os = "windows")]
+            if exchange.sharing.load(Ordering::Acquire) {
+                return;
+            }
+            let data = unpad_rgba8(&event.data, size.x, size.y);
+            if !data.is_empty() {
+                exchange.publish_shm(size.x, size.y, data);
+            }
+        })
+        .id();
+    target.image = Some(handle);
+    target.size = size;
+    target.reader = Some(reader);
+    target_bytes.0 = size.x as u64 * size.y as u64 * 4 * 2;
+}
+
+/// A read-back frame arrives padded to 256-byte rows; the viewer wants
+/// tightly packed RGBA.
+#[cfg(not(target_os = "linux"))]
+fn unpad_rgba8(data: &[u8], width: u32, height: u32) -> Vec<u8> {
+    const TEXEL: usize = 4;
+    let row = width as usize * TEXEL;
+    let padded = row.next_multiple_of(256);
+    if data.len() < padded * height as usize {
+        return Vec::new();
+    }
+    if padded == row {
+        return data[..row * height as usize].to_vec();
+    }
+    data.chunks(padded)
+        .take(height as usize)
+        .flat_map(|chunk| &chunk[..row])
+        .copied()
+        .collect()
+}
+
 /// Allocates the scratch target and the ring once the render device exists,
 /// again whenever the view changes size, and the ring alone whenever the
 /// viewer's offer changes what it should be: tiled in a modifier the viewer
 /// samples directly if there is one, linear otherwise.
+#[cfg(target_os = "linux")]
 fn build_surface(
     mut surface: ResMut<GameSurface>,
     mut copy: ResMut<FrameCopy>,
@@ -700,6 +967,7 @@ fn build_surface(
 /// Before the cameras' views are prepared: point their output at a free slot
 /// of a direct ring. With none free they draw into the scratch target, and
 /// the viewer stays on an older frame.
+#[cfg(target_os = "linux")]
 fn aim_cameras(
     copy: Option<Res<FrameCopy>>,
     cameras: Query<&ExtractedCamera>,
@@ -729,6 +997,7 @@ fn aim_cameras(
 
 /// After the cameras' submission: tell the viewer once the GPU has finished
 /// the frame. A linear ring first gets the frame copied into a free slot.
+#[cfg(target_os = "linux")]
 fn finish_frame(
     copy: Option<Res<FrameCopy>>,
     mut drawing: ResMut<Drawing>,
@@ -763,6 +1032,7 @@ fn finish_frame(
 }
 
 /// Copies the scratch target into a free linear slot, and answers which.
+#[cfg(target_os = "linux")]
 fn copy_frame(copy: &FrameCopy, device: &RenderDevice, queue: &RenderQueue) -> Option<usize> {
     let source = copy.scratch.as_ref()?;
     if copy.ring.is_empty() {
@@ -786,6 +1056,7 @@ fn copy_frame(copy: &FrameCopy, device: &RenderDevice, queue: &RenderQueue) -> O
 
 /// The format a frame goes to the HDR surface in, or none for the ring.
 /// Matches what `display::Formats::configure` picks for the space.
+#[cfg(target_os = "linux")]
 fn plane_format(space: OutputSpace) -> Option<wgpu::TextureFormat> {
     match space {
         OutputSpace::Sdr => None,
@@ -795,6 +1066,7 @@ fn plane_format(space: OutputSpace) -> Option<wgpu::TextureFormat> {
 }
 
 /// The swapchain on the viewer's HDR surface. Render world only.
+#[cfg(target_os = "linux")]
 #[derive(Resource, Default)]
 struct HdrPlane {
     surface: Option<wgpu::Surface<'static>>,
@@ -816,6 +1088,7 @@ struct HdrPlane {
 /// Makes a swapchain on the viewer's HDR surface the first time there is
 /// one, says what it offers, and on a frame going out HDR points the
 /// cameras at its next texture.
+#[cfg(target_os = "linux")]
 #[allow(clippy::too_many_arguments)]
 fn aim_plane(
     copy: Option<Res<FrameCopy>>,
@@ -960,6 +1233,7 @@ fn aim_plane(
 
 /// Drops the plane back to the 8-bit ring: the next frames rebuild without
 /// it, and the offers drive the frame's space back to SDR with them.
+#[cfg(target_os = "linux")]
 fn drop_plane(plane: &mut HdrPlane, offers: &DisplayOffers) {
     plane.surface = None;
     plane.formats = None;
@@ -971,6 +1245,7 @@ fn drop_plane(plane: &mut HdrPlane, offers: &DisplayOffers) {
 
 /// Makes the swapchain's surface on the viewer's `wl_surface`, and keeps
 /// it only if the compositor takes an HDR space there.
+#[cfg(target_os = "linux")]
 fn adopt_plane(
     plane: &mut HdrPlane,
     display: usize,
@@ -1015,6 +1290,7 @@ fn adopt_plane(
     }
 }
 
+#[cfg(target_os = "linux")]
 fn extent(size: UVec2) -> wgpu::Extent3d {
     wgpu::Extent3d {
         width: size.x,
@@ -1025,6 +1301,7 @@ fn extent(size: UVec2) -> wgpu::Extent3d {
 
 // ─── dma-buf images ─────────────────────────────────────────────────────────
 
+#[cfg(target_os = "linux")]
 mod dmabuf {
     use super::{SharedImage, TARGET_FORMAT, extent};
     use ash::{ext, khr, vk};
@@ -1452,7 +1729,7 @@ mod dmabuf {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use blockloom_protocol::SceneView;
@@ -4383,5 +4660,188 @@ mod tests {
             libc::munmap(mapped, length);
             pixel
         }
+    }
+}
+
+#[cfg(test)]
+mod shm_tests {
+    use super::*;
+    use blockloom_protocol::{EditorMessage, SceneView};
+
+    fn red_frame(width: u32, height: u32) -> Vec<u8> {
+        (0..width * height)
+            .flat_map(|_| [255u8, 0, 0, 255])
+            .collect()
+    }
+
+    #[test]
+    fn a_published_frame_is_the_latest_one() {
+        let exchange = FrameExchange::new(|| {});
+        assert!(exchange.shm().pixels.is_none());
+        exchange.publish_shm(4, 2, red_frame(4, 2));
+        let first = exchange.shm();
+        assert_eq!((first.width, first.height), (4, 2));
+        assert_eq!(first.pixels.as_deref().unwrap().len(), 4 * 2 * 4);
+        exchange.publish_shm(4, 2, red_frame(4, 2));
+        let second = exchange.shm();
+        assert!(second.generation > first.generation);
+    }
+
+    #[test]
+    fn a_wrong_sized_frame_never_lands() {
+        let exchange = FrameExchange::new(|| {});
+        exchange.publish_shm(4, 4, vec![0; 10]);
+        assert!(exchange.shm().pixels.is_none());
+    }
+
+    #[test]
+    fn clearing_a_world_clears_its_frame() {
+        let exchange = FrameExchange::new(|| {});
+        exchange.publish_shm(2, 2, red_frame(2, 2));
+        assert!(exchange.shm().pixels.is_some());
+        exchange.clear();
+        assert!(exchange.shm().pixels.is_none());
+    }
+
+    #[test]
+    fn unpadded_rows_come_back_tight() {
+        // 2 pixels wide: 8 bytes a row, padded to 256.
+        let mut padded = vec![0u8; 256 * 3];
+        padded[0..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        padded[256..264].copy_from_slice(&[9, 10, 11, 12, 13, 14, 15, 16]);
+        padded[512..520].copy_from_slice(&[17, 18, 19, 20, 21, 22, 23, 24]);
+        #[cfg(not(target_os = "linux"))]
+        let tight = unpad_rgba8(&padded, 2, 3);
+        #[cfg(target_os = "linux")]
+        let tight = {
+            // Same maths as the read-back path, over 4-byte texels.
+            const TEXEL: usize = 4;
+            let (row, rows) = (2usize * TEXEL, 3);
+            let padded_row = row.next_multiple_of(256);
+            padded
+                .chunks(padded_row)
+                .take(rows)
+                .flat_map(|chunk| &chunk[..row])
+                .copied()
+                .collect::<Vec<u8>>()
+        };
+        assert_eq!(
+            tight,
+            vec![
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+                24
+            ]
+        );
+    }
+
+    // Needs a GPU: `cargo test -p blockloom-runtime -- --ignored shm`.
+    // Runs a red world without a window and reads its frames back, the way
+    // the Game view shows them where there is no GPU sharing.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn an_embedded_world_publishes_read_back_frames() {
+        blockloom_core::init();
+        let mut red = blockloom_core::project::Project::starter("Embedded", Mode::TwoD);
+        red.world.background = "#ff0000".to_string();
+        let (to_world, incoming) = std::sync::mpsc::channel();
+        let (outgoing, reports) = std::sync::mpsc::channel();
+        let exchange = FrameExchange::new(|| {});
+        let frames = exchange.clone();
+        let world = std::thread::spawn(move || {
+            run(Embedded {
+                mode: Mode::TwoD,
+                incoming,
+                outgoing,
+                frames,
+            })
+        });
+        to_world
+            .send(EditorMessage::SceneView(SceneView {
+                enabled: false,
+                ..SceneView::default()
+            }))
+            .unwrap();
+        to_world
+            .send(EditorMessage::Load {
+                project: Box::new(red),
+                dir: None,
+            })
+            .unwrap();
+
+        let started = std::time::Instant::now();
+        let mut seen = None;
+        let mut waited = 0u32;
+        let mut transcripts = Vec::new();
+        while started.elapsed() < Duration::from_secs(120) {
+            if world.is_finished() {
+                transcripts.extend(reports.try_iter());
+                let reason = match world.join() {
+                    Ok(()) => "exited cleanly".to_string(),
+                    Err(panic) => panic
+                        .downcast_ref::<String>()
+                        .map(String::as_str)
+                        .or_else(|| panic.downcast_ref::<&str>().copied())
+                        .unwrap_or("unknown panic")
+                        .to_string(),
+                };
+                panic!(
+                    "the world ended before publishing a frame: {reason}\nreports: {transcripts:?}"
+                );
+            }
+            let frame = exchange.shm();
+            if let Some(pixels) = frame.pixels
+                && frame.width == SIZE.x
+                && !pixels.is_empty()
+            {
+                let at = ((SIZE.y as usize / 2 * SIZE.x as usize) + SIZE.x as usize / 2) * 4;
+                let pixel = [pixels[at], pixels[at + 1], pixels[at + 2]];
+                seen = Some(pixel);
+                // Red first in memory, the way the target holds it.
+                if pixel[0] > 150 && pixel[1] < 80 && pixel[2] < 80 {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            waited += 1;
+            transcripts.extend(reports.try_iter());
+            if transcripts.iter().any(|report| {
+                matches!(
+                    report,
+                    RuntimeMessage::Error { .. } | RuntimeMessage::Fatal { .. }
+                )
+            }) {
+                panic!("the world reported an error: {transcripts:?}");
+            }
+            if waited % 100 == 0 {
+                let frame = exchange.shm();
+                eprintln!(
+                    "still waiting: shm generation {}, {}x{}, {} reports so far",
+                    frame.generation,
+                    frame.width,
+                    frame.height,
+                    transcripts.len()
+                );
+            }
+        }
+
+        to_world.send(EditorMessage::Shutdown).unwrap();
+        drop(to_world);
+        world.join().unwrap();
+        transcripts.extend(reports.try_iter());
+        let errors: Vec<_> = transcripts
+            .into_iter()
+            .filter(|report| {
+                matches!(
+                    report,
+                    RuntimeMessage::Error { .. } | RuntimeMessage::Fatal { .. }
+                )
+            })
+            .collect();
+        assert!(errors.is_empty(), "{errors:?}");
+        let pixel = seen.expect("no read-back frame arrived");
+        assert!(
+            pixel[0] > 150 && pixel[1] < 80 && pixel[2] < 80,
+            "expected red, read {pixel:?}"
+        );
     }
 }

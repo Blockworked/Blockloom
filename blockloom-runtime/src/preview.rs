@@ -533,7 +533,9 @@ pub fn drain_preview_inputs(
     mut mouse_buttons: ResMut<ButtonInput<MouseButton>>,
     mut key_buttons: ResMut<ButtonInput<KeyCode>>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    #[cfg(target_os = "linux")] surface: Option<Res<crate::embed::GameSurface>>,
+    #[cfg(any(target_os = "linux", target_os = "windows"))] surface: Option<
+        Res<crate::embed::GameSurface>,
+    >,
 ) {
     let inputs = std::mem::take(&mut engine.preview_inputs);
     if inputs.is_empty() {
@@ -544,7 +546,7 @@ pub fn drain_preview_inputs(
         .map(|window| Vec2::new(window.width(), window.height()))
         .unwrap_or(Vec2::new(960.0, 720.0));
     // Embedded, the pointer lands on the shared image rather than a window.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let window_size = surface.map_or(window_size, |surface| surface.size());
     for input in inputs {
         match &input {

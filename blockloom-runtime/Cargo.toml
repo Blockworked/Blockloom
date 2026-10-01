@@ -99,6 +99,8 @@ ash = "0.38"
 
 # HDR10 metadata on the DX12 swap chain wgpu makes. Version matches wgpu-hal's.
 [target.'cfg(windows)'.dependencies]
+bevy = { workspace = true, features = ["raw_vulkan_init"] }
+ash = "0.38"
 windows = { version = "0.62", default-features = false, features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
 
 [features]

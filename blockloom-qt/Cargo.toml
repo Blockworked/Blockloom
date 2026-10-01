@@ -33,6 +33,12 @@ blockloom-runtime = { path = "../blockloom-runtime" }
 blockloom-core = { path = "../blockloom-core" }
 blockloom-protocol = { path = "../blockloom-protocol" }
 
+# Windows shares Vulkan images with Qt through Win32 memory handles.
+[target.'cfg(target_os = "windows")'.dependencies]
+blockloom-runtime = { path = "../blockloom-runtime" }
+blockloom-core = { path = "../blockloom-core" }
+blockloom-protocol = { path = "../blockloom-protocol" }
+
 [build-dependencies]
 cxx-qt-build = { version = "0.10", features = ["link_qt_object_files"] }
 qt-build-utils = { version = "0.10", features = ["qt_minimal"] }

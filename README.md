@@ -36,6 +36,8 @@ them.
 - On Linux: `pkg-config` and development libraries for ALSA, udev, Wayland,
   xkbcommon and EGL, plus a working Vulkan loader and GPU driver. Python 3
   is needed for automatic build-cache cleanup.
+- On Windows: a working Vulkan GPU driver. Dependency preparation downloads
+  pinned Vulkan headers; a full Vulkan SDK is optional.
 
 The first build needs network access for Rust dependencies, the pinned
 `blockstitch` Git dependency, and patched dependency archives. A sibling
@@ -51,9 +53,18 @@ just build                  # release build of the entire workspace
 just run                    # build, then launch the editor
 ```
 
-Always build the **whole workspace**, not just `-p blockloom`. On Windows,
-macOS, or Linux with `BLOCKLOOM_RUNTIME=process`, the editor launches the
-`blockloom-runtime` executable beside itself. Linux normally renders in-process.
+Always build the **whole workspace**, not just `-p blockloom`. Linux and
+Windows normally run the world in-process. macOS and `BLOCKLOOM_RUNTIME=process`
+launch the `blockloom-runtime` executable beside the editor.
+
+On Windows the Game view defaults to Vulkan and shares three GPU images with
+Qt through Win32 memory handles. Cameras render directly into those images,
+without CPU readback or a frame copy. Ownership barriers and queue completion
+waits protect frames while Qt samples them, including during resize and shutdown.
+If sharing is unsupported or Qt uses a different GPU, the view falls back to
+readback. `QSG_RHI_BACKEND` can select another Qt renderer, which also uses
+readback. The shared ring currently displays SDR; it does not provide the Linux
+Wayland HDR plane.
 
 `just` Cargo recipes automatically generate patched Bevy/wgpu sources in
 gitignored `.patched-deps/` from the small in-repo patches. Before running

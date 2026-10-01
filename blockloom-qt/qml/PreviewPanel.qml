@@ -8,7 +8,8 @@ import com.blockworked.Blockloom 1.0
 // The Game tab: the game at its real pixel size, with a resolution and an
 // aspect ratio to size it by, plus input forwarding. An embedded world
 // (Linux) draws straight into GameView on the GPU at exactly the view's
-// pixels. A child-process world streams MJPEG instead, and can keep its OS
+// pixels; on Windows it shares Vulkan images through Win32 handles.
+// A child-process world streams MJPEG instead, and can keep its OS
 // window up beside the view or hide it (headless).
 //
 // While nothing runs it is the scene view: the same world, loaded but not

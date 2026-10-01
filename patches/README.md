@@ -13,6 +13,8 @@ editor's Android runtime cross-build. Before running Cargo directly on a fresh
 checkout, run `just prepare-patched-deps`. Preparation requires Bash, curl, tar,
 patch, and either sha256sum or shasum. On Windows the justfile finds Git Bash
 itself (PATH first, then the default install location).
+Windows preparation also caches checksum-verified Vulkan 1.3.290 headers from
+Khronos. Qt's native texture import needs headers, but no SDK library linkage.
 
 `dependencies.txt` pins the crate name, version, archive SHA-256 and generated
 directory name. Preparation first checks Cargo's archive cache, then downloads

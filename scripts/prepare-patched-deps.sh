@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]; then
+    export PATH="/usr/bin:$PATH"
+fi
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output="${BLOCKLOOM_PATCHED_DEPS_DIR:-$root/.patched-deps}"
@@ -29,6 +32,29 @@ cleanup() {
     rmdir "$output/.prepare-lock"
 }
 trap cleanup EXIT
+
+# Qt's native Vulkan texture API needs headers, but no SDK libraries.
+if [[ ( "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ) && -d "$root/blockloom-qt" ]]; then
+    headers="$output/vulkan-headers"
+    if [[ ! -f "$headers/include/vulkan/vulkan.h" ]]; then
+        if [[ "$mode" == --check ]]; then
+            echo "Vulkan headers missing; run just prepare-patched-deps." >&2
+            exit 1
+        fi
+        archive="$output/.archives/vulkan-headers-v1.3.290.tar.gz"
+        mkdir -p "$output/.archives" "$headers"
+        if [[ ! -f "$archive" ]]; then
+            curl --fail --location --retry 3 \
+                https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.3.290.tar.gz \
+                -o "$archive"
+        fi
+        if [[ "$(hash < "$archive")" != f38a653bf93cab7a2a229a53d2d53b1cba9a2819e4c0a7de13c54085bde9bcf5 ]]; then
+            echo "Vulkan header checksum mismatch." >&2
+            exit 1
+        fi
+        tar -xzf "$archive" -C "$headers" --strip-components=1
+    fi
+fi
 
 while read -r name version checksum directory; do
     [[ -z "$name" || "$name" == \#* ]] && continue

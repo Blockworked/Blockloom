@@ -329,7 +329,9 @@ pub fn interact(
     mut posed: Query<(&mut Transform, &mut PhysicsPose, &mut PrevPose)>,
     windows: Query<&Window, With<PrimaryWindow>>,
     terrains: Option<Res<crate::terrain::TerrainIndex>>,
-    #[cfg(target_os = "linux")] surface: Option<Res<crate::embed::GameSurface>>,
+    #[cfg(any(target_os = "linux", target_os = "windows"))] surface: Option<
+        Res<crate::embed::GameSurface>,
+    >,
 ) {
     if !editing(&engine, &editor) {
         editor.let_go();
@@ -342,7 +344,7 @@ pub fn interact(
         .single()
         .map(|window| Vec2::new(window.width(), window.height()))
         .unwrap_or(Vec2::new(960.0, 720.0));
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let space = surface.map_or(space, |surface| surface.size());
     let px_scale = ui_scale.0.max(0.25);
     let mode = dimension.0;
@@ -1551,7 +1553,9 @@ pub fn draw(
     actors: Query<(&ActorId, &Visibility)>,
     posed: Query<(&mut Transform, &mut PhysicsPose, &mut PrevPose)>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    #[cfg(target_os = "linux")] surface: Option<Res<crate::embed::GameSurface>>,
+    #[cfg(any(target_os = "linux", target_os = "windows"))] surface: Option<
+        Res<crate::embed::GameSurface>,
+    >,
     mut lines: Gizmos,
     mut handles: Gizmos<HandleGizmos>,
 ) {
@@ -1566,7 +1570,7 @@ pub fn draw(
         .single()
         .map(|window| Vec2::new(window.width(), window.height()))
         .unwrap_or(Vec2::new(960.0, 720.0));
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let size = surface.map_or(size, |surface| surface.size());
     let mode = dimension.0;
     let lens = lens(&editor, mode, camera, size, px_scale);

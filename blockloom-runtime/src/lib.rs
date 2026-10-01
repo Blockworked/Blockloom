@@ -41,7 +41,7 @@ mod dim3;
 mod director;
 mod display;
 mod edit;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub mod embed;
 mod engine;
 mod environment;

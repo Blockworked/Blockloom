@@ -8,10 +8,18 @@ profile="${1-dist}"
 web_target_dir="${CARGO_TARGET_DIR:-target}/web-build"
 export CARGO_BUILD_BUILD_DIR="${CARGO_BUILD_BUILD_DIR:-$web_target_dir}"
 case "$(uname -s)" in
-    Linux) python3 scripts/prune-target.py --target-dir "${CARGO_TARGET_DIR:-target}" --run ;;
-    MINGW* | MSYS* | CYGWIN*) python scripts/prune-target.py --target-dir "${CARGO_TARGET_DIR:-target}" --run ;;
+    Linux) PY=python3 ;;
+    MINGW* | MSYS* | CYGWIN*) PY=python ;;
+    *) PY= ;;
 esac
-cargo build -p blockloom-runtime --lib --no-default-features --target wasm32-unknown-unknown --profile "$profile" --target-dir "$web_target_dir"
+# prune-target.py --run wraps the build so the cache is cleaned around it;
+# elsewhere the build runs on its own.
+set -- cargo build -p blockloom-runtime --lib --no-default-features \
+    --target wasm32-unknown-unknown --profile "$profile" --target-dir "$web_target_dir"
+if [ -n "$PY" ]; then
+    set -- "$PY" scripts/prune-target.py --target-dir "${CARGO_TARGET_DIR:-target}" --run "$@"
+fi
+"$@"
 command -v wasm-bindgen >/dev/null || { echo "need wasm-bindgen-cli: just web-tools"; exit 1; }
 out="${CARGO_TARGET_DIR:-target}/release/players/wasm32-unknown-unknown"
 mkdir -p "$out"

@@ -4,6 +4,7 @@
 #define BLOCKLOOM_GAME_VIEW_H
 
 #include <QtCore/QTimer>
+#include <QtCore/QPointer>
 #include <QtQml/qqmlregistration.h>
 #include <QtQuick/QQuickItem>
 
@@ -12,7 +13,9 @@ class PointerLock;
 
 // The Game view: shows the embedded world's newest frame, straight from the
 // GPU image it was drawn into. On Linux the images are dma-bufs imported
-// through EGL, so Qt has to be on its OpenGL renderer.
+// through EGL, so Qt has to be on its OpenGL renderer. Where the GPU can't
+// share, the world reads its target back and the view uploads those bytes.
+// Windows shares Vulkan allocations through Win32 handles.
 class GameView : public QQuickItem
 {
     Q_OBJECT
@@ -71,9 +74,12 @@ private:
 
     // Render thread only: the ring imported, and the node holding it.
     quint64 m_generation = 0;
+    // The read-back frame shown, by the exchange's generation.
+    quint64 m_shmGeneration = 0;
     GameViewNode *m_node = nullptr;
+    bool m_sharingOffered = false;
     // GUI thread only.
-    QQuickWindow *m_hooked = nullptr;
+    QPointer<QQuickWindow> m_hooked;
     bool m_hasFrame = false;
     bool m_pointerLocked = false;
     PointerLock *m_lock = nullptr;
@@ -86,7 +92,8 @@ private:
 
 // Called by Rust from any thread when the exchange changes.
 void game_view_wake();
-// Before any window exists: the Game view imports through EGL into GL.
-void game_view_prefer_opengl();
+// Before any window exists: EGL/OpenGL on Linux, Vulkan on Windows.
+void game_view_prefer_renderer();
+void game_view_configure_windows();
 
 #endif

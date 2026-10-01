@@ -528,8 +528,10 @@ pub(crate) fn send_metadata(
             };
             if let Err(error) = swapchain.SetHDRMetaData(
                 DXGI_HDR_METADATA_TYPE_HDR10,
-                std::mem::size_of_val(&data) as u32,
-                Some(std::ptr::from_ref(&data).cast()),
+                Some(std::slice::from_raw_parts(
+                    std::ptr::from_ref(&data).cast::<u8>(),
+                    std::mem::size_of_val(&data),
+                )),
             ) {
                 warn!("HDR metadata: {error}");
             }

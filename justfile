@@ -174,7 +174,7 @@ web-check: prepare-patched-deps
 # The wasm-bindgen CLI matching Cargo.lock's wasm-bindgen, which the glue
 # generator has to match exactly.
 web-tools: prepare-patched-deps
-    cargo install wasm-bindgen-cli --locked --version "$(cargo metadata --format-version 1 --filter-platform wasm32-unknown-unknown | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "wasm-bindgen"))')"
+    {{if os() == "windows" { "python" } else { "python3" }}} scripts/web-tools.py
 
 # The web player, staged beside the editor where the Build dialog looks for
 # it (players/wasm32-unknown-unknown/: the wasm and its JS glue). `dist` is
