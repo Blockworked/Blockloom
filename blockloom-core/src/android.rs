@@ -1724,6 +1724,7 @@ pub fn newest_ndk_package(manager: &Path) -> Result<String, String> {
 /// Whether an sdkmanager package name is already on disk under `sdk`.
 /// Build-tools counts only with its assembler present: a stopped download
 /// leaves an empty version dir that installs nothing.
+#[cfg(not(target_arch = "wasm32"))]
 fn package_present(sdk: &Path, package: &str) -> bool {
     if package == "platform-tools" {
         return sdk.join("platform-tools").join(exe("adb")).is_file();
