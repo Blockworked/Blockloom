@@ -17,6 +17,13 @@ import type { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/s
 
 import { buildToolSchema, toolDescription } from "./registry.js";
 import {
+  changesPluginCommands,
+  pluginToolDescription,
+  pluginToolName,
+  pluginToolSchema,
+  type PluginCommand,
+} from "./plugins.js";
+import {
   ShellSession,
   loadSpecs,
   resolveShell,
@@ -111,11 +118,58 @@ async function main(): Promise<void> {
 
   const server = new McpServer({ name: "blockloom", version: packageVersion() });
 
+  // Plugin commands come and go with the open project's plugins, so their
+  // tools are kept in step with `plugin-commands` after anything that could
+  // change them.
+  const pluginTools = new Map<string, { signature: string; tool: { remove(): void } }>();
+  const syncPluginTools = async () => {
+    let commands: PluginCommand[] = [];
+    try {
+      const response = await session.run("plugin-commands");
+      if (response.ok) {
+        commands = (response.result as { commands?: PluginCommand[] }).commands ?? [];
+      }
+    } catch {
+      // No project open (or no shell): there are no plugin commands to offer.
+    }
+    const wanted = new Map(commands.map((c) => [pluginToolName(c.name), c]));
+    for (const [name, known] of pluginTools) {
+      if (!wanted.has(name)) {
+        known.tool.remove();
+        pluginTools.delete(name);
+      }
+    }
+    for (const [name, command] of wanted) {
+      const signature = JSON.stringify(command);
+      if (pluginTools.get(name)?.signature === signature) continue;
+      pluginTools.get(name)?.tool.remove();
+      const description = pluginToolDescription(command);
+      const run = async (args: Record<string, unknown>) =>
+        invoke(session, { name: command.name }, args ?? {});
+      try {
+        const tool =
+          command.args.length === 0
+            ? server.registerTool(name, { title: command.name, description }, () => run({}))
+            : server.registerTool(
+                name,
+                { title: command.name, description, inputSchema: pluginToolSchema(command) },
+                (args) => run(args ?? {}),
+              );
+        pluginTools.set(name, { signature, tool });
+      } catch (error) {
+        console.error(`blockloom-mcp: skipping plugin command ${command.name}: ${error}`);
+      }
+    }
+  };
+
   const registerTools = () => {
     for (const spec of specs) {
       const description = toolDescription(spec);
-      const run = async (args: Record<string, unknown>) =>
-        invoke(session, spec, args ?? {});
+      const run = async (args: Record<string, unknown>) => {
+        const result = await invoke(session, spec, args ?? {});
+        if (!result.isError && changesPluginCommands(spec.name)) await syncPluginTools();
+        return result;
+      };
       if (spec.args.length === 0) {
         server.registerTool(spec.name, { title: spec.name, description }, () =>
           run({}),
@@ -144,6 +198,7 @@ async function main(): Promise<void> {
 
   registerTools();
   registerResources();
+  await syncPluginTools();
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -171,7 +226,7 @@ function readResource(
 /// `structuredContent` for clients that can use it directly.
 async function invoke(
   session: ShellSession,
-  spec: ShellCommandSpec,
+  spec: Pick<ShellCommandSpec, "name">,
   args: Record<string, unknown>,
 ): Promise<CallToolResult> {
   const line = spec.name + " " + JSON.stringify(args ?? {});

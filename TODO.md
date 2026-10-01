@@ -1504,7 +1504,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Plugin statement blocks in the VM: `PluginBlock` instruction, `Effect::PluginCall`, the editor runs the block's command, `plugin-run-block`, Play preflight; codegen refuses by name and Build is refused while they exist.
     - [x] Plugin statement blocks in the palette and on the canvas (one `PluginBlock` row whose head follows the schema label; needs blockstitch's function `head` and `index` pieces).
     - [x] Plugin reporters and hats: `PluginRead` values answered on demand by the world's modules, `WhenPlugin` hats started by `event` effects; palette, canvas, preflight, tally example (needs blockstitch's operator `layout`).
-    - [ ] Codegen and the script ABI for plugin blocks; importer/build hooks; per-plugin MCP tools.
+    - [x] Per-plugin MCP tools: `plugin-commands` becomes one typed tool per command (`plugin-id__name`), kept in step after install, remove, open and undo.
+    - [ ] Codegen and the script ABI for plugin blocks; importer/build hooks.
     - [ ] HTTP registry transport; revision bump for attached copies on package changes.
     - [x] Mesh submission service: `mesh`/`remove_mesh` effects become named 3D entities with an optional trimesh collider.
     - [x] Voxel plugin first slice (`plugins/voxel`): finite cube world, seeded terrain presets, greedy chunk mesher, glowing materials, live set/fill/sphere/generate, reporters, rays (distance, break, place), schema and sealed package (`just voxel-plugin`).

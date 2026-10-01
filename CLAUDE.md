@@ -116,7 +116,11 @@ MCP tool, with schemas derived from the same registry (see `src/registry.ts`,
 which maps every `ArgSpec.ty` prose string to a zod schema - a new prose type
 must be taught there). Tool calls are one shell line, responses are the
 `{ok, result, error}` shape, plus `blockloom://state` and `blockloom://blocks`
-resources. Each session is its own backend unless started with `--attach` (see
+resources. A project's plugin commands are tools too: after `open-project`, `plugin-*`
+and undo/redo the server re-reads `plugin-commands` and registers (or removes)
+one tool per command, named `plugin-id__name` with a schema built from the
+command's typed arguments (`src/plugins.ts`; a new plugin field type must be
+taught there). Each session is its own backend unless started with `--attach` (see
 above), so without it the window-and-shell sharing rules apply: the shell
 attaches to the live owner's files and follows their saves, and one MCP server
 process and the editor should still not write the same project at once. The shell resolves as `target/debug|release/blockloom-shell`
