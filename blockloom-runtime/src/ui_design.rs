@@ -9,7 +9,8 @@ use blockloom_protocol::{
 #[derive(Resource, Default)]
 pub(crate) struct DesignSession {
     request: Option<InterfaceDesign>,
-    last: Option<InterfaceLayout>,
+    pub(crate) last: Option<InterfaceLayout>,
+    viewport_before: Option<bevy::window::WindowResolution>,
 }
 
 impl DesignSession {
@@ -37,6 +38,12 @@ impl DesignSession {
             return Ok(());
         };
         request.document.validate()?;
+        if request
+            .viewport
+            .is_some_and(|v| v.into_iter().any(|n| !(16..=8192).contains(&n)))
+        {
+            return Err("Interface viewport dimensions must be between 16 and 8192 pixels".into());
+        }
         if self.request.as_ref().is_some_and(|old| {
             (request.generation, request.revision) <= (old.generation, old.revision)
         }) {
@@ -53,6 +60,25 @@ impl DesignSession {
     }
 }
 
+/// Restore the process window when the design viewport releases it.
+pub(crate) fn resize(
+    mut session: ResMut<DesignSession>,
+    mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+) {
+    let Ok(mut window) = windows.single_mut() else {
+        return;
+    };
+    if let Some(size) = session.request.as_ref().and_then(|v| v.viewport) {
+        if session.viewport_before.is_none() {
+            session.viewport_before = Some(window.resolution.clone());
+        }
+        window.resolution.set_scale_factor_override(Some(1.0));
+        window.resolution.set_physical_resolution(size[0], size[1]);
+    } else if let Some(resolution) = session.viewport_before.take() {
+        window.resolution = resolution;
+    }
+}
+
 pub(crate) fn inactive(session: Option<Res<DesignSession>>) -> bool {
     session.is_none_or(|s| !s.active())
 }
@@ -61,6 +87,8 @@ pub(crate) fn inactive(session: Option<Res<DesignSession>>) -> bool {
 pub(crate) fn report(
     mut session: ResMut<DesignSession>,
     manager: Res<UiManager>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    cameras: Query<(&Camera, Has<bevy::ui::IsDefaultUiCamera>)>,
     nodes: Query<(
         &ComputedNode,
         &UiGlobalTransform,
@@ -105,7 +133,22 @@ pub(crate) fn report(
             clips,
         });
     }
+    let viewport = cameras
+        .iter()
+        .filter(|(camera, default_ui)| camera.is_active && *default_ui)
+        .find_map(|(camera, _)| camera.physical_viewport_size())
+        .map(|v| v.to_array())
+        .or_else(|| {
+            windows
+                .single()
+                .ok()
+                .map(|w| [w.physical_width(), w.physical_height()])
+        });
+    let Some(viewport) = viewport else {
+        return;
+    };
     let layout = InterfaceLayout {
+        viewport,
         revision: request.revision,
         generation: request.generation,
         widgets,
@@ -123,6 +166,7 @@ mod tests {
 
     fn fixture(revision: u64) -> InterfaceDesign {
         InterfaceDesign {
+            viewport: Some([960, 720]),
             revision,
             generation: 1,
             document: serde_json::from_str(include_str!(
@@ -150,6 +194,13 @@ mod tests {
                 .apply(Some(fixture(1)), &engine, &mut manager)
                 .is_err()
         );
+        let mut too_small = fixture(3);
+        too_small.viewport = Some([8, 720]);
+        assert!(
+            session
+                .apply(Some(too_small), &engine, &mut manager)
+                .is_err()
+        );
         let mut invalid = fixture(3);
         invalid.document.widgets[1].element.parent = "missing".into();
         assert!(session.apply(Some(invalid), &engine, &mut manager).is_err());
@@ -166,6 +217,40 @@ mod tests {
         assert!(!session.active());
         assert!(manager.ids().is_empty());
         assert_eq!(engine.project, project);
+    }
+
+    #[test]
+    fn design_resizes_and_restores_the_process_window() {
+        let mut app = App::new();
+        let mut session = DesignSession::default();
+        session.request = Some(fixture(1));
+        app.insert_resource(session);
+        let original = Window::default();
+        let resolution = original.resolution.clone();
+        let window = app
+            .world_mut()
+            .spawn((original, bevy::window::PrimaryWindow))
+            .id();
+        app.add_systems(Update, resize);
+        app.update();
+        assert_eq!(
+            app.world().get::<Window>(window).unwrap().physical_width(),
+            960
+        );
+        assert_eq!(
+            app.world()
+                .get::<Window>(window)
+                .unwrap()
+                .resolution
+                .scale_factor(),
+            1.0
+        );
+        app.world_mut().resource_mut::<DesignSession>().clear();
+        app.update();
+        assert_eq!(
+            app.world().get::<Window>(window).unwrap().resolution,
+            resolution
+        );
     }
 
     #[test]

@@ -295,6 +295,7 @@ struct Ring {
     last: usize,
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     generations: u64,
+    layouts: Vec<Option<blockloom_protocol::InterfaceLayout>>,
 }
 
 impl FrameExchange {
@@ -438,6 +439,29 @@ impl FrameExchange {
         Some((ring.set.as_ref()?.generation, ring.ready?))
     }
 
+    /// Claim the displayed slot and its geometry in one lock.
+    pub fn acquire(&self) -> Option<(u64, usize, Option<blockloom_protocol::InterfaceLayout>)> {
+        let mut ring = self.ring.lock().ok()?;
+        let generation = ring.set.as_ref()?.generation;
+        let index = ring.ready?;
+        let layout = ring.layouts.get(index)?.clone();
+        ring.reserved = Some(index);
+        Some((generation, index, layout))
+    }
+
+    /// Geometry belonging to a particular completed slot.
+    pub fn layout(
+        &self,
+        generation: u64,
+        index: usize,
+    ) -> Option<blockloom_protocol::InterfaceLayout> {
+        let ring = self.ring.lock().ok()?;
+        if ring.set.as_ref()?.generation != generation {
+            return None;
+        }
+        ring.layouts.get(index)?.clone()
+    }
+
     /// The viewer is now reading `index`; the one it read before is free.
     pub fn hold(&self, generation: u64, index: usize) {
         if let Ok(mut ring) = self.ring.lock()
@@ -481,6 +505,7 @@ impl FrameExchange {
             ring.generations += 1;
             let generation = ring.generations;
             ring.busy = vec![false; images.len()];
+            ring.layouts = vec![None; images.len()];
             ring.ready = None;
             ring.held = None;
             ring.reserved = None;
@@ -520,8 +545,17 @@ impl FrameExchange {
         Some(index)
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(test, target_os = "windows"))]
     fn finished(&self, generation: u64, index: usize) {
+        self.finished_with_layout(generation, index, None);
+    }
+
+    fn finished_with_layout(
+        &self,
+        generation: u64,
+        index: usize,
+        layout: Option<blockloom_protocol::InterfaceLayout>,
+    ) {
         {
             let Ok(mut ring) = self.ring.lock() else {
                 return;
@@ -535,6 +569,7 @@ impl FrameExchange {
             }
             ring.busy[index] = false;
             ring.ready = Some(index);
+            ring.layouts[index] = layout;
         }
         (self.wake)();
     }
@@ -626,6 +661,18 @@ struct FrameCopy {
     hdr: Option<wgpu::TextureFormat>,
 }
 
+#[cfg(target_os = "linux")]
+#[derive(Resource)]
+struct DesignFrame(Option<blockloom_protocol::InterfaceLayout>);
+
+#[cfg(target_os = "linux")]
+impl ExtractResource<RenderApp> for DesignFrame {
+    type Source = crate::ui_design::DesignSession;
+    fn extract_resource(source: &Self::Source) -> Self {
+        Self(source.last.clone())
+    }
+}
+
 /// The slot this frame's cameras are drawing into, render world only.
 #[cfg(target_os = "linux")]
 #[derive(Resource, Default)]
@@ -663,7 +710,10 @@ fn add_surface(app: &mut App, exchange: Arc<FrameExchange>) {
             views: Vec::new(),
             hdr: None,
         })
-        .add_plugins(ExtractResourcePlugin::<FrameCopy>::default())
+        .add_plugins((
+            ExtractResourcePlugin::<FrameCopy>::default(),
+            ExtractResourcePlugin::<DesignFrame>::default(),
+        ))
         .add_systems(Last, build_surface);
         if let Some(render) = app.get_sub_app_mut(RenderApp) {
             render
@@ -999,6 +1049,7 @@ fn aim_cameras(
 /// the frame. A linear ring first gets the frame copied into a free slot.
 #[cfg(target_os = "linux")]
 fn finish_frame(
+    design: Res<DesignFrame>,
     copy: Option<Res<FrameCopy>>,
     mut drawing: ResMut<Drawing>,
     mut plane: ResMut<HdrPlane>,
@@ -1024,7 +1075,10 @@ fn finish_frame(
         };
         if let Some(index) = index {
             let (exchange, generation) = (copy.exchange.clone(), copy.generation);
-            queue.on_submitted_work_done(move || exchange.finished(generation, index));
+            let layout = design.0.clone();
+            queue.on_submitted_work_done(move || {
+                exchange.finished_with_layout(generation, index, layout)
+            });
         }
     }
     // Callbacks only fire when the device is polled.
@@ -1762,6 +1816,84 @@ mod tests {
 
         exchange.hold(generation, second);
         assert_eq!(exchange.claim(generation), Some(first));
+    }
+
+    #[test]
+    fn layout_belongs_to_the_completed_slot_and_dies_with_its_ring() {
+        let exchange = FrameExchange::new(|| {});
+        let generation = exchange.install(960, 720, MODIFIER_LINEAR, images(3));
+        let first = exchange.claim(generation).unwrap();
+        let layout = blockloom_protocol::InterfaceLayout {
+            viewport: [960, 720],
+            revision: 3,
+            generation: 7,
+            widgets: vec![],
+        };
+        exchange.finished_with_layout(generation, first, Some(layout.clone()));
+        exchange.hold(generation, first);
+        let second = exchange.claim(generation).unwrap();
+        let mut next = layout.clone();
+        next.revision += 1;
+        exchange.finished_with_layout(generation, second, Some(next.clone()));
+        assert_eq!(exchange.layout(generation, first), Some(layout));
+        assert_eq!(exchange.layout(generation, second), Some(next.clone()));
+        assert_eq!(exchange.acquire(), Some((generation, second, Some(next))));
+        exchange.install(1280, 720, MODIFIER_LINEAR, images(3));
+        assert_eq!(exchange.layout(generation, first), None);
+    }
+
+    #[test]
+    #[ignore = "needs Vulkan and dma-buf export"]
+    fn interface_design_renders_and_reports_geometry_without_a_window() {
+        let document: blockloom_core::ui::UiDocument =
+            serde_json::from_value(serde_json::json!({"widgets": [{
+                "element": {"id": "panel", "kind": "Panel", "anchor": "Center", "size": [200, 160]},
+                "style": {"normal": {"background": "#ff0000"}}
+            }]}))
+            .unwrap();
+        for scale in [1.0, 0.5] {
+            let mut project = blockloom_core::project::Project::starter(
+                "Interface",
+                blockloom_core::scene::Mode::TwoD,
+            );
+            project.world.quality.resolution_scale = scale;
+            let (set, index, reports) = run_world_reporting(
+                project,
+                |_| {},
+                SceneView {
+                    enabled: false,
+                    ..Default::default()
+                },
+                30,
+                |p| p[0] > 180 && p[1] < 30,
+                vec![EditorMessage::InterfaceDesign {
+                    design: Some(blockloom_protocol::InterfaceDesign {
+                        revision: 1,
+                        generation: 1,
+                        viewport: None,
+                        document: document.clone(),
+                    }),
+                }],
+            );
+            assert!(
+                !reports.iter().any(|r| matches!(
+                    r,
+                    RuntimeMessage::Fatal { .. } | RuntimeMessage::Error { .. }
+                )),
+                "{reports:?}"
+            );
+            let set = set.expect("interface frame");
+            let pixel = middle_pixel(&set.images[index], set.width as usize, set.height as usize);
+            assert!(
+                pixel[0] > 180 && pixel[1] < 30,
+                "scale={scale}, pixel={pixel:?}, layouts={:?}",
+                reports
+                    .iter()
+                    .filter(|r| matches!(r, RuntimeMessage::InterfaceLayout(_)))
+                    .collect::<Vec<_>>()
+            );
+            assert!(reports.iter().any(|r| matches!(r, RuntimeMessage::InterfaceLayout(l) if l.viewport == [set.width, set.height] && l.widgets[0].id == "panel")));
+        }
     }
 
     #[test]
@@ -4492,6 +4624,10 @@ mod tests {
                 dir: None,
             })
             .unwrap();
+        let design = extra.iter().find_map(|message| match message {
+            EditorMessage::InterfaceDesign { design } => design.clone(),
+            _ => None,
+        });
         for message in extra {
             to_world.send(message).unwrap();
         }
@@ -4523,6 +4659,15 @@ mod tests {
                 if set.modifier == MODIFIER_LINEAR {
                     let pixel = middle_pixel(&set.images[index], size.x as usize, size.y as usize);
                     if done(pixel) || (settle > 0 && frames_seen > settle) {
+                        if let Some(design) = &design {
+                            let layout =
+                                exchange.layout(generation, index).expect("frame geometry");
+                            assert_eq!(
+                                (layout.revision, layout.generation),
+                                (design.revision, design.generation)
+                            );
+                            assert_eq!(layout.viewport, [set.width, set.height]);
+                        }
                         break;
                     }
                 }
@@ -4531,7 +4676,7 @@ mod tests {
         }
 
         drop(starting);
-        to_world.send(EditorMessage::Shutdown).unwrap();
+        let _ = to_world.send(EditorMessage::Shutdown);
         drop(to_world);
         world.join().unwrap();
         let reports: Vec<_> = reports.try_iter().collect();

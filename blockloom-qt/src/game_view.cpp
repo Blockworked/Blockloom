@@ -696,6 +696,10 @@ void GameView::sendSize()
 void GameView::wake()
 {
     const bool has = game_view_latest().valid || game_view_hdr_live() || game_view_shm_live();
+    if (!has && !m_interfaceLayout.isEmpty()) {
+        m_interfaceLayout.clear();
+        Q_EMIT interfaceLayoutChanged();
+    }
     if (has != m_hasFrame) {
         m_hasFrame = has;
         Q_EMIT hasFrameChanged();
@@ -890,7 +894,7 @@ QSGNode *GameView::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
     if (window() == plane.window)
         parkPlane();
 #endif
-    const GameFrame latest = game_view_latest();
+    const GameFrame latest = game_view_acquire();
     if (!latest.valid || latest.generation != m_generation || latest.index >= node->ring.size()) {
         // Nothing new: a frame from this ring stays up rather than flashing,
         // and with no ring there is nothing to show.
@@ -902,6 +906,14 @@ QSGNode *GameView::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
         return node;
     node->show(node->textureFor(int(latest.index)), fit(boundingRect(), node->size));
     game_view_hold(latest.generation, latest.index);
+    const QString layout = QString::fromUtf8(latest.layout.data(), qsizetype(latest.layout.size()));
+    if (layout != m_renderLayout) {
+        m_renderLayout = layout;
+        QMetaObject::invokeMethod(this, [this, layout] {
+            m_interfaceLayout = layout;
+            Q_EMIT interfaceLayoutChanged();
+        }, Qt::QueuedConnection);
+    }
     return node;
 #endif
 }

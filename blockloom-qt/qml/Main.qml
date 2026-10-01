@@ -54,9 +54,11 @@ ApplicationWindow {
     property var assetDrag: null
     property var assetTargets: []
 
+    readonly property string previewLayout: bridge.previewLayout
     readonly property string previewFrame: bridge.previewFrame
     readonly property string appVersion: bridge.appVersion
-    function watchPreview(port) { bridge.watchPreview(port); }
+    readonly property int previewPort: appState.preview_port || 0
+    onPreviewPortChanged: bridge.watchPreview(previewPort)
     function physicalKey(scanCode) { return bridge.physicalKey(scanCode); }
     // The watched Android device's newest frame (`{serial, image, width, height,
     // transport, ...}`), or `{error}` once its stream ends. Pushed, not polled.

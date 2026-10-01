@@ -448,6 +448,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 .after(bevy::transform::TransformSystems::Propagate)
                 .run_if(is_3d),
         );
+        app.add_systems(Update, ui_design::resize.after(world::pump_editor));
+        app.add_systems(Last, preview::capture_preview_frame);
         app.add_systems(
             PostUpdate,
             ui_design::report
@@ -563,17 +565,13 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 (
                     world::drive_camera,
                     edit::apply_view,
-                    edit::draw,
+                    edit::draw.run_if(ui_design::inactive),
                     volumes::draw_volumes,
                     volume_heat::collect_heat,
                 )
                     .chain(),
                 streaming::update_streaming_cells.run_if(is_3d),
-                (
-                    overlay::update_speech_bubbles,
-                    preview::capture_preview_frame,
-                )
-                    .chain(),
+                overlay::update_speech_bubbles,
                 (
                     world::report_status.run_if(bridge::editor_attached),
                     overlay::update_status.run_if(bridge::editor_attached),

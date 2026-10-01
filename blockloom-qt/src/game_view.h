@@ -21,6 +21,7 @@ class GameView : public QQuickItem
     Q_OBJECT
     QML_ELEMENT
     Q_PROPERTY(bool hasFrame READ hasFrame NOTIFY hasFrameChanged)
+    Q_PROPERTY(QString interfaceLayout READ interfaceLayout NOTIFY interfaceLayoutChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
     // Asks for the pointer pinned over the view; held says it really is.
     Q_PROPERTY(bool pointerLocked READ pointerLocked WRITE setPointerLocked NOTIFY pointerLockedChanged)
@@ -33,6 +34,7 @@ public:
     ~GameView() override;
 
     bool hasFrame() const { return m_hasFrame; }
+    QString interfaceLayout() const { return m_interfaceLayout; }
     QString error() const { return m_error; }
     bool pointerLocked() const { return m_pointerLocked; }
     void setPointerLocked(bool locked);
@@ -46,6 +48,7 @@ public:
 Q_SIGNALS:
     void hasFrameChanged();
     void errorChanged();
+    void interfaceLayoutChanged();
     void pointerLockedChanged();
     void pointerHeldChanged();
     void resolutionChanged();
@@ -88,6 +91,8 @@ private:
     qreal m_sentScale = 0;
     QTimer m_resizeTimer;
     QString m_error;
+    QString m_interfaceLayout;
+    QString m_renderLayout;
 };
 
 // Called by Rust from any thread when the exchange changes.

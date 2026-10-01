@@ -192,9 +192,7 @@ Rectangle {
     property bool pointerSuspended: false
     // Follow the stream whenever the sidecar has a port.
     readonly property int port: appState.preview_port || 0
-    onPortChanged: app.watchPreview(port)
-    Component.onCompleted: { app.watchPreview(port); app.invoke("set_scene_view", { view: sceneView }, null, () => {}); Qt.callLater(openWorld); }
-    Component.onDestruction: app.watchPreview(0)
+    Component.onCompleted: { app.invoke("set_scene_view", { view: sceneView }, null, () => {}); Qt.callLater(openWorld); }
 
     function report(command, args) { app.invoke(command, args, null, e => app.invoke("push_log", { kind: "error", text: String(e) })); }
     function input(payload) { app.invoke("preview_input", { input: payload }, null, () => {}); }

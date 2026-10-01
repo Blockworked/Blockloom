@@ -28,6 +28,7 @@ mod ffi {
         valid: bool,
         generation: u64,
         index: usize,
+        layout: String,
     }
 
     /// One read-back frame: tightly packed sRGB RGBA bytes.
@@ -43,6 +44,7 @@ mod ffi {
         /// Generation 0 means there is no world to show.
         fn game_view_slots(known: u64, out: &mut GameFrames) -> bool;
         fn game_view_latest() -> GameFrame;
+        fn game_view_acquire() -> GameFrame;
         fn game_view_hold(generation: u64, index: usize);
         fn game_view_reserve(generation: u64, index: usize) -> bool;
         /// The window put a frame on screen. Any thread.
@@ -254,13 +256,30 @@ fn game_view_latest() -> GameFrame {
             valid: true,
             generation,
             index,
+            layout: String::new(),
         };
     }
     GameFrame {
         valid: false,
         generation: 0,
         index: 0,
+        layout: String::new(),
     }
+}
+
+fn game_view_acquire() -> GameFrame {
+    #[cfg(target_os = "linux")]
+    if let Some((generation, index, layout)) = embedded::FRAMES.acquire() {
+        return GameFrame {
+            valid: true,
+            generation,
+            index,
+            layout: layout
+                .and_then(|v| serde_json::to_string(&v).ok())
+                .unwrap_or_default(),
+        };
+    }
+    game_view_latest()
 }
 
 fn game_view_hold(generation: u64, index: usize) {

@@ -21,6 +21,7 @@ fn main() {
                 "qml/NewProjectDialog.qml",
                 "qml/EditorPage.qml",
                 "qml/UiDesigner.qml",
+                "qml/InterfaceGeometry.qml",
                 "qml/TopBar.qml",
                 "qml/ActorList.qml",
                 "qml/BlockSidebar.qml",

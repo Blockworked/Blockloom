@@ -15,6 +15,7 @@ temp="$(mktemp -d)"
 trap 'rm -rf "$temp"' EXIT
 mkdir -p "$temp/com/blockworked"
 cp -R "$module" "$temp/com/blockworked/Blockstitch"
+cp -R "$root/blockloom-qt/tests/qml/fixtures/Blockloom" "$temp/com/blockworked/Blockloom"
 # The editor links the plugin statically; these controls only need its QML.
 sed '/plugin /d; /classname /d; /prefer /d' "$module/qmldir" > "$temp/com/blockworked/Blockstitch/qmldir"
 QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}" \

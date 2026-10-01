@@ -260,6 +260,7 @@ fn configure_ui_camera(
 
 fn feedback(
     engine: NonSend<Engine>,
+    design: Option<Res<crate::ui_design::DesignSession>>,
     diagnostics: Option<Res<DiagnosticsStore>>,
     pace: Option<Res<crate::performance::LoopPace>>,
     warmup: Option<Res<crate::streaming::Warmup>>,
@@ -274,6 +275,13 @@ fn feedback(
     }
     for (key, value) in &scaling.overrides {
         let _ = settings.set(*key, value);
+    }
+    // Authoring needs the requested pixel grid, independent of game budgets.
+    if design.is_some_and(|session| session.active()) {
+        settings.resolution_scale = 1.0;
+        settings.dynamic_resolution = false;
+        settings.auto_drop = false;
+        settings.upscaler = Upscaler::Spatial;
     }
     settings.normalize();
     if settings != scaling.settings || engine.rebuild {
@@ -924,6 +932,47 @@ mod tests {
     use bevy::render::render_resource::PrimitiveTopology;
     use blockloom_core::quality::{Quality, Setting};
     use blockloom_core::vm::Effect;
+
+    #[test]
+    fn authoring_uses_full_resolution_and_cancel_restores_game_quality() {
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(receiver, blockloom_core::scene::Mode::TwoD);
+        engine.project.world.quality.resolution_scale = 0.5;
+        engine.project.world.quality.upscaler = Upscaler::Taa;
+        let saved = engine.project.clone();
+        let mut session = crate::ui_design::DesignSession::default();
+        session
+            .apply(
+                Some(blockloom_protocol::InterfaceDesign {
+                    viewport: None,
+                    revision: 1,
+                    generation: 1,
+                    document: Default::default(),
+                }),
+                &engine,
+                &mut crate::ui::UiManager::default(),
+            )
+            .unwrap();
+        let mut app = App::new();
+        app.insert_non_send(engine)
+            .insert_resource(session)
+            .init_resource::<Scaling>();
+        app.add_systems(Update, feedback);
+        app.update();
+        let settings = &app.world().resource::<Scaling>().settings;
+        assert_eq!(settings.resolution_scale, 1.0);
+        assert!(!settings.dynamic_resolution && !settings.auto_drop);
+        assert_eq!(settings.upscaler, Upscaler::Spatial);
+        assert_eq!(app.world().non_send::<Engine>().project, saved);
+        app.world_mut()
+            .resource_mut::<crate::ui_design::DesignSession>()
+            .clear();
+        app.update();
+        let settings = &app.world().resource::<Scaling>().settings;
+        assert_eq!(settings.resolution_scale, 0.5);
+        assert_eq!(settings.upscaler, Upscaler::Taa);
+        assert_eq!(app.world().non_send::<Engine>().project, saved);
+    }
 
     #[test]
     fn native_ui_tracks_output_and_returns_to_the_world_for_hdr_or_native_scale() {

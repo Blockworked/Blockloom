@@ -289,7 +289,10 @@ Item {
                             }
                         }
                     }
-                    PreviewPanel { app: root.app }
+                    Loader {
+                        active: panels.tab === 1
+                        sourceComponent: Component { PreviewPanel { app: root.app } }
+                    }
                     UiDesigner { app: root.app }
                     DevicesPanel { app: root.app }
                 }

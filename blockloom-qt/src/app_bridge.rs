@@ -26,6 +26,7 @@ pub mod qobject {
         #[qproperty(QString, state_json, cxx_name = "stateJson")]
         #[qproperty(QString, status_json, cxx_name = "statusJson")]
         #[qproperty(QString, log_json, cxx_name = "logJson")]
+        #[qproperty(QString, preview_layout, cxx_name = "previewLayout")]
         #[qproperty(QString, preview_frame, cxx_name = "previewFrame")]
         #[qproperty(QString, screen_json, cxx_name = "screenJson")]
         #[qproperty(QString, app_version, cxx_name = "appVersion")]
@@ -98,6 +99,7 @@ pub struct AppBridgeRust {
     log_json: QString,
     preview_frame: QString,
     screen_json: QString,
+    preview_layout: QString,
     app_version: QString,
     startup_project: QString,
     backend: Option<Backend>,
@@ -114,6 +116,7 @@ impl Default for AppBridgeRust {
             log_json: QString::default(),
             preview_frame: QString::default(),
             screen_json: QString::default(),
+            preview_layout: QString::default(),
             app_version: QString::from(env!("CARGO_PKG_VERSION")),
             startup_project: std::env::args_os()
                 .skip_while(|arg| arg != "--project")
@@ -260,13 +263,19 @@ impl qobject::AppBridge {
         self.as_mut().rust_mut().preview = None;
         if port <= 0 {
             self.as_mut().set_preview_frame(QString::default());
+            self.as_mut().set_preview_layout(QString::default());
             return;
         }
         let thread = self.qt_thread();
         let latest: Latest = Arc::new(Mutex::new(None));
         let watch = preview::Watch::start(port as u16, move |frame| {
-            post_latest(&latest, &thread, frame, |bridge, frame| {
-                bridge.set_preview_frame(QString::from(&frame));
+            post_latest(&latest, &thread, frame, |mut bridge, frame| {
+                if let Ok(bundle) = serde_json::from_str::<serde_json::Value>(&frame) {
+                    bridge
+                        .as_mut()
+                        .set_preview_layout(QString::from(bundle["layout"].as_str().unwrap_or("")));
+                    bridge.set_preview_frame(QString::from(bundle["frame"].as_str().unwrap_or("")));
+                }
             });
         });
         self.as_mut().rust_mut().preview = Some(watch);

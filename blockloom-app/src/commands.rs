@@ -5131,6 +5131,14 @@ pub(crate) fn preview_interface(
         }
         if let Some(design) = &design {
             design.document.validate()?;
+            if design
+                .viewport
+                .is_some_and(|v| v.into_iter().any(|n| !(16..=8192).contains(&n)))
+            {
+                return Err(
+                    "Interface viewport dimensions must be between 16 and 8192 pixels".into(),
+                );
+            }
             if let Some(dir) = s.project_dir() {
                 design.document.with_stylesheets(dir)?;
             }

@@ -27,7 +27,16 @@ const JPEG_QUALITY: u8 = 60;
 
 /// The latest encoded frame, shared with the HTTP thread.
 #[derive(Resource, Clone, Default)]
-pub struct LatestFrame(pub Arc<Mutex<Option<Vec<u8>>>>);
+pub struct LatestFrame(pub Arc<Mutex<Option<EncodedFrame>>>);
+
+#[derive(Clone)]
+pub struct EncodedFrame {
+    jpeg: Vec<u8>,
+    layout: String,
+}
+
+#[derive(Component)]
+struct CaptureLayout(Option<blockloom_protocol::InterfaceLayout>);
 
 /// Preview streamer state on the main world.
 #[derive(Resource)]
@@ -148,7 +157,8 @@ fn serve(listener: std::net::TcpListener, frames: LatestFrame) {
 fn serve_single(stream: &mut std::net::TcpStream, frames: &LatestFrame) {
     let body = frames.0.lock().ok().and_then(|guard| (*guard).clone());
     match body {
-        Some(jpeg) => {
+        Some(frame) => {
+            let jpeg = frame.jpeg;
             let _ = write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -174,15 +184,18 @@ fn serve_stream(stream: &mut std::net::TcpStream, frames: &LatestFrame) {
     );
     let mut last_len = 0usize;
     let mut last_hash = 0u64;
+    let mut last_layout = String::new();
     loop {
-        let jpeg: Option<Vec<u8>> = frames.0.lock().ok().and_then(|guard| (*guard).clone());
-        if let Some(jpeg) = jpeg {
+        let jpeg: Option<EncodedFrame> = frames.0.lock().ok().and_then(|guard| (*guard).clone());
+        if let Some(frame) = jpeg {
+            let jpeg = &frame.jpeg;
             // Skip re-sending an identical frame: a paused world is still.
-            let hash = hash_bytes(&jpeg);
-            if jpeg.len() != last_len || hash != last_hash {
+            let hash = hash_bytes(jpeg);
+            if jpeg.len() != last_len || hash != last_hash || frame.layout != last_layout {
+                last_layout = frame.layout.clone();
                 last_len = jpeg.len();
                 last_hash = hash;
-                if write_frame(stream, &jpeg).is_err() {
+                if write_frame(stream, jpeg, &frame.layout).is_err() {
                     return;
                 }
             }
@@ -191,11 +204,11 @@ fn serve_stream(stream: &mut std::net::TcpStream, frames: &LatestFrame) {
     }
 }
 
-fn write_frame(stream: &mut std::net::TcpStream, jpeg: &[u8]) -> std::io::Result<()> {
+fn write_frame(stream: &mut impl Write, jpeg: &[u8], layout: &str) -> std::io::Result<()> {
     stream.write_all(
         format!(
-            "--blockloom-frame\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
-            jpeg.len()
+            "--blockloom-frame\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\nX-Blockloom-Interface: {}\r\n\r\n",
+            jpeg.len(), layout
         )
         .as_bytes(),
     )?;
@@ -220,14 +233,6 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
 /// Whether a frame is due. Throttled so capture costs ~15fps, not every frame.
 pub fn capture_due(state: &PreviewState) -> bool {
     state.enabled && Instant::now() >= state.next_capture
-}
-
-/// Records one captured screenshot as the latest JPEG frame.
-pub fn publish_frame(state: &mut PreviewState, jpeg: Vec<u8>) {
-    if let Ok(mut guard) = state.frames.0.lock() {
-        *guard = Some(jpeg);
-    }
-    state.next_capture = Instant::now() + CAPTURE_INTERVAL;
 }
 
 /// Encodes a Bevy image as JPEG for the stream.
@@ -657,8 +662,12 @@ fn type_preview_text(
     }
 }
 
-/// Captures a frame when due. Runs in Update, after the world has been drawn.
-pub fn capture_preview_frame(mut state: ResMut<PreviewState>, mut commands: Commands) {
+/// Captures after layout, so geometry is frozen with the screenshot request.
+pub fn capture_preview_frame(
+    mut state: ResMut<PreviewState>,
+    design: Res<crate::ui_design::DesignSession>,
+    mut commands: Commands,
+) {
     if !capture_due(&state) {
         return;
     }
@@ -666,21 +675,32 @@ pub fn capture_preview_frame(mut state: ResMut<PreviewState>, mut commands: Comm
     // observer publishes on completion, and screenshots lag a frame behind.
     state.next_capture = Instant::now() + CAPTURE_INTERVAL;
     commands
-        .spawn(bevy::render::view::window::screenshot::Screenshot::primary_window())
+        .spawn((
+            bevy::render::view::window::screenshot::Screenshot::primary_window(),
+            CaptureLayout(design.last.clone()),
+        ))
         .observe(on_screenshot);
 }
 
 fn on_screenshot(
     trigger: On<bevy::render::view::window::screenshot::ScreenshotCaptured>,
     mut state: ResMut<PreviewState>,
+    captures: Query<&CaptureLayout>,
 ) {
     if !state.enabled {
         return;
     }
     if let Some(jpeg) = encode_jpeg(&trigger.image) {
-        publish_frame(&mut state, jpeg);
-        // `publish_frame` stamps its own throttle; the reservation above
-        // only covered the flight time.
+        let layout = captures.get(trigger.entity).ok().and_then(|v| v.0.as_ref());
+        if let Ok(mut guard) = state.frames.0.lock() {
+            *guard = Some(EncodedFrame {
+                jpeg,
+                layout: layout
+                    .and_then(|v| serde_json::to_string(v).ok())
+                    .unwrap_or_default(),
+            });
+        }
+        state.next_capture = Instant::now() + CAPTURE_INTERVAL;
     }
 }
 
@@ -702,6 +722,25 @@ pub fn apply_preview_visibility(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streamed_frame_carries_its_frozen_layout_even_for_identical_pixels() {
+        let mut stream = Vec::new();
+        let layout = serde_json::json!({"revision": 9, "generation": 3, "viewport": [960,720], "widgets": [{"id": "line\nbreak"}]}).to_string();
+        write_frame(&mut stream, &[1, 2, 3], &layout).unwrap();
+        let header_end = stream.windows(4).position(|p| p == b"\r\n\r\n").unwrap();
+        let headers = std::str::from_utf8(&stream[..header_end]).unwrap();
+        assert!(headers.contains("Content-Length: 3"));
+        let metadata = headers
+            .lines()
+            .find_map(|l| l.strip_prefix("X-Blockloom-Interface: "))
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(metadata).unwrap()["revision"],
+            9
+        );
+        assert_eq!(&stream[header_end + 4..header_end + 7], &[1, 2, 3]);
+    }
 
     #[test]
     fn a_locked_view_moves_by_raw_motion_and_a_lost_focus_lets_go() {

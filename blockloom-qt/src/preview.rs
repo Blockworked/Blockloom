@@ -63,11 +63,11 @@ fn follow(port: u16, stop: &AtomicBool, on_frame: &impl Fn(String)) -> std::io::
         if !line.trim_end().starts_with("--") {
             continue;
         }
-        let length = part_length(&mut reader)?;
+        let (length, layout) = part_length(&mut reader)?;
         let mut jpeg = vec![0; length];
         reader.read_exact(&mut jpeg)?;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&jpeg);
-        on_frame(format!("data:image/jpeg;base64,{encoded}"));
+        on_frame(serde_json::json!({"frame": format!("data:image/jpeg;base64,{encoded}"), "layout": layout}).to_string());
     }
     Ok(())
 }
@@ -83,8 +83,9 @@ fn skip_headers(reader: &mut impl BufRead) -> std::io::Result<()> {
 }
 
 /// Reads one part's headers and returns its Content-Length.
-fn part_length(reader: &mut impl BufRead) -> std::io::Result<usize> {
+fn part_length(reader: &mut impl BufRead) -> std::io::Result<(usize, String)> {
     let mut length = 0;
+    let mut layout = String::new();
     let mut line = String::new();
     loop {
         line.clear();
@@ -93,7 +94,10 @@ fn part_length(reader: &mut impl BufRead) -> std::io::Result<usize> {
         }
         let trimmed = line.trim_end();
         if trimmed.is_empty() {
-            return Ok(length);
+            return Ok((length, layout));
+        }
+        if let Some(value) = trimmed.strip_prefix("X-Blockloom-Interface:") {
+            layout = value.trim().to_string();
         }
         if let Some((name, value)) = trimmed.split_once(':')
             && name.eq_ignore_ascii_case("content-length")

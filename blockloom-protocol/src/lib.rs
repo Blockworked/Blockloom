@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 21;
+pub const PROTOCOL_VERSION: u32 = 22;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -88,6 +88,8 @@ pub enum TouchPhase {
 /// A caller-owned revision and viewport generation identify a temporary draft.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InterfaceDesign {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewport: Option<[u32; 2]>,
     pub revision: u64,
     pub generation: u64,
     pub document: blockloom_core::ui::UiDocument,
@@ -95,6 +97,8 @@ pub struct InterfaceDesign {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InterfaceLayout {
+    /// Physical pixels of the render target used for these bounds.
+    pub viewport: [u32; 2],
     pub revision: u64,
     pub generation: u64,
     pub widgets: Vec<InterfaceWidgetBounds>,
@@ -578,6 +582,7 @@ mod tests {
     fn interface_design_and_geometry_round_trip() {
         let message = EditorMessage::InterfaceDesign {
             design: Some(InterfaceDesign {
+                viewport: Some([960, 720]),
                 revision: 4,
                 generation: 2,
                 document: blockloom_core::ui::UiDocument::default(),
@@ -588,6 +593,7 @@ mod tests {
             Some(Ok(message))
         );
         let message = RuntimeMessage::InterfaceLayout(InterfaceLayout {
+            viewport: [960, 720],
             revision: 4,
             generation: 2,
             widgets: vec![InterfaceWidgetBounds {
