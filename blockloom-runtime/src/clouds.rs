@@ -286,6 +286,7 @@ pub fn register(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/cloud_stats.wesl");
     bevy::asset::embedded_asset!(app, "shaders/cloud_bake.wesl");
     bevy::asset::embedded_asset!(app, "shaders/cloud_march.wesl");
+    bevy::asset::embedded_asset!(app, "shaders/cloud_resolve.wesl");
     bevy::asset::embedded_asset!(app, "shaders/cloud_shadow.wesl");
     bevy::asset::embedded_asset!(app, "shaders/cloud_shadow_composite.wesl");
     app.add_plugins((
@@ -409,6 +410,8 @@ struct CloudPipeline {
     shadow_layout: BindGroupLayoutDescriptor,
     shadow: CachedComputePipelineId,
     layouts: [BindGroupLayoutDescriptor; 2],
+    resolve_layout: BindGroupLayoutDescriptor,
+    resolve: CachedRenderPipelineId,
     bake_layout: BindGroupLayoutDescriptor,
     bake: CachedComputePipelineId,
     shader: Handle<Shader>,
@@ -469,14 +472,49 @@ fn init(
                     // One stacked noise atlas for shape and detail both.
                     texture_3d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
                     texture_cube(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
                 ),
             ),
         )
     };
+    // The march's raw output and last frame's history, folded into this
+    // frame's history.
+    let resolve_layout = BindGroupLayoutDescriptor::new(
+        "cloud_resolve",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::FRAGMENT,
+            (
+                uniform_buffer::<CloudUniforms>(true),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+            ),
+        ),
+    );
+    let resolve = cache.queue_render_pipeline(RenderPipelineDescriptor {
+        label: Some("cloud_resolve".into()),
+        layout: vec![resolve_layout.clone()],
+        vertex: fullscreen.to_vertex_state(),
+        fragment: Some(FragmentState {
+            shader: bevy::asset::load_embedded_asset!(
+                assets.as_ref(),
+                "shaders/cloud_resolve.wesl"
+            ),
+            targets: vec![
+                Some(ColorTargetState {
+                    format: WORKING_FORMAT,
+                    blend: None,
+                    write_mask: ColorWrites::ALL
+                });
+                2
+            ],
+            ..default()
+        }),
+        ..default()
+    });
     let bake_layout = BindGroupLayoutDescriptor::new(
         "cloud_bake",
         &BindGroupLayoutEntries::sequential(
@@ -574,6 +612,8 @@ fn init(
         shadow_layout,
         shadow,
         layouts: [layout(false), layout(true)],
+        resolve_layout,
+        resolve,
         bake_layout,
         bake,
         shader: bevy::asset::load_embedded_asset!(assets.as_ref(), "shaders/cloud_march.wesl"),
@@ -698,6 +738,8 @@ fn compatible_history(mut old: CloudUniforms, next: CloudUniforms) -> bool {
 struct History {
     shadow: (Texture, TextureView),
     size: UVec2,
+    /// The march's output before it meets the history: color, then depths.
+    raw: [(Texture, TextureView); 2],
     color: [(Texture, TextureView); 2],
     depth: [(Texture, TextureView); 2],
     /// One stacked atlas for shape under detail: a single bind for the
@@ -815,6 +857,8 @@ fn prepare(
                         "working_cloud_shadow",
                     ),
                     size: half,
+                    raw: ["working_cloud_raw", "working_cloud_raw_depth"]
+                        .map(|label| texture(&device, half.extend(1), false, label)),
                     color: std::array::from_fn(|_| {
                         texture(&device, half.extend(1), false, "working_cloud_history")
                     }),
@@ -883,8 +927,9 @@ fn draw(
         return;
     };
     let (target, v, h, prepass, up, fu) = view.into_inner();
-    let (Some(march), Some(bake), Some(uniform), Some(depth), Some(sky)) = (
+    let (Some(march), Some(resolve), Some(bake), Some(uniform), Some(depth), Some(sky)) = (
         cache.get_render_pipeline(v.pipeline),
+        cache.get_render_pipeline(pipeline.resolve),
         cache.get_compute_pipeline(pipeline.bake),
         buffer.0.binding(),
         prepass.depth_only_view(),
@@ -1016,12 +1061,10 @@ fn draw(
         "cloud_march",
         &cache.get_bind_group_layout(&pipeline.layouts[v.multi as usize]),
         &BindGroupEntries::sequential((
-            uniform,
+            uniform.clone(),
             depth,
             &h.noise.1,
             &pipeline.repeat,
-            &h.color[h.current ^ 1].1,
-            &h.depth[h.current ^ 1].1,
             &sky.texture_view,
             &pipeline.linear,
         )),
@@ -1029,7 +1072,7 @@ fn draw(
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
     {
-        let attachments = [&h.color[h.current].1, &h.depth[h.current].1].map(|view| {
+        let attachments = [&h.raw[0].1, &h.raw[1].1].map(|view| {
             Some(RenderPassColorAttachment {
                 view,
                 depth_slice: None,
@@ -1052,6 +1095,41 @@ fn draw(
         pass.set_bind_group(0, &group, &[v.offset]);
         pass.draw(0..3, 0..1);
         span.end(&mut pass);
+    }
+    {
+        let group = device.create_bind_group(
+            "cloud_resolve",
+            &cache.get_bind_group_layout(&pipeline.resolve_layout),
+            &BindGroupEntries::sequential((
+                uniform,
+                &h.raw[0].1,
+                &h.raw[1].1,
+                &h.color[h.current ^ 1].1,
+                &h.depth[h.current ^ 1].1,
+                &pipeline.linear,
+            )),
+        );
+        let attachments = [&h.color[h.current].1, &h.depth[h.current].1].map(|view| {
+            Some(RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations::default(),
+            })
+        });
+        let mut pass = ctx
+            .command_encoder()
+            .begin_render_pass(&RenderPassDescriptor {
+                label: Some("cloud_resolve"),
+                color_attachments: &attachments,
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        pass.set_pipeline(resolve);
+        pass.set_bind_group(0, &group, &[v.offset]);
+        pass.draw(0..3, 0..1);
     }
     if let (Some(measure), Some(output)) = (
         cache.get_compute_pipeline(pipeline.stats),
@@ -1100,6 +1178,8 @@ mod tests {
             )
             .unwrap();
         }
+        blockloom_core::shader_lib::validate(include_str!("shaders/cloud_resolve.wesl"), &[])
+            .unwrap();
         blockloom_core::shader_lib::validate(include_str!("shaders/cloud_stats.wesl"), &[])
             .unwrap();
         blockloom_core::shader_lib::validate(include_str!("shaders/cloud_bake.wesl"), &[]).unwrap();
