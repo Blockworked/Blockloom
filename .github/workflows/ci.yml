@@ -93,6 +93,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: android
+      - uses: taiki-e/install-action@just
       - name: Fetch the pinned NDK major
         run: |
           curl -sS -o /tmp/ndk.zip \
