@@ -925,6 +925,24 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "preview-interface",
+        cmd: "preview_interface",
+        aliases: &["preview_interface"],
+        summary: "Preview a temporary {revision, generation, document} without saving or starting gameplay. Omit design to close it.",
+        args: &[ArgSpec {
+            name: "design",
+            ty: "object",
+            required: false,
+        }],
+    },
+    CommandSpec {
+        name: "interface-layout",
+        cmd: "interface_layout",
+        aliases: &["interface_layout"],
+        summary: "Read the latest design geometry in physical viewport pixels, tagged by revision and generation.",
+        args: &[],
+    },
+    CommandSpec {
         name: "set-interface",
         cmd: "set_interface",
         aliases: &["set_interface"],

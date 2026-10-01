@@ -84,6 +84,8 @@ pub(crate) struct AppState {
     pub(crate) paused: bool,
     /// The last status the runtime reported.
     pub(crate) status: Option<blockloom_protocol::Status>,
+    pub(crate) interface_design: Option<blockloom_protocol::InterfaceDesign>,
+    pub(crate) interface_layout: Option<blockloom_protocol::InterfaceLayout>,
     pub(crate) log: Vec<LogLine>,
     /// Lines ever pushed, so a frontend can tell which ones it hasn't seen.
     pub(crate) log_total: u64,

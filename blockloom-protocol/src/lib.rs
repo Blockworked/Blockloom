@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 20;
+pub const PROTOCOL_VERSION: u32 = 21;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -85,6 +85,38 @@ pub enum TouchPhase {
     Cancel,
 }
 
+/// A caller-owned revision and viewport generation identify a temporary draft.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InterfaceDesign {
+    pub revision: u64,
+    pub generation: u64,
+    pub document: blockloom_core::ui::UiDocument,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InterfaceLayout {
+    pub revision: u64,
+    pub generation: u64,
+    pub widgets: Vec<InterfaceWidgetBounds>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InterfaceWidgetBounds {
+    pub id: String,
+    pub size: [f32; 2],
+    /// Affine local-to-viewport matrix: x axis, y axis, translation.
+    pub transform: [f32; 6],
+    pub visible: bool,
+    pub paint_order: u32,
+    pub clips: Vec<InterfaceClip>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InterfaceClip {
+    pub rect: [f32; 4],
+    pub viewport_to_local: [f32; 6],
+}
+
 /// Editor -> runtime.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -97,6 +129,10 @@ pub enum EditorMessage {
         /// script libraries the editor built into `.blockloom/build`.
         #[serde(default)]
         dir: Option<String>,
+    },
+    /// Temporary authored UI preview. None returns to the scene view.
+    InterfaceDesign {
+        design: Option<InterfaceDesign>,
     },
     /// The green flag.
     Start,
@@ -161,6 +197,8 @@ pub enum EditorMessage {
 pub enum RuntimeMessage {
     /// Sent once, as soon as the window is up.
     Ready { protocol: u32 },
+    /// Computed UI geometry in physical viewport pixels, after layout.
+    InterfaceLayout(InterfaceLayout),
     /// A `say` block, or anything else worth showing in the editor's log.
     Say { actor: String, text: String },
     /// A block failed to evaluate. The script carried on regardless.
@@ -534,6 +572,40 @@ mod tests {
         assert!(line.ends_with('\n'));
         assert!(!line[..line.len() - 1].contains('\n'));
         assert_eq!(decode::<RuntimeMessage>(&line), Some(Ok(message)));
+    }
+
+    #[test]
+    fn interface_design_and_geometry_round_trip() {
+        let message = EditorMessage::InterfaceDesign {
+            design: Some(InterfaceDesign {
+                revision: 4,
+                generation: 2,
+                document: blockloom_core::ui::UiDocument::default(),
+            }),
+        };
+        assert_eq!(
+            decode::<EditorMessage>(&encode(&message)),
+            Some(Ok(message))
+        );
+        let message = RuntimeMessage::InterfaceLayout(InterfaceLayout {
+            revision: 4,
+            generation: 2,
+            widgets: vec![InterfaceWidgetBounds {
+                id: "button".into(),
+                size: [80., 32.],
+                transform: [1., 0., 0., 1., 100., 200.],
+                visible: true,
+                paint_order: 3,
+                clips: vec![InterfaceClip {
+                    rect: [0., 0., 400., 300.],
+                    viewport_to_local: [1., 0., 0., 1., 0., 0.],
+                }],
+            }],
+        });
+        assert_eq!(
+            decode::<RuntimeMessage>(&encode(&message)),
+            Some(Ok(message))
+        );
     }
 
     #[test]

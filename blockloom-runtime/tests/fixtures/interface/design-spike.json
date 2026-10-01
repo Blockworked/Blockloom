@@ -1,0 +1,13 @@
+{
+  "reference_size": [960, 720],
+  "safe_area": [16, 24, 16, 12],
+  "scale": "ScaleWithSize",
+  "widgets": [
+    {"element": {"id": "screen", "kind": "VerticalBox", "anchor": "TopLeft", "size": [360, 600]}},
+    {"element": {"id": "heading", "parent": "screen", "kind": "RichText", "content": "[b]Design preview[/b] with text that wraps across the panel", "size": [300, 80]}},
+    {"element": {"id": "nested", "parent": "screen", "kind": "Panel", "size": [300, 120]}},
+    {"element": {"id": "image", "parent": "nested", "kind": "Image", "size": [64, 48]}},
+    {"element": {"id": "slider", "parent": "screen", "kind": "Slider", "size": [280, 32], "range": [0, 100]}},
+    {"element": {"id": "list", "parent": "screen", "kind": "ListView", "size": [280, 180]}, "items": ["One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"]}
+  ]
+}

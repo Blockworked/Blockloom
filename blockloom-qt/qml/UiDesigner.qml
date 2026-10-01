@@ -7,7 +7,8 @@ Item {
     id: root
     required property var app
     property var document: ({widgets: [], styles: {}, prefabs: {}, reference_size: [960,720], safe_area: [0,0,0,0], theme: "Dark", scale: "ConstantPixel"})
-    property int selected: -1
+    property string selectedId: ""
+    readonly property int selected: document.widgets.findIndex(w => w.element.id === selectedId)
     property string error: ""
     readonly property var widget: selected >= 0 && selected < document.widgets.length ? document.widgets[selected] : null
     readonly property var kinds: ["Panel","Label","Button","Image","Input","Slider","Toggle","List","VerticalBox","HorizontalBox","Grid","Canvas","WrapBox","SizeBox","Spacer","Progress","RadialProgress","ListView","Tabs","Select","Scrollbar","RichText","Tooltip"]
@@ -20,7 +21,7 @@ Item {
     function refresh() {
         const saved = app.appState.project ? app.appState.project.world.interface : null;
         if (saved) document = copy(saved);
-        if (selected >= document.widgets.length) selected = -1;
+        if (selected < 0) selectedId = "";
     }
     Component.onCompleted: refresh()
     Connections { target: root.app; function onAppStateChanged() { root.refresh(); } }
@@ -50,13 +51,13 @@ Item {
         next.widgets.push({element: {id: id+n, kind: kind, content: ["Label","Button","RichText","Toggle"].indexOf(kind) >= 0 ? kind : "", anchor: "TopLeft", offset: [Math.round(x),Math.round(y)], size: [180, kind === "Panel" || kind === "ListView" ? 180 : 40], parent: "", modal: false, range: [0,100], value: {Number: 0}}, style: {}, bindings: [], items: []});
         // Values use the core's tagged representation; default values can be omitted.
         delete next.widgets[next.widgets.length-1].element.value;
-        selected = next.widgets.length-1; save(next);
+        selectedId = id+n; save(next);
     }
     function removeSelected() {
         if (!widget) return;
         const next = copy(document); let gone = [widget.element.id];
         for (let i=0;i<gone.length;++i) next.widgets.forEach(w => { if(w.element.parent === gone[i] && gone.indexOf(w.element.id)<0) gone.push(w.element.id); });
-        next.widgets = next.widgets.filter(w => gone.indexOf(w.element.id)<0); selected = -1; save(next);
+        next.widgets = next.widgets.filter(w => gone.indexOf(w.element.id)<0); selectedId = ""; save(next);
     }
     function rect(w, depth) {
         if (depth > 40) return {x:0,y:0,w:100,h:40};
@@ -120,7 +121,7 @@ Item {
                     width: ListView.view.width; height: 30
                     text: (modelData.element.parent ? "    " : "")+modelData.element.id
                     highlighted: root.selected === index
-                    onClicked: root.selected=index
+                    onClicked: root.selectedId=modelData.element.id
                 }
             }
             Button { text: "Delete widget"; enabled: !!root.widget; onClicked: root.removeSelected() }
@@ -156,7 +157,7 @@ Item {
                             MouseArea {
                                 anchors.fill: parent
                                 property point start
-                                onPressed: mouse => { root.selected=tile.index; start=mapToItem(canvas,mouse.x,mouse.y); }
+                                onPressed: mouse => { root.selectedId=tile.modelData.element.id; start=mapToItem(canvas,mouse.x,mouse.y); }
                                 onPositionChanged: mouse => { if(pressed) { const at=mapToItem(canvas,mouse.x,mouse.y); tile.dragOffset=Qt.point(at.x-start.x,at.y-start.y); } }
                                 onCanceled: tile.dragOffset=Qt.point(0,0)
                                 onReleased: mouse => {

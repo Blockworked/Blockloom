@@ -414,3 +414,85 @@ fn cloud_layers_normalize_paint_and_undo() {
     );
     backend.dispatch("close_project", json!({})).unwrap();
 }
+
+#[test]
+fn interface_preview_never_saves_a_draft_and_cancel_uses_the_same_runtime() {
+    use blockloom_app::EmbeddedRuntime;
+    use blockloom_core::scene::Mode;
+    use blockloom_protocol::{EditorMessage, RuntimeMessage};
+    use std::sync::{
+        Arc, Mutex,
+        mpsc::{Receiver, Sender},
+    };
+
+    #[derive(Default)]
+    struct PreviewHost(Mutex<Option<Receiver<EditorMessage>>>);
+    impl EmbeddedRuntime for PreviewHost {
+        fn start(
+            &self,
+            _: Mode,
+            incoming: Receiver<EditorMessage>,
+            outgoing: Sender<RuntimeMessage>,
+        ) -> Result<Box<dyn Send>, String> {
+            *self.0.lock().unwrap() = Some(incoming);
+            Ok(Box::new(outgoing))
+        }
+    }
+
+    let (_guard, _data, projects) = isolated("interface-preview");
+    let host = Arc::new(PreviewHost::default());
+    let backend = Backend::start_embedded(AppHandle::new(|_| {}), host.clone());
+    let dir = create_project(&backend, projects.path(), "Design");
+    backend
+        .dispatch("open_project", json!({"path": dir}))
+        .unwrap();
+    let saved = std::fs::read(dir.join("project.blockloom")).unwrap();
+    let revision = blockloom_core::sync::read_revision(&dir);
+    let project = backend.dispatch("get_state", json!({})).unwrap()["project"].clone();
+    let document: Value = serde_json::from_str(include_str!(
+        "../../blockloom-runtime/tests/fixtures/interface/design-spike.json"
+    ))
+    .unwrap();
+    let design = json!({"revision": 2, "generation": 1, "document": document});
+    backend
+        .dispatch("preview_interface", json!({"design": design}))
+        .unwrap();
+    assert!(
+        backend
+            .dispatch("preview_interface", json!({"design": design}))
+            .is_err()
+    );
+    assert_eq!(
+        backend.dispatch("interface_layout", json!({})).unwrap(),
+        Value::Null
+    );
+    assert_eq!(
+        backend.dispatch("get_state", json!({})).unwrap()["project"],
+        project
+    );
+    assert_eq!(std::fs::read(dir.join("project.blockloom")).unwrap(), saved);
+    assert_eq!(blockloom_core::sync::read_revision(&dir), revision);
+    backend.dispatch("preview_interface", json!({})).unwrap();
+    let receiver = host.0.lock().unwrap().take().unwrap();
+    let messages: Vec<_> = receiver.try_iter().collect();
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|m| matches!(m, EditorMessage::Load { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|m| matches!(m, EditorMessage::InterfaceDesign { .. }))
+            .count(),
+        2
+    );
+    assert!(messages.iter().all(|m| !matches!(m, EditorMessage::Start)));
+    assert!(matches!(
+        messages.last(),
+        Some(EditorMessage::InterfaceDesign { design: None })
+    ));
+    backend.dispatch("close_project", json!({})).unwrap();
+}

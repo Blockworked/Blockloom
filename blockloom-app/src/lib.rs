@@ -96,6 +96,8 @@ impl Backend {
             running: false,
             paused: false,
             status: None,
+            interface_design: None,
+            interface_layout: None,
             log: Vec::new(),
             log_total: 0,
             // An embedded world is always shown, so it is always previewing.

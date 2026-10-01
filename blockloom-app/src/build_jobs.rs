@@ -225,6 +225,8 @@ mod tests {
                 running: false,
                 paused: false,
                 status: None,
+                interface_design: None,
+                interface_layout: None,
                 log: vec![],
                 log_total: 0,
                 preview_enabled: false,

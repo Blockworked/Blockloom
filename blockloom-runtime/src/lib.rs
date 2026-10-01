@@ -86,6 +86,7 @@ mod tiles;
 mod traced;
 mod transition;
 mod ui;
+mod ui_design;
 mod ui_systems;
 mod vfx;
 mod volume_heat;
@@ -273,6 +274,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .init_resource::<PendingEffects>()
         .init_resource::<world::NavMesh>()
         .init_resource::<ui::UiManager>()
+        .init_resource::<ui_design::DesignSession>()
         .init_resource::<ui::DeviceInsets>()
         .init_resource::<sound::SoundState>()
         .init_resource::<fx::FxCache>()
@@ -446,6 +448,12 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 .after(bevy::transform::TransformSystems::Propagate)
                 .run_if(is_3d),
         );
+        app.add_systems(
+            PostUpdate,
+            ui_design::report
+                .after(bevy::ui::UiSystems::PostLayout)
+                .after(bevy::ui::UiSystems::Stack),
+        );
         // ── Simulation (FixedUpdate), shared once ──
         app.add_systems(
             FixedUpdate,
@@ -453,7 +461,11 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 (dim2::sync_pause, dim3::sync_pause).chain(),
                 (dim2::sync_timestep, dim3::sync_timestep).chain(),
                 (world::restore_poses, atmosphere::sample_atmosphere).chain(),
-                (ui_systems::bindings, world::step_vm).chain(),
+                (
+                    ui_systems::bindings.run_if(ui_design::inactive),
+                    world::step_vm,
+                )
+                    .chain(),
                 (world::step_scripts, ai::tick).chain(),
                 overlay::apply_ui_effects,
                 world::apply_saved_data,
@@ -504,7 +516,9 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             Update,
             (
                 world::pump_editor,
-                (edit::interact, edit::report).chain(),
+                (edit::interact, edit::report)
+                    .chain()
+                    .run_if(ui_design::inactive),
                 preview::apply_preview_visibility,
                 preview::drain_preview_inputs,
                 fx::despawn_fx,
@@ -534,7 +548,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     ui_systems::hover,
                     ui_systems::navigation,
                     ui_systems::touch,
-                    ui_systems::project_widgets,
+                    ui_systems::project_widgets.run_if(ui_design::inactive),
                     overlay::draw_ui,
                     ui_systems::animate,
                     ui_systems::atlas,

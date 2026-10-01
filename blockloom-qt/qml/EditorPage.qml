@@ -157,6 +157,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
             ActorList {
+                visible: panels.tab !== 2
                 Layout.fillHeight: true
                 Layout.preferredWidth: panels.leftOpen ? panels.leftWidth : 34
                 app: root.app
@@ -294,6 +295,7 @@ Item {
                 }
             }
             InspectorPanel {
+                visible: panels.tab !== 2
                 Layout.fillHeight: true
                 Layout.preferredWidth: panels.rightOpen ? panels.rightWidth : 34
                 app: root.app
@@ -302,7 +304,7 @@ Item {
                 onResizeRequested: w => panels.rightWidth = Math.max(220, Math.min(480, w))
             }
         }
-        AssetTray { Layout.fillWidth: true; app: root.app }
+        AssetTray { visible: panels.tab !== 2; Layout.fillWidth: true; app: root.app }
         RunLog { Layout.fillWidth: true; app: root.app }
     }
 

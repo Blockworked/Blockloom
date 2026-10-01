@@ -192,6 +192,14 @@ impl Backend {
                 .unwrap_or_else(|| id.to_string())
         };
         match message {
+            RuntimeMessage::InterfaceLayout(layout) => {
+                if s.interface_design.as_ref().is_some_and(|d| {
+                    d.revision == layout.revision && d.generation == layout.generation
+                }) {
+                    s.interface_layout = Some(layout);
+                }
+                return;
+            }
             RuntimeMessage::Ready { protocol } => {
                 if protocol != blockloom_protocol::PROTOCOL_VERSION {
                     s.push_log(LogLine {
@@ -350,6 +358,8 @@ impl Backend {
         s.paused = false;
         s.status = None;
         s.runtime = None;
+        s.interface_design = None;
+        s.interface_layout = None;
         s.preview_port = None;
         s.pointer_locked = false;
         s.ray_tracing = None;

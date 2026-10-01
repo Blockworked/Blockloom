@@ -644,6 +644,8 @@ pub(crate) fn take_over_lock(state: &SharedState, app: &AppHandle) -> Result<Loc
 /// false only when the project is on its way to being deleted. Releases our
 /// owner lock, but only when it is still ours.
 fn close_open_project(s: &mut AppState, save: bool) {
+    s.interface_design = None;
+    s.interface_layout = None;
     if save {
         auto_save(s);
     }
@@ -2180,6 +2182,8 @@ pub(crate) fn run_project(
             s.preview_port = None;
         }
     }
+    s.interface_design = None;
+    s.interface_layout = None;
     s.log.clear();
     s.running = true;
     s.paused = false;
@@ -2189,6 +2193,8 @@ pub(crate) fn run_project(
 
 pub(crate) fn stop_project(state: &SharedState, app: &AppHandle) -> Result<(), String> {
     let mut s = lock(state)?;
+    s.interface_design = None;
+    s.interface_layout = None;
     if let Some(runtime) = s.runtime.as_mut()
         && !runtime.send(&blockloom_protocol::EditorMessage::Stop)
     {
@@ -3974,6 +3980,8 @@ pub(crate) fn open_script_ide(state: &SharedState) -> Result<serde_json::Value, 
 /// game window straight away. While a run is going the edit waits for the next
 /// Play - reloading mid-run would throw the world away under the user.
 fn sync_runtime(s: &mut AppState) {
+    s.interface_design = None;
+    s.interface_layout = None;
     let Some(project) = s.project().cloned() else {
         return;
     };
@@ -5107,6 +5115,53 @@ pub(crate) fn clear_log(state: &SharedState, app: &AppHandle) -> Result<(), Stri
     s.log.clear();
     emit(app, &s);
     Ok(())
+}
+
+/// Sends a temporary UI document through the existing idle world transport.
+pub(crate) fn preview_interface(
+    backend: &Backend,
+    state: &SharedState,
+    app: &AppHandle,
+    design: Option<blockloom_protocol::InterfaceDesign>,
+) -> Result<(), String> {
+    {
+        let s = lock(state)?;
+        if s.running {
+            return Err("Stop the game before previewing the interface".into());
+        }
+        if let Some(design) = &design {
+            design.document.validate()?;
+            if let Some(dir) = s.project_dir() {
+                design.document.with_stylesheets(dir)?;
+            }
+            if s.interface_design.as_ref().is_some_and(|old| {
+                (design.generation, design.revision) <= (old.generation, old.revision)
+            }) {
+                return Err("Stale interface design revision or viewport generation".into());
+            }
+        }
+    }
+    open_world(backend, state, app)?;
+    let mut s = lock(state)?;
+    let message = blockloom_protocol::EditorMessage::InterfaceDesign {
+        design: design.clone(),
+    };
+    if !s
+        .runtime
+        .as_mut()
+        .is_some_and(|runtime| runtime.send(&message))
+    {
+        return Err("Lost the connection to the game runtime".into());
+    }
+    s.interface_design = design;
+    s.interface_layout = None;
+    Ok(())
+}
+
+pub(crate) fn interface_layout(
+    state: &SharedState,
+) -> Result<Option<blockloom_protocol::InterfaceLayout>, String> {
+    Ok(lock(state)?.interface_layout.clone())
 }
 
 /// Saves the designer document as one undoable edit.

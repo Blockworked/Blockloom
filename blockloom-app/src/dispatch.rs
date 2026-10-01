@@ -283,6 +283,13 @@ impl Backend {
                 app,
                 arg(&args, "path")?,
             )?),
+            "preview_interface" => to_json(commands::preview_interface(
+                self,
+                state,
+                app,
+                arg(&args, "design")?,
+            )?),
+            "interface_layout" => to_json(commands::interface_layout(state)?),
             "set_interface" => to_json(commands::set_interface(
                 state,
                 app,

@@ -245,6 +245,7 @@ pub fn note_contact(engine: &mut Engine, a: Entity, b: Entity, started: bool) {
 pub fn pump_editor(
     mut engine: NonSendMut<Engine>,
     mut preview: Option<ResMut<crate::preview::PreviewState>>,
+    mut design: Option<ResMut<crate::ui_design::DesignSession>>,
     mut manager: ResMut<crate::ui::UiManager>,
     mut scene: Option<ResMut<crate::edit::SceneEditor>>,
     mut debug: Option<ResMut<crate::hdr::HdrDebug>>,
@@ -274,6 +275,9 @@ pub fn pump_editor(
         };
         match message {
             EditorMessage::Load { project, dir } => {
+                if let Some(design) = design.as_mut() {
+                    design.clear();
+                }
                 engine.project = *project;
                 engine.project_dir = dir.map(std::path::PathBuf::from);
                 let loaded = engine.project.clone();
@@ -296,7 +300,22 @@ pub fn pump_editor(
                     scene.loaded = true;
                 }
             }
+            EditorMessage::InterfaceDesign { design: request } => {
+                if let Some(design) = design.as_mut() {
+                    if let Err(message) = design.apply(request, &engine, &mut manager) {
+                        bridge::send(&RuntimeMessage::Error {
+                            actor: String::new(),
+                            message,
+                        });
+                    } else {
+                        engine.preview_inputs.clear();
+                    }
+                }
+            }
             EditorMessage::Start => {
+                if let Some(design) = design.as_mut() {
+                    design.clear();
+                }
                 let project = engine.project.clone();
                 engine.vm.load(&project);
                 load_saved_data(&mut engine);
@@ -334,6 +353,9 @@ pub fn pump_editor(
                 }
             }
             EditorMessage::Stop => {
+                if let Some(design) = design.as_mut() {
+                    design.clear();
+                }
                 end_run(&mut engine, &mut manager);
                 bridge::send(&RuntimeMessage::Stopped);
             }
@@ -371,7 +393,9 @@ pub fn pump_editor(
                 }
             }
             EditorMessage::PreviewInput { input } => {
-                engine.preview_inputs.push(input);
+                if design.as_ref().is_none_or(|d| !d.active()) {
+                    engine.preview_inputs.push(input);
+                }
             }
             EditorMessage::SceneView(view) => {
                 if let Some(debug) = debug.as_mut() {
