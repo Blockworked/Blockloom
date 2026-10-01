@@ -1360,9 +1360,126 @@ Phased by dependency and value per cost. Each phase unblocks the next.
       upload automation (signed APK file only); no 32-bit targets; no ray
       tracing, HDR output or EXR capture on Android.
 
+### Phase 6.6 - UWP / Microsoft Store for Windows (player only, do between Phase 6 and Phase 7)
+
+- [ ] Goal: a project builds from a Windows PC into a sideloadable and
+      Store-ready package and runs standalone on Windows 10/11. No editor
+      on the device: Qt stays Win32 desktop-only (same rule as Phase 6.5),
+      and Store is a Build dialog row, never a Play path.
+- [ ] Upfront truth, read before scoping: UWP as a XAML/CoreWindow app
+      model is legacy (Microsoft steers new apps to Windows App SDK plus
+      MSIX), Rust `*-uwp-windows-msvc` std is broken upstream (uses
+      Win32 APIs the store partition forbids), and winit has no WinRT
+      backend (Bevy plus wgpu plus audio therefore have no UWP window
+      path today). So v1 ships Track A only; Track B stays parked behind
+      a spike.
+- [ ] Two tracks, do in order:
+  - Track A first (this phase): MSIX-packaged Win32 through the Desktop
+        Bridge. Same player binary as the Windows x64/ARM64 rows, wrapped
+        with an AppxManifest plus tile assets and signed with the Windows
+        SDK tools. Store-accepted, sideloadable, no runtime rewrite. This
+        is what "UWP for Windows" means in v1.
+  - Track B later (gated): true UWP sandbox (`x86_64-uwp-windows-msvc`,
+        `aarch64-uwp-windows-msvc`, CoreApplication sandbox, read-only
+        install location, suspend/resume lifecycle). Needs a windowing
+        backend that does not exist upstream yet.
+- [ ] Spike first, before any Track B code: `cargo check -p
+      blockloom-runtime --target x86_64-uwp-windows-msvc` on a Windows
+      runner, plus a minimal Bevy plus wgpu plus audio probe for window
+      creation, swapchain, input, file reads under the install location,
+      and suspend/resume. Park Track B unless std plus winit plus Bevy
+      all pass; Track A never waits on it.
+- [ ] Scope: x86_64 desktop first, ARM64 desktop second (Surface-class
+      devices). MSIX in v1; APPX is the same container with the older
+      extension, not a second format. No 32-bit in v1. No Xbox (GDK is a
+      separate path, not APPX UWP), no HoloLens remoting in v1. Packaging
+      runs on a Windows host only in v1: other hosts list the rows as
+      unavailable with the reason attached.
+- [ ] Project settings plus app config (`uwp.rs` beside `android.rs`,
+      Project settings rows like `project.android`):
+  - Package identity name (default `com.blockloom.game.<sanitized id>`),
+        publisher subject, four-part version, Desktop device family,
+        capabilities (none by default; `internetClient` is opt-in, a game
+        that needs none declares none).
+  - Tile plus splash plus Store logo generated from the project icon
+        through the existing `Icons` pipeline.
+  - App config file beside `android.json` under the data dir (honors
+        `BLOCKLOOM_DATA_DIR`): Windows SDK location, test-cert
+        thumbprint, license or Store association state. Keystore and PFX
+        passwords never land there.
+  - Backend commands (`commands.rs`/`dispatch.rs`, on the shell/MCP
+        surface too): `uwp-status`. `just uwp-check` is the headless
+        equivalent.
+- [ ] Build targets and dialog (`build.rs`):
+  - Track A adds Store rows that reuse the `pc-windows-msvc` compilers
+        (no new Rust target in v1): e.g. "Windows Store (MSIX x64)" beside
+        "Windows x64". Readiness is SDK tools plus staged player plus Rust
+        target when the project has scripts, with the reason attached like
+        every other row. There is no `stage-player` change: the staged
+        Win32 player is the payload.
+  - Track B triples (`*-uwp-windows-msvc`) appear only if the spike
+        unblocks, with an `is_uwp()` helper beside `is_android()`/`is_web()`.
+  - `hdr_default` matches desktop (HDR where the display offers it),
+        unlike the Android and web SDR-only rows. The per-platform quality
+        rows list Store beside desktop with no weak-GPU caveat.
+  - `build_uwp` beside `build_android`/`build_web`: same game-folder
+        staging (pack, assets minus script sources, atlas, baked sky,
+        probes, terrain), then package assembly from a checked-in template
+        (`blockloom-core/src/uwp-template/`: AppxManifest, tile assets,
+        `resources.pri` layout) with MakeAppx from the installed Windows
+        SDK, signed with SignTool. Scripts and native block logic ride as
+        the same `.dll` files desktop ships; whoever calls this compiled
+        them first, same as every other target.
+- [ ] Runtime compat: Track A needs none (full-trust Win32 inside MSIX,
+      one `cfg` check that it is running packaged, no behavior changes).
+      Track B is a second `Launch` like `Launch::Web`/`Launch::Android`
+      when it happens: pack and game files from the install location
+      through an asset-reader path (never `std::fs` beside a binary),
+      synthetic `Load`/`Start`, no stdin bridge, no process exit, saves
+      to the app data LocalFolder, probe bakes ship pre-baked and are
+      never written at runtime, suspend/resume pauses strands like `pause
+      game` (world freezes, UI strands keep the wall clock), resize and
+      orientation handled, no second input stack.
+- [ ] Scripts and native logic on Store: Track A ships what desktop
+      ships (same triple, same `.dll` names, VM as fallback). Track B
+      cross-compiles each script plus codegen logic for the UWP triple
+      against the same ABI and `export!` entry points; a script that
+      cannot build for the target fails the build with rustc's error, the
+      same as cross-desktop and wasm.
+- [ ] Signing and the dev loop:
+  - A test cert is auto-created on the first Store build (clearly
+        test-only, like the Android debug keystore); release signing takes
+        a PFX path plus thumbprint in Project settings and asks for the
+        password on each build (env or OS credential store, never written
+        into the project or the app config). The Build dialog's remember
+        checkbox keeps a password that just signed for the next build,
+        with a Forget button.
+  - The Build dialog gains Install on this PC (behind `Add-AppxPackage`,
+        needs sideloading or dev mode on): install plus launch, with the
+        run log tailed back into RunLog from a log file under LocalFolder
+        (there is no stdout or logcat in a package). Document the dev-mode
+        plus cert-trust steps next to `just player`.
+- [ ] Tooling and tests:
+  - `just uwp-check` (SDK plus Rust-target probe, no device needed),
+        `just uwp-build <project> [out]` (through the shell like
+        `web-build`). CI validates the manifest template and runs `cargo
+        check -p blockloom-runtime --target x86_64-uwp-windows-msvc` on a
+        Windows runner only (check-only without linking until the std
+        half unblocks); Linux CI never attempts it.
+  - A smoke test beside `web-smoke`: install the MSIX on Windows,
+        launch, watch the log tail for the world-built marker and actor
+        movement, fail on Rust panics. Unit tests for manifest
+        substitution, identity sanitize, quad-version validation,
+        `targets()` Store notes, and the app-config round trip.
+- [ ] Not in v1, by decision: no editor on the device; no Partner Center
+      upload automation (signed `.msix` file only); no 32-bit targets; no
+      Xbox GDK path, no HoloLens remoting; no new HDR, ray tracing or EXR
+      behavior beyond desktop; Track B true-UWP sandbox stays parked until
+      Rust std plus winit plus Bevy unblock upstream.
+
 ### Phase 7 - Scale and ecosystem, do last
 - [ ] Multiplayer: headless server, replication, lobbies, rollback.
-- [ ] Deploy: Web/WASM (see Phase 8 player and Phase 9 editor), Android signing (see Phase 6.5), iOS signing, console path, auto-updater/DLC/addressables.
+- [ ] Deploy: Web/WASM (see Phase 8 player and Phase 9 editor), Android signing (see Phase 6.5), Windows Store signing (see Phase 6.6), iOS signing, console path, auto-updater/DLC/addressables.
 - [ ] Ecosystem: analytics/crash, achievements/IAP hooks, plugin API, asset store, collab/VCS, docs/LTS.
 
 ### Phase 8 - Web player via WebGPU (single-file build, do before Phase 9)

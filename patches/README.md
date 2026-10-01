@@ -40,7 +40,7 @@ The integration test uses isolated local archives and does not access the networ
 - wgpu-hal 30.0.1: descriptor allocation retries once in a fresh pool instead of
   panicking on pool exhaustion/fragmentation; Android/Mali command pools request
   resource release every 64 resets. The latter remains experimental.
-- bevy_pbr 0.20.0-rc.1: Mali-only view and preprocessing bind-group reuse caches.
+- bevy_pbr 0.20.0-rc.2: Mali-only view and preprocessing bind-group reuse caches.
 
 These are the changes from the former vendor copies, not new stability fixes.
 See [the Android investigation](../docs/android-mali-debugging.md) for evidence

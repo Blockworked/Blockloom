@@ -64,7 +64,7 @@ bevy = { workspace = true, features = ["experimental_pbr_pcss"] }
 # names the framework's own NativeActivity, so the native-activity backend
 # rides along (GameActivity would want Java instead).
 [target.'cfg(target_os = "android")'.dependencies]
-bevy_android = "0.20.0-rc.1"
+bevy_android = "0.20.0-rc.2"
 bevy = { workspace = true, features = ["android-native-activity"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

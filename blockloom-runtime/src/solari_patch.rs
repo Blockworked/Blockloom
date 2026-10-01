@@ -1,6 +1,7 @@
 //! Edits to Bevy Solari's shaders, 3D only: the sky lights what a traced
-//! ray escapes to. Solari binds the environment map but never reads it, so
-//! under an open sky bounced light and reflections came back black.
+//! ray escapes to. Since Bevy 0.20.0-rc.2 Solari samples the environment map
+//! on a miss itself, so these edits are no-ops there and only apply to older
+//! shaders that bind the map but never read it.
 //!
 //! Same rules as `pbr_patch`: exact text against the pinned Bevy, patched as
 //! each shader loads, and an edit that no longer finds its text leaves that
@@ -109,6 +110,11 @@ fn patch_solari_shaders(
 /// throughput until shading, so it goes back in here; the first bounce hasn't
 /// had it taken out yet.
 fn patch_initial_path(source: &str) -> Result<String, &'static str> {
+    // Since rc.2 Bevy samples the map on a miss itself, with proper ReSTIR
+    // handling; nothing left to add.
+    if source.contains("sample_environment_map_light") {
+        return Ok(source.to_string());
+    }
     let source = replace_once(
         source,
         "import package::scene::sampling::{calculate_resolved_light_contribution, isinf,",
@@ -143,6 +149,10 @@ fn patch_initial_path(source: &str) -> Result<String, &'static str> {
 /// A cell's GI ray that escapes its reach, and then the world, sees the sky.
 /// The cache holds irradiance, so a cosine-sampled sky counts pi times.
 fn patch_world_cache(source: &str) -> Result<String, &'static str> {
+    // Since rc.2 Bevy adds pi times the map on a miss itself.
+    if source.contains("sample_environment_map_light") {
+        return Ok(source.to_string());
+    }
     let source = replace_once(
         source,
         "import package::scene::sampling::{calculate_resolved_light_contribution, trace_visibility};",
@@ -179,6 +189,11 @@ fn patch_world_cache(source: &str) -> Result<String, &'static str> {
 /// Bounces that escape see the sky; a camera ray that does is left out of
 /// the image, so the view keeps the background the raster passes drew.
 fn patch_pathtracer(source: &str) -> Result<String, &'static str> {
+    // Since rc.2 Bevy adds the map on every miss, camera ray included; the
+    // raster background no longer shows through the reference tracer.
+    if source.contains("sample_environment_map_light") {
+        return Ok(source.to_string());
+    }
     let source = replace_once(
         source,
         "import package::scene::sampling::{sample_random_light, random_emissive_light_pdf, power_heuristic};",

@@ -24,7 +24,7 @@ edition = "2024"
 # moves them together and `just blockstitch-local` overrides both.
 blockstitch-core = { git = "https://github.com/Blockworked/blockstitch", rev = "fa100f5e" }
 blockstitch-qml = { git = "https://github.com/Blockworked/blockstitch", rev = "fa100f5e" }
-bevy = "0.20.0-rc.1"
+bevy = "0.20.0-rc.2"
 # No 0.20 release yet: the bindings moved into the rapier monorepo, which
 # tracks Bevy's main. Patched onto the RC below until a release lands.
 bevy_rapier2d = { git = "https://github.com/dimforge/rapier", rev = "09ca067a" }
@@ -77,7 +77,7 @@ strip = "symbols"
 
 # bevy_rapier's git master depends on Bevy's main; build it against the RC.
 [patch."https://github.com/bevyengine/bevy"]
-bevy = "0.20.0-rc.1"
+bevy = "0.20.0-rc.2"
 
 # Generated from pinned release archives and patches/ by
 # `just prepare-patched-deps`. See patches/README.md for the Mali workarounds.
