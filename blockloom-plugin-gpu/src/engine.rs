@@ -243,14 +243,11 @@ impl ComputeEngine {
         let count = names.len();
         for step in 0..count {
             let name = &names[(self.cursor + step) % count];
-            loop {
-                let Some(command) = self
-                    .plugins
-                    .get_mut(name)
-                    .and_then(|p| p.queue.front().cloned())
-                else {
-                    break;
-                };
+            while let Some(command) = self
+                .plugins
+                .get_mut(name)
+                .and_then(|p| p.queue.front().cloned())
+            {
                 let cost = match &command {
                     GpuCommand::Dispatch { kernel, .. } => command.invocations(
                         self.kernels
@@ -312,9 +309,11 @@ impl ComputeEngine {
                     let words: Result<Vec<u32>, String> =
                         match read.staging.slice(..).get_mapped_range() {
                             Ok(view) => Ok(view
-                                .chunks_exact(4)
+                                .as_chunks::<4>()
+                                .0
+                                .iter()
                                 .take(read.words as usize)
-                                .map(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+                                .map(|b| u32::from_ne_bytes(*b))
                                 .collect()),
                             Err(e) => Err(e.to_string()),
                         };
