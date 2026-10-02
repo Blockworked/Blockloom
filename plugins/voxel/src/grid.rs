@@ -4,64 +4,13 @@
 //! and start at zero in one corner; anything outside the box reads as air and
 //! ignores writes.
 
+pub use crate::shape::Shape;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const CHUNK: i32 = 16;
 const CELLS: usize = (CHUNK * CHUNK * CHUNK) as usize;
 
 pub type Cells = [u8; CELLS];
-
-/// What part of its cell a solid cell fills. Anything but a cube is kept in
-/// a sparse table, so a world of cubes pays nothing for the rest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Shape {
-    #[default]
-    Cube,
-    /// The lower half.
-    Slab,
-    /// The upper half.
-    TopSlab,
-    /// A half-width column through the middle.
-    Post,
-}
-
-impl Shape {
-    pub fn from_name(name: &str) -> Result<Shape, String> {
-        match name
-            .trim()
-            .to_ascii_lowercase()
-            .replace([' ', '-'], "_")
-            .as_str()
-        {
-            "cube" | "full" => Ok(Shape::Cube),
-            "slab" => Ok(Shape::Slab),
-            "top_slab" => Ok(Shape::TopSlab),
-            "post" => Ok(Shape::Post),
-            other => Err(format!(
-                "no shape called {other} (cube, slab, top slab or post)"
-            )),
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Shape::Cube => "cube",
-            Shape::Slab => "slab",
-            Shape::TopSlab => "top slab",
-            Shape::Post => "post",
-        }
-    }
-
-    /// The box it fills, as fractions of the cell: low corner, high corner.
-    pub fn bounds(self) -> ([f32; 3], [f32; 3]) {
-        match self {
-            Shape::Cube => ([0.0; 3], [1.0; 3]),
-            Shape::Slab => ([0.0; 3], [1.0, 0.5, 1.0]),
-            Shape::TopSlab => ([0.0, 0.5, 0.0], [1.0; 3]),
-            Shape::Post => ([0.25, 0.0, 0.25], [0.75, 1.0, 0.75]),
-        }
-    }
-}
 
 pub struct Grid {
     /// Size in cells, a whole number of chunks on each axis.
@@ -300,8 +249,8 @@ mod tests {
         grid.set([20, 2, 2], 0);
         assert!(grid.shaped_in([1, 0, 0]).is_empty());
         assert!(Shape::from_name("Top slab").is_ok());
-        assert!(Shape::from_name("ramp").is_err());
-        assert_eq!(Shape::from_name(Shape::TopSlab.name()), Ok(Shape::TopSlab));
+        assert!(Shape::from_name("dome").is_err());
+        assert_eq!(Shape::from_name(&Shape::TopSlab.name()), Ok(Shape::TopSlab));
     }
 
     #[test]

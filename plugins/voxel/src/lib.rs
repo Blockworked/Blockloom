@@ -22,6 +22,7 @@ mod grid;
 mod mesher;
 mod palette;
 mod ray;
+mod shape;
 mod terrain;
 
 use blockloom_plugin_api::mesh::MeshData;

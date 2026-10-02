@@ -51,6 +51,37 @@ impl Group {
         );
     }
 
+    /// A flat convex polygon of three or more points, wound counter-clockwise
+    /// seen from the side `normal` points to. Positions are already scaled.
+    fn push_poly(&mut self, points: &[[f32; 3]], normal: [f32; 3], color: [f32; 3]) {
+        let base = self.positions.len() as u32 / 3;
+        for p in points {
+            self.positions.extend(p);
+            self.normals.extend(normal);
+            let [r, g, b] = color;
+            self.colors.extend([r, g, b, 1.0]);
+        }
+        let (a, b, c) = (points[0], points[1], points[2]);
+        let (e1, e2) = (
+            [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+            [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+        );
+        let cross = [
+            e1[1] * e2[2] - e1[2] * e2[1],
+            e1[2] * e2[0] - e1[0] * e2[2],
+            e1[0] * e2[1] - e1[1] * e2[0],
+        ];
+        let facing = cross[0] * normal[0] + cross[1] * normal[1] + cross[2] * normal[2];
+        for i in 1..points.len() as u32 - 1 {
+            let tri = if facing >= 0.0 {
+                [0, i, i + 1]
+            } else {
+                [0, i + 1, i]
+            };
+            self.indices.extend(tri.map(|t| base + t));
+        }
+    }
+
     /// A rectangle on the plane `plane` across `axis` (all in cells from the
     /// chunk's corner), spanning `lo` to `hi` on the next two axes.
     #[allow(clippy::too_many_arguments)]
@@ -175,32 +206,22 @@ pub fn mesh_chunk(
             continue;
         };
         let key = (look.emission > 0.0).then_some(grid.get(cell));
-        let (lo, hi) = shape.bounds();
         let at = [0, 1, 2].map(|a| (cell[a] - base[a]) as f32);
-        for axis in 0..3 {
-            let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
-            for sign in [1, -1] {
-                let on_edge = if sign > 0 {
-                    hi[axis] >= 1.0
-                } else {
-                    lo[axis] <= 0.0
-                };
-                let mut next = cell;
-                next[axis] += sign;
-                if on_edge && grid.is_full(next) {
-                    continue;
-                }
-                let at_plane = at[axis] + if sign > 0 { hi[axis] } else { lo[axis] };
-                groups.entry(key).or_default().push_rect(
-                    axis,
-                    sign,
-                    at_plane,
-                    [at[u] + lo[u], at[v] + lo[v]],
-                    [at[u] + hi[u], at[v] + hi[v]],
-                    look.color,
-                    voxel,
-                );
+        for face in shape.faces() {
+            if let Some(e) = face.edge
+                && grid.is_full([cell[0] + e[0], cell[1] + e[1], cell[2] + e[2]])
+            {
+                continue;
             }
+            let points: Vec<[f32; 3]> = face
+                .points
+                .iter()
+                .map(|p| [0, 1, 2].map(|a| (at[a] + p[a]) * voxel))
+                .collect();
+            groups
+                .entry(key)
+                .or_default()
+                .push_poly(&points, face.normal, look.color);
         }
     }
     groups
@@ -273,6 +294,42 @@ mod tests {
         grid.set([2, 3, 2], STONE);
         let groups = mesh_chunk(&grid, &palette(), [0, 0, 0], 1.0);
         assert_eq!(lit(&groups), 22);
+    }
+
+    #[test]
+    fn stairs_and_ramps_mesh_with_normals_that_match_their_winding() {
+        use crate::shape::Facing;
+        for (shape, tris) in [
+            (Shape::Stair(Facing::West), 22),
+            (Shape::Ramp(Facing::North), 8),
+        ] {
+            let mut grid = Grid::new([16, 16, 16]);
+            grid.set_shaped([3, 3, 3], STONE, shape);
+            let groups = mesh_chunk(&grid, &palette(), [0, 0, 0], 1.0);
+            let g = &groups[&None];
+            assert_eq!(g.triangles(), tris, "{shape:?}");
+            for t in g.indices.chunks(3) {
+                let p = |i: u32| {
+                    let i = i as usize * 3;
+                    [g.positions[i], g.positions[i + 1], g.positions[i + 2]]
+                };
+                let n = &g.normals[t[0] as usize * 3..t[0] as usize * 3 + 3];
+                let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
+                let (u, v) = (
+                    [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+                    [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+                );
+                let cross = [
+                    u[1] * v[2] - u[2] * v[1],
+                    u[2] * v[0] - u[0] * v[2],
+                    u[0] * v[1] - u[1] * v[0],
+                ];
+                assert!(
+                    cross[0] * n[0] + cross[1] * n[1] + cross[2] * n[2] > 0.0,
+                    "{shape:?}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -150,12 +150,12 @@
     },
     {
       "name": "shape_voxel",
-      "summary": "Make a solid cell of the running world a slab, top slab, post or whole cube.",
+      "summary": "Make a solid cell of the running world a slab, top slab, post, stair, ramp or whole cube.",
       "args": [
         {"name": "x", "type": "int", "default": 0},
         {"name": "y", "type": "int", "default": 0},
         {"name": "z", "type": "int", "default": 0},
-        {"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post"], "default": "slab"}
+        {"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post", "stair south", "stair west", "stair north", "stair east", "ramp south", "ramp west", "ramp north", "ramp east"], "default": "slab"}
       ],
       "action": {"do": "module", "op": "shape"}
     },
@@ -189,10 +189,10 @@
         {"name": "x", "type": "int", "default": 0},
         {"name": "y", "type": "int", "default": 0},
         {"name": "z", "type": "int", "default": 0},
-        {"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post"], "default": "slab"}
+        {"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post", "stair south", "stair west", "stair north", "stair east", "ramp south", "ramp west", "ramp north", "ramp east"], "default": "slab"}
       ],
       "command": "shape_voxel",
-      "help": "Makes a solid cell a slab, top slab, post or whole cube; air stays air."
+      "help": "Makes a solid cell a slab, top slab, post, stair or ramp (rising towards the side named) or a whole cube; air stays air."
     },
     {
       "type_id": "fill_voxels",

@@ -485,8 +485,9 @@ the remaining proof.
 
 - A cell is still one material byte; its shape lives in a sparse table, so a
   world of cubes costs nothing extra and the greedy mesher is untouched (it
-  only sees whole cubes). Shaped cells are small boxes with their own faces,
-  which is enough for slabs and posts; stairs and ramps need non-box shapes.
+  only sees whole cubes). Shaped cells come from a short face list (boxes, plus
+  a wedge for ramps, turned about the vertical axis by facing), which covers
+  slabs, posts, stairs and ramps; faces two boxes press together are dropped.
 - Rays and the break/place blocks work in whole cells, so they treat a slab as
   a cube. Collision is the mesh, so it is the real shape.
 

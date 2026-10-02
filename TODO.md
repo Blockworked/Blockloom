@@ -1517,8 +1517,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Voxel plugin first slice (`plugins/voxel`): finite cube world, seeded terrain presets, greedy chunk mesher, glowing materials, live set/fill/sphere/generate, reporters, rays (distance, break, place), schema and sealed package (`just voxel-plugin`).
     - [x] Scene-view preview: a plugin with `editor.preview` is hosted while nothing plays (`plugins::preview`), the voxel world shows in the editor without Play.
     - [x] Voxel edit persistence: saved `edits` lines on the `world` resource, `add_voxel_edit`/`clear_voxel_edits`, and a general `set_resource_field` command action.
-    - [x] Voxel shaped cells: slab, top slab and post, `shape_voxel`, and a `shape` saved-edit line.
-    - [ ] Voxel next: editor brushes, more shapes (stairs, ramps), smooth terrain, streaming/LOD, instancing, GPU meshing, fracture.
+    - [x] Voxel shaped cells: slab, top slab, post, stairs and ramps (four facings), `shape_voxel`, and a `shape` saved-edit line.
+    - [ ] Voxel next: editor brushes, smooth terrain, streaming/LOD, instancing, GPU meshing, fracture.
     - [ ] Phases 4-7 (procedural graph, GPU path, fracture, ecosystem).
 
 ### Phase 8 - Web player via WebGPU (single-file build, do before Phase 9)

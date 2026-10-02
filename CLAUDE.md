@@ -539,7 +539,7 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   edit along one); edits last for the run. The package schema declares the
   resource, commands and nine blocks (a material is a dropdown of the built-in names; ids work
   too). Measured: the default 64x32x64 island is drawn from the wasm module in
-  under a second, inside its 10 s call budget. Not yet: smooth terrain, more shapes (stairs, ramps),
+  under a second, inside its 10 s call budget. Not yet: smooth terrain,
   streaming and LOD, instancing, GPU meshing, fracture, editor brushes. Its manifest asks for `editor.preview`,
   so the scene view shows the generated world without Play (edits made by
   blocks still last only for a run). Saved edits are the `world` resource's
@@ -550,11 +550,12 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `clear_voxel_edits` forgets them, both through the `set_resource_field`
   command action (sets one resource field, or with `append` pushes `value` onto
   its list; one undo step).
-  A solid cell may be a slab, top slab or post (`Shape` in `grid.rs`, a sparse
-  table beside the cells): the greedy mesher takes only whole cubes, shaped
-  cells are boxes meshed on their own with faces on a cell's edge hidden by a
-  whole-cube neighbour, `shape` is the op, `shape_voxel` the command and block
-  (ten blocks now), `shape X Y Z name` a saved edit line. Writing a cube or air
+  A solid cell may be a slab, top slab, post, stair or ramp (`Shape` in
+  `shape.rs`, a sparse table in `grid.rs`; a stair or ramp has a facing, the
+  side it rises towards): the greedy mesher takes only whole cubes, shaped
+  cells are a few boxes (and a wedge) meshed on their own from `Shape::faces`,
+  with faces on a cell's edge hidden by a whole-cube neighbour, `shape` is the op, `shape_voxel` the command and block
+  (ten blocks now), `shape X Y Z name` a saved edit line (`stair west`, `ramp north`). Writing a cube or air
   takes a shape away; rays still treat a shaped cell as the whole cell.
 - **Importers and build hooks** (`blockloom-plugin-api/src/assets.rs`,
   `blockloom-plugin-host/src/imports.rs`): a package's schema may list
