@@ -1501,11 +1501,12 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Modules in the built desktop player: the build ships each plugin's manifest and files, the player verifies them against the pack and hosts the loadout; module-op blocks, reporters and hats build.
     - [x] A browser host for portable modules: the host crate builds for wasm32 (wasmi, no dlopen), `files::set_reader` reads shipped plugins from the page's mounted files, the web build ships and records portable plugins, the web player hosts the loadout. Checked by an in-memory load test and the wasm32 clippy; no browser run yet.
     - [ ] Browser proof (`just web-build` with a plugin project, `just web-smoke`), a faster host on the browser's own WebAssembly, Android plugin code.
-    - [x] Plugin statement blocks in the VM: `PluginBlock` instruction, `Effect::PluginCall`, the editor runs the block's command, `plugin-run-block`, Play preflight; codegen refuses by name and Build is refused while they exist.
+    - [x] Plugin statement blocks in the VM: `PluginBlock` instruction, `Effect::PluginCall`, the editor runs the block's command, `plugin-run-block`, Play preflight; codegen emits them (`Act::PluginCall`, `ACT_PLUGIN_CALL`, logic ABI 34) and Build is refused for a statement whose command runs in the editor.
     - [x] Plugin statement blocks in the palette and on the canvas (one `PluginBlock` row whose head follows the schema label; needs blockstitch's function `head` and `index` pieces).
     - [x] Plugin reporters and hats: `PluginRead` values answered on demand by the world's modules, `WhenPlugin` hats started by `event` effects; palette, canvas, preflight, tally example (needs blockstitch's operator `layout`).
     - [x] Per-plugin MCP tools: `plugin-commands` becomes one typed tool per command (`plugin-id__name`), kept in step after install, remove, open and undo.
-    - [ ] Codegen and the script ABI for plugin blocks; importer/build hooks.
+    - [x] Codegen for plugin statements, reporters and hats, held against the VM in `tests/codegen.rs` and through the player boundary in `logic.rs`.
+    - [ ] The script ABI for plugin blocks (call, read, hear events); importer/build hooks.
     - [ ] HTTP registry transport; revision bump for attached copies on package changes.
     - [x] Mesh submission service: `mesh`/`remove_mesh` effects become named 3D entities with an optional trimesh collider.
     - [x] Voxel plugin first slice (`plugins/voxel`): finite cube world, seeded terrain presets, greedy chunk mesher, glowing materials, live set/fill/sphere/generate, reporters, rays (distance, break, place), schema and sealed package (`just voxel-plugin`).

@@ -52,6 +52,73 @@ impl Val {
     }
 }
 
+/// Splits a plugin hat's `detail` (or a plugin's event) into its parts.
+const PLUGIN_SEP: char = '\u{1f}';
+
+/// What a plugin hat or event is keyed by: plugin, event, then each slot's
+/// text, so one string carries all of it.
+pub fn plugin_detail(plugin: &str, event: &str, args: &[String]) -> String {
+    let mut out = format!("{plugin}{PLUGIN_SEP}{event}");
+    for arg in args {
+        out.push(PLUGIN_SEP);
+        out.push_str(arg);
+    }
+    out
+}
+
+/// Whether a plugin event (`got`) starts a hat (`want`): same plugin and
+/// event, and every non-empty hat slot equal as text or as numbers.
+fn plugin_hat_matches(want: &str, got: &str) -> bool {
+    let want: Vec<&str> = want.split(PLUGIN_SEP).collect();
+    let got: Vec<&str> = got.split(PLUGIN_SEP).collect();
+    if want.len() < 2 || got.len() < 2 || want[0] != got[0] || want[1] != got[1] {
+        return false;
+    }
+    want[2..].iter().enumerate().all(|(i, want)| {
+        want.is_empty()
+            || got.get(i + 2).is_some_and(|got| {
+                got == want
+                    || matches!((got.parse::<f64>(), want.parse::<f64>()), (Ok(a), Ok(b)) if a == b)
+            })
+    })
+}
+
+/// A plugin call's slot values as a JSON array: a whole number is an
+/// integer, as the VM's own plugin calls spell it.
+pub fn plugin_args_json(args: &[Val]) -> String {
+    let mut out = String::from("[");
+    for (i, arg) in args.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        match arg {
+            Val::Num(n) if !n.is_finite() => out.push_str("null"),
+            Val::Num(n) if n.fract() == 0.0 && n.abs() < 9.0e15 => {
+                out.push_str(&(*n as i64).to_string())
+            }
+            Val::Num(n) => out.push_str(&format!("{n:?}")),
+            Val::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+            Val::Text(text) => {
+                out.push('"');
+                for ch in text.chars() {
+                    match ch {
+                        '"' => out.push_str("\\\""),
+                        '\\' => out.push_str("\\\\"),
+                        '\n' => out.push_str("\\n"),
+                        '\r' => out.push_str("\\r"),
+                        '\t' => out.push_str("\\t"),
+                        ch if (ch as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", ch as u32)),
+                        ch => out.push(ch),
+                    }
+                }
+                out.push('"');
+            }
+        }
+    }
+    out.push(']');
+    out
+}
+
 /// What a generated program asks the world to do. One per leaf instruction
 /// the blocks have, carrying values that are already evaluated - the host
 /// never evaluates anything, just as it never does for the VM.
@@ -421,6 +488,13 @@ pub enum Act {
     SwitchScene {
         scene: String,
         transition: String,
+    },
+    /// A plugin block ran. `args` follow the block's slot order and are
+    /// already evaluated; the host runs the block's command.
+    PluginCall {
+        plugin: String,
+        block: String,
+        args: Vec<Val>,
     },
     /// Grabs or frees the pointer; window-global, like gravity.
     SetMouseLocked {
@@ -851,6 +925,11 @@ impl Runner {
                 }
                 ("CutsceneEnded", "CutsceneEnded") => true,
                 ("Particles", "Particles") => entry.actor == &*template && entry.detail == detail,
+                // A plugin's event reaches every actor, or only the one it names.
+                ("Plugin", "Plugin") => {
+                    (actor.is_empty() || entry.actor == &*template)
+                        && plugin_hat_matches(entry.detail, detail)
+                }
                 _ => false,
             };
             if !matches {
@@ -864,6 +943,7 @@ impl Runner {
                 | "EnteredRoom" => {
                     vec![Rc::from(actor)]
                 }
+                "Plugin" if !actor.is_empty() => vec![Rc::from(actor)],
                 _ => self.actors.copies_of(entry.actor),
             };
             for id in running {
@@ -1213,7 +1293,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 33;
+pub const LOGIC_ABI_VERSION: u32 = 34;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1441,6 +1521,9 @@ pub const ACT_SET_TIME_SCALE: u32 = 118;
 pub const ACT_HITSTOP: u32 = 119;
 pub const ACT_SET_LETTERBOX: u32 = 120;
 pub const ACT_FADE_SCREEN: u32 = 121;
+/// `a` = plugin id, `b` = block id, `c` = the slot values as a JSON array
+/// (whole numbers as integers, as the VM hands them over).
+pub const ACT_PLUGIN_CALL: u32 = 122;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2421,6 +2504,19 @@ impl Host for AbiHost {
                 &scene,
                 &transition,
                 [0.0; 3],
+                &zero,
+            ),
+            Act::PluginCall {
+                plugin,
+                block,
+                args,
+            } => self.act_many(
+                actor,
+                ACT_PLUGIN_CALL,
+                &plugin,
+                &block,
+                &plugin_args_json(&args),
+                &[],
                 &zero,
             ),
         }

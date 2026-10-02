@@ -66,18 +66,18 @@ pub use runtime::{
     ACT_HIDE_ELEMENT, ACT_HITSTOP, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD,
     ACT_LIST_CLEAR, ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE,
     ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_PAINT_TILE, ACT_PLAY_ANIMATION,
-    ACT_PLAY_CUTSCENE, ACT_PLAY_SOUND, ACT_POINT_TOWARDS, ACT_PUFF_SMOKE, ACT_RUMBLE_GAMEPAD,
-    ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_ANIMATION_SPEED, ACT_SET_AURORA, ACT_SET_BODY,
-    ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW,
-    ACT_SET_CLOUD_DRIFT, ACT_SET_CLOUD_LAYER, ACT_SET_CLOUDS, ACT_SET_COLLISION_LAYER,
-    ACT_SET_COLLISION_MASK, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_EMISSIVE_STRENGTH,
-    ACT_SET_EMITTER_DIAL, ACT_SET_EMITTER_PLAYING, ACT_SET_EXPOSURE, ACT_SET_FIELD, ACT_SET_FOCUS,
-    ACT_SET_FOG_DENSITY, ACT_SET_GI_BOUNCES, ACT_SET_GI_SAMPLES, ACT_SET_GRAVITY,
-    ACT_SET_HDR_OUTPUT, ACT_SET_IK_TARGET, ACT_SET_LETTERBOX, ACT_SET_LIGHT_INTENSITY,
-    ACT_SET_LIGHT_SHADOWS, ACT_SET_LIGHTNING_RATE, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED,
-    ACT_SET_PARALLAX, ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_PEAK_BRIGHTNESS,
-    ACT_SET_PRECIPITATION, ACT_SET_RAY_TRACING, ACT_SET_RENDER_SETTING, ACT_SET_RIG_SLOT,
-    ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SHADOW_DISTANCE, ACT_SET_SLOT_TINT,
+    ACT_PLAY_CUTSCENE, ACT_PLAY_SOUND, ACT_PLUGIN_CALL, ACT_POINT_TOWARDS, ACT_PUFF_SMOKE,
+    ACT_RUMBLE_GAMEPAD, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_ANIMATION_SPEED, ACT_SET_AURORA,
+    ACT_SET_BODY, ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH,
+    ACT_SET_CAMERA_VIEW, ACT_SET_CLOUD_DRIFT, ACT_SET_CLOUD_LAYER, ACT_SET_CLOUDS,
+    ACT_SET_COLLISION_LAYER, ACT_SET_COLLISION_MASK, ACT_SET_COLOR, ACT_SET_DENSITY,
+    ACT_SET_EMISSIVE_STRENGTH, ACT_SET_EMITTER_DIAL, ACT_SET_EMITTER_PLAYING, ACT_SET_EXPOSURE,
+    ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_FOG_DENSITY, ACT_SET_GI_BOUNCES, ACT_SET_GI_SAMPLES,
+    ACT_SET_GRAVITY, ACT_SET_HDR_OUTPUT, ACT_SET_IK_TARGET, ACT_SET_LETTERBOX,
+    ACT_SET_LIGHT_INTENSITY, ACT_SET_LIGHT_SHADOWS, ACT_SET_LIGHTNING_RATE, ACT_SET_MASS,
+    ACT_SET_MOUSE_LOCKED, ACT_SET_PARALLAX, ACT_SET_PARENT, ACT_SET_PAUSED,
+    ACT_SET_PEAK_BRIGHTNESS, ACT_SET_PRECIPITATION, ACT_SET_RAY_TRACING, ACT_SET_RENDER_SETTING,
+    ACT_SET_RIG_SLOT, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SHADOW_DISTANCE, ACT_SET_SLOT_TINT,
     ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_SPRITE_DIAL, ACT_SET_TIME_OF_DAY,
     ACT_SET_TIME_SCALE, ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME,
     ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT, ACT_SET_WATER, ACT_SET_WIND,
@@ -87,7 +87,7 @@ pub use runtime::{
     Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI,
     SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
     SYM_LOGIC_SCENE, SYM_LOGIC_TICK, SceneTable, State, Status, TICK_STOPPED, VALUE_BOOL,
-    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val,
+    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val, plugin_detail,
 };
 
 use crate::project::Project;
@@ -364,9 +364,6 @@ pub fn compile(project: &Project) -> Emit<String> {
 
             let counters = canvas.plan.counters.len();
             for entry in &program.entries {
-                if let crate::vm::Trigger::Plugin { plugin, event, .. } = &entry.trigger {
-                    return Err(Unsupported::new(format!("the plugin hat {plugin}/{event}")));
-                }
                 entries.push(format!(
                     "    Entry {{ actor: {}, strand: {}, trigger: {}, detail: {}, \
                      start: {}, counters: {counters}, run: actor_{index} }},",
@@ -461,6 +458,11 @@ fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
         Trigger::UiEvent { id, event } => format!("{event}\n{id}"),
         Trigger::UiClicked(id) | Trigger::UiChanged(id) => id.clone(),
         Trigger::ActionPressed(action) => action.clone(),
+        Trigger::Plugin {
+            plugin,
+            event,
+            args,
+        } => plugin_detail(plugin, event, args),
         Trigger::Started
         | Trigger::QualityDropped
         | Trigger::SceneStarted
@@ -468,8 +470,7 @@ fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
         | Trigger::CutsceneEnded
         | Trigger::Clicked
         | Trigger::Cloned
-        | Trigger::Touched
-        | Trigger::Plugin { .. } => String::new(),
+        | Trigger::Touched => String::new(),
     }
 }
 
@@ -1531,10 +1532,26 @@ impl<'a> Pass<'a> {
             Action::SetMouseLocked(locked) => {
                 act(format!("Act::SetMouseLocked {{ locked: {locked} }}"))
             }
-            Action::PluginCall { plugin, block, .. } => {
-                return Err(Unsupported::new(format!(
-                    "the plugin block {plugin}/{block}"
-                )));
+            // Slots are read in order into lets, as the VM evaluates them
+            // before it queues the call.
+            Action::PluginCall {
+                plugin,
+                block,
+                args,
+            } => {
+                let mut lets = String::new();
+                let mut names = Vec::new();
+                for (i, arg) in args.iter().enumerate() {
+                    lets.push_str(&format!("    let p{i} = {};\n", self.evaluated(arg)?));
+                    names.push(format!("p{i}"));
+                }
+                format!(
+                    "{lets}    h.act(&me, Act::PluginCall {{ plugin: {}.to_string(), \
+                     block: {}.to_string(), args: vec![{}] }});\n",
+                    literal(plugin),
+                    literal(block),
+                    names.join(", ")
+                )
             }
             Action::RumbleGamepad { strength, duration } => format!(
                 "    let strength = ({} as f32).clamp(0.0, 100.0);\n    \
@@ -1934,11 +1951,6 @@ impl<'a> Pass<'a> {
                 "{{ let a = vec![{}]; sense(h, &me, \"CurrentTime\", a) }}",
                 arg(0)?
             )),
-            // A plugin's code runs in the editor's world, which no compiled
-            // program can reach.
-            Op::Ext(name) if &**name == crate::value::PLUGIN_READ => {
-                Err(Unsupported::new("a plugin reporter".to_string()))
-            }
             Op::Ext(name) => Ok(format!(
                 "{{ let a = vec![{}]; sense(h, &me, {}, a) }}",
                 parts.join(", "),

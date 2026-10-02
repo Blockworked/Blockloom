@@ -422,8 +422,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   game with the reasons, since it must not run without its plugin). A Build
   accepts plugin blocks the world can run itself (`block_runs_in_world`: a
   module-op statement or reporter, any hat) and refuses a statement whose
-  command runs in the editor. Plugin blocks keep a project on the VM, so a
-  build with them has no native logic.
+  command runs in the editor. Plugin blocks compile too (see below), so a
+  build keeps native logic.
 - **Native modules** load in the editor on a command's first use
   (`commands::plugins::Modules` on `OpenProject`, keyed by package hash, dropped
   when the package changes or the project closes): a `module` command action
@@ -444,8 +444,11 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   as JSON integers. The world forwards it as `RuntimeMessage::PluginCall`, and
   the editor runs it (`commands::plugins::run_block`: slots named by the schema,
   an `actor` argument filled from the running actor, an actor slot's name
-  resolved to an id, then the same `plugin_call` path). Codegen refuses it by
-  name, so such a project stays on the VM, and `preflight` stops Play on a
+  resolved to an id, then the same `plugin_call` path). Codegen emits it as
+  `Act::PluginCall` (slots read into `let`s in order, then one host act; over
+  the logic ABI as `ACT_PLUGIN_CALL` with the slots as a JSON array in `c`,
+  whole numbers as integers, which `logic.rs` turns back into the same
+  `Effect::PluginCall`), and `preflight` stops Play on a
   block no installed plugin provides or whose slot count changed. A Build is
   refused for a statement whose command runs in the editor, since a built game
   has none (module-op blocks ship, see Builds). `plugin-run-block` runs one from the shell and MCP, and the snapshot's
@@ -502,8 +505,15 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `Trigger::Plugin` and started by `Event::Plugin { plugin, event, args, actor
   }`, which a module raises with an `event` effect (`{name, actor?, args}`).
   Hat slots are literal text, blank for any, and match as text or as numbers.
-  Both are VM only: codegen refuses them by name, scripts do not hear plugin
-  events, and `Project::plugin_blocks` reports all three shapes
+  Both compile: a reporter is the generic sensing read (`sense(h, &me,
+  "PluginRead", ..)`, answered by the host's `ext_operator`, so the world's
+  installed reader answers it exactly as for the VM), and a hat is an
+  `Entry` whose `detail` is `plugin_detail` (plugin, event and slots joined by
+  U+001F), started by `fire("Plugin", actor, detail, "")` - with an actor only
+  that actor's strand, without one every copy's - and matched as the VM does
+  (`plugin_hat_matches`). `tests/codegen.rs` holds statement, reporter and hat
+  against the VM line for line, and `LOGIC_ABI_VERSION` is 34. Scripts do not
+  hear plugin events, and `Project::plugin_blocks` reports all three shapes
   (`PluginBlockShape`) so `preflight` checks each one (kind, slot count, and
   that a reporter's command is a module op) and a Build is refused. In the
   palette the operator `PluginRead` has a `layout` and `result` that are

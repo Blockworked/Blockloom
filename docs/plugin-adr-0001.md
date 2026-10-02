@@ -287,7 +287,10 @@ The desktop player now hosts the plugin code a build ships. Decisions:
 - A build accepts what the world can run by itself: statements and reporters
   whose commands are module ops, and hats. A statement whose command edits the
   project still needs the editor and still stops the build. A project with
-  plugin blocks stays on the VM, so it ships no native logic.
+  plugin blocks still ships native logic: statements, reporters and hats
+  compile (`ACT_PLUGIN_CALL`, the generic sensing read, a `Plugin` entry
+  keyed by plugin, event and slots), and `tests/codegen.rs` compares each with
+  the VM.
 - Web and Android builds still refuse plugin code: the first needs a browser
   host for portable modules, the second a player built with the host crate.
 

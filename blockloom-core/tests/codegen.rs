@@ -561,6 +561,16 @@ impl Host for Recorder {
             "DictAsJson" => Ok(Val::Text(dict_as_json(
                 self.dicts.get(&args[0].as_text()).map_or(&[], Vec::as_slice),
             ))),
+            // A plugin's module, as the harness answers for one: the same
+            // rule sits in `plugin_answer` for the VM's side.
+            "PluginRead" => {
+                let slots: Vec<String> = args[2..].iter().map(Val::as_text).collect();
+                match args[1].as_text().as_str() {
+                    "count" => Ok(Val::Num(slots.join("").len() as f64 * 2.0)),
+                    "label" => Ok(Val::Text(format!("{}:{}", args[0].as_text(), slots.join("+")))),
+                    other => Err(format!("{}/{other} has no reading", args[0].as_text())),
+                }
+            }
             other => Err(format!("unknown operator '{other}'")),
         }
     }
@@ -1101,6 +1111,11 @@ fn line_of(act: &Act) -> String {
         }
         Act::DeleteActor { .. } => "DeleteActor".to_string(),
         Act::SwitchScene { scene, transition } => format!("SwitchScene {scene} {transition}"),
+        Act::PluginCall {
+            plugin,
+            block,
+            args,
+        } => format!("PluginCall {plugin}/{block} {}", plugin_args_json(args)),
         Act::SetBody { body } => format!("SetBody {body}"),
         Act::SetTrigger { trigger } => format!("SetTrigger {trigger}"),
         Act::SetCollisionLayer { layer } => format!("SetCollisionLayer {layer}"),
@@ -1200,6 +1215,11 @@ fn main() {
     // A cutscene signal and end, likewise.
     runner.fire("CutsceneSignal", "", "beat", "");
     runner.fire("CutsceneEnded", "", "Opener", "");
+    // A plugin's events, likewise: one for everybody, one for the harness
+    // player only, and one whose slot is the number a hat spells another way.
+    runner.fire("Plugin", "", "com.example.tally\u{1f}changed\u{1f}coins", "");
+    runner.fire("Plugin", "a1", "com.example.tally\u{1f}hit\u{1f}5", "");
+    runner.fire("Plugin", "", "com.example.tally\u{1f}spent\u{1f}5.0", "");
 
     for tick in 0..TICKS {
         recorder.tick = tick;
@@ -1451,6 +1471,15 @@ fn line_of(effect: &Effect) -> Option<String> {
             scene,
             transition,
         } => format!("{actor}|SwitchScene {scene} {transition}"),
+        Effect::PluginCall {
+            actor,
+            plugin,
+            block,
+            args,
+        } => format!(
+            "{actor}|PluginCall {plugin}/{block} {}",
+            serde_json::Value::Array(args.clone())
+        ),
         Effect::SetBody { actor, body } => format!("{actor}|SetBody {body:?}"),
         Effect::SetTrigger { actor, trigger } => format!("{actor}|SetTrigger {trigger}"),
         Effect::SetCollisionLayer { actor, layer } => format!("{actor}|SetCollisionLayer {layer}"),
@@ -1682,6 +1711,9 @@ fn project_with_headers(
 fn by_vm(project: &Project) -> Vec<String> {
     blockloom_core::init();
     publish_world();
+    // The module the harness answers for, so a plugin reporter reads the
+    // same on both sides.
+    blockloom_core::sense::set_plugin_reader(Some(Box::new(plugin_answer)));
     let mut vm = Vm::new();
     vm.load(project);
     vm.fire(Event::Started);
@@ -1726,6 +1758,19 @@ fn by_vm(project: &Project) -> Vec<String> {
     vm.fire(Event::CutsceneEnded {
         cutscene: "Opener".to_string(),
     });
+    // A plugin's events: the harness's other half fires the same three.
+    for (actor, event, arg) in [
+        (None, "changed", "coins"),
+        (Some(ACTOR), "hit", "5"),
+        (None, "spent", "5.0"),
+    ] {
+        vm.fire(Event::Plugin {
+            plugin: "com.example.tally".to_string(),
+            event: event.to_string(),
+            args: vec![arg.to_string()],
+            actor: actor.map(str::to_string),
+        });
+    }
     let mut lines = Vec::new();
     for tick in 0..TICKS {
         // Escape mid-run, so a case with a pause menu can toggle on it. No
@@ -1748,6 +1793,17 @@ fn by_vm(project: &Project) -> Vec<String> {
         }
     }
     lines
+}
+
+/// The harness's plugin: `count` is twice the slots' length, `label` joins
+/// them, and anything else has no reading. Mirrors `Recorder::sense`.
+fn plugin_answer(plugin: &str, block: &str, args: &[Evaluated]) -> Result<Evaluated, String> {
+    let slots: Vec<String> = args.iter().map(Evaluated::as_text).collect();
+    match block {
+        "count" => Ok(Evaluated::Number(slots.join("").len() as f64 * 2.0)),
+        "label" => Ok(Evaluated::Text(format!("{plugin}:{}", slots.join("+")))),
+        other => Err(format!("{plugin}/{other} has no reading")),
+    }
 }
 
 /// What the compiled program does with it, as the same lines.
@@ -3037,6 +3093,86 @@ fn switching_scenes_asks_for_the_same_scene_in_the_same_order() {
             }],
         ],
         &[],
+    );
+}
+
+#[test]
+fn plugin_blocks_ask_the_same_things_in_order() {
+    // Slots are read left to right before the call is queued, a whole number
+    // goes over as an integer, and a bad slot is reported once and stands in
+    // as zero on both sides.
+    let call = |args: Vec<Value>| K::PluginBlock {
+        plugin: "com.example.health".to_string(),
+        block: "heal".to_string(),
+        args,
+    };
+    assert_same_strands(
+        "plugin-call",
+        vec![vec![
+            call(vec![Value::text("Hero"), Value::number(5.0)]),
+            call(vec![
+                op("Join", vec![Value::text("a\"b\\"), Value::text("\n")]),
+                number(2.5),
+                op("True", vec![]),
+            ]),
+            call(vec![op("Div", vec![number(1.0), Value::text("x")])]),
+            call(vec![]),
+        ]],
+        &[],
+    );
+}
+
+#[test]
+fn plugin_reporters_answer_the_same_including_the_errors() {
+    let read = |block: &str, slots: Vec<Value>| {
+        let mut args = vec![Value::text("com.example.tally"), Value::text(block)];
+        args.extend(slots);
+        op(blockloom_core::value::PLUGIN_READ, args)
+    };
+    assert_same(
+        "plugin-read",
+        vec![
+            K::Say {
+                text: read("count", vec![Value::text("coins")]),
+            },
+            K::Say {
+                text: read("label", vec![Value::text("a"), number(3.0)]),
+            },
+            K::Say {
+                text: read("nothing", vec![]),
+            },
+            K::Say {
+                text: op(
+                    "Add",
+                    vec![number(1.0), read("count", vec![Value::text("ab")])],
+                ),
+            },
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn when_a_plugin_fires_only_its_hats_start() {
+    let hat = |event: &str, arg: &str| K::WhenPlugin {
+        plugin: "com.example.tally".to_string(),
+        block: event.to_string(),
+        event: event.to_string(),
+        args: vec![arg.to_string()],
+    };
+    let said = |text: &str| K::Say {
+        text: Value::text(text),
+    };
+    assert_same_headed(
+        "plugin-hats",
+        vec![
+            (hat("changed", "coins"), vec![said("changed coins")]),
+            (hat("changed", ""), vec![said("changed anything")]),
+            (hat("changed", "gems"), vec![said("changed gems")]),
+            (hat("hit", "5"), vec![said("hit five")]),
+            (hat("spent", "5"), vec![said("spent five")]),
+            (hat("other", ""), vec![said("never fired")]),
+        ],
     );
 }
 

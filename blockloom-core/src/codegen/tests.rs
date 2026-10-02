@@ -447,23 +447,23 @@ fn a_custom_block_that_calls_itself_compiles_with_a_budget() {
     assert!(source.contains("let mut budget = STEP_BUDGET;"), "{source}");
 }
 
-/// The editor runs a plugin block's command, which no compiled program can
-/// reach, so the project stays on the VM and the refusal names the block.
+/// A plugin block compiles to a host act carrying its slots, in order.
 #[test]
-fn a_plugin_block_is_refused_by_name() {
-    let error = compile(&started(vec![Instruction::new(K::PluginBlock {
+fn a_plugin_block_compiles_to_a_host_act() {
+    let source = compile(&started(vec![Instruction::new(K::PluginBlock {
         plugin: "com.example.health".to_string(),
         block: "heal".to_string(),
-        args: vec![Value::text("Hero")],
+        args: vec![Value::text("Hero"), Value::number(5.0)],
     })]))
-    .expect_err("plugin blocks run in the editor");
-    assert!(error.what.contains("com.example.health/heal"), "{error}");
+    .expect("plugin blocks compile");
+    assert!(source.contains("Act::PluginCall"), "{source}");
+    assert!(source.contains("\"com.example.health\""), "{source}");
 }
 
-/// A plugin's reporter is answered by a module inside the editor's world, and
-/// its hat starts on that module's events, so both keep a project on the VM.
+/// A plugin reporter is a sensing read like any other extension operator, and
+/// a plugin hat is an entry keyed by its plugin, event and slots.
 #[test]
-fn a_plugin_reporter_and_hat_are_refused_by_name() {
+fn a_plugin_reporter_and_hat_compile() {
     let read = Value::op(
         Op::from_name(crate::value::PLUGIN_READ),
         vec![
@@ -472,23 +472,27 @@ fn a_plugin_reporter_and_hat_are_refused_by_name() {
             Value::text("coins"),
         ],
     );
-    let error = compile(&started(vec![Instruction::new(K::Say { text: read })]))
-        .expect_err("plugin reporters run in the world");
-    assert!(error.what.contains("plugin reporter"), "{error}");
+    let source = compile(&started(vec![Instruction::new(K::Say { text: read })]))
+        .expect("plugin reporters compile");
+    assert!(source.contains("\"PluginRead\""), "{source}");
 
-    let error = compile(&project_with(vec![
+    let source = compile(&project_with(vec![
         Instruction::new(K::WhenPlugin {
             plugin: "com.example.tally".to_string(),
             block: "changed".to_string(),
             event: "changed".to_string(),
-            args: vec![],
+            args: vec!["coins".to_string()],
         }),
         Instruction::new(K::Say {
             text: Value::text("hi"),
         }),
     ]))
-    .expect_err("plugin hats start on a module's events");
-    assert!(error.what.contains("com.example.tally/changed"), "{error}");
+    .expect("plugin hats compile");
+    assert!(source.contains("trigger: \"Plugin\""), "{source}");
+    assert!(
+        source.contains("com.example.tally\u{1f}changed\u{1f}coins"),
+        "{source}"
+    );
 }
 
 /// A reporter, though, may: each call builds a state of its own, exactly as
