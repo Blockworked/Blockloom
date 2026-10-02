@@ -10,3 +10,9 @@ boring = "5"
 quiche = "0.30"
 rcgen = "0.14"
 ring = "0.17"
+
+[dev-dependencies]
+# Evaluated, not adopted: see tests/tokio_quiche.rs and docs/multiplayer-phase0.md.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+tokio-quiche = "0.20"
+futures = "0.3"

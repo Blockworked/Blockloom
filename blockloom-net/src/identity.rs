@@ -85,11 +85,11 @@ impl Identity {
         self.fingerprint
     }
 
-    pub(crate) fn cert(&self) -> &X509 {
+    pub fn cert(&self) -> &X509 {
         &self.cert
     }
 
-    pub(crate) fn key(&self) -> &PKey<Private> {
+    pub fn key(&self) -> &PKey<Private> {
         &self.key
     }
 }

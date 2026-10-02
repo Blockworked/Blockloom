@@ -34,13 +34,31 @@ The plan's matrix, one thread, debug build, loopback, 256 KiB reliable transfer 
 | 100 | 0% | 254 ms | 2367 ms | 457 ms | 200 |
 | 100 | 5% | 701 ms | 4956 ms | 2810 ms | 200 |
 
+### 1.1 `tokio-quiche` spike
+
+`blockloom-net/tests/tokio_quiche.rs` (dev-dependencies only) builds the same pinned-identity connection on `tokio-quiche` 0.20's `ApplicationOverQuic`: a handshake, a 768 KiB stream, datagrams both ways, and a wrong-fingerprint client. Both tests pass (handshake 3 ms and 768 KiB in about 190 ms on loopback; the raw driver's loopback figures are not directly comparable because that spike reports them through the matrix).
+
+What fit:
+- The pin works through `ConnectionHook::create_custom_ssl_context_builder`, so the same BoringSSL verify callback and in-memory `Identity` carry over. No verification is disabled.
+- ALPN, datagrams and stream flow control are plain `QuicSettings`.
+- Address validation (Retry) is on by default.
+
+What did not:
+- **Retry control is global.** The only switch is `disable_client_ip_validation`; there is no per-connection or per-token decision, and quiche has no client API to present a token in an Initial anyway.
+- The hook is only invoked when certificate file paths are supplied, so the in-memory identity needs dummy paths.
+- The application callbacks own the quiche connection, so the `Impairment` harness (which wraps our send path and honours `SendInfo::at` pacing) cannot sit in front of it. Seeded loss tests would need a UDP proxy instead.
+- It brings tokio and `foundations` into the dependency tree: about 6 extra minutes on a cold dev build here, and a second runtime next to Bevy's task pools. Stream writes need our own pending buffer, as in the raw driver, because `stream_send` is partial.
+- It would not remove any code we need to keep: Retry-less admission, the peer cap, kick and queue bounds are still ours.
+
+**Recommendation: keep the raw `poll()` driver.** It is about 600 lines, runs on the simulation host's own thread with no second runtime, and keeps the impairment seam the Phase 3 matrix needs. Revisit `tokio-quiche` only if the dedicated server (Phase 5) wants many thousands of connections, where its multi-socket listener is the real gain. The spike stays as a dev-only test so that check is cheap.
+
 ### Findings and decisions this forces
 
-1. **The Retry round trip is a visible join cost.** Without jitter a handshake is about 2 RTT (Retry, then TLS). Quiche only needs Retry for amplification protection. Decision (section 6): skip it when the invite carries the admission token, keep it for direct IP joins.
+1. **The Retry round trip is a visible join cost.** Without jitter a handshake is about 2 RTT (Retry, then TLS). Quiche only needs Retry for amplification protection. The owner decided (section 6) to skip it when the invite carries the admission token, but that cannot be done at the QUIC layer, see section 6 decision 1.
 2. **The server sends two Retries per connection attempt**, most likely because BoringSSL's ClientHello spans two Initial packets (not verified at the packet level). The client uses the first and drops the second, so it is harmless; the test asserts `>= 1`.
 3. **Reordering hurts far more than the plan's loss figures.** With 20 ms of jitter (which reorders packets) a 50 ms RTT transfer takes 1667 ms instead of 233 ms at 0% loss, apparently because reordered packets read as loss to the congestion controller. This was only run with Quiche's default CUBIC. Phase 3 should try BBR and the relaxed loss threshold before the join baseline is sized, and the matrix should keep a jitter column.
 4. **Short-header packets do not carry a connection ID length**, so the server must issue full length (20 byte) connection IDs. A 16 byte ID silently broke every post-handshake packet in the first draft.
-5. **`tokio-quiche` was not evaluated.** The raw `poll()` driver above is about 600 lines and fits the plan's "no blocking send, one I/O owner" rule, so the spike did not need it. The owner has asked for a `tokio-quiche` spike (section 6).
+5. **`tokio-quiche` 0.20 was spiked and works, but is not adopted.** See section 1.1.
 6. **Build requirements.** `boring-sys` needs cmake, a C/C++ compiler and libclang (bindgen). A clean `cargo build -p blockloom-net` took 2m55s here, and clippy with `-D warnings` is clean. It cannot build for `wasm32-unknown-unknown`, so the crate must stay out of the web player (the plan's `multiplayer` feature gate) and out of the Android runtime until that target has its own qualification.
 
 Not covered: Windows, macOS and Android builds of Quiche/BoringSSL; IPv6; mDNS discovery; 0-RTT (the spike never enables early data); connection migration (disabled in the config); WebTransport.
@@ -122,8 +140,8 @@ Facts about the clocks that matter for the plan's section 6:
 
 ## 6. Decisions (answered 2026-10-02 by the project owner)
 
-1. **Retry:** skip it when the invite's admission token is present; keep it for direct IP joins. The token path needs its own flood limits (per-source rate and a cap on half-open handshakes) before Phase 3 ships.
-2. **Transport driver:** try `tokio-quiche`. A small spike comes first, behind the same `Server`/`Client` surface, and is judged on the loopback tests, the matrix above and how it sits next to the simulation thread. The raw `poll()` driver stays until that spike decides.
+1. **Retry:** the owner chose to skip it when the invite's admission token is present and keep it for direct IP joins. **This cannot be built at the QUIC layer:** the token is an application secret in the invite, but Retry happens before any application data, quiche has no client API to put a token in the Initial, and `tokio-quiche` only has a global off switch. The workable form is adaptive Retry: skip it while half-open handshakes are under a cap and per-source rate is low, and require it above that (or always, if the extra round trip is acceptable). The invite token then gates admission after the handshake. Needs the owner's pick before Phase 3.
+2. **Transport driver:** try `tokio-quiche`. Done (section 1.1): it works, but the raw `poll()` driver stays because of the global Retry switch, the lost impairment seam and the extra runtime. Recommendation, awaiting the owner's confirmation.
 3. **Run overrides:** wind, water, weather and time of day (and the other overrides gameplay reporters read) are shared server state. Fog, clouds, aurora and lightning become per-client looks. The first replication schema follows this split; any override a reporter reads from that second group needs a server counterpart or moves to the first.
 4. **"Wall" time:** becomes real wall time for UI strands. This changes existing games slightly under time scaling or a stall, so it needs a compatibility note and a test, and should land with the clock work in Phase 1 (together with `elapsed_secs_f64`).
 5. **Logical rate:** v1 multiplayer uses each project's existing fixed rate. Lower-rate profiles and their physics substep policy are deferred.
