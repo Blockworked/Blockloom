@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 38;
+pub const ABI_VERSION: u32 = 39;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -226,6 +226,12 @@ pub const PLUGIN_SEP: char = '\u{1f}';
 pub const READ_PLUGIN: u32 = 53;
 /// The same reporter's answer as text, asked the same way.
 pub const TEXT_PLUGIN: u32 = 21;
+/// `a` = field name (`count`, `x`, `distance`, ...), `arg` = which hit, from
+/// 1. A number from this actor's last query; a miss reads as zero.
+pub const READ_QUERY: u32 = 54;
+/// `a` = field name (`actor`, `body`, `collider`, `error`, ...), `b` = which
+/// hit, from 1. Words from this actor's last query.
+pub const TEXT_QUERY: u32 = 22;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -455,6 +461,12 @@ pub const ACT_PLUGIN_CALL: u32 = 100;
 /// `b` = `torque` to turn the body instead of pushing it; `n0..n2` = the
 /// vector. Acts for one fixed step.
 pub const ACT_ADD_FORCE: u32 = 101;
+/// `a` = query kind (`ray`, `rays`, `ball cast`, `ball overlap`, `box cast`,
+/// `box overlap`, `capsule cast`, `capsule overlap`, `closest`), `b` = trigger
+/// policy (`UseGlobal`, `Ignore`, `Include`); `n0` = layer mask (0 for every
+/// layer), `n1..` = the kind's numbers. Asked on the spot, as this actor;
+/// the answer is read back with [`READ_QUERY`] and [`TEXT_QUERY`].
+pub const ACT_PHYSICS_QUERY: u32 = 102;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

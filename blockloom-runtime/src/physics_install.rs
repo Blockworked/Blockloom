@@ -912,7 +912,12 @@ mod tests {
         id
     }
 
-    pub(super) fn body(project: &mut Project, id: &str, spec: RigidbodySpec, shapes: Vec<ColliderSpec>) {
+    pub(super) fn body(
+        project: &mut Project,
+        id: &str,
+        spec: RigidbodySpec,
+        shapes: Vec<ColliderSpec>,
+    ) {
         let library = project.physics.materials.clone();
         let scene = project.active_scene_mut();
         scene.set_rigidbody(id, spec, &library).unwrap();
@@ -1989,7 +1994,12 @@ mod tests_2d {
         id
     }
 
-    pub(super) fn body(project: &mut Project, id: &str, spec: RigidbodySpec, shapes: Vec<ColliderSpec>) {
+    pub(super) fn body(
+        project: &mut Project,
+        id: &str,
+        spec: RigidbodySpec,
+        shapes: Vec<ColliderSpec>,
+    ) {
         let library = project.physics.materials.clone();
         let scene = project.active_scene_mut();
         scene.set_rigidbody(id, spec, &library).unwrap();
@@ -2428,7 +2438,12 @@ mod query_tests {
     };
     use blockloom_core::physics::{ColliderShape, ColliderSpec, RigidbodySpec};
 
-    fn ask(app: &mut App, request: QueryRequest, filter: QueryFilter, limit: usize) -> QueryOutcome {
+    fn ask(
+        app: &mut App,
+        request: QueryRequest,
+        filter: QueryFilter,
+        limit: usize,
+    ) -> QueryOutcome {
         app.world_mut()
             .run_system_once(move |world: World3| world.service().run(&request, &filter, limit))
             .unwrap()
@@ -2458,7 +2473,12 @@ mod query_tests {
         let floor_id = floor(&mut p);
         let (mut app, _) = world(&p);
         settle(&mut app);
-        let found = ask(&mut app, down(2.0, 5.0, -5.0, false), QueryFilter::default(), 8);
+        let found = ask(
+            &mut app,
+            down(2.0, 5.0, -5.0, false),
+            QueryFilter::default(),
+            8,
+        );
         assert!(found.error.is_none(), "{:?}", found.error);
         let hit = &found.hits[0];
         assert_eq!(hit.actor, floor_id);
@@ -2479,16 +2499,31 @@ mod query_tests {
         slab(&mut p, "High", [0.0, 6.0, 0.0], [4.0, 1.0, 4.0]);
         let (mut app, _) = world(&p);
         settle(&mut app);
-        let all = ask(&mut app, down(0.0, 10.0, -10.0, true), QueryFilter::default(), 8);
+        let all = ask(
+            &mut app,
+            down(0.0, 10.0, -10.0, true),
+            QueryFilter::default(),
+            8,
+        );
         // Each slab is crossed on entry and the ray ends outside all of them.
         let order: Vec<f32> = all.hits.iter().map(|h| h.distance).collect();
         assert_eq!(order.len(), 3, "{order:?}");
         assert!(order.windows(2).all(|w| w[0] <= w[1]));
         assert!(!all.overflow);
-        let small = ask(&mut app, down(0.0, 10.0, -10.0, true), QueryFilter::default(), 2);
+        let small = ask(
+            &mut app,
+            down(0.0, 10.0, -10.0, true),
+            QueryFilter::default(),
+            2,
+        );
         assert_eq!(small.hits.len(), 2);
         assert!(small.overflow);
-        let first = ask(&mut app, down(0.0, 10.0, -10.0, false), QueryFilter::default(), 8);
+        let first = ask(
+            &mut app,
+            down(0.0, 10.0, -10.0, false),
+            QueryFilter::default(),
+            8,
+        );
         assert_eq!(first.hits.len(), 1);
         assert!((first.hits[0].distance - all.hits[0].distance).abs() < 1e-4);
     }
@@ -2499,11 +2534,20 @@ mod query_tests {
         slab(&mut p, "Block", [0.0, 0.0, 0.0], [4.0, 4.0, 4.0]);
         let (mut app, _) = world(&p);
         settle(&mut app);
-        let found = ask(&mut app, down(0.0, 0.5, -10.0, false), QueryFilter::default(), 8);
+        let found = ask(
+            &mut app,
+            down(0.0, 0.5, -10.0, false),
+            QueryFilter::default(),
+            8,
+        );
         let hit = &found.hits[0];
         assert!(hit.started_inside);
         assert_eq!(hit.distance, 0.0);
-        assert!(hit.normal[1] > 0.99, "opposes the direction: {:?}", hit.normal);
+        assert!(
+            hit.normal[1] > 0.99,
+            "opposes the direction: {:?}",
+            hit.normal
+        );
     }
 
     #[test]
@@ -2512,10 +2556,20 @@ mod query_tests {
         let block = slab(&mut p, "Block", [0.0, 0.0, 0.0], [4.0, 4.0, 4.0]);
         let (mut app, _) = world(&p);
         settle(&mut app);
-        let inside = ask(&mut app, down(0.0, 1.0, 1.0, true), QueryFilter::default(), 8);
+        let inside = ask(
+            &mut app,
+            down(0.0, 1.0, 1.0, true),
+            QueryFilter::default(),
+            8,
+        );
         assert_eq!(inside.hits.len(), 1);
         assert_eq!(inside.hits[0].actor, block);
-        let outside = ask(&mut app, down(0.0, 9.0, 9.0, true), QueryFilter::default(), 8);
+        let outside = ask(
+            &mut app,
+            down(0.0, 9.0, 9.0, true),
+            QueryFilter::default(),
+            8,
+        );
         assert!(outside.hits.is_empty());
     }
 
@@ -2589,7 +2643,12 @@ mod query_tests {
         assert_eq!(found.hits.len(), 1, "{found:?}");
         assert_eq!(found.hits[0].actor, floor_id);
         // Nobody asking sees the walker too.
-        let anyone = ask(&mut app, down(0.0, 2.0, -5.0, true), QueryFilter::default(), 8);
+        let anyone = ask(
+            &mut app,
+            down(0.0, 2.0, -5.0, true),
+            QueryFilter::default(),
+            8,
+        );
         assert_eq!(anyone.hits.len(), 2);
         // With layers 3 and 4 not colliding, the walker's own query misses the floor.
         let mut p2 = p.clone();
@@ -2632,12 +2691,26 @@ mod query_tests {
             .unwrap();
         let (mut app, _) = world(&p);
         settle(&mut app);
-        assert!(ask(&mut app, down(0.0, 5.0, -5.0, true), QueryFilter::default(), 8)
+        assert!(
+            ask(
+                &mut app,
+                down(0.0, 5.0, -5.0, true),
+                QueryFilter::default(),
+                8
+            )
             .hits
-            .is_empty());
-        assert!(ask(&mut app, down(10.0, 5.0, -5.0, true), QueryFilter::default(), 8)
+            .is_empty()
+        );
+        assert!(
+            ask(
+                &mut app,
+                down(10.0, 5.0, -5.0, true),
+                QueryFilter::default(),
+                8
+            )
             .hits
-            .is_empty());
+            .is_empty()
+        );
     }
 
     #[test]
@@ -2662,8 +2735,17 @@ mod query_tests {
             shape: QueryShape::Ball { radius: 0.5 },
             at: [0.0, y, 0.0],
         };
-        assert_eq!(ask(&mut app, overlap(0.25), QueryFilter::default(), 8).hits.len(), 1);
-        assert!(ask(&mut app, overlap(2.0), QueryFilter::default(), 8).hits.is_empty());
+        assert_eq!(
+            ask(&mut app, overlap(0.25), QueryFilter::default(), 8)
+                .hits
+                .len(),
+            1
+        );
+        assert!(
+            ask(&mut app, overlap(2.0), QueryFilter::default(), 8)
+                .hits
+                .is_empty()
+        );
         let boxed = QueryRequest::Overlap {
             shape: QueryShape::Box {
                 half: [0.5; 3],
@@ -2671,7 +2753,10 @@ mod query_tests {
             },
             at: [0.0, 0.25, 0.0],
         };
-        assert_eq!(ask(&mut app, boxed, QueryFilter::default(), 8).hits.len(), 1);
+        assert_eq!(
+            ask(&mut app, boxed, QueryFilter::default(), 8).hits.len(),
+            1
+        );
         let capsule = QueryRequest::Overlap {
             shape: QueryShape::Capsule {
                 radius: 0.3,
@@ -2680,7 +2765,10 @@ mod query_tests {
             },
             at: [0.0, 0.7, 0.0],
         };
-        assert_eq!(ask(&mut app, capsule, QueryFilter::default(), 8).hits.len(), 1);
+        assert_eq!(
+            ask(&mut app, capsule, QueryFilter::default(), 8).hits.len(),
+            1
+        );
     }
 
     #[test]
@@ -2722,7 +2810,12 @@ mod query_tests {
         body(&mut p, &ball_id, RigidbodySpec::default(), vec![ball()]);
         let (mut app, _) = world(&p);
         run(&mut app, 240);
-        let found = ask(&mut app, down(0.0, 5.0, -1.0, false), QueryFilter::default(), 8);
+        let found = ask(
+            &mut app,
+            down(0.0, 5.0, -1.0, false),
+            QueryFilter::default(),
+            8,
+        );
         let hit = &found.hits[0];
         assert_eq!(hit.actor, ball_id);
         assert_eq!(hit.body.as_deref(), Some(ball_id.as_str()));
@@ -2755,10 +2848,19 @@ mod query_tests {
         let lookup = FolderCollision::new(&dir, Source::Cook);
         let (mut app, _) = world_with(&p, &lookup);
         run(&mut app, 240);
-        let from_above = ask(&mut app, down(0.0, 5.0, -2.0, true), QueryFilter::default(), 8);
+        let from_above = ask(
+            &mut app,
+            down(0.0, 5.0, -2.0, true),
+            QueryFilter::default(),
+            8,
+        );
         let _ = std::fs::remove_dir_all(&dir);
         let actors: Vec<&str> = from_above.hits.iter().map(|h| h.actor.as_str()).collect();
-        assert_eq!(actors, [crate_id.as_str(), ground.as_str()], "{from_above:?}");
+        assert_eq!(
+            actors,
+            [crate_id.as_str(), ground.as_str()],
+            "{from_above:?}"
+        );
         // The crate's top face is at y = 1 and the ground's triangles at y = 0.
         assert!((from_above.hits[0].point[1] - 1.0).abs() < 0.08);
         assert!(from_above.hits[1].point[1].abs() < 0.02);
@@ -2835,7 +2937,11 @@ mod query_tests_2d {
         );
         let (mut app, _) = world(&p);
         run(&mut app, 3);
-        let all = ask(&mut app, down(0.0, 6.0, -5.0, true), QueryFilter::as_actor(&walker));
+        let all = ask(
+            &mut app,
+            down(0.0, 6.0, -5.0, true),
+            QueryFilter::as_actor(&walker),
+        );
         let ground_id = p
             .actors
             .iter()
@@ -2871,22 +2977,52 @@ mod query_tests_2d {
             to: [0.0, -5.0, 0.0],
         };
         let found = ask(&mut app, cast, QueryFilter::default());
-        assert!((found.hits[0].distance - 4.5).abs() < 1e-2, "{}", found.hits[0].distance);
+        assert!(
+            (found.hits[0].distance - 4.5).abs() < 1e-2,
+            "{}",
+            found.hits[0].distance
+        );
         let overlap = |y: f32, shape: QueryShape| QueryRequest::Overlap {
             shape,
             at: [0.0, y, 0.0],
         };
         let ball = QueryShape::Ball { radius: 0.5 };
-        assert_eq!(ask(&mut app, overlap(0.25, ball.clone()), QueryFilter::default()).hits.len(), 1);
-        assert!(ask(&mut app, overlap(2.0, ball), QueryFilter::default()).hits.is_empty());
+        assert_eq!(
+            ask(
+                &mut app,
+                overlap(0.25, ball.clone()),
+                QueryFilter::default()
+            )
+            .hits
+            .len(),
+            1
+        );
+        assert!(
+            ask(&mut app, overlap(2.0, ball), QueryFilter::default())
+                .hits
+                .is_empty()
+        );
         // A box turned a quarter about z still reaches down by its half width.
         let quarter = (std::f32::consts::FRAC_PI_4).sin_cos();
         let turned = QueryShape::Box {
             half: [1.0, 0.1, 0.0],
             rotation: [0.0, 0.0, quarter.0, quarter.1],
         };
-        assert_eq!(ask(&mut app, overlap(0.8, turned.clone()), QueryFilter::default()).hits.len(), 1);
-        assert!(ask(&mut app, overlap(1.4, turned), QueryFilter::default()).hits.is_empty());
+        assert_eq!(
+            ask(
+                &mut app,
+                overlap(0.8, turned.clone()),
+                QueryFilter::default()
+            )
+            .hits
+            .len(),
+            1
+        );
+        assert!(
+            ask(&mut app, overlap(1.4, turned), QueryFilter::default())
+                .hits
+                .is_empty()
+        );
         let near = ask(
             &mut app,
             QueryRequest::Closest {

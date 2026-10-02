@@ -65,7 +65,6 @@ mod overlay;
 mod passes;
 mod pbr_patch;
 mod performance;
-mod queries;
 mod physics_install;
 pub mod player;
 #[cfg(feature = "plugins")]
@@ -78,6 +77,7 @@ mod post;
 mod preview;
 mod probes;
 mod quality;
+mod queries;
 mod ray_tracing;
 mod script;
 mod shadows;

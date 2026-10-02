@@ -12,6 +12,7 @@
 //! know about the other.
 
 use blockloom_core::components::CameraView;
+use blockloom_core::physics::query;
 use blockloom_core::scene::Axis;
 use blockloom_core::script::abi;
 #[cfg(not(target_arch = "wasm32"))]
@@ -758,14 +759,64 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
         abi::READ_RAY_DISTANCE => {
             let from = parse_triple(a)?;
             let to = parse_triple(b)?;
-            sense::read(|sensors| {
-                let mask = blockloom_core::physics_query::query_mask(sensors, Some(actor));
-                blockloom_core::physics_query::ray_hit(sensors, from, to, Some(actor), mask)
-                    .map(|(_, distance)| distance as f64)
-            })
+            nearest_ray(actor, from, to).map(|hit| hit.distance as f64)
         }
+        abi::READ_QUERY => match query::read_field(
+            actor,
+            arg.max(0.0) as usize,
+            query::HitField::parse(a).filter(|field| !field.is_text())?,
+            actor_name,
+        ) {
+            query::HitValue::Number(number) => Some(number),
+            query::HitValue::Text(_) => None,
+        },
         _ => None,
     }
+}
+
+/// The nearest collider on a segment, asked of the physics world as `actor`.
+/// Nothing found, or no world to ask, is `None`.
+fn nearest_ray(actor: &str, from: [f32; 3], to: [f32; 3]) -> Option<query::QueryHit> {
+    if !query::available() {
+        return None;
+    }
+    let request = query::QueryRequest::Ray {
+        from,
+        to,
+        all: false,
+    };
+    let filter = query::QueryFilter::as_actor(actor);
+    query::dispatch(&request, &filter, 1)
+        .hits
+        .into_iter()
+        .next()
+}
+
+/// The nearest collider within `radius` of `center`.
+fn nearest_within(actor: &str, center: [f32; 3], radius: f32) -> Option<query::QueryHit> {
+    if !query::available() {
+        return None;
+    }
+    let request = query::QueryRequest::Closest {
+        point: center,
+        max_distance: radius.max(0.0),
+    };
+    let filter = query::QueryFilter::as_actor(actor);
+    query::dispatch(&request, &filter, 1)
+        .hits
+        .into_iter()
+        .next()
+}
+
+/// The name blocks use for an actor id, or the id itself when it has none.
+fn actor_name(id: &str) -> String {
+    sense::read(|sensors| {
+        sensors
+            .actors
+            .get(id)
+            .map(|actor| actor.name.clone())
+            .unwrap_or_else(|| id.to_string())
+    })
 }
 
 /// Whether `target` is a trigger: empty names the running actor itself.
@@ -855,33 +906,22 @@ fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
         abi::TEXT_RAY_HIT => (|| {
             let from = parse_triple(a)?;
             let to = parse_triple(b)?;
-            sense::read(|sensors| {
-                let mask = blockloom_core::physics_query::query_mask(sensors, Some(actor));
-                blockloom_core::physics_query::ray_hit(sensors, from, to, Some(actor), mask)
-                    .and_then(|(id, _)| sensors.actors.get(&id))
-                    .map(|actor| actor.name.clone())
-                    .filter(|name| !name.is_empty())
-            })
+            Some(actor_name(&nearest_ray(actor, from, to)?.actor)).filter(|name| !name.is_empty())
         })(),
         abi::TEXT_CIRCLE_HIT => (|| {
             let at = parse_triple(a)?;
             let radius = b.trim().parse::<f32>().ok()?;
-            sense::read(|sensors| {
-                let mask = blockloom_core::physics_query::query_mask(sensors, Some(actor));
-                blockloom_core::physics_query::overlap_circle(
-                    sensors,
-                    at,
-                    radius,
-                    Some(actor),
-                    mask,
-                )
-                .into_iter()
-                .next()
-                .and_then(|id| sensors.actors.get(&id))
-                .map(|actor| actor.name.clone())
-                .filter(|name| !name.is_empty())
-            })
+            let hit = nearest_within(actor, at, radius)?;
+            Some(actor_name(&hit.actor)).filter(|name| !name.is_empty())
         })(),
+        abi::TEXT_QUERY => {
+            let field = query::HitField::parse(a).filter(|field| field.is_text())?;
+            let index = b.trim().parse::<usize>().ok()?;
+            match query::read_field(actor, index, field, actor_name) {
+                query::HitValue::Text(text) => Some(text).filter(|text| !text.is_empty()),
+                query::HitValue::Number(_) => None,
+            }
+        }
         abi::TEXT_CURRENT_CLIP => me(actor)
             .map(|me| me.anim_clip)
             .filter(|clip| !clip.is_empty()),
@@ -987,6 +1027,29 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
         abi::ACT_APPLY_IMPULSE => Effect::ApplyImpulse {
             actor,
             impulse: vector,
+        },
+        abi::ACT_PHYSICS_QUERY => match query::QueryKind::parse(a) {
+            Some(kind) => {
+                let record = query::ask_call(
+                    &actor,
+                    kind,
+                    query::TriggerPolicy::parse(b),
+                    n0 as u32,
+                    numbers.get(1..).unwrap_or(&[]),
+                );
+                match record.error {
+                    Some(message) => Effect::Error { actor, message },
+                    None => Effect::PhysicsQuery {
+                        actor,
+                        kind: kind.name().to_string(),
+                        hits: record.hits.len(),
+                    },
+                }
+            }
+            None => Effect::Error {
+                actor,
+                message: format!("there's no query called \"{a}\""),
+            },
         },
         abi::ACT_ADD_FORCE => match blockloom_core::physics::ForceMode::parse(a) {
             Some(mode) => Effect::AddForce {

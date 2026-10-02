@@ -520,6 +520,13 @@ pub enum Effect {
         block: String,
         args: Vec<serde_json::Value>,
     },
+    /// A physics query ran and its answer is filed under `actor`; the world
+    /// has nothing to apply, so this only keeps the two schedulers honest.
+    PhysicsQuery {
+        actor: String,
+        kind: String,
+        hits: usize,
+    },
     /// Rumbles connected gamepads. Window-global: no actor.
     RumbleGamepad {
         strength: f32,

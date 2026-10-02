@@ -551,6 +551,54 @@ pub enum InstructionKind {
         y: Value,
         z: Value,
     },
+    /// Casts a ray along a segment and keeps what it crossed as this actor's
+    /// query result, read back by the `hit` reporters. The ray ignores this
+    /// actor's own colliders.
+    CastRay {
+        #[serde(default)]
+        hits: crate::physics::query::RayHits,
+        #[serde(default)]
+        triggers: crate::physics::query::TriggerPolicy,
+        from_x: Value,
+        from_y: Value,
+        from_z: Value,
+        to_x: Value,
+        to_y: Value,
+        to_z: Value,
+    },
+    /// Sweeps a ball along a segment and keeps the first thing it meets as
+    /// this actor's query result.
+    CastBall {
+        #[serde(default)]
+        triggers: crate::physics::query::TriggerPolicy,
+        radius: Value,
+        from_x: Value,
+        from_y: Value,
+        from_z: Value,
+        to_x: Value,
+        to_y: Value,
+        to_z: Value,
+    },
+    /// Keeps everything a ball at a point overlaps as this actor's query
+    /// result.
+    OverlapBall {
+        #[serde(default)]
+        triggers: crate::physics::query::TriggerPolicy,
+        radius: Value,
+        x: Value,
+        y: Value,
+        z: Value,
+    },
+    /// Keeps the collider nearest a point, within `range`, as this actor's
+    /// query result.
+    FindClosest {
+        #[serde(default)]
+        triggers: crate::physics::query::TriggerPolicy,
+        range: Value,
+        x: Value,
+        y: Value,
+        z: Value,
+    },
     /// World gravity, not this actor's - see
     /// [`crate::scene::Physics::gravity_scale`] for the per-actor dial.
     SetGravity {
@@ -1178,6 +1226,47 @@ impl BlockKind for InstructionKind {
                 f(x, InputValueType::Any);
                 f(y, InputValueType::Any);
                 f(z, InputValueType::Any);
+            }
+            K::CastRay {
+                from_x,
+                from_y,
+                from_z,
+                to_x,
+                to_y,
+                to_z,
+                ..
+            } => {
+                for v in [from_x, from_y, from_z, to_x, to_y, to_z] {
+                    f(v, InputValueType::Any);
+                }
+            }
+            K::CastBall {
+                radius,
+                from_x,
+                from_y,
+                from_z,
+                to_x,
+                to_y,
+                to_z,
+                ..
+            } => {
+                for v in [radius, from_x, from_y, from_z, to_x, to_y, to_z] {
+                    f(v, InputValueType::Any);
+                }
+            }
+            K::OverlapBall {
+                radius, x, y, z, ..
+            }
+            | K::FindClosest {
+                range: radius,
+                x,
+                y,
+                z,
+                ..
+            } => {
+                for v in [radius, x, y, z] {
+                    f(v, InputValueType::Any);
+                }
             }
             K::Splash {
                 x,

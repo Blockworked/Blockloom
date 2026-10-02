@@ -30,7 +30,7 @@ use super::ColliderId;
 pub const MAX_RESULTS: usize = 64;
 
 /// Whether a query reports trigger colliders.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, serde::Deserialize)]
 pub enum TriggerPolicy {
     /// What the project says: triggers are reported, as in Unity.
     #[default]
@@ -51,6 +51,25 @@ impl TriggerPolicy {
             "ignore" | "ignore triggers" | "skip triggers" => Self::Ignore,
             "include" | "include triggers" | "hit triggers" => Self::Include,
             _ => Self::UseGlobal,
+        }
+    }
+}
+
+/// How many hits a ray block keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, serde::Deserialize)]
+pub enum RayHits {
+    /// Only the nearest.
+    #[default]
+    Nearest,
+    /// Everything on the segment, nearest first.
+    Every,
+}
+
+impl RayHits {
+    pub fn kind(self) -> QueryKind {
+        match self {
+            RayHits::Nearest => QueryKind::Ray,
+            RayHits::Every => QueryKind::Rays,
         }
     }
 }
@@ -99,10 +118,7 @@ pub enum QueryShape {
     /// A ball (a circle in 2D).
     Ball { radius: f32 },
     /// A box by half extents, turned by `rotation` (x, y, z, w).
-    Box {
-        half: [f32; 3],
-        rotation: [f32; 4],
-    },
+    Box { half: [f32; 3], rotation: [f32; 4] },
     /// A capsule along y by the half length of its segment and its radius.
     Capsule {
         radius: f32,
@@ -210,6 +226,160 @@ pub trait QueryService {
     fn run(&self, request: &QueryRequest, filter: &QueryFilter, limit: usize) -> QueryOutcome;
 }
 
+/// The query kinds a block, script or compiled program can ask by name, with
+/// the numbers each one reads. Positions are world units; box and capsule
+/// rotations are Euler degrees (x, y, z) like a collider's.
+///
+/// | kind | numbers |
+/// | --- | --- |
+/// | `ray`, `rays` | from x y z, to x y z |
+/// | `ball cast` | radius, from x y z, to x y z |
+/// | `ball overlap` | radius, x y z |
+/// | `box cast` | half x y z, rotation x y z, from x y z, to x y z |
+/// | `box overlap` | half x y z, rotation x y z, x y z |
+/// | `capsule cast` | radius, half height, rotation x y z, from x y z, to x y z |
+/// | `capsule overlap` | radius, half height, rotation x y z, x y z |
+/// | `closest` | range, x y z |
+///
+/// `ray` keeps the nearest hit, `rays` every one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum QueryKind {
+    Ray,
+    Rays,
+    BallCast,
+    BallOverlap,
+    BoxCast,
+    BoxOverlap,
+    CapsuleCast,
+    CapsuleOverlap,
+    Closest,
+}
+
+impl QueryKind {
+    pub const ALL: [QueryKind; 9] = [
+        QueryKind::Ray,
+        QueryKind::Rays,
+        QueryKind::BallCast,
+        QueryKind::BallOverlap,
+        QueryKind::BoxCast,
+        QueryKind::BoxOverlap,
+        QueryKind::CapsuleCast,
+        QueryKind::CapsuleOverlap,
+        QueryKind::Closest,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            QueryKind::Ray => "ray",
+            QueryKind::Rays => "rays",
+            QueryKind::BallCast => "ball cast",
+            QueryKind::BallOverlap => "ball overlap",
+            QueryKind::BoxCast => "box cast",
+            QueryKind::BoxOverlap => "box overlap",
+            QueryKind::CapsuleCast => "capsule cast",
+            QueryKind::CapsuleOverlap => "capsule overlap",
+            QueryKind::Closest => "closest",
+        }
+    }
+
+    pub fn parse(word: &str) -> Option<QueryKind> {
+        let word = word.trim().to_ascii_lowercase();
+        Self::ALL.into_iter().find(|kind| kind.name() == word)
+    }
+
+    /// How many numbers the kind reads.
+    pub fn arity(self) -> usize {
+        match self {
+            QueryKind::Ray | QueryKind::Rays => 6,
+            QueryKind::BallCast => 7,
+            QueryKind::BallOverlap | QueryKind::Closest => 4,
+            QueryKind::BoxCast => 12,
+            QueryKind::BoxOverlap => 9,
+            QueryKind::CapsuleCast => 11,
+            QueryKind::CapsuleOverlap => 8,
+        }
+    }
+}
+
+fn euler_quat(x: f32, y: f32, z: f32) -> [f32; 4] {
+    glam::Quat::from_euler(
+        glam::EulerRot::XYZ,
+        x.to_radians(),
+        y.to_radians(),
+        z.to_radians(),
+    )
+    .to_array()
+}
+
+/// The request `numbers` make for `kind`; a wrong count is an error naming the
+/// kind, and a number that is not finite is refused by [`check`].
+pub fn build_request(kind: QueryKind, numbers: &[f64]) -> Result<QueryRequest, String> {
+    if numbers.len() != kind.arity() {
+        return Err(format!(
+            "a {} query takes {} numbers, not {}",
+            kind.name(),
+            kind.arity(),
+            numbers.len()
+        ));
+    }
+    let n: Vec<f32> = numbers.iter().map(|v| *v as f32).collect();
+    let at = |i: usize| [n[i], n[i + 1], n[i + 2]];
+    let request = match kind {
+        QueryKind::Ray | QueryKind::Rays => QueryRequest::Ray {
+            from: at(0),
+            to: at(3),
+            all: kind == QueryKind::Rays,
+        },
+        QueryKind::BallCast => QueryRequest::Cast {
+            shape: QueryShape::Ball { radius: n[0] },
+            from: at(1),
+            to: at(4),
+        },
+        QueryKind::BallOverlap => QueryRequest::Overlap {
+            shape: QueryShape::Ball { radius: n[0] },
+            at: at(1),
+        },
+        QueryKind::BoxCast => QueryRequest::Cast {
+            shape: QueryShape::Box {
+                half: at(0),
+                rotation: euler_quat(n[3], n[4], n[5]),
+            },
+            from: at(6),
+            to: at(9),
+        },
+        QueryKind::BoxOverlap => QueryRequest::Overlap {
+            shape: QueryShape::Box {
+                half: at(0),
+                rotation: euler_quat(n[3], n[4], n[5]),
+            },
+            at: at(6),
+        },
+        QueryKind::CapsuleCast => QueryRequest::Cast {
+            shape: QueryShape::Capsule {
+                radius: n[0],
+                half_height: n[1],
+                rotation: euler_quat(n[2], n[3], n[4]),
+            },
+            from: at(5),
+            to: at(8),
+        },
+        QueryKind::CapsuleOverlap => QueryRequest::Overlap {
+            shape: QueryShape::Capsule {
+                radius: n[0],
+                half_height: n[1],
+                rotation: euler_quat(n[2], n[3], n[4]),
+            },
+            at: at(5),
+        },
+        QueryKind::Closest => QueryRequest::Closest {
+            point: at(1),
+            max_distance: n[0],
+        },
+    };
+    check(&request)?;
+    Ok(request)
+}
+
 /// A request that cannot be asked, whatever the world holds.
 pub fn check(request: &QueryRequest) -> Result<(), String> {
     let finite = |v: &[f32]| v.iter().all(|n| n.is_finite());
@@ -270,9 +440,8 @@ pub fn with_service<R>(service: &dyn QueryService, tick: u64, f: impl FnOnce() -
     }
     // SAFETY: the pointer is only read while `f` runs, `Restore` puts the
     // previous value back even on unwind, and the service outlives this call.
-    let erased: *const dyn QueryService = unsafe {
-        std::mem::transmute::<&dyn QueryService, &'static dyn QueryService>(service)
-    };
+    let erased: *const dyn QueryService =
+        unsafe { std::mem::transmute::<&dyn QueryService, &'static dyn QueryService>(service) };
     let _restore = Restore(SERVICE.with(|slot| slot.replace(Some((erased, tick)))));
     f()
 }
@@ -313,12 +482,7 @@ pub struct QueryRecord {
 }
 
 /// Asks, files the answer under `actor` for its reporters and returns it.
-pub fn ask(
-    actor: &str,
-    request: &QueryRequest,
-    filter: &QueryFilter,
-    limit: usize,
-) -> QueryRecord {
+pub fn ask(actor: &str, request: &QueryRequest, filter: &QueryFilter, limit: usize) -> QueryRecord {
     let outcome = dispatch(request, filter, limit);
     let record = QueryRecord {
         kind: request.name().to_string(),
@@ -329,6 +493,37 @@ pub fn ask(
     };
     store(actor, record.clone());
     record
+}
+
+/// The query a block, script or compiled program asked by name: builds the
+/// request from `numbers`, asks as `actor` (so its own colliders are skipped
+/// and its layer rules apply) and files the answer under it. `layers` of zero
+/// means every layer. A request that cannot be built is filed as an error.
+pub fn ask_call(
+    actor: &str,
+    kind: QueryKind,
+    triggers: TriggerPolicy,
+    layers: u32,
+    numbers: &[f64],
+) -> QueryRecord {
+    let filter = QueryFilter {
+        layers: if layers == 0 { u32::MAX } else { layers },
+        triggers,
+        ..QueryFilter::as_actor(actor)
+    };
+    match build_request(kind, numbers) {
+        Ok(request) => ask(actor, &request, &filter, MAX_RESULTS),
+        Err(why) => {
+            let record = QueryRecord {
+                kind: kind.name().to_string(),
+                tick: current_tick().unwrap_or(0),
+                error: Some(why),
+                ..QueryRecord::default()
+            };
+            store(actor, record.clone());
+            record
+        }
+    }
 }
 
 /// Files `record` as the actor's last query.
@@ -522,10 +717,13 @@ mod tests {
 
     #[test]
     fn results_sort_by_distance_then_collider_and_overflow_is_reported() {
-        let service = Fixed(vec![hit("c", 3.0), hit("b", 3.0), hit("a", 5.0), hit("z", 1.0)]);
-        let found = with_service(&service, 7, || {
-            dispatch(&ray(), &QueryFilter::default(), 3)
-        });
+        let service = Fixed(vec![
+            hit("c", 3.0),
+            hit("b", 3.0),
+            hit("a", 5.0),
+            hit("z", 1.0),
+        ]);
+        let found = with_service(&service, 7, || dispatch(&ray(), &QueryFilter::default(), 3));
         let ids: Vec<_> = found.hits.iter().map(|h| h.collider.as_str()).collect();
         assert_eq!(ids, ["z", "b", "c"]);
         assert!(found.overflow);
@@ -609,5 +807,66 @@ mod tests {
         assert_eq!(TriggerPolicy::parse("ignore"), TriggerPolicy::Ignore);
         assert_eq!(TriggerPolicy::parse("include"), TriggerPolicy::Include);
         assert_eq!(TriggerPolicy::parse(""), TriggerPolicy::UseGlobal);
+    }
+
+    #[test]
+    fn named_kinds_build_requests_from_their_numbers() {
+        for kind in QueryKind::ALL {
+            assert_eq!(QueryKind::parse(kind.name()), Some(kind));
+            let zeros = vec![0.0; kind.arity()];
+            assert!(build_request(kind, &zeros).is_ok(), "{}", kind.name());
+            assert!(build_request(kind, &zeros[1..]).is_err());
+        }
+        let request = build_request(QueryKind::BallCast, &[0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        assert_eq!(
+            request,
+            Ok(QueryRequest::Cast {
+                shape: QueryShape::Ball { radius: 0.5 },
+                from: [1.0, 2.0, 3.0],
+                to: [4.0, 5.0, 6.0],
+            })
+        );
+        let Ok(QueryRequest::Overlap {
+            shape: QueryShape::Box { half, rotation },
+            at,
+        }) = build_request(
+            QueryKind::BoxOverlap,
+            &[1.0, 2.0, 3.0, 0.0, 90.0, 0.0, 7.0, 8.0, 9.0],
+        )
+        else {
+            panic!("a box overlap");
+        };
+        assert_eq!((half, at), ([1.0, 2.0, 3.0], [7.0, 8.0, 9.0]));
+        // A quarter turn about y is (0, sin 45, 0, cos 45).
+        assert!((rotation[1] - 0.70710677).abs() < 1e-5 && (rotation[3] - 0.70710677).abs() < 1e-5);
+        assert!(build_request(QueryKind::Ray, &[0.0, 0.0, 0.0, f64::NAN, 0.0, 0.0]).is_err());
+    }
+
+    #[test]
+    fn a_named_query_asks_as_the_actor_and_files_even_its_failures() {
+        reset();
+        struct Echo;
+        impl QueryService for Echo {
+            fn run(&self, _: &QueryRequest, filter: &QueryFilter, _: usize) -> QueryOutcome {
+                assert_eq!(filter.as_actor.as_deref(), Some("me"));
+                assert_eq!(filter.layers, 0b10);
+                assert_eq!(filter.triggers, TriggerPolicy::Ignore);
+                QueryOutcome::finish(vec![hit("a", 1.0)], 8)
+            }
+        }
+        let found = with_service(&Echo, 5, || {
+            ask_call(
+                "me",
+                QueryKind::Ray,
+                TriggerPolicy::Ignore,
+                0b10,
+                &[0.0, 0.0, 0.0, 10.0, 0.0, 0.0],
+            )
+        });
+        assert_eq!((found.hits.len(), found.tick), (1, 5));
+        let bad = ask_call("me", QueryKind::Ray, TriggerPolicy::UseGlobal, 0, &[1.0]);
+        assert!(bad.error.unwrap().contains("6 numbers"));
+        assert!(record_of("me", |r| r.unwrap().hits.is_empty()));
+        reset();
     }
 }

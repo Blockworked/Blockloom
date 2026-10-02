@@ -66,14 +66,14 @@ pub use runtime::{
     ACT_FRACTURE, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_HITSTOP, ACT_JSON_TO_DICT,
     ACT_JSON_TO_LIST, ACT_LIST_ADD, ACT_LIST_CLEAR, ACT_LIST_DELETE, ACT_LIST_INSERT,
     ACT_LIST_REPLACE, ACT_LIST_REVERSE, ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_PAINT_TILE,
-    ACT_PLAY_ANIMATION, ACT_PLAY_CUTSCENE, ACT_PLAY_SOUND, ACT_PLUGIN_CALL, ACT_POINT_TOWARDS,
-    ACT_PUFF_SMOKE, ACT_RUMBLE_GAMEPAD, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_ANIMATION_SPEED,
-    ACT_SET_AURORA, ACT_SET_BODY, ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH,
-    ACT_SET_CAMERA_VIEW, ACT_SET_CLOUD_DRIFT, ACT_SET_CLOUD_LAYER, ACT_SET_CLOUDS,
-    ACT_SET_COLLISION_LAYER, ACT_SET_COLLISION_MASK, ACT_SET_COLOR, ACT_SET_DENSITY,
-    ACT_SET_EMISSIVE_STRENGTH, ACT_SET_EMITTER_DIAL, ACT_SET_EMITTER_PLAYING, ACT_SET_EXPOSURE,
-    ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_FOG_DENSITY, ACT_SET_GI_BOUNCES, ACT_SET_GI_SAMPLES,
-    ACT_SET_GRAVITY, ACT_SET_HDR_OUTPUT, ACT_SET_IK_TARGET, ACT_SET_LETTERBOX,
+    ACT_PHYSICS_QUERY, ACT_PLAY_ANIMATION, ACT_PLAY_CUTSCENE, ACT_PLAY_SOUND, ACT_PLUGIN_CALL,
+    ACT_POINT_TOWARDS, ACT_PUFF_SMOKE, ACT_RUMBLE_GAMEPAD, ACT_SAVE_VARIABLE, ACT_SAY,
+    ACT_SET_ANIMATION_SPEED, ACT_SET_AURORA, ACT_SET_BODY, ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV,
+    ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW, ACT_SET_CLOUD_DRIFT, ACT_SET_CLOUD_LAYER,
+    ACT_SET_CLOUDS, ACT_SET_COLLISION_LAYER, ACT_SET_COLLISION_MASK, ACT_SET_COLOR,
+    ACT_SET_DENSITY, ACT_SET_EMISSIVE_STRENGTH, ACT_SET_EMITTER_DIAL, ACT_SET_EMITTER_PLAYING,
+    ACT_SET_EXPOSURE, ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_FOG_DENSITY, ACT_SET_GI_BOUNCES,
+    ACT_SET_GI_SAMPLES, ACT_SET_GRAVITY, ACT_SET_HDR_OUTPUT, ACT_SET_IK_TARGET, ACT_SET_LETTERBOX,
     ACT_SET_LIGHT_INTENSITY, ACT_SET_LIGHT_SHADOWS, ACT_SET_LIGHTNING_RATE, ACT_SET_MASS,
     ACT_SET_MOUSE_LOCKED, ACT_SET_PARALLAX, ACT_SET_PARENT, ACT_SET_PAUSED,
     ACT_SET_PEAK_BRIGHTNESS, ACT_SET_PRECIPITATION, ACT_SET_RAY_TRACING, ACT_SET_RENDER_SETTING,
@@ -1340,6 +1340,24 @@ impl<'a> Pass<'a> {
             Action::SetBody(body) => act(format!("Act::SetBody {{ body: {} }}", name_of(body))),
             Action::ApplyImpulse(vector) => {
                 reading(self.vec3(vector)?, "Act::ApplyImpulse { impulse: slot }")
+            }
+            Action::Query {
+                kind,
+                triggers,
+                values,
+            } => {
+                let mut lets = String::new();
+                let mut names = Vec::new();
+                for (i, value) in values.iter().enumerate() {
+                    lets.push_str(&format!("    let q{i} = {} as f64;\n", self.number(value)?));
+                    names.push(format!("q{i}"));
+                }
+                format!(
+                    "{lets}    h.act(&me, Act::Query {{ kind: {}, triggers: {}, numbers: vec![{}] }});\n",
+                    literal(kind.name()),
+                    name_of(triggers),
+                    names.join(", ")
+                )
             }
             Action::AddForce {
                 mode,

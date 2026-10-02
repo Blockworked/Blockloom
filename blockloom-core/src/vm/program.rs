@@ -255,6 +255,13 @@ pub enum Action {
     SetCloudDrift([Value; 3]),
     SetBody(BodyKind),
     ApplyImpulse([Value; 3]),
+    /// A physics query, asked on the spot; the answer is filed under the
+    /// running actor for the `hit` reporters. `values` are `kind`'s numbers.
+    Query {
+        kind: crate::physics::query::QueryKind,
+        triggers: crate::physics::query::TriggerPolicy,
+        values: Vec<Value>,
+    },
     /// A force (or, with `torque`, a torque) read per `mode`.
     AddForce {
         mode: crate::physics::ForceMode,
@@ -814,6 +821,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
         Action::SetSlotTint { slot, color } => vec![slot, color],
         Action::SetIkTarget { constraint, x, y } => vec![constraint, x, y],
         Action::AddForce { vector, .. } => vector.iter().collect(),
+        Action::Query { values, .. } => values.iter().collect(),
         Action::GoTo(target)
         | Action::ApplyImpulse(target)
         | Action::SetVelocity(target)
@@ -1188,6 +1196,20 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
                 *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
             }
             Action::ApplyImpulse(t)
+        }
+        Action::Query {
+            kind,
+            triggers,
+            mut values,
+        } => {
+            for v in &mut values {
+                *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
+            }
+            Action::Query {
+                kind,
+                triggers,
+                values,
+            }
         }
         Action::AddForce {
             mode,
@@ -1898,6 +1920,71 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             y.clone(),
             z.clone(),
         ]))),
+        K::CastRay {
+            hits,
+            triggers,
+            from_x,
+            from_y,
+            from_z,
+            to_x,
+            to_y,
+            to_z,
+        } => steps.push(Step::Action(Action::Query {
+            kind: hits.kind(),
+            triggers: *triggers,
+            values: vec![
+                from_x.clone(),
+                from_y.clone(),
+                from_z.clone(),
+                to_x.clone(),
+                to_y.clone(),
+                to_z.clone(),
+            ],
+        })),
+        K::CastBall {
+            triggers,
+            radius,
+            from_x,
+            from_y,
+            from_z,
+            to_x,
+            to_y,
+            to_z,
+        } => steps.push(Step::Action(Action::Query {
+            kind: crate::physics::query::QueryKind::BallCast,
+            triggers: *triggers,
+            values: vec![
+                radius.clone(),
+                from_x.clone(),
+                from_y.clone(),
+                from_z.clone(),
+                to_x.clone(),
+                to_y.clone(),
+                to_z.clone(),
+            ],
+        })),
+        K::OverlapBall {
+            triggers,
+            radius,
+            x,
+            y,
+            z,
+        } => steps.push(Step::Action(Action::Query {
+            kind: crate::physics::query::QueryKind::BallOverlap,
+            triggers: *triggers,
+            values: vec![radius.clone(), x.clone(), y.clone(), z.clone()],
+        })),
+        K::FindClosest {
+            triggers,
+            range,
+            x,
+            y,
+            z,
+        } => steps.push(Step::Action(Action::Query {
+            kind: crate::physics::query::QueryKind::Closest,
+            triggers: *triggers,
+            values: vec![range.clone(), x.clone(), y.clone(), z.clone()],
+        })),
         K::AddForce { mode, x, y, z } => steps.push(Step::Action(Action::AddForce {
             mode: *mode,
             torque: false,

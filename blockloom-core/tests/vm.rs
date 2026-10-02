@@ -2431,6 +2431,119 @@ fn a_plugin_block_asks_the_editor_to_run_its_command_with_its_slots() {
     }));
 }
 
+/// One wall at the end of every query, standing in for a physics world.
+struct Wall;
+
+impl blockloom_core::physics::query::QueryService for Wall {
+    fn run(
+        &self,
+        request: &blockloom_core::physics::query::QueryRequest,
+        _: &blockloom_core::physics::query::QueryFilter,
+        limit: usize,
+    ) -> blockloom_core::physics::query::QueryOutcome {
+        use blockloom_core::physics::query::{QueryHit, QueryOutcome, QueryRequest};
+        let point = match request {
+            QueryRequest::Ray { to, .. } | QueryRequest::Cast { to, .. } => *to,
+            QueryRequest::Overlap { at, .. } => *at,
+            QueryRequest::Closest { point, .. } => *point,
+        };
+        let hit = QueryHit {
+            actor: "wall".into(),
+            body: None,
+            collider: "wall:0".into(),
+            subshape: 0,
+            point,
+            normal: [0.0, 1.0, 0.0],
+            distance: point[0],
+            fraction: 1.0,
+            started_inside: false,
+            trigger: false,
+        };
+        QueryOutcome::finish(vec![hit], limit)
+    }
+}
+
+#[test]
+fn a_cast_block_files_its_answer_for_the_hit_reporters() {
+    use blockloom_core::physics::query::{self, RayHits, TriggerPolicy};
+    let project = project_with(vec![started(vec![
+        InstructionKind::CastRay {
+            hits: RayHits::Nearest,
+            triggers: TriggerPolicy::UseGlobal,
+            from_x: Value::number(0.0),
+            from_y: Value::number(0.0),
+            from_z: Value::number(0.0),
+            to_x: Value::number(6.0),
+            to_y: Value::number(1.0),
+            to_z: Value::number(0.0),
+        },
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("QueryNumber"),
+                vec![Value::number(1.0), Value::text("distance")],
+            ),
+        },
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("QueryText"),
+                vec![Value::number(1.0), Value::text("actor")],
+            ),
+        },
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("QueryNumber"),
+                vec![Value::number(2.0), Value::text("distance")],
+            ),
+        },
+    ])]);
+    query::reset();
+    let effects = query::with_service(&Wall, 0, || Harness::started(&project).run(1));
+    let said: Vec<_> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Say { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    // The second hit does not exist, which reads as zero rather than an error.
+    assert_eq!(said, ["6", "wall", "0"]);
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::PhysicsQuery { kind, hits: 1, .. } if kind == "ray"
+    )));
+}
+
+#[test]
+fn a_query_with_no_world_reports_why_and_reads_as_a_miss() {
+    use blockloom_core::physics::query::{self, TriggerPolicy};
+    let project = project_with(vec![started(vec![
+        InstructionKind::OverlapBall {
+            triggers: TriggerPolicy::UseGlobal,
+            radius: Value::number(-1.0),
+            x: Value::number(0.0),
+            y: Value::number(0.0),
+            z: Value::number(0.0),
+        },
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("QueryNumber"),
+                vec![Value::number(1.0), Value::text("count")],
+            ),
+        },
+    ])]);
+    query::reset();
+    let effects = Harness::started(&project).run(1);
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Error { .. }))
+    );
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::Say { text, .. } if text == "0"
+    )));
+}
+
 fn when_plugin(event: &str, args: &[&str]) -> Instruction {
     ins(InstructionKind::WhenPlugin {
         plugin: "com.example.tally".to_string(),

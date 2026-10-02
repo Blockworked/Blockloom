@@ -521,6 +521,13 @@ pub enum Act {
         block: String,
         args: Vec<Val>,
     },
+    /// A physics query: `kind` by name, `triggers` as a `TriggerPolicy` name
+    /// and the kind's numbers. The host files the answer under the actor.
+    Query {
+        kind: &'static str,
+        triggers: &'static str,
+        numbers: Vec<f64>,
+    },
     /// Grabs or frees the pointer; window-global, like gravity.
     SetMouseLocked {
         locked: bool,
@@ -1316,7 +1323,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 35;
+pub const LOGIC_ABI_VERSION: u32 = 36;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1549,6 +1556,8 @@ pub const ACT_FADE_SCREEN: u32 = 121;
 pub const ACT_PLUGIN_CALL: u32 = 122;
 /// `a` = force mode name, `b` = `torque` for a torque, empty for a force.
 pub const ACT_ADD_FORCE: u32 = 123;
+/// `a` = query kind name, `b` = trigger policy name, numbers = the query's.
+pub const ACT_PHYSICS_QUERY: u32 = 124;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2233,6 +2242,19 @@ impl Host for AbiHost {
                 "",
                 "",
                 impulse.map(f64::from),
+                &zero,
+            ),
+            Act::Query {
+                kind,
+                triggers,
+                numbers,
+            } => self.act_many(
+                actor,
+                ACT_PHYSICS_QUERY,
+                kind,
+                triggers,
+                "",
+                &numbers,
                 &zero,
             ),
             Act::AddForce {

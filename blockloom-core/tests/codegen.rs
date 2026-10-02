@@ -166,6 +166,9 @@ struct Recorder {
     /// just what order things came in.
     tick: usize,
     out: Vec<String>,
+    /// The last physics query: where its one hit stood, how big the ball was
+    /// (or the range), and whether triggers were asked for.
+    query: Option<([f64; 3], f64, bool)>,
 }
 
 impl Host for Recorder {
@@ -174,6 +177,17 @@ impl Host for Recorder {
         // land silently rather than as transcript lines, and a name nothing
         // declared is a no-op.
         match &act {
+            // The harness world answers every query with one wall, standing
+            // at the point the query was aimed at.
+            Act::Query { kind, triggers, numbers } => {
+                let at = |i: usize| numbers.get(i).copied().unwrap_or(0.0);
+                let (point, size) = match *kind {
+                    "ray" | "rays" => ([at(3), at(4), at(5)], 0.0),
+                    "ball cast" => ([at(4), at(5), at(6)], at(0)),
+                    _ => ([at(1), at(2), at(3)], at(0)),
+                };
+                self.query = Some((point.map(|n| n as f32 as f64), size as f32 as f64, *triggers == "Include"));
+            }
             Act::AddToList { name, value } => {
                 match list_item(value) {
                     Some(item) => {
@@ -450,8 +464,7 @@ impl Host for Recorder {
                 }
                 Ok(Val::Num(axis_of(&args[1], [4.0, -1.0, 0.0])))
             }
-            // Nobody in the harness world has a body, so no ray or ball
-            // ever finds one, and nobody is a trigger - mirroring what the
+            // Nobody is a trigger - mirroring what the
             // VM reads off the same published snapshot.
             "IsTrigger" => {
                 let name = args[0].as_text();
@@ -478,9 +491,42 @@ impl Host for Recorder {
                     Err(format!("there's no actor named \"{name}\""))
                 }
             }
-            "RayHit" => Ok(Val::Text(String::new())),
-            "RayDistance" => Ok(Val::Num(-1.0)),
-            "CircleHit" => Ok(Val::Text(String::new())),
+            "QueryNumber" => {
+                let field = args[1].as_text();
+                let index = args[0].as_number().unwrap_or(0.0).max(0.0) as usize;
+                let hit = if index == 1 { self.query } else { None };
+                let (point, size, trigger) = hit.unwrap_or(([0.0; 3], 0.0, false));
+                let seen = hit.is_some();
+                let flag = |on: bool| if seen && on { 1.0 } else { 0.0 };
+                Ok(Val::Num(match field.as_str() {
+                    "count" => if self.query.is_some() { 1.0 } else { 0.0 },
+                    "overflowed" | "tick" | "part" => 0.0,
+                    "x" => point[0],
+                    "y" => point[1],
+                    "z" => point[2],
+                    "normal x" | "normal z" => 0.0,
+                    "normal y" => if seen { 1.0 } else { 0.0 },
+                    "distance" => point[0] as f32 as f64,
+                    "fraction" => size,
+                    "started inside" => flag(false),
+                    "is trigger" => flag(trigger),
+                    _ => return Err(format!("a query result has no numbers called \"{field}\"")),
+                }))
+            }
+            "QueryText" => {
+                let field = args[1].as_text();
+                let index = args[0].as_number().unwrap_or(0.0).max(0.0) as usize;
+                let seen = index == 1 && self.query.is_some();
+                Ok(Val::Text(match field.as_str() {
+                    "actor" | "actor id" if seen => "wall".to_string(),
+                    "collider" if seen => "wall:0".to_string(),
+                    "actor" | "actor id" | "collider" | "body" | "error" => String::new(),
+                    _ => return Err(format!("a query result has no words called \"{field}\"")),
+                }))
+            }
+            // The harness world is one wall standing where each query aims.
+            "RayHit" | "CircleHit" => Ok(Val::Text("wall".to_string())),
+            "RayDistance" => Ok(Val::Num(args[3].as_number().unwrap_or(0.0) as f32 as f64)),
             // List reporters read the run's lists, unknown names included:
             // nothing declared reads as empty, exactly as it does on the VM.
             "ListItem" => {
@@ -1116,6 +1162,7 @@ fn line_of(act: &Act) -> String {
             block,
             args,
         } => format!("PluginCall {plugin}/{block} {}", plugin_args_json(args)),
+        Act::Query { kind, .. } => format!("Query {kind} 1"),
         Act::SetBody { body } => format!("SetBody {body}"),
         Act::AddForce {
             mode,
@@ -1188,7 +1235,7 @@ fn shown(value: &Val) -> String {
 /// fixed tick, in the order they started, and the run ends when they are all
 /// done or one of them says `stop all`.
 fn main() {
-    let mut recorder = Recorder { vars: HashMap::new(), lists: HashMap::new(), dicts: HashMap::new(), tick: 0, out: Vec::new() };
+    let mut recorder = Recorder { vars: HashMap::new(), lists: HashMap::new(), dicts: HashMap::new(), tick: 0, out: Vec::new(), query: None };
     for (name, value) in seeded() {
         recorder.vars.insert(name.to_string(), value);
     }
@@ -1485,6 +1532,7 @@ fn line_of(effect: &Effect) -> Option<String> {
             "{actor}|PluginCall {plugin}/{block} {}",
             serde_json::Value::Array(args.clone())
         ),
+        Effect::PhysicsQuery { actor, kind, hits } => format!("{actor}|Query {kind} {hits}"),
         Effect::SetBody { actor, body } => format!("{actor}|SetBody {body:?}"),
         Effect::AddForce {
             actor,
@@ -1720,7 +1768,53 @@ fn project_with_headers(
 }
 
 /// What the VM does with it, as transcript lines.
+/// Answers every physics query with one wall at the point it was aimed at, as
+/// the compiled harness does.
+struct WallWorld;
+
+impl blockloom_core::physics::query::QueryService for WallWorld {
+    fn run(
+        &self,
+        request: &blockloom_core::physics::query::QueryRequest,
+        filter: &blockloom_core::physics::query::QueryFilter,
+        limit: usize,
+    ) -> blockloom_core::physics::query::QueryOutcome {
+        use blockloom_core::physics::query::{QueryHit, QueryOutcome, QueryRequest, QueryShape};
+        let size = |shape: &QueryShape| match shape {
+            QueryShape::Ball { radius } => *radius,
+            _ => 0.0,
+        };
+        let (point, size) = match request {
+            QueryRequest::Ray { to, .. } => (*to, 0.0),
+            QueryRequest::Cast { shape, to, .. } => (*to, size(shape)),
+            QueryRequest::Overlap { shape, at } => (*at, size(shape)),
+            QueryRequest::Closest {
+                point,
+                max_distance,
+            } => (*point, *max_distance),
+        };
+        let hit = QueryHit {
+            actor: "wall".into(),
+            body: None,
+            collider: "wall:0".into(),
+            subshape: 0,
+            point,
+            normal: [0.0, 1.0, 0.0],
+            distance: point[0],
+            fraction: size,
+            started_inside: false,
+            trigger: filter.triggers == blockloom_core::physics::query::TriggerPolicy::Include,
+        };
+        QueryOutcome::finish(vec![hit], limit)
+    }
+}
+
 fn by_vm(project: &Project) -> Vec<String> {
+    blockloom_core::physics::query::reset();
+    blockloom_core::physics::query::with_service(&WallWorld, 0, || by_vm_ticks(project))
+}
+
+fn by_vm_ticks(project: &Project) -> Vec<String> {
     blockloom_core::init();
     publish_world();
     // The module the harness answers for, so a plugin reporter reads the
@@ -3715,6 +3809,88 @@ fn level_blocks_ask_the_same_things_in_order() {
                 layer: op("Join", vec![Value::text("Sk"), Value::text("y")]),
                 axis: ParallaxAxis::Both,
                 value: number(0.0),
+            },
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn query_blocks_ask_the_same_things_and_read_the_same_answers() {
+    use blockloom_core::physics::query::{RayHits, TriggerPolicy};
+    assert_same(
+        "queries",
+        vec![
+            K::CastRay {
+                hits: RayHits::Nearest,
+                triggers: TriggerPolicy::UseGlobal,
+                from_x: number(0.0),
+                from_y: number(1.0),
+                from_z: number(2.0),
+                to_x: op("Add", vec![number(3.0), number(0.5)]),
+                to_y: number(-4.0),
+                to_z: number(5.0),
+            },
+            K::Say {
+                text: op("QueryNumber", vec![number(1.0), Value::text("x")]),
+            },
+            K::Say {
+                text: op("QueryText", vec![number(1.0), Value::text("actor")]),
+            },
+            K::CastRay {
+                hits: RayHits::Every,
+                triggers: TriggerPolicy::Include,
+                from_x: number(0.0),
+                from_y: number(0.0),
+                from_z: number(0.0),
+                to_x: number(9.0),
+                to_y: number(0.0),
+                to_z: number(0.0),
+            },
+            K::Say {
+                text: op("QueryNumber", vec![number(1.0), Value::text("is trigger")]),
+            },
+            K::CastBall {
+                triggers: TriggerPolicy::Ignore,
+                radius: number(0.25),
+                from_x: number(1.0),
+                from_y: number(2.0),
+                from_z: number(3.0),
+                to_x: number(4.0),
+                to_y: number(5.0),
+                to_z: number(6.0),
+            },
+            K::Say {
+                text: op("QueryNumber", vec![number(1.0), Value::text("fraction")]),
+            },
+            K::OverlapBall {
+                triggers: TriggerPolicy::UseGlobal,
+                radius: number(2.0),
+                x: number(7.0),
+                y: number(8.0),
+                z: number(9.0),
+            },
+            K::Say {
+                text: op("QueryNumber", vec![number(1.0), Value::text("distance")]),
+            },
+            K::Say {
+                text: op("QueryNumber", vec![number(2.0), Value::text("distance")]),
+            },
+            K::FindClosest {
+                triggers: TriggerPolicy::UseGlobal,
+                range: number(12.0),
+                x: number(-1.0),
+                y: number(-2.0),
+                z: number(-3.0),
+            },
+            K::Say {
+                text: op("QueryNumber", vec![number(1.0), Value::text("fraction")]),
+            },
+            K::Say {
+                text: op("QueryText", vec![number(1.0), Value::text("collider")]),
+            },
+            K::Say {
+                text: op("QueryNumber", vec![number(1.0), Value::text("count")]),
             },
         ],
         &[],

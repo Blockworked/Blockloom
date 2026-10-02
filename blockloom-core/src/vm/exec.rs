@@ -1652,6 +1652,28 @@ impl Vm {
                     impulse,
                 });
             }
+            Action::Query {
+                kind,
+                triggers,
+                values,
+            } => {
+                let numbers: Vec<f64> = values
+                    .iter()
+                    .map(|value| f64::from(self.eval_f32(value, actor, params, temps, out)))
+                    .collect();
+                let record = crate::physics::query::ask_call(actor, *kind, *triggers, 0, &numbers);
+                if let Some(message) = record.error {
+                    out.push(Effect::Error {
+                        actor: actor.to_string(),
+                        message,
+                    });
+                }
+                out.push(Effect::PhysicsQuery {
+                    actor: actor.to_string(),
+                    kind: kind.name().to_string(),
+                    hits: record.hits.len(),
+                });
+            }
             Action::AddForce {
                 mode,
                 torque,

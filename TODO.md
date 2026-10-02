@@ -272,8 +272,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [x] Phase 0: probes against pinned Rapier for materials, compounds, events, queries, CCD and the controller; compatibility ledger.
   - [ ] Phase 0 leftovers: 2D probes, joints, mesh cooking, per-body solver overrides, a platform-carry backend switch, Unity-editor confirmation of the documented values.
   - [x] Phase 1: document and ownership foundation (specs, ids, ownership, materials, validation, transactions, migration preview, shell/MCP commands). Not yet: inspector UI, runtime reading the components, applying migration.
-  - [x] Phase 2: bodies, geometry and solver policy (planner in core, per-collider child entities, mass rules, constraints, sleep, materials with stick/slip, layer matrix and exact pair filtering, CCD mapping, speed caps, Play/Build preflight, layer/plan commands). Open: add-force/add-torque blocks and script calls (the `ForceMode` math is in `physics/ops.rs`, nothing calls it from gameplay yet); per-body solver overrides and contact offset, queryable and interpolation have no runtime effect; mesh/terrain/tilemap colliders wait for Phase 3; no inspector UI yet.
-  - [ ] Phase 3: events, queries and cooking.
+  - [x] Phase 2: bodies, geometry and solver policy (planner in core, per-collider child entities, mass rules, constraints, sleep, materials with stick/slip, layer matrix and exact pair filtering, CCD mapping, speed caps, Play/Build preflight, layer/plan commands). Force blocks and per-body solver overrides landed with Phase 3. Open: contact offset, queryable and interpolation have no runtime effect; no inspector UI yet.
+  - [x] Phase 3: contact lifecycle, authoritative 2D and 3D queries (ray, rays, ball/box/capsule cast and overlap, closest) over the Rapier world with layer and trigger filtering, collision cooking (hulls, decomposition, trimesh) for Play and builds, query blocks and `hit` reporters in the VM, compiled logic and script ABI. Open: no GPU-checked run, no inspector UI for cooking settings.
   - [ ] Phase 4: character controllers.
   - [ ] Phase 5: reusable motors and input.
   - [ ] Phase 6: cameras, presets and authoring.

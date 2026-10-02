@@ -483,6 +483,21 @@ Phase 2 of the physics plan. Core decides, the runtime installs.
   totals and removal, modes, triggers, layers, exact filtering, stick/slip on a slope,
   CCD, one-way, caps, forces, depenetration caps, contact events at two frame rates), `cargo test -p blockloom-app --test physics`.
 
+### Physics queries (Phase 3)
+
+`physics/query.rs` holds the request types (`QueryRequest`: ray, cast and overlap of
+ball, box and capsule, closest), `QueryFilter` (layer mask, trigger policy, ignored
+actor) and `QueryOutcome`. The runtime answers them from the live Rapier world
+(`blockloom-runtime/src/queries.rs`) through a `QueryService` installed for the
+frame. A query block (`CastRay`, `CastBall`, `OverlapBall`, `FindClosest`) asks on the
+spot as the running actor and files the answer as that actor's query result;
+`QueryNumber`/`QueryText` read hit N back by field (a miss reads zero or empty). The
+VM, compiled logic (`ACT_PHYSICS_QUERY` is the script ABI's) and scripts
+(`ABI_VERSION` 39, `LOGIC_ABI_VERSION` 36) land on the same answers;
+`tests/codegen.rs` holds them together with a one-wall harness world.
+`RayHit`/`RayDistance`/`CircleHit` reporters ask the same service. With no world
+installed a query reports an error and reads as a miss.
+
 ### Actors that come and go
 
 An actor's id is what everything keys it by, and a run can mint ids the

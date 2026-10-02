@@ -88,12 +88,9 @@ impl Lookups<'_, '_> {
         {
             return false;
         }
-        let named = |actor: &String| {
-            ident.actor == *actor || ident.body.as_deref() == Some(actor.as_str())
-        };
-        if filter.as_actor.as_ref().is_some_and(named)
-            || filter.exclude_actors.iter().any(named)
-        {
+        let named =
+            |actor: &String| ident.actor == *actor || ident.body.as_deref() == Some(actor.as_str());
+        if filter.as_actor.as_ref().is_some_and(named) || filter.exclude_actors.iter().any(named) {
             return false;
         }
         let layer = ident.filter.map_or(1, |f| f.layer);
@@ -101,13 +98,36 @@ impl Lookups<'_, '_> {
             return false;
         }
         match (self.asker(filter), ident.filter, self.layers.as_ref()) {
-            (Some(asker), Some(target), Some(layers)) => {
-                match layers.mode {
-                    Some(mode) => pair_collides(&asker, &target, &layers.settings, mode),
-                    None => true,
-                }
-            }
+            (Some(asker), Some(target), Some(layers)) => match layers.mode {
+                Some(mode) => pair_collides(&asker, &target, &layers.settings, mode),
+                None => true,
+            },
             _ => true,
+        }
+    }
+}
+
+/// Both dimensions' query access in one system parameter, so a system that
+/// runs blocks, scripts or plugin hooks can open a query scope without being
+/// generic over the live dimension.
+#[derive(SystemParam)]
+pub struct QueryAccess<'w, 's> {
+    two: d2::World2<'w, 's>,
+    three: d3::World3<'w, 's>,
+    layers: Option<Res<'w, PhysicsLayers>>,
+}
+
+impl QueryAccess<'_, '_> {
+    /// Runs `f` with queries answering for the world as it stood after `tick`.
+    /// With no physics world built (a project that has not started) queries
+    /// report that instead of an empty world.
+    pub fn scope<R>(&self, tick: u64, f: impl FnOnce() -> R) -> R {
+        use blockloom_core::physics::query::with_service;
+        use blockloom_core::scene::Mode;
+        match self.layers.as_ref().and_then(|layers| layers.mode) {
+            Some(Mode::TwoD) => with_service(&self.two.service(), tick, f),
+            Some(Mode::ThreeD) => with_service(&self.three.service(), tick, f),
+            None => f(),
         }
     }
 }
@@ -184,18 +204,17 @@ pub mod d3 {
                 return QueryOutcome::failed("the physics world is not built yet");
             };
             let lookups = &world.lookups;
-            let predicate = |entity: Entity,
-                             raw: &bevy_rapier3d::rapier::geometry::Collider|
-             -> bool {
-                raw.is_enabled() && {
-                    let ident = lookups.ident(entity, raw.is_sensor(), raw.parent().is_some());
-                    let queryable = lookups
-                        .planned
-                        .get(entity)
-                        .map_or(true, |planned| planned.queryable);
-                    lookups.admits(&ident, queryable, filter)
-                }
-            };
+            let predicate =
+                |entity: Entity, raw: &bevy_rapier3d::rapier::geometry::Collider| -> bool {
+                    raw.is_enabled() && {
+                        let ident = lookups.ident(entity, raw.is_sensor(), raw.parent().is_some());
+                        let queryable = lookups
+                            .planned
+                            .get(entity)
+                            .map_or(true, |planned| planned.queryable);
+                        lookups.admits(&ident, queryable, filter)
+                    }
+                };
             let query_filter = rp::QueryFilter::default().predicate(&predicate);
             let hit_of = |entity: Entity,
                           sensor: bool,
@@ -502,18 +521,17 @@ pub mod d2 {
                 return QueryOutcome::failed("the physics world is not built yet");
             };
             let lookups = &world.lookups;
-            let predicate = |entity: Entity,
-                             raw: &bevy_rapier2d::rapier::geometry::Collider|
-             -> bool {
-                raw.is_enabled() && {
-                    let ident = lookups.ident(entity, raw.is_sensor(), raw.parent().is_some());
-                    let queryable = lookups
-                        .planned
-                        .get(entity)
-                        .map_or(true, |planned| planned.queryable);
-                    lookups.admits(&ident, queryable, filter)
-                }
-            };
+            let predicate =
+                |entity: Entity, raw: &bevy_rapier2d::rapier::geometry::Collider| -> bool {
+                    raw.is_enabled() && {
+                        let ident = lookups.ident(entity, raw.is_sensor(), raw.parent().is_some());
+                        let queryable = lookups
+                            .planned
+                            .get(entity)
+                            .map_or(true, |planned| planned.queryable);
+                        lookups.admits(&ident, queryable, filter)
+                    }
+                };
             let query_filter = rp::QueryFilter::default().predicate(&predicate);
             let hit_of = |entity: Entity,
                           sensor: bool,

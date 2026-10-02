@@ -2,9 +2,8 @@
 
 use bevy::prelude::*;
 use blockloom_core::ai::{BehaviorNode, BrainSpec};
-use blockloom_core::physics_query;
+use blockloom_core::physics::query::{self, QueryFilter, QueryRequest, TriggerPolicy};
 use blockloom_core::scene::Mode;
-use blockloom_core::sense::Sensors;
 use blockloom_core::vm::Effect;
 
 use crate::engine::{ActorId, Dimension, Engine, PendingEffects};
@@ -17,9 +16,7 @@ struct Decision<'a> {
     to: Option<Vec3>,
     facing: Vec3,
     brain: &'a BrainSpec,
-    sensors: &'a Sensors,
     mode: Mode,
-    mask: u8,
 }
 
 impl Decision<'_> {
@@ -56,14 +53,21 @@ impl Decision<'_> {
         let Some(to) = self.to else {
             return false;
         };
-        let hit = physics_query::ray_hit(
-            self.sensors,
-            self.from.to_array(),
-            to.to_array(),
-            Some(self.actor),
-            self.mask,
-        );
-        hit.is_none_or(|(id, _)| Some(id.as_str()) == self.target_id)
+        // What stands between: the nearest solid thing along the sight line, as
+        // the asker (so its own colliders and layer rules apply).
+        let request = QueryRequest::Ray {
+            from: self.from.to_array(),
+            to: to.to_array(),
+            all: false,
+        };
+        let filter = QueryFilter {
+            triggers: TriggerPolicy::Ignore,
+            ..QueryFilter::as_actor(self.actor)
+        };
+        let seen = query::dispatch(&request, &filter, 1);
+        seen.hits
+            .first()
+            .is_none_or(|hit| Some(hit.actor.as_str()) == self.target_id)
     }
 
     fn eval(&self, node: &BehaviorNode, effects: &mut Vec<Effect>, depth: usize) -> bool {
@@ -131,13 +135,14 @@ pub fn tick(
     dimension: Res<Dimension>,
     transforms: Query<&Transform, With<ActorId>>,
     mut effects: ResMut<PendingEffects>,
+    queries: crate::queries::QueryAccess,
 ) {
     if !engine.running || engine.paused {
         return;
     }
     let mut ids: Vec<_> = engine.entities.keys().collect();
     ids.sort();
-    blockloom_core::sense::read(|sensors| {
+    queries.scope(engine.contact_ticks, || {
         for id in &ids {
             if !engine.has_component(id, "Brain") {
                 continue;
@@ -172,9 +177,7 @@ pub fn tick(
                 to,
                 facing: forward_of(transform, dimension.0),
                 brain,
-                sensors,
                 mode: dimension.0,
-                mask: engine.filter_of(id).1,
             };
             decision.eval(&brain.tree, &mut effects.0, 0);
         }
@@ -184,24 +187,38 @@ pub fn tick(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use blockloom_core::sense::{ActorSense, ColliderShape};
+    use blockloom_core::physics::query::{QueryHit, QueryOutcome, QueryService};
 
-    fn target(at: [f32; 3]) -> ActorSense {
-        ActorSense {
-            name: "Player".to_string(),
-            position: at,
-            has_body: true,
-            shape: ColliderShape::Ball { radius: 0.2 },
-            ..Default::default()
+    /// A world with one thing on the sight line, at `distance`.
+    struct Along(Option<(&'static str, f32)>);
+
+    impl QueryService for Along {
+        fn run(&self, request: &QueryRequest, filter: &QueryFilter, limit: usize) -> QueryOutcome {
+            // The enemy asks as itself and never for triggers.
+            assert_eq!(filter.as_actor.as_deref(), Some("enemy"));
+            assert_eq!(filter.triggers, TriggerPolicy::Ignore);
+            assert!(matches!(request, QueryRequest::Ray { all: false, .. }));
+            let hits = self
+                .0
+                .map(|(actor, distance)| QueryHit {
+                    actor: actor.to_string(),
+                    body: None,
+                    collider: "c".into(),
+                    subshape: 0,
+                    point: [distance, 0.0, 0.0],
+                    normal: [-1.0, 0.0, 0.0],
+                    distance,
+                    fraction: distance / 5.0,
+                    started_inside: false,
+                    trigger: false,
+                })
+                .into_iter()
+                .collect();
+            QueryOutcome::finish(hits, limit)
         }
     }
 
-    #[test]
-    fn sight_respects_range_cone_and_occlusion() {
-        let mut sensors = Sensors::default();
-        sensors
-            .actors
-            .insert("player".to_string(), target([5.0, 0.0, 0.0]));
+    fn sees(world: &Along, facing: Vec3) -> bool {
         let brain = BrainSpec {
             target: "player".to_string(),
             sight: 10.0,
@@ -213,48 +230,27 @@ mod tests {
             target_id: Some("player"),
             from: Vec3::ZERO,
             to: Some(Vec3::X * 5.0),
-            facing: Vec3::X,
+            facing,
             brain: &brain,
-            sensors: &sensors,
             mode: Mode::TwoD,
-            mask: 255,
         };
-        assert!(decision.visible());
-        assert!(
-            !Decision {
-                facing: -Vec3::X,
-                ..decision
-            }
-            .visible()
-        );
-        sensors.actors.insert(
-            "wall".to_string(),
-            ActorSense {
-                position: [2.0, 0.0, 0.0],
-                has_body: true,
-                shape: ColliderShape::Box {
-                    half: [0.2, 0.2, 0.2],
-                },
-                ..Default::default()
-            },
-        );
-        let blocked = Decision {
-            actor: "enemy",
-            target_id: Some("player"),
-            from: Vec3::ZERO,
-            to: Some(Vec3::X * 5.0),
-            facing: Vec3::X,
-            brain: &brain,
-            sensors: &sensors,
-            mode: Mode::TwoD,
-            mask: 255,
-        };
-        assert!(!blocked.visible());
+        query::with_service(world, 1, || decision.visible())
+    }
+
+    #[test]
+    fn sight_respects_range_cone_and_occlusion() {
+        let clear = Along(Some(("player", 5.0)));
+        assert!(sees(&clear, Vec3::X));
+        // Behind the enemy, outside its cone.
+        assert!(!sees(&clear, -Vec3::X));
+        // Something solid stands in the way.
+        assert!(!sees(&Along(Some(("wall", 2.0))), Vec3::X));
+        // An empty line (the target has no collider) is a clear one.
+        assert!(sees(&Along(None), Vec3::X));
     }
 
     #[test]
     fn selector_discards_failed_branch_effects() {
-        let sensors = Sensors::default();
         let brain = BrainSpec::default();
         let decision = Decision {
             actor: "enemy",
@@ -263,9 +259,7 @@ mod tests {
             to: None,
             facing: Vec3::X,
             brain: &brain,
-            sensors: &sensors,
             mode: Mode::TwoD,
-            mask: 255,
         };
         let tree = BehaviorNode::Selector {
             children: vec![

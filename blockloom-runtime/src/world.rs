@@ -369,6 +369,7 @@ pub fn pump_editor(
                 engine.touching.clear();
                 engine.contacts.clear();
                 engine.contact_ticks = 0;
+                blockloom_core::physics::query::reset();
                 engine.speech.clear();
                 engine.pending_scene = None;
                 engine.veil.reset();
@@ -709,6 +710,7 @@ pub fn rebuild_world(
     engine.touching.clear();
     engine.contacts.clear();
     engine.contact_ticks = 0;
+    blockloom_core::physics::query::reset();
     // Remaps last exactly as long as the run, like everything else live.
     engine.reset_input_run();
     // Everything the last run made goes with it - except opt-in survivors
@@ -1061,6 +1063,7 @@ pub fn step_scripts(
     mut engine: NonSendMut<Engine>,
     time: Res<Time>,
     mut effects: ResMut<PendingEffects>,
+    queries: crate::queries::QueryAccess,
 ) {
     if !engine.running || engine.paused || engine.scripts.is_empty() {
         return;
@@ -1095,20 +1098,22 @@ pub fn step_scripts(
         .collect();
 
     let mut asked = crate::script::Asked::default();
-    for actor in &actors {
-        let Some(script) = engine.scripts.get(actor) else {
-            continue;
-        };
-        if fresh.contains(actor) {
-            script.start(actor, &mut asked);
-        }
-        for (to, event) in &heard {
-            if to.as_ref().is_none_or(|to| to == actor) {
-                script.event(actor, &mut asked, event);
+    queries.scope(engine.contact_ticks, || {
+        for actor in &actors {
+            let Some(script) = engine.scripts.get(actor) else {
+                continue;
+            };
+            if fresh.contains(actor) {
+                script.start(actor, &mut asked);
             }
+            for (to, event) in &heard {
+                if to.as_ref().is_none_or(|to| to == actor) {
+                    script.event(actor, &mut asked, event);
+                }
+            }
+            script.tick(actor, &mut asked, dt);
         }
-        script.tick(actor, &mut asked, dt);
-    }
+    });
     engine.scripts_started.extend(fresh);
     for message in asked.messages.drain(..) {
         engine.fire(Event::Message(message));
@@ -2183,6 +2188,7 @@ pub fn step_vm(
     time: Res<Time>,
     mut effects: ResMut<PendingEffects>,
     transforms: Query<&Transform, With<ActorId>>,
+    queries: crate::queries::QueryAccess,
 ) {
     // A paused world is still stepped: the scheduler gives a slice to the
     // strands the interface started and skips everything else, which is what
@@ -2216,22 +2222,25 @@ pub fn step_vm(
     let wall = (elapsed - engine.started_at).max(0.0);
     let mut produced = Vec::new();
     let mut messages = Vec::new();
-    if engine.logic.is_some() {
-        let variables = engine.variables.clone();
-        let lists = engine.lists.clone();
-        let dicts = engine.dicts.clone();
-        engine.logic.as_mut().expect("checked above").tick(
-            now,
-            wall,
-            variables,
-            lists,
-            dicts,
-            &mut produced,
-            &mut messages,
-        );
-    } else {
-        engine.vm.tick_at(now, wall, &mut produced);
-    }
+    let tick = engine.contact_ticks;
+    queries.scope(tick, || {
+        if engine.logic.is_some() {
+            let variables = engine.variables.clone();
+            let lists = engine.lists.clone();
+            let dicts = engine.dicts.clone();
+            engine.logic.as_mut().expect("checked above").tick(
+                now,
+                wall,
+                variables,
+                lists,
+                dicts,
+                &mut produced,
+                &mut messages,
+            );
+        } else {
+            engine.vm.tick_at(now, wall, &mut produced);
+        }
+    });
     for message in messages {
         engine.fire(Event::Message(message));
     }
@@ -4576,6 +4585,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetPaused { .. }
         | Effect::SaveVariable { .. }
         | Effect::PluginCall { .. }
+        | Effect::PhysicsQuery { .. }
         | Effect::SetParent { .. }
         | Effect::CreateClone { .. }
         | Effect::CreateActor { .. }

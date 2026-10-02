@@ -97,6 +97,8 @@ const PARALLAX_AXES: &[&str] = &["Both", "X", "Y"];
 const CONTACT_PHASES: &[&str] = &["Enter", "Stay", "Exit"];
 const CONTACT_SCOPES: &[&str] = &["Any", "Collision", "Trigger"];
 const FORCE_MODES: &[&str] = &["Force", "Acceleration", "Impulse", "VelocityChange"];
+const RAY_HITS: &[&str] = &["Nearest", "Every"];
+const TRIGGER_POLICIES: &[&str] = &["UseGlobal", "Ignore", "Include"];
 const CLOUD_LAYER_PROPERTIES: &[&str] = &["Coverage", "Opacity", "Contrast", "Altitude", "Spin"];
 const UI_ANCHORS: &[&str] = &[
     "TopLeft",
@@ -946,6 +948,181 @@ pub const BLOCKS: &[BlockSpec] = &[
         dropdowns: &[Dropdown {
             field: "mode",
             options: FORCE_MODES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "CastRay",
+        category: "Physics",
+        purpose: "Casts a ray from one point to another in the physics world and keeps what it crossed as this actor's query result. Nearest keeps the first hit, Every keeps all of them nearest first. Read the result with the hit reporters. The ray ignores this actor's own colliders and a ray that starts inside a collider hits it at distance 0. 2D worlds read x and y.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "from_x",
+                id: "QueryFromX",
+                value: "Any",
+            },
+            Slot {
+                field: "from_y",
+                id: "QueryFromY",
+                value: "Any",
+            },
+            Slot {
+                field: "from_z",
+                id: "QueryFromZ",
+                value: "Any",
+            },
+            Slot {
+                field: "to_x",
+                id: "QueryToX",
+                value: "Any",
+            },
+            Slot {
+                field: "to_y",
+                id: "QueryToY",
+                value: "Any",
+            },
+            Slot {
+                field: "to_z",
+                id: "QueryToZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[
+            Dropdown {
+                field: "hits",
+                options: RAY_HITS,
+            },
+            Dropdown {
+                field: "triggers",
+                options: TRIGGER_POLICIES,
+            },
+        ],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "CastBall",
+        category: "Physics",
+        purpose: "Sweeps a ball of the given radius from one point to another and keeps the first thing it meets as this actor's query result. A ball that starts overlapping something hits it at distance 0. Read the result with the hit reporters.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "radius",
+                id: "QueryRadius",
+                value: "Any",
+            },
+            Slot {
+                field: "from_x",
+                id: "QueryFromX",
+                value: "Any",
+            },
+            Slot {
+                field: "from_y",
+                id: "QueryFromY",
+                value: "Any",
+            },
+            Slot {
+                field: "from_z",
+                id: "QueryFromZ",
+                value: "Any",
+            },
+            Slot {
+                field: "to_x",
+                id: "QueryToX",
+                value: "Any",
+            },
+            Slot {
+                field: "to_y",
+                id: "QueryToY",
+                value: "Any",
+            },
+            Slot {
+                field: "to_z",
+                id: "QueryToZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "triggers",
+            options: TRIGGER_POLICIES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "OverlapBall",
+        category: "Physics",
+        purpose: "Keeps every collider a ball at a point overlaps as this actor's query result, nearest first. Read the result with the hit reporters.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "radius",
+                id: "QueryRadius",
+                value: "Any",
+            },
+            Slot {
+                field: "x",
+                id: "QueryFromX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "QueryFromY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "QueryFromZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "triggers",
+            options: TRIGGER_POLICIES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "FindClosest",
+        category: "Physics",
+        purpose: "Keeps the collider nearest a point, within range, as this actor's query result. Distance is to the surface, and zero when the point is inside. Read the result with the hit reporters.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "range",
+                id: "QueryRadius",
+                value: "Any",
+            },
+            Slot {
+                field: "x",
+                id: "QueryFromX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "QueryFromY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "QueryFromZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "triggers",
+            options: TRIGGER_POLICIES,
         }],
         strings: NO_STRINGS,
         bools: NO_BOOLS,

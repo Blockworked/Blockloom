@@ -36,6 +36,22 @@ pub struct WaterSample {
     pub foam: f32,
 }
 
+/// One thing a physics query found, as [`Actor::raycast`] and friends report
+/// it. `distance` is along the query, `fraction` how far along (0-1).
+#[derive(Clone, PartialEq, Debug)]
+pub struct Hit {
+    pub actor: String,
+    pub body: String,
+    pub collider: String,
+    pub part: u32,
+    pub point: (f32, f32, f32),
+    pub normal: (f32, f32, f32),
+    pub distance: f32,
+    pub fraction: f32,
+    pub started_inside: bool,
+    pub trigger: bool,
+}
+
 /// This actor's particles, as [`Actor::particles`] reads them.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Particles {
@@ -385,6 +401,106 @@ impl Actor {
 
     pub fn my_collision_layer(&self) -> u8 {
         self.collision_layer("")
+    }
+
+    /// Asks the physics world, as this actor, and files the answer for
+    /// [`Actor::hit_count`], [`Actor::hit_number`] and [`Actor::hit_text`].
+    /// `kind` is a query name (`"ray"`, `"rays"`, `"ball cast"`, `"ball
+    /// overlap"`, `"box cast"`, `"box overlap"`, `"capsule cast"`, `"capsule
+    /// overlap"`, `"closest"`), `triggers` is `"UseGlobal"`, `"Ignore"` or
+    /// `"Include"`, `layers` a mask (0 for every layer) and `numbers` what
+    /// the kind takes. Returns how many hits there were.
+    pub fn query(&self, kind: &str, triggers: &str, layers: u32, numbers: &[f64]) -> usize {
+        let mut all = Vec::with_capacity(numbers.len() + 1);
+        all.push(layers as f64);
+        all.extend_from_slice(numbers);
+        self.act_many(
+            ACT_PHYSICS_QUERY,
+            Str::borrow(kind),
+            Str::borrow(triggers),
+            Str::EMPTY,
+            &all,
+        );
+        self.hit_count()
+    }
+
+    /// How many hits the last query found.
+    pub fn hit_count(&self) -> usize {
+        self.hit_number(1, "count") as usize
+    }
+
+    /// A number from the `index`th (from 1) hit of the last query: `x`, `y`,
+    /// `z`, `normal x`, `normal y`, `normal z`, `distance`, `fraction`,
+    /// `part`, `started inside`, `is trigger`; or `count`, `overflowed` and
+    /// `tick` for the query itself. Zero when there is no such hit.
+    pub fn hit_number(&self, index: usize, field: &str) -> f64 {
+        self.number(READ_QUERY, Str::borrow(field), Str::EMPTY, index as f64)
+            .unwrap_or(0.0)
+    }
+
+    /// Words from a hit: `actor` (its name), `actor id`, `body`, `collider`;
+    /// or `error` for the query itself. Empty when there is none.
+    pub fn hit_text(&self, index: usize, field: &str) -> String {
+        self.text(
+            TEXT_QUERY,
+            Str::borrow(field),
+            Str::borrow(&index.to_string()),
+        )
+        .unwrap_or_default()
+    }
+
+    /// The nearest thing a segment crosses, as this actor.
+    pub fn raycast(&self, from: (f32, f32, f32), to: (f32, f32, f32)) -> Option<Hit> {
+        let numbers = [from.0, from.1, from.2, to.0, to.1, to.2].map(f64::from);
+        (self.query("ray", "UseGlobal", 0, &numbers) > 0).then(|| self.hit(1))
+    }
+
+    /// Everything a segment crosses, nearest first.
+    pub fn raycast_all(&self, from: (f32, f32, f32), to: (f32, f32, f32)) -> Vec<Hit> {
+        let numbers = [from.0, from.1, from.2, to.0, to.1, to.2].map(f64::from);
+        let count = self.query("rays", "UseGlobal", 0, &numbers);
+        (1..=count).map(|index| self.hit(index)).collect()
+    }
+
+    /// The first thing a ball meets sweeping along a segment.
+    pub fn cast_ball(
+        &self,
+        radius: f32,
+        from: (f32, f32, f32),
+        to: (f32, f32, f32),
+    ) -> Option<Hit> {
+        let numbers = [radius, from.0, from.1, from.2, to.0, to.1, to.2].map(f64::from);
+        (self.query("ball cast", "UseGlobal", 0, &numbers) > 0).then(|| self.hit(1))
+    }
+
+    /// Everything a ball at a point overlaps, nearest first.
+    pub fn overlap_ball(&self, at: (f32, f32, f32), radius: f32) -> Vec<Hit> {
+        let numbers = [radius, at.0, at.1, at.2].map(f64::from);
+        let count = self.query("ball overlap", "UseGlobal", 0, &numbers);
+        (1..=count).map(|index| self.hit(index)).collect()
+    }
+
+    /// The collider nearest a point within `range`.
+    pub fn closest(&self, at: (f32, f32, f32), range: f32) -> Option<Hit> {
+        let numbers = [range, at.0, at.1, at.2].map(f64::from);
+        (self.query("closest", "UseGlobal", 0, &numbers) > 0).then(|| self.hit(1))
+    }
+
+    /// The `index`th (from 1) hit of the last query.
+    pub fn hit(&self, index: usize) -> Hit {
+        let n = |field: &str| self.hit_number(index, field);
+        Hit {
+            actor: self.hit_text(index, "actor"),
+            body: self.hit_text(index, "body"),
+            collider: self.hit_text(index, "collider"),
+            part: n("part") as u32,
+            point: (n("x") as f32, n("y") as f32, n("z") as f32),
+            normal: (n("normal x") as f32, n("normal y") as f32, n("normal z") as f32),
+            distance: n("distance") as f32,
+            fraction: n("fraction") as f32,
+            started_inside: n("started inside") != 0.0,
+            trigger: n("is trigger") != 0.0,
+        }
     }
 
     /// The first body a segment hits, by name, or `None`. Bodies only; this
