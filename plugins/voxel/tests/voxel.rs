@@ -133,7 +133,7 @@ fn the_package_schema_is_valid_and_its_blocks_resolve() {
     let contributions = contributions();
     contributions.check_definition().unwrap();
     assert_eq!(contributions.resources.len(), 1);
-    assert_eq!(blocks().len(), 9);
+    assert_eq!(blocks().len(), 10);
     // Every statement and reporter has the op it names.
     let ops: BTreeSet<_> = blocks().into_iter().map(|b| b.op).collect();
     for op in [
@@ -358,6 +358,37 @@ fn saved_edits_are_laid_over_the_terrain_in_order() {
 }
 
 #[test]
+fn a_cell_can_be_a_slab_and_a_saved_shape_line_does_the_same() {
+    let mut world = hosted(CodeModule::Native(module()));
+    let mut scene = Scene::default();
+    scene.apply(world.start(&resources(small_flat())));
+    let flat = scene.triangles();
+    // The floor's top cell (y 4) becomes a slab: a dip in the surface.
+    let at = [json!(4), json!(4), json!(8)];
+    let mut args = at.to_vec();
+    args.push(json!("slab"));
+    scene.apply(world.run_block(ID, "shape_voxel", &args, "me"));
+    assert!(scene.triangles() > flat, "{} vs {flat}", scene.triangles());
+    assert_eq!(world.read(ID, "voxel_at", &at, "me").unwrap(), json!(3));
+    // Back to a cube, and it merges flat again.
+    args[3] = json!("cube");
+    scene.apply(world.run_block(ID, "shape_voxel", &args, "me"));
+    assert_eq!(scene.triangles(), flat);
+    // Air has no shape, so shaping it does nothing.
+    args[1] = json!(9);
+    args[3] = json!("post");
+    assert!(world.run_block(ID, "shape_voxel", &args, "me").is_empty());
+
+    // The saved edit line gives the same dip when a world starts.
+    let mut payload = small_flat();
+    payload["edits"] = json!(["shape 4 4 8 top slab"]);
+    let mut again = hosted(CodeModule::Native(module()));
+    let mut saved = Scene::default();
+    saved.apply(again.start(&resources(payload)));
+    assert!(saved.triangles() > flat);
+}
+
+#[test]
 fn bad_settings_and_edits_are_refused_with_a_reason() {
     let mut world = hosted(CodeModule::Native(module()));
     // The reason is logged; the call itself reports that it failed.
@@ -434,7 +465,7 @@ fn the_sealed_package_runs_in_the_portable_executor() {
     package::seal(&root).unwrap();
     let package = Package::load(&root).unwrap();
     assert_eq!(package.manifest.id, ID);
-    assert_eq!(package.contributions.blocks.len(), 9);
+    assert_eq!(package.contributions.blocks.len(), 10);
 
     let entry = package.manifest.runtime.portable.clone().unwrap();
     let wasm_module = portable(&root.join(&entry.module), &entry);

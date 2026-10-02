@@ -481,3 +481,12 @@ the remaining proof.
   Running QML a plugin ships needs a trust decision per package and a way to
   keep it from the document; that stays open.
 
+## Shaped voxel cells (eighteenth batch)
+
+- A cell is still one material byte; its shape lives in a sparse table, so a
+  world of cubes costs nothing extra and the greedy mesher is untouched (it
+  only sees whole cubes). Shaped cells are small boxes with their own faces,
+  which is enough for slabs and posts; stairs and ramps need non-box shapes.
+- Rays and the break/place blocks work in whole cells, so they treat a slab as
+  a cube. Collision is the mesh, so it is the real shape.
+

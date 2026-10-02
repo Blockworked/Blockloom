@@ -4,17 +4,71 @@
 //! and start at zero in one corner; anything outside the box reads as air and
 //! ignores writes.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const CHUNK: i32 = 16;
 const CELLS: usize = (CHUNK * CHUNK * CHUNK) as usize;
 
 pub type Cells = [u8; CELLS];
 
+/// What part of its cell a solid cell fills. Anything but a cube is kept in
+/// a sparse table, so a world of cubes pays nothing for the rest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Shape {
+    #[default]
+    Cube,
+    /// The lower half.
+    Slab,
+    /// The upper half.
+    TopSlab,
+    /// A half-width column through the middle.
+    Post,
+}
+
+impl Shape {
+    pub fn from_name(name: &str) -> Result<Shape, String> {
+        match name
+            .trim()
+            .to_ascii_lowercase()
+            .replace([' ', '-'], "_")
+            .as_str()
+        {
+            "cube" | "full" => Ok(Shape::Cube),
+            "slab" => Ok(Shape::Slab),
+            "top_slab" => Ok(Shape::TopSlab),
+            "post" => Ok(Shape::Post),
+            other => Err(format!(
+                "no shape called {other} (cube, slab, top slab or post)"
+            )),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Shape::Cube => "cube",
+            Shape::Slab => "slab",
+            Shape::TopSlab => "top slab",
+            Shape::Post => "post",
+        }
+    }
+
+    /// The box it fills, as fractions of the cell: low corner, high corner.
+    pub fn bounds(self) -> ([f32; 3], [f32; 3]) {
+        match self {
+            Shape::Cube => ([0.0; 3], [1.0; 3]),
+            Shape::Slab => ([0.0; 3], [1.0, 0.5, 1.0]),
+            Shape::TopSlab => ([0.0, 0.5, 0.0], [1.0; 3]),
+            Shape::Post => ([0.25, 0.0, 0.25], [0.75, 1.0, 0.75]),
+        }
+    }
+}
+
 pub struct Grid {
     /// Size in cells, a whole number of chunks on each axis.
     size: [i32; 3],
     chunks: Vec<Option<Box<Cells>>>,
+    /// The cells that are not whole cubes.
+    shapes: BTreeMap<[i32; 3], Shape>,
     /// Chunks whose meshes are out of date: those written to, and the
     /// neighbours that see one of their cells across a boundary.
     dirty: BTreeSet<[i32; 3]>,
@@ -36,6 +90,7 @@ impl Grid {
         Grid {
             size,
             chunks: vec![None; count[0] * count[1] * count[2]],
+            shapes: BTreeMap::new(),
             dirty: BTreeSet::new(),
         }
     }
@@ -72,11 +127,45 @@ impl Grid {
             .map_or(0, |cells| cells[local(cell)])
     }
 
-    /// Writes a cell; true when that changed it.
+    pub fn shape_at(&self, cell: [i32; 3]) -> Shape {
+        self.shapes.get(&cell).copied().unwrap_or_default()
+    }
+
+    /// A solid cell that fills its whole cell, so it hides what it touches.
+    pub fn is_full(&self, cell: [i32; 3]) -> bool {
+        self.get(cell) != 0 && !self.shapes.contains_key(&cell)
+    }
+
+    /// The shaped cells inside one chunk.
+    pub fn shaped_in(&self, chunk: [i32; 3]) -> Vec<([i32; 3], Shape)> {
+        let lo = chunk.map(|c| c * CHUNK);
+        let hi = lo.map(|c| c + CHUNK);
+        self.shapes
+            .range(lo..hi)
+            .filter(|(cell, _)| (0..3).all(|a| (lo[a]..hi[a]).contains(&cell[a])))
+            .map(|(&cell, &shape)| (cell, shape))
+            .collect()
+    }
+
+    /// Writes a whole cube; true when that changed the cell.
     pub fn set(&mut self, cell: [i32; 3], material: u8) -> bool {
+        self.set_shaped(cell, material, Shape::Cube)
+    }
+
+    /// Changes the shape of a solid cell; true when that changed it.
+    pub fn reshape(&mut self, cell: [i32; 3], shape: Shape) -> bool {
+        match self.get(cell) {
+            0 => false,
+            material => self.set_shaped(cell, material, shape),
+        }
+    }
+
+    /// Writes a cell and its shape; true when that changed it.
+    pub fn set_shaped(&mut self, cell: [i32; 3], material: u8, shape: Shape) -> bool {
         if !self.contains(cell) {
             return false;
         }
+        let shape = if material == 0 { Shape::Cube } else { shape };
         let chunk = cell.map(|c| c.div_euclid(CHUNK));
         let slot = self.slot(chunk).expect("a contained cell has a chunk");
         if material == 0 && self.chunks[slot].is_none() {
@@ -84,10 +173,16 @@ impl Grid {
         }
         let cells = self.chunks[slot].get_or_insert_with(|| Box::new([0; CELLS]));
         let index = local(cell);
-        if cells[index] == material {
+        if cells[index] == material && self.shapes.get(&cell).copied().unwrap_or_default() == shape
+        {
             return false;
         }
         cells[index] = material;
+        if shape == Shape::Cube {
+            self.shapes.remove(&cell);
+        } else {
+            self.shapes.insert(cell, shape);
+        }
         self.dirty.insert(chunk);
         // A cell on a chunk's face decides which faces its neighbour draws.
         for axis in 0..3 {
@@ -133,6 +228,7 @@ impl Grid {
 
     pub fn clear(&mut self) {
         self.chunks.iter_mut().for_each(|c| *c = None);
+        self.shapes.clear();
         self.dirty.clear();
     }
 
@@ -182,6 +278,30 @@ mod tests {
         grid.set([5, 5, 5], 1);
         assert_eq!(grid.take_dirty(), [[0, 0, 0]]);
         assert!(grid.take_dirty().is_empty());
+    }
+
+    #[test]
+    fn shapes_are_kept_per_cell_and_dropped_with_the_cell() {
+        let mut grid = Grid::new([32, 16, 16]);
+        assert!(!grid.reshape([1, 1, 1], Shape::Slab), "air has no shape");
+        grid.set([1, 1, 1], 1);
+        assert!(grid.is_full([1, 1, 1]));
+        assert!(grid.reshape([1, 1, 1], Shape::Slab));
+        assert!(!grid.reshape([1, 1, 1], Shape::Slab));
+        assert_eq!(grid.shape_at([1, 1, 1]), Shape::Slab);
+        assert!(!grid.is_full([1, 1, 1]));
+        assert_eq!(grid.get([1, 1, 1]), 1);
+        grid.set_shaped([20, 2, 2], 3, Shape::Post);
+        assert_eq!(grid.shaped_in([0, 0, 0]).len(), 1);
+        assert_eq!(grid.shaped_in([1, 0, 0]), [([20, 2, 2], Shape::Post)]);
+        // Writing a cube, or air, takes the shape away.
+        grid.set([1, 1, 1], 1);
+        assert_eq!(grid.shape_at([1, 1, 1]), Shape::Cube);
+        grid.set([20, 2, 2], 0);
+        assert!(grid.shaped_in([1, 0, 0]).is_empty());
+        assert!(Shape::from_name("Top slab").is_ok());
+        assert!(Shape::from_name("ramp").is_err());
+        assert_eq!(Shape::from_name(Shape::TopSlab.name()), Ok(Shape::TopSlab));
     }
 
     #[test]

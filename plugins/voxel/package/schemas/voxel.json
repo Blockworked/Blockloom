@@ -149,6 +149,17 @@
       "action": {"do": "module", "op": "place"}
     },
     {
+      "name": "shape_voxel",
+      "summary": "Make a solid cell of the running world a slab, top slab, post or whole cube.",
+      "args": [
+        {"name": "x", "type": "int", "default": 0},
+        {"name": "y", "type": "int", "default": 0},
+        {"name": "z", "type": "int", "default": 0},
+        {"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post"], "default": "slab"}
+      ],
+      "action": {"do": "module", "op": "shape"}
+    },
+    {
       "name": "voxel_stats",
       "summary": "Answer how many cells are solid and how many chunks are drawn.",
       "action": {"do": "module", "op": "count"}
@@ -168,6 +179,20 @@
       ],
       "command": "set_voxel",
       "help": "Changes one cell of the running world; the chunk it is in is redrawn."
+    },
+    {
+      "type_id": "shape_voxel",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "shape voxel x {x} y {y} z {z} as {shape}",
+      "slots": [
+        {"name": "x", "type": "int", "default": 0},
+        {"name": "y", "type": "int", "default": 0},
+        {"name": "z", "type": "int", "default": 0},
+        {"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post"], "default": "slab"}
+      ],
+      "command": "shape_voxel",
+      "help": "Makes a solid cell a slab, top slab, post or whole cube; air stays air."
     },
     {
       "type_id": "fill_voxels",

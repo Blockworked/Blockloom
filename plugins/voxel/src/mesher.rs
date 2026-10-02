@@ -38,23 +38,53 @@ impl Group {
     }
 
     fn push(&mut self, quad: &Quad, voxel: f32) {
-        let (u, v) = ((quad.axis + 1) % 3, (quad.axis + 2) % 3);
+        let [w, h] = quad.size;
+        let (a, s) = (quad.at, quad.size);
+        self.push_rect(
+            quad.axis,
+            quad.sign,
+            quad.plane as f32,
+            [a[0] as f32, a[1] as f32],
+            [(a[0] + w) as f32, (a[1] + s[1].min(h)) as f32],
+            quad.color,
+            voxel,
+        );
+    }
+
+    /// A rectangle on the plane `plane` across `axis` (all in cells from the
+    /// chunk's corner), spanning `lo` to `hi` on the next two axes.
+    #[allow(clippy::too_many_arguments)]
+    fn push_rect(
+        &mut self,
+        axis: usize,
+        sign: i32,
+        plane: f32,
+        lo: [f32; 2],
+        hi: [f32; 2],
+        color: [f32; 3],
+        voxel: f32,
+    ) {
+        let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
         let base = self.positions.len() as u32 / 3;
         let mut normal = [0.0; 3];
-        normal[quad.axis] = quad.sign as f32;
-        let [w, h] = quad.size;
-        for (du, dv) in [(0, 0), (w, 0), (w, h), (0, h)] {
+        normal[axis] = sign as f32;
+        for (pu, pv) in [
+            (lo[0], lo[1]),
+            (hi[0], lo[1]),
+            (hi[0], hi[1]),
+            (lo[0], hi[1]),
+        ] {
             let mut p = [0.0; 3];
-            p[quad.axis] = quad.plane as f32 * voxel;
-            p[u] = (quad.at[0] + du) as f32 * voxel;
-            p[v] = (quad.at[1] + dv) as f32 * voxel;
+            p[axis] = plane * voxel;
+            p[u] = pu * voxel;
+            p[v] = pv * voxel;
             self.positions.extend(p);
             self.normals.extend(normal);
-            let [r, g, b] = quad.color;
+            let [r, g, b] = color;
             self.colors.extend([r, g, b, 1.0]);
         }
         // u x v = axis, so this order is counter-clockwise seen from +axis.
-        let order: [u32; 6] = if quad.sign > 0 {
+        let order: [u32; 6] = if sign > 0 {
             [0, 1, 2, 0, 2, 3]
         } else {
             [0, 2, 1, 0, 3, 2]
@@ -89,13 +119,14 @@ pub fn mesh_chunk(
                         at[u] = i;
                         at[v] = j;
                         let cell = [base[0] + at[0], base[1] + at[1], base[2] + at[2]];
-                        let material = grid.get(cell);
-                        if material == 0 {
+                        // Shaped cells are drawn on their own, below.
+                        if !grid.is_full(cell) {
                             continue;
                         }
+                        let material = grid.get(cell);
                         let mut next = cell;
                         next[axis] += sign;
-                        if grid.get(next) == 0 {
+                        if !grid.is_full(next) {
                             mask[j as usize * n + i as usize] = material;
                         }
                     }
@@ -139,12 +170,46 @@ pub fn mesh_chunk(
             }
         }
     }
+    for (cell, shape) in grid.shaped_in(chunk) {
+        let Some(look) = palette.get(grid.get(cell)) else {
+            continue;
+        };
+        let key = (look.emission > 0.0).then_some(grid.get(cell));
+        let (lo, hi) = shape.bounds();
+        let at = [0, 1, 2].map(|a| (cell[a] - base[a]) as f32);
+        for axis in 0..3 {
+            let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+            for sign in [1, -1] {
+                let on_edge = if sign > 0 {
+                    hi[axis] >= 1.0
+                } else {
+                    lo[axis] <= 0.0
+                };
+                let mut next = cell;
+                next[axis] += sign;
+                if on_edge && grid.is_full(next) {
+                    continue;
+                }
+                let at_plane = at[axis] + if sign > 0 { hi[axis] } else { lo[axis] };
+                groups.entry(key).or_default().push_rect(
+                    axis,
+                    sign,
+                    at_plane,
+                    [at[u] + lo[u], at[v] + lo[v]],
+                    [at[u] + hi[u], at[v] + hi[v]],
+                    look.color,
+                    voxel,
+                );
+            }
+        }
+    }
     groups
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::grid::Shape;
     use crate::palette::{DIRT, GLOW, STONE};
 
     fn palette() -> Palette {
@@ -174,6 +239,40 @@ mod tests {
         }
         // A row of four is still a box: six merged quads.
         assert_eq!(lit(&mesh_chunk(&grid, &palette(), [0, 0, 0], 1.0)), 12);
+    }
+
+    #[test]
+    fn a_slab_is_a_half_height_box_that_stays_visible_over_a_cube() {
+        let mut grid = Grid::new([16, 16, 16]);
+        grid.set_shaped([4, 4, 4], STONE, Shape::Slab);
+        let groups = mesh_chunk(&grid, &palette(), [0, 0, 0], 1.0);
+        assert_eq!(lit(&groups), 12);
+        let ys: Vec<f32> = groups[&None].positions.chunks(3).map(|p| p[1]).collect();
+        let (lo, hi) = (
+            ys.iter().cloned().fold(f32::MAX, f32::min),
+            ys.iter().cloned().fold(f32::MIN, f32::max),
+        );
+        assert_eq!((lo, hi), (4.0, 4.5));
+        // The cube beside it draws every face (a slab is no wall), and the
+        // slab's side against the cube is hidden: 6 + 5 faces.
+        grid.set([5, 4, 4], STONE);
+        let groups = mesh_chunk(&grid, &palette(), [0, 0, 0], 1.0);
+        assert_eq!(lit(&groups), 22);
+    }
+
+    #[test]
+    fn a_post_has_its_sides_inset() {
+        let mut grid = Grid::new([16, 16, 16]);
+        grid.set_shaped([2, 2, 2], STONE, Shape::Post);
+        let groups = mesh_chunk(&grid, &palette(), [0, 0, 0], 2.0);
+        assert_eq!(lit(&groups), 12);
+        let xs: Vec<f32> = groups[&None].positions.chunks(3).map(|p| p[0]).collect();
+        assert!(xs.iter().all(|&x| x == 4.5 || x == 5.5), "{xs:?}");
+        // A cube on top hides the post's top, but its own underside still
+        // shows around the post: 5 + 6 faces.
+        grid.set([2, 3, 2], STONE);
+        let groups = mesh_chunk(&grid, &palette(), [0, 0, 0], 1.0);
+        assert_eq!(lit(&groups), 22);
     }
 
     #[test]

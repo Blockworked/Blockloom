@@ -7,10 +7,11 @@
 //! away), so the game only ever redraws touched chunks. A chunk's cells are
 //! the authority, its meshes are disposable.
 //!
-//! Ops: `world.start`, `world.stop`, `set`, `fill`, `sphere`, `generate`,
+//! Ops: `world.start`, `world.stop`, `set`, `fill`, `sphere`, `shape`, `generate`,
 //! `get`, `height`, `count`, `cast`, `break`, `place`. Cell coordinates are
 //! whole numbers from one corner of the world; a material is its id or its
-//! name (`air` or 0 clears). A ray (`cast`, `break`, `place`) is given in
+//! name (`air` or 0 clears). A solid cell may be a slab, top slab or post
+//! instead of a whole cube (`shape`); rays still treat it as the whole cell. A ray (`cast`, `break`, `place`) is given in
 //! world units, like the cubes are drawn.
 //!
 //! Edits made by blocks last as long as the run: stopping the game starts the
@@ -25,7 +26,7 @@ mod terrain;
 
 use blockloom_plugin_api::mesh::MeshData;
 use blockloom_plugin_sdk::{Error, Host, Plugin, Value, export_plugin, json};
-use grid::{CHUNK, Grid};
+use grid::{CHUNK, Grid, Shape};
 use palette::Palette;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -173,7 +174,8 @@ impl World {
     }
 
     /// Applies one saved edit line: `set X Y Z material`, `fill X1 Y1 Z1 X2
-    /// Y2 Z2 material` or `sphere X Y Z radius material`.
+    /// Y2 Z2 material`, `sphere X Y Z radius material` or `shape X Y Z
+    /// shape` (which only reshapes a solid cell).
     fn apply_edit(&mut self, line: &str) -> Result<u64, String> {
         let words: Vec<&str> = line.split_whitespace().collect();
         let (verb, rest) = words.split_first().ok_or("an empty edit")?;
@@ -215,6 +217,11 @@ impl World {
                     .ok_or("the radius must be 0 to 512")?;
                 let m = material(4)?;
                 Ok(self.fill_sphere([c[0], c[1], c[2]], radius, m))
+            }
+            "shape" => {
+                let c = cells(0, 3)?;
+                let shape = Shape::from_name(&rest.get(3..).unwrap_or_default().join(" "))?;
+                Ok(u64::from(self.grid.reshape([c[0], c[1], c[2]], shape)))
             }
             other => Err(format!("unknown edit \"{other}\"")),
         }
@@ -388,6 +395,15 @@ impl Voxel {
         Ok(Voxel::edited(world, changed))
     }
 
+    fn shape(&mut self, args: &Value) -> Result<Value, Error> {
+        let at = cell(args)?;
+        let shape = Shape::from_name(args["shape"].as_str().unwrap_or("cube"))
+            .map_err(Error::bad_argument)?;
+        let world = self.world()?;
+        let changed = u64::from(world.grid.reshape(at, shape));
+        Ok(Voxel::edited(world, changed))
+    }
+
     fn sphere(&mut self, args: &Value) -> Result<Value, Error> {
         let centre = cell(args)?;
         let radius = args["radius"]
@@ -501,11 +517,14 @@ impl Plugin for Voxel {
             "set" => self.set(&args),
             "fill" => self.fill(&args),
             "sphere" => self.sphere(&args),
+            "shape" => self.shape(&args),
             "generate" => self.regenerate(&args),
             "get" => {
                 let at = cell(&args)?;
-                let material = self.world()?.grid.get(at);
-                Ok(json!({"material": material, "value": material}))
+                let grid = &self.world()?.grid;
+                let material = grid.get(at);
+                let shape = grid.shape_at(at).name();
+                Ok(json!({"material": material, "shape": shape, "value": material}))
             }
             "height" => {
                 let (x, z) = (int(&args, "x")?, int(&args, "z")?);
