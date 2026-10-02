@@ -11,7 +11,9 @@ use crate::lock::{LockFile, LockedPackage, ProjectPlugins};
 use crate::package::Package;
 use crate::source::Source;
 use blockloom_plugin_api::loadout::{Loadout, LoadoutBlock, LoadoutPlugin};
-use blockloom_plugin_api::manifest::{DependencyScope, PluginManifest, Tier};
+use blockloom_plugin_api::manifest::{
+    DependencyScope, PluginManifest, Tier, loads_native_libraries,
+};
 use blockloom_plugin_api::record::PluginRecord;
 use blockloom_plugin_api::schema::{
     BlockKind, BlockSchema, BuildHookSchema, CommandAction, CommandSchema, ComponentSchema,
@@ -595,9 +597,8 @@ pub(crate) fn code_runtime_of(
     target: &str,
 ) -> Result<CodeRuntime, String> {
     let manifest = &package.manifest;
-    if !manifest.runtime.native.contains_key(target)
-        && let Some(entry) = &manifest.runtime.portable
-    {
+    let native = loads_native_libraries(target) && manifest.runtime.native.contains_key(target);
+    if !native && let Some(entry) = &manifest.runtime.portable {
         return Ok(CodeRuntime::Portable(PortableLibrary {
             path: package.root.join(&entry.module),
             hash: package.content_hash.clone(),
@@ -678,6 +679,7 @@ fn shipped_files(
         .filter(|path| {
             let path = path.as_str();
             if manifest.editor.modules.iter().any(|m| m == path)
+                || manifest.editor.inspectors.iter().any(|i| i.module == path)
                 || path.starts_with("editor/")
                 || path.starts_with("docs/")
                 || path.starts_with("examples/")

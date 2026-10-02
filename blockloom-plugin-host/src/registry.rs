@@ -148,18 +148,18 @@ fn unpack_verified(
 /// `base`.
 pub fn open_registry(base: &Path, location: &str) -> Result<Box<dyn Registry>, String> {
     if location.starts_with("http://") || location.starts_with("https://") {
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
         return Ok(Box::new(HttpRegistry::open(location)?));
-        #[cfg(target_arch = "wasm32")]
-        return Err("a browser build can't read an HTTP registry".to_string());
+        #[cfg(any(target_arch = "wasm32", target_os = "android"))]
+        return Err("this build can't read an HTTP registry".to_string());
     }
     Ok(Box::new(DirRegistry::open(base.join(location))))
 }
 
 /// Largest `index.json` and archive an HTTP registry may send.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 const MAX_INDEX_BYTES: u64 = 16 * 1024 * 1024;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
 
 /// A registry served over HTTP: the same `index.json` and `archives/` a
@@ -167,14 +167,14 @@ const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
 /// putting a published folder there. The index is read once per value; every
 /// archive is checked against the hash in it, so only the index has to come
 /// over a channel you trust (HTTPS, or this machine).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 pub struct HttpRegistry {
     base: String,
     agent: ureq::Agent,
     index: std::sync::OnceLock<Index>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 impl HttpRegistry {
     pub fn open(url: &str) -> Result<Self, String> {
         let base = url.trim_end_matches('/').to_string();
@@ -228,7 +228,7 @@ impl HttpRegistry {
 }
 
 /// An archive path an index may name: relative, plain segments.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 fn plain_relative(path: &str) -> bool {
     !path.is_empty()
         && !path.contains(['\\', ':', '?', '#'])
@@ -237,7 +237,7 @@ fn plain_relative(path: &str) -> bool {
             .all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 impl Registry for HttpRegistry {
     fn versions(&self, id: &str) -> Result<Vec<IndexEntry>, String> {
         Ok(self
@@ -326,7 +326,7 @@ mod tests {
 
     /// Serves `root` over HTTP on a loopback port until the process ends,
     /// counting requests; `tamper` rewrites a path's body.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
     fn serve(
         root: PathBuf,
         tamper: fn(&str, Vec<u8>) -> Vec<u8>,
@@ -374,7 +374,7 @@ mod tests {
         (url, hits)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
     #[test]
     fn an_http_registry_lists_and_fetches_what_a_folder_published() {
         let dir = tempfile::tempdir().unwrap();
@@ -410,7 +410,7 @@ mod tests {
         assert!(missing.contains("not in this registry"), "{missing}");
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
     #[test]
     fn an_http_archive_that_does_not_match_the_index_is_refused() {
         let dir = tempfile::tempdir().unwrap();
@@ -441,7 +441,7 @@ mod tests {
         assert!(error.contains("index hash"), "{error}");
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
     #[test]
     fn http_registries_need_https_except_on_this_machine() {
         for bad in [

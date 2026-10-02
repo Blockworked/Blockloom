@@ -35,6 +35,14 @@ fn instructions_arg(args: &Value, name: &str) -> Result<Vec<Instruction>, String
     wire::from_wire(value).map_err(|e| format!("invalid argument '{name}': {e}"))
 }
 
+/// A tool run's hits: a list as `hits`, else the one `hit`.
+fn tool_hits(args: &Value) -> Result<Vec<Value>, String> {
+    match args.get("hits").filter(|v| !v.is_null()) {
+        Some(_) => arg(args, "hits"),
+        None => Ok(vec![arg(args, "hit")?]),
+    }
+}
+
 fn to_json<T: serde::Serialize>(value: T) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|e| e.to_string())
 }
@@ -539,7 +547,7 @@ impl Backend {
                 app,
                 &arg::<String>(&args, "plugin")?,
                 &arg::<String>(&args, "tool")?,
-                &arg(&args, "hit")?,
+                &tool_hits(&args)?,
                 &arg(&args, "options").unwrap_or(Value::Null),
             )?),
             "add_plugin_component" => to_json(commands::plugins::add_plugin_component(

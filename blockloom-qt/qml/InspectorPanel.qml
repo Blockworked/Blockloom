@@ -882,15 +882,46 @@ Rectangle {
                 text: "Real Rust, compiled when you press Play. It runs alongside this actor's blocks, not instead of them." }
         }
     }
+    // The QML section the plugin draws for one of its component types, from the
+    // trusted editor modules: {file} once trusted, {file: null} until then, or
+    // null when the plugin draws none.
+    function pluginSection(plugin, typeId) {
+        const shipped = appState.plugins && appState.plugins.editorModules ? appState.plugins.editorModules : [];
+        const owner = shipped.find(p => p.plugin === plugin);
+        const section = owner && owner.inspectors ? owner.inspectors.find(i => i.component === typeId) : null;
+        return section ? { file: section.file || null, pluginName: owner.pluginName } : null;
+    }
+
     // A plugin's component: a form from its schema, or a note that keeps the
-    // data safe while the plugin is missing.
+    // data safe while the plugin is missing. A trusted plugin may draw its own
+    // section instead, with the generated form one click away.
     Component {
         id: pluginCard
         ColumnLayout {
             id: plug
             readonly property var c: parent.c
             readonly property var t: root.pluginType(root.componentName(c))
+            readonly property var section: root.pluginSection(c.record.plugin, c.record.type_id)
+            readonly property bool drawn: !!section && !!section.file && !!t && !sectionFailed
+            property bool sectionFailed: false
+            property bool rawFields: false
+            readonly property bool formShown: !!t && c.record.schema_version === t.version && (!drawn || rawFields)
             spacing: 6
+            // What the plugin's section is handed as `host`.
+            QtObject {
+                id: sectionHost
+                readonly property string plugin: plug.c.record.plugin
+                readonly property string component: plug.c.record.type_id
+                readonly property string actorId: root.actor ? root.actor.id : ""
+                readonly property var payload: plug.c.record.payload
+                readonly property var type: plug.t
+                readonly property var app: root.app
+                readonly property var project: root.appState.project
+                function write(next) { root.writePlugin(plug.c, next); }
+                function call(command, args, done, failed) {
+                    root.app.invoke("plugin_call", { command: plugin + "/" + command, args: args || ({}) }, done, failed);
+                }
+            }
             Text {
                 visible: !plug.t
                 Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
@@ -901,8 +932,30 @@ Rectangle {
                 Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.warning; font.pixelSize: 12
                 text: "Written at schema " + plug.c.record.schema_version + ", the plugin is at " + (plug.t ? plug.t.version : 0) + ". Migrate it from the Plugins dialog before running."
             }
+            Text {
+                visible: !!plug.section && !plug.section.file
+                Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
+                text: plug.section ? plug.section.pluginName + " draws its own section for this. Trust it in Plugin editors to use it." : ""
+            }
+            Loader {
+                id: sectionLoader
+                objectName: "plugin-section"
+                Layout.fillWidth: true
+                active: plug.drawn && !!plug.t && plug.c.record.schema_version === plug.t.version
+                visible: active && status === Loader.Ready
+                onActiveChanged: if (active) setSource(root.app.toFileUrl(plug.section.file), { host: sectionHost })
+                Component.onCompleted: if (active) setSource(root.app.toFileUrl(plug.section.file), { host: sectionHost })
+                onStatusChanged: if (status === Loader.Error) plug.sectionFailed = true
+            }
+            BwButton {
+                visible: plug.drawn && !!plug.t && plug.c.record.schema_version === plug.t.version
+                implicitHeight: 24; font.pixelSize: 11
+                text: plug.rawFields ? "Hide fields" : "Fields"
+                onClicked: plug.rawFields = !plug.rawFields
+            }
             PluginRecordForm {
-                visible: !!plug.t && plug.c.record.schema_version === plug.t.version
+                objectName: "plugin-fields"
+                visible: plug.formShown
                 app: root.app; type: plug.t || ({ fields: [], defaults: {} }); payload: plug.c.record.payload; actors: root.actorOptions
                 onChanged: next => root.writePlugin(plug.c, next)
             }

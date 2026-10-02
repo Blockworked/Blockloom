@@ -19,6 +19,29 @@ TestCase {
         ],
         defaults: { hp: 100, bar_color: "#44CC55", tags: [] }
     })
+    property bool sectionTrusted: false
+    QtObject {
+        id: sectionApp
+        property var appState: ({
+            project_path: "/tmp/Demo", selected_actor: null, project: null,
+            plugins: { editorModules: [{
+                plugin: "com.example.notes", pluginName: "Notes", trusted: test.sectionTrusted, changed: false, modules: [],
+                inspectors: [{ component: "sticky", path: "editor/StickySection.qml", file: test.sectionTrusted ? "/tmp/StickySection.qml" : null }]
+            }] }
+        })
+        property var openActor: null
+        property var status: null
+        property var assetTargets: []
+        property var assetDrag: null
+        property string inspectedLighting: ""
+        property bool inspectScene: false
+        property string inspectedScene: ""
+        function invoke(command, args, done, failed) { if (done) done({}); }
+        function assetUrl(path) { return ""; }
+        function fromFileUrl(path) { return String(path); }
+        function toFileUrl(path) { return "file://" + path; }
+    }
+    Component { id: panelFactory; Editor.InspectorPanel { app: sectionApp } }
     Component { id: formFactory; Editor.PluginRecordForm { app: stubApp } }
     Component { id: editorFactory; Editor.PluginValueEditor { app: stubApp } }
     SignalSpy { id: formSpy; signalName: "changed" }
@@ -137,5 +160,18 @@ TestCase {
     function test_aMultilineTextUsesABox() {
         const e = createTemporaryObject(editorFactory, test, { ty: { type: "text", ui: { widget: "multiline" } }, value: "a\nb" });
         verify(findChild(e, "plugin-multiline") !== null);
+    }
+    function test_aPluginSectionNeedsTrustBeforeItHasAFile() {
+        const panel = createTemporaryObject(panelFactory, test, { width: 360, height: 600 });
+        test.sectionTrusted = false;
+        const held = panel.pluginSection("com.example.notes", "sticky");
+        verify(held !== null);
+        compare(held.file, null);
+        compare(held.pluginName, "Notes");
+        test.sectionTrusted = true;
+        compare(panel.pluginSection("com.example.notes", "sticky").file, "/tmp/StickySection.qml");
+        // Only the component type it names, and only its own plugin.
+        compare(panel.pluginSection("com.example.notes", "other"), null);
+        compare(panel.pluginSection("com.example.health", "sticky"), null);
     }
 }

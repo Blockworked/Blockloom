@@ -447,10 +447,19 @@ impl Voxel {
             None => json!({"hit": false, "distance": -1.0, "value": -1.0}),
             Some(hit) => {
                 let distance = round(hit.distance * voxel);
+                // World-space boxes, which a scene tool may outline.
+                let boxed = |cell: [i32; 3]| {
+                    let min = [0, 1, 2].map(|a| round(world.origin[a] + cell[a] as f32 * voxel));
+                    let max =
+                        [0, 1, 2].map(|a| round(world.origin[a] + (cell[a] + 1) as f32 * voxel));
+                    [min[0], min[1], min[2], max[0], max[1], max[2]]
+                };
                 json!({
                     "hit": true,
                     "cell": hit.cell,
                     "before": hit.before(),
+                    "cell_box": boxed(hit.cell),
+                    "before_box": boxed(hit.before()),
                     "normal": hit.normal,
                     "material": world.grid.get(hit.cell),
                     "distance": distance,

@@ -100,6 +100,11 @@ BwDialog {
                                 text: (entry.modelData.changed ? "This plugin changed since you trusted it. " : "")
                                     + "Its screens run code inside Blockloom with the same access you have. Trust it only if you trust where it came from."
                             }
+                            Text {
+                                visible: !!entry.modelData.inspectors && entry.modelData.inspectors.length > 0
+                                Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
+                                text: "Draws its own inspector section for: " + (entry.modelData.inspectors || []).map(i => i.component).join(", ")
+                            }
                             Flow {
                                 visible: entry.modelData.trusted
                                 Layout.fillWidth: true; spacing: 6

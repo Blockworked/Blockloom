@@ -528,3 +528,26 @@ the remaining proof.
 - Not run here: there is no Qt in the build container, so the dialog and its
   test have not been run; the backend (ledger, snapshot, commands, example
   package) is tested.
+
+## Scene tool strokes, inspector sections and Android (twenty-first batch)
+
+- A stroke is the hits of every pointer move between press and release, sent
+  once on release, so the editor keeps one undo step however long the drag.
+  The cast answers a `cell_box` for the outline and the stroke dedupes by
+  cell. `PROTOCOL_VERSION` 25.
+- An inspector section is a trusted QML module for one component, so it rides
+  the existing trust ledger and hash; without trust the schema form shows.
+  Nothing new is exposed beyond what `host.app` already gave a module.
+- Native compiled editor modules are not planned: they would execute inside
+  the Qt process with nothing like the portable fuel and memory limits, and
+  trusted QML already reaches the editor. Revisit only with a real need.
+- Android is portable-only, as the browser is: no library is read out of an
+  APK. The host compiles for `aarch64-linux-android` (HTTP registries off) and
+  so does the runtime with `--features plugins`; there is no NDK or device
+  here, so the runtime build and a real run are unverified.
+- A faster browser host is not built. A browser instance has no fuel, so a
+  runaway call could hang the page; a design that fell back to wasmi per
+  plugin needs an opt-in flag and a watchdog, and cannot be proven without a
+  browser here.
+- Not run here: QML tests and the runtime's own tests (no Qt, no linkable
+  Bevy); the plugin api, host, voxel and app tests pass.

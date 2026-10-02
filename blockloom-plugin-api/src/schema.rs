@@ -984,6 +984,14 @@ pub struct ToolSchema {
     /// What the tool asks for in the editor before it is used.
     #[serde(default)]
     pub options: Vec<FieldSchema>,
+    /// Path into the cast's answer of the box the editor outlines under the
+    /// pointer and along a stroke: six numbers, min then max, in world units.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub outline: String,
+    /// Holding the button and dragging keeps casting, and the whole stroke
+    /// runs on release as one undo step.
+    #[serde(default)]
+    pub drag: bool,
 }
 
 fn default_reach() -> f64 {
@@ -1007,6 +1015,11 @@ impl ToolSchema {
             return Err(format!("tool {name}: reach is 0 to {MAX_TOOL_REACH}"));
         }
         check_fields(&self.options, name)?;
+        if self.outline.starts_with('$') {
+            return Err(format!(
+                "tool {name}: outline is a path into the hit, not a $ source"
+            ));
+        }
         let Some(command) = all.command(&self.command) else {
             return Err(format!("tool {name}: unknown command {}", self.command));
         };
@@ -1061,8 +1074,29 @@ impl ToolSchema {
     }
 }
 
+/// The six numbers (min then max) a tool's `outline` path names in a hit.
+pub fn box_at(hit: &Value, path: &str) -> Option<[f64; 6]> {
+    if path.is_empty() {
+        return None;
+    }
+    let list = dig(hit, path)?;
+    let list = list.as_array()?;
+    if list.len() != 6 {
+        return None;
+    }
+    let mut out = [0.0; 6];
+    for (slot, value) in out.iter_mut().zip(list) {
+        let n = value.as_f64()?;
+        if !n.is_finite() {
+            return None;
+        }
+        *slot = n;
+    }
+    Some(out)
+}
+
 /// Reads `a.b.0` out of a value: a key of an object or an index of a list.
-fn dig(value: &Value, path: &str) -> Option<Value> {
+pub fn dig(value: &Value, path: &str) -> Option<Value> {
     let mut at = value;
     for step in path.split('.') {
         at = match at {
@@ -1511,6 +1545,26 @@ mod tests {
         ] {
             assert!(schema(bad).check_definition().is_err());
         }
+    }
+
+    #[test]
+    fn a_tool_outline_is_a_path_to_six_numbers() {
+        let hit = json!({"hit": true, "before_box": [0, 1, 2, 3.5, 4, 5], "short": [1, 2]});
+        assert_eq!(
+            box_at(&hit, "before_box"),
+            Some([0.0, 1.0, 2.0, 3.5, 4.0, 5.0])
+        );
+        assert_eq!(box_at(&hit, "short"), None);
+        assert_eq!(box_at(&hit, "missing"), None);
+        assert_eq!(box_at(&hit, ""), None);
+        let bad: Contributions = serde_json::from_value(json!({
+            "commands": [{"name": "paint", "summary": "x", "args": [],
+                "action": {"do": "module", "op": "paint"}}],
+            "tools": [{"name": "brush", "title": "Brush", "cast": "cast",
+                "command": "paint", "outline": "$hit.box", "drag": true}]
+        }))
+        .unwrap();
+        assert!(bad.check_definition().is_err());
     }
 
     #[test]

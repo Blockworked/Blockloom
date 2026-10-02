@@ -317,7 +317,7 @@ impl Backend {
             RuntimeMessage::PluginTool {
                 plugin,
                 tool,
-                hit,
+                hits,
                 options,
             } => {
                 drop(s);
@@ -327,7 +327,7 @@ impl Backend {
                     &self.app,
                     &plugin,
                     &tool,
-                    &hit,
+                    &hits,
                     &options,
                 ) {
                     let line = LogLine {

@@ -62,6 +62,9 @@ pub enum MeshOp {
 pub struct PluginHost {
     pub loadout: Loadout,
     pub meshes: Vec<MeshOp>,
+    /// How many times a preview module has been started, so what was cast
+    /// against an older one can be told from what is in the scene now.
+    pub previews: u64,
     #[cfg(feature = "plugins")]
     world: Option<Rc<RefCell<WorldPlugins>>>,
     #[cfg(feature = "plugins")]
@@ -253,7 +256,11 @@ pub fn shipped_loadout(
             .collect();
         #[cfg(target_arch = "wasm32")]
         let target = "wasm32-unknown-unknown";
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(target_os = "android", target_arch = "aarch64"))]
+        let target = "aarch64-linux-android";
+        #[cfg(all(target_os = "android", target_arch = "x86_64"))]
+        let target = "x86_64-linux-android";
+        #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
         let target = blockloom_core::build::host().map_or("unknown", |t| t.triple);
         shipped_loadout(&shipped, target)
     }
@@ -354,6 +361,7 @@ fn preview_with(engine: &mut Engine, open: impl FnOnce(&Loadout) -> WorldPlugins
         let started = world.start(&|plugin| records_for(engine, plugin, true));
         engine.plugins.world = Some(Rc::new(RefCell::new(world)));
         engine.plugins.previewing = Some(key);
+        engine.plugins.previews += 1;
         // A preview draws; what it says belongs to a run's log.
         let drawn = applied(started)
             .into_iter()
@@ -430,14 +438,16 @@ fn read(
     }
 }
 
-/// A click with a plugin's scene tool: the pointer's ray goes to the tool's
-/// cast op in the hosted module, and a hit comes back as the message the
-/// editor runs the tool's command from. A miss, or no module, is nothing.
-pub fn tool_click(
+/// Casts the pointer's ray through a plugin tool's cast op in the hosted
+/// module. A hit is the module's whole answer; a miss, or no module, is
+/// nothing. `report` says whether a failing cast reaches the editor's log
+/// (a click does, a hover every frame would flood it).
+pub fn tool_cast(
     engine: &mut Engine,
     tool: &blockloom_protocol::PluginToolView,
     ray: Ray3d,
-) -> Option<blockloom_protocol::RuntimeMessage> {
+    report: bool,
+) -> Option<Value> {
     #[cfg(feature = "plugins")]
     {
         if engine.running {
@@ -455,28 +465,40 @@ pub fn tool_click(
         let hit = match hit {
             Ok(hit) => hit,
             Err(message) => {
-                bridge::send(&RuntimeMessage::Error {
-                    actor: String::new(),
-                    message,
-                });
+                if report {
+                    bridge::send(&RuntimeMessage::Error {
+                        actor: String::new(),
+                        message,
+                    });
+                }
                 return None;
             }
         };
-        if hit.get("hit").and_then(Value::as_bool) != Some(true) {
-            return None;
-        }
-        Some(RuntimeMessage::PluginTool {
-            plugin: tool.plugin.clone(),
-            tool: tool.tool.clone(),
-            hit,
-            options: tool.options.clone(),
-        })
+        (hit.get("hit").and_then(Value::as_bool) == Some(true)).then_some(hit)
     }
     #[cfg(not(feature = "plugins"))]
     {
-        let _ = (engine, tool, ray);
+        let _ = (engine, tool, ray, report);
         None
     }
+}
+
+/// A stroke of a plugin tool as the message the editor runs it from.
+pub fn tool_stroke(
+    tool: &blockloom_protocol::PluginToolView,
+    hits: Vec<Value>,
+) -> blockloom_protocol::RuntimeMessage {
+    RuntimeMessage::PluginTool {
+        plugin: tool.plugin.clone(),
+        tool: tool.tool.clone(),
+        hits,
+        options: tool.options.clone(),
+    }
+}
+
+/// The box a hit asks the editor to outline, in world units.
+pub fn tool_outline(tool: &blockloom_protocol::PluginToolView, hit: &Value) -> Option<[f32; 6]> {
+    blockloom_plugin_api::schema::box_at(hit, &tool.outline).map(|b| b.map(|n| n as f32))
 }
 
 /// Runs a plugin block here when its command is a module op; returns false
@@ -736,18 +758,25 @@ mod tests {
             tool: "paint".to_string(),
             cast: "cast".to_string(),
             reach: 100.0,
+            outline: "before_box".to_string(),
+            drag: true,
             options: json!({"material": "wood"}),
         };
         let down = Ray3d::new(Vec3::new(5.5, 15.5, 5.5), Dir3::NEG_Y);
-        let Some(RuntimeMessage::PluginTool { hit, options, .. }) =
-            tool_click(&mut engine, &tool, down)
-        else {
+        let Some(hit) = tool_cast(&mut engine, &tool, down, true) else {
             panic!("a ray at the floor hits it");
         };
         assert!(hit["cell"].is_array() && hit["before"].is_array());
+        // The empty cell above the floor is one cell wide.
+        let outline = tool_outline(&tool, &hit).expect("the cast reports a box");
+        assert!((outline[3] - outline[0] - 1.0).abs() < 1e-3);
+        let RuntimeMessage::PluginTool { hits, options, .. } = tool_stroke(&tool, vec![hit]) else {
+            panic!("a stroke is a plugin tool message");
+        };
+        assert_eq!(hits.len(), 1);
         assert_eq!(options["material"], "wood");
         let up = Ray3d::new(Vec3::new(5.5, 15.5, 5.5), Dir3::Y);
-        assert!(tool_click(&mut engine, &tool, up).is_none());
+        assert!(tool_cast(&mut engine, &tool, up, true).is_none());
 
         // The same world again keeps the module.
         engine.plugins.meshes.clear();

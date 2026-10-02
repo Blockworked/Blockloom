@@ -118,7 +118,7 @@ Rectangle {
         if (!t) return null;
         const options = {};
         (t.tool.options || []).forEach(f => { options[f.name] = pluginOption(t, f); });
-        return { plugin: t.plugin, tool: t.tool.name, cast: t.tool.cast, reach: t.tool.reach, options: options };
+        return { plugin: t.plugin, tool: t.tool.name, cast: t.tool.cast, reach: t.tool.reach, outline: t.tool.outline || "", drag: !!t.tool.drag, options: options };
     }
     // "3, 7 12" -> [3, 7, 12]: the tiles a brush paints with, variants after the first.
     function tileList(text) { const l = String(text).split(/[\s,]+/).filter(t => t !== "").map(Number).filter(n => Number.isInteger(n) && n >= 0); return l.length ? l : [0]; }

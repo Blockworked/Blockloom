@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 27;
+pub const PROTOCOL_VERSION: u32 = 28;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -286,13 +286,14 @@ pub enum RuntimeMessage {
     },
     /// The Tiles tool's pick read a cell: which sheet tile it shows.
     TilePicked { actor: String, tile: i32 },
-    /// A click with a plugin's scene tool hit something: the module's answer
-    /// to the cast and the tool's option values. The editor owns the plugins,
-    /// so it resolves the tool's command arguments and runs it.
+    /// A stroke with a plugin's scene tool ended: the module's answer to each
+    /// cast that hit (a click is a stroke of one) and the tool's option
+    /// values. The editor owns the plugins, so it resolves the tool's command
+    /// arguments for every hit and runs them as one undo step.
     PluginTool {
         plugin: String,
         tool: String,
-        hit: serde_json::Value,
+        hits: Vec<serde_json::Value>,
         options: serde_json::Value,
     },
     /// A plugin block ran. The editor owns the plugins, so it looks the block
@@ -358,6 +359,13 @@ pub struct PluginToolView {
     /// The module op that takes the pointer's ray.
     pub cast: String,
     pub reach: f64,
+    /// Path into the cast's answer of the box to outline (six numbers: min
+    /// then max, in world units); empty draws none.
+    #[serde(default)]
+    pub outline: String,
+    /// Dragging keeps casting, and the hits are sent on release.
+    #[serde(default)]
+    pub drag: bool,
     /// The tool's option values, passed back with each hit.
     #[serde(default)]
     pub options: serde_json::Value,

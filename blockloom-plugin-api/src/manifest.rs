@@ -4,7 +4,7 @@
 //! engine, the target and the payload actually on disk before a package is
 //! trusted with anything.
 
-use crate::id::{validate_package_path, validate_plugin_id};
+use crate::id::{validate_package_path, validate_plugin_id, validate_type_id};
 use crate::versions;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
@@ -172,6 +172,19 @@ pub struct Editor {
     /// meshes show in the scene view. It starts with `preview: true`.
     #[serde(default)]
     pub preview: bool,
+    /// QML the inspector draws for one of the package's component types in
+    /// place of the generated form. Trusted code, like `modules`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inspectors: Vec<InspectorModule>,
+}
+
+/// A QML inspector section for one component type of the package.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectorModule {
+    /// The component type's `type_id`.
+    pub component: String,
+    /// The `.qml` file, relative to the package root.
+    pub module: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -241,6 +254,13 @@ impl TargetSupport {
 }
 
 pub const WEB_TARGET: &str = "wasm32-unknown-unknown";
+
+/// Whether a player for `triple` can load a native library. A browser has no
+/// native code, and an Android player only reads what its APK ships, which
+/// the system loader won't open as a library.
+pub fn loads_native_libraries(triple: &str) -> bool {
+    triple != WEB_TARGET && !triple.contains("android")
+}
 
 impl PluginManifest {
     pub fn from_json(text: &str) -> Result<Self, String> {
@@ -320,6 +340,31 @@ impl PluginManifest {
         if let Some(other) = self.editor.modules.iter().find(|m| !m.ends_with(".qml")) {
             return fail(format!("{other}: an editor module is a .qml file"));
         }
+        if !self.editor.inspectors.is_empty()
+            && !self.capabilities.contains(&Capability::TrustedEditor)
+        {
+            return fail(
+                "inspector sections must declare the trusted-editor capability".to_string(),
+            );
+        }
+        let mut drawn = BTreeSet::new();
+        for section in &self.editor.inspectors {
+            if let Err(why) = validate_type_id(&section.component) {
+                return fail(format!("inspector section: {why}"));
+            }
+            if !section.module.ends_with(".qml") {
+                return fail(format!(
+                    "{}: an inspector section is a .qml file",
+                    section.module
+                ));
+            }
+            if !drawn.insert(section.component.as_str()) {
+                return fail(format!(
+                    "{}: two inspector sections for one component",
+                    section.component
+                ));
+            }
+        }
         for (triple, entry) in &self.runtime.native {
             if triple.is_empty() || triple.contains('/') {
                 return fail(format!("\"{triple}\" is not a target triple"));
@@ -358,6 +403,7 @@ impl PluginManifest {
     pub fn referenced_paths(&self) -> Vec<String> {
         let mut paths: Vec<String> = self.contributions.clone();
         paths.extend(self.editor.modules.iter().cloned());
+        paths.extend(self.editor.inspectors.iter().map(|i| i.module.clone()));
         if let Some(p) = &self.runtime.portable {
             paths.push(p.module.clone());
         }
@@ -375,10 +421,14 @@ impl PluginManifest {
             Tier::Declarative => TargetSupport::Native,
             Tier::Portable => TargetSupport::Portable,
             Tier::Native => {
-                if self.runtime.native.contains_key(triple) {
+                if loads_native_libraries(triple) && self.runtime.native.contains_key(triple) {
                     TargetSupport::Native
                 } else if self.runtime.portable.is_some() {
                     TargetSupport::Portable
+                } else if !loads_native_libraries(triple) {
+                    TargetSupport::Unsupported {
+                        reason: format!("{triple} runs only portable modules, and this has none"),
+                    }
                 } else {
                     TargetSupport::Unsupported {
                         reason: format!(
@@ -522,9 +572,31 @@ mod tests {
             "portable": {"module": "p.wasm"}
         });
         v["files"] = json!({"a.so": HASH, "p.wasm": HASH});
-        let m = parse(v);
+        let m = parse(v.clone());
         m.validate().unwrap();
         assert_eq!(m.support_for(WEB_TARGET), TargetSupport::Portable);
+        // Android reads no library out of its APK, even one built for it.
+        assert_eq!(
+            m.support_for("aarch64-linux-android"),
+            TargetSupport::Portable
+        );
+        v["runtime"]["native"] = json!({"aarch64-linux-android": {"library": "a.so"}});
+        let android = parse(v.clone());
+        android.validate().unwrap();
+        assert_eq!(
+            android.support_for("aarch64-linux-android"),
+            TargetSupport::Portable
+        );
+        v["runtime"] = json!({"native": {"aarch64-linux-android": {"library": "a.so"}}});
+        v["files"] = json!({"a.so": HASH});
+        let only_native = parse(v);
+        assert!(
+            !only_native
+                .support_for("aarch64-linux-android")
+                .is_supported()
+        );
+        assert!(loads_native_libraries("x86_64-pc-windows-msvc"));
+        assert!(!loads_native_libraries("x86_64-linux-android"));
     }
 
     #[test]
@@ -550,5 +622,31 @@ mod tests {
         v["editor"] = json!({"modules": ["editor/panel.so"]});
         v["files"] = json!({"editor/panel.so": HASH});
         assert!(parse(v).validate().is_err());
+    }
+
+    #[test]
+    fn inspector_sections_are_trusted_qml_for_one_component_each() {
+        let mut v = base();
+        v["editor"] = json!({"inspectors": [{"component": "tally", "module": "editor/Tally.qml"}]});
+        v["files"] = json!({"editor/Tally.qml": HASH});
+        assert!(parse(v.clone()).validate().is_err(), "needs the capability");
+        v["capabilities"] = json!(["trusted-editor"]);
+        parse(v.clone()).validate().unwrap();
+        assert_eq!(
+            parse(v.clone()).referenced_paths(),
+            vec!["editor/Tally.qml".to_string()]
+        );
+        let mut twice = v.clone();
+        twice["editor"]["inspectors"] = json!([
+            {"component": "tally", "module": "editor/Tally.qml"},
+            {"component": "tally", "module": "editor/Tally.qml"}
+        ]);
+        assert!(parse(twice).validate().is_err());
+        let mut bad_name = v.clone();
+        bad_name["editor"]["inspectors"][0]["component"] = json!("not a name");
+        assert!(parse(bad_name).validate().is_err());
+        let mut bad_file = v;
+        bad_file["editor"]["inspectors"][0]["module"] = json!("editor/Tally.so");
+        assert!(parse(bad_file).validate().is_err());
     }
 }

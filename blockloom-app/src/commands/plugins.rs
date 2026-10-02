@@ -270,7 +270,10 @@ fn editor_modules_json(active: &ActivePlugins) -> Vec<Value> {
     active
         .plugins
         .values()
-        .filter(|p| !p.package.manifest.editor.modules.is_empty())
+        .filter(|p| {
+            let editor = &p.package.manifest.editor;
+            !editor.modules.is_empty() || !editor.inspectors.is_empty()
+        })
         .map(|p| {
             let m = &p.package.manifest;
             let trusted = ledger.is_trusted(&m.id, &p.package.content_hash);
@@ -289,10 +292,24 @@ fn editor_modules_json(active: &ActivePlugins) -> Vec<Value> {
                     })
                 })
                 .collect();
+            // Sections the inspector draws itself for a component type.
+            let inspectors: Vec<Value> = m
+                .editor
+                .inspectors
+                .iter()
+                .map(|section| {
+                    json!({
+                        "component": section.component,
+                        "path": section.module,
+                        "file": trusted.then(|| p.package.root.join(&section.module).to_string_lossy().into_owned()),
+                    })
+                })
+                .collect();
             json!({
                 "plugin": m.id,
                 "pluginName": m.name,
                 "hash": p.package.content_hash,
+                "inspectors": inspectors,
                 // Trusted once, but the package has changed since.
                 "changed": !trusted && ledger.granted(&m.id).is_some(),
                 "trusted": trusted,
@@ -1046,19 +1063,17 @@ pub(crate) fn remove_plugin_resource(
     Ok(removed)
 }
 
-/// Runs a command a plugin declared, by `plugin/name`. Arguments are checked
-/// against its schema, then the declared action is applied to the project
-/// through the same validated paths the editor uses.
-pub(crate) fn plugin_call(
+/// A command's declared action and its arguments normalized and validated
+/// against its schema.
+fn checked_args(
     state: &SharedState,
-    app: &AppHandle,
-    command: String,
-    args: Value,
-) -> Result<Value, String> {
+    command: &str,
+    args: &Value,
+) -> Result<(CommandAction, Value), String> {
     let (action, fields) = {
         let s = lock(state)?;
         let (_, schema) = active(&s)?
-            .command(&command)
+            .command(command)
             .ok_or_else(|| format!("No plugin command named \"{command}\""))?;
         (schema.action.clone(), schema.args.clone())
     };
@@ -1071,7 +1086,7 @@ pub(crate) fn plugin_call(
         migrations: Vec::new(),
         inspector: None,
     };
-    let args = args_schema.normalize(&args);
+    let args = args_schema.normalize(args);
     args_schema.validate(&args).map_err(|errors| {
         format!(
             "{command}: {}",
@@ -1082,6 +1097,19 @@ pub(crate) fn plugin_call(
                 .join("; ")
         )
     })?;
+    Ok((action, args))
+}
+
+/// Runs a command a plugin declared, by `plugin/name`. Arguments are checked
+/// against its schema, then the declared action is applied to the project
+/// through the same validated paths the editor uses.
+pub(crate) fn plugin_call(
+    state: &SharedState,
+    app: &AppHandle,
+    command: String,
+    args: Value,
+) -> Result<Value, String> {
+    let (action, args) = checked_args(state, &command, &args)?;
     let plugin = id::split_qualified(&command)
         .map_or("", |(p, _)| p)
         .to_string();
@@ -1247,18 +1275,20 @@ pub(crate) fn run_block(
     )
 }
 
-/// `plugin-run-tool`: one click of a plugin's scene tool. The tool's
-/// command arguments are read from the cast's answer and the options, then
-/// the command runs like any other (one undo step).
+/// `plugin-run-tool`: a stroke of a plugin's scene tool (a click is a stroke
+/// of one hit). Each hit's command arguments are read from the cast's answer
+/// and the options. A stroke whose command writes a resource field lands as
+/// one write, so it is one undo step and one reload; any other command runs
+/// once per hit.
 pub(crate) fn run_tool(
     state: &SharedState,
     app: &AppHandle,
     plugin: &str,
     tool: &str,
-    hit: &Value,
+    hits: &[Value],
     options: &Value,
 ) -> Result<Value, String> {
-    let (command, args) = {
+    let (command, mut calls) = {
         let s = lock(state)?;
         let active = active(&s)?;
         let schema = active
@@ -1267,12 +1297,67 @@ pub(crate) fn run_tool(
             .find(|(p, t)| *p == plugin && t.name == tool)
             .map(|(_, t)| t)
             .ok_or_else(|| format!("{plugin}/{tool}: no installed plugin provides this tool"))?;
-        let args = schema
-            .resolve_args(hit, options)
-            .map_err(|e| format!("{plugin}/{tool}: {e}"))?;
-        (id::qualified(plugin, &schema.command), args)
+        let mut calls = Vec::with_capacity(hits.len());
+        for hit in hits {
+            let args = schema
+                .resolve_args(hit, options)
+                .map_err(|e| format!("{plugin}/{tool}: {e}"))?;
+            // Two hits that ask for the same thing ask once.
+            if !calls.contains(&args) {
+                calls.push(args);
+            }
+        }
+        (id::qualified(plugin, &schema.command), calls)
     };
-    plugin_call(state, app, command, args)
+    match calls.len() {
+        0 => Ok(json!({ "applied": 0 })),
+        1 => plugin_call(state, app, command, calls.remove(0)),
+        count => {
+            let checked = calls
+                .iter()
+                .map(|args| checked_args(state, &command, args))
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some(CommandAction::SetResourceField {
+                resource,
+                field,
+                append,
+                template,
+            }) = checked.first().map(|(action, _)| action.clone())
+            {
+                let name = id::qualified(plugin, &resource);
+                let mut payload = {
+                    let s = lock(state)?;
+                    let project = s.project().ok_or("No project is open")?;
+                    project
+                        .plugin_resources
+                        .iter()
+                        .find(|r| r.name() == name)
+                        .map_or_else(|| json!({}), |r| r.payload.clone())
+                };
+                let mut list = payload[&field].as_array().cloned().unwrap_or_default();
+                for (_, args) in &checked {
+                    let value = match &template {
+                        Some(template) => Value::String(fill_template(template, args)?),
+                        None => args["value"].clone(),
+                    };
+                    if append {
+                        list.push(value);
+                    } else {
+                        payload[&field] = value;
+                    }
+                }
+                if append {
+                    payload[&field] = Value::Array(list);
+                }
+                set_plugin_resource(state, app, name.clone(), payload)?;
+                return Ok(json!({ "resource": name, "field": field, "applied": count }));
+            }
+            for args in calls {
+                plugin_call(state, app, command.clone(), args)?;
+            }
+            Ok(json!({ "applied": count }))
+        }
+    }
 }
 
 /// An actor slot's text as an id: an id as it stands, else the first actor

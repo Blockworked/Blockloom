@@ -1497,14 +1497,16 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Declarative inspector layout: field `ui` hints (label, slider, multiline, unit, step, `visible_when`) and component `inspector` groups.
     - [x] Declarative plugin panels (text, resource forms, command buttons) in a top bar dialog.
     - [x] Trusted editor modules: `editor.modules` QML loaded at run time behind a per-user trust ledger bound to the package hash (window-only `plugin_trust`), a `host` bridge, the Plugin editors dialog and `plugins/examples/com.example.notes`.
-    - [ ] Contribution host next: native editor modules and inspector sections a plugin draws itself.
+    - [x] Plugin-drawn inspector sections: `editor.inspectors` trusted QML replaces the schema form for one component (`com.example.notes` sticky).
+    - [ ] Native compiled editor modules: left out on purpose (host-level code in the Qt process, no bounding ABI); trusted QML covers custom UI.
     - [x] Native modules load in the editor for `module` commands (`Modules` cache, run-log output, panic containment).
     - [x] Portable (WASM) executor in the editor: wasmi, linear-memory ABI, memory and work limits, stop-and-reload on a fault.
     - [x] Plugin SDK crate (`blockloom-plugin-sdk`): one `Plugin` trait and `export_plugin!` for native and WebAssembly, `NativeModule::from_entry`, and the `plugins/examples/tally` example (`just example-plugin`).
     - [x] Native and portable modules in the running game world: loadout sent before Play, `world.start`/`world.stop` lifecycle, staged hooks, module-op blocks run in the world, effects (`say`, `broadcast`, `error`).
     - [x] Modules in the built desktop player: the build ships each plugin's manifest and files, the player verifies them against the pack and hosts the loadout; module-op blocks, reporters and hats build.
     - [x] A browser host for portable modules: the host crate builds for wasm32 (wasmi, no dlopen), `files::set_reader` reads shipped plugins from the page's mounted files, the web build ships and records portable plugins, the web player hosts the loadout. Checked by an in-memory load test and the wasm32 clippy; no browser run yet.
-    - [ ] Browser proof (`just web-build` with a plugin project, `just web-smoke`), a faster host on the browser's own WebAssembly, Android plugin code.
+    - [x] Android plugin code: portable modules only, plugins ship in the APK assets, runtime built with `--features plugins` (compile-checked, not run on a device).
+    - [ ] Browser proof (`just web-build` with a plugin project, `just web-smoke`) and a faster host on the browser's own WebAssembly (needs a fuel substitute).
     - [x] Plugin statement blocks in the VM: `PluginBlock` instruction, `Effect::PluginCall`, the editor runs the block's command, `plugin-run-block`, Play preflight; codegen emits them (`Act::PluginCall`, `ACT_PLUGIN_CALL`, logic ABI 34) and Build is refused for a statement whose command runs in the editor.
     - [x] Plugin statement blocks in the palette and on the canvas (one `PluginBlock` row whose head follows the schema label; needs blockstitch's function `head` and `index` pieces).
     - [x] Plugin reporters and hats: `PluginRead` values answered on demand by the world's modules, `WhenPlugin` hats started by `event` effects; palette, canvas, preflight, tally example (needs blockstitch's operator `layout`).
@@ -1520,7 +1522,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Voxel edit persistence: saved `edits` lines on the `world` resource, `add_voxel_edit`/`clear_voxel_edits`, and a general `set_resource_field` command action.
     - [x] Voxel shaped cells: slab, top slab, post, stairs and ramps (four facings), `shape_voxel`, and a `shape` saved-edit line.
     - [x] Plugin scene tools: a package's `tools` (cast op, command, `$hit`/`$option` argument sources, typed options) are toolbar tools in the 3D scene view; a click casts the pointer ray through the hosted preview module and runs the command (`plugin-run-tool`). Voxel paint, erase, ball and shape tools, and `paint_voxel*` template commands, use it.
-    - [ ] Scene tool follow-ups: drag painting, a cell outline under the pointer.
+    - [x] Scene tool follow-ups: `drag` strokes (one undo step, batched hits) and `outline` boxes under the pointer; voxel tools use both (`PROTOCOL_VERSION` 25).
     - [ ] Voxel next: smooth terrain, streaming/LOD, instancing, GPU meshing, fracture.
     - [ ] Phases 4-7 (procedural graph, GPU path, fracture, ecosystem).
 

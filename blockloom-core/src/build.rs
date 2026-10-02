@@ -518,17 +518,6 @@ pub fn build(
     parent: &Path,
     options: BuildOptions,
 ) -> Result<Build, String> {
-    if target.is_android()
-        && let Some(plugin) = options
-            .plugins
-            .iter()
-            .find(|p| p.entry.tier != "declarative")
-    {
-        return Err(format!(
-            "plugin {} has code, and plugin code is not supported on {} builds yet",
-            plugin.entry.id, target.label
-        ));
-    }
     if target.is_web() {
         return build_web(
             project,
@@ -867,7 +856,8 @@ fn build_android_with_config(
     // Bevy's Android asset reader rather than the disk.
     let game = dir.join("assets");
     std::fs::create_dir_all(&game).map_err(|e| format!("{}: {e}", game.display()))?;
-    let mut game_pack = GamePack::new(project.clone());
+    let mut game_pack = GamePack::new(project.clone())
+        .with_plugins(options.plugins.iter().map(|p| p.entry.clone()).collect());
     game_pack.hdr = false;
     game_pack.write(&pack::pack_path(&game))?;
 
@@ -880,6 +870,7 @@ fn build_android_with_config(
     copy_probes(project, project_dir, &game)?;
     crate::build_control::step("Packing terrain and scripts")?;
     copy_terrain(project, project_dir, &game)?;
+    copy_plugins(&options.plugins, &game)?;
     copy_extras(&options.extras, &game)?;
     let native_libs = android_native_libs(project, project_dir, target, runtime_so, options.fast)?;
 
@@ -1076,6 +1067,11 @@ fn android_build_fingerprint(
     project_json.hash(&mut hasher);
     target.triple.hash(&mut hasher);
     options.fast.hash(&mut hasher);
+    // A plugin's package is named by its content hash.
+    for plugin in &options.plugins {
+        plugin.entry.id.hash(&mut hasher);
+        plugin.entry.hash.hash(&mut hasher);
+    }
     // Hook output is restaged on every build, so its bytes count, not its mtimes.
     for extra in &options.extras {
         extra.to.hash(&mut hasher);

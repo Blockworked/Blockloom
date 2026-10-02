@@ -555,9 +555,12 @@ fn a_command_can_set_or_append_to_a_resource_field() {
         json!({
             "resources": [{"type_id": "journal", "fields": [
                 {"name": "title", "type": "text", "default": "none"},
-                {"name": "lines", "type": "list", "item": {"type": "text"}, "max_len": 2, "default": []}
+                {"name": "lines", "type": "list", "item": {"type": "text"}, "max_len": 2, "default": []},
+                {"name": "trail", "type": "list", "item": {"type": "text"}, "max_len": 8, "default": []}
             ]}],
-            "tools": [{"name": "stamp", "title": "Stamp", "cast": "cast", "command": "title_at",
+            "tools": [{"name": "walk", "title": "Walk", "cast": "cast", "command": "trail_at",
+                "drag": true, "outline": "box", "args": {"x": "$hit.cell.0"}},
+                {"name": "stamp", "title": "Stamp", "cast": "cast", "command": "title_at",
                 "args": {"who": "$option.who", "x": "$hit.cell.0"},
                 "options": [{"name": "who", "type": "text", "default": "me"}]}],
             "panels": [{"name": "main", "title": "Journal", "items": [
@@ -571,6 +574,9 @@ fn a_command_can_set_or_append_to_a_resource_field() {
                 {"name": "set_title", "summary": "Set the title.",
                  "args": [{"name": "value", "type": "text", "default": ""}],
                  "action": {"do": "set_resource_field", "resource": "journal", "field": "title"}},
+                {"name": "trail_at", "summary": "Append a trail step.",
+                 "args": [{"name": "x", "type": "int", "default": 0}],
+                 "action": {"do": "set_resource_field", "resource": "journal", "field": "trail", "append": true, "template": "step {x}"}},
                 {"name": "title_at", "summary": "Set the title from a template.",
                  "args": [{"name": "who", "type": "text", "default": "me"}, {"name": "x", "type": "int", "default": 0}],
                  "action": {"do": "set_resource_field", "resource": "journal", "field": "title", "template": "{who} at {x}"}}
@@ -641,7 +647,13 @@ fn a_command_can_set_or_append_to_a_resource_field() {
     assert_eq!(resource()["payload"]["title"], "cat at 7");
     // A scene tool's click resolves its command's arguments from the hit.
     let tools = invoke("get_state", json!({}))["plugins"]["tools"].clone();
-    assert_eq!(tools[0]["tool"]["name"], "stamp");
+    let stamp = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["tool"]["name"] == "stamp")
+        .expect("the stamp tool is listed");
+    assert_eq!(stamp["tool"]["name"], "stamp");
     invoke(
         "plugin_run_tool",
         json!({"plugin": "com.example.journal", "tool": "stamp",
@@ -656,6 +668,41 @@ fn a_command_can_set_or_append_to_a_resource_field() {
             )
             .is_err()
     );
+
+    // A stroke is every hit at once: one write, one undo step, repeats dropped.
+    let walk = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["tool"]["name"] == "walk")
+        .expect("the walk tool is listed");
+    assert_eq!(walk["tool"]["drag"], true);
+    assert_eq!(walk["tool"]["outline"], "box");
+    let hit = |x: i32| json!({"hit": true, "cell": [x, 0, 0]});
+    let stroke = invoke(
+        "plugin_run_tool",
+        json!({"plugin": "com.example.journal", "tool": "walk",
+               "hits": [hit(1), hit(2), hit(2), hit(3)]}),
+    );
+    assert_eq!(stroke["applied"], 3);
+    assert_eq!(
+        resource()["payload"]["trail"],
+        json!(["step 1", "step 2", "step 3"])
+    );
+    invoke("undo", json!({}));
+    assert_eq!(resource()["payload"]["trail"], json!([]));
+    assert_eq!(resource()["payload"]["title"], "dog at 3");
+    // Too long for the list's bound: refused whole.
+    let long: Vec<Value> = (0..9).map(hit).collect();
+    assert!(
+        backend
+            .dispatch(
+                "plugin_run_tool",
+                json!({"plugin": "com.example.journal", "tool": "walk", "hits": long}),
+            )
+            .is_err()
+    );
+    assert_eq!(resource()["payload"]["trail"], json!([]));
 }
 
 #[test]
@@ -754,6 +801,24 @@ fn the_notes_example_ships_a_screen_and_saves_through_its_command() {
         std::fs::read_to_string(file)
             .unwrap()
             .contains("host.call(\"set_notes\"")
+    );
+    // The sticky note's inspector section is listed too, with its file once trusted.
+    let section = &modules[0]["inspectors"][0];
+    assert_eq!(section["component"], "sticky");
+    let section_file = section["file"].as_str().unwrap();
+    assert!(
+        std::fs::read_to_string(section_file)
+            .unwrap()
+            .contains("host.write(next)")
+    );
+    let types = invoke("get_state", json!({}))["plugins"]["types"].clone();
+    assert!(
+        types
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["name"] == "com.example.notes/sticky"),
+        "{types}"
     );
     // The screen's Save button is this command.
     invoke(

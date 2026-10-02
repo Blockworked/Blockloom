@@ -589,15 +589,21 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   scene view's toolbar gets a toggle per tool in 3D, with the options drawn by
   `PluginValueEditor` under it (kept in the QML `Settings` as JSON per tool).
   `SceneTool::Plugin` plus `SceneView::plugin_tool` (`PluginToolView`: plugin,
-  tool, cast op, reach, option values; `PROTOCOL_VERSION` 24) tell the world
+  tool, cast op, reach, outline, drag, option values; `PROTOCOL_VERSION` 25) tell the world
   which tool is out. A left click casts the pointer ray through the hosted
   preview module (`plugins::tool_click`, `WorldPlugins::query`: `{x y z dx dy dz
   reach}` in, `{hit, ...}` out, read only) and a hit goes back as
   `RuntimeMessage::PluginTool`; the editor resolves the arguments
   (`ToolSchema::resolve_args`) and runs the command (`commands::plugins::run_tool`,
   `plugin-run-tool` in the shell and MCP), one undo step, which reloads the
-  world and so redraws the preview. One click is one stroke: no drag painting
-  and no cell outline under the pointer yet.
+  world and so redraws the preview. A tool with `drag` paints a stroke: the
+  button down casts every pointer move (`plugins::tool_stroke`, a cell once per
+  stroke) and the release sends all the hits as one `PluginTool`, which
+  `run_tool` runs batched as a single undo step (Escape or losing focus drops
+  it). A tool with `outline` (a `$`-less path into the cast's answer holding
+  `[x0 y0 z0 x1 y1 z1]`, read by `schema::box_at`) gets a gizmo box under the
+  pointer that follows the hover cast (`plugins::tool_outline`,
+  `edit::follow_plugin_tool`). The voxel tools use both.
 - **Mesh service** (`blockloom-plugin-api/src/mesh.rs`, `blockloom-runtime/src/
   plugin_meshes.rs`): a module answers with `{"effect": "mesh", name,
   positions, normals, colors, indices, origin, emission, roughness, collider}`
@@ -713,10 +719,24 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `host.project`, `host.resource(name)`, `host.setResource(name, payload)`,
   `host.call(command, args)` and `host.app` (the editor's `invoke` and state, i.e.
   host-level). `plugins/examples/com.example.notes` is the example. QML test:
-  `tests/qml/tst_PluginEditors.qml`.
-- **Not yet**: plugin code in an Android build, a faster browser host (the page's own WebAssembly instead of wasmi in
-  wasm), a headless browser proof, native editor modules and inspector
-  sections a plugin draws itself.
+  `tests/qml/tst_PluginEditors.qml`. A package may also list
+  `editor.inspectors` (`{component, module}`, one `.qml` per component, same
+  capability and trust): `InspectorPanel.qml`'s `pluginSection` loads it in place
+  of the schema form once the package is trusted (the form stays otherwise),
+  with `host.write(next)`, `host.call(...)`, `host.payload`, `host.type`,
+  `host.app` and `host.project`. `com.example.notes` has a `sticky` component
+  with one. Native compiled editor modules are deliberately not offered: they
+  would run host-level code inside the Qt process with no ABI to bound it, so a
+  plugin that needs custom UI uses trusted QML.
+- **Plugin code on Android**: Android loads only portable (wasmi) modules, like
+  the browser (`loads_native_libraries` is false for both). The runtime `.so` is
+  built with `--features plugins`, the plugin host skips `ureq` there, builds
+  ship plugins in the APK's assets (the same `game/plugins/<id>/` layout) and
+  `android.rs` points the host's file reader at the APK. Compile-checked for
+  `aarch64-linux-android`; never run on a device.
+- **Not yet**: a faster browser host (the page's own WebAssembly instead of wasmi
+  in wasm; it needs a fuel substitute, since a browser instance has no budget to
+  stop a runaway call), a headless browser proof and native editor modules.
   `plugins/examples/com.example.health` is the sealed proof package;
   `plugins/examples/tally` is the SDK one, with code, and
   `plugins/examples/palette` the importer/build-hook one.

@@ -166,7 +166,29 @@ pub struct SceneEditor {
     /// How far parallax drew each layer from its pose last frame, so a
     /// layer is picked and handled where it shows.
     pub parallax: HashMap<String, Vec3>,
+    /// A plugin tool's stroke while the left button is down.
+    plugin_stroke: Option<PluginStroke>,
+    /// The box a plugin tool would act on under the pointer, and what it was
+    /// cast from: the ray, and which preview module answered.
+    plugin_hover: Option<[f32; 6]>,
+    plugin_cast: Option<(Ray3d, u64)>,
 }
+
+/// The casts a plugin tool has made since the button went down.
+struct PluginStroke {
+    hits: Vec<serde_json::Value>,
+    boxes: Vec<[f32; 6]>,
+    /// What a hit was keyed by, so the same cell isn't recorded twice.
+    seen: HashSet<String>,
+    /// Where the pointer was at the last cast.
+    last: Vec2,
+}
+
+/// The most hits one stroke keeps, and how far the pointer may travel between
+/// casts, so a quick drag leaves no gaps.
+const STROKE_MAX_HITS: usize = 4096;
+const STROKE_STEP_PX: f32 = 6.0;
+const STROKE_MAX_CASTS: usize = 24;
 
 impl Default for SceneEditor {
     fn default() -> Self {
@@ -197,6 +219,9 @@ impl Default for SceneEditor {
             brushing: false,
             pointer_ray: None,
             parallax: HashMap::new(),
+            plugin_stroke: None,
+            plugin_hover: None,
+            plugin_cast: None,
         }
     }
 }
@@ -228,6 +253,9 @@ impl SceneEditor {
         self.hover = None;
         self.brushing = false;
         self.pointer_ray = None;
+        self.plugin_stroke = None;
+        self.plugin_hover = None;
+        self.plugin_cast = None;
         self.buttons = [false; 3];
         self.keys.clear();
     }
@@ -397,6 +425,7 @@ pub fn interact(
                     // pointer last moved.
                     if index == 0 {
                         editor.brushing = false;
+                        finish_stroke(editor);
                     }
                     if index == 0 && editor.drag.is_some() {
                         update_drag(&mut engine, editor, &lens, at, mode, px_scale, &mut posed);
@@ -411,6 +440,7 @@ pub fn interact(
             PreviewInput::Key { code, down } => {
                 if down {
                     if code == "Escape" {
+                        editor.plugin_stroke = None;
                         cancel_drag(&mut engine, editor, &mut posed);
                     }
                     editor.keys.insert(code);
@@ -420,6 +450,7 @@ pub fn interact(
             }
             PreviewInput::Focus { focused: false } => {
                 editor.brushing = false;
+                editor.plugin_stroke = None;
                 cancel_drag(&mut engine, editor, &mut posed);
                 editor.keys.clear();
                 editor.buttons = [false; 3];
@@ -452,6 +483,112 @@ pub fn interact(
             editor.hover = hovered(&engine, editor, &lens, at, px_scale, &posed);
         }
     }
+    follow_plugin_tool(&mut engine, editor, &lens);
+}
+
+/// Casts a plugin tool's ray at `at` and keeps the hit in the stroke, unless
+/// the stroke already has that cell.
+fn stroke_cast(engine: &mut Engine, editor: &mut SceneEditor, lens: &Lens, at: Vec2) {
+    let (Some(tool), Some(ray)) = (editor.view.plugin_tool.clone(), lens.ray(at)) else {
+        return;
+    };
+    let Some(hit) = crate::plugins::tool_cast(engine, &tool, ray, true) else {
+        return;
+    };
+    let outline = crate::plugins::tool_outline(&tool, &hit);
+    // The box is what the tool acts on, so it keys the hit; without one, the
+    // answer minus how far away it was.
+    let key = match outline {
+        Some(b) => format!("{b:?}"),
+        None => {
+            let mut plain = hit.clone();
+            if let Some(map) = plain.as_object_mut() {
+                map.remove("distance");
+                map.remove("value");
+            }
+            plain.to_string()
+        }
+    };
+    let Some(stroke) = editor.plugin_stroke.as_mut() else {
+        return;
+    };
+    if stroke.hits.len() >= STROKE_MAX_HITS || !stroke.seen.insert(key) {
+        return;
+    }
+    stroke.hits.push(hit);
+    if let Some(b) = outline {
+        stroke.boxes.push(b);
+    }
+}
+
+/// The button came up: a stroke that caught anything goes to the editor.
+fn finish_stroke(editor: &mut SceneEditor) {
+    let Some(stroke) = editor.plugin_stroke.take() else {
+        return;
+    };
+    let Some(tool) = editor.view.plugin_tool.clone() else {
+        return;
+    };
+    if !stroke.hits.is_empty() {
+        editor
+            .outbox
+            .push(crate::plugins::tool_stroke(&tool, stroke.hits));
+    }
+}
+
+/// Each frame a plugin tool is out: extend a stroke along the pointer's path,
+/// or outline what the tool would act on under it.
+fn follow_plugin_tool(engine: &mut Engine, editor: &mut SceneEditor, lens: &Lens) {
+    let Some(tool) = editor
+        .view
+        .plugin_tool
+        .clone()
+        .filter(|_| editor.view.tool == SceneTool::Plugin)
+    else {
+        editor.plugin_stroke = None;
+        editor.plugin_hover = None;
+        editor.plugin_cast = None;
+        return;
+    };
+    let Some(at) = editor.pointer else {
+        return;
+    };
+    if let Some(from) = editor.plugin_stroke.as_ref().map(|s| s.last) {
+        editor.plugin_hover = None;
+        if !editor.buttons[0] || at == from {
+            return;
+        }
+        let steps = ((at - from).length() / STROKE_STEP_PX)
+            .ceil()
+            .clamp(1.0, STROKE_MAX_CASTS as f32) as usize;
+        for step in 1..=steps {
+            let point = from.lerp(at, step as f32 / steps as f32);
+            stroke_cast(engine, editor, lens, point);
+        }
+        if let Some(stroke) = editor.plugin_stroke.as_mut() {
+            stroke.last = at;
+        }
+        return;
+    }
+    if editor.nav.is_some() {
+        editor.plugin_hover = None;
+        return;
+    }
+    let Some(ray) = editor.pointer_ray else {
+        return;
+    };
+    let now = (ray, engine.plugins.previews);
+    let same = editor.plugin_cast.is_some_and(|(was, previews)| {
+        previews == now.1
+            && was.origin.distance_squared(ray.origin) < 1e-8
+            && was.direction.dot(*ray.direction) > 0.999_999
+    });
+    if same {
+        return;
+    }
+    editor.plugin_cast = Some(now);
+    editor.plugin_hover = crate::plugins::tool_cast(engine, &tool, ray, false)
+        .and_then(|hit| crate::plugins::tool_outline(&tool, &hit));
 }
 
 /// The first time a project arrives, the scene view starts where its camera
@@ -538,12 +675,26 @@ fn press(
         {
             editor.brushing = true;
         }
-        // A plugin's tool casts through its module instead of picking.
+        // A plugin's tool casts through its module instead of picking: a click
+        // acts at once, a tool that drags collects its stroke until release.
         0 if editor.view.tool == SceneTool::Plugin && editor.view.plugin_tool.is_some() => {
-            if let (Some(tool), Some(ray)) = (editor.view.plugin_tool.clone(), lens.ray(at))
-                && let Some(message) = crate::plugins::tool_click(engine, &tool, ray)
+            let Some(tool) = editor.view.plugin_tool.clone() else {
+                return;
+            };
+            if tool.drag {
+                editor.plugin_stroke = Some(PluginStroke {
+                    hits: Vec::new(),
+                    boxes: Vec::new(),
+                    seen: HashSet::new(),
+                    last: at,
+                });
+                stroke_cast(engine, editor, lens, at);
+            } else if let Some(ray) = lens.ray(at)
+                && let Some(hit) = crate::plugins::tool_cast(engine, &tool, ray, true)
             {
-                editor.outbox.push(message);
+                editor
+                    .outbox
+                    .push(crate::plugins::tool_stroke(&tool, vec![hit]));
             }
         }
         0 => {
@@ -1652,6 +1803,15 @@ pub fn draw(
         }
     }
 
+    if let Some(stroke) = &editor.plugin_stroke {
+        for b in &stroke.boxes {
+            outline_box(&mut handles, b, GRIP);
+        }
+    }
+    if let Some(b) = &editor.plugin_hover {
+        outline_box(&mut handles, b, HOVER);
+    }
+
     let Some(frame) = gizmo_frame(&engine, &editor, &lens, px_scale, &posed) else {
         return;
     };
@@ -1712,6 +1872,18 @@ pub fn draw(
             );
         }
     }
+}
+
+/// A plugin tool's box: min then max, in world units.
+fn outline_box(handles: &mut Gizmos<HandleGizmos>, b: &[f32; 6], color: Color) {
+    let min = Vec3::new(b[0], b[1], b[2]);
+    let max = Vec3::new(b[3], b[4], b[5]);
+    // A hair past the faces, so it doesn't z-fight the cubes it hugs.
+    let size = (max - min) * 1.004;
+    handles.cube(
+        Transform::from_translation((min + max) * 0.5).with_scale(size),
+        color,
+    );
 }
 
 fn centre_handle(handles: &mut Gizmos<HandleGizmos>, frame: &Frame, lens: &Lens, color: Color) {

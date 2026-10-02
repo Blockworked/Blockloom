@@ -17,6 +17,9 @@ zip = { version = "7.2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libloading.workspace = true
+
+# Android's player only reads what its APK ships, and rustls needs a C build.
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "android")))'.dependencies]
 ureq = { version = "3.4", default-features = false, features = ["rustls"] }
 
 [features]

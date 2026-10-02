@@ -1,10 +1,37 @@
 {
+  "components": [
+    {
+      "type_id": "sticky",
+      "display_name": "Sticky note",
+      "fields": [
+        {
+          "name": "text",
+          "type": "text",
+          "max_len": 280,
+          "default": ""
+        },
+        {
+          "name": "color",
+          "type": "color",
+          "default": "#ffe27a"
+        }
+      ]
+    }
+  ],
   "resources": [
     {
       "type_id": "notes",
       "display_name": "Notes",
       "fields": [
-        {"name": "text", "type": "text", "max_len": 4000, "default": "", "ui": {"widget": "multiline"}}
+        {
+          "name": "text",
+          "type": "text",
+          "max_len": 4000,
+          "default": "",
+          "ui": {
+            "widget": "multiline"
+          }
+        }
       ]
     }
   ],
@@ -12,8 +39,39 @@
     {
       "name": "set_notes",
       "summary": "Replace the project's notes.",
-      "args": [{"name": "value", "type": "text", "max_len": 4000, "default": ""}],
-      "action": {"do": "set_resource_field", "resource": "notes", "field": "text"}
+      "args": [
+        {
+          "name": "value",
+          "type": "text",
+          "max_len": 4000,
+          "default": ""
+        }
+      ],
+      "action": {
+        "do": "set_resource_field",
+        "resource": "notes",
+        "field": "text"
+      }
+    },
+    {
+      "name": "add_sticky",
+      "summary": "Pin a sticky note to an actor.",
+      "args": [
+        {
+          "name": "actor",
+          "type": "actor"
+        },
+        {
+          "name": "text",
+          "type": "text",
+          "max_len": 280,
+          "default": ""
+        }
+      ],
+      "action": {
+        "do": "add_component",
+        "component": "sticky"
+      }
     }
   ]
 }

@@ -3146,7 +3146,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "plugin-run-tool",
         cmd: "plugin_run_tool",
         aliases: &[],
-        summary: "Run a plugin's scene-view tool as one click would: the tool's command with its arguments read from `hit` (the cast's answer) and `options`.",
+        summary: "Run a plugin's scene-view tool as a click or a stroke would: the tool's command with its arguments read from `hit` (the cast's answer), or from each of `hits`, and `options`. A stroke is one undo step.",
         args: &[
             ArgSpec {
                 name: "plugin",
@@ -3161,7 +3161,12 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             ArgSpec {
                 name: "hit",
                 ty: "object",
-                required: true,
+                required: false,
+            },
+            ArgSpec {
+                name: "hits",
+                ty: "[{cast answers}]",
+                required: false,
             },
             ArgSpec {
                 name: "options",

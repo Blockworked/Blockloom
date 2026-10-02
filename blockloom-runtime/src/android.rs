@@ -55,6 +55,9 @@ fn read_asset(key: &str) -> Option<Vec<u8>> {
 /// is set, which the entry above did.
 pub fn load_pack() -> Result<GamePack, String> {
     blockloom_core::vfs::set_asset_reader(read_asset);
+    // A shipped plugin's package is read out of the APK like any game file.
+    #[cfg(feature = "plugins")]
+    blockloom_plugin_host::files::set_reader(blockloom_core::vfs::read);
     let bytes = blockloom_core::vfs::read(Path::new(blockloom_core::pack::PACK_FILE))
         .map_err(|e| format!("couldn't read the game out of the APK: {e}"))?;
     let text =
