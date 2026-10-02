@@ -162,7 +162,8 @@ def _pump(stream, outbox, index):
     # that forwards its output to the main loop's queue.
     try:
         while True:
-            chunk = stream.read(65536)
+            # Forward available bytes instead of waiting for a full 64 KiB.
+            chunk = stream.read1(65536)
             if not chunk:
                 break
             outbox.put((index, chunk))

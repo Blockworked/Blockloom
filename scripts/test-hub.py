@@ -360,9 +360,14 @@ class HubTests(unittest.TestCase):
     def test_launch_passes_path_and_bundled_tools_without_shell(self):
         self.service.install(self.bundle)
         self.service.bind(self.project, "release-0.1.0")
-        with patch.object(hub.subprocess, "Popen") as launch:
+        with patch.object(hub.subprocess, "Popen") as launch, \
+                patch.object(hub, "process_token", return_value="editor-birth") as identity:
             launch.return_value.pid = 42
             result = self.service.launch(self.project)
+        identity.assert_called_once_with(42)
+        record = hub.read_json(self.service.root / "running.json")["editors"][0]
+        self.assertEqual(record["pid"], 42)
+        self.assertEqual(record["token"], "editor-birth")
         args, kwargs = launch.call_args
         self.assertEqual(args[0][-2:], ["--project", str(self.project)])
         self.assertEqual(result["pid"], 42)

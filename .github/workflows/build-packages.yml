@@ -114,6 +114,7 @@ jobs:
           fi
       - name: Service and packaging tests
         run: |
+          python scripts/test-replace.py
           python scripts/test-hub.py
           python scripts/test-hub-download.py
           python scripts/test-hub-github.py

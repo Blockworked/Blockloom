@@ -6,8 +6,10 @@ import io
 import os
 from pathlib import Path
 import queue
+import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -65,6 +67,25 @@ class RunnerTests(unittest.TestCase):
         with patch.dict(os.environ, {"BLOCKLOOM_NATIVE_PROFILE": "dist"}):
             self.assertEqual(replace.run_builds("dist"), 0)
 
+    def test_threaded_output_arrives_before_the_build_exits(self):
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; print('Compiling a crate', flush=True); time.sleep(60)"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+        outbox = queue.Queue()
+        reader = threading.Thread(target=replace._pump, args=(process.stdout, outbox, 0), daemon=True)
+        reader.start()
+        try:
+            index, chunk = outbox.get(timeout=5)
+            self.assertEqual(index, 0)
+            self.assertIn(b"Compiling a crate", chunk)
+            self.assertIsNone(process.poll())
+        finally:
+            process.kill()
+            process.wait(timeout=10)
+            reader.join(timeout=5)
+        self.assertFalse(reader.is_alive())
+
     def test_a_failed_build_fails_the_run(self):
         for _, recipe in replace.BUILDS:
             self.stub(recipe)
@@ -103,7 +124,7 @@ class RunnerTests(unittest.TestCase):
                 pass
 
     def test_cancel_marks_builds_cancelled(self):
-        with patch.object(replace, "stop", lambda processes: None):
+        with patch.object(replace, "WINDOWS", True), patch.object(replace, "stop", lambda processes: None):
             with patch.object(replace, "_run_threaded", side_effect=KeyboardInterrupt):
                 with self.assertRaises(KeyboardInterrupt):
                     replace.run_builds("release")
