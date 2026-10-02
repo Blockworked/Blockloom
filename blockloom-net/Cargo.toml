@@ -1,0 +1,12 @@
+[package]
+name = "blockloom-net"
+version.workspace = true
+edition.workspace = true
+description = "Native QUIC transport for multiplayer: Quiche over UDP, pinned self-signed identities."
+
+[dependencies]
+# Same BoringSSL binding quiche uses, for in-memory identities and the pin check.
+boring = "5"
+quiche = "0.30"
+rcgen = "0.14"
+ring = "0.17"

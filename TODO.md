@@ -1497,7 +1497,11 @@ Phased by dependency and value per cost. Each phase unblocks the next.
       Rust std plus winit plus Bevy unblock upstream.
 
 ### Phase 7 - Scale and ecosystem, do last
-- [ ] Multiplayer: headless server, replication, lobbies, rollback.
+- [ ] Multiplayer: headless server, replication, lobbies, rollback (`docs/multiplayer-and-embedded-server-plan.md`):
+    - [x] Phase 0, transport spike: `blockloom-net` (Quiche, pinned self-signed identity, Retry, streams, datagrams, seeded loss/delay harness) and the findings in `docs/multiplayer-phase0.md` (extraction inventory, reporter domains, clock facts, decisions needed).
+    - [ ] Phase 0 leftovers: Windows/macOS/Android Quiche builds, VM and sensing baselines against the built player (needs a GPU), `tokio-quiche` decision.
+    - [ ] Phase 1: private authoritative simulation (split `add_world`, contacts and sensing on the fixed tick, camera-independent atmosphere, headless 2D/3D harness).
+    - [ ] Phases 2 to 6 as in the plan (players and authoring, LAN and late join, prediction and dedicated server, plugin/save scope, browser and internet).
 - [ ] Deploy: Web/WASM (see Phase 8 player and Phase 9 editor), Android signing (see Phase 6.5), Windows Store signing (see Phase 6.6), iOS signing, console path, auto-updater/DLC/addressables.
 - [ ] Ecosystem: analytics/crash, achievements/IAP hooks, asset store, collab/VCS, docs/LTS.
 - [ ] Plugin platform (`docs/plugin-system-and-voxel-plan.md`; decisions in `docs/plugin-adr-0001.md`):

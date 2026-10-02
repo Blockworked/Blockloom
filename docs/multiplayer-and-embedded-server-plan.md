@@ -1,6 +1,6 @@
 # Multiplayer and embedded servers
 
-Status: proposed architecture and delivery plan. This document does not implement networking or claim that the existing runtime is a multiplayer server.
+Status: proposed architecture and delivery plan. This document does not implement networking or claim that the existing runtime is a multiplayer server. Phase 0 (transport spike and extraction inventory) is recorded in [multiplayer-phase0.md](multiplayer-phase0.md); the `blockloom-net` crate is its only code.
 
 Research date: 2026-10-02.
 

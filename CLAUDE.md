@@ -181,6 +181,21 @@ uploads those bytes as an image. Elsewhere it is a child process.
 - **`blockloom-plugin-api`**, **`blockloom-plugin-host`**, **`blockloom-plugin-sdk`**, **`blockloom-plugin-gpu`** - the plugin platform:
   manifests, schemas, records and the C ABI (api, wasm-safe), resolver, cache,
   install transactions and the native loader (host). See Plugins below.
+- **`blockloom-net`** - native multiplayer transport (Phase 0 of
+  `docs/multiplayer-and-embedded-server-plan.md`, findings in
+  `docs/multiplayer-phase0.md`). Quiche over a nonblocking UDP socket, driven
+  by `poll()` from one thread, carrying opaque bytes: `Server` and `Client`
+  with ALPN `blockloom-game/1`, a self-signed in-memory `Identity` pinned by
+  its SHA-256 `Fingerprint` (a BoringSSL custom verify callback, never a
+  disabled check), stateless Retry address validation, reliable streams with a
+  4 MiB per-peer queue cap (`QueueFull`), datagrams, a peer cap and `kick`.
+  `Impairment` (loss, duplication, delay, jitter, seeded) wraps the send path
+  for tests, and Quiche's pacing times are honoured there. Server connection
+  IDs must be full length (a short header does not carry one). Nothing depends
+  on it yet and it cannot build for wasm32 (BoringSSL), so keep it out of the
+  web and Android runtimes. `cargo test -p blockloom-net`; the RTT/loss matrix
+  is `cargo test -p blockloom-net --test loopback -- --ignored --nocapture
+  matrix`.
 - **`blockstitch-core`** (sibling repo, see above) - the shared block-editor
   backend. `value` is the `Value`/`Op` expression system, extended by an app
   through `register_operators` (Blockloom registers its sensing reporters in
