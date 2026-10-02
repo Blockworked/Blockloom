@@ -507,3 +507,24 @@ the remaining proof.
   module op, so they work from the shell and MCP as well as from a click.
 - `SceneView` grew a boxed `plugin_tool` rather than a field per tool, so the
   protocol never needs to know a plugin's tools (`PROTOCOL_VERSION` 24).
+
+## Trusted editor modules (twentieth batch)
+
+- QML a plugin ships runs in the editor's engine, so it can do anything the
+  editor can. The manifest already forced a `trusted-editor` capability; the
+  new part is that nothing loads until the user says so, once per package
+  content. The ledger is outside the project (a project cannot trust itself)
+  and names the content hash, so updating the package, which is how code
+  changes, asks again.
+- The one command that grants trust has no shell or MCP name and is refused on
+  the attach socket, so an agent that can install a package cannot also make
+  the editor run it. The dev bridge serves raw dispatch names and is out of
+  the workspace; a person at a keyboard on that machine could always edit the
+  ledger file, which is the same trust boundary as the editor itself.
+- Modules get a small `host` rather than the module system's imports, but
+  `host.app` is the editor, so this is a convenience and not a sandbox. Only
+  QML is accepted; native editor modules stay a later question. Builds never
+  carry editor modules.
+- Not run here: there is no Qt in the build container, so the dialog and its
+  test have not been run; the backend (ledger, snapshot, commands, example
+  package) is tested.

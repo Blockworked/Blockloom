@@ -59,6 +59,10 @@ pub fn serve_attach(_backend: Backend) -> Result<(), String> {
     Err("Attach mode needs a local socket, so it isn't available on this platform".to_string())
 }
 
+/// Commands only the editor window may run, never a script or agent.
+#[cfg(unix)]
+const GUI_ONLY: &[&str] = &["plugin_trust", "plugin_untrust"];
+
 /// One command arriving over the socket.
 #[cfg(unix)]
 fn serve_conn(backend: Backend, stream: std::os::unix::net::UnixStream) {
@@ -87,6 +91,10 @@ fn serve_line(backend: &Backend, line: &str) -> String {
         }
     };
     let cmd = request.get("cmd").and_then(Value::as_str).unwrap_or("");
+    // Trusting a plugin's editor code is for the person at the window.
+    if GUI_ONLY.contains(&cmd) {
+        return json!({"ok": false, "result": null, "error": format!("{cmd} can only be run from the editor window"), "state": null}).to_string();
+    }
     let args = request.get("args").cloned().unwrap_or(Value::Null);
     let args = if args.is_null() { json!({}) } else { args };
     let (ok, result, error) = match backend.dispatch(cmd, args) {

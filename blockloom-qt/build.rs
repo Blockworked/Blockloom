@@ -50,6 +50,7 @@ fn main() {
                 "qml/BuildDialog.qml",
                 "qml/PluginManagerDialog.qml",
                 "qml/PluginPanelDialog.qml",
+                "qml/PluginEditorsDialog.qml",
                 "qml/PluginRecordForm.qml",
                 "qml/PluginValueEditor.qml",
                 "qml/BuildProgress.qml",

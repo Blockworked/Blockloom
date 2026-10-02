@@ -38,6 +38,11 @@ Rectangle {
             visible: !!(root.appState.plugins && root.appState.plugins.panels && root.appState.plugins.panels.length > 0)
             onClicked: pluginPanels.open()
         }
+        IconButton {
+            iconName: "app-window"; tip: "Plugin editors"
+            visible: !!(root.appState.plugins && root.appState.plugins.editorModules && root.appState.plugins.editorModules.length > 0)
+            onClicked: pluginEditors.open()
+        }
         IconButton { iconName: "settings"; tip: "Project settings"; onClicked: settingsDialog.open() }
         IconButton { iconName: "smartphone"; tip: "App settings (Android SDK)"; onClicked: appSettings.open() }
         Item { Layout.fillWidth: true }
@@ -310,6 +315,7 @@ Rectangle {
     BuildDialog { id: buildDialog; app: root.app }
     PluginManagerDialog { id: pluginManager; app: root.app }
     PluginPanelDialog { id: pluginPanels; app: root.app }
+    PluginEditorsDialog { id: pluginEditors; app: root.app }
     ProjectSettingsDialog { id: settingsDialog; app: root.app }
     AppSettingsDialog { id: appSettings; app: root.app }
 }

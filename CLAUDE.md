@@ -623,9 +623,26 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   upload the folder. After a package change the owner bumps the folder's
   revision (`plugins::reload(s, true)`), so an attached copy's live reload
   also reloads its active plugins.
+- **Trusted editor modules** (`PluginEditorsDialog.qml`, `blockloom-plugin-host/src/trust.rs`):
+  a package may list `editor.modules` (`.qml` files, which need the
+  `trusted-editor` capability and are left out of every build). Their QML runs
+  inside the editor with the editor's own access, so a module loads only after
+  the user trusts that exact package. `TrustLedger` (`<data dir>/blockloom/trusted-plugins.json`,
+  per user, never in the project) maps a plugin id to the package's
+  `content_hash`; an update changes the hash and asks again. `plugin_trust` and
+  `plugin_untrust` exist in dispatch for the window only: they have no shell or
+  MCP command and the attach socket refuses them (`GUI_ONLY`). The snapshot's
+  `plugins.editorModules` lists each such plugin with `trusted`, `changed` and
+  its modules, and gives a module's `file` only while trusted. The top bar's
+  app-window button opens the dialog, which asks for trust, lists the modules
+  and loads one into a `Loader` with `host` as an initial property: `host.plugin`,
+  `host.project`, `host.resource(name)`, `host.setResource(name, payload)`,
+  `host.call(command, args)` and `host.app` (the editor's `invoke` and state, i.e.
+  host-level). `plugins/examples/com.example.notes` is the example. QML test:
+  `tests/qml/tst_PluginEditors.qml`.
 - **Not yet**: plugin code in an Android build, a faster browser host (the page's own WebAssembly instead of wasmi in
-  wasm), a headless browser proof, and trusted editor modules
-  (QML a plugin ships and the editor loads at run time).
+  wasm), a headless browser proof, native editor modules and inspector
+  sections a plugin draws itself.
   `plugins/examples/com.example.health` is the sealed proof package;
   `plugins/examples/tally` is the SDK one, with code, and
   `plugins/examples/palette` the importer/build-hook one.

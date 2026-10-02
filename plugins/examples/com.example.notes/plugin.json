@@ -1,0 +1,25 @@
+{
+  "capabilities": [
+    "trusted-editor"
+  ],
+  "contributions": [
+    "schemas/notes.json"
+  ],
+  "description": "An editor-module example: project notes in a screen the plugin draws itself. Needs the user's trust, since its QML runs inside the editor.",
+  "editor": {
+    "modules": [
+      "editor/NotesPanel.qml"
+    ]
+  },
+  "engine": ">=0.0.1",
+  "files": {
+    "editor/NotesPanel.qml": "87b430ed4a37c6df71b8c5352dbcc9e47f9d85a74933599682a3283c8429e199",
+    "schemas/notes.json": "e286a93bfd432b36a503163378f3699be95a26caaf84b3f9a95c78a67b2edcd1"
+  },
+  "format": 1,
+  "id": "com.example.notes",
+  "license": "MIT",
+  "name": "Notes",
+  "tier": "declarative",
+  "version": "1.0.0"
+}

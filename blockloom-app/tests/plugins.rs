@@ -657,3 +657,113 @@ fn a_command_can_set_or_append_to_a_resource_field() {
             .is_err()
     );
 }
+
+#[test]
+fn editor_modules_load_only_after_the_user_trusts_that_exact_package() {
+    let root = data_root().join("trusted");
+    let pkg = root.join("pkg");
+    std::fs::create_dir_all(pkg.join("editor")).unwrap();
+    std::fs::write(
+        pkg.join("editor/StampPanel.qml"),
+        "import QtQuick\nItem { property var host }\n",
+    )
+    .unwrap();
+    let manifest = |version: &str| {
+        std::fs::write(
+            pkg.join("plugin.json"),
+            json!({
+                "format": 1, "id": "com.example.stamp", "name": "Stamp", "version": version,
+                "engine": ">=0.0.1", "tier": "declarative", "contributions": [],
+                "capabilities": ["trusted-editor"],
+                "editor": {"modules": ["editor/StampPanel.qml"]}
+            })
+            .to_string(),
+        )
+        .unwrap();
+    };
+    manifest("1.0.0");
+    let backend = Backend::start(AppHandle::new(|_| {}));
+    let invoke = |cmd: &str, args: Value| backend.dispatch(cmd, args).unwrap();
+    invoke("plugin_seal", json!({"path": pkg.to_string_lossy()}));
+    invoke(
+        "create_project",
+        json!({"name": "Trusted", "mode": "TwoD", "location": root.join("projects")}),
+    );
+    invoke(
+        "plugin_install",
+        json!({"id": "com.example.stamp", "source": format!("path:{}", pkg.display())}),
+    );
+    let modules = || invoke("get_state", json!({}))["plugins"]["editorModules"].clone();
+
+    // Installed but not trusted: the editor is told what it ships, not where it is.
+    let listed = modules();
+    assert_eq!(listed[0]["plugin"], "com.example.stamp");
+    assert_eq!(listed[0]["trusted"], false);
+    assert_eq!(listed[0]["modules"][0]["title"], "Stamp panel");
+    assert!(listed[0]["modules"][0]["file"].is_null());
+
+    invoke("plugin_trust", json!({"id": "com.example.stamp"}));
+    let trusted = modules();
+    assert_eq!(trusted[0]["trusted"], true);
+    let file = trusted[0]["modules"][0]["file"].as_str().unwrap();
+    assert!(file.ends_with("editor/StampPanel.qml") && std::path::Path::new(file).exists());
+
+    // Taking it back unloads it.
+    invoke("plugin_untrust", json!({"id": "com.example.stamp"}));
+    assert_eq!(modules()[0]["trusted"], false);
+
+    // Trust names the package's content: a new version asks again.
+    invoke("plugin_trust", json!({"id": "com.example.stamp"}));
+    manifest("1.1.0");
+    invoke("plugin_seal", json!({"path": pkg.to_string_lossy()}));
+    invoke(
+        "plugin_update",
+        json!({"id": "com.example.stamp", "source": format!("path:{}", pkg.display())}),
+    );
+    let after = modules();
+    assert_eq!(after[0]["trusted"], false, "{after}");
+    assert_eq!(after[0]["changed"], true);
+
+    // A plugin with no editor modules has nothing to trust.
+    assert!(
+        backend
+            .dispatch("plugin_trust", json!({"id": "com.example.nothing"}))
+            .is_err()
+    );
+}
+
+#[test]
+fn the_notes_example_ships_a_screen_and_saves_through_its_command() {
+    let root = data_root().join("notes");
+    let notes =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins/examples/com.example.notes");
+    let backend = Backend::start(AppHandle::new(|_| {}));
+    let invoke = |cmd: &str, args: Value| backend.dispatch(cmd, args).unwrap();
+    invoke(
+        "create_project",
+        json!({"name": "Notes", "mode": "TwoD", "location": root.join("projects")}),
+    );
+    invoke(
+        "plugin_install",
+        json!({"id": "com.example.notes", "source": format!("path:{}", notes.display())}),
+    );
+    invoke("plugin_trust", json!({"id": "com.example.notes"}));
+    let modules = invoke("get_state", json!({}))["plugins"]["editorModules"].clone();
+    let file = modules[0]["modules"][0]["file"].as_str().unwrap();
+    assert!(
+        std::fs::read_to_string(file)
+            .unwrap()
+            .contains("host.call(\"set_notes\"")
+    );
+    // The screen's Save button is this command.
+    invoke(
+        "plugin_call",
+        json!({"command": "com.example.notes/set_notes", "args": {"value": "first draft"}}),
+    );
+    let state = invoke("get_state", json!({}));
+    let saved = state["project"]["plugin_resources"]
+        .as_array()
+        .and_then(|all| all.iter().find(|r| r["type_id"] == "notes"))
+        .unwrap();
+    assert_eq!(saved["payload"]["text"], "first draft");
+}

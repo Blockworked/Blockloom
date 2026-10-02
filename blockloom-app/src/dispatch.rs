@@ -524,6 +524,16 @@ impl Backend {
                 &arg::<String>(&args, "block")?,
                 arg(&args, "args").unwrap_or_default(),
             )?),
+            "plugin_trust" => to_json(commands::plugins::plugin_trust(
+                state,
+                app,
+                &arg::<String>(&args, "id")?,
+            )?),
+            "plugin_untrust" => to_json(commands::plugins::plugin_untrust(
+                state,
+                app,
+                &arg::<String>(&args, "id")?,
+            )?),
             "plugin_run_tool" => to_json(commands::plugins::run_tool(
                 state,
                 app,

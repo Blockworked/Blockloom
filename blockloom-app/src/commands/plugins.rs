@@ -32,6 +32,7 @@ use blockloom_plugin_host::module::CodeModule;
 use blockloom_plugin_host::package;
 use blockloom_plugin_host::registry::DirRegistry;
 use blockloom_plugin_host::source::Source;
+use blockloom_plugin_host::trust;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -261,6 +262,106 @@ fn blocks_json(active: &ActivePlugins) -> Vec<Value> {
         .collect()
 }
 
+/// The plugins that ship editor modules, each with whether the user has
+/// trusted this exact package. Only a trusted plugin's modules get a file to
+/// load, and the QML loads nothing else.
+fn editor_modules_json(active: &ActivePlugins) -> Vec<Value> {
+    let ledger = trust::TrustLedger::read(&trust::default_path());
+    active
+        .plugins
+        .values()
+        .filter(|p| !p.package.manifest.editor.modules.is_empty())
+        .map(|p| {
+            let m = &p.package.manifest;
+            let trusted = ledger.is_trusted(&m.id, &p.package.content_hash);
+            let modules: Vec<Value> = m
+                .editor
+                .modules
+                .iter()
+                .map(|path| {
+                    let stem = Path::new(path)
+                        .file_stem()
+                        .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+                    json!({
+                        "path": path,
+                        "title": module_title(&stem),
+                        "file": trusted.then(|| p.package.root.join(path).to_string_lossy().into_owned()),
+                    })
+                })
+                .collect();
+            json!({
+                "plugin": m.id,
+                "pluginName": m.name,
+                "hash": p.package.content_hash,
+                // Trusted once, but the package has changed since.
+                "changed": !trusted && ledger.granted(&m.id).is_some(),
+                "trusted": trusted,
+                "modules": modules,
+            })
+        })
+        .collect()
+}
+
+/// `PluginPanel` -> `Plugin panel`: a file's name as a title.
+fn module_title(stem: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in stem.chars().enumerate() {
+        if c == '_' || c == '-' {
+            out.push(' ');
+        } else if c.is_uppercase() && i > 0 {
+            out.push(' ');
+            out.extend(c.to_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Trusts an installed plugin's editor modules at the package's current
+/// content. Only the editor window may ask: the shell and MCP have no such
+/// command, and the attach socket refuses it.
+pub(crate) fn plugin_trust(
+    state: &SharedState,
+    app: &AppHandle,
+    id: &str,
+) -> Result<Value, String> {
+    let s = lock(state)?;
+    let hash = {
+        let active = active(&s)?;
+        let loaded = active
+            .get(id)
+            .ok_or_else(|| format!("{id} is not installed in this project"))?;
+        if loaded.package.manifest.editor.modules.is_empty() {
+            return Err(format!("{id} ships no editor modules"));
+        }
+        loaded.package.content_hash.clone()
+    };
+    let path = trust::default_path();
+    let mut ledger = trust::TrustLedger::read(&path);
+    ledger.grant(id, &hash);
+    ledger.write(&path)?;
+    emit(app, &s);
+    Ok(json!({ "id": id, "hash": hash }))
+}
+
+/// Takes the trust back; the plugin's modules stop loading.
+pub(crate) fn plugin_untrust(
+    state: &SharedState,
+    app: &AppHandle,
+    id: &str,
+) -> Result<Value, String> {
+    let s = lock(state)?;
+    let path = trust::default_path();
+    let mut ledger = trust::TrustLedger::read(&path);
+    let removed = ledger.revoke(id);
+    if removed {
+        ledger.write(&path)?;
+    }
+    emit(app, &s);
+    Ok(json!({ "id": id, "removed": removed }))
+}
+
 /// Every scene-view tool the installed plugins add, with its owner's name.
 fn tools_json(active: &ActivePlugins) -> Vec<Value> {
     active
@@ -319,6 +420,7 @@ pub(crate) fn summary(s: &AppState) -> Value {
         "types": types_json(active),
         "panels": panels_json(active),
         "tools": tools_json(active),
+        "editorModules": editor_modules_json(active),
         "problems": active.problems,
         "issues": active.audit(project.plugin_records()),
     })
@@ -339,6 +441,7 @@ pub(crate) fn plugin_list(state: &SharedState) -> Result<Value, String> {
         "types": types_json(active),
         "panels": panels_json(active),
         "tools": tools_json(active),
+        "editorModules": editor_modules_json(active),
         "problems": active.problems,
         "direct": plugins.plugins,
         "registries": plugins.registries,

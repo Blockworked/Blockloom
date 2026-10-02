@@ -317,6 +317,9 @@ impl PluginManifest {
         {
             return fail("editor modules must declare the trusted-editor capability".to_string());
         }
+        if let Some(other) = self.editor.modules.iter().find(|m| !m.ends_with(".qml")) {
+            return fail(format!("{other}: an editor module is a .qml file"));
+        }
         for (triple, entry) in &self.runtime.native {
             if triple.is_empty() || triple.contains('/') {
                 return fail(format!("\"{triple}\" is not a target triple"));
@@ -542,6 +545,10 @@ mod tests {
         v["files"] = json!({"editor/Panel.qml": HASH});
         assert!(parse(v.clone()).validate().is_err());
         v["capabilities"] = json!(["trusted-editor"]);
-        parse(v).validate().unwrap();
+        parse(v.clone()).validate().unwrap();
+        // Only QML is loaded into the editor.
+        v["editor"] = json!({"modules": ["editor/panel.so"]});
+        v["files"] = json!({"editor/panel.so": HASH});
+        assert!(parse(v).validate().is_err());
     }
 }

@@ -13,7 +13,8 @@
 //!   [`module`] is either of them. [`world`] hosts a project's modules in a
 //!   running game: lifecycle calls, hooks by stage and blocks that are ops.
 //!   [`shipped`] loads what a built game carries, for its player. [`imports`]
-//!   runs importers and build hooks over a project's files.
+//!   runs importers and build hooks over a project's files. [`trust`] is the
+//!   per-user list of plugins allowed to run code in the editor.
 
 pub mod active;
 pub mod cache;
@@ -31,4 +32,5 @@ pub mod registry;
 pub mod resolver;
 pub mod shipped;
 pub mod source;
+pub mod trust;
 pub mod world;
