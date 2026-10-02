@@ -24,6 +24,8 @@ pub fn register(app: &mut App) {
 /// Where volumes are weighed. A game with a window weighs them at its world
 /// camera; a server has no camera, so it names an actor or a point instead and
 /// the weights don't depend on what any one client is looking at.
+// The server driver picks the other two; a windowed game keeps the camera.
+#[allow(dead_code)]
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub enum VolumeEye {
     #[default]

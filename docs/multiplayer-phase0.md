@@ -148,11 +148,12 @@ Facts about the clocks that matter for the plan's section 6:
 
 ## 7. Where Phase 1 starts
 
-The smallest first extraction that unblocks everything else, in order:
+Status as of the first Phase 1 slices (the same branch as Phase 0):
 
-1. Split `add_world` into simulation registration and presentation registration, behind the existing entry points, with no behavior change.
-2. Move `relay_collisions` and the tick-sampled part of `publish_sensors` into `FixedUpdate`, with `FixedPostUpdate` ordering so contacts keep their current latency (the plan asks for that latency to be stated and tested).
-3. Replace the camera-weighted environment blend in `sample_atmosphere` with a server-defined sample point.
-4. A bare-`App` headless harness for one 2D and one 3D project that steps the simulation and compares VM and compiled logic, built from the `MinimalPlugins` tests above.
+1. **Done, partly:** `add_world` is split into `simulation::add_simulation` and the presentation registration. The fixed step and physics are separated with unchanged order (each simulation system is a `SimStep`, presentation systems order against the steps they sat between). The `Update` chain and `rebuild_world`/`apply_lifetimes` are still interleaved with presentation and are the next extraction.
+2. **Done:** contacts relay on the fixed tick (`world::register_contacts`). The tick-sampled part of `publish_sensors` is not moved yet.
+3. **Done:** `volumes::VolumeEye` lets a world with no camera weigh volumes at an actor or a point. The server still needs to set it, and presentation blends per client later.
+4. **Done for the fixed step:** `simulation::tests` run a 2D and a 3D project headless over `MinimalPlugins`, check determinism, and check native logic against the VM. Needs the asset stores (CPU-only collections) until `rebuild_world` is split.
+5. **Done:** clocks (real `wall`, `elapsed_secs_f64`). Still open: Bevy's 250 ms virtual delta cap and the server's own accumulator.
 
-These touch `world.rs`, `lib.rs`, `dim2.rs`/`dim3.rs` and `atmosphere.rs`. The physics and character-controller thread is likely to edit `dim2.rs`/`dim3.rs` and the movement code, so step 2 should wait for or be coordinated with that work.
+Verification: the 420 runtime unit tests, plus the ignored GPU suite on lavapipe (`BLOCKLOOM_TEST_OPAQUE_FD=1 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json cargo test -p blockloom-runtime --lib -- --ignored --test-threads=1`, about 30 minutes). Before the split 54 passed and 11 failed on this container's lavapipe (the failing set is in the PR description); the same suite after the split is recorded there too.

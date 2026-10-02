@@ -2473,6 +2473,36 @@ The VM holds `Rc`s, so it is a `!Send` Bevy resource - which is exactly right:
 every system touching it is therefore scheduled on the main thread, the same
 thread the thread-local sensor snapshot lives on. Keep it that way.
 
+### Simulation and presentation registration
+
+`blockloom-runtime/src/simulation.rs` is the half of `add_world` that a server
+could register alone: `add_simulation` inserts the engine, `Dimension`,
+`PendingEffects`, the nav mesh, both Rapier pipelines (in the fixed schedule),
+the contact relay and the whole fixed-step simulation chain, plus
+`FixedPostUpdate`'s parenting and pose recording. Each fixed-step simulation
+system sits in a `SimStep` set and the sets are chained in the order the old
+single chain ran. The systems that used to sit inside that chain but present
+something (interface bindings and effects, exposure, HDR, lights, ray tracing,
+fx, sound, input effects) are registered by `add_world` in lib.rs and order
+themselves `.after`/`.before` the steps they used to sit between, so the order
+is unchanged. A new simulation system is a `SimStep` member; a new
+presentation system that reads an effect goes between two steps in lib.rs.
+
+Still interleaved, and the next extraction: the `Update` chain (`pump_editor`,
+`rebuild_world`, `gather_volumes`/`blend_environment`, `publish_sensors`) and
+`rebuild_world`/`apply_lifetimes` themselves, which spawn meshes and materials
+next to the entities. The sim systems therefore still take the asset stores
+(`AssetServer`, `Assets<Mesh>`, `Assets<StandardMaterial>`, ...) as required
+parameters. The tests in `simulation.rs` supply them as plain CPU-side asset
+collections over `MinimalPlugins`, which is the headless footing: a 2D and a 3D
+project step on the fixed clock with no window or device, the same project steps
+to the same place on every run, and a project compiled to native logic steps to
+the same place as the VM.
+
+`volumes::VolumeEye` says where volumes are weighed: the world camera (the
+default), a named actor or a point, so a world with no camera blends the same
+atmosphere for `sample_atmosphere`.
+
 ### Per-frame cost
 
 `publish_sensors` rebuilds the snapshot every frame, so it is the first thing
