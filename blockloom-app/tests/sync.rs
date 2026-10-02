@@ -516,3 +516,145 @@ fn interface_preview_never_saves_a_draft_and_cancel_uses_the_same_runtime() {
     ));
     backend.dispatch("close_project", json!({})).unwrap();
 }
+
+#[test]
+fn interface_transactions_save_once_undo_cancel_and_reject_stale_edits() {
+    let (_guard, _data, projects) = isolated("interface-transactions");
+    let backend = backend();
+    let dir = create_project(&backend, projects.path(), "Transactions");
+    backend
+        .dispatch("open_project", json!({"path": dir}))
+        .unwrap();
+    let document = json!({"widgets": [{"element": {"id": "box", "kind": "Canvas", "offset": [10,20], "size": [100,80]}},
+        {"element": {"id": "child", "parent": "box", "kind": "Label", "size": [30,20]}}]});
+    backend
+        .dispatch("set_interface", json!({"document": document}))
+        .unwrap();
+    let original =
+        backend.dispatch("get_state", json!({})).unwrap()["project"]["world"]["interface"].clone();
+    let revision = blockloom_core::sync::read_revision(&dir);
+    let saved = std::fs::read(dir.join("project.blockloom")).unwrap();
+    let begin = || {
+        backend
+            .dispatch(
+                "begin_interface_edit",
+                json!({"revision": blockloom_core::sync::read_revision(&dir)}),
+            )
+            .unwrap()
+    };
+    let token = begin();
+    assert!(
+        backend
+            .dispatch("begin_interface_edit", json!({"revision": revision}))
+            .is_err()
+    );
+    for x in 11..30 {
+        backend
+            .dispatch(
+                "update_interface_edit",
+                json!({"token": token, "edit": {"kind": "Move", "id": "box", "offset": [x,20]}}),
+            )
+            .unwrap();
+    }
+    assert_eq!(blockloom_core::sync::read_revision(&dir), revision);
+    assert_eq!(std::fs::read(dir.join("project.blockloom")).unwrap(), saved);
+    assert_eq!(
+        backend.dispatch("get_state", json!({})).unwrap()["project"]["world"]["interface"],
+        original
+    );
+    for edit in [
+        json!({"kind":"Move","id":"missing","offset":[0,0]}),
+        json!({"kind":"Resize","id":"box","offset":[0,0],"size":[-1,10]}),
+        json!({"kind":"Move","id":"box","offset":[0,0],"typo":1}),
+    ] {
+        assert!(
+            backend
+                .dispatch("update_interface_edit", json!({"token":token,"edit":edit}))
+                .is_err()
+        );
+    }
+    backend
+        .dispatch("commit_interface_edit", json!({"token": token}))
+        .unwrap();
+    assert_eq!(blockloom_core::sync::read_revision(&dir), revision + 1);
+    assert!(
+        backend
+            .dispatch("commit_interface_edit", json!({"token": token}))
+            .is_err()
+    );
+    backend.dispatch("undo", json!({})).unwrap();
+    assert_eq!(
+        backend.dispatch("get_state", json!({})).unwrap()["project"]["world"]["interface"],
+        original
+    );
+    backend.dispatch("redo", json!({})).unwrap();
+    assert_eq!(
+        backend.dispatch("get_state", json!({})).unwrap()["project"]["world"]["interface"]["widgets"]
+            [0]["element"]["offset"],
+        json!([29.0, 20.0])
+    );
+    let token = begin();
+    backend.dispatch("update_interface_edit", json!({"token": token, "edit": {"kind":"Resize","id":"box","size":[200,150],"offset":[29,20]}})).unwrap();
+    let saved = std::fs::read(dir.join("project.blockloom")).unwrap();
+    backend
+        .dispatch("cancel_interface_edit", json!({"token": token}))
+        .unwrap();
+    assert_eq!(std::fs::read(dir.join("project.blockloom")).unwrap(), saved);
+    let token = begin();
+    backend.dispatch("update_interface_edit", json!({"token": token, "edit": {"kind":"Resize","id":"box","size":[200,150],"offset":[29,20]}})).unwrap();
+    backend
+        .dispatch("commit_interface_edit", json!({"token": token}))
+        .unwrap();
+    assert_eq!(
+        backend.dispatch("get_state", json!({})).unwrap()["project"]["world"]["interface"]["widgets"]
+            [0]["element"]["size"],
+        json!([200.0, 150.0])
+    );
+    let token = begin();
+    backend.dispatch("undo", json!({})).unwrap();
+    assert!(
+        backend
+            .dispatch("commit_interface_edit", json!({"token": token}))
+            .is_err()
+    );
+    backend
+        .dispatch("cancel_interface_edit", json!({"token": token}))
+        .unwrap();
+    let token = begin();
+    let mut external = blockloom_core::project::read_project_dir(&dir).unwrap();
+    external.name = "External save".into();
+    blockloom_core::project::save_project(&external, &dir).unwrap();
+    assert!(
+        backend
+            .dispatch(
+                "update_interface_edit",
+                json!({"token":token,"edit":{"kind":"Move","id":"box","offset":[0,0]}})
+            )
+            .is_err()
+    );
+    assert!(
+        backend
+            .dispatch("commit_interface_edit", json!({"token":token}))
+            .is_err()
+    );
+    backend
+        .dispatch("cancel_interface_edit", json!({"token": token}))
+        .unwrap();
+    let token = begin();
+    let revision = blockloom_core::sync::read_revision(&dir);
+    backend
+        .dispatch("commit_interface_edit", json!({"token":token}))
+        .unwrap();
+    assert_eq!(blockloom_core::sync::read_revision(&dir), revision);
+    let token = begin();
+    backend.dispatch("close_project", json!({})).unwrap();
+    backend
+        .dispatch("open_project", json!({"path":dir}))
+        .unwrap();
+    assert!(
+        backend
+            .dispatch("commit_interface_edit", json!({"token":token}))
+            .is_err()
+    );
+    backend.dispatch("close_project", json!({})).unwrap();
+}

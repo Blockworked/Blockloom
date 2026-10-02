@@ -223,6 +223,64 @@ impl Default for UiDocument {
         }
     }
 }
+/// Absolute authored values, applied to a transaction's starting document.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum UiEdit {
+    Move {
+        id: String,
+        offset: [f32; 2],
+    },
+    Resize {
+        id: String,
+        size: [f32; 2],
+        offset: [f32; 2],
+    },
+}
+
+impl UiDocument {
+    pub fn apply_edit(&mut self, edit: &UiEdit) -> Result<(), String> {
+        let (UiEdit::Move { id, offset } | UiEdit::Resize { id, offset, .. }) = edit;
+        if offset.iter().any(|v| !v.is_finite()) {
+            return Err("Invalid widget offset".into());
+        }
+        let index = self
+            .widgets
+            .iter()
+            .position(|w| &w.element.id == id)
+            .ok_or_else(|| format!("Unknown widget: {id}"))?;
+        let widget = &self.widgets[index];
+        if !widget.world_actor.is_empty() {
+            return Err("Projected widgets cannot be moved or resized".into());
+        }
+        if !widget.element.parent.is_empty()
+            && widget.layout.as_ref().is_none_or(|l| !l.absolute)
+            && self
+                .widgets
+                .iter()
+                .find(|w| w.element.id == widget.element.parent)
+                .is_none_or(|w| w.element.kind != UiKind::Canvas)
+        {
+            return Err("This widget is positioned by its parent layout".into());
+        }
+        if let UiEdit::Resize { size, .. } = edit
+            && size.iter().any(|v| !v.is_finite() || *v <= 0.)
+        {
+            return Err("Widget size must be finite and positive".into());
+        }
+        let widget = &mut self.widgets[index];
+        widget.element.offset = *offset;
+        if let UiEdit::Resize { size, .. } = edit {
+            widget.element.size = *size;
+            if let Some(layout) = &mut widget.layout {
+                layout.width = UiLength::Px(size[0]);
+                layout.height = UiLength::Px(size[1]);
+            }
+        }
+        Ok(())
+    }
+}
+
 impl UiDocument {
     pub fn validate(&self) -> Result<(), String> {
         if self
@@ -365,6 +423,79 @@ pub fn effective_safe_area(authored: [f32; 4], device: [f32; 4]) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_edits_preserve_layout_and_reject_invalid_dimensions() {
+        let mut document = UiDocument::default();
+        document.widgets = vec![
+            UiWidget {
+                element: UiElement {
+                    id: "parent".into(),
+                    kind: UiKind::Panel,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            UiWidget {
+                element: UiElement {
+                    id: "child".into(),
+                    parent: "parent".into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ];
+        let move_child = UiEdit::Move {
+            id: "child".into(),
+            offset: [20., 30.],
+        };
+        let original = document.clone();
+        assert!(document.apply_edit(&move_child).is_err());
+        assert_eq!(document, original);
+        document.widgets[0].element.kind = UiKind::Canvas;
+        document.apply_edit(&move_child).unwrap();
+        assert_eq!(document.widgets[1].element.offset, [20., 30.]);
+        document.widgets[1].layout = Some(UiLayout {
+            width: UiLength::Percent(50.),
+            padding: [4.; 4],
+            ..Default::default()
+        });
+        document
+            .apply_edit(&UiEdit::Resize {
+                id: "child".into(),
+                offset: [21., 31.],
+                size: [80., 60.],
+            })
+            .unwrap();
+        let layout = document.widgets[1].layout.as_ref().unwrap();
+        assert_eq!(layout.width, UiLength::Px(80.));
+        assert_eq!(layout.height, UiLength::Px(60.));
+        assert_eq!(layout.padding, [4.; 4]);
+        let original = document.clone();
+        for size in [[0., 1.], [-1., 1.], [f32::NAN, 1.], [1., f32::INFINITY]] {
+            assert!(
+                document
+                    .apply_edit(&UiEdit::Resize {
+                        id: "child".into(),
+                        offset: [0.; 2],
+                        size
+                    })
+                    .is_err()
+            );
+            assert_eq!(document, original);
+        }
+        assert!(
+            document
+                .apply_edit(&UiEdit::Move {
+                    id: "child".into(),
+                    offset: [f32::NAN, 0.]
+                })
+                .is_err()
+        );
+        document.widgets[1].world_actor = "actor".into();
+        assert!(document.apply_edit(&move_child).is_err());
+    }
+
     #[test]
     fn device_insets_add_over_the_authored_safe_area() {
         assert_eq!(

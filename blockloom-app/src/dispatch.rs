@@ -289,6 +289,24 @@ impl Backend {
                 app,
                 arg(&args, "design")?,
             )?),
+            "begin_interface_edit" => to_json(commands::begin_interface_edit(
+                state,
+                arg(&args, "revision")?,
+            )?),
+            "update_interface_edit" => to_json(commands::update_interface_edit(
+                state,
+                arg(&args, "token")?,
+                arg(&args, "edit")?,
+            )?),
+            "commit_interface_edit" => to_json(commands::commit_interface_edit(
+                state,
+                app,
+                arg(&args, "token")?,
+            )?),
+            "cancel_interface_edit" => to_json(commands::cancel_interface_edit(
+                state,
+                arg(&args, "token")?,
+            )?),
             "interface_layout" => to_json(commands::interface_layout(state)?),
             "set_interface" => to_json(commands::set_interface(
                 state,

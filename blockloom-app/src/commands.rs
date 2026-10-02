@@ -311,6 +311,7 @@ pub(crate) fn open_project(
             (held, false, other.is_some(), None)
         }
     };
+    s.interface_edit = None;
     s.open = Some(OpenProject::new(
         project,
         dir.clone(),
@@ -369,6 +370,7 @@ pub(crate) fn create_project(
     library::remember(&dir);
     let revision = sync::read_revision(&dir);
     let owns_lock = sync::write_lock(&dir, &owner_lock(&session)).is_ok();
+    s.interface_edit = None;
     s.open = Some(OpenProject::new(project, dir, revision, owns_lock, false));
     s.library = library::list();
     if let Some(dir) = s.project_dir().map(Path::to_path_buf) {
@@ -553,6 +555,7 @@ pub(crate) fn import_project(
     library::remember(&dir);
     let revision = sync::read_revision(&dir);
     let owns_lock = sync::write_lock(&dir, &owner_lock(&session)).is_ok();
+    s.interface_edit = None;
     s.open = Some(OpenProject::new(project, dir, revision, owns_lock, false));
     s.library = library::list();
     if let Some(dir) = s.project_dir().map(Path::to_path_buf) {
@@ -654,6 +657,7 @@ fn close_open_project(s: &mut AppState, save: bool) {
     {
         sync::release_lock(&open.dir, &s.session_id);
     }
+    s.interface_edit = None;
     s.open = None;
     s.selected_actor = None;
     s.history.clear();
@@ -5162,6 +5166,96 @@ pub(crate) fn interface_layout(
     state: &SharedState,
 ) -> Result<Option<blockloom_protocol::InterfaceLayout>, String> {
     Ok(lock(state)?.interface_layout.clone())
+}
+
+fn check_interface_edit(s: &AppState, token: &str) -> Result<(), String> {
+    let draft = s
+        .interface_edit
+        .as_ref()
+        .filter(|d| d.token == token)
+        .ok_or("Unknown interface transaction")?;
+    let open = s.open.as_ref().ok_or("No project is open")?;
+    if s.running
+        || open.project != draft.project
+        || open.loaded_revision() != draft.revision
+        || sync::read_revision(&open.dir) != draft.revision
+    {
+        return Err("Stale interface transaction".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn begin_interface_edit(state: &SharedState, revision: u64) -> Result<String, String> {
+    let mut s = lock(state)?;
+    if s.running {
+        return Err("Stop the game before editing the interface".into());
+    }
+    if let Some(draft) = &s.interface_edit {
+        if check_interface_edit(&s, &draft.token).is_ok() {
+            return Err("An interface transaction is already open".into());
+        }
+        s.interface_edit = None;
+    }
+    let open = s.open.as_ref().ok_or("No project is open")?;
+    if open.loaded_revision() != revision || sync::read_revision(&open.dir) != revision {
+        return Err("Stale interface revision".into());
+    }
+    let token = uuid::Uuid::new_v4().to_string();
+    s.interface_edit = Some(crate::state::InterfaceEditTransaction {
+        token: token.clone(),
+        project: open.project.clone(),
+        revision,
+        document: open.project.world.interface.clone(),
+    });
+    Ok(token)
+}
+
+pub(crate) fn update_interface_edit(
+    state: &SharedState,
+    token: String,
+    edit: blockloom_core::ui::UiEdit,
+) -> Result<blockloom_core::ui::UiDocument, String> {
+    let mut s = lock(state)?;
+    check_interface_edit(&s, &token)?;
+    let draft = s.interface_edit.as_mut().unwrap();
+    let mut document = draft.project.world.interface.clone();
+    document.apply_edit(&edit)?;
+    document.validate()?;
+    draft.document = document.clone();
+    Ok(document)
+}
+
+pub(crate) fn commit_interface_edit(
+    state: &SharedState,
+    app: &AppHandle,
+    token: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    check_interface_edit(&s, &token)?;
+    let draft = s.interface_edit.take().unwrap();
+    if draft.document == draft.project.world.interface {
+        return Ok(());
+    }
+    push_undo(&mut s);
+    s.project_mut().unwrap().world.interface = draft.document;
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+pub(crate) fn cancel_interface_edit(state: &SharedState, token: String) -> Result<(), String> {
+    let mut s = lock(state)?;
+    if s.interface_edit.as_ref().is_none_or(|d| d.token != token) {
+        return Err("Unknown interface transaction".into());
+    }
+    s.interface_edit = None;
+    s.interface_design = None;
+    s.interface_layout = None;
+    if let Some(runtime) = &mut s.runtime {
+        runtime.send(&blockloom_protocol::EditorMessage::InterfaceDesign { design: None });
+    }
+    Ok(())
 }
 
 /// Saves the designer document as one undoable edit.

@@ -84,6 +84,7 @@ pub(crate) struct AppState {
     pub(crate) paused: bool,
     /// The last status the runtime reported.
     pub(crate) status: Option<blockloom_protocol::Status>,
+    pub(crate) interface_edit: Option<InterfaceEditTransaction>,
     pub(crate) interface_design: Option<blockloom_protocol::InterfaceDesign>,
     pub(crate) interface_layout: Option<blockloom_protocol::InterfaceLayout>,
     pub(crate) log: Vec<LogLine>,
@@ -349,4 +350,12 @@ pub(crate) fn sync_dto(s: &AppState) -> SyncDto {
         session: s.session_id.clone(),
         owner: blockloom_core::sync::read_lock(&open.dir),
     }
+}
+
+/// A draft belongs to one project and one saved revision.
+pub(crate) struct InterfaceEditTransaction {
+    pub(crate) token: String,
+    pub(crate) project: Project,
+    pub(crate) revision: u64,
+    pub(crate) document: blockloom_core::ui::UiDocument,
 }

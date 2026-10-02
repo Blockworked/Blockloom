@@ -943,6 +943,57 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[],
     },
     CommandSpec {
+        name: "begin-interface-edit",
+        cmd: "begin_interface_edit",
+        aliases: &["begin_interface_edit"],
+        summary: "Begin a move/resize draft at the saved project revision; returns a token.",
+        args: &[ArgSpec {
+            name: "revision",
+            ty: "number",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "update-interface-edit",
+        cmd: "update_interface_edit",
+        aliases: &["update_interface_edit"],
+        summary: "Replace the draft with a typed edit: {kind: Move, id, offset} or {kind: Resize, id, size, offset}. Does not save.",
+        args: &[
+            ArgSpec {
+                name: "token",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "edit",
+                ty: "object",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "commit-interface-edit",
+        cmd: "commit_interface_edit",
+        aliases: &["commit_interface_edit"],
+        summary: "Commit a current draft as one saved undo step. Rejects stale transactions.",
+        args: &[ArgSpec {
+            name: "token",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "cancel-interface-edit",
+        cmd: "cancel_interface_edit",
+        aliases: &["cancel_interface_edit"],
+        summary: "Discard a draft without saving. Also accepts a stale draft token.",
+        args: &[ArgSpec {
+            name: "token",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-interface",
         cmd: "set_interface",
         aliases: &["set_interface"],

@@ -96,6 +96,7 @@ impl Backend {
             running: false,
             paused: false,
             status: None,
+            interface_edit: None,
             interface_design: None,
             interface_layout: None,
             log: Vec::new(),

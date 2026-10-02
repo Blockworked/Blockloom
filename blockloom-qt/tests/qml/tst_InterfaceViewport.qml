@@ -10,6 +10,11 @@ TestCase {
     when: windowShown
     property var panel: null
     property var calls: []
+    property var draft: null
+    property bool deferBegin: false
+    property bool deferUpdate: false
+    property var pendingBegin: null
+    property var pendingUpdate: null
     QtObject {
         id: backend
         property var appState: ({running: false, runtime_embedded: true, project: {world: {interface: {
@@ -19,12 +24,30 @@ TestCase {
         property string previewLayout: ""
         function invoke(command, args, done, failed) {
             test.calls.push({command: command, args: args});
-            if (done) done();
+            if (command === "begin_interface_edit") {
+                test.draft = JSON.parse(JSON.stringify(appState.project.world.interface));
+                if (test.deferBegin) test.pendingBegin = done;
+                else if (done) done("draft-token");
+            } else if (command === "update_interface_edit") {
+                const next = JSON.parse(JSON.stringify(test.draft));
+                const w = next.widgets.find(w => w.element.id === args.edit.id);
+                w.element.offset = args.edit.offset;
+                if (args.edit.kind === "Resize") w.element.size = args.edit.size;
+                if (test.deferUpdate) test.pendingUpdate = () => done(next);
+                else if (done) done(next);
+            } else if (command === "commit_interface_edit") {
+                appState = {running: false, runtime_embedded: true, sync: {revision: 2}, project: {world: {interface: panel.copy(panel.document)}}};
+                if (done) done();
+            } else if (done) done();
         }
     }
     Component { id: workspace; Editor.UiDesigner { app: backend } }
     function init() {
-        calls = [];
+        calls = []; deferBegin = false; deferUpdate = false; pendingBegin = null; pendingUpdate = null;
+        backend.appState = {running: false, runtime_embedded: true, sync: {revision: 1}, project: {world: {interface: {
+            widgets: [{element: {id: "back", kind: "Panel", offset: [200,200], size: [200,200], anchor: "TopLeft"}},
+                {element: {id: "front", kind: "Label", offset: [250,270], size: [100,60], anchor: "Center"}}]
+        }}}};
         panel = workspace.createObject(test, {width: test.width, height: test.height});
         verify(panel !== null);
         tryVerify(() => calls.some(c => c.command === "preview_interface" && !!c.args.design));
@@ -98,4 +121,153 @@ TestCase {
         panel.screenId = "";
         compare(panel.screenWidgets.length, 4);
     }
+    function test_move_previews_and_commits_once_on_release() {
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
+        const canvas = findChild(panel, "interfaceCanvas");
+        mousePress(canvas,390,390);
+        mouseMove(canvas,410,420);
+        verify(panel.gesture !== null);
+        fuzzyCompare(panel.document.widgets[0].element.offset[0],220,1.5);
+        fuzzyCompare(panel.document.widgets[0].element.offset[1],230,1.5);
+        verify(!calls.some(c => c.command === "commit_interface_edit" || c.command === "set_interface"));
+        verify(findChild(panel,"interfacePicking").enabled);
+        mouseMove(canvas,430,440);
+        mouseRelease(canvas,430,440);
+        compare(panel.gesture, null);
+        compare(calls.filter(c => c.command === "begin_interface_edit").length, 1);
+        compare(calls.filter(c => c.command === "commit_interface_edit").length, 1);
+        fuzzyCompare(panel.document.widgets[0].element.offset[0],240,1.5);
+        fuzzyCompare(panel.document.widgets[0].element.offset[1],250,1.5);
+    }
+    function test_resize_uses_runtime_transform_and_escape_discards() {
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
+        panel.selectedId = "front";
+        verify(panel.startEdit("Resize",300,300));
+        panel.dragEdit(300,320);
+        compare(panel.document.widgets[1].element.size.join(","), "120,60");
+        compare(panel.document.widgets[1].element.offset.join(","), "260,270");
+        keyClick(Qt.Key_Escape);
+        compare(panel.gesture,null);
+        compare(panel.document.widgets[1].element.size.join(","), "100,60");
+        verify(calls.some(c => c.command === "cancel_interface_edit"));
+        verify(!calls.some(c => c.command === "commit_interface_edit" || c.command === "set_interface"));
+    }
+    function test_resize_handle_retains_grab_during_preview() {
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
+        panel.selectedId = "back";
+        const handle = findChild(panel,"interfaceResizeHandle");
+        verify(handle.visible);
+        mousePress(handle,handle.width/2,handle.height/2);
+        mouseMove(handle,handle.width/2+30,handle.height/2+20);
+        verify(panel.gesture !== null);
+        verify(handle.visible);
+        fuzzyCompare(panel.document.widgets[0].element.size[0],230,1.5);
+        fuzzyCompare(panel.document.widgets[0].element.size[1],220,1.5);
+        mouseRelease(handle,handle.width/2+30,handle.height/2+20);
+        compare(calls.filter(c => c.command === "commit_interface_edit").length,1);
+    }
+    function test_inspector_uses_typed_edit_and_flow_widgets_are_disabled() {
+        panel.selectedId = "back";
+        panel.editDimension(0,123);
+        compare(panel.document.widgets[0].element.offset[0],123);
+        verify(calls.some(c => c.command === "update_interface_edit" && c.args.edit.kind === "Move"));
+        verify(!calls.some(c => c.command === "set_interface"));
+        const next = panel.copy(panel.document);
+        next.widgets[1].element.parent = "back";
+        panel.document = next;
+        panel.selectedId = "front";
+        verify(!panel.editable(panel.widget));
+        verify(!panel.startEdit("Move",null,null));
+    }
+    function test_screen_and_viewport_changes_cancel_gestures() {
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
+        panel.selectedId = "back";
+        verify(panel.startEdit("Move",390,390));
+        panel.dragEdit(410,410);
+        panel.previewWidth = 1280;
+        compare(panel.gesture,null);
+        compare(panel.document.widgets[0].element.offset.join(","),"200,200");
+        verify(calls.some(c => c.command === "cancel_interface_edit"));
+    }
+
+    function test_release_before_begin_reply_flushes_final_edit() {
+        deferBegin = true;
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision,panel.generation)));
+        panel.selectedId = "back";
+        verify(panel.startEdit("Move",300,300));
+        panel.dragEdit(320,330);
+        panel.dragEdit(340,350);
+        panel.finishEdit();
+        verify(!calls.some(c => c.command === "update_interface_edit"));
+        pendingBegin("draft-token");
+        compare(panel.gesture,null);
+        compare(panel.document.widgets[0].element.offset.join(","),"240,250");
+        compare(calls.filter(c => c.command === "update_interface_edit").length,1);
+        compare(calls.filter(c => c.command === "commit_interface_edit").length,1);
+    }
+    function test_inflight_update_coalesces_and_cancel_ignores_reply() {
+        deferUpdate = true;
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision,panel.generation)));
+        panel.selectedId = "back";
+        verify(panel.startEdit("Move",300,300));
+        panel.dragEdit(310,310);
+        panel.dragEdit(330,330);
+        panel.dragEdit(350,350);
+        compare(calls.filter(c => c.command === "update_interface_edit").length,1);
+        panel.finishEdit();
+        deferUpdate = false;
+        pendingUpdate();
+        compare(panel.document.widgets[0].element.offset.join(","),"250,250");
+        compare(calls.filter(c => c.command === "update_interface_edit").length,2);
+        compare(calls.filter(c => c.command === "commit_interface_edit").length,1);
+        deferBegin = true;
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision,panel.generation)));
+        verify(panel.startEdit("Move",300,300));
+        panel.dragEdit(310,310);
+        panel.cancelEdit();
+        pendingBegin("late-token");
+        compare(panel.gesture,null);
+        verify(calls.some(c => c.command === "cancel_interface_edit" && c.args.token === "late-token"));
+        compare(calls.filter(c => c.command === "commit_interface_edit").length,1);
+    }
+
+    function test_moves_use_canvas_scale_and_parent_transform() {
+        const next = panel.copy(panel.document);
+        next.scale = "ScaleWithSize"; next.reference_size = [480,360];
+        next.widgets[0].element.kind = "Canvas";
+        panel.document = next;
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision,panel.generation)));
+        panel.selectedId = "back";
+        verify(panel.startEdit("Move",300,300));
+        panel.dragEdit(320,340);
+        compare(panel.document.widgets[0].element.offset.join(","),"210,220");
+        panel.cancelEdit();
+        const nested = panel.copy(panel.document);
+        nested.widgets[0].element.kind = "Canvas";
+        nested.widgets[1].element.parent = "back";
+        panel.document = nested;
+        const frame = geometry(panel.revision,panel.generation);
+        frame.widgets[1].transform = [0,2,-2,0,300,300];
+        panel.receiveLayout(JSON.stringify(frame));
+        panel.selectedId = "front";
+        verify(panel.startEdit("Move",300,300));
+        panel.dragEdit(320,340);
+        compare(panel.document.widgets[1].element.offset.join(","),"270,260");
+        panel.cancelEdit();
+    }
+    function test_continuous_drag_sends_previews_and_cancel_ignores_update_reply() {
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision,panel.generation)));
+        panel.selectedId = "back";
+        verify(panel.startEdit("Move",300,300));
+        const before = calls.filter(c => c.command === "preview_interface").length;
+        for (let i=0;i<6;++i) { panel.dragEdit(310+i,310+i); wait(30); }
+        verify(calls.filter(c => c.command === "preview_interface").length > before);
+        deferUpdate = true;
+        panel.dragEdit(350,350);
+        panel.cancelEdit();
+        pendingUpdate();
+        compare(panel.document.widgets[0].element.offset.join(","),"200,200");
+        verify(!calls.some(c => c.command === "commit_interface_edit"));
+    }
+
 }

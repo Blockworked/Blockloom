@@ -25,6 +25,7 @@ Item {
         return false;
     }
     onScreenIdChanged: {
+        cancelEdit();
         ++revision;
         frameLayout = null;
         hoveredId = "";
@@ -32,6 +33,100 @@ Item {
         if (designing) previewDelay.restart();
     }
     readonly property int selected: document.widgets.findIndex(w => w.element.id === selectedId)
+    property var gesture: null
+    readonly property var selectedBounds: bounds.find(w => w.id === selectedId) || null
+    readonly property var resizePoint: selectedBounds ? geometry.point(selectedBounds.transform, selectedBounds.size[0]/2, selectedBounds.size[1]/2) : ({x: 0, y: 0})
+    function editable(w) {
+        if (!w || w.world_actor) return false;
+        const parent = document.widgets.find(p => p.element.id === w.element.parent);
+        return !w.element.parent || (w.layout && w.layout.absolute) || (parent && parent.element.kind === "Canvas");
+    }
+    function startEdit(kind, x, y) {
+        if (gesture || !widget || !editable(widget)) return false;
+        const bound = selectedBounds;
+        if (x !== null && (!layoutReady || !bound)) return false;
+        const parent = bounds.find(w => w.id === widget.element.parent);
+        const g = {kind: kind, id: selectedId, original: copy(document), token: null,
+            offset: (widget.element.offset || [0,0]).slice(), start: {x: x, y: y},
+            inverse: bound ? geometry.inverse(bound.transform) : null,
+            parentInverse: parent ? geometry.inverse(parent.transform) : null,
+            size: bound ? [bound.size[0], bound.size[1]] : (widget.element.size || [0,0]).slice(),
+            handle: {x: resizePoint.x, y: resizePoint.y}, scale: designScale, committing: false, edit: null, sent: null, busy: false, released: false, canceled: false};
+        gesture = g;
+        forceActiveFocus();
+        const backend = app;
+        app.invoke("begin_interface_edit", {revision: savedRevision}, function(token) {
+            g.token = token;
+            if (g.canceled) backend.invoke("cancel_interface_edit", {token: token});
+            else root.flushEdit(g);
+        }, function(e) { root.failEdit(g, e); });
+        return true;
+    }
+    function failEdit(g, e) {
+        if (g.canceled) return;
+        if (g.token) app.invoke("cancel_interface_edit", {token: g.token});
+        if (gesture !== g) return;
+        g.canceled = true; gesture = null; refresh(); error = String(e);
+        if (designing) previewDelay.restart();
+    }
+    function flushEdit(g) {
+        if (g.canceled || !g.token || g.busy) return;
+        if (g.edit && g.edit !== g.sent) {
+            const edit = g.edit; g.sent = edit; g.busy = true;
+            app.invoke("update_interface_edit", {token: g.token, edit: edit}, function(next) {
+                g.busy = false;
+                if (g.canceled || root.gesture !== g) return;
+                root.document = next;
+                root.flushEdit(g);
+            }, function(e) { root.failEdit(g, e); });
+        } else if (g.released) {
+            g.busy = true; g.committing = true;
+            app.invoke("commit_interface_edit", {token: g.token}, function() {
+                if (g.canceled || root.gesture !== g) return;
+                root.gesture = null; root.refresh(); root.error = "";
+                if (root.designing) previewDelay.restart();
+            }, function(e) { root.failEdit(g, e); });
+        }
+    }
+    function dragEdit(x, y) {
+        const g = gesture;
+        if (!g || g.released || !g.inverse) return;
+        let dx = x-g.start.x, dy = y-g.start.y;
+        let offset = g.offset.slice();
+        if (g.kind === "Move") {
+            if (g.parentInverse) {
+                const a = geometry.point(g.parentInverse, g.start.x, g.start.y), b = geometry.point(g.parentInverse, x, y);
+                dx = b.x-a.x; dy = b.y-a.y;
+            } else { dx /= g.scale; dy /= g.scale; }
+            offset = [g.offset[0]+dx, g.offset[1]+dy];
+            g.edit = {kind: "Move", id: g.id, offset: offset};
+        } else {
+            const a = geometry.point(g.inverse, g.start.x, g.start.y), b = geometry.point(g.inverse, x, y);
+            const size = [Math.max(1,g.size[0]+b.x-a.x), Math.max(1,g.size[1]+b.y-a.y)];
+            const w = g.original.widgets.find(w => w.element.id === g.id);
+            const fractions = {TopLeft:[0,0], Top:[0.5,0], TopRight:[1,0], Left:[0,0.5], Center:[0.5,0.5], Right:[1,0.5], BottomLeft:[0,1], Bottom:[0.5,1], BottomRight:[1,1]};
+            const f = w.layout && w.layout.absolute ? [0,0] : fractions[w.element.anchor || "Center"];
+            offset = [g.offset[0]+f[0]*(size[0]-g.size[0]), g.offset[1]+f[1]*(size[1]-g.size[1])];
+            g.edit = {kind: "Resize", id: g.id, size: size, offset: offset};
+        }
+        flushEdit(g);
+    }
+    function finishEdit() { if (gesture) { gesture.released = true; flushEdit(gesture); } }
+    function cancelEdit() {
+        const g = gesture;
+        if (!g || g.committing) return;
+        g.canceled = true; gesture = null;
+        if (g.token) app.invoke("cancel_interface_edit", {token: g.token});
+        refresh(); if (designing) previewDelay.restart();
+    }
+    function editDimension(index, value) {
+        if (!widget || !Number.isFinite(value) || !startEdit(index < 2 ? "Move" : "Resize", null, null)) return;
+        const g = gesture, offset = g.offset.slice(), size = g.size.slice();
+        if (index < 2) offset[index] = value; else size[index-2] = value;
+        g.edit = index < 2 ? {kind:"Move", id:g.id, offset:offset} : {kind:"Resize", id:g.id, size:size, offset:offset};
+        finishEdit();
+    }
+    Keys.onEscapePressed: cancelEdit()
     property string error: ""
     readonly property bool designing: visible && app.appState.running !== true
     readonly property bool embedded: app.appState.runtime_embedded === true
@@ -56,6 +151,7 @@ Item {
             function() { root.error = ""; }, function(e) { root.error = String(e); });
     }
     function updateSession() {
+        if (!designing) cancelEdit();
         frameLayout = null;
         if (designing) {
             if (!embedded && !app.appState.preview_enabled) {
@@ -75,17 +171,20 @@ Item {
         frameLayout = null;
         if (screenId && !document.widgets.some(w => w.element.id === screenId && !w.element.parent)) screenId = "";
         if (!inScreen(selectedId)) selectedId = "";
-        if (designing) previewDelay.restart();
+        if (designing) {
+            if (gesture) { if (!previewDelay.running) previewDelay.start(); }
+            else previewDelay.restart();
+        }
     }
-    onPreviewWidthChanged: { ++generation; frameLayout = null; if (designing) previewDelay.restart(); }
-    onPreviewHeightChanged: { ++generation; frameLayout = null; if (designing) previewDelay.restart(); }
+    onPreviewWidthChanged: { cancelEdit(); ++generation; frameLayout = null; if (designing) previewDelay.restart(); }
+    onPreviewHeightChanged: { cancelEdit(); ++generation; frameLayout = null; if (designing) previewDelay.restart(); }
     onSelectedIdChanged: overlay.requestPaint()
     onHoveredIdChanged: overlay.requestPaint()
     onFrameLayoutChanged: overlay.requestPaint()
     onLayoutReadyChanged: overlay.requestPaint()
     Timer { id: previewDelay; interval: 80; onTriggered: root.requestPreview() }
     readonly property double savedRevision: app.appState.sync ? app.appState.sync.revision : 0
-    onSavedRevisionChanged: { frameLayout = null; if (designing) previewDelay.restart(); }
+    onSavedRevisionChanged: { if (gesture && !gesture.committing) cancelEdit(); frameLayout = null; if (designing) previewDelay.restart(); }
     readonly property var widget: selected >= 0 && selected < document.widgets.length ? document.widgets[selected] : null
     readonly property var kinds: ["Panel","Label","Button","Image","Input","Slider","Toggle","List","VerticalBox","HorizontalBox","Grid","Canvas","WrapBox","SizeBox","Spacer","Progress","RadialProgress","ListView","Tabs","Select","Scrollbar","RichText","Tooltip"]
     property int previewWidth: 960
@@ -95,9 +194,19 @@ Item {
     property real zoom: Math.min((stage.width - 32) / previewWidth, (stage.height - 32) / previewHeight)
     function copy(v) { return JSON.parse(JSON.stringify(v)); }
     function refresh() {
+        if (gesture) return;
         const saved = app.appState.project ? app.appState.project.world.interface : null;
         if (saved && JSON.stringify(saved) !== JSON.stringify(document)) document = copy(saved);
         if (selected < 0) selectedId = "";
+    }
+    readonly property string projectId: app.appState.project ? app.appState.project.id || "" : ""
+    onProjectIdChanged: cancelEdit()
+    Component.onDestruction: {
+        const g = gesture;
+        if (g) {
+            g.canceled = true;
+            if (g.token && !g.committing) app.invoke("cancel_interface_edit", {token: g.token});
+        }
     }
     Component.onCompleted: { refresh(); if (designing) updateSession(); }
     Connections {
@@ -106,6 +215,7 @@ Item {
         function onPreviewLayoutChanged() { if (root.designing && !root.embedded) Qt.callLater(() => root.receiveLayout(root.app.previewLayout)); }
     }
     function save(next) {
+        if (gesture) return;
         document = next;
         app.invoke("set_interface", {document: next}, function() { root.error = ""; }, function(e) { root.error = String(e); root.refresh(); });
     }
@@ -245,21 +355,49 @@ Item {
                     MouseArea {
                         objectName: "interfacePicking"
                         anchors.fill: parent
-                        enabled: root.layoutReady
+                        enabled: root.layoutReady || !!root.gesture
+                        property real pressX: 0
+                        property real pressY: 0
                         hoverEnabled: true
-                        onPositionChanged: mouse => root.hoveredId = geometry.pick(root.bounds, mouse.x, mouse.y)
+                        onPositionChanged: mouse => {
+                            if (pressed) {
+                                if (!root.gesture && Math.hypot(mouse.x-pressX, mouse.y-pressY) > 3/Math.max(0.05,root.zoom)) root.startEdit("Move", pressX, pressY);
+                                root.dragEdit(mouse.x, mouse.y);
+                            }
+                            else root.hoveredId = geometry.pick(root.bounds, mouse.x, mouse.y);
+                        }
                         onExited: root.hoveredId = ""
-                        onPressed: mouse => root.selectedId = geometry.pick(root.bounds, mouse.x, mouse.y)
+                        onPressed: mouse => {
+                            root.selectedId = geometry.pick(root.bounds, mouse.x, mouse.y);
+                            pressX = mouse.x; pressY = mouse.y;
+                        }
+                        onReleased: root.finishEdit()
+                        onCanceled: root.cancelEdit()
+                    }
+                    Rectangle {
+                        objectName: "interfaceResizeHandle"
+                        visible: (root.gesture && root.gesture.kind === "Resize") || (root.layoutReady && !!root.selectedBounds && root.editable(root.widget))
+                        x: (root.gesture ? root.gesture.handle.x : root.resizePoint.x)-width/2; y: (root.gesture ? root.gesture.handle.y : root.resizePoint.y)-height/2
+                        width: 10/Math.max(0.05,root.zoom); height: width
+                        color: "#70baff"
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.SizeFDiagCursor
+                            onPressed: mouse => { const p = canvas.mapFromItem(parent,mouse.x,mouse.y); root.startEdit("Resize",p.x,p.y); }
+                            onPositionChanged: mouse => { if (pressed) { const p = canvas.mapFromItem(parent,mouse.x,mouse.y); root.dragEdit(p.x,p.y); } }
+                            onReleased: root.finishEdit()
+                            onCanceled: root.cancelEdit()
+                        }
                     }
                     Rectangle {
                         anchors.fill: parent
-                        visible: !root.layoutReady
+                        visible: !root.layoutReady && !root.gesture
                         color: "#252d3a"
                         Text { anchors.centerIn: parent; color: "white"; text: root.app.appState.running ? "Stop the game to edit the interface" : root.error ? "Preview unavailable" : "Rendering interface…" }
                     }
                 }
             }
-            Label { text: root.error || "Runtime preview. Click a widget to select it; use the inspector to edit it."; color: root.error ? "#ff8888" : Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: root.error || "Drag to move; drag the corner to resize. Escape cancels. Parent layout controls flow widgets."; color: root.error ? "#ff8888" : Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
         }
         ScrollView {
             Layout.preferredWidth: 245; Layout.fillHeight: true
@@ -278,7 +416,8 @@ Item {
                         required property int index
                         Label { text: modelData; Layout.preferredWidth: 55 }
                         TextField { Layout.fillWidth: true; text: root.widget ? (index<2 ? root.widget.element.offset || [0,0] : root.widget.element.size || [0,0])[index%2] : "0"; validator: DoubleValidator {}
-                            onEditingFinished: { if(!root.widget) return; const field=index<2?"offset":"size", pair=(root.widget.element[field] || [0,0]).slice(); pair[index%2]=Number(text); root.change(field,pair); } }
+                            enabled: root.editable(root.widget) && !root.gesture
+                            onEditingFinished: root.editDimension(index, Number(text)) }
                     }
                 }
                 CheckBox { text: "Modal"; checked: root.widget ? root.widget.element.modal === true : false; onToggled: root.change("modal",checked) }
