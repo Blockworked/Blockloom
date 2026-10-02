@@ -454,3 +454,9 @@ example-plugin:
     cp -r plugins/examples/tally/package/. target/plugins/com.example.tally/
     cp target/wasm32-unknown-unknown/release/blockloom_example_tally.wasm target/plugins/com.example.tally/portable/tally.wasm
     cargo run -p blockloom-app --bin blockloom-shell -- --no-state --eval 'plugin-seal path=target/plugins/com.example.tally'
+    cargo build --release -p blockloom-example-palette --target wasm32-unknown-unknown
+    rm -rf target/plugins/com.example.palette
+    mkdir -p target/plugins/com.example.palette/portable
+    cp -r plugins/examples/palette/package/. target/plugins/com.example.palette/
+    cp target/wasm32-unknown-unknown/release/blockloom_example_palette.wasm target/plugins/com.example.palette/portable/palette.wasm
+    cargo run -p blockloom-app --bin blockloom-shell -- --no-state --eval 'plugin-seal path=target/plugins/com.example.palette'

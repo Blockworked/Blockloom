@@ -585,11 +585,41 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   GPU meshing, fracture, editor brushes. Its manifest asks for `editor.preview`,
   so the scene view shows the generated world without Play (edits made by
   blocks still last only for a run).
+- **Importers and build hooks** (`blockloom-plugin-api/src/assets.rs`,
+  `blockloom-plugin-host/src/imports.rs`): a package's schema may list
+  `importers` (name, extensions, `limit_ms`) and `build` hooks (name,
+  `limit_ms`). Both are module ops over raw bytes, `importer.<name>` and
+  `build.<name>`: a request is one JSON line (`Request`) then the source
+  file's bytes, an answer one JSON line then each produced file's bytes in
+  listed order (`Produced`, with `warnings`, `errors` and `dependencies`).
+  The host does every read and write, so a module needs no capability: output
+  paths are relative plain names (`check_output_path`), sizes are checked
+  against the bytes, at most `MAX_FILES`/`MAX_OUTPUT_BYTES`, and a portable
+  module gets the schema's `limit_ms` of fuel for the one call
+  (`CodeModule::call_bytes`). An import of `assets/x.gpl` writes
+  `assets/x.gpl.imported/...` (never imported again) and records source,
+  output and dependency hashes in `.blockloom/imports.json`, so
+  `imports::status` says `fresh`, `source_changed`, `dependency_changed`,
+  `output_missing`, `output_edited` or `source_missing`; a re-import replaces
+  exactly what the last one wrote, and deleting the source in the tray forgets
+  it. `import_assets` runs the first importer that takes a file's extension
+  (a failure is logged, the copy stays); `plugin-importers`, `plugin-imports`
+  and `plugin-import path=... importer=...` are the shell/MCP side. Before a
+  desktop or web build `plugins::run_build_hooks` runs every hook with the
+  target and the asset list, stages the files under `.blockloom/cooked/`, and
+  `BuildOptions::extras` (`ExtraFile`) copies them to
+  `game/plugins/<id>/cooked/` (refusing an escape or an overwrite); an error
+  from a hook stops the build, and Android builds refuse extras. A package
+  that is only importers and hooks is an editor tool and is not shipped.
+  `plugins/examples/palette` imports GIMP `.gpl` palettes as a one-row
+  `palette.png` (stored-deflate PNG, no compressor) plus `palette.json`, and
+  its `cook` hook fails a build that has an unimported palette.
 - **Not yet**: plugin code in an Android build, a faster browser host (the page's own WebAssembly instead of wasmi in
   wasm), a headless browser proof, an HTTP registry, dynamic QML for
   plugin editor panels.
   `plugins/examples/com.example.health` is the sealed proof package;
-  `plugins/examples/tally` is the SDK one, with code.
+  `plugins/examples/tally` is the SDK one, with code, and
+  `plugins/examples/palette` the importer/build-hook one.
 
 ### Scripts
 

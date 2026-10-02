@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "id": "com.example.palette",
+  "name": "Palette",
+  "version": "1.0.0",
+  "description": "Imports GIMP palettes (.gpl) as one-row palette images, and checks at build time that every palette was imported. A portable module: it runs sandboxed on every platform.",
+  "license": "MIT",
+  "engine": ">=0.0.1",
+  "tier": "portable",
+  "abi": 1,
+  "sdk": "^0.0",
+  "runtime": {
+    "portable": {"module": "portable/palette.wasm", "memory_limit_mib": 16, "call_limit_ms": 20}
+  },
+  "contributions": ["schemas/palette.json"]
+}

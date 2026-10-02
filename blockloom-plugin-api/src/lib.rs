@@ -10,6 +10,7 @@
 //! - [`abi`] is the native C boundary: fixed-width, versioned, no Rust types.
 //! - [`loadout`] is what a running world needs to host a plugin's code.
 //! - [`mesh`] is a mesh a plugin submits for the world to draw.
+//! - [`assets`] is what an importer or a build hook is asked and answers.
 //! - [`wasm`] is the same contract over a WebAssembly module's linear memory.
 //!
 //! Engine, SDK, plugin ABI, editor API, schema and shader API versions are
@@ -17,6 +18,7 @@
 //! change to the rest.
 
 pub mod abi;
+pub mod assets;
 pub mod id;
 pub mod loadout;
 pub mod manifest;

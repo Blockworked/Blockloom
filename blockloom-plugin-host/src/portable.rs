@@ -205,11 +205,10 @@ impl PortableModule {
         self.stopped
     }
 
-    fn explain(&self, op: &str, error: wasmi::Error) -> String {
+    fn explain(&self, op: &str, error: wasmi::Error, limit_ms: u32) -> String {
         match error.as_trap_code() {
             Some(TrapCode::OutOfFuel) => format!(
-                "{op}: used more than its {} ms of work for one call and was stopped",
-                self.call_limit_ms
+                "{op}: used more than its {limit_ms} ms of work for one call and was stopped"
             ),
             _ => format!("{op}: the module trapped: {error}"),
         }
@@ -270,18 +269,39 @@ impl PortableModule {
     /// Calls `op` with `input` and returns the module's answer. Fails with a
     /// reason, and stops the module, when it traps or spends its budget.
     pub fn call(&mut self, op: &str, input: &[u8]) -> Result<Vec<u8>, String> {
+        self.call_with_fuel(op, input, self.fuel_per_call, self.call_limit_ms)
+    }
+
+    /// [`PortableModule::call`] with a budget of `limit_ms` of work instead of
+    /// the manifest's, for the long jobs (an import, a build hook) that are
+    /// allowed more than a frame's worth.
+    pub fn call_limited(
+        &mut self,
+        op: &str,
+        input: &[u8],
+        limit_ms: u32,
+    ) -> Result<Vec<u8>, String> {
+        let fuel = u64::from(limit_ms).saturating_mul(FUEL_PER_MS);
+        self.call_with_fuel(op, input, fuel, limit_ms)
+    }
+
+    fn call_with_fuel(
+        &mut self,
+        op: &str,
+        input: &[u8],
+        fuel: u64,
+        limit_ms: u32,
+    ) -> Result<Vec<u8>, String> {
         if self.stopped {
             return Err(format!("{op}: the module was stopped by an earlier fault"));
         }
-        self.store
-            .set_fuel(self.fuel_per_call)
-            .map_err(|e| e.to_string())?;
+        self.store.set_fuel(fuel).map_err(|e| e.to_string())?;
         match self.run(op, input) {
             Ok(Ok(bytes)) => Ok(bytes),
             Ok(Err(status)) => Err(format!("{op}: {status:?}")),
             Err(error) => {
                 self.stopped = true;
-                Err(self.explain(op, error))
+                Err(self.explain(op, error, limit_ms))
             }
         }
     }

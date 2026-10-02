@@ -1,0 +1,17 @@
+{
+  "importers": [
+    {
+      "name": "gpl",
+      "summary": "A GIMP palette becomes palette.png (one pixel per colour, in one row) and palette.json (the names).",
+      "extensions": ["gpl"],
+      "limit_ms": 1000
+    }
+  ],
+  "build": [
+    {
+      "name": "cook",
+      "summary": "Fails the build when a palette was never imported, and ships palettes.json listing them.",
+      "limit_ms": 1000
+    }
+  ]
+}

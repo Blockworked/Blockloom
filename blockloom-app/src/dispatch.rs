@@ -497,6 +497,14 @@ impl Backend {
                 arg(&args, "id")?,
                 arg(&args, "dryRun").unwrap_or_default(),
             )?),
+            "plugin_importers" => to_json(commands::plugins::plugin_importers(state)?),
+            "plugin_imports" => to_json(commands::plugins::plugin_imports(state)?),
+            "plugin_import" => to_json(commands::plugins::plugin_import(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg(&args, "importer").ok(),
+            )?),
             "plugin_call" => to_json(commands::plugins::plugin_call(
                 state,
                 app,

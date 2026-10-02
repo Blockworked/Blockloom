@@ -490,7 +490,7 @@ fn a_plugin_reporter_and_hat_compile() {
     .expect("plugin hats compile");
     assert!(source.contains("trigger: \"Plugin\""), "{source}");
     assert!(
-        source.contains("com.example.tally\u{1f}changed\u{1f}coins"),
+        source.contains("com.example.tally\\u{1f}changed\\u{1f}coins"),
         "{source}"
     );
 }

@@ -3072,6 +3072,38 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        name: "plugin-importers",
+        cmd: "plugin_importers",
+        aliases: &[],
+        summary: "List the importers and build hooks installed plugins add, and how each imported file stands against its source.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "plugin-imports",
+        cmd: "plugin_imports",
+        aliases: &[],
+        summary: "Every remembered import and whether it is current (fresh, source changed, dependency changed, output missing or edited, source missing).",
+        args: &[],
+    },
+    CommandSpec {
+        name: "plugin-import",
+        cmd: "plugin_import",
+        aliases: &[],
+        summary: "Run a plugin's importer over a project file under assets/ and write what it makes to <file>.imported/. Replaces what the last import of that file wrote.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+            ArgSpec {
+                name: "importer",
+                ty: "string",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
         name: "plugin-run-block",
         cmd: "plugin_run_block",
         aliases: &[],

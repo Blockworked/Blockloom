@@ -14,7 +14,8 @@ use blockloom_plugin_api::loadout::{Loadout, LoadoutBlock, LoadoutPlugin};
 use blockloom_plugin_api::manifest::{DependencyScope, PluginManifest, Tier};
 use blockloom_plugin_api::record::PluginRecord;
 use blockloom_plugin_api::schema::{
-    BlockKind, BlockSchema, CommandAction, CommandSchema, ComponentSchema, HookSchema, SchemaError,
+    BlockKind, BlockSchema, BuildHookSchema, CommandAction, CommandSchema, ComponentSchema,
+    HookSchema, ImporterSchema, SchemaError,
 };
 use blockloom_plugin_api::{Version, id};
 use serde::Serialize;
@@ -365,6 +366,42 @@ impl ActivePlugins {
             .is_some_and(|c| matches!(c.action, CommandAction::Module { .. }))
     }
 
+    /// Every importer, as `(plugin, schema)`.
+    pub fn importers(&self) -> Vec<(&str, &ImporterSchema)> {
+        self.plugins
+            .iter()
+            .flat_map(|(plugin, p)| {
+                p.package
+                    .contributions
+                    .importers
+                    .iter()
+                    .map(move |i| (plugin.as_str(), i))
+            })
+            .collect()
+    }
+
+    /// The importers that take a file with this extension.
+    pub fn importers_for(&self, extension: &str) -> Vec<(&str, &ImporterSchema)> {
+        self.importers()
+            .into_iter()
+            .filter(|(_, importer)| importer.handles(extension))
+            .collect()
+    }
+
+    /// Every build hook, as `(plugin, schema)`.
+    pub fn build_hooks(&self) -> Vec<(&str, &BuildHookSchema)> {
+        self.plugins
+            .iter()
+            .flat_map(|(plugin, p)| {
+                p.package
+                    .contributions
+                    .build_hooks
+                    .iter()
+                    .map(move |h| (plugin.as_str(), h))
+            })
+            .collect()
+    }
+
     pub fn hooks(&self) -> Vec<(&str, &HookSchema)> {
         self.plugins
             .iter()
@@ -575,7 +612,10 @@ pub(crate) fn loadout_plugin(id: &str, package: &Package, runtime: CodeRuntime) 
 
 fn has_runtime_content(package: &Package) -> bool {
     let c = &package.contributions;
-    package.manifest.tier != Tier::Declarative
+    // An importer and a build hook run in the editor, so a package that is
+    // only those stays out of the game.
+    let editor_tool = !(c.importers.is_empty() && c.build_hooks.is_empty());
+    (package.manifest.tier != Tier::Declarative && !editor_tool)
         || !c.blocks.is_empty()
         || !c.commands.is_empty()
         || !c.hooks.is_empty()

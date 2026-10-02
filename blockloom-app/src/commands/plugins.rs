@@ -10,7 +10,7 @@
 use super::{auto_save, emit, lock, push_undo, push_undo_for, sync_runtime};
 use crate::AppHandle;
 use crate::state::{AppState, EditSession, LogLine, SharedState};
-use blockloom_core::build::{self, PluginPayload, Target};
+use blockloom_core::build::{self, ExtraFile, PluginPayload, Target};
 use blockloom_core::components::ActorComponent;
 use blockloom_core::library;
 use blockloom_core::pack::{PLUGINS_DIR, PackedPlugin};
@@ -23,6 +23,7 @@ use blockloom_plugin_api::schema::{BlockKind, CommandAction, ComponentSchema, Fi
 use blockloom_plugin_api::{Version, VersionReq};
 use blockloom_plugin_host::active::{ActivePlugins, RecordIssue, RecordStatus, migrate_records};
 use blockloom_plugin_host::cache::{self, Cache};
+use blockloom_plugin_host::imports::{self, Imported};
 use blockloom_plugin_host::install::{self, Change, Environment, PlanChange};
 use blockloom_plugin_host::lock::ProjectPlugins;
 use blockloom_plugin_host::module::CodeModule;
@@ -928,29 +929,40 @@ pub(crate) fn plugin_call(
             Ok(json!({ "resource": name }))
         }
         CommandAction::Module { op } => {
-            let module = {
-                let mut s = lock(state)?;
-                let open = s.open.as_mut().ok_or("No project is open")?;
-                open.modules.get(&open.plugins, &plugin)?
-            };
-            let mut module = module.lock().map_err(|_| "the plugin module is poisoned")?;
-            let answer = module.call_json(&op, &args);
-            let logs = module.take_logs();
-            drop(module);
-            if !logs.is_empty() {
-                let mut s = lock(state)?;
-                for (level, message) in logs {
-                    s.push_log(LogLine {
-                        kind: if level <= LOG_WARN { "error" } else { "say" }.to_string(),
-                        actor: plugin.clone(),
-                        text: message,
-                    });
-                }
-                emit(app, &s);
-            }
-            answer
+            with_module(state, app, &plugin, |module| module.call_json(&op, &args))
         }
     }
+}
+
+/// Runs `f` against `plugin`'s module, loading it on first use, then puts
+/// what the module logged in the run log.
+fn with_module<T>(
+    state: &SharedState,
+    app: &AppHandle,
+    plugin: &str,
+    f: impl FnOnce(&mut CodeModule) -> Result<T, String>,
+) -> Result<T, String> {
+    let module = {
+        let mut s = lock(state)?;
+        let open = s.open.as_mut().ok_or("No project is open")?;
+        open.modules.get(&open.plugins, plugin)?
+    };
+    let mut module = module.lock().map_err(|_| "the plugin module is poisoned")?;
+    let answer = f(&mut module);
+    let logs = module.take_logs();
+    drop(module);
+    if !logs.is_empty() {
+        let mut s = lock(state)?;
+        for (level, message) in logs {
+            s.push_log(LogLine {
+                kind: if level <= LOG_WARN { "error" } else { "say" }.to_string(),
+                actor: plugin.to_string(),
+                text: message,
+            });
+        }
+        emit(app, &s);
+    }
+    answer
 }
 
 /// Runs the plugin block a running game reached: the block's command, its
@@ -1088,6 +1100,209 @@ pub(crate) fn plugin_migrate(
         "migrated": count,
         "records": migrated,
     }))
+}
+
+// ─── Importers and build hooks ──────────────────────────────────────────────
+
+/// `plugin-importers`: what plugins can import, and how each imported file
+/// stands against its source.
+pub(crate) fn plugin_importers(state: &SharedState) -> Result<Value, String> {
+    let s = lock(state)?;
+    let dir = open_dir(&s)?;
+    let active = active(&s)?;
+    let importers: Vec<Value> = active
+        .importers()
+        .into_iter()
+        .map(|(plugin, i)| {
+            json!({
+                "plugin": plugin,
+                "name": i.name,
+                "summary": i.summary,
+                "extensions": i.extensions,
+                "limitMs": i.limit_ms,
+            })
+        })
+        .collect();
+    let hooks: Vec<Value> = active
+        .build_hooks()
+        .into_iter()
+        .map(|(plugin, h)| {
+            json!({
+                "plugin": plugin,
+                "name": h.name,
+                "summary": h.summary,
+                "limitMs": h.limit_ms,
+            })
+        })
+        .collect();
+    Ok(json!({
+        "importers": importers,
+        "buildHooks": hooks,
+        "imports": imports::status(&dir),
+    }))
+}
+
+/// Runs an importer over `path`. `importer` is `plugin-id/name` or just the
+/// name; with none given, the first importer that takes the file's extension.
+pub(crate) fn plugin_import(
+    state: &SharedState,
+    app: &AppHandle,
+    path: String,
+    importer: Option<String>,
+) -> Result<Imported, String> {
+    let (dir, name, plugin, schema) = {
+        let s = lock(state)?;
+        let dir = owned_dir(&s)?;
+        let name = s.project().map(|p| p.name.clone()).unwrap_or_default();
+        let extension = Path::new(&path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let candidates = active(&s)?.importers_for(&extension);
+        let picked = match importer.as_deref().filter(|i| !i.is_empty()) {
+            None => candidates.first().copied(),
+            Some(wanted) => candidates
+                .iter()
+                .copied()
+                .find(|(plugin, i)| wanted == i.name || wanted == id::qualified(plugin, &i.name)),
+        };
+        let (plugin, schema) = picked.ok_or_else(|| match importer {
+            Some(wanted) if !wanted.is_empty() => {
+                format!("No importer \"{wanted}\" takes .{extension} files")
+            }
+            _ => format!("No installed plugin imports .{extension} files"),
+        })?;
+        (dir, name, plugin.to_string(), schema.clone())
+    };
+    let imported = with_module(state, app, &plugin, |module| {
+        imports::run_import(module, &plugin, &schema, &dir, &name, &path)
+    })?;
+    let mut s = lock(state)?;
+    for warning in &imported.warnings {
+        s.push_log(LogLine {
+            kind: "error".to_string(),
+            actor: plugin.clone(),
+            text: format!("{path}: {warning}"),
+        });
+    }
+    s.push_log(LogLine {
+        kind: "say".to_string(),
+        actor: plugin.clone(),
+        text: format!("Imported {path}: {} file(s)", imported.outputs.len()),
+    });
+    emit(app, &s);
+    Ok(imported)
+}
+
+/// `plugin-imports`: every remembered import and whether it is still current.
+pub(crate) fn plugin_imports(state: &SharedState) -> Result<Value, String> {
+    let s = lock(state)?;
+    let dir = open_dir(&s)?;
+    Ok(json!({ "imports": imports::status(&dir) }))
+}
+
+/// Imports each of `paths` an installed importer takes. A file nothing takes
+/// is left alone, and a failed import is logged, not raised: the copy
+/// already happened.
+pub(crate) fn auto_import(state: &SharedState, app: &AppHandle, paths: &[String]) {
+    for path in paths {
+        if imports::is_imported_output(path) {
+            continue;
+        }
+        let extension = Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let wanted = lock(state)
+            .ok()
+            .and_then(|s| {
+                s.open
+                    .as_ref()
+                    .map(|open| !open.plugins.importers_for(&extension).is_empty())
+            })
+            .unwrap_or(false);
+        if !wanted {
+            continue;
+        }
+        if let Err(error) = plugin_import(state, app, path.clone(), None)
+            && let Ok(mut s) = lock(state)
+        {
+            s.push_log(LogLine {
+                kind: "error".to_string(),
+                actor: "Blockloom".to_string(),
+                text: format!("Couldn't import {path}: {error}"),
+            });
+            emit(app, &s);
+        }
+    }
+}
+
+/// Forgets what an import of `path` made, for a source that was deleted.
+pub(crate) fn forget_import(dir: &Path, path: &str) {
+    let _ = imports::forget(dir, path);
+}
+
+/// Where a build hook's files are staged before the build copies them.
+const COOKED_DIR: &str = ".blockloom/cooked";
+
+/// Runs every build hook of the project's plugins for `target` and stages
+/// what they made. A hook that fails stops the build. The files ship under
+/// `plugins/<id>/cooked/`.
+pub(crate) fn run_build_hooks(
+    state: &SharedState,
+    app: &AppHandle,
+    dir: &Path,
+    project: &Project,
+    target: &Target,
+) -> Result<Vec<ExtraFile>, String> {
+    let hooks: Vec<(String, blockloom_plugin_api::schema::BuildHookSchema)> = {
+        let s = lock(state)?;
+        match s.open.as_ref() {
+            Some(open) => open
+                .plugins
+                .build_hooks()
+                .into_iter()
+                .map(|(plugin, hook)| (plugin.to_string(), hook.clone()))
+                .collect(),
+            None => Vec::new(),
+        }
+    };
+    let staging = dir.join(COOKED_DIR);
+    let _ = std::fs::remove_dir_all(&staging);
+    let mut extras: Vec<ExtraFile> = Vec::new();
+    for (plugin, hook) in hooks {
+        blockloom_core::build_control::step(&format!("Running build hook {plugin}/{}", hook.name))?;
+        let run = with_module(state, app, &plugin, |module| {
+            imports::run_build_hook(module, &plugin, &hook, dir, &project.name, target.triple)
+        })?;
+        if !run.warnings.is_empty() {
+            let mut s = lock(state)?;
+            for warning in &run.warnings {
+                s.push_log(LogLine {
+                    kind: "error".to_string(),
+                    actor: plugin.clone(),
+                    text: format!("{}: {warning}", hook.name),
+                });
+            }
+            emit(app, &s);
+        }
+        for file in run.files {
+            let to = format!("{PLUGINS_DIR}/{plugin}/cooked/{}", file.path);
+            if extras.iter().any(|e| e.to == to) {
+                return Err(format!("two build hooks of {plugin} made {}", file.path));
+            }
+            let from = staging.join(&plugin).join(&file.path);
+            if let Some(parent) = from.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("{}: {e}", parent.display()))?;
+            }
+            std::fs::write(&from, &file.data).map_err(|e| format!("{}: {e}", from.display()))?;
+            extras.push(ExtraFile { to, from });
+        }
+    }
+    Ok(extras)
 }
 
 #[cfg(test)]

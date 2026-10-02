@@ -322,3 +322,127 @@ fn a_portable_plugin_command_runs_in_its_wasm_module() {
             .contains("hello from wasm")
     );
 }
+
+/// The palette example's wasm module, or `None` when the target is missing.
+fn palette_wasm() -> Option<PathBuf> {
+    use std::process::Command;
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let installed = Command::new("rustc")
+        .args([
+            "--print",
+            "target-libdir",
+            "--target",
+            "wasm32-unknown-unknown",
+        ])
+        .output()
+        .ok()
+        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
+        .is_some_and(|dir| dir.exists());
+    if !installed {
+        assert!(
+            std::env::var_os("BLOCKLOOM_REQUIRE_WASM").is_none(),
+            "wasm32-unknown-unknown is required but not installed"
+        );
+        return None;
+    }
+    let output = Command::new(cargo)
+        .args([
+            "build",
+            "--release",
+            "--package",
+            "blockloom-example-palette",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--message-format=json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|m| m["reason"] == "compiler-artifact")
+        .flat_map(|m| m["filenames"].as_array().cloned().unwrap_or_default())
+        .filter_map(|name| name.as_str().map(PathBuf::from))
+        .find(|path| path.extension().is_some_and(|e| e == "wasm"))
+}
+
+#[test]
+fn an_importer_runs_when_a_file_is_imported_and_its_outputs_follow_the_source() {
+    let Some(wasm) = palette_wasm() else { return };
+    let root = data_root().join("importer");
+    let pkg = root.join("pkg");
+    let source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins/examples/palette/package");
+    blockloom_plugin_host::package::copy_dir(&source, &pkg).unwrap();
+    std::fs::create_dir_all(pkg.join("portable")).unwrap();
+    std::fs::copy(&wasm, pkg.join("portable/palette.wasm")).unwrap();
+
+    let backend = Backend::start(AppHandle::new(|_| {}));
+    let invoke = |cmd: &str, args: Value| backend.dispatch(cmd, args).unwrap();
+    invoke("plugin_seal", json!({"path": pkg.to_string_lossy()}));
+    invoke(
+        "create_project",
+        json!({"name": "Importer", "mode": "TwoD", "location": root.join("projects")}),
+    );
+    let dir = PathBuf::from(
+        invoke("get_state", json!({}))["project_path"]
+            .as_str()
+            .unwrap(),
+    );
+    // With no importer installed a palette is just a file.
+    let gpl = root.join("sunset.gpl");
+    std::fs::write(
+        &gpl,
+        "GIMP Palette\nName: Sunset\n255 0 0 Red\n0 0 255 Blue\n",
+    )
+    .unwrap();
+    invoke(
+        "import_assets",
+        json!({"parent": "assets", "paths": [gpl.to_string_lossy()]}),
+    );
+    assert!(!dir.join("assets/sunset.gpl.imported").exists());
+
+    invoke(
+        "plugin_install",
+        json!({"id": "com.example.palette", "source": format!("path:{}", pkg.display())}),
+    );
+    let listed = invoke("plugin_importers", json!({}));
+    assert_eq!(listed["importers"][0]["extensions"], json!(["gpl"]));
+    assert_eq!(listed["buildHooks"][0]["name"], "cook");
+
+    // Importing a file that an installed importer takes imports it as well.
+    std::fs::remove_file(dir.join("assets/sunset.gpl")).unwrap();
+    invoke(
+        "import_assets",
+        json!({"parent": "assets", "paths": [gpl.to_string_lossy()]}),
+    );
+    assert!(dir.join("assets/sunset.gpl.imported/palette.png").is_file());
+    let imports = invoke("plugin_imports", json!({}));
+    assert_eq!(imports["imports"][0]["source"], "assets/sunset.gpl");
+    assert_eq!(imports["imports"][0]["state"], "fresh");
+
+    // The shell-side command re-runs one by name, and refuses what no
+    // importer takes.
+    let again = invoke(
+        "plugin_import",
+        json!({"path": "assets/sunset.gpl", "importer": "com.example.palette/gpl"}),
+    );
+    assert_eq!(again["outputs"].as_array().unwrap().len(), 2);
+    std::fs::write(dir.join("assets/a.txt"), "x").unwrap();
+    assert!(
+        backend
+            .dispatch("plugin_import", json!({"path": "assets/a.txt"}))
+            .is_err()
+    );
+
+    // Deleting the source takes what it made with it.
+    invoke("delete_asset", json!({"path": "assets/sunset.gpl"}));
+    assert!(!dir.join("assets/sunset.gpl.imported").exists());
+    assert!(
+        invoke("plugin_imports", json!({}))["imports"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}

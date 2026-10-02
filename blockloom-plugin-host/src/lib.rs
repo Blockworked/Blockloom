@@ -12,12 +12,14 @@
 //!   module under the same contract with a memory and work budget, and
 //!   [`module`] is either of them. [`world`] hosts a project's modules in a
 //!   running game: lifecycle calls, hooks by stage and blocks that are ops.
-//!   [`shipped`] loads what a built game carries, for its player.
+//!   [`shipped`] loads what a built game carries, for its player. [`imports`]
+//!   runs importers and build hooks over a project's files.
 
 pub mod active;
 pub mod cache;
 pub mod files;
 pub mod hooks;
+pub mod imports;
 pub mod install;
 pub mod lifecycle;
 pub mod lock;

@@ -1507,7 +1507,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Per-plugin MCP tools: `plugin-commands` becomes one typed tool per command (`plugin-id__name`), kept in step after install, remove, open and undo.
     - [x] Codegen for plugin statements, reporters and hats, held against the VM in `tests/codegen.rs` and through the player boundary in `logic.rs`.
     - [x] The script ABI for plugin blocks: `plugin_call`, `plugin_number`/`plugin_text`, `Event::Plugin` (`ABI_VERSION` 36), tested through a built script.
-    - [ ] Importer/build hooks.
+    - [x] Importer/build hooks: schema `importers`/`build`, byte-framed module ops with host-mediated IO and a per-call budget, `<file>.imported/` outputs tracked in `.blockloom/imports.json`, auto-import on asset import, `plugin-importers`/`plugin-imports`/`plugin-import`, build hooks staged into `game/plugins/<id>/cooked/`, `plugins/examples/palette`.
+    - [ ] Importer next: tray/inspector UI for import status, re-import on source change, hooks on Android builds.
     - [ ] HTTP registry transport; revision bump for attached copies on package changes.
     - [x] Mesh submission service: `mesh`/`remove_mesh` effects become named 3D entities with an optional trimesh collider.
     - [x] Voxel plugin first slice (`plugins/voxel`): finite cube world, seeded terrain presets, greedy chunk mesher, glowing materials, live set/fill/sphere/generate, reporters, rays (distance, break, place), schema and sealed package (`just voxel-plugin`).

@@ -383,6 +383,44 @@ pub struct BuildOptions {
     /// The plugins the game ships with, resolved by the editor from the
     /// project's lock: what to record in the pack and which files to copy.
     pub plugins: Vec<PluginPayload>,
+    /// Files a plugin's build hooks made, to add to the game folder.
+    pub extras: Vec<ExtraFile>,
+}
+
+/// A file a build hook produced: where it is now and where in the game
+/// folder it goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtraFile {
+    /// Relative to the game folder, forward slashes.
+    pub to: String,
+    pub from: PathBuf,
+}
+
+/// Copies the build hooks' files into the game folder. A destination that
+/// leaves it, or lands on a file the build already made, fails the build.
+fn copy_extras(extras: &[ExtraFile], game: &Path) -> Result<usize, String> {
+    for extra in extras {
+        let bad = extra.to.is_empty()
+            || extra.to.starts_with('/')
+            || extra.to.contains('\\')
+            || extra
+                .to
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..");
+        if bad {
+            return Err(format!("a build hook file can't go to \"{}\"", extra.to));
+        }
+        let to = game.join(&extra.to);
+        if to.exists() {
+            return Err(format!("a build hook file would overwrite {}", extra.to));
+        }
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        std::fs::copy(&extra.from, &to)
+            .map_err(|e| format!("{}: couldn't copy {}: {e}", extra.to, extra.from.display()))?;
+    }
+    Ok(extras.len())
 }
 
 /// One plugin to ship: what the pack records and where its files are now.
@@ -491,6 +529,12 @@ pub fn build(
             plugin.entry.id, target.label
         ));
     }
+    if target.is_android() && !options.extras.is_empty() {
+        return Err(format!(
+            "build hook files are not supported on {} builds yet",
+            target.label
+        ));
+    }
     if target.is_web() {
         return build_web(
             project,
@@ -499,6 +543,7 @@ pub fn build(
             player,
             parent,
             &options.plugins,
+            &options.extras,
         );
     }
     if target.is_android() {
@@ -539,6 +584,7 @@ pub fn build(
     crate::build_control::step("Copying game assets")?;
     let assets = copy_assets(project_dir, &game)?;
     copy_plugins(&options.plugins, &game)?;
+    copy_extras(&options.extras, &game)?;
     crate::build_control::step("Baking sprite atlas")?;
     let atlas = bake_sprite_atlas(project, project_dir, &game)?;
     crate::build_control::step("Baking sky")?;
@@ -660,6 +706,7 @@ fn build_web(
     player: &Path,
     parent: &Path,
     plugins: &[PluginPayload],
+    extras: &[ExtraFile],
 ) -> Result<Build, String> {
     crate::build_control::step("Checking shaders")?;
     let shaders = check_shaders(project, project_dir)?;
@@ -691,6 +738,7 @@ fn build_web(
     copy_terrain(project, project_dir, &game)?;
     let scripts = copy_scripts(project, project_dir, &game, target)?;
     copy_plugins(plugins, &game)?;
+    copy_extras(extras, &game)?;
 
     let mut paths = Vec::new();
     distribution::collect_files(&game, &mut paths)?;
@@ -1746,6 +1794,27 @@ mod tests {
             "the player verifies against it"
         );
         assert!(there.join("schemas/a.json").is_file());
+    }
+
+    #[test]
+    fn build_hook_files_land_in_the_game_and_cannot_escape_or_overwrite() {
+        let from = temp("extra-src");
+        let game = temp("extra-game");
+        std::fs::write(from.join("cooked.bin"), b"cooked").unwrap();
+        let extra = |to: &str| ExtraFile {
+            to: to.to_string(),
+            from: from.join("cooked.bin"),
+        };
+        copy_extras(&[extra("plugins/a/cooked/x.bin")], &game).unwrap();
+        assert_eq!(
+            std::fs::read(game.join("plugins/a/cooked/x.bin")).unwrap(),
+            b"cooked"
+        );
+        for bad in ["../x", "/x", "a/../x", "a\\b", "", "a//b"] {
+            assert!(copy_extras(&[extra(bad)], &game).is_err(), "{bad}");
+        }
+        let again = copy_extras(&[extra("plugins/a/cooked/x.bin")], &game);
+        assert!(again.unwrap_err().contains("overwrite"));
     }
 
     fn temp(name: &str) -> PathBuf {

@@ -382,3 +382,28 @@ world, and clippy for the runtime on wasm32 with the feature. Not run here:
 the page in a browser (WebGPU has no software path in this container), so
 `just web-build` on a project with a portable plugin and `just web-smoke` are
 the remaining proof.
+
+## Importers and build hooks (eleventh batch)
+
+- The plan asks for importers in workers with deadlines and project-scoped IO.
+  Here the host is the only thing that touches files: a module is handed the
+  source's bytes and answers with the files it made, so an importer needs no
+  capability and cannot read or write anything it was not given. The wire form
+  is a JSON header line followed by raw bytes, not base64, since sources and
+  products can be large images or models.
+- The deadline is the portable module's fuel for one call (`limit_ms` in the
+  schema, at most two minutes); a native library is trusted and untimed, as
+  for every other native call. A call that runs out stops the module, which
+  the editor replaces on the next use.
+- Outputs go beside the source in `<file>.imported/` and never import again.
+  `.blockloom/imports.json` keeps hashes of the source, any `dependencies` the
+  module named and each output, so staleness is answered from the disk and a
+  hand-edited output is told apart from a changed source. Re-importing deletes
+  what the previous run wrote and the new one did not.
+- A build hook sees the target and every asset path and may add files, which
+  ship under `game/plugins/<id>/cooked/` through `BuildOptions::extras`, or
+  fail the build. Android builds refuse extras for now. A package that only
+  has importers and hooks is not shipped: it runs in the editor.
+- Not yet: importer UI in the asset tray, automatic re-import when a source
+  changes on disk, importer-declared thumbnails, and hooks whose output a
+  shipped plugin reads (there is no host service to open a cooked file).

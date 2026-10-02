@@ -47,7 +47,7 @@ jobs:
           cargo clippy --all-targets
           -p blockloom-core -p blockloom-protocol -p blockloom-app -p blockloom-runtime
           -p blockloom-plugin-api -p blockloom-plugin-host
-          -p blockloom-plugin-sdk -p blockloom-example-tally -p blockloom-voxel
+          -p blockloom-plugin-sdk -p blockloom-example-tally -p blockloom-example-palette -p blockloom-voxel
       # GPU tests are #[ignore]d and stay manual. Tests that only start the
       # renderer run on lavapipe, Mesa's software Vulkan.
       - name: Test
@@ -58,7 +58,7 @@ jobs:
           cargo test
           -p blockloom-core -p blockloom-protocol -p blockloom-app -p blockloom-runtime
           -p blockloom-plugin-api -p blockloom-plugin-host
-          -p blockloom-plugin-sdk -p blockloom-example-tally -p blockloom-voxel
+          -p blockloom-plugin-sdk -p blockloom-example-tally -p blockloom-example-palette -p blockloom-voxel
 
   # The browser player (Phase 8): the runtime has to keep building for wasm,
   # and a script has to keep compiling to a wasm module. The headless smoke
@@ -84,11 +84,11 @@ jobs:
       # The plugin SDK's wasm half: lint it for the target, then run the
       # example plugin's module through the portable executor.
       - name: Plugin SDK (wasm32)
-        run: cargo clippy -p blockloom-plugin-sdk -p blockloom-example-tally -p blockloom-voxel --target wasm32-unknown-unknown
+        run: cargo clippy -p blockloom-plugin-sdk -p blockloom-example-tally -p blockloom-example-palette -p blockloom-voxel --target wasm32-unknown-unknown
       - name: Example plugins as wasm modules
         env:
           BLOCKLOOM_REQUIRE_WASM: 1
-        run: cargo test -p blockloom-example-tally -p blockloom-voxel
+        run: cargo test -p blockloom-example-tally -p blockloom-example-palette -p blockloom-voxel
 
   # The Android player (Phase 6.5): the runtime has to keep checking for both
   # Android triples, built the way the APK builds it (no default features).

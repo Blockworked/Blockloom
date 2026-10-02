@@ -37,6 +37,7 @@
 
 use blockloom_plugin_api::abi::Status;
 
+pub use blockloom_plugin_api::assets::{Produced, ProducedFile, Request, build_op, importer_op};
 pub use serde_json::{self, Value, json};
 
 #[cfg(not(target_arch = "wasm32"))]

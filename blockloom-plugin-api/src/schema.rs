@@ -645,11 +645,95 @@ pub struct HookSchema {
     pub after: Vec<String>,
 }
 
+fn default_limit_ms() -> u32 {
+    crate::assets::DEFAULT_LIMIT_MS
+}
+
+/// An importer a package adds: files with one of its extensions become
+/// other project files. The module answers op `importer.<name>` (see
+/// [`crate::assets`]); the host does the reading and the writing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImporterSchema {
+    pub name: String,
+    pub summary: String,
+    /// Lowercase, without the dot.
+    pub extensions: Vec<String>,
+    /// How long one import may work, in milliseconds (a portable module is
+    /// stopped when it spends it).
+    #[serde(default = "default_limit_ms")]
+    pub limit_ms: u32,
+}
+
+/// A hook a package runs when a game is built, before it is packed: it may
+/// refuse the build and may add files to the game. The module answers op
+/// `build.<name>`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BuildHookSchema {
+    pub name: String,
+    pub summary: String,
+    #[serde(default = "default_limit_ms")]
+    pub limit_ms: u32,
+}
+
+fn check_limit(name: &str, limit_ms: u32) -> Result<(), String> {
+    if limit_ms == 0 || limit_ms > crate::assets::MAX_LIMIT_MS {
+        return Err(format!(
+            "{name}: limit_ms must be between 1 and {}",
+            crate::assets::MAX_LIMIT_MS
+        ));
+    }
+    Ok(())
+}
+
+impl ImporterSchema {
+    pub fn check_definition(&self) -> Result<(), String> {
+        validate_type_id(&self.name)?;
+        check_limit(&self.name, self.limit_ms)?;
+        if self.extensions.is_empty() {
+            return Err(format!("{}: an importer needs an extension", self.name));
+        }
+        let mut seen = BTreeSet::new();
+        for extension in &self.extensions {
+            let ok = (1..=16).contains(&extension.len())
+                && extension
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+            if !ok {
+                return Err(format!(
+                    "{}: \"{extension}\" must be 1-16 lowercase letters or digits, without the dot",
+                    self.name
+                ));
+            }
+            if !seen.insert(extension.as_str()) {
+                return Err(format!("{}: lists .{extension} twice", self.name));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn handles(&self, extension: &str) -> bool {
+        self.extensions
+            .iter()
+            .any(|e| e.eq_ignore_ascii_case(extension))
+    }
+}
+
+impl BuildHookSchema {
+    pub fn check_definition(&self) -> Result<(), String> {
+        validate_type_id(&self.name)?;
+        check_limit(&self.name, self.limit_ms)
+    }
+}
+
 /// Everything one package contributes, as read from its `schemas/` files.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Contributions {
     #[serde(default)]
     pub hooks: Vec<HookSchema>,
+    #[serde(default)]
+    pub importers: Vec<ImporterSchema>,
+    #[serde(default, rename = "build")]
+    pub build_hooks: Vec<BuildHookSchema>,
     #[serde(default)]
     pub components: Vec<ComponentSchema>,
     #[serde(default)]
@@ -668,6 +752,8 @@ impl Contributions {
         self.blocks.extend(other.blocks);
         self.commands.extend(other.commands);
         self.hooks.extend(other.hooks);
+        self.importers.extend(other.importers);
+        self.build_hooks.extend(other.build_hooks);
     }
 
     pub fn component(&self, type_id: &str) -> Option<&ComponentSchema> {
@@ -725,6 +811,20 @@ impl Contributions {
                 if other == &hook.name {
                     return Err(format!("hook {} is ordered against itself", hook.name));
                 }
+            }
+        }
+        let mut importers = BTreeSet::new();
+        for importer in &self.importers {
+            importer.check_definition()?;
+            if !importers.insert(importer.name.as_str()) {
+                return Err(format!("two importers named {}", importer.name));
+            }
+        }
+        let mut builds = BTreeSet::new();
+        for hook in &self.build_hooks {
+            hook.check_definition()?;
+            if !builds.insert(hook.name.as_str()) {
+                return Err(format!("two build hooks named {}", hook.name));
             }
         }
         let mut commands = BTreeSet::new();
@@ -898,5 +998,33 @@ mod tests {
         }))
         .unwrap();
         assert!(contributions.check_definition().is_err());
+    }
+
+    #[test]
+    fn importers_and_build_hooks_are_checked() {
+        let mut c: Contributions = serde_json::from_value(json!({
+            "importers": [{"name": "gpl", "summary": "palettes", "extensions": ["gpl", "pal"]}],
+            "build": [{"name": "check", "summary": "checks", "limit_ms": 1000}]
+        }))
+        .unwrap();
+        c.check_definition().unwrap();
+        assert!(c.importers[0].handles("GPL"));
+        assert!(!c.importers[0].handles("png"));
+        assert_eq!(c.importers[0].limit_ms, crate::assets::DEFAULT_LIMIT_MS);
+
+        c.importers[0].extensions = vec![".gpl".to_string()];
+        assert!(c.check_definition().is_err());
+        c.importers[0].extensions = vec!["gpl".to_string(), "gpl".to_string()];
+        assert!(c.check_definition().is_err());
+        c.importers[0].extensions = Vec::new();
+        assert!(c.check_definition().is_err());
+        c.importers[0].extensions = vec!["gpl".to_string()];
+        c.importers.push(c.importers[0].clone());
+        assert!(c.check_definition().is_err());
+        c.importers.pop();
+        c.build_hooks[0].limit_ms = 0;
+        assert!(c.check_definition().is_err());
+        c.build_hooks[0].limit_ms = crate::assets::MAX_LIMIT_MS + 1;
+        assert!(c.check_definition().is_err());
     }
 }

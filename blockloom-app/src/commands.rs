@@ -2765,6 +2765,7 @@ pub(crate) fn run_build_game(
         key_pass,
         remember_passwords,
         plugins: plugins::payloads(&dir, &project, target)?,
+        extras: plugins::run_build_hooks(state, app, &dir, &project, target)?,
     };
     let built = build::build(
         &project,
@@ -3252,6 +3253,8 @@ pub(crate) fn import_assets(
         sync_runtime(&mut s);
         emit(app, &s);
     }
+    drop(s);
+    plugins::auto_import(state, app, &made);
     Ok(made)
 }
 
@@ -3495,6 +3498,7 @@ pub(crate) fn delete_asset(
     let dir = project_dir(&s)?;
     assets::delete(&dir, &path)?;
     pipeline::note_removed(&dir, &path);
+    plugins::forget_import(&dir, &path);
     if touches_scripts(&path) {
         sync_ide(&dir);
     }

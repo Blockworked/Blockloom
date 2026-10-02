@@ -43,6 +43,17 @@ impl CodeModule {
         }
     }
 
+    /// Calls `op` over raw bytes. `limit_ms` is the work a portable module may
+    /// spend on this one call; a native library is trusted and not timed.
+    pub fn call_bytes(&mut self, op: &str, input: &[u8], limit_ms: u32) -> Result<Vec<u8>, String> {
+        match self {
+            CodeModule::Native(m) => m
+                .call(op, input)
+                .map_err(|status| format!("{op}: {status:?}")),
+            CodeModule::Portable(m) => m.call_limited(op, input, limit_ms),
+        }
+    }
+
     /// What the plugin has logged through the host since the last call here.
     pub fn take_logs(&mut self) -> Vec<(u32, String)> {
         match self {
