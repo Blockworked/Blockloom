@@ -69,6 +69,7 @@ then publishes editor/Hub archives and `blockloom-catalog.json`. Editor archives
 include Qt, the pinned Rust compiler, web support and optional Android Rust targets.
 The Hub archive currently requires Python 3.11+ installed separately.
 macOS packages target macOS 27 using GitHub's `xcode-27` runner.
+Windows packages use Visual Studio 2026 on `windows-2025-vs2026`.
 
 ### Editor And Runtime
 

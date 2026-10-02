@@ -21,7 +21,7 @@ jobs:
         include:
           - os: ubuntu-24.04
             arch: linux_gcc_64
-          - os: windows-2022
+          - os: windows-2025-vs2026
             arch: win64_msvc2022_64
           - os: xcode-27
             arch: clang_64
@@ -44,6 +44,10 @@ jobs:
           python-version: '3.12'
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
+        with:
+          arch: x64
+          # The action accepts VS's numeric version before its year alias is added.
+          vsversion: '18.0'
       - name: Configure macOS 27 SDK
         if: runner.os == 'macOS'
         run: |
