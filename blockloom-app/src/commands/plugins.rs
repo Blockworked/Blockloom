@@ -972,6 +972,31 @@ pub(crate) fn plugin_call(
             set_plugin_resource(state, app, name.clone(), args)?;
             Ok(json!({ "resource": name }))
         }
+        CommandAction::SetResourceField {
+            resource,
+            field,
+            append,
+        } => {
+            let name = id::qualified(&plugin, &resource);
+            let mut payload = {
+                let s = lock(state)?;
+                let project = s.project().ok_or("No project is open")?;
+                project
+                    .plugin_resources
+                    .iter()
+                    .find(|r| r.name() == name)
+                    .map_or_else(|| json!({}), |r| r.payload.clone())
+            };
+            if append {
+                let mut list = payload[&field].as_array().cloned().unwrap_or_default();
+                list.push(args["value"].clone());
+                payload[&field] = Value::Array(list);
+            } else {
+                payload[&field] = args["value"].clone();
+            }
+            set_plugin_resource(state, app, name.clone(), payload)?;
+            Ok(json!({ "resource": name, "field": field }))
+        }
         CommandAction::Module { op } => {
             with_module(state, app, &plugin, |module| module.call_json(&op, &args))
         }

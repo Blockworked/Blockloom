@@ -544,3 +544,79 @@ fn an_attached_copy_follows_the_owners_package_changes() {
             .is_err()
     );
 }
+
+#[test]
+fn a_command_can_set_or_append_to_a_resource_field() {
+    let root = data_root().join("resfield");
+    let pkg = root.join("pkg");
+    std::fs::create_dir_all(pkg.join("schemas")).unwrap();
+    std::fs::write(
+        pkg.join("schemas/log.json"),
+        json!({
+            "resources": [{"type_id": "journal", "fields": [
+                {"name": "title", "type": "text", "default": "none"},
+                {"name": "lines", "type": "list", "item": {"type": "text"}, "max_len": 2, "default": []}
+            ]}],
+            "commands": [
+                {"name": "add_line", "summary": "Append a line.",
+                 "args": [{"name": "value", "type": "text", "default": ""}],
+                 "action": {"do": "set_resource_field", "resource": "journal", "field": "lines", "append": true}},
+                {"name": "set_title", "summary": "Set the title.",
+                 "args": [{"name": "value", "type": "text", "default": ""}],
+                 "action": {"do": "set_resource_field", "resource": "journal", "field": "title"}}
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        pkg.join("plugin.json"),
+        json!({
+            "format": 1, "id": "com.example.journal", "name": "Journal", "version": "1.0.0",
+            "engine": ">=0.0.1", "tier": "declarative", "contributions": ["schemas/log.json"]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let backend = Backend::start(AppHandle::new(|_| {}));
+    let invoke = |cmd: &str, args: Value| backend.dispatch(cmd, args).unwrap();
+    invoke("plugin_seal", json!({"path": pkg.to_string_lossy()}));
+    invoke(
+        "create_project",
+        json!({"name": "Journal", "mode": "TwoD", "location": root.join("projects")}),
+    );
+    invoke(
+        "plugin_install",
+        json!({"id": "com.example.journal", "source": format!("path:{}", pkg.display())}),
+    );
+    let add = |text: &str| {
+        backend.dispatch(
+            "plugin_call",
+            json!({"command": "com.example.journal/add_line", "args": {"value": text}}),
+        )
+    };
+    add("one").unwrap();
+    add("two").unwrap();
+    let resource = || {
+        let state = backend.dispatch("get_state", json!({})).unwrap();
+        state["project"]["plugin_resources"]
+            .as_array()
+            .and_then(|all| all.iter().find(|r| r["type_id"] == "journal").cloned())
+            .unwrap()
+    };
+    assert_eq!(resource()["payload"]["lines"], json!(["one", "two"]));
+    // The list's own bound still holds, and a refused append changes nothing.
+    assert!(add("three").is_err());
+    assert_eq!(resource()["payload"]["lines"], json!(["one", "two"]));
+    // Setting one field keeps the others.
+    invoke(
+        "plugin_call",
+        json!({"command": "com.example.journal/set_title", "args": {"value": "Day 1"}}),
+    );
+    let payload = resource()["payload"].clone();
+    assert_eq!(payload["title"], "Day 1");
+    assert_eq!(payload["lines"], json!(["one", "two"]));
+    // One undo takes back one command.
+    invoke("undo", json!({}));
+    assert_eq!(resource()["payload"]["title"], "none");
+}

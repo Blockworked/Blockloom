@@ -461,3 +461,15 @@ the remaining proof.
   record validates and migrates exactly as before. A hidden field keeps its
   value. Plugin-drawn panels and trusted editor modules are still open.
 
+## Saved voxel edits (sixteenth batch)
+
+- Edits that outlive a run are data in the `world` resource: a list of text
+  lines, replayed over the generated terrain at `world.start`. Lines keep the
+  document diffable and need no new schema type; a bad line is reported and
+  skipped, so one typo does not lose the rest.
+- Writing them needed one general command action, `set_resource_field`
+  (replace one field of a resource, or `append` to a list field), so any
+  package can build a log or a list from commands. `set_world` still replaces
+  the whole resource, which includes its edits.
+- Editor brushes that write these lines from the scene view are still open.
+

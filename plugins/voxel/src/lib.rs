@@ -13,8 +13,9 @@
 //! name (`air` or 0 clears). A ray (`cast`, `break`, `place`) is given in
 //! world units, like the cubes are drawn.
 //!
-//! Edits last as long as the run: stopping the game starts the next from the
-//! generated world again.
+//! Edits made by blocks last as long as the run: stopping the game starts the
+//! next from the generated world again. Edits the project saves are the
+//! `world` resource's `edits` lines, applied in order on top of the terrain.
 
 mod grid;
 mod mesher;
@@ -44,6 +45,8 @@ struct Settings {
     solid: bool,
     palette_colors: Vec<String>,
     palette_emission: Vec<f64>,
+    /// Edits laid over the generated terrain, oldest first (see `apply_edit`).
+    edits: Vec<String>,
 }
 
 impl Default for Settings {
@@ -57,6 +60,7 @@ impl Default for Settings {
             solid: true,
             palette_colors: Vec::new(),
             palette_emission: Vec::new(),
+            edits: Vec::new(),
         }
     }
 }
@@ -129,6 +133,91 @@ impl World {
         self.seed = seed;
         self.grid.mark_all_dirty();
         Ok(())
+    }
+
+    /// Fills the box between two corners (any order), clipped to the world.
+    fn fill_box(&mut self, a: [i32; 3], b: [i32; 3], material: u8) -> u64 {
+        let size = self.grid.size();
+        let lo = [0, 1, 2].map(|i| a[i].min(b[i]).max(0));
+        let hi = [0, 1, 2].map(|i| a[i].max(b[i]).min(size[i] - 1));
+        let mut changed = 0;
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
+                for x in lo[0]..=hi[0] {
+                    changed += u64::from(self.grid.set([x, y, z], material));
+                }
+            }
+        }
+        changed
+    }
+
+    /// Fills the cells whose centres lie within `radius` cells of `centre`.
+    fn fill_sphere(&mut self, centre: [i32; 3], radius: f64, material: u8) -> u64 {
+        let size = self.grid.size();
+        let reach = radius.ceil() as i32;
+        let lo = [0, 1, 2].map(|i| (centre[i] - reach).max(0));
+        let hi = [0, 1, 2].map(|i| (centre[i] + reach).min(size[i] - 1));
+        let mut changed = 0;
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
+                for x in lo[0]..=hi[0] {
+                    let d = [x - centre[0], y - centre[1], z - centre[2]]
+                        .map(|d| f64::from(d) * f64::from(d));
+                    if d[0] + d[1] + d[2] <= radius * radius {
+                        changed += u64::from(self.grid.set([x, y, z], material));
+                    }
+                }
+            }
+        }
+        changed
+    }
+
+    /// Applies one saved edit line: `set X Y Z material`, `fill X1 Y1 Z1 X2
+    /// Y2 Z2 material` or `sphere X Y Z radius material`.
+    fn apply_edit(&mut self, line: &str) -> Result<u64, String> {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let (verb, rest) = words.split_first().ok_or("an empty edit")?;
+        let cells = |from: usize, count: usize| -> Result<Vec<i32>, String> {
+            (from..from + count)
+                .map(|i| {
+                    rest.get(i)
+                        .and_then(|w| w.parse::<f64>().ok())
+                        .filter(|v| v.is_finite() && v.abs() < 1e9)
+                        .map(|v| v.floor() as i32)
+                        .ok_or_else(|| format!("expected a number at word {}", i + 2))
+                })
+                .collect()
+        };
+        let material = |at: usize| -> Result<u8, String> {
+            let word = rest.get(at).ok_or("the material is missing")?;
+            let value = word
+                .parse::<i64>()
+                .map_or_else(|_| json!(word), |n| json!(n));
+            self.palette.id_of(&value)
+        };
+        match *verb {
+            "set" => {
+                let c = cells(0, 3)?;
+                let m = material(3)?;
+                Ok(u64::from(self.grid.set([c[0], c[1], c[2]], m)))
+            }
+            "fill" => {
+                let c = cells(0, 6)?;
+                let m = material(6)?;
+                Ok(self.fill_box([c[0], c[1], c[2]], [c[3], c[4], c[5]], m))
+            }
+            "sphere" => {
+                let c = cells(0, 3)?;
+                let radius = rest
+                    .get(3)
+                    .and_then(|w| w.parse::<f64>().ok())
+                    .filter(|r| (0.0..=512.0).contains(r))
+                    .ok_or("the radius must be 0 to 512")?;
+                let m = material(4)?;
+                Ok(self.fill_sphere([c[0], c[1], c[2]], radius, m))
+            }
+            other => Err(format!("unknown edit \"{other}\"")),
+        }
     }
 
     /// Meshes every dirty chunk and says what the game should now draw.
@@ -246,7 +335,18 @@ impl Voxel {
         world
             .generate(&settings.preset, settings.seed)
             .map_err(Error::new)?;
-        let effects = world.flush();
+        // A bad saved edit is reported and skipped; the rest still apply.
+        let mut problems = Vec::new();
+        for (n, line) in settings.edits.iter().enumerate() {
+            if let Err(why) = world.apply_edit(line) {
+                problems.push(json!({
+                    "effect": "error",
+                    "message": format!("voxel edit {} ({line}): {why}", n + 1),
+                }));
+            }
+        }
+        let mut effects = world.flush();
+        effects.extend(problems);
         let line = format!(
             "voxel world {}x{}x{}, {} chunks drawn",
             world.grid.size()[0],
@@ -255,7 +355,6 @@ impl Voxel {
             world.published.len()
         );
         self.world = Some(world);
-        let mut effects = effects;
         effects.push(json!({"effect": "say", "text": line}));
         Ok(json!({ "effects": effects }))
     }
@@ -285,17 +384,7 @@ impl Voxel {
             .palette
             .id_of(&args["material"])
             .map_err(Error::bad_argument)?;
-        let size = world.grid.size();
-        let lo = [0, 1, 2].map(|i| a[i].min(b[i]).max(0));
-        let hi = [0, 1, 2].map(|i| a[i].max(b[i]).min(size[i] - 1));
-        let mut changed = 0;
-        for z in lo[2]..=hi[2] {
-            for y in lo[1]..=hi[1] {
-                for x in lo[0]..=hi[0] {
-                    changed += u64::from(world.grid.set([x, y, z], material));
-                }
-            }
-        }
+        let changed = world.fill_box(a, b, material);
         Ok(Voxel::edited(world, changed))
     }
 
@@ -310,22 +399,7 @@ impl Voxel {
             .palette
             .id_of(&args["material"])
             .map_err(Error::bad_argument)?;
-        let size = world.grid.size();
-        let reach = radius.ceil() as i32;
-        let lo = [0, 1, 2].map(|i| (centre[i] - reach).max(0));
-        let hi = [0, 1, 2].map(|i| (centre[i] + reach).min(size[i] - 1));
-        let mut changed = 0;
-        for z in lo[2]..=hi[2] {
-            for y in lo[1]..=hi[1] {
-                for x in lo[0]..=hi[0] {
-                    let d = [x - centre[0], y - centre[1], z - centre[2]]
-                        .map(|d| f64::from(d) * f64::from(d));
-                    if d[0] + d[1] + d[2] <= radius * radius {
-                        changed += u64::from(world.grid.set([x, y, z], material));
-                    }
-                }
-            }
-        }
+        let changed = world.fill_sphere(centre, radius, material);
         Ok(Voxel::edited(world, changed))
     }
 

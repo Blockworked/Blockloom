@@ -302,6 +302,62 @@ fn rays_measure_break_and_build_in_world_units() {
 }
 
 #[test]
+fn saved_edits_are_laid_over_the_terrain_in_order() {
+    let mut payload = small_flat();
+    payload["edits"] = json!([
+        "fill 0 0 0 3 3 3 wood",
+        "set 1 1 1 air",
+        "sphere 20 8 20 2 stone",
+        "set 99 99 99 stone",
+        "bounce 1 2 3",
+        "fill 0 0 0 1 1 1 nonsense"
+    ]);
+    let mut world = hosted(CodeModule::Native(module()));
+    let mut outcomes = world.start(&resources(payload));
+    // Bad lines are reported by number and the good ones still apply; an edit
+    // past the world's edge is just clipped.
+    let errors: Vec<String> = outcomes
+        .iter()
+        .filter_map(|o| match o {
+            Outcome::Effect {
+                effect: Effect::Error { message },
+                ..
+            } => Some(message.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert!(errors[0].contains("edit 5"), "{errors:?}");
+    assert!(errors[1].contains("edit 6"), "{errors:?}");
+    outcomes.retain(|o| {
+        !matches!(
+            o,
+            Outcome::Effect {
+                effect: Effect::Error { .. },
+                ..
+            }
+        )
+    });
+    let mut scene = Scene::default();
+    scene.apply(outcomes);
+    let at = |world: &mut WorldPlugins, c: [i64; 3]| {
+        world
+            .read(
+                ID,
+                "voxel_at",
+                &[json!(c[0]), json!(c[1]), json!(c[2])],
+                "me",
+            )
+            .unwrap()
+    };
+    assert_eq!(at(&mut world, [0, 0, 0]), json!(5), "wood");
+    assert_eq!(at(&mut world, [1, 1, 1]), json!(0), "a later edit wins");
+    assert_eq!(at(&mut world, [20, 8, 20]), json!(1), "stone");
+    // The fill that named an unknown material changed nothing.
+    assert_eq!(at(&mut world, [3, 3, 3]), json!(5));
+}
+
+#[test]
 fn bad_settings_and_edits_are_refused_with_a_reason() {
     let mut world = hosted(CodeModule::Native(module()));
     // The reason is logged; the call itself reports that it failed.

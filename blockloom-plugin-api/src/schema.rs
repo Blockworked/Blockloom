@@ -713,6 +713,14 @@ pub enum CommandAction {
     SetField { component: String, field: String },
     /// Replaces a project resource with the arguments as its payload.
     SetResource { resource: String },
+    /// Sets one field of a project resource from the `value` argument, or
+    /// with `append` adds `value` to the end of that field's list.
+    SetResourceField {
+        resource: String,
+        field: String,
+        #[serde(default)]
+        append: bool,
+    },
     /// Calls `op` on the package's native or portable module.
     Module { op: String },
 }
@@ -739,7 +747,9 @@ impl CommandSchema {
             {
                 Err(format!("{}: needs an actor argument", self.name))
             }
-            CommandAction::SetField { .. } if !needs("value") => {
+            CommandAction::SetField { .. } | CommandAction::SetResourceField { .. }
+                if !needs("value") =>
+            {
                 Err(format!("{}: needs a value argument", self.name))
             }
             _ => Ok(()),
@@ -985,6 +995,24 @@ impl Contributions {
                 CommandAction::SetResource { resource } if self.resource(resource).is_none() => {
                     return Err(format!("{}: unknown resource {resource}", command.name));
                 }
+                CommandAction::SetResourceField {
+                    resource,
+                    field,
+                    append,
+                } => {
+                    let schema = self
+                        .resource(resource)
+                        .ok_or_else(|| format!("{}: unknown resource {resource}", command.name))?;
+                    let Some(target) = schema.fields.iter().find(|f| &f.name == field) else {
+                        return Err(format!("{}: {resource} has no field {field}", command.name));
+                    };
+                    if *append && !matches!(target.ty, FieldType::List { .. }) {
+                        return Err(format!(
+                            "{}: {resource}.{field} is not a list, so nothing can be appended",
+                            command.name
+                        ));
+                    }
+                }
                 CommandAction::SetField { component, field } => {
                     let schema = self.component(component).expect("checked above");
                     if !schema.fields.iter().any(|f| &f.name == field) {
@@ -1140,6 +1168,33 @@ mod tests {
         }))
         .unwrap();
         assert!(contributions.check_definition().is_err());
+    }
+
+    #[test]
+    fn resource_field_commands_name_a_real_field_and_list() {
+        let with = |action: Value| -> Result<(), String> {
+            let c: Contributions = serde_json::from_value(json!({
+                "resources": [{"type_id": "Log", "fields": [
+                    {"name": "title", "type": "text", "default": ""},
+                    {"name": "lines", "type": "list", "item": {"type": "text"}, "default": []}
+                ]}],
+                "commands": [{"name": "x", "summary": "x",
+                    "args": [{"name": "value", "type": "text"}], "action": action}]
+            }))
+            .unwrap();
+            c.check_definition()
+        };
+        with(json!({"do": "set_resource_field", "resource": "Log", "field": "title"})).unwrap();
+        with(json!({"do": "set_resource_field", "resource": "Log", "field": "lines", "append": true}))
+            .unwrap();
+        let e = with(json!({"do": "set_resource_field", "resource": "Log", "field": "nope"}));
+        assert!(e.unwrap_err().contains("no field"));
+        let e = with(json!({"do": "set_resource_field", "resource": "Nope", "field": "title"}));
+        assert!(e.unwrap_err().contains("unknown resource"));
+        let e = with(
+            json!({"do": "set_resource_field", "resource": "Log", "field": "title", "append": true}),
+        );
+        assert!(e.unwrap_err().contains("not a list"));
     }
 
     #[test]

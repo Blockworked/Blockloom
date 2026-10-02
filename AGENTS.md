@@ -404,8 +404,9 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   and `plugin_call`. Package changes are transactions on
   `plugins.json` and `plugins.lock` only. A command a plugin declares is run as
   `plugin-id/name key=value` in the shell (`Action::Plugin`, forwarded as
-  `plugin_call`) and through the MCP `plugin-call` tool. `StateDto.plugins` is
-  the snapshot slot.
+  `plugin_call`) and through the MCP `plugin-call` tool. A command's action is
+  `add_component`, `set_field`, `set_resource`, `set_resource_field` or
+  `module`. `StateDto.plugins` is the snapshot slot.
 - **Builds**: a pack that carries plugins is `PACK_VERSION` 2 (without them it
   is still written as 1), each plugin's `plugin.json` and shipped files go to
   `game/plugins/<id>/`, and Android builds refuse plugins that have code. A web
@@ -605,10 +606,16 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   resource, commands and nine blocks (a material is a dropdown of the built-in names; ids work
   too). Measured: the default 64x32x64 island is drawn from the wasm module in
   under a second, inside its 10 s call budget. Not yet: smooth terrain, shaped
-  cells, edits saved or applied to the project, streaming and LOD, instancing,
-  GPU meshing, fracture, editor brushes. Its manifest asks for `editor.preview`,
+  cells, streaming and LOD, instancing, GPU meshing, fracture, editor brushes. Its manifest asks for `editor.preview`,
   so the scene view shows the generated world without Play (edits made by
-  blocks still last only for a run).
+  blocks still last only for a run). Saved edits are the `world` resource's
+  `edits` lines (`set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`,
+  `sphere X Y Z radius material`), applied in order over the generated terrain
+  at `world.start` (a bad line is reported by number and skipped), so the scene
+  view and every run show them; `add_voxel_edit` appends one and
+  `clear_voxel_edits` forgets them, both through the `set_resource_field`
+  command action (sets one resource field, or with `append` pushes `value` onto
+  its list; one undo step).
 - **Importers and build hooks** (`blockloom-plugin-api/src/assets.rs`,
   `blockloom-plugin-host/src/imports.rs`): a package's schema may list
   `importers` (name, extensions, `limit_ms`) and `build` hooks (name,

@@ -11,7 +11,8 @@
         {"name": "origin", "type": "vec3", "default": [0, 0, 0], "description": "Where the world's low corner stands."},
         {"name": "solid", "type": "bool", "default": true, "description": "Whether the cells collide."},
         {"name": "palette_colors", "type": "list", "item": {"type": "color"}, "max_len": 255, "default": [], "description": "Colors laid over the built-in materials by position (stone, dirt, grass, sand, wood, leaves, glow); more add materials. Blank keeps the built-in."},
-        {"name": "palette_emission", "type": "list", "item": {"type": "number", "min": 0, "max": 100}, "max_len": 255, "default": [], "description": "How strongly each material glows, in the same order. 0 does not glow."}
+        {"name": "palette_emission", "type": "list", "item": {"type": "number", "min": 0, "max": 100}, "max_len": 255, "default": [], "description": "How strongly each material glows, in the same order. 0 does not glow."},
+        {"name": "edits", "type": "list", "item": {"type": "text", "max_len": 120}, "max_len": 4096, "default": [], "description": "Edits laid over the terrain in order: `set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`, `sphere X Y Z radius material`."}
       ]
     }
   ],
@@ -26,6 +27,18 @@
         {"name": "voxel_size", "type": "number", "min": 0.05, "max": 64, "default": 1}
       ],
       "action": {"do": "set_resource", "resource": "world"}
+    },
+    {
+      "name": "add_voxel_edit",
+      "summary": "Save one edit line (set, fill or sphere) into the world every game starts with.",
+      "args": [{"name": "value", "type": "text", "max_len": 120, "default": "set 0 0 0 stone"}],
+      "action": {"do": "set_resource_field", "resource": "world", "field": "edits", "append": true}
+    },
+    {
+      "name": "clear_voxel_edits",
+      "summary": "Forget every saved edit, back to the generated terrain.",
+      "args": [{"name": "value", "type": "list", "item": {"type": "text"}, "max_len": 0, "default": []}],
+      "action": {"do": "set_resource_field", "resource": "world", "field": "edits"}
     },
     {
       "name": "set_voxel",

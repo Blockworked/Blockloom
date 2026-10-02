@@ -1515,7 +1515,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Mesh submission service: `mesh`/`remove_mesh` effects become named 3D entities with an optional trimesh collider.
     - [x] Voxel plugin first slice (`plugins/voxel`): finite cube world, seeded terrain presets, greedy chunk mesher, glowing materials, live set/fill/sphere/generate, reporters, rays (distance, break, place), schema and sealed package (`just voxel-plugin`).
     - [x] Scene-view preview: a plugin with `editor.preview` is hosted while nothing plays (`plugins::preview`), the voxel world shows in the editor without Play.
-    - [ ] Voxel next: edit persistence, editor brushes, shaped cells, smooth terrain, streaming/LOD, instancing, GPU meshing, fracture.
+    - [x] Voxel edit persistence: saved `edits` lines on the `world` resource, `add_voxel_edit`/`clear_voxel_edits`, and a general `set_resource_field` command action.
+    - [ ] Voxel next: editor brushes, shaped cells, smooth terrain, streaming/LOD, instancing, GPU meshing, fracture.
     - [ ] Phases 4-7 (procedural graph, GPU path, fracture, ecosystem).
 
 ### Phase 8 - Web player via WebGPU (single-file build, do before Phase 9)
