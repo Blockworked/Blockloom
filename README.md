@@ -68,6 +68,7 @@ existing-tag dispatch. It builds native and web players with the `dist` profile,
 then publishes editor/Hub archives and `blockloom-catalog.json`. Editor archives
 include Qt, the pinned Rust compiler, web support and optional Android Rust targets.
 The Hub archive currently requires Python 3.11+ installed separately.
+macOS packages target macOS 27 using GitHub's `xcode-27` runner.
 
 ### Editor And Runtime
 

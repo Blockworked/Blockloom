@@ -245,7 +245,8 @@ offline. CI never performs a system installation. Windows, Linux and macOS jobs
 run independently. Artifacts include Qt and the pinned Rust toolchain, including
 wasm and optional Android targets. The Hub archive requires Python 3.11+ on PATH.
 Linux packages require Ubuntu 24.04-compatible system libraries; macOS packages
-are unsigned for distribution (ad hoc signing only). Broader platform baselines,
+target macOS 27 on GitHub's `xcode-27` runner and are unsigned for distribution
+(ad hoc signing only). Broader platform baselines,
 developer signing and a bundled Hub Python runtime remain shipping work.
 
 The release workflow validates its existing tag against the workspace version,

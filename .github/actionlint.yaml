@@ -1,0 +1,5 @@
+paths:
+  .github/workflows/build-packages.yml:
+    # GitHub's macOS 27 preview runner is newer than actionlint's label list.
+    ignore:
+      - '^label "xcode-27" is unknown\.'
