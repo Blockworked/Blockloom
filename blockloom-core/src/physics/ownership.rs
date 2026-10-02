@@ -149,7 +149,10 @@ impl PhysicsOwnership {
 
 /// The actor whose Rigidbody carries a collider on `actor`: itself, else the
 /// nearest ancestor with one. Parent loops end the walk.
-pub(super) fn body_above<'a>(actor: &'a Actor, by_id: &HashMap<&str, &'a Actor>) -> Option<&'a Actor> {
+pub(super) fn body_above<'a>(
+    actor: &'a Actor,
+    by_id: &HashMap<&str, &'a Actor>,
+) -> Option<&'a Actor> {
     let mut at = actor;
     let mut seen = HashSet::new();
     loop {

@@ -4556,8 +4556,7 @@ pub fn is_dynamic(engine: &Engine, actor: &str) -> bool {
     engine.actor(actor).is_some_and(|actor| {
         actor.physics().body == BodyKind::Dynamic
             || actor.components.rigidbody().is_some_and(|body| {
-                body.simulated
-                    && body.body_type == blockloom_core::physics::BodyType::Dynamic
+                body.simulated && body.body_type == blockloom_core::physics::BodyType::Dynamic
             })
     })
 }
