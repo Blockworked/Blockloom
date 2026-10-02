@@ -36,11 +36,11 @@ The plan's matrix, one thread, debug build, loopback, 256 KiB reliable transfer 
 
 ### Findings and decisions this forces
 
-1. **The Retry round trip is a visible join cost.** Without jitter a handshake is about 2 RTT (Retry, then TLS). Quiche only needs Retry for amplification protection. Decision for Phase 3: keep it on by default for a listening endpoint, and consider skipping it when the invite already carries the high-entropy admission token.
+1. **The Retry round trip is a visible join cost.** Without jitter a handshake is about 2 RTT (Retry, then TLS). Quiche only needs Retry for amplification protection. Decision (section 6): skip it when the invite carries the admission token, keep it for direct IP joins.
 2. **The server sends two Retries per connection attempt**, most likely because BoringSSL's ClientHello spans two Initial packets (not verified at the packet level). The client uses the first and drops the second, so it is harmless; the test asserts `>= 1`.
 3. **Reordering hurts far more than the plan's loss figures.** With 20 ms of jitter (which reorders packets) a 50 ms RTT transfer takes 1667 ms instead of 233 ms at 0% loss, apparently because reordered packets read as loss to the congestion controller. This was only run with Quiche's default CUBIC. Phase 3 should try BBR and the relaxed loss threshold before the join baseline is sized, and the matrix should keep a jitter column.
 4. **Short-header packets do not carry a connection ID length**, so the server must issue full length (20 byte) connection IDs. A 16 byte ID silently broke every post-handshake packet in the first draft.
-5. **`tokio-quiche` was not evaluated.** The raw `poll()` driver above is about 600 lines and fits the plan's "no blocking send, one I/O owner" rule, so the spike did not need it. The decision whether to adopt it is open.
+5. **`tokio-quiche` was not evaluated.** The raw `poll()` driver above is about 600 lines and fits the plan's "no blocking send, one I/O owner" rule, so the spike did not need it. The owner has asked for a `tokio-quiche` spike (section 6).
 6. **Build requirements.** `boring-sys` needs cmake, a C/C++ compiler and libclang (bindgen). A clean `cargo build -p blockloom-net` took 2m55s here, and clippy with `-D warnings` is clean. It cannot build for `wasm32-unknown-unknown`, so the crate must stay out of the web player (the plan's `multiplayer` feature gate) and out of the Android runtime until that target has its own qualification.
 
 Not covered: Windows, macOS and Android builds of Quiche/BoringSSL; IPv6; mDNS discovery; 0-RTT (the spike never enables early data); connection migration (disabled in the config); WebTransport.
@@ -107,17 +107,26 @@ Facts about the clocks that matter for the plan's section 6:
 
 ## 5. Baseline
 
-- VM cost: `cargo bench -p blockloom-core --bench vm` (results are appended at the bottom of this page when the run finishes).
+- VM cost, `cargo bench -p blockloom-core --bench vm`, 50 actors, release build, shared 4-core cloud container (so noisy, and not comparable to the numbers in `docs/performance.md`):
+
+| Canvas | ns/tick | ns/actor |
+| --- | --- | --- |
+| arithmetic | 27,144 | 543 |
+| effects | 17,590 | 352 |
+| custom_blocks | 28,687 | 574 |
+| lists | 112,770 | 2,255 |
+| sensing | 88,630 | 1,773 |
+| sensing_crowd | 82,782 | 1,656 |
 - Sensing publish cost: the ignored `sensor_publish_cost` test in `world.rs:7273` needs a runtime build; not run here.
 - Input latency, resident memory and per-frame CPU of the existing player: not measured. They need a GPU and a built player, and the plan's gate for Phase 1 ("measure resident memory, local input latency and allocation cost against the existing player") needs them. A local run of `just player` plus `docs/performance.md`'s harness is the way to collect them.
 
-## 6. Decisions needed from the project owner
+## 6. Decisions (answered 2026-10-02 by the project owner)
 
-1. Retry on every join, or skip it when the invite token already proves intent (finding 1).
-2. Adopt `tokio-quiche`, or keep the raw `poll()` driver (finding 5).
-3. Which run overrides in 2.3 are shared server state and which are per-client views; the answer sets the first replication schema.
-4. Whether `wall` should become real wall time for UI strands (it changes pause menus' timing under `time_scale`), or stay a fixed-clock alias and gain a new, honestly named wall-clock reporter.
-5. The first supported lower logical rate and its physics substep policy, or "60 Hz only in v1".
+1. **Retry:** skip it when the invite's admission token is present; keep it for direct IP joins. The token path needs its own flood limits (per-source rate and a cap on half-open handshakes) before Phase 3 ships.
+2. **Transport driver:** try `tokio-quiche`. A small spike comes first, behind the same `Server`/`Client` surface, and is judged on the loopback tests, the matrix above and how it sits next to the simulation thread. The raw `poll()` driver stays until that spike decides.
+3. **Run overrides:** wind, water, weather and time of day (and the other overrides gameplay reporters read) are shared server state. Fog, clouds, aurora and lightning become per-client looks. The first replication schema follows this split; any override a reporter reads from that second group needs a server counterpart or moves to the first.
+4. **"Wall" time:** becomes real wall time for UI strands. This changes existing games slightly under time scaling or a stall, so it needs a compatibility note and a test, and should land with the clock work in Phase 1 (together with `elapsed_secs_f64`).
+5. **Logical rate:** v1 multiplayer uses each project's existing fixed rate. Lower-rate profiles and their physics substep policy are deferred.
 
 ## 7. Where Phase 1 starts
 
