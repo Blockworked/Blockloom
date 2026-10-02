@@ -634,6 +634,7 @@ mod tests {
                     ty: ty.clone(),
                     default: None,
                     description: String::new(),
+                    ui: None,
                 })
                 .collect(),
             wants_actor,

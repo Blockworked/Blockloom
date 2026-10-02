@@ -490,6 +490,14 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   through `set_plugin_component`/`set_plugin_resource`, so validation and undo
   are the backend's. QML tests: `tests/qml/tst_PluginInspector.qml`. A new
   `FieldType` must be taught to `PluginValueEditor.qml` (and `src/plugins.ts`).
+  Drawing hints are declarative and never touch a payload: a field's `ui`
+  (`label`, `widget` of `slider` for a bounded int/number or `multiline` for
+  text, `unit`, `step`, `visible_when` of `{field, equals | not_equals}` or
+  truthy) and a component's `inspector.groups` (`label`, `fields`, `collapsed`).
+  `check_ui` in `schema.rs` refuses a hint that names a missing field, suits the
+  wrong type, or draws a field twice; the form draws ungrouped fields first,
+  then each group under a foldable heading, and hides a row while its
+  `visible_when` fails (the value stays in the record).
 - **Mesh service** (`blockloom-plugin-api/src/mesh.rs`, `blockloom-runtime/src/
   plugin_meshes.rs`): a module answers with `{"effect": "mesh", name,
   positions, normals, colors, indices, origin, emission, roughness, collider}`

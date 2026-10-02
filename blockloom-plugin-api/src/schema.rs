@@ -69,6 +69,68 @@ pub struct FieldSchema {
     pub default: Option<Value>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
+    /// How the inspector draws it. Nothing here changes what a payload holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<FieldUi>,
+}
+
+/// Hints for drawing one field.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FieldUi {
+    /// Shown instead of the field's name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub widget: Option<Widget>,
+    /// Shown after the value, such as `m` or `%`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub unit: String,
+    /// A slider's step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<f64>,
+    /// The field is drawn only while this holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_when: Option<Condition>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Widget {
+    /// A bounded `int` or `number` as a slider.
+    Slider,
+    /// A `text` field as a box of several lines.
+    Multiline,
+}
+
+/// A test on another field of the same record. With neither `equals` nor
+/// `not_equals` it holds while the field is truthy (true, a non-zero number
+/// or a non-empty text or list).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Condition {
+    pub field: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equals: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_equals: Option<Value>,
+}
+
+/// Fields drawn together under one heading.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InspectorGroup {
+    #[serde(default)]
+    pub label: String,
+    pub fields: Vec<String>,
+    /// Starts folded away.
+    #[serde(default)]
+    pub collapsed: bool,
+}
+
+/// How a component's inspector card is laid out. A field no group names is
+/// drawn first, ungrouped, in schema order.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct InspectorLayout {
+    #[serde(default)]
+    pub groups: Vec<InspectorGroup>,
 }
 
 /// Something in a payload that points outside it, so the host can find what a
@@ -293,6 +355,83 @@ fn check_fields(fields: &[FieldSchema], what: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Checks the drawing hints name real fields and suit their types.
+fn check_ui(
+    fields: &[FieldSchema],
+    layout: Option<&InspectorLayout>,
+    what: &str,
+) -> Result<(), String> {
+    let names: BTreeSet<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+    for field in fields {
+        let Some(ui) = &field.ui else { continue };
+        let at = format!("{what}.{}", field.name);
+        match (&ui.widget, &field.ty) {
+            (None, _) => {}
+            (
+                Some(Widget::Slider),
+                FieldType::Int {
+                    min: Some(_),
+                    max: Some(_),
+                },
+            ) => {}
+            (
+                Some(Widget::Slider),
+                FieldType::Number {
+                    min: Some(_),
+                    max: Some(_),
+                },
+            ) => {}
+            (Some(Widget::Slider), _) => {
+                return Err(format!(
+                    "{at}: a slider needs an int or number with min and max"
+                ));
+            }
+            (Some(Widget::Multiline), FieldType::Text { .. }) => {}
+            (Some(Widget::Multiline), _) => {
+                return Err(format!("{at}: a multiline box needs a text field"));
+            }
+        }
+        if let Some(step) = ui.step
+            && !(step.is_finite() && step > 0.0)
+        {
+            return Err(format!("{at}: step must be above zero"));
+        }
+        if let Some(condition) = &ui.visible_when {
+            if condition.field == field.name {
+                return Err(format!("{at}: visible_when can't name the field itself"));
+            }
+            if !names.contains(condition.field.as_str()) {
+                return Err(format!(
+                    "{at}: visible_when names unknown field {}",
+                    condition.field
+                ));
+            }
+            if condition.equals.is_some() && condition.not_equals.is_some() {
+                return Err(format!(
+                    "{at}: visible_when takes equals or not_equals, not both"
+                ));
+            }
+        }
+    }
+    if let Some(layout) = layout {
+        let mut placed = BTreeSet::new();
+        for group in &layout.groups {
+            for name in &group.fields {
+                if !names.contains(name.as_str()) {
+                    return Err(format!(
+                        "{what}: inspector group \"{}\" names unknown field {name}",
+                        group.label
+                    ));
+                }
+                if !placed.insert(name.as_str()) {
+                    return Err(format!("{what}: inspector draws {name} twice"));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Checks `payload` (an object) against `fields`. Unknown fields are
 /// refused: a typo should not be stored silently.
 fn validate_object(fields: &[FieldSchema], payload: &Value) -> Vec<SchemaError> {
@@ -386,6 +525,8 @@ pub struct ComponentSchema {
     pub editor_only: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub migrations: Vec<MigrationStep>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inspector: Option<InspectorLayout>,
 }
 
 fn one() -> u32 {
@@ -399,6 +540,7 @@ impl ComponentSchema {
             return Err(format!("{}: schema versions start at 1", self.type_id));
         }
         check_fields(&self.fields, &self.type_id)?;
+        check_ui(&self.fields, self.inspector.as_ref(), &self.type_id)?;
         let mut from = BTreeSet::new();
         for step in &self.migrations {
             if step.from == 0 || step.from >= self.version {
@@ -1026,5 +1168,94 @@ mod tests {
         assert!(c.check_definition().is_err());
         c.build_hooks[0].limit_ms = crate::assets::MAX_LIMIT_MS + 1;
         assert!(c.check_definition().is_err());
+    }
+    fn with(fields: Value, inspector: Value) -> ComponentSchema {
+        serde_json::from_value(json!({
+            "type_id": "Ui", "fields": fields, "inspector": inspector
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn inspector_hints_round_trip_and_leave_payloads_alone() {
+        let schema = with(
+            json!([
+                {"name": "on", "type": "bool", "default": true},
+                {"name": "power", "type": "number", "min": 0, "max": 1, "default": 0.5,
+                 "ui": {"label": "Power", "widget": "slider", "step": 0.1, "unit": "%",
+                        "visible_when": {"field": "on"}}},
+                {"name": "note", "type": "text", "default": "",
+                 "ui": {"widget": "multiline", "visible_when": {"field": "on", "equals": true}}}
+            ]),
+            json!({"groups": [{"label": "Main", "fields": ["on", "power"], "collapsed": true}]}),
+        );
+        schema.check_definition().unwrap();
+        schema.validate(&schema.defaults()).unwrap();
+        let again: ComponentSchema =
+            serde_json::from_value(serde_json::to_value(&schema).unwrap()).unwrap();
+        assert_eq!(again, schema);
+        assert_eq!(
+            schema.fields[1].ui.as_ref().unwrap().widget,
+            Some(Widget::Slider)
+        );
+        assert!(schema.inspector.as_ref().unwrap().groups[0].collapsed);
+        assert!(health().inspector.is_none());
+    }
+
+    #[test]
+    fn bad_inspector_hints_are_definition_errors() {
+        let bad = |fields: Value, inspector: Value| {
+            with(fields, inspector).check_definition().unwrap_err()
+        };
+        let none = json!(null);
+        // A slider needs a bounded number.
+        let e = bad(
+            json!([{"name": "a", "type": "int", "default": 0, "ui": {"widget": "slider"}}]),
+            none.clone(),
+        );
+        assert!(e.contains("slider"), "{e}");
+        let e = bad(
+            json!([{"name": "a", "type": "bool", "default": false, "ui": {"widget": "multiline"}}]),
+            none.clone(),
+        );
+        assert!(e.contains("multiline"), "{e}");
+        let e = bad(
+            json!([{"name": "a", "type": "int", "min": 0, "max": 5, "default": 0,
+                    "ui": {"widget": "slider", "step": 0}}]),
+            none.clone(),
+        );
+        assert!(e.contains("step"), "{e}");
+        // Conditions name another real field.
+        let e = bad(
+            json!([{"name": "a", "type": "bool", "default": false,
+                    "ui": {"visible_when": {"field": "a"}}}]),
+            none.clone(),
+        );
+        assert!(e.contains("itself"), "{e}");
+        let e = bad(
+            json!([{"name": "a", "type": "bool", "default": false,
+                    "ui": {"visible_when": {"field": "zzz"}}}]),
+            none.clone(),
+        );
+        assert!(e.contains("zzz"), "{e}");
+        let e = bad(
+            json!([{"name": "a", "type": "bool", "default": false},
+                   {"name": "b", "type": "bool", "default": false,
+                    "ui": {"visible_when": {"field": "a", "equals": true, "not_equals": false}}}]),
+            none,
+        );
+        assert!(e.contains("not both"), "{e}");
+        // Groups name each field once.
+        let fields = json!([{"name": "a", "type": "bool", "default": false}]);
+        let e = bad(
+            fields.clone(),
+            json!({"groups": [{"label": "G", "fields": ["nope"]}]}),
+        );
+        assert!(e.contains("nope"), "{e}");
+        let e = bad(
+            fields,
+            json!({"groups": [{"label": "G", "fields": ["a"]}, {"label": "H", "fields": ["a"]}]}),
+        );
+        assert!(e.contains("twice"), "{e}");
     }
 }

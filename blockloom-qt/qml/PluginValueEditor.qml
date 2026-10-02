@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import com.blockworked.Blockstitch 1.0
 
@@ -42,13 +43,20 @@ ColumnLayout {
     // A color keeps the alpha pair it had when only the swatch is picked.
     function recolor(old, picked) { return String(old).length === 9 ? picked + String(old).slice(7) : picked; }
     readonly property string kind: ty && ty.type ? ty.type : "text"
+    // The schema's drawing hints for this value, if it has any.
+    readonly property string widget: ty && ty.ui && ty.ui.widget ? ty.ui.widget : ""
+    function stepOf(t) {
+        if (t.ui && t.ui.step) return t.ui.step;
+        return t.type === "int" ? 1 : (t.max - t.min) / 100;
+    }
     readonly property var items: kind === "list" && Array.isArray(value) ? value : []
 
     Loader {
         Layout.fillWidth: true
         visible: root.kind !== "list"
-        sourceComponent: ({ bool: boolEditor, int: intEditor, number: numberEditor, text: textEditor, color: colorEditor,
-                            vec3: vec3Editor, choice: choiceEditor, asset: assetEditor, actor: actorEditor })[root.kind] || null
+        sourceComponent: root.widget === "slider" ? sliderEditor : root.widget === "multiline" ? multilineEditor
+            : ({ bool: boolEditor, int: intEditor, number: numberEditor, text: textEditor, color: colorEditor,
+                 vec3: vec3Editor, choice: choiceEditor, asset: assetEditor, actor: actorEditor })[root.kind] || null
     }
     Component { id: boolEditor
         RowLayout { SwitchField { value: root.value === true; onToggled: on => root.edited(on) } Item { Layout.fillWidth: true } } }
@@ -62,6 +70,28 @@ ColumnLayout {
             maximumLength: root.ty.max_len !== undefined && root.ty.max_len !== null ? root.ty.max_len : 32767
             text: root.value === null || root.value === undefined ? "" : String(root.value)
             onEditingFinished: if (text !== String(root.value)) root.edited(text)
+        } }
+    Component { id: sliderEditor
+        RowLayout {
+            spacing: 8
+            SliderField {
+                objectName: "plugin-slider"
+                from: root.ty.min; to: root.ty.max; stepSize: root.stepOf(root.ty)
+                value: Number(root.value) || 0
+                onMoved: root.edited(root.clamp(root.kind === "int" ? Math.round(value) : value, root.ty.min, root.ty.max))
+            }
+            Text { text: String(Number(root.value) || 0); color: Theme.textDim; font.pixelSize: 11; Layout.preferredWidth: 36 }
+        } }
+    Component { id: multilineEditor
+        Rectangle {
+            Layout.fillWidth: true; implicitHeight: 72; radius: 4; color: Theme.field; border.width: 1; border.color: Theme.border
+            TextArea {
+                objectName: "plugin-multiline"
+                anchors.fill: parent; font.pixelSize: 12; color: Theme.text; wrapMode: TextEdit.Wrap
+                background: null
+                text: root.value === null || root.value === undefined ? "" : String(root.value)
+                onEditingFinished: if (text !== String(root.value)) root.edited(text)
+            }
         } }
     Component { id: colorEditor
         RowLayout {

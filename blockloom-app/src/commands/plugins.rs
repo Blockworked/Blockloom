@@ -241,6 +241,7 @@ fn types_json(active: &ActivePlugins) -> Vec<Value> {
                     "version": schema.version,
                     "editorOnly": schema.editor_only,
                     "fields": schema.fields,
+                    "inspector": schema.inspector,
                     "defaults": schema.defaults(),
                 }));
             }
@@ -917,6 +918,7 @@ pub(crate) fn plugin_call(
         fields,
         editor_only: false,
         migrations: Vec::new(),
+        inspector: None,
     };
     let args = args_schema.normalize(&args);
     args_schema.validate(&args).map_err(|errors| {

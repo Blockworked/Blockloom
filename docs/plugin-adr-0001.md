@@ -451,3 +451,13 @@ the remaining proof.
   game, and the Android cache fingerprint hashes their bytes (the staged
   `.blockloom/cooked` folder is rewritten every build, so its mtimes are not
   part of it). Plugin code is still refused on Android.
+
+## Inspector layout hints (fifteenth batch)
+
+- A schema may say how a component is drawn without a plugin shipping UI
+  code: per-field `ui` (label, slider or multiline widget, unit, step,
+  `visible_when` against another field of the record) and `inspector.groups`.
+  Hints are checked when the package is verified and carry no data, so a
+  record validates and migrates exactly as before. A hidden field keeps its
+  value. Plugin-drawn panels and trusted editor modules are still open.
+

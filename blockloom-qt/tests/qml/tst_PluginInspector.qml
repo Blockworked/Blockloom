@@ -85,4 +85,57 @@ TestCase {
         compare(editorSpy.count, 1);
         compare(editorSpy.signalArguments[0][0].length, 2);
     }
+
+    property var laidOut: ({
+        name: "com.example.lamp/Lamp", displayName: "Lamp", version: 1,
+        fields: [
+            { name: "on", type: "bool", default: true },
+            { name: "power", type: "number", min: 0, max: 1, ui: { label: "Brightness", widget: "slider", unit: "%", visible_when: { field: "on" } } },
+            { name: "mode", type: "choice", options: ["a", "b"] },
+            { name: "note", type: "text", ui: { widget: "multiline", visible_when: { field: "mode", equals: "b" } } },
+            { name: "extra", type: "int", ui: { visible_when: { field: "mode", not_equals: "a" } } }
+        ],
+        defaults: { on: true, power: 0.5, mode: "a", note: "", extra: 0 },
+        inspector: { groups: [{ label: "Light", fields: ["on", "power"] }, { label: "Advanced", fields: ["note", "extra"], collapsed: true }] }
+    })
+
+    function test_groupsDrawLooseFieldsFirstThenEachHeading() {
+        const form = createTemporaryObject(formFactory, test, { type: laidOut, payload: {} });
+        compare(form.sections.length, 3);
+        compare(form.sections[0].label, "");
+        compare(form.sections[0].members.join(","), "2");
+        compare(form.sections[1].label, "Light");
+        compare(form.sections[2].collapsed, true);
+    }
+    function test_aCollapsedGroupStartsFoldedAndOpensOnClick() {
+        const form = createTemporaryObject(formFactory, test, { type: laidOut, payload: { mode: "b" } });
+        verify(findChild(form, "plugin-row-power") !== null);
+        verify(findChild(form, "plugin-row-note") === null);
+        form.flip(form.sections[2]);
+        verify(form.isOpen(form.sections[2]));
+        verify(findChild(form, "plugin-row-note") !== null);
+    }
+    function test_visibleWhenReadsAnotherField() {
+        const form = createTemporaryObject(formFactory, test, { type: laidOut, payload: { on: false } });
+        const f = name => laidOut.fields.find(x => x.name === name);
+        verify(!form.shown(f("power")));
+        verify(!form.shown(f("note")));
+        verify(!form.shown(f("extra")));
+        form.payload = { on: true, mode: "b" };
+        verify(form.shown(f("power")));
+        verify(form.shown(f("note")));
+        verify(form.shown(f("extra")));
+    }
+    function test_aSliderClampsAndRoundsAnInt() {
+        const slider = { type: "int", min: 0, max: 10, ui: { widget: "slider" } };
+        const e = createTemporaryObject(editorFactory, test, { ty: slider, value: 3 });
+        verify(findChild(e, "plugin-slider") !== null);
+        compare(e.stepOf(slider), 1);
+        compare(e.stepOf({ type: "number", min: 0, max: 1, ui: { widget: "slider" } }), 0.01);
+        compare(e.stepOf({ type: "number", min: 0, max: 1, ui: { step: 0.25 } }), 0.25);
+    }
+    function test_aMultilineTextUsesABox() {
+        const e = createTemporaryObject(editorFactory, test, { ty: { type: "text", ui: { widget: "multiline" } }, value: "a\nb" });
+        verify(findChild(e, "plugin-multiline") !== null);
+    }
 }
