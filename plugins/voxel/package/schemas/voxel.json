@@ -41,6 +41,30 @@
       "action": {"do": "set_resource_field", "resource": "world", "field": "edits"}
     },
     {
+      "name": "paint_voxel",
+      "summary": "Save one cell with a material into the world every game starts with.",
+      "args": [{"name": "x", "type": "int", "default": 0}, {"name": "y", "type": "int", "default": 0}, {"name": "z", "type": "int", "default": 0}, {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}],
+      "action": {"do": "set_resource_field", "resource": "world", "field": "edits", "append": true, "template": "set {x} {y} {z} {material}"}
+    },
+    {
+      "name": "paint_voxel_box",
+      "summary": "Save a box of cells with a material into the world every game starts with.",
+      "args": [{"name": "x1", "type": "int", "default": 0}, {"name": "y1", "type": "int", "default": 0}, {"name": "z1", "type": "int", "default": 0}, {"name": "x2", "type": "int", "default": 0}, {"name": "y2", "type": "int", "default": 0}, {"name": "z2", "type": "int", "default": 0}, {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}],
+      "action": {"do": "set_resource_field", "resource": "world", "field": "edits", "append": true, "template": "fill {x1} {y1} {z1} {x2} {y2} {z2} {material}"}
+    },
+    {
+      "name": "paint_voxel_sphere",
+      "summary": "Save a ball of cells with a material into the world every game starts with.",
+      "args": [{"name": "x", "type": "int", "default": 0}, {"name": "y", "type": "int", "default": 0}, {"name": "z", "type": "int", "default": 0}, {"name": "radius", "type": "int", "min": 1, "max": 64, "default": 3}, {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}],
+      "action": {"do": "set_resource_field", "resource": "world", "field": "edits", "append": true, "template": "sphere {x} {y} {z} {radius} {material}"}
+    },
+    {
+      "name": "paint_voxel_shape",
+      "summary": "Save a shape (slab, stair, ramp...) for one cell into the world every game starts with.",
+      "args": [{"name": "x", "type": "int", "default": 0}, {"name": "y", "type": "int", "default": 0}, {"name": "z", "type": "int", "default": 0}, {"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post", "stair south", "stair west", "stair north", "stair east", "ramp south", "ramp west", "ramp north", "ramp east"], "default": "slab"}],
+      "action": {"do": "set_resource_field", "resource": "world", "field": "edits", "append": true, "template": "shape {x} {y} {z} {shape}"}
+    },
+    {
       "name": "set_voxel",
       "summary": "Put a material in one cell of the running world.",
       "args": [
@@ -163,6 +187,50 @@
       "name": "voxel_stats",
       "summary": "Answer how many cells are solid and how many chunks are drawn.",
       "action": {"do": "module", "op": "count"}
+    }
+  ],
+  "tools": [
+    {
+      "name": "paint",
+      "title": "Voxel paint",
+      "description": "Click a surface to save a cube of the chosen material against it.",
+      "cast": "cast",
+      "reach": 200,
+      "command": "paint_voxel",
+      "args": {"x": "$hit.before.0", "y": "$hit.before.1", "z": "$hit.before.2", "material": "$option.material"},
+      "options": [{"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}]
+    },
+    {
+      "name": "erase",
+      "title": "Voxel erase",
+      "description": "Click a cube to save it as air.",
+      "cast": "cast",
+      "reach": 200,
+      "command": "paint_voxel",
+      "args": {"x": "$hit.cell.0", "y": "$hit.cell.1", "z": "$hit.cell.2", "material": "air"}
+    },
+    {
+      "name": "ball",
+      "title": "Voxel ball",
+      "description": "Click a surface to save a ball of the chosen material centred on the cell against it.",
+      "cast": "cast",
+      "reach": 200,
+      "command": "paint_voxel_sphere",
+      "args": {"x": "$hit.before.0", "y": "$hit.before.1", "z": "$hit.before.2", "radius": "$option.radius", "material": "$option.material"},
+      "options": [
+        {"name": "radius", "type": "int", "min": 1, "max": 16, "default": 3},
+        {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}
+      ]
+    },
+    {
+      "name": "shape",
+      "title": "Voxel shape",
+      "description": "Click a cube to save it as a slab, stair, ramp or other shape.",
+      "cast": "cast",
+      "reach": 200,
+      "command": "paint_voxel_shape",
+      "args": {"x": "$hit.cell.0", "y": "$hit.cell.1", "z": "$hit.cell.2", "shape": "$option.shape"},
+      "options": [{"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post", "stair south", "stair west", "stair north", "stair east", "ramp south", "ramp west", "ramp north", "ramp east"], "default": "slab"}]
     }
   ],
   "blocks": [

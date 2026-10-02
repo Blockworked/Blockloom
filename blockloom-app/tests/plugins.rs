@@ -557,6 +557,9 @@ fn a_command_can_set_or_append_to_a_resource_field() {
                 {"name": "title", "type": "text", "default": "none"},
                 {"name": "lines", "type": "list", "item": {"type": "text"}, "max_len": 2, "default": []}
             ]}],
+            "tools": [{"name": "stamp", "title": "Stamp", "cast": "cast", "command": "title_at",
+                "args": {"who": "$option.who", "x": "$hit.cell.0"},
+                "options": [{"name": "who", "type": "text", "default": "me"}]}],
             "panels": [{"name": "main", "title": "Journal", "items": [
                 {"kind": "resource", "resource": "journal"},
                 {"kind": "command", "command": "add_line", "label": "Add"}
@@ -567,7 +570,10 @@ fn a_command_can_set_or_append_to_a_resource_field() {
                  "action": {"do": "set_resource_field", "resource": "journal", "field": "lines", "append": true}},
                 {"name": "set_title", "summary": "Set the title.",
                  "args": [{"name": "value", "type": "text", "default": ""}],
-                 "action": {"do": "set_resource_field", "resource": "journal", "field": "title"}}
+                 "action": {"do": "set_resource_field", "resource": "journal", "field": "title"}},
+                {"name": "title_at", "summary": "Set the title from a template.",
+                 "args": [{"name": "who", "type": "text", "default": "me"}, {"name": "x", "type": "int", "default": 0}],
+                 "action": {"do": "set_resource_field", "resource": "journal", "field": "title", "template": "{who} at {x}"}}
             ]
         })
         .to_string(),
@@ -627,4 +633,27 @@ fn a_command_can_set_or_append_to_a_resource_field() {
     // One undo takes back one command.
     invoke("undo", json!({}));
     assert_eq!(resource()["payload"]["title"], "none");
+    // A template builds the value from the arguments.
+    invoke(
+        "plugin_call",
+        json!({"command": "com.example.journal/title_at", "args": {"who": "cat", "x": 7}}),
+    );
+    assert_eq!(resource()["payload"]["title"], "cat at 7");
+    // A scene tool's click resolves its command's arguments from the hit.
+    let tools = invoke("get_state", json!({}))["plugins"]["tools"].clone();
+    assert_eq!(tools[0]["tool"]["name"], "stamp");
+    invoke(
+        "plugin_run_tool",
+        json!({"plugin": "com.example.journal", "tool": "stamp",
+               "hit": {"hit": true, "cell": [3, 0, 0]}, "options": {"who": "dog"}}),
+    );
+    assert_eq!(resource()["payload"]["title"], "dog at 3");
+    assert!(
+        backend
+            .dispatch(
+                "plugin_run_tool",
+                json!({"plugin": "com.example.journal", "tool": "stamp", "hit": {"hit": true}}),
+            )
+            .is_err()
+    );
 }

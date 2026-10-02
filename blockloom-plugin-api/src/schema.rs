@@ -8,7 +8,7 @@
 use crate::id::validate_type_id;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The type of one field, and the bounds a value must be inside.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -714,15 +714,60 @@ pub enum CommandAction {
     /// Replaces a project resource with the arguments as its payload.
     SetResource { resource: String },
     /// Sets one field of a project resource from the `value` argument, or
-    /// with `append` adds `value` to the end of that field's list.
+    /// with `append` adds `value` to the end of that field's list. With a
+    /// `template` the value is that text with each `{arg}` replaced by the
+    /// argument of that name, and no `value` argument is needed.
     SetResourceField {
         resource: String,
         field: String,
         #[serde(default)]
         append: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        template: Option<String>,
     },
     /// Calls `op` on the package's native or portable module.
     Module { op: String },
+}
+
+/// The `{name}` placeholders in a command template, in order.
+pub fn template_names(template: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('}') else { break };
+        names.push(after[..close].to_string());
+        rest = &after[close + 1..];
+    }
+    names
+}
+
+/// Fills a command template from its arguments: text as it is, whole numbers
+/// without a fraction. An argument the template names but `args` lacks is an
+/// error.
+pub fn fill_template(template: &str, args: &Value) -> Result<String, String> {
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('}') else { break };
+        let name = &after[..close];
+        out.push_str(&rest[..open]);
+        match &args[name] {
+            Value::Null => return Err(format!("the template needs {name}")),
+            Value::String(s) => out.push_str(s),
+            Value::Number(n) => match n.as_f64() {
+                Some(f) if f.fract() == 0.0 && f.abs() < 1e15 => {
+                    out.push_str(&(f as i64).to_string())
+                }
+                _ => out.push_str(&n.to_string()),
+            },
+            other => out.push_str(&other.to_string()),
+        }
+        rest = &after[close + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
 }
 
 /// A backend command a package adds. QML, the shell and MCP all find it
@@ -746,6 +791,20 @@ impl CommandSchema {
                 if !needs("actor") =>
             {
                 Err(format!("{}: needs an actor argument", self.name))
+            }
+            CommandAction::SetResourceField {
+                template: Some(template),
+                ..
+            } => {
+                for name in template_names(template) {
+                    if !needs(&name) {
+                        return Err(format!(
+                            "{}: the template names {name}, which is not an argument",
+                            self.name
+                        ));
+                    }
+                }
+                Ok(())
             }
             CommandAction::SetField { .. } | CommandAction::SetResourceField { .. }
                 if !needs("value") =>
@@ -896,6 +955,122 @@ pub struct Contributions {
     pub commands: Vec<CommandSchema>,
     #[serde(default)]
     pub panels: Vec<PanelSchema>,
+    #[serde(default)]
+    pub tools: Vec<ToolSchema>,
+}
+
+/// A scene-view tool a package adds. A click casts the pointer's ray through
+/// the module's `cast` op (arguments `x y z dx dy dz reach`, answer `hit`
+/// plus whatever else it reports) and, on a hit, runs `command` with `args`
+/// resolved against the answer and the tool's option values.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolSchema {
+    pub name: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// The module op the pointer's ray goes to.
+    pub cast: String,
+    /// How far along the ray to look, in world units.
+    #[serde(default = "default_reach")]
+    pub reach: f64,
+    /// The command a hit runs.
+    pub command: String,
+    /// The command's arguments: `$hit.path` reads the cast's answer
+    /// (`$hit.cell.0` is a list's first item), `$option.name` an option, and
+    /// anything else is a literal text.
+    #[serde(default)]
+    pub args: BTreeMap<String, String>,
+    /// What the tool asks for in the editor before it is used.
+    #[serde(default)]
+    pub options: Vec<FieldSchema>,
+}
+
+fn default_reach() -> f64 {
+    64.0
+}
+
+/// The most a tool's reach may be.
+pub const MAX_TOOL_REACH: f64 = 100_000.0;
+
+impl ToolSchema {
+    fn check_definition(&self, all: &Contributions) -> Result<(), String> {
+        validate_type_id(&self.name)?;
+        let name = &self.name;
+        if self.title.trim().is_empty() {
+            return Err(format!("tool {name}: needs a title"));
+        }
+        if self.cast.trim().is_empty() {
+            return Err(format!("tool {name}: needs a cast op"));
+        }
+        if !(self.reach > 0.0 && self.reach <= MAX_TOOL_REACH) {
+            return Err(format!("tool {name}: reach is 0 to {MAX_TOOL_REACH}"));
+        }
+        check_fields(&self.options, name)?;
+        let Some(command) = all.command(&self.command) else {
+            return Err(format!("tool {name}: unknown command {}", self.command));
+        };
+        for (arg, source) in &self.args {
+            if !command.args.iter().any(|a| &a.name == arg) {
+                return Err(format!(
+                    "tool {name}: {} has no argument {arg}",
+                    self.command
+                ));
+            }
+            if let Some(path) = source.strip_prefix("$option.")
+                && !self.options.iter().any(|o| o.name == path)
+            {
+                return Err(format!("tool {name}: {source} names no option"));
+            }
+            if source.starts_with('$')
+                && !source.starts_with("$hit.")
+                && !source.starts_with("$option.")
+            {
+                return Err(format!(
+                    "tool {name}: {source} reads neither hit nor option"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The command's arguments for one hit: each `$` source read from the
+    /// cast's answer or the option values, the rest passed as text. The
+    /// options a caller leaves out take their defaults.
+    pub fn resolve_args(&self, hit: &Value, options: &Value) -> Result<Value, String> {
+        let mut out = serde_json::Map::new();
+        for (arg, source) in &self.args {
+            let value = if let Some(path) = source.strip_prefix("$hit.") {
+                dig(hit, path).ok_or_else(|| format!("the hit has no {path}"))?
+            } else if let Some(path) = source.strip_prefix("$option.") {
+                match options.get(path).filter(|v| !v.is_null()) {
+                    Some(v) => v.clone(),
+                    None => self
+                        .options
+                        .iter()
+                        .find(|o| o.name == path)
+                        .and_then(|o| o.default.clone())
+                        .ok_or_else(|| format!("the option {path} has no value"))?,
+                }
+            } else {
+                Value::String(source.clone())
+            };
+            out.insert(arg.clone(), value);
+        }
+        Ok(Value::Object(out))
+    }
+}
+
+/// Reads `a.b.0` out of a value: a key of an object or an index of a list.
+fn dig(value: &Value, path: &str) -> Option<Value> {
+    let mut at = value;
+    for step in path.split('.') {
+        at = match at {
+            Value::Array(list) => list.get(step.parse::<usize>().ok()?)?,
+            other => other.get(step)?,
+        };
+    }
+    Some(at.clone())
 }
 
 /// An editor panel a package adds, drawn by the editor from this list so a
@@ -965,6 +1140,7 @@ impl Contributions {
         self.blocks.extend(other.blocks);
         self.commands.extend(other.commands);
         self.panels.extend(other.panels);
+        self.tools.extend(other.tools);
         self.hooks.extend(other.hooks);
         self.importers.extend(other.importers);
         self.build_hooks.extend(other.build_hooks);
@@ -1048,6 +1224,13 @@ impl Contributions {
                 return Err(format!("two panels named {}", panel.name));
             }
         }
+        let mut tools = BTreeSet::new();
+        for tool in &self.tools {
+            tool.check_definition(self)?;
+            if !tools.insert(tool.name.as_str()) {
+                return Err(format!("two tools named {}", tool.name));
+            }
+        }
         let mut commands = BTreeSet::new();
         for command in &self.commands {
             command.check_definition()?;
@@ -1068,6 +1251,7 @@ impl Contributions {
                     resource,
                     field,
                     append,
+                    ..
                 } => {
                     let schema = self
                         .resource(resource)
@@ -1288,6 +1472,69 @@ mod tests {
         assert!(e.unwrap_err().contains("unknown resource"));
         let e = with(json!([{"kind": "command", "command": "nope"}]));
         assert!(e.unwrap_err().contains("unknown command"));
+    }
+
+    #[test]
+    fn a_tool_names_a_command_and_fills_its_arguments_from_a_hit() {
+        let schema = |args: Value| -> Contributions {
+            serde_json::from_value(json!({
+                "commands": [{"name": "paint", "summary": "x",
+                    "args": [{"name": "x", "type": "int"}, {"name": "m", "type": "text", "default": "a"}],
+                    "action": {"do": "module", "op": "paint"}}],
+                "tools": [{"name": "brush", "title": "Brush", "cast": "cast", "command": "paint",
+                    "args": args,
+                    "options": [{"name": "material", "type": "text", "default": "stone"}]}]
+            }))
+            .unwrap()
+        };
+        let good = schema(json!({"x": "$hit.cell.0", "m": "$option.material"}));
+        good.check_definition().unwrap();
+        let tool = &good.tools[0];
+        let hit = json!({"hit": true, "cell": [4, 5, 6]});
+        assert_eq!(
+            tool.resolve_args(&hit, &json!({})).unwrap(),
+            json!({"x": 4, "m": "stone"})
+        );
+        assert_eq!(
+            tool.resolve_args(&hit, &json!({"material": "wood"}))
+                .unwrap()["m"],
+            "wood"
+        );
+        assert!(
+            tool.resolve_args(&json!({"hit": true}), &json!({}))
+                .is_err()
+        );
+        for bad in [
+            json!({"nope": "1"}),
+            json!({"x": "$option.missing"}),
+            json!({"x": "$other.cell"}),
+        ] {
+            assert!(schema(bad).check_definition().is_err());
+        }
+    }
+
+    #[test]
+    fn templates_name_arguments_and_fill_from_them() {
+        assert_eq!(template_names("fill {a} {b} x {a}"), ["a", "b", "a"]);
+        let args = json!({"x": 3.0, "r": 2.5, "m": "wood"});
+        assert_eq!(
+            fill_template("sphere {x} {r} {m} {{", &args).unwrap(),
+            "sphere 3 2.5 wood {{"
+        );
+        assert!(fill_template("go {nope}", &args).is_err());
+        let c: Contributions = serde_json::from_value(json!({
+            "resources": [{"type_id": "Log", "fields": [{"name": "lines", "type": "list", "item": {"type": "text"}, "default": []}]}],
+            "commands": [{"name": "add", "summary": "x",
+                "args": [{"name": "x", "type": "int"}],
+                "action": {"do": "set_resource_field", "resource": "Log", "field": "lines", "append": true, "template": "at {x}"}}]
+        }))
+        .unwrap();
+        c.check_definition().unwrap();
+        let mut bad = c.clone();
+        if let CommandAction::SetResourceField { template, .. } = &mut bad.commands[0].action {
+            *template = Some("at {y}".to_string());
+        }
+        assert!(bad.check_definition().is_err());
     }
 
     #[test]

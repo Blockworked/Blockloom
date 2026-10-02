@@ -430,6 +430,55 @@ fn read(
     }
 }
 
+/// A click with a plugin's scene tool: the pointer's ray goes to the tool's
+/// cast op in the hosted module, and a hit comes back as the message the
+/// editor runs the tool's command from. A miss, or no module, is nothing.
+pub fn tool_click(
+    engine: &mut Engine,
+    tool: &blockloom_protocol::PluginToolView,
+    ray: Ray3d,
+) -> Option<blockloom_protocol::RuntimeMessage> {
+    #[cfg(feature = "plugins")]
+    {
+        if engine.running {
+            return None;
+        }
+        let world = engine.plugins.world.clone()?;
+        let origin = ray.origin;
+        let dir = *ray.direction;
+        let input = json!({
+            "x": origin.x, "y": origin.y, "z": origin.z,
+            "dx": dir.x, "dy": dir.y, "dz": dir.z,
+            "reach": tool.reach,
+        });
+        let hit = world.borrow_mut().query(&tool.plugin, &tool.cast, &input);
+        let hit = match hit {
+            Ok(hit) => hit,
+            Err(message) => {
+                bridge::send(&RuntimeMessage::Error {
+                    actor: String::new(),
+                    message,
+                });
+                return None;
+            }
+        };
+        if hit.get("hit").and_then(Value::as_bool) != Some(true) {
+            return None;
+        }
+        Some(RuntimeMessage::PluginTool {
+            plugin: tool.plugin.clone(),
+            tool: tool.tool.clone(),
+            hit,
+            options: tool.options.clone(),
+        })
+    }
+    #[cfg(not(feature = "plugins"))]
+    {
+        let _ = (engine, tool, ray);
+        None
+    }
+}
+
 /// Runs a plugin block here when its command is a module op; returns false
 /// for the editor to run it (a block whose command edits the project).
 pub fn run_block(
@@ -680,6 +729,25 @@ mod tests {
         assert_eq!(opened.get(), 1);
         // Hooks and blocks stay off: a preview is not a run.
         assert!(!run_block(&mut engine, "a", ID, "set_voxel", &[]));
+
+        // A plugin tool's click casts through the hosted module.
+        let tool = blockloom_protocol::PluginToolView {
+            plugin: ID.to_string(),
+            tool: "paint".to_string(),
+            cast: "cast".to_string(),
+            reach: 100.0,
+            options: json!({"material": "wood"}),
+        };
+        let down = Ray3d::new(Vec3::new(5.5, 15.5, 5.5), Dir3::NEG_Y);
+        let Some(RuntimeMessage::PluginTool { hit, options, .. }) =
+            tool_click(&mut engine, &tool, down)
+        else {
+            panic!("a ray at the floor hits it");
+        };
+        assert!(hit["cell"].is_array() && hit["before"].is_array());
+        assert_eq!(options["material"], "wood");
+        let up = Ray3d::new(Vec3::new(5.5, 15.5, 5.5), Dir3::Y);
+        assert!(tool_click(&mut engine, &tool, up).is_none());
 
         // The same world again keeps the module.
         engine.plugins.meshes.clear();

@@ -20,7 +20,7 @@ use blockloom_plugin_api::id::{self, validate_plugin_id};
 use blockloom_plugin_api::manifest::TargetSupport;
 use blockloom_plugin_api::record::PluginRecord;
 use blockloom_plugin_api::schema::{
-    BlockKind, CommandAction, ComponentSchema, FieldType, PanelItem,
+    BlockKind, CommandAction, ComponentSchema, FieldType, PanelItem, fill_template,
 };
 use blockloom_plugin_api::{Version, VersionReq};
 use blockloom_plugin_host::active::{ActivePlugins, RecordIssue, RecordStatus, migrate_records};
@@ -261,6 +261,20 @@ fn blocks_json(active: &ActivePlugins) -> Vec<Value> {
         .collect()
 }
 
+/// Every scene-view tool the installed plugins add, with its owner's name.
+fn tools_json(active: &ActivePlugins) -> Vec<Value> {
+    active
+        .tools()
+        .into_iter()
+        .map(|(plugin, tool)| {
+            let name = active
+                .get(plugin)
+                .map_or_else(String::new, |p| p.package.manifest.name.clone());
+            json!({ "plugin": plugin, "pluginName": name, "tool": tool })
+        })
+        .collect()
+}
+
 /// Every editor panel the installed plugins add, with its owner's name.
 fn panels_json(active: &ActivePlugins) -> Vec<Value> {
     active
@@ -304,6 +318,7 @@ pub(crate) fn summary(s: &AppState) -> Value {
         "blocks": blocks_json(active),
         "types": types_json(active),
         "panels": panels_json(active),
+        "tools": tools_json(active),
         "problems": active.problems,
         "issues": active.audit(project.plugin_records()),
     })
@@ -323,6 +338,7 @@ pub(crate) fn plugin_list(state: &SharedState) -> Result<Value, String> {
         "blocks": blocks_json(active),
         "types": types_json(active),
         "panels": panels_json(active),
+        "tools": tools_json(active),
         "problems": active.problems,
         "direct": plugins.plugins,
         "registries": plugins.registries,
@@ -1008,8 +1024,13 @@ pub(crate) fn plugin_call(
             resource,
             field,
             append,
+            template,
         } => {
             let name = id::qualified(&plugin, &resource);
+            let value = match &template {
+                Some(template) => Value::String(fill_template(template, &args)?),
+                None => args["value"].clone(),
+            };
             let mut payload = {
                 let s = lock(state)?;
                 let project = s.project().ok_or("No project is open")?;
@@ -1021,10 +1042,10 @@ pub(crate) fn plugin_call(
             };
             if append {
                 let mut list = payload[&field].as_array().cloned().unwrap_or_default();
-                list.push(args["value"].clone());
+                list.push(value);
                 payload[&field] = Value::Array(list);
             } else {
-                payload[&field] = args["value"].clone();
+                payload[&field] = value;
             }
             set_plugin_resource(state, app, name.clone(), payload)?;
             Ok(json!({ "resource": name, "field": field }))
@@ -1121,6 +1142,34 @@ pub(crate) fn run_block(
         command,
         Value::Object(std::mem::take(&mut object)),
     )
+}
+
+/// `plugin-run-tool`: one click of a plugin's scene tool. The tool's
+/// command arguments are read from the cast's answer and the options, then
+/// the command runs like any other (one undo step).
+pub(crate) fn run_tool(
+    state: &SharedState,
+    app: &AppHandle,
+    plugin: &str,
+    tool: &str,
+    hit: &Value,
+    options: &Value,
+) -> Result<Value, String> {
+    let (command, args) = {
+        let s = lock(state)?;
+        let active = active(&s)?;
+        let schema = active
+            .tools()
+            .into_iter()
+            .find(|(p, t)| *p == plugin && t.name == tool)
+            .map(|(_, t)| t)
+            .ok_or_else(|| format!("{plugin}/{tool}: no installed plugin provides this tool"))?;
+        let args = schema
+            .resolve_args(hit, options)
+            .map_err(|e| format!("{plugin}/{tool}: {e}"))?;
+        (id::qualified(plugin, &schema.command), args)
+    };
+    plugin_call(state, app, command, args)
 }
 
 /// An actor slot's text as an id: an id as it stands, else the first actor

@@ -538,6 +538,14 @@ fn press(
         {
             editor.brushing = true;
         }
+        // A plugin's tool casts through its module instead of picking.
+        0 if editor.view.tool == SceneTool::Plugin && editor.view.plugin_tool.is_some() => {
+            if let (Some(tool), Some(ray)) = (editor.view.plugin_tool.clone(), lens.ray(at))
+                && let Some(message) = crate::plugins::tool_click(engine, &tool, ray)
+            {
+                editor.outbox.push(message);
+            }
+        }
         0 => {
             if let Some(handle) = hovered(engine, editor, lens, at, px_scale, posed) {
                 start_drag(engine, editor, lens, handle, at, posed);
@@ -941,7 +949,7 @@ fn gizmo_hovered(
                 }
             }
         }
-        SceneTool::Brush | SceneTool::Tiles => return None,
+        SceneTool::Brush | SceneTool::Tiles | SceneTool::Plugin => return None,
         SceneTool::Rotate => {
             for &axis in offered(lens, false) {
                 let points: Option<Vec<Vec2>> = ring_points(&frame, axis)
@@ -1676,7 +1684,7 @@ pub fn draw(
                 tint(Handle::Free, Color::WHITE),
             );
         }
-        SceneTool::Brush | SceneTool::Tiles => {}
+        SceneTool::Brush | SceneTool::Tiles | SceneTool::Plugin => {}
         SceneTool::Rotate => {
             for &axis in offered(&lens, false) {
                 handles.linestrip(

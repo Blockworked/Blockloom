@@ -491,3 +491,19 @@ the remaining proof.
 - Rays and the break/place blocks work in whole cells, so they treat a slab as
   a cube. Collision is the mesh, so it is the real shape.
 
+
+## Scene tools and brushes (nineteenth batch)
+
+- A plugin tool is data, like a panel: the plugin names a cast op, a command
+  and where each command argument comes from (`$hit.path`, `$option.name`).
+  The world only casts and reports the hit, and the editor runs the command, so
+  a tool's edit is an ordinary undoable command and the preview redraws by the
+  usual reload. Nothing a plugin ships runs in the editor.
+- The cast is a read-only module call (`WorldPlugins::query`) on the module the
+  scene-view preview already hosts. Clicks cost one call; drag painting and a
+  hover outline would cost one per frame and were left out.
+- `set_resource_field` gained a `template`, so a brush command is the voxel
+  edit line it saves with its arguments filled in. `paint_voxel*` need no
+  module op, so they work from the shell and MCP as well as from a click.
+- `SceneView` grew a boxed `plugin_tool` rather than a field per tool, so the
+  protocol never needs to know a plugin's tools (`PROTOCOL_VERSION` 24).

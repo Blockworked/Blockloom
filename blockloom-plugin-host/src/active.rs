@@ -15,7 +15,7 @@ use blockloom_plugin_api::manifest::{DependencyScope, PluginManifest, Tier};
 use blockloom_plugin_api::record::PluginRecord;
 use blockloom_plugin_api::schema::{
     BlockKind, BlockSchema, BuildHookSchema, CommandAction, CommandSchema, ComponentSchema,
-    HookSchema, ImporterSchema, PanelSchema, SchemaError,
+    HookSchema, ImporterSchema, PanelSchema, SchemaError, ToolSchema,
 };
 use blockloom_plugin_api::{Version, id};
 use serde::Serialize;
@@ -342,6 +342,20 @@ impl ActivePlugins {
                     .panels
                     .iter()
                     .map(move |panel| (plugin.as_str(), panel))
+            })
+            .collect()
+    }
+
+    /// Every contributed scene-view tool with the plugin that owns it.
+    pub fn tools(&self) -> Vec<(&str, &ToolSchema)> {
+        self.plugins
+            .iter()
+            .flat_map(|(plugin, p)| {
+                p.package
+                    .contributions
+                    .tools
+                    .iter()
+                    .map(move |tool| (plugin.as_str(), tool))
             })
             .collect()
     }

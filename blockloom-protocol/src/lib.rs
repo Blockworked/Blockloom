@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 26;
+pub const PROTOCOL_VERSION: u32 = 27;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -286,6 +286,15 @@ pub enum RuntimeMessage {
     },
     /// The Tiles tool's pick read a cell: which sheet tile it shows.
     TilePicked { actor: String, tile: i32 },
+    /// A click with a plugin's scene tool hit something: the module's answer
+    /// to the cast and the tool's option values. The editor owns the plugins,
+    /// so it resolves the tool's command arguments and runs it.
+    PluginTool {
+        plugin: String,
+        tool: String,
+        hit: serde_json::Value,
+        options: serde_json::Value,
+    },
     /// A plugin block ran. The editor owns the plugins, so it looks the block
     /// up and runs its command; `args` follow the block's slot order.
     PluginCall {
@@ -336,6 +345,22 @@ pub enum SceneTool {
     /// Paint, erase, fill or pick on the selected tilemap with
     /// `SceneView::tile_brush`.
     Tiles,
+    /// A tool a plugin added: a click casts through its module, see
+    /// `SceneView::plugin_tool`.
+    Plugin,
+}
+
+/// The plugin scene tool in use and what it asks the module.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PluginToolView {
+    pub plugin: String,
+    pub tool: String,
+    /// The module op that takes the pointer's ray.
+    pub cast: String,
+    pub reach: f64,
+    /// The tool's option values, passed back with each hit.
+    #[serde(default)]
+    pub options: serde_json::Value,
 }
 
 /// What the Game view shows in place of the lit image, for judging exposure.
@@ -395,6 +420,8 @@ pub struct SceneView {
     pub brush: blockloom_core::terrain::sculpt::Brush,
     /// The tile brush the Tiles tool paints with.
     pub tile_brush: blockloom_core::tilemap::TileBrush,
+    /// The plugin tool `SceneTool::Plugin` clicks with.
+    pub plugin_tool: Option<Box<PluginToolView>>,
     pub tiles: TileDebug,
 }
 
@@ -488,6 +515,7 @@ impl Default for SceneView {
             path_tracer: PathTracerView::default(),
             brush: Default::default(),
             tile_brush: Default::default(),
+            plugin_tool: None,
             tiles: TileDebug::default(),
         }
     }

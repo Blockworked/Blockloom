@@ -507,6 +507,23 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   resource or command. The snapshot's `plugins.panels` carries each panel with
   its owner and the commands its buttons run; the top bar shows a panel button
   while any exist. QML test: `tests/qml/tst_PluginPanels.qml`.
+- **Plugin scene tools** (`ToolSchema`, `Contributions::tools`): a package's
+  `tools` name a `cast` module op, a `reach`, a `command`, that command's `args`
+  (`$hit.cell.0` reads the cast's answer, `$option.name` an option, anything
+  else is text) and typed `options`. `check_definition` refuses an unknown
+  command, argument or option. The snapshot's `plugins.tools` lists them and the
+  scene view's toolbar gets a toggle per tool in 3D, with the options drawn by
+  `PluginValueEditor` under it (kept in the QML `Settings` as JSON per tool).
+  `SceneTool::Plugin` plus `SceneView::plugin_tool` (`PluginToolView`: plugin,
+  tool, cast op, reach, option values; `PROTOCOL_VERSION` 24) tell the world
+  which tool is out. A left click casts the pointer ray through the hosted
+  preview module (`plugins::tool_click`, `WorldPlugins::query`: `{x y z dx dy dz
+  reach}` in, `{hit, ...}` out, read only) and a hit goes back as
+  `RuntimeMessage::PluginTool`; the editor resolves the arguments
+  (`ToolSchema::resolve_args`) and runs the command (`commands::plugins::run_tool`,
+  `plugin-run-tool` in the shell and MCP), one undo step, which reloads the
+  world and so redraws the preview. One click is one stroke: no drag painting
+  and no cell outline under the pointer yet.
 - **Mesh service** (`blockloom-plugin-api/src/mesh.rs`, `blockloom-runtime/src/
   plugin_meshes.rs`): a module answers with `{"effect": "mesh", name,
   positions, normals, colors, indices, origin, emission, roughness, collider}`
@@ -540,7 +557,7 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   resource, commands and nine blocks (a material is a dropdown of the built-in names; ids work
   too). Measured: the default 64x32x64 island is drawn from the wasm module in
   under a second, inside its 10 s call budget. Not yet: smooth terrain,
-  streaming and LOD, instancing, GPU meshing, fracture, editor brushes. Its manifest asks for `editor.preview`,
+  streaming and LOD, instancing, GPU meshing, fracture. Its manifest asks for `editor.preview`,
   so the scene view shows the generated world without Play (edits made by
   blocks still last only for a run). Saved edits are the `world` resource's
   `edits` lines (`set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`,
@@ -549,7 +566,11 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   view and every run show them; `add_voxel_edit` appends one and
   `clear_voxel_edits` forgets them, both through the `set_resource_field`
   command action (sets one resource field, or with `append` pushes `value` onto
-  its list; one undo step).
+  its list; one undo step; a `template` builds the value from the command's
+  arguments, `sphere {x} {y} {z} {radius} {material}`, so no `value` is
+  needed). `paint_voxel`, `paint_voxel_box`, `paint_voxel_sphere` and
+  `paint_voxel_shape` are those templates, and the package's four scene tools
+  (paint, erase, ball, shape) click them into the world (see Plugin scene tools).
   A solid cell may be a slab, top slab, post, stair or ramp (`Shape` in
   `shape.rs`, a sparse table in `grid.rs`; a stair or ramp has a facing, the
   side it rises towards): the greedy mesher takes only whole cubes, shaped

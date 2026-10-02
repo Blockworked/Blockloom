@@ -314,6 +314,33 @@ impl Backend {
                     serial,
                 });
             }
+            RuntimeMessage::PluginTool {
+                plugin,
+                tool,
+                hit,
+                options,
+            } => {
+                drop(s);
+                // Run outside the lock: the command takes it itself.
+                if let Err(message) = crate::commands::plugins::run_tool(
+                    &self.state,
+                    &self.app,
+                    &plugin,
+                    &tool,
+                    &hit,
+                    &options,
+                ) {
+                    let line = LogLine {
+                        kind: "error".to_string(),
+                        actor: "Blockloom".to_string(),
+                        text: message,
+                    };
+                    if let Ok(s) = self.state.lock() {
+                        self.publish_log(s, line);
+                    }
+                }
+                return;
+            }
             RuntimeMessage::PluginCall {
                 actor,
                 plugin,

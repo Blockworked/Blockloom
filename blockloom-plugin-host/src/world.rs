@@ -312,6 +312,28 @@ impl WorldPlugins {
         Ok(value.clone())
     }
 
+    /// Asks a module op directly and answers what it said, for the editor's
+    /// own questions (a tool's cast). Nothing it does is applied: this is a
+    /// read, so effects in the answer are an error.
+    pub fn query(&mut self, plugin: &str, op: &str, input: &Value) -> Result<Value, String> {
+        if !self.modules.contains_key(plugin) {
+            return Err(format!("{plugin} is not hosted here"));
+        }
+        let (outcomes, answer, missing) = self.call_answer(plugin, op, input, false, false);
+        for outcome in outcomes {
+            match outcome {
+                Outcome::Effect { .. } => {
+                    self.error(plugin, format!("{op}: a query can only answer, not act"))
+                }
+                other => self.pending.push(other),
+            }
+        }
+        if missing {
+            return Err(format!("{plugin}: the module has no op {op}"));
+        }
+        answer.ok_or_else(|| format!("{plugin}/{op} could not answer"))
+    }
+
     /// Drops every remembered read. The world calls this at the start of
     /// each frame, since what a module reports may move with it.
     pub fn forget_reads(&mut self) {

@@ -67,6 +67,9 @@ Rectangle {
         property bool tileRegions: true
         property bool tileRooms: true
         property bool tileParallax: true
+        // The plugin scene tool ("plugin-id/tool") and each tool's options as JSON text.
+        property string pluginTool: ""
+        property string pluginOptions: "{}"
     }
     // The reference path tracer is heavy, so it is never remembered on.
     property bool pathTracing: false
@@ -86,8 +89,37 @@ Rectangle {
                  falloff: scene.brushFalloff, level: null, step: scene.brushStep, scale: scene.brushScale, seed: 1 },
         tile_brush: { tool: scene.tileTool, tiles: tileList(scene.tileTiles), autotile: scene.tileAutotile, size: scene.tileSize,
                       density: scene.tileDensity, jitter: scene.tileJitter, seed: scene.tileSeed },
+        plugin_tool: root.pluginToolView,
         tiles: { collision: scene.tileCollision, regions: scene.tileRegions, rooms: scene.tileRooms, parallax: scene.tileParallax }
     })
+    // The scene tools installed plugins add, as [{key, plugin, pluginName, tool}].
+    readonly property var pluginTools: {
+        const all = appState.plugins && appState.plugins.tools ? appState.plugins.tools : [];
+        return root.is3d ? all.map(t => ({ key: t.plugin + "/" + t.tool.name, plugin: t.plugin, pluginName: t.pluginName, tool: t.tool })) : [];
+    }
+    readonly property var activePluginTool: pluginTools.find(t => t.key === scene.pluginTool) || null
+    function optionsOf(key) { try { return JSON.parse(scene.pluginOptions)[key] || {}; } catch (e) { return {}; } }
+    // An option's value: what was set, else the schema's default.
+    function pluginOption(entry, field) {
+        const set = optionsOf(entry.key)[field.name];
+        return set !== undefined && set !== null ? set : field.default;
+    }
+    function setPluginOption(entry, field, value) {
+        let all = {};
+        try { all = JSON.parse(scene.pluginOptions) || {}; } catch (e) { all = {}; }
+        const mine = Object.assign({}, all[entry.key] || {});
+        mine[field.name] = value;
+        all[entry.key] = mine;
+        scene.pluginOptions = JSON.stringify(all);
+    }
+    // What the world needs to click with the chosen plugin tool: where to cast and the option values.
+    readonly property var pluginToolView: {
+        const t = activePluginTool;
+        if (!t) return null;
+        const options = {};
+        (t.tool.options || []).forEach(f => { options[f.name] = pluginOption(t, f); });
+        return { plugin: t.plugin, tool: t.tool.name, cast: t.tool.cast, reach: t.tool.reach, options: options };
+    }
     // "3, 7 12" -> [3, 7, 12]: the tiles a brush paints with, variants after the first.
     function tileList(text) { const l = String(text).split(/[\s,]+/).filter(t => t !== "").map(Number).filter(n => Number.isInteger(n) && n >= 0); return l.length ? l : [0]; }
     // The selected actor's tilemap, which the Tiles tool paints on.
@@ -401,6 +433,16 @@ Rectangle {
                         ToolToggle { visible: scene.enabled; icon: "scale"; tip: "Scale (R)"; checked: scene.tool === "scale"; onClicked: root.setTool("scale") }
                         ToolToggle { visible: scene.enabled && root.is3d; icon: "pencil"; tip: "Terrain brush (B): sculpt, paint, cut holes and place grass or trees on the selected terrain"; checked: scene.tool === "brush"; onClicked: root.setTool("brush") }
                         ToolToggle { visible: scene.enabled; icon: "palette"; tip: "Tiles (T): paint, erase, fill, draw lines and rects, scatter or pick on the selected tilemap"; checked: scene.tool === "tiles"; onClicked: root.setTool("tiles") }
+                        Repeater {
+                            model: scene.enabled ? root.pluginTools : []
+                            delegate: ToolToggle {
+                                required property var modelData
+                                icon: "plug-zap"
+                                tip: modelData.tool.title + " (" + modelData.pluginName + "): " + (modelData.tool.description || "a plugin's tool")
+                                checked: scene.tool === "plugin" && scene.pluginTool === modelData.key
+                                onClicked: { scene.pluginTool = modelData.key; root.setTool("plugin"); }
+                            }
+                        }
                         ToolToggle { visible: scene.enabled && root.is3d; icon: "move-3d"; tip: scene.local ? "Local axes: the actor's own" : "World axes"; checked: scene.local; onClicked: scene.local = !scene.local }
                         Rectangle { width: 1; height: 20; color: Theme.border; anchors.verticalCenter: parent.verticalCenter; visible: scene.enabled }
                         ToolToggle { visible: scene.enabled; icon: "layout-grid"; tip: "Snap to the grid (hold Ctrl to flip)"; checked: scene.snap; onClicked: scene.snap = !scene.snap }
@@ -464,6 +506,39 @@ Rectangle {
                             NumberField { Layout.preferredWidth: 48
                                 value: scene.brushOp === "Terrace" ? scene.brushStep : scene.brushScale; fallback: scene.brushOp === "Terrace" ? 4 : 12
                                 onCommitted: n => { const v = Math.max(0.05, Number(n)); if (scene.brushOp === "Terrace") scene.brushStep = v; else scene.brushScale = v; } }
+                        }
+                    }
+                }
+                // A plugin tool's options, under the toolbar.
+                Rectangle {
+                    visible: root.editing && scene.tool === "plugin" && root.is3d
+                    anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 8; anchors.topMargin: 48
+                    width: pluginRows.implicitWidth + 16; height: pluginRows.implicitHeight + 16; radius: 6
+                    color: "#d0202124"; border.color: Theme.borderSoft
+                    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }
+                    ColumnLayout {
+                        id: pluginRows
+                        anchors.centerIn: parent; spacing: 4
+                        width: 220
+                        Text { visible: !root.activePluginTool; text: "Pick a plugin tool."; color: Theme.textDim; font.pixelSize: 11 }
+                        Text {
+                            visible: !!root.activePluginTool
+                            Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 11; color: Theme.textDim
+                            text: root.activePluginTool ? root.activePluginTool.tool.description || root.activePluginTool.tool.title : ""
+                        }
+                        Repeater {
+                            model: root.activePluginTool ? root.activePluginTool.tool.options || [] : []
+                            delegate: ColumnLayout {
+                                id: optionRow
+                                required property var modelData
+                                Layout.fillWidth: true; spacing: 2
+                                Text { text: optionRow.modelData.name.replace(/_/g, " "); color: Theme.textDim; font.pixelSize: 11 }
+                                PluginValueEditor {
+                                    app: root.app; ty: optionRow.modelData
+                                    value: root.pluginOption(root.activePluginTool, optionRow.modelData)
+                                    onEdited: next => root.setPluginOption(root.activePluginTool, optionRow.modelData, next)
+                                }
+                            }
                         }
                     }
                 }

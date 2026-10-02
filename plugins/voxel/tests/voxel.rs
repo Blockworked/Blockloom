@@ -133,6 +133,7 @@ fn the_package_schema_is_valid_and_its_blocks_resolve() {
     let contributions = contributions();
     contributions.check_definition().unwrap();
     assert_eq!(contributions.resources.len(), 1);
+    assert_eq!(contributions.tools.len(), 4);
     assert_eq!(blocks().len(), 10);
     // Every statement and reporter has the op it names.
     let ops: BTreeSet<_> = blocks().into_iter().map(|b| b.op).collect();
@@ -386,6 +387,61 @@ fn a_cell_can_be_a_slab_and_a_saved_shape_line_does_the_same() {
     let mut saved = Scene::default();
     saved.apply(again.start(&resources(payload)));
     assert!(saved.triangles() > flat);
+}
+
+#[test]
+fn a_scene_tool_casts_a_ray_and_its_command_saves_an_edit() {
+    let contributions = contributions();
+    let mut world = hosted(CodeModule::Native(module()));
+    let mut scene = Scene::default();
+    scene.apply(world.start(&resources(small_flat())));
+    // Straight down onto the floor's top cell (4, 4, 8).
+    let ray = json!({"x": 12.25, "y": 6.0, "z": 0.25, "dx": 0, "dy": -1, "dz": 0, "reach": 200});
+    let hit = world.query(ID, "cast", &ray).unwrap();
+    assert_eq!(hit["cell"], json!([4, 4, 8]));
+    assert_eq!(hit["before"], json!([4, 5, 8]));
+    // A ray into the sky is a miss, and an op the module lacks an error.
+    let sky = json!({"x": 12.25, "y": 6.0, "z": 0.25, "dx": 0, "dy": 1, "dz": 0, "reach": 20});
+    assert_eq!(world.query(ID, "cast", &sky).unwrap()["hit"], json!(false));
+    assert!(world.query(ID, "nonsense", &ray).is_err());
+
+    let line = |tool: &str, options: Value| {
+        let tool = contributions.tools.iter().find(|t| t.name == tool).unwrap();
+        let args = tool.resolve_args(&hit, &options).unwrap();
+        let command = contributions.command(&tool.command).unwrap();
+        let CommandAction::SetResourceField {
+            template: Some(template),
+            ..
+        } = &command.action
+        else {
+            panic!("a brush appends a templated edit line");
+        };
+        blockloom_plugin_api::schema::fill_template(template, &args).unwrap()
+    };
+    assert_eq!(line("paint", json!({})), "set 4 5 8 stone");
+    assert_eq!(line("paint", json!({"material": "wood"})), "set 4 5 8 wood");
+    assert_eq!(line("erase", json!({})), "set 4 4 8 air");
+    assert_eq!(line("ball", json!({"radius": 2})), "sphere 4 5 8 2 stone");
+    assert_eq!(
+        line("shape", json!({"shape": "stair north"})),
+        "shape 4 4 8 stair north"
+    );
+
+    // The saved lines make the same world a run would.
+    let mut payload = small_flat();
+    payload["edits"] = json!([
+        line("paint", json!({"material": "wood"})),
+        line("erase", json!({}))
+    ]);
+    let mut again = hosted(CodeModule::Native(module()));
+    again.start(&resources(payload));
+    let mut at = |cell: [i64; 3]| {
+        again
+            .read(ID, "voxel_at", &cell.map(|c| json!(c)), "me")
+            .unwrap()
+    };
+    assert_eq!(at([4, 5, 8]), json!(5), "wood");
+    assert_eq!(at([4, 4, 8]), json!(0), "erased");
 }
 
 #[test]

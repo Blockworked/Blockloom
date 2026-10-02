@@ -3143,6 +3143,34 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        name: "plugin-run-tool",
+        cmd: "plugin_run_tool",
+        aliases: &[],
+        summary: "Run a plugin's scene-view tool as one click would: the tool's command with its arguments read from `hit` (the cast's answer) and `options`.",
+        args: &[
+            ArgSpec {
+                name: "plugin",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "tool",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "hit",
+                ty: "object",
+                required: true,
+            },
+            ArgSpec {
+                name: "options",
+                ty: "object",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
         name: "plugin-inspect",
         cmd: "plugin_inspect",
         aliases: &[],

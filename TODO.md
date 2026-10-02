@@ -1518,7 +1518,9 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Scene-view preview: a plugin with `editor.preview` is hosted while nothing plays (`plugins::preview`), the voxel world shows in the editor without Play.
     - [x] Voxel edit persistence: saved `edits` lines on the `world` resource, `add_voxel_edit`/`clear_voxel_edits`, and a general `set_resource_field` command action.
     - [x] Voxel shaped cells: slab, top slab, post, stairs and ramps (four facings), `shape_voxel`, and a `shape` saved-edit line.
-    - [ ] Voxel next: editor brushes, smooth terrain, streaming/LOD, instancing, GPU meshing, fracture.
+    - [x] Plugin scene tools: a package's `tools` (cast op, command, `$hit`/`$option` argument sources, typed options) are toolbar tools in the 3D scene view; a click casts the pointer ray through the hosted preview module and runs the command (`plugin-run-tool`). Voxel paint, erase, ball and shape tools, and `paint_voxel*` template commands, use it.
+    - [ ] Scene tool follow-ups: drag painting, a cell outline under the pointer.
+    - [ ] Voxel next: smooth terrain, streaming/LOD, instancing, GPU meshing, fracture.
     - [ ] Phases 4-7 (procedural graph, GPU path, fracture, ecosystem).
 
 ### Phase 8 - Web player via WebGPU (single-file build, do before Phase 9)
