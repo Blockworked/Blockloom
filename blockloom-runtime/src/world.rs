@@ -483,12 +483,12 @@ pub fn begin_run(engine: &mut Engine, now: f64) {
 /// Where this run's saves live. Desktop uses the data dir; an APK's assets
 /// are read-only, so Android uses the app's internal data dir instead.
 #[cfg(target_os = "android")]
-fn save_path_for(project_id: &str) -> std::path::PathBuf {
+pub(crate) fn save_path_for(project_id: &str) -> std::path::PathBuf {
     crate::android::save_path(project_id)
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
-fn save_path_for(project_id: &str) -> std::path::PathBuf {
+pub(crate) fn save_path_for(project_id: &str) -> std::path::PathBuf {
     blockloom_core::save::path(project_id)
 }
 

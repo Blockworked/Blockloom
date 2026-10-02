@@ -14,14 +14,19 @@
 //!   running game: lifecycle calls, hooks by stage and blocks that are ops.
 //!   [`shipped`] loads what a built game carries, for its player. [`imports`]
 //!   runs importers and build hooks over a project's files. [`trust`] is the
-//!   per-user list of plugins allowed to run code in the editor.
+//!   per-user list of plugins allowed to run code in the editor. [`services`]
+//!   answers a module's `blockloom.call`s: [`storage`] for its bytes and
+//!   [`diagnostics`] for what it costs.
 
 pub mod active;
 pub mod cache;
+pub mod diagnostics;
 pub mod files;
+pub mod generation;
 pub mod hooks;
 pub mod imports;
 pub mod install;
+pub mod jobs;
 pub mod lifecycle;
 pub mod lock;
 pub mod module;
@@ -30,7 +35,9 @@ pub mod package;
 pub mod portable;
 pub mod registry;
 pub mod resolver;
+pub mod services;
 pub mod shipped;
 pub mod source;
+pub mod storage;
 pub mod trust;
 pub mod world;

@@ -39,7 +39,7 @@ use blockloom_plugin_api::schema::FieldType;
 #[cfg(feature = "plugins")]
 use blockloom_plugin_host::world::{Effect, Outcome, WorldPlugins};
 #[cfg(feature = "plugins")]
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 /// A change to the meshes plugins have drawn, waiting for
 /// `plugin_meshes::sync` to carry it out.
@@ -65,6 +65,9 @@ pub struct PluginHost {
     /// How many times a preview module has been started, so what was cast
     /// against an older one can be told from what is in the scene now.
     pub previews: u64,
+    /// What the open modules cost and report; kept across a preview and a run.
+    #[cfg(feature = "plugins")]
+    pub diagnostics: Arc<blockloom_plugin_host::diagnostics::Diagnostics>,
     #[cfg(feature = "plugins")]
     world: Option<Rc<RefCell<WorldPlugins>>>,
     #[cfg(feature = "plugins")]
@@ -277,6 +280,39 @@ pub fn shipped_loadout(
     }
 }
 
+/// The services every module of this world is opened with: its project's
+/// data, the player's saves and the run's diagnostics.
+#[cfg(feature = "plugins")]
+fn host_services(engine: &Engine) -> blockloom_plugin_host::services::HostServices {
+    use blockloom_plugin_api::data::DATA_DIR;
+    use blockloom_plugin_host::storage::{BlobStore, DiskStore, PackStore};
+    let mut host = blockloom_plugin_host::services::HostServices::new(env!("CARGO_PKG_VERSION"))
+        .with_diagnostics(engine.plugins.diagnostics.clone());
+    if let Some(dir) = engine.project_dir.as_deref() {
+        let data = dir.join(DATA_DIR);
+        // A built game's folder carries a pack; its data is shipped and fixed.
+        let store: Arc<dyn BlobStore> = if blockloom_core::pack::pack_path(dir).is_file() {
+            Arc::new(PackStore::open(data))
+        } else {
+            Arc::new(DiskStore::new(data, false))
+        };
+        host = host.with_project_store(store);
+    }
+    // The browser keeps variable saves in localStorage; plugin saves last the run there.
+    #[cfg(target_arch = "wasm32")]
+    let saves: Arc<dyn BlobStore> = Arc::new(blockloom_plugin_host::storage::MemoryStore::new());
+    #[cfg(not(target_arch = "wasm32"))]
+    let saves: Arc<dyn BlobStore> =
+        Arc::new(DiskStore::new(save_dir_for(&engine.project.id), false));
+    host.with_save_store(saves)
+}
+
+/// Where a project's plugin saves live, beside its variable saves.
+#[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
+fn save_dir_for(project_id: &str) -> std::path::PathBuf {
+    crate::world::save_path_for(project_id).with_extension("plugins")
+}
+
 /// The run begins: open the modules and tell each its records.
 pub fn begin(engine: &mut Engine) {
     #[cfg(feature = "plugins")]
@@ -285,7 +321,8 @@ pub fn begin(engine: &mut Engine) {
         if engine.plugins.loadout.is_empty() {
             return;
         }
-        let world = WorldPlugins::load(&engine.plugins.loadout, env!("CARGO_PKG_VERSION"));
+        engine.plugins.diagnostics.reset();
+        let world = WorldPlugins::load_with(&engine.plugins.loadout, &host_services(engine));
         install(engine, world);
     }
     #[cfg(not(feature = "plugins"))]
@@ -312,9 +349,10 @@ fn install(engine: &mut Engine, mut world: WorldPlugins) {
 /// from is unchanged. Hooks and blocks stay off: only the start is run.
 pub fn preview(engine: &mut Engine) {
     #[cfg(feature = "plugins")]
-    preview_with(engine, |wanted| {
-        WorldPlugins::load(wanted, env!("CARGO_PKG_VERSION"))
-    });
+    {
+        let host = host_services(engine);
+        preview_with(engine, |wanted| WorldPlugins::load_with(wanted, &host));
+    }
     #[cfg(not(feature = "plugins"))]
     let _ = engine;
 }
@@ -554,6 +592,10 @@ pub fn run_block(
     }
 }
 
+/// How long the fixed tick spends on plugin jobs, at most (one slice always runs).
+#[cfg(feature = "plugins")]
+const JOB_BUDGET_MS: f64 = 4.0;
+
 /// The system that runs one stage's hooks. Hooks wait while the game is
 /// paused or not yet running, except the two stages that follow frames.
 pub fn stage(stage: Stage) -> impl FnMut(NonSendMut<Engine>, Res<Time>) {
@@ -569,6 +611,7 @@ pub fn stage(stage: Stage) -> impl FnMut(NonSendMut<Engine>, Res<Time>) {
             }
             if stage == Stage::FixedSimulation {
                 engine.plugins.ticks += 1;
+                engine.plugins.diagnostics.set_tick(engine.plugins.ticks);
             }
             let tick = engine.plugins.ticks;
             let dt = f64::from(time.delta_secs());
@@ -581,7 +624,12 @@ pub fn stage(stage: Stage) -> impl FnMut(NonSendMut<Engine>, Res<Time>) {
                 if matches!(stage, Stage::Input | Stage::Presentation) {
                     world.forget_reads();
                 }
-                world.run_stage(stage, tick, dt)
+                let mut outcomes = world.run_stage(stage, tick, dt);
+                // Jobs get their slices once per fixed tick, after the hooks.
+                if stage == Stage::FixedSimulation {
+                    outcomes.extend(world.run_jobs(JOB_BUDGET_MS));
+                }
+                outcomes
             };
             apply(&mut engine, applied(outcomes));
         }
@@ -724,6 +772,7 @@ mod tests {
             hooks: vec![],
             blocks: vec![],
             preview,
+            nodes: vec![],
         };
         let world = |size: u32| {
             PluginRecord::new(

@@ -22,14 +22,21 @@
 //! ([`WorldPlugins::forget_reads`]), so a loop asking the same question every
 //! step costs one call. A read is a question, so it may log but not act.
 
+use crate::diagnostics::Diagnostics;
+use crate::generation::{GraphCache, GraphRun};
 use crate::hooks::{HookRef, order_hooks};
+use crate::jobs::JobTable;
 use crate::module::{CodeModule, is_unsupported};
+use crate::services::HostServices;
+use blockloom_plugin_api::generation::NodeSchema;
 use blockloom_plugin_api::loadout::{Loadout, LoadoutBlock, ops};
 use blockloom_plugin_api::mesh::MeshData;
 use blockloom_plugin_api::schema::{FieldSchema, FieldType, HookSchema, Stage};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
+use web_time::Instant;
 
 /// What a plugin may ask the world to do from an op's answer.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -93,19 +100,42 @@ pub struct WorldPlugins {
     modules: BTreeMap<String, Hosted>,
     order: Vec<HookRef>,
     pending: Vec<Outcome>,
+    diagnostics: Arc<Diagnostics>,
+    jobs: Arc<Mutex<JobTable>>,
+    /// The graph nodes each plugin computes.
+    nodes: BTreeMap<String, Vec<NodeSchema>>,
+    graph_runs: BTreeMap<u64, GraphRun>,
+    graph_cache: GraphCache,
 }
+
+/// The job name a plugin starts to evaluate a node graph: `jobs.start` with
+/// `{"name": "graph.evaluate", "args": {graph, tile, seed?, extra?}}`. One node
+/// is evaluated per slice, and the job's result is
+/// `{"outputs": {"node.port": value}, "evaluated": n, "cached": m}`.
+pub const GRAPH_JOB: &str = "graph.evaluate";
 
 impl WorldPlugins {
     /// Opens every module in `loadout`. A plugin that fails to open is left
     /// out and reported by the next call that returns outcomes
     /// ([`WorldPlugins::drain`]).
     pub fn load(loadout: &Loadout, engine: &str) -> WorldPlugins {
-        let mut world = WorldPlugins::default();
+        Self::load_with(loadout, &HostServices::new(engine))
+    }
+
+    /// [`WorldPlugins::load`] with the services (storage, diagnostics, a
+    /// world's queries) each module is opened with.
+    pub fn load_with(loadout: &Loadout, host: &HostServices) -> WorldPlugins {
+        let mut world = WorldPlugins {
+            diagnostics: host.diagnostics.clone(),
+            jobs: host.jobs.clone(),
+            ..WorldPlugins::default()
+        };
         let mut hooks = Vec::new();
         for plugin in &loadout.plugins {
-            match CodeModule::load(&plugin.runtime, engine) {
+            match CodeModule::load_with(&plugin.runtime, &plugin.id, host) {
                 Ok(module) => {
                     world.insert(plugin.id.clone(), module, &plugin.blocks);
+                    world.set_nodes(&plugin.id, plugin.nodes.clone());
                     hooks.extend(plugin.hooks.iter().map(|h| (plugin.id.as_str(), h)));
                 }
                 Err(message) => world.error(&plugin.id, format!("could not load: {message}")),
@@ -152,6 +182,179 @@ impl WorldPlugins {
             plugin: plugin.to_string(),
             message,
         });
+    }
+
+    /// Tells the world which graph nodes `plugin`'s module computes.
+    pub fn set_nodes(&mut self, plugin: &str, nodes: Vec<NodeSchema>) {
+        if !nodes.is_empty() {
+            self.nodes.insert(plugin.to_string(), nodes);
+        }
+    }
+
+    /// The node cache, to size or clear it.
+    pub fn graph_cache(&mut self) -> &mut GraphCache {
+        &mut self.graph_cache
+    }
+
+    /// One node of a graph job: the progress to report, or the whole result.
+    fn graph_slice(&mut self, job: &crate::jobs::Job) -> (Vec<Outcome>, Result<Value, String>) {
+        let mut run = match self.graph_runs.remove(&job.id) {
+            Some(run) => run,
+            None => {
+                let nodes = self
+                    .nodes
+                    .get(&job.plugin)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                match GraphRun::new(nodes, &job.args) {
+                    Ok(run) => run,
+                    Err(e) => return (Vec::new(), Err(e)),
+                }
+            }
+        };
+        let mut outcomes = Vec::new();
+        let mut cache = std::mem::take(&mut self.graph_cache);
+        let plugin = job.plugin.clone();
+        let stepped = if run.is_done() {
+            Ok(())
+        } else {
+            let mut call = |op: &str, input: &Value| -> Result<Value, String> {
+                let (o, answer, missing) = self.call_answer(&plugin, op, input, false, true);
+                outcomes.extend(o);
+                answer.ok_or_else(|| {
+                    if missing {
+                        format!("the module has no op {op}")
+                    } else {
+                        "the module is not running".to_string()
+                    }
+                })
+            };
+            run.step(&mut cache, &mut call)
+        };
+        self.graph_cache = cache;
+        let answer = stepped.map(|()| {
+            if run.is_done() {
+                json!({"done": true, "progress": 1.0, "result": run.result()})
+            } else {
+                let progress = run.progress();
+                self.graph_runs.insert(job.id, run);
+                json!({"progress": progress})
+            }
+        });
+        (outcomes, answer)
+    }
+
+    /// What the hosted modules cost and report.
+    pub fn diagnostics(&self) -> &Arc<Diagnostics> {
+        &self.diagnostics
+    }
+
+    /// Gives every running job a slice, highest priority first, until
+    /// `budget_ms` is spent (one slice always runs, so jobs make progress).
+    /// A job that ends raises its event, and a failure is reported.
+    pub fn run_jobs(&mut self, budget_ms: f64) -> Vec<Outcome> {
+        let started = Instant::now();
+        let mut out = self.drain();
+        let notices = self.table().take_cancel_notices();
+        for job in notices {
+            if job.name == GRAPH_JOB {
+                self.graph_runs.remove(&job.id);
+                continue;
+            }
+            let input =
+                json!({"job": job.id, "cancel": true, "args": job.args, "state": job.state});
+            out.extend(self.call(&job.plugin, &format!("job.{}", job.name), &input, true));
+        }
+        let mut sliced = Vec::new();
+        loop {
+            let Some(job) = self.table().next_runnable(&sliced) else {
+                break;
+            };
+            sliced.push(job.id);
+            let left = (budget_ms - started.elapsed().as_secs_f64() * 1000.0).max(0.0);
+            let input = json!({
+                "job": job.id,
+                "name": job.name,
+                "args": job.args,
+                "state": job.state,
+                "slice": job.slice,
+                "budget_ms": left,
+            });
+            if job.name == GRAPH_JOB {
+                let (outcomes, answer) = self.graph_slice(&job);
+                out.extend(outcomes);
+                match answer {
+                    Ok(answer) => self.table().answered(job.id, &answer),
+                    Err(e) => self.table().failed(job.id, e),
+                }
+                if started.elapsed().as_secs_f64() * 1000.0 >= budget_ms {
+                    break;
+                }
+                continue;
+            }
+            let op = format!("job.{}", job.name);
+            let (outcomes, answer, missing) =
+                self.call_answer(&job.plugin, &op, &input, false, true);
+            out.extend(outcomes);
+            match answer {
+                Some(answer) => self.table().answered(job.id, &answer),
+                None => self.table().failed(
+                    job.id,
+                    if missing {
+                        format!("the module has no op {op}")
+                    } else {
+                        "the module is not running".to_string()
+                    },
+                ),
+            }
+            if started.elapsed().as_secs_f64() * 1000.0 >= budget_ms {
+                break;
+            }
+        }
+        let ended = {
+            let mut table = self.table();
+            table.prune();
+            table.drain_ended()
+        };
+        for e in ended {
+            self.graph_runs.remove(&e.id);
+            if let Some(event) = e.event {
+                out.push(Outcome::Effect {
+                    plugin: e.plugin.clone(),
+                    effect: Effect::Event {
+                        name: event,
+                        actor: None,
+                        args: vec![json!(e.id), json!(e.status.name())],
+                    },
+                });
+            }
+            if let Some(error) = e.error {
+                out.push(Outcome::Error {
+                    plugin: e.plugin,
+                    message: format!("job {}: {error}", e.id),
+                });
+            }
+        }
+        out
+    }
+
+    /// The table plugins start jobs in, shared with their `jobs.*` services.
+    pub fn job_table(&self) -> Arc<Mutex<JobTable>> {
+        self.jobs.clone()
+    }
+
+    /// Cancels what `plugin` is running, as a reload or removal does.
+    pub fn cancel_jobs(&mut self, plugin: &str) -> usize {
+        self.table().cancel_plugin(plugin)
+    }
+
+    /// How many jobs are running.
+    pub fn running_jobs(&self) -> usize {
+        self.table().running()
+    }
+
+    fn table(&self) -> std::sync::MutexGuard<'_, JobTable> {
+        self.jobs.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// The ids of the plugins still hosted.
@@ -421,7 +624,9 @@ impl WorldPlugins {
             hosted.reads.clear();
         }
         let mut missing = false;
+        let started = Instant::now();
         let answer = hosted.module.call_json(op, input);
+        self.diagnostics.record_call(plugin, op, started.elapsed());
         let mut out: Vec<Outcome> = hosted
             .module
             .take_logs()
@@ -583,6 +788,35 @@ mod tests {
                     answer(out, json!({"value": n}))
                 }
                 "bare" => answer(out, json!({})),
+                // A job that counts to `args.to`, a slice at a time.
+                "job.count" => {
+                    if input["cancel"] == true {
+                        return answer(
+                            out,
+                            json!({"effects": [{"effect": "say", "text": "cancelled"}]}),
+                        );
+                    }
+                    let at = input["state"].as_u64().unwrap_or(0) + 1;
+                    let to = input["args"]["to"].as_u64().unwrap_or(1);
+                    if at >= to {
+                        answer(out, json!({"done": true, "result": {"counted": at}}))
+                    } else {
+                        answer(
+                            out,
+                            json!({"state": at, "progress": at as f64 / to as f64,
+                                   "effects": [{"effect": "say", "text": format!("at {at}")}]}),
+                        )
+                    }
+                }
+                "node.noise" => answer(
+                    out,
+                    json!({"outputs": {"height": input["params"]["scale"].as_f64().unwrap_or(1.0)}}),
+                ),
+                "node.double" => answer(
+                    out,
+                    json!({"outputs": {"out": input["inputs"]["in"].as_f64().unwrap_or(0.0) * 2.0}}),
+                ),
+                "job.fail" => answer(out, json!({"error": "no cells to make"})),
                 "ping" => answer(
                     out,
                     json!({"effects": [{"effect": "event", "name": "pinged", "args": [input["by"]]}]}),
@@ -1044,5 +1278,174 @@ mod tests {
             "{pending:?}"
         );
         assert!(world.drain().is_empty());
+    }
+
+    fn counting_world() -> WorldPlugins {
+        WorldPlugins::with_modules(vec![Preloaded {
+            id: "a".to_string(),
+            module: scripted(),
+            hooks: vec![],
+            blocks: vec![],
+        }])
+        .unwrap()
+    }
+
+    #[test]
+    fn a_job_runs_a_slice_per_call_and_raises_its_event_when_done() {
+        let mut world = counting_world();
+        let table = world.job_table();
+        let id = table
+            .lock()
+            .unwrap()
+            .start("a", "count", json!({"to": 3}), Some("counted".into()), 0)
+            .unwrap();
+        let first = world.run_jobs(50.0);
+        assert_eq!(said(&first), ["a: at 1"]);
+        assert_eq!(world.running_jobs(), 1);
+        assert_eq!(said(&world.run_jobs(50.0)), ["a: at 2"]);
+        let last = world.run_jobs(50.0);
+        assert_eq!(world.running_jobs(), 0);
+        let raised: Vec<_> = last
+            .iter()
+            .filter_map(|o| match o {
+                Outcome::Effect {
+                    effect: Effect::Event { name, args, .. },
+                    ..
+                } => Some((name.clone(), args.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            raised,
+            [("counted".to_string(), vec![json!(id), json!("done")])]
+        );
+        let result = table.lock().unwrap().take("a", id).unwrap().result.unwrap();
+        assert_eq!(result["counted"], 3);
+    }
+
+    #[test]
+    fn a_cancelled_job_is_told_once_and_a_failing_one_is_reported() {
+        let mut world = counting_world();
+        let table = world.job_table();
+        let slow = table
+            .lock()
+            .unwrap()
+            .start("a", "count", json!({"to": 100}), None, 0)
+            .unwrap();
+        world.run_jobs(50.0);
+        assert_eq!(world.cancel_jobs("a"), 1);
+        assert_eq!(said(&world.run_jobs(50.0)), ["a: cancelled"]);
+        assert!(world.run_jobs(50.0).is_empty());
+        assert_eq!(world.running_jobs(), 0);
+        let _ = slow;
+        table
+            .lock()
+            .unwrap()
+            .start("a", "fail", Value::Null, None, 0)
+            .unwrap();
+        let failed = errors(&world.run_jobs(50.0));
+        assert_eq!(failed, ["a: job 2: no cells to make"]);
+        // An op the module lacks fails the job, not the run.
+        table
+            .lock()
+            .unwrap()
+            .start("a", "ghost", Value::Null, None, 0)
+            .unwrap();
+        let missing = errors(&world.run_jobs(50.0));
+        assert!(missing.iter().any(|e| e.contains("job 3")), "{missing:?}");
+    }
+
+    #[test]
+    fn a_zero_budget_still_gives_one_slice_so_jobs_make_progress() {
+        let mut world = counting_world();
+        let table = world.job_table();
+        table
+            .lock()
+            .unwrap()
+            .start("a", "count", json!({"to": 9}), None, 0)
+            .unwrap();
+        table
+            .lock()
+            .unwrap()
+            .start("a", "count", json!({"to": 9}), None, 0)
+            .unwrap();
+        assert_eq!(said(&world.run_jobs(0.0)).len(), 1);
+        assert_eq!(said(&world.run_jobs(0.0)).len(), 1);
+        // Generous budget: every job gets exactly one slice.
+        assert_eq!(said(&world.run_jobs(1000.0)).len(), 2);
+    }
+
+    #[test]
+    fn a_graph_job_evaluates_a_node_per_slice_and_reuses_the_cache() {
+        let nodes: Vec<NodeSchema> = serde_json::from_value(json!([
+            {"name": "noise", "title": "Noise", "outputs": [{"name": "height", "type": "number"}],
+             "params": [{"name": "scale", "type": "number", "default": 1.0}]},
+            {"name": "double", "title": "Double", "inputs": [{"name": "in", "type": "number"}],
+             "outputs": [{"name": "out", "type": "number"}]}
+        ]))
+        .unwrap();
+        let mut world = counting_world();
+        world.set_nodes("a", nodes);
+        let table = world.job_table();
+        let args = json!({
+            "graph": {
+                "nodes": [{"id": "n", "node": "noise", "params": {"scale": 4.0}}, {"id": "d", "node": "double"}],
+                "edges": [{"from": "n.height", "to": "d.in"}],
+                "outputs": ["d.out"]
+            },
+            "tile": {"origin": [0, 0, 0], "size": [4, 4, 4]}
+        });
+        let first = table
+            .lock()
+            .unwrap()
+            .start("a", GRAPH_JOB, args.clone(), Some("tile".into()), 0)
+            .unwrap();
+        world.run_jobs(50.0);
+        assert_eq!(world.running_jobs(), 1, "one node is not the whole graph");
+        let ended = world.run_jobs(50.0);
+        assert_eq!(world.running_jobs(), 0);
+        assert!(ended.iter().any(|o| matches!(o, Outcome::Effect { effect: Effect::Event { name, .. }, .. } if name == "tile")));
+        let result = table
+            .lock()
+            .unwrap()
+            .take("a", first)
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(result["outputs"]["d.out"], 8.0);
+        assert_eq!(
+            (result["evaluated"].as_u64(), result["cached"].as_u64()),
+            (Some(2), Some(0))
+        );
+        // The same graph again comes straight from the cache.
+        let second = table
+            .lock()
+            .unwrap()
+            .start("a", GRAPH_JOB, args, None, 0)
+            .unwrap();
+        world.run_jobs(50.0);
+        world.run_jobs(50.0);
+        let again = table
+            .lock()
+            .unwrap()
+            .take("a", second)
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(
+            (again["evaluated"].as_u64(), again["cached"].as_u64()),
+            (Some(0), Some(2))
+        );
+        // A graph the plugin has no nodes for fails the job, not the world.
+        let bad = table
+            .lock()
+            .unwrap()
+            .start("a", GRAPH_JOB, json!({"graph": {"nodes": [{"id": "x", "node": "nope"}]}, "tile": {"origin": [0,0,0], "size": [1,1,1]}}), None, 0)
+            .unwrap();
+        let errs = errors(&world.run_jobs(50.0));
+        assert!(
+            errs[0].contains(&format!("job {bad}")) && errs[0].contains("no node nope"),
+            "{errs:?}"
+        );
     }
 }

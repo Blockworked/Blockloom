@@ -11,6 +11,8 @@
 //! - [`loadout`] is what a running world needs to host a plugin's code.
 //! - [`mesh`] is a mesh a plugin submits for the world to draw.
 //! - [`assets`] is what an importer or a build hook is asked and answers.
+//! - [`generation`] is typed graph nodes a plugin offers and the graphs built from them.
+//! - [`data`] is where a plugin's project data lives and how a build lists it.
 //! - [`wasm`] is the same contract over a WebAssembly module's linear memory.
 //!
 //! Engine, SDK, plugin ABI, editor API, schema and shader API versions are
@@ -19,6 +21,8 @@
 
 pub mod abi;
 pub mod assets;
+pub mod data;
+pub mod generation;
 pub mod id;
 pub mod loadout;
 pub mod manifest;

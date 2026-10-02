@@ -452,6 +452,61 @@ fn copy_plugins(plugins: &[PluginPayload], game: &Path) -> Result<usize, String>
     Ok(plugins.len())
 }
 
+/// Copies the data each shipped plugin keeps in the project to the game's own
+/// `.blockloom/plugin-data`, and writes the index a player lists it by.
+fn copy_plugin_data(
+    plugins: &[PluginPayload],
+    project_dir: &Path,
+    game: &Path,
+) -> Result<usize, String> {
+    use blockloom_plugin_api::data::{DATA_DIR, DataIndex, INDEX_FILE};
+    let mut index = DataIndex::default();
+    for plugin in plugins {
+        let from = project_dir.join(DATA_DIR).join(&plugin.entry.id);
+        if from.is_dir() {
+            copy_data_tree(
+                &from,
+                &game.join(DATA_DIR).join(&plugin.entry.id),
+                &plugin.entry.id,
+                &mut index,
+            )?;
+        }
+    }
+    if !index.files.is_empty() {
+        let to = game.join(DATA_DIR).join(INDEX_FILE);
+        let json = serde_json::to_vec(&index).map_err(|e| e.to_string())?;
+        std::fs::write(&to, json).map_err(|e| format!("{}: {e}", to.display()))?;
+    }
+    Ok(index.files.len())
+}
+
+fn copy_data_tree(
+    from: &Path,
+    to: &Path,
+    key: &str,
+    index: &mut blockloom_plugin_api::data::DataIndex,
+) -> Result<(), String> {
+    std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
+    for entry in std::fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // Half-finished commits are not data.
+        if name.ends_with(".blockloom-tmp") || name.ends_with(".blockloom-bak") {
+            continue;
+        }
+        let meta = entry.metadata().map_err(|e| e.to_string())?;
+        let child = format!("{key}/{name}");
+        if meta.is_dir() {
+            copy_data_tree(&entry.path(), &to.join(&name), &child, index)?;
+        } else {
+            std::fs::copy(entry.path(), to.join(&name))
+                .map_err(|e| format!("{}: {e}", entry.path().display()))?;
+            index.files.insert(child, meta.len());
+        }
+    }
+    Ok(())
+}
+
 /// Where a build landed, and what went into it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Build {
@@ -567,6 +622,7 @@ pub fn build(
     crate::build_control::step("Copying game assets")?;
     let assets = copy_assets(project_dir, &game)?;
     copy_plugins(&options.plugins, &game)?;
+    copy_plugin_data(&options.plugins, project_dir, &game)?;
     copy_extras(&options.extras, &game)?;
     crate::build_control::step("Baking sprite atlas")?;
     let atlas = bake_sprite_atlas(project, project_dir, &game)?;
@@ -721,6 +777,7 @@ fn build_web(
     copy_terrain(project, project_dir, &game)?;
     let scripts = copy_scripts(project, project_dir, &game, target)?;
     copy_plugins(plugins, &game)?;
+    copy_plugin_data(plugins, project_dir, &game)?;
     copy_extras(extras, &game)?;
 
     let mut paths = Vec::new();
@@ -871,6 +928,7 @@ fn build_android_with_config(
     crate::build_control::step("Packing terrain and scripts")?;
     copy_terrain(project, project_dir, &game)?;
     copy_plugins(&options.plugins, &game)?;
+    copy_plugin_data(&options.plugins, project_dir, &game)?;
     copy_extras(&options.extras, &game)?;
     let native_libs = android_native_libs(project, project_dir, target, runtime_so, options.fast)?;
 
@@ -1797,6 +1855,46 @@ mod tests {
             "the player verifies against it"
         );
         assert!(there.join("schemas/a.json").is_file());
+    }
+
+    #[test]
+    fn plugin_data_ships_with_an_index() {
+        use blockloom_plugin_api::data::{DATA_DIR, DataIndex, INDEX_FILE};
+        let dir = temp("plugin-data");
+        let project = dir.join("project");
+        let game = dir.join("game");
+        let data = project.join(DATA_DIR).join("com.example.a");
+        std::fs::create_dir_all(data.join("deep")).unwrap();
+        std::fs::write(data.join("one"), b"1").unwrap();
+        std::fs::write(data.join("deep/two"), b"22").unwrap();
+        std::fs::write(data.join("half.blockloom-tmp"), b"x").unwrap();
+        // Another plugin's data is not shipped unless that plugin is.
+        let other = project.join(DATA_DIR).join("com.example.b");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("nope"), b"x").unwrap();
+        let payload = PluginPayload {
+            entry: pack::PackedPlugin {
+                id: "com.example.a".to_string(),
+                version: "1.0.0".to_string(),
+                hash: "h".to_string(),
+                tier: "portable".to_string(),
+                dir: "plugins/com.example.a".to_string(),
+                files: Vec::new(),
+            },
+            root: project.clone(),
+        };
+        assert_eq!(copy_plugin_data(&[payload], &project, &game).unwrap(), 2);
+        let index: DataIndex =
+            serde_json::from_slice(&std::fs::read(game.join(DATA_DIR).join(INDEX_FILE)).unwrap())
+                .unwrap();
+        assert_eq!(index.files.get("com.example.a/deep/two"), Some(&2));
+        assert!(!game.join(DATA_DIR).join("com.example.b").exists());
+        assert!(
+            !game
+                .join(DATA_DIR)
+                .join("com.example.a/half.blockloom-tmp")
+                .exists()
+        );
     }
 
     #[test]

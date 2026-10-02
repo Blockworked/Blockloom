@@ -133,6 +133,28 @@ pub(crate) fn reload(s: &mut AppState, bump: bool) {
 #[derive(Default)]
 pub(crate) struct Modules {
     loaded: std::collections::BTreeMap<String, (String, Arc<Mutex<CodeModule>>)>,
+    /// What editor-side calls into modules cost and report.
+    pub(crate) diagnostics: Arc<blockloom_plugin_host::diagnostics::Diagnostics>,
+}
+
+/// The services a module the editor opens gets: the project's data folder, the
+/// project's plugin saves and the editor's diagnostics.
+fn editor_services(
+    dir: &Path,
+    project_id: &str,
+    diagnostics: &Arc<blockloom_plugin_host::diagnostics::Diagnostics>,
+) -> blockloom_plugin_host::services::HostServices {
+    use blockloom_plugin_host::storage::DiskStore;
+    blockloom_plugin_host::services::HostServices::new(&engine_version().to_string())
+        .with_diagnostics(diagnostics.clone())
+        .with_project_store(Arc::new(DiskStore::new(
+            dir.join(blockloom_plugin_api::data::DATA_DIR),
+            false,
+        )))
+        .with_save_store(Arc::new(DiskStore::new(
+            blockloom_core::save::path(project_id).with_extension("plugins"),
+            false,
+        )))
 }
 
 impl Modules {
@@ -145,7 +167,13 @@ impl Modules {
         });
     }
 
-    fn get(&mut self, active: &ActivePlugins, id: &str) -> Result<Arc<Mutex<CodeModule>>, String> {
+    fn get(
+        &mut self,
+        active: &ActivePlugins,
+        id: &str,
+        dir: &Path,
+        project_id: &str,
+    ) -> Result<Arc<Mutex<CodeModule>>, String> {
         let runtime = active.code_runtime(id)?;
         if let Some((hash, module)) = self.loaded.get(id)
             && hash == runtime.hash()
@@ -154,8 +182,9 @@ impl Modules {
             return Ok(module.clone());
         }
         let hash = runtime.hash().to_string();
-        let module = CodeModule::load(&runtime, &engine_version().to_string())
-            .map_err(|e| format!("{id}: {e}"))?;
+        let host = editor_services(dir, project_id, &self.diagnostics);
+        let module =
+            CodeModule::load_with(&runtime, id, &host).map_err(|e| format!("{id}: {e}"))?;
         let module = Arc::new(Mutex::new(module));
         self.loaded.insert(id.to_string(), (hash, module.clone()));
         Ok(module)
@@ -1198,7 +1227,8 @@ fn with_module<T>(
     let module = {
         let mut s = lock(state)?;
         let open = s.open.as_mut().ok_or("No project is open")?;
-        open.modules.get(&open.plugins, plugin)?
+        open.modules
+            .get(&open.plugins, plugin, &open.dir, &open.project.id)?
     };
     let mut module = module.lock().map_err(|_| "the plugin module is poisoned")?;
     let answer = f(&mut module);

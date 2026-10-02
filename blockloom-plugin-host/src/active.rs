@@ -636,6 +636,7 @@ pub(crate) fn loadout_plugin(id: &str, package: &Package, runtime: CodeRuntime) 
         hooks: contributions.hooks.clone(),
         blocks,
         preview: package.manifest.editor.preview,
+        nodes: contributions.nodes.clone(),
     }
 }
 
@@ -648,6 +649,7 @@ fn has_runtime_content(package: &Package) -> bool {
         || !c.blocks.is_empty()
         || !c.commands.is_empty()
         || !c.hooks.is_empty()
+        || !c.nodes.is_empty()
         || c.components
             .iter()
             .chain(&c.resources)

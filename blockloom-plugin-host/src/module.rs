@@ -1,8 +1,9 @@
 //! A plugin's loaded code, whichever tier it is: one handle for the editor's
 //! command calls and a running world's hooks.
 
-use crate::native::{NativeModule, default_services};
+use crate::native::{NativeModule, ServiceFn};
 use crate::portable::PortableModule;
+use crate::services::HostServices;
 use blockloom_plugin_api::loadout::CodeRuntime;
 use serde_json::Value;
 
@@ -14,7 +15,20 @@ pub enum CodeModule {
 impl CodeModule {
     /// Opens the library or module `runtime` names, under its capabilities.
     pub fn load(runtime: &CodeRuntime, engine: &str) -> Result<CodeModule, String> {
-        let services = default_services(engine.to_string());
+        Self::load_with(runtime, "", &HostServices::new(engine))
+    }
+
+    /// [`CodeModule::load`] for `plugin`, with the services `host` gives it.
+    pub fn load_with(
+        runtime: &CodeRuntime,
+        plugin: &str,
+        host: &HostServices,
+    ) -> Result<CodeModule, String> {
+        Self::open(runtime, host.for_plugin(plugin))
+    }
+
+    /// Opens the module with exactly these services.
+    pub fn open(runtime: &CodeRuntime, services: Box<ServiceFn>) -> Result<CodeModule, String> {
         match runtime {
             CodeRuntime::Native(library) => {
                 NativeModule::load(&library.path, library.capabilities.clone(), services)

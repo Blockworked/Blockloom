@@ -6,6 +6,7 @@
 //! are module ops, which the world runs itself instead of asking the editor.
 //! Paths are whatever the sender could resolve; the world opens them as given.
 
+use crate::generation::NodeSchema;
 use crate::manifest::{Capability, PortableEntry};
 use crate::schema::{FieldSchema, FieldType, HookSchema};
 use serde::{Deserialize, Serialize};
@@ -77,6 +78,9 @@ pub struct LoadoutPlugin {
     /// The plugin draws a preview in the scene view while nothing plays.
     #[serde(default)]
     pub preview: bool,
+    /// The graph nodes its modules compute (see [`crate::generation`]).
+    #[serde(default)]
+    pub nodes: Vec<NodeSchema>,
 }
 
 /// Every plugin the world hosts, in dependency order.

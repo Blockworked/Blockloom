@@ -334,7 +334,7 @@ impl FieldSchema {
     }
 }
 
-fn check_fields(fields: &[FieldSchema], what: &str) -> Result<(), String> {
+pub(crate) fn check_fields(fields: &[FieldSchema], what: &str) -> Result<(), String> {
     let mut seen = BTreeSet::new();
     for field in fields {
         validate_type_id(&field.name).map_err(|e| format!("{what} field {e}"))?;
@@ -434,7 +434,7 @@ fn check_ui(
 
 /// Checks `payload` (an object) against `fields`. Unknown fields are
 /// refused: a typo should not be stored silently.
-fn validate_object(fields: &[FieldSchema], payload: &Value) -> Vec<SchemaError> {
+pub(crate) fn validate_object(fields: &[FieldSchema], payload: &Value) -> Vec<SchemaError> {
     let mut errors = Vec::new();
     let Some(object) = payload.as_object() else {
         return vec![err("", "expected an object")];
@@ -957,6 +957,8 @@ pub struct Contributions {
     pub panels: Vec<PanelSchema>,
     #[serde(default)]
     pub tools: Vec<ToolSchema>,
+    #[serde(default)]
+    pub nodes: Vec<crate::generation::NodeSchema>,
 }
 
 /// A scene-view tool a package adds. A click casts the pointer's ray through
@@ -1175,6 +1177,7 @@ impl Contributions {
         self.commands.extend(other.commands);
         self.panels.extend(other.panels);
         self.tools.extend(other.tools);
+        self.nodes.extend(other.nodes);
         self.hooks.extend(other.hooks);
         self.importers.extend(other.importers);
         self.build_hooks.extend(other.build_hooks);
@@ -1263,6 +1266,13 @@ impl Contributions {
             tool.check_definition(self)?;
             if !tools.insert(tool.name.as_str()) {
                 return Err(format!("two tools named {}", tool.name));
+            }
+        }
+        let mut nodes = BTreeSet::new();
+        for node in &self.nodes {
+            node.check_definition()?;
+            if !nodes.insert(node.name.as_str()) {
+                return Err(format!("two nodes named {}", node.name));
             }
         }
         let mut commands = BTreeSet::new();
