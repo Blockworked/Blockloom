@@ -42,6 +42,8 @@ pub use serde_json::{self, Value, json};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+#[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
+pub mod testing;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 

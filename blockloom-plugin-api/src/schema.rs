@@ -959,6 +959,14 @@ pub struct Contributions {
     pub tools: Vec<ToolSchema>,
     #[serde(default)]
     pub nodes: Vec<crate::generation::NodeSchema>,
+    #[serde(default)]
+    pub menus: Vec<crate::surfaces::MenuSchema>,
+    #[serde(default)]
+    pub shortcuts: Vec<crate::surfaces::ShortcutSchema>,
+    #[serde(default)]
+    pub overlays: Vec<crate::surfaces::OverlaySchema>,
+    #[serde(default)]
+    pub shaders: Vec<crate::rendering::ShaderSchema>,
 }
 
 /// A scene-view tool a package adds. A click casts the pointer's ray through
@@ -1178,6 +1186,10 @@ impl Contributions {
         self.panels.extend(other.panels);
         self.tools.extend(other.tools);
         self.nodes.extend(other.nodes);
+        self.menus.extend(other.menus);
+        self.shortcuts.extend(other.shortcuts);
+        self.overlays.extend(other.overlays);
+        self.shaders.extend(other.shaders);
         self.hooks.extend(other.hooks);
         self.importers.extend(other.importers);
         self.build_hooks.extend(other.build_hooks);
@@ -1240,6 +1252,13 @@ impl Contributions {
                 }
             }
         }
+        let mut shaders = BTreeSet::new();
+        for shader in &self.shaders {
+            shader.check_definition()?;
+            if !shaders.insert(shader.name.as_str()) {
+                return Err(format!("two shaders named {}", shader.name));
+            }
+        }
         let mut importers = BTreeSet::new();
         for importer in &self.importers {
             importer.check_definition()?;
@@ -1273,6 +1292,50 @@ impl Contributions {
             node.check_definition()?;
             if !nodes.insert(node.name.as_str()) {
                 return Err(format!("two nodes named {}", node.name));
+            }
+        }
+        let mut menus = BTreeSet::new();
+        for item in &self.menus {
+            item.check_definition()?;
+            if !menus.insert(item.name.as_str()) {
+                return Err(format!("two menu items named {}", item.name));
+            }
+            if self.command(&item.command).is_none() {
+                return Err(format!(
+                    "menu item {}: unknown command {}",
+                    item.name, item.command
+                ));
+            }
+        }
+        let mut shortcuts = BTreeSet::new();
+        let mut keys = BTreeSet::new();
+        for shortcut in &self.shortcuts {
+            shortcut.check_definition()?;
+            if !shortcuts.insert(shortcut.name.as_str()) {
+                return Err(format!("two shortcuts named {}", shortcut.name));
+            }
+            if self.command(&shortcut.command).is_none() {
+                return Err(format!(
+                    "shortcut {}: unknown command {}",
+                    shortcut.name, shortcut.command
+                ));
+            }
+        }
+        for keys_of in self
+            .shortcuts
+            .iter()
+            .filter_map(|s| s.normalized())
+            .chain(self.menus.iter().filter_map(|m| m.keys()))
+        {
+            if !keys.insert(keys_of.clone()) {
+                return Err(format!("{keys_of} is bound twice in this package"));
+            }
+        }
+        let mut overlays = BTreeSet::new();
+        for overlay in &self.overlays {
+            overlay.check_definition()?;
+            if !overlays.insert(overlay.name.as_str()) {
+                return Err(format!("two overlays named {}", overlay.name));
             }
         }
         let mut commands = BTreeSet::new();

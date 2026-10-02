@@ -87,11 +87,14 @@ pub struct LoadoutPlugin {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Loadout {
     pub plugins: Vec<LoadoutPlugin>,
+    /// Every plugin's shader modules, code or not.
+    #[serde(default)]
+    pub shaders: Vec<crate::rendering::LoadoutShader>,
 }
 
 impl Loadout {
     pub fn is_empty(&self) -> bool {
-        self.plugins.is_empty()
+        self.plugins.is_empty() && self.shaders.is_empty()
     }
 }
 
@@ -106,6 +109,12 @@ pub mod ops {
     pub const START: &str = "world.start";
     /// The run ended; the module stays loaded until the world is dropped.
     pub const STOP: &str = "world.stop";
+    /// A portable module is about to be replaced by a newer build: answer
+    /// `{"state": ...}` to hand what matters to the new one. Optional.
+    pub const SAVE: &str = "world.save";
+    /// The replacement's `world.start` has run: take back what `world.save`
+    /// answered, as `{"state": ...}`. Optional.
+    pub const RESTORE: &str = "world.restore";
     /// Prefix of a hook's op: a hook named `tick` is called as `hook.tick`
     /// with `{"stage", "hook", "tick", "dt"}`.
     pub const HOOK_PREFIX: &str = "hook.";

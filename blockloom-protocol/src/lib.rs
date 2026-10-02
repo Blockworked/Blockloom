@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 28;
+pub const PROTOCOL_VERSION: u32 = 29;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -296,6 +296,10 @@ pub enum RuntimeMessage {
         hits: Vec<serde_json::Value>,
         options: serde_json::Value,
     },
+    /// What the plugin modules the world hosts cost and report: per plugin its
+    /// call timings, counters, gauges and markers (`Diagnostics::snapshot`).
+    /// Sent about once a second while any are open and the figures changed.
+    PluginDiagnostics { snapshot: serde_json::Value },
     /// A plugin block ran. The editor owns the plugins, so it looks the block
     /// up and runs its command; `args` follow the block's slot order.
     PluginCall {
@@ -430,7 +434,23 @@ pub struct SceneView {
     pub tile_brush: blockloom_core::tilemap::TileBrush,
     /// The plugin tool `SceneTool::Plugin` clicks with.
     pub plugin_tool: Option<Box<PluginToolView>>,
+    /// The plugin overlays drawn over the scene.
+    pub plugin_overlays: Vec<PluginOverlayView>,
     pub tiles: TileDebug,
+}
+
+/// A plugin overlay that is on: the world asks the plugin's hosted module for
+/// `overlay.<overlay>` every `interval_ms` and draws what it answers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PluginOverlayView {
+    pub plugin: String,
+    pub overlay: String,
+    #[serde(default = "default_overlay_interval")]
+    pub interval_ms: u32,
+}
+
+fn default_overlay_interval() -> u32 {
+    250
 }
 
 /// The 2D level overlays in the scene view.
@@ -524,6 +544,7 @@ impl Default for SceneView {
             brush: Default::default(),
             tile_brush: Default::default(),
             plugin_tool: None,
+            plugin_overlays: Vec::new(),
             tiles: TileDebug::default(),
         }
     }

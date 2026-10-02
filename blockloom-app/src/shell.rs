@@ -2877,6 +2877,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[],
     },
     CommandSpec {
+        name: "plugin-diagnostics",
+        cmd: "plugin_diagnostics",
+        aliases: &[],
+        summary: "What plugin calls cost and report: per-op call counts and timings, counters, gauges, markers and recent errors, for the editor's modules and for the running world.",
+        args: &[],
+    },
+    CommandSpec {
         name: "plugin-commands",
         cmd: "plugin_commands",
         aliases: &[],
@@ -3185,6 +3192,39 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             ty: "folder path",
             required: true,
         }],
+    },
+    CommandSpec {
+        name: "plugin-new",
+        cmd: "plugin_new",
+        aliases: &[],
+        summary: "Author tool: write a starter package folder (template declarative, sealed and installable, or portable, a Rust crate with a test harness and build.sh).",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "folder path",
+                required: true,
+            },
+            ArgSpec {
+                name: "id",
+                ty: "id",
+                required: true,
+            },
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "template",
+                ty: "declarative | portable",
+                required: false,
+            },
+            ArgSpec {
+                name: "sdk",
+                ty: "folder path",
+                required: false,
+            },
+        ],
     },
     CommandSpec {
         name: "plugin-seal",

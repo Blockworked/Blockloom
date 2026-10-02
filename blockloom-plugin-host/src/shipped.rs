@@ -31,6 +31,7 @@ pub struct Shipped<'a> {
 /// ran without its plugin would be wrong rather than slow.
 pub fn shipped_loadout(plugins: &[Shipped], target: &str) -> Result<Loadout, Vec<String>> {
     let mut loaded = Vec::new();
+    let mut shaders = Vec::new();
     let mut errors = Vec::new();
     for shipped in plugins {
         let package = match Package::load_shipped(shipped.dir, shipped.files, shipped.hash) {
@@ -40,6 +41,10 @@ pub fn shipped_loadout(plugins: &[Shipped], target: &str) -> Result<Loadout, Vec
                 continue;
             }
         };
+        match package.shader_modules() {
+            Ok(modules) => shaders.extend(modules),
+            Err(e) => errors.push(e),
+        }
         if package.manifest.tier == Tier::Declarative {
             continue;
         }
@@ -49,7 +54,10 @@ pub fn shipped_loadout(plugins: &[Shipped], target: &str) -> Result<Loadout, Vec
         }
     }
     if errors.is_empty() {
-        Ok(Loadout { plugins: loaded })
+        Ok(Loadout {
+            plugins: loaded,
+            shaders,
+        })
     } else {
         Err(errors)
     }

@@ -551,3 +551,49 @@ the remaining proof.
   browser here.
 - Not run here: QML tests and the runtime's own tests (no Qt, no linkable
   Bevy); the plugin api, host, voxel and app tests pass.
+
+## Services, surfaces, rendering and the authoring kit (twenty-second batch)
+
+- One `HostServices` hub answers every module's `host.call` in the editor and
+  in the world. A provider chain lets the world add `physics.*`/`nav.*`
+  without the host knowing about Bevy, and the capability gate stays where the
+  call enters (`native.rs`), so a service is open or closed the same for
+  native, portable and isolated modules.
+- Storage is two namespaced stores with atomic multi-key commits and hard
+  limits. Saves are separate from project blobs because a built game's
+  project data is read-only while saves are written during play. Web saves are
+  memory only: localStorage persistence is not done.
+- Jobs run in slices inside a per-frame budget and carry their state through
+  the answer, so a plugin never needs a thread and a runaway job costs one
+  slice. Generation graphs are data checked before they run; the cache is
+  keyed by node, parameters and inputs so a parameter edit recomputes only the
+  downstream nodes. `graph.evaluate` is a host job, not a module op.
+- Surfaces are commands with fixed arguments (menus, shortcuts) or a
+  read-only op (overlays), so none of them can change a project outside a
+  validated, undoable command. Conflicts block a run only when the pair truly
+  cannot work together (declared, shared service, impossible hook order); key
+  clashes are reported but never block.
+- Rendering stays in effects: instances reuse one mesh's buffers and the
+  material so Bevy batches them, and a shader module is only importable by
+  surface shaders, never a replacement for a Blockloom module. Plugin-owned
+  compute passes are deliberately not offered: a plugin dispatching GPU work
+  has no budget, ordering or memory limit the host can enforce.
+- Live reload is `world.save`/`world.restore` for portable modules only. A
+  native library cannot be unloaded safely while its code may be on a stack,
+  so a native change says a restart is needed.
+- Isolation is opt-in (`BLOCKLOOM_PLUGIN_ISOLATION`). The worker owns the
+  library; host services run in the host, so the capability gate cannot be
+  bypassed from the worker. A call past its wall-clock limit kills the worker
+  and the module is reloaded on the next call. The cost is a frame per call
+  over a pipe, which is why it is not the default. The worker binary must
+  ship beside the editor; nothing packages it yet.
+- Kit: the scaffold's portable source is the SDK's own tested template, so
+  what `plugin-new` writes compiles. A portable scaffold cannot be sealed
+  until its wasm exists, so `build.sh` seals. The harness reuses the host's
+  loader, so a plugin's tests see the same errors and statuses as a run, but
+  there is no world: effects come back in the answer.
+- Verified here: plugin api, host (including the isolation test with a real
+  child process), SDK harness and scaffold, app and runtime plugin tests,
+  wasm32 and aarch64-linux-android checks of the host. Not run here: QML
+  (menus, shortcuts, overlays, manager rows), the GPU half of instancing and
+  shader modules, and the Android runtime.

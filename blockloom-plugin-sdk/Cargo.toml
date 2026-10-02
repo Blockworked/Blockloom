@@ -4,10 +4,23 @@ version.workspace = true
 edition.workspace = true
 description = "Write a Blockloom plugin once; build it as a native library or a WebAssembly module."
 
+[features]
+# `Harness`: runs a plugin in-process through the host's real native loader.
+testing = ["dep:blockloom-plugin-host"]
+
 [dependencies]
 blockloom-plugin-api = { path = "../blockloom-plugin-api" }
+blockloom-plugin-host = { path = "../blockloom-plugin-host", optional = true }
 serde_json.workspace = true
 
 [dev-dependencies]
 blockloom-plugin-host = { path = "../blockloom-plugin-host" }
 serde_json.workspace = true
+
+[[test]]
+name = "harness"
+required-features = ["testing"]
+
+[[test]]
+name = "scaffold"
+required-features = ["testing"]

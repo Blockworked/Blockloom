@@ -734,6 +734,81 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   ship plugins in the APK's assets (the same `game/plugins/<id>/` layout) and
   `android.rs` points the host's file reader at the APK. Compile-checked for
   `aarch64-linux-android`; never run on a device.
+- **Host services** (`blockloom-plugin-host/src/services.rs`): a module's
+  `host.call` reaches one `HostServices` hub, named `area.verb`: `host.version`,
+  `rng.*` (hashes of `{seed, index}`, so a replay matches), `storage.*` and
+  `save.*` (need `project-storage`), `diag.*`, `jobs.*`, and whatever a
+  `ServiceProvider` chained on adds (the world's `physics.*` and `nav.*`,
+  `blockloom-runtime/src/plugin_services.rs`, answered from the published
+  sensor snapshot and the nav bake). The editor and the world each build one
+  hub; the capability gate stays in `native.rs`.
+- **Storage** (`storage.rs`): two stores namespaced by plugin id, project
+  blobs (`.blockloom/plugin-data`, read-only in a built game) and player saves
+  (per project, written while a game plays). `BlobStore` is a flat key space
+  with atomic multi-key `commit`; `DiskStore` writes through a temp file and a
+  rename, `MemoryStore` serves tests. Content blobs live under
+  `blobs/<sha256>` (`put`/`get`) and every write is held to `StoreLimits`
+  (16 MiB a blob, 256 MiB and 4096 keys a plugin). Web builds keep saves in
+  memory only so far.
+- **Jobs and generation** (`jobs.rs`, `generation.rs`): `jobs.start` runs
+  `job.<name>` in slices under a per-frame budget (`WorldPlugins::run_jobs`),
+  highest priority first. A slice answers `{progress, state}`, `{done,
+  result}` or `{error}`; `state` comes back next slice, cancel calls the op
+  once with `cancel: true`, and a job's `event` is raised when it ends. A
+  package's `nodes` are typed graph nodes (`blockloom-plugin-api/src/
+  generation.rs`, `GraphDef::plan` checks types, one source per input and
+  cycles); the `graph.evaluate` job evaluates one node per slice through a
+  tile cache (`GraphCache`) with per-node margins, so an edit recomputes only
+  what it feeds.
+- **Diagnostics** (`diagnostics.rs`): `diag.count|gauge|time|marker` plus the
+  host's own call counts, timings, errors and faults per plugin.
+  `plugins::report` sends them from the world about every fifth status report
+  (`RuntimeMessage::PluginDiagnostics`, and `plugin/*` render metrics for the
+  profiler); `StateDto.plugin_diagnostics`, `plugin-diagnostics` in the shell
+  and the Plugin Manager's rows read them.
+- **Editor surfaces** (`blockloom-plugin-api/src/surfaces.rs`): a package's
+  `menus`, `shortcuts` and `overlays`. A menu item or shortcut runs one of
+  the package's commands with fixed arguments (so it is that command's
+  validated, undoable action): the top bar's plugin menus and `Main.qml`'s
+  `Instantiator` of `Shortcut`s call `plugin_call`. An overlay is a scene-view
+  toggle that asks the hosted preview module for `overlay.<name>` and draws
+  the answered `Shape`s as gizmos (`SceneView::plugin_overlays`,
+  `PROTOCOL_VERSION` 26); overlays only look. `surfaces_json` in
+  `commands/plugins.rs` builds the snapshot. `conflicts` in a manifest, two
+  packages providing one service and hook orders that cannot be met are
+  `ActivePlugins::conflicts()`; a blocking one stops Play and Build and is
+  listed by `plugin-check` and the manager.
+- **Rendering service** (`blockloom-plugin-api/src/rendering.rs`): an
+  `instances` effect draws many copies of one of the plugin's meshes (position,
+  yaw, scale each) as entities sharing the mesh's buffers and material, which
+  Bevy batches (`plugin_meshes.rs`, `PluginInstance`); a mesh may be a
+  `convex_hull` or `aabb` collider as well as a trimesh. A package's `shaders`
+  are `.wesl` files registered as `blockloom::plugin_<id>_<name>`
+  (`rendering::module_name`): core's `shader_lib` keeps a global extra-module
+  registry (`set_extra`, so the editor's surface check can link them and a
+  plugin cannot replace a built-in module) and the runtime's
+  `passes::sync_plugin_shaders` adds each as a Shader asset when the loadout's
+  shaders change. Compute kernels a plugin dispatches itself are not offered.
+- **Reload and isolation**: a changed loadout reaches the running world as
+  `WorldPlugins::reload`: a portable module answers `world.save`, is replaced
+  and gets `world.restore`; a native change needs the run restarted
+  (`ReloadReport::restart_needed`). With `BLOCKLOOM_PLUGIN_ISOLATION=process`
+  a native library is loaded by the `blockloom-plugin-worker` binary beside
+  the editor (`BLOCKLOOM_PLUGIN_WORKER` names another; `all` hosts portable
+  modules there too): `isolated.rs` speaks length-prefixed JSON frames over its
+  stdin/stdout, host services stay in the host and cross the pipe, and a call
+  past its wall-clock limit or a worker that dies stops the module, not the
+  game. The worker has to ship beside the editor to be usable.
+- **Authoring kit**: `plugin-new path=... id=... template=declarative|portable`
+  (`blockloom-app/src/scaffold.rs`) writes a starter package: a declarative
+  one is sealed at once, a portable one is a crate (`src/lib.rs` is
+  `blockloom-plugin-sdk/templates/lib.rs`, which the SDK's `tests/scaffold.rs`
+  compiles and runs), schemas, `build.sh` (wasm build plus `plugin-seal`) and
+  a CI workflow. The SDK's `testing` feature adds `Harness` and `harness!(T)`
+  (`harness!(T, [Capability::ProjectStorage])`): the plugin runs in-process
+  through the host's loader with memory stores. `docs/plugin-api.md` is the
+  author guide. CI runs `cargo test -p blockloom-plugin-sdk --features testing`
+  and the host with `test-fixtures` (the isolation test).
 - **Not yet**: a faster browser host (the page's own WebAssembly instead of wasmi
   in wasm; it needs a fuel substitute, since a browser instance has no budget to
   stop a runaway call), a headless browser proof and native editor modules.

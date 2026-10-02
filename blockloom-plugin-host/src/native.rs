@@ -364,6 +364,7 @@ unsafe extern "C" fn call(_h: u64, op: Slice, input: Slice, out: *mut Buffer) ->
                 }
                 code
             },
+            "spin" => loop { std::hint::spin_loop(); },
             "panic" => panic!("boom"),
             _ => 3,
         }

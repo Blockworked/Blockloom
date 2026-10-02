@@ -12,6 +12,7 @@
 //! - [`mesh`] is a mesh a plugin submits for the world to draw.
 //! - [`assets`] is what an importer or a build hook is asked and answers.
 //! - [`generation`] is typed graph nodes a plugin offers and the graphs built from them.
+//! - [`surfaces`] is menu items, shortcuts and scene-view overlays.
 //! - [`data`] is where a plugin's project data lives and how a build lists it.
 //! - [`wasm`] is the same contract over a WebAssembly module's linear memory.
 //!
@@ -28,7 +29,9 @@ pub mod loadout;
 pub mod manifest;
 pub mod mesh;
 pub mod record;
+pub mod rendering;
 pub mod schema;
+pub mod surfaces;
 pub mod wasm;
 
 pub use semver::{self, Version, VersionReq};

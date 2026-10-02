@@ -27,6 +27,7 @@ use blockloom_core::value::{Evaluated, evaluated_from_json, json_of};
 use blockloom_core::vm::Event;
 use blockloom_plugin_api::loadout::Loadout;
 use blockloom_plugin_api::mesh::MeshData;
+use blockloom_plugin_api::rendering::InstanceData;
 use blockloom_plugin_api::schema::Stage;
 #[cfg(feature = "plugins")]
 use blockloom_protocol::RuntimeMessage;
@@ -53,6 +54,15 @@ pub enum MeshOp {
         plugin: String,
         name: String,
     },
+    /// Draws copies of a mesh the plugin already submitted.
+    Instances {
+        plugin: String,
+        set: InstanceData,
+    },
+    RemoveInstances {
+        plugin: String,
+        name: String,
+    },
     /// The run ended: every plugin's meshes go.
     Clear,
 }
@@ -65,6 +75,14 @@ pub struct PluginHost {
     /// How many times a preview module has been started, so what was cast
     /// against an older one can be told from what is in the scene now.
     pub previews: u64,
+    /// A plugin changed the ground; the next navigation sync bakes again.
+    pub nav_dirty: std::cell::Cell<bool>,
+    /// Bumped when the plugins' shader modules change, so they are registered again.
+    pub shaders_serial: u64,
+    /// Status reports since the plugin diagnostics last went to the editor.
+    reports: u32,
+    /// The diagnostics the editor last heard, so an unchanged set is not resent.
+    reported: String,
     /// What the open modules cost and report; kept across a preview and a run.
     #[cfg(feature = "plugins")]
     pub diagnostics: Arc<blockloom_plugin_host::diagnostics::Diagnostics>,
@@ -112,6 +130,15 @@ enum Applied {
         plugin: String,
         name: String,
     },
+    NavDirty,
+    Instances {
+        plugin: String,
+        set: InstanceData,
+    },
+    RemoveInstances {
+        plugin: String,
+        name: String,
+    },
 }
 
 #[cfg(feature = "plugins")]
@@ -141,6 +168,9 @@ fn applied(outcomes: Vec<Outcome>) -> Vec<Applied> {
                 },
                 Effect::Mesh(mesh) => Applied::Mesh { plugin, mesh },
                 Effect::RemoveMesh { name } => Applied::RemoveMesh { plugin, name },
+                Effect::NavDirty { .. } => Applied::NavDirty,
+                Effect::Instances(set) => Applied::Instances { plugin, set },
+                Effect::RemoveInstances { name } => Applied::RemoveInstances { plugin, name },
             },
         })
         .collect()
@@ -170,7 +200,10 @@ fn apply(engine: &mut Engine, outcomes: Vec<Applied>) {
                 args,
                 actor,
             }),
-            Applied::Mesh { .. } | Applied::RemoveMesh { .. }
+            Applied::Mesh { .. }
+            | Applied::RemoveMesh { .. }
+            | Applied::Instances { .. }
+            | Applied::RemoveInstances { .. }
                 if !engine.project.active_scene().world.mode.is_3d() =>
             {
                 bridge::send(&RuntimeMessage::Error {
@@ -184,6 +217,15 @@ fn apply(engine: &mut Engine, outcomes: Vec<Applied>) {
             Applied::RemoveMesh { plugin, name } => {
                 engine.plugins.meshes.push(MeshOp::Remove { plugin, name })
             }
+            Applied::Instances { plugin, set } => engine
+                .plugins
+                .meshes
+                .push(MeshOp::Instances { plugin, set }),
+            Applied::RemoveInstances { plugin, name } => engine
+                .plugins
+                .meshes
+                .push(MeshOp::RemoveInstances { plugin, name }),
+            Applied::NavDirty => engine.plugins.nav_dirty.set(true),
         }
     }
 }
@@ -280,6 +322,14 @@ pub fn shipped_loadout(
     }
 }
 
+/// Publishes the navigation mesh for plugin queries (`nav.*` services).
+pub fn publish_nav(nav: &crate::world::NavMesh) {
+    #[cfg(feature = "plugins")]
+    crate::plugin_services::publish_nav(nav);
+    #[cfg(not(feature = "plugins"))]
+    let _ = nav;
+}
+
 /// The services every module of this world is opened with: its project's
 /// data, the player's saves and the run's diagnostics.
 #[cfg(feature = "plugins")]
@@ -287,7 +337,8 @@ fn host_services(engine: &Engine) -> blockloom_plugin_host::services::HostServic
     use blockloom_plugin_api::data::DATA_DIR;
     use blockloom_plugin_host::storage::{BlobStore, DiskStore, PackStore};
     let mut host = blockloom_plugin_host::services::HostServices::new(env!("CARGO_PKG_VERSION"))
-        .with_diagnostics(engine.plugins.diagnostics.clone());
+        .with_diagnostics(engine.plugins.diagnostics.clone())
+        .with_provider(Arc::new(crate::plugin_services::WorldQueries));
     if let Some(dir) = engine.project_dir.as_deref() {
         let data = dir.join(DATA_DIR);
         // A built game's folder carries a pack; its data is shipped and fixed.
@@ -343,6 +394,64 @@ fn install(engine: &mut Engine, mut world: WorldPlugins) {
     apply(engine, applied(started));
 }
 
+/// The editor sent a different loadout while a game runs: replace what
+/// changed (see `WorldPlugins::reload`) and say what happened. `old` is the
+/// loadout the run was started with, or last reloaded to.
+pub fn reload(engine: &mut Engine, old: &Loadout) {
+    #[cfg(feature = "plugins")]
+    {
+        let Some(world) = engine.plugins.world.clone() else {
+            return;
+        };
+        if !engine.running || old.plugins == engine.plugins.loadout.plugins {
+            return;
+        }
+        let records = |plugin: &str| records_for(engine, plugin, false);
+        let (outcomes, report) = {
+            let Ok(mut world) = world.try_borrow_mut() else {
+                return;
+            };
+            world.reload(old, &engine.plugins.loadout, &records)
+        };
+        apply(engine, applied(outcomes));
+        let mut lines = Vec::new();
+        for id in &report.reloaded {
+            let kept = if report.kept_state.contains(id) {
+                ", keeping its state"
+            } else {
+                ""
+            };
+            lines.push(format!("[plugins] reloaded {id}{kept}"));
+        }
+        lines.extend(
+            report
+                .added
+                .iter()
+                .map(|id| format!("[plugins] started {id}")),
+        );
+        lines.extend(
+            report
+                .removed
+                .iter()
+                .map(|id| format!("[plugins] stopped {id}")),
+        );
+        for text in lines {
+            bridge::send(&RuntimeMessage::Say {
+                actor: String::new(),
+                text,
+            });
+        }
+        for (id, why) in report.restart_needed {
+            bridge::send(&RuntimeMessage::Error {
+                actor: String::new(),
+                message: format!("{id} changed: {why}"),
+            });
+        }
+    }
+    #[cfg(not(feature = "plugins"))]
+    let _ = (engine, old);
+}
+
 /// Hosts the plugins that draw a preview while nothing plays, so their meshes
 /// show in the scene view. Called whenever the world is loaded, the loadout
 /// changes or a run ends; the modules are kept while what they were started
@@ -375,6 +484,7 @@ fn preview_with(engine: &mut Engine, open: impl FnOnce(&Loadout) -> WorldPlugins
                 .filter(|p| p.preview)
                 .cloned()
                 .collect(),
+            shaders: Vec::new(),
         };
         if wanted.is_empty() || !engine.project.active_scene().world.mode.is_3d() {
             if engine.plugins.previewing.is_some() {
@@ -518,6 +628,61 @@ pub fn tool_cast(
     {
         let _ = (engine, tool, ray, report);
         None
+    }
+}
+
+/// What a plugin overlay draws right now: the hosted module's answer to
+/// `overlay.<name>`, which only looks at the world. No module hosted is an
+/// empty overlay.
+pub fn overlay_shapes(
+    engine: &mut Engine,
+    view: &blockloom_protocol::PluginOverlayView,
+    selected: Option<&str>,
+    camera: [f32; 3],
+) -> Result<Vec<blockloom_plugin_api::surfaces::Shape>, String> {
+    #[cfg(feature = "plugins")]
+    {
+        let Some(world) = engine.plugins.world.clone() else {
+            return Ok(Vec::new());
+        };
+        let input = json!({"selected": selected, "camera": camera});
+        let op = format!("overlay.{}", view.overlay);
+        let answer = world.borrow_mut().query(&view.plugin, &op, &input)?;
+        blockloom_plugin_api::surfaces::parse_shapes(&answer)
+            .map_err(|e| format!("{}/{}: {e}", view.plugin, view.overlay))
+    }
+    #[cfg(not(feature = "plugins"))]
+    {
+        let _ = (engine, view, selected, camera);
+        Ok(Vec::new())
+    }
+}
+
+/// Called with each status report: the plugins' own readings for the
+/// profiler, and about once a second the whole diagnostics to the editor when
+/// they changed.
+pub fn report(engine: &mut Engine) -> Vec<(String, f64)> {
+    #[cfg(feature = "plugins")]
+    {
+        if !engine.plugins.active() {
+            return Vec::new();
+        }
+        engine.plugins.reports += 1;
+        if engine.plugins.reports >= 5 {
+            engine.plugins.reports = 0;
+            let snapshot = engine.plugins.diagnostics.snapshot();
+            let text = snapshot.to_string();
+            if text != engine.plugins.reported {
+                engine.plugins.reported = text;
+                bridge::send(&RuntimeMessage::PluginDiagnostics { snapshot });
+            }
+        }
+        engine.plugins.diagnostics.metrics()
+    }
+    #[cfg(not(feature = "plugins"))]
+    {
+        let _ = engine;
+        Vec::new()
     }
 }
 

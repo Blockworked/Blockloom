@@ -29,10 +29,11 @@ use crate::jobs::JobTable;
 use crate::module::{CodeModule, is_unsupported};
 use crate::services::HostServices;
 use blockloom_plugin_api::generation::NodeSchema;
-use blockloom_plugin_api::loadout::{Loadout, LoadoutBlock, ops};
+use blockloom_plugin_api::loadout::{CodeRuntime, Loadout, LoadoutBlock, LoadoutPlugin, ops};
 use blockloom_plugin_api::mesh::MeshData;
+use blockloom_plugin_api::rendering::InstanceData;
 use blockloom_plugin_api::schema::{FieldSchema, FieldType, HookSchema, Stage};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -62,6 +63,19 @@ pub enum Effect {
     Mesh(MeshData),
     /// Takes the plugin's mesh of that name out of the world.
     RemoveMesh { name: String },
+    /// Draws many copies of one of the plugin's meshes in one batch,
+    /// replacing the plugin's set of the same name.
+    Instances(InstanceData),
+    /// Takes the plugin's instance set of that name out of the world.
+    RemoveInstances { name: String },
+    /// The ground changed: the navigation mesh is baked again. `min` and
+    /// `max` say where, for the run log; the bake covers the whole level.
+    NavDirty {
+        #[serde(default)]
+        min: Option<[f32; 3]>,
+        #[serde(default)]
+        max: Option<[f32; 3]>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,6 +120,32 @@ pub struct WorldPlugins {
     nodes: BTreeMap<String, Vec<NodeSchema>>,
     graph_runs: BTreeMap<u64, GraphRun>,
     graph_cache: GraphCache,
+    /// What the modules were opened with, so a reloaded one gets the same.
+    services: Option<HostServices>,
+}
+
+/// What a mid-run change of loadout did.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ReloadReport {
+    /// Portable modules replaced by a newer build.
+    pub reloaded: Vec<String>,
+    /// Plugins that were not hosted and now are.
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    /// Changed plugins that keep running their old code until the run is
+    /// restarted, and why.
+    pub restart_needed: Vec<(String, String)>,
+    /// Reloaded plugins that carried state across with `world.save`.
+    pub kept_state: Vec<String>,
+}
+
+impl ReloadReport {
+    pub fn is_empty(&self) -> bool {
+        self.reloaded.is_empty()
+            && self.added.is_empty()
+            && self.removed.is_empty()
+            && self.restart_needed.is_empty()
+    }
 }
 
 /// The job name a plugin starts to evaluate a node graph: `jobs.start` with
@@ -128,6 +168,7 @@ impl WorldPlugins {
         let mut world = WorldPlugins {
             diagnostics: host.diagnostics.clone(),
             jobs: host.jobs.clone(),
+            services: Some(host.clone()),
             ..WorldPlugins::default()
         };
         let mut hooks = Vec::new();
@@ -384,6 +425,118 @@ impl WorldPlugins {
             out.extend(self.call(&id, ops::START, &input, true));
         }
         out
+    }
+
+    /// Brings the hosted modules in line with a loadout that changed during a
+    /// run. A plugin that is new is opened and started; one that is gone is
+    /// stopped; a portable one whose code changed is replaced - `world.save`
+    /// first, then `world.start` and `world.restore` on the new module, its
+    /// jobs cancelled. A native library cannot be swapped under a running
+    /// game, so a change to one is reported and the old code runs on.
+    /// `records` is what `start` takes.
+    pub fn reload(
+        &mut self,
+        old: &Loadout,
+        new: &Loadout,
+        records: &dyn Fn(&str) -> Value,
+    ) -> (Vec<Outcome>, ReloadReport) {
+        let host = self
+            .services
+            .clone()
+            .unwrap_or_else(|| HostServices::new(""));
+        let mut out = self.drain();
+        let mut report = ReloadReport::default();
+        let old_by: BTreeMap<&str, &LoadoutPlugin> =
+            old.plugins.iter().map(|p| (p.id.as_str(), p)).collect();
+        let new_ids: BTreeSet<&str> = new.plugins.iter().map(|p| p.id.as_str()).collect();
+        for id in old_by.keys() {
+            if !new_ids.contains(id) && self.modules.contains_key(*id) {
+                out.extend(self.call(id, ops::STOP, &json!({}), true));
+                self.cancel_jobs(id);
+                self.modules.remove(*id);
+                self.nodes.remove(*id);
+                report.removed.push(id.to_string());
+            }
+        }
+        let is_native = |p: &LoadoutPlugin| matches!(p.runtime, CodeRuntime::Native(_));
+        let mut effective: Vec<&LoadoutPlugin> = Vec::new();
+        for plugin in &new.plugins {
+            let id = plugin.id.as_str();
+            let hosted = self.modules.contains_key(id);
+            let prev = old_by.get(id).copied();
+            if prev == Some(plugin) {
+                effective.push(plugin);
+                continue;
+            }
+            if let Some(prev) = prev
+                && hosted
+                && (is_native(prev) || is_native(plugin))
+            {
+                let reason = if is_native(prev) {
+                    "a native library stays loaded for the whole run"
+                } else {
+                    "a native library is not loaded into a run in progress"
+                };
+                report
+                    .restart_needed
+                    .push((id.to_string(), format!("{reason}; restart the run")));
+                effective.push(prev);
+                continue;
+            }
+            let mut saved = None;
+            if hosted {
+                let (o, answer, _) = self.call_answer(id, ops::SAVE, &json!({}), true, true);
+                out.extend(o);
+                saved = answer
+                    .and_then(|a| a.get("state").cloned())
+                    .filter(|state| !state.is_null());
+                out.extend(self.call(id, ops::STOP, &json!({}), true));
+                self.cancel_jobs(id);
+                self.modules.remove(id);
+            }
+            match CodeModule::load_with(&plugin.runtime, id, &host) {
+                Ok(module) => {
+                    self.insert(id.to_string(), module, &plugin.blocks);
+                    self.nodes.remove(id);
+                    self.set_nodes(id, plugin.nodes.clone());
+                    let mut input = records(id);
+                    if let Some(object) = input.as_object_mut() {
+                        object.insert("plugin".to_string(), json!(id));
+                    }
+                    out.extend(self.call(id, ops::START, &input, true));
+                    if let Some(state) = saved {
+                        let (o, _, missing) = self.call_answer(
+                            id,
+                            ops::RESTORE,
+                            &json!({"state": state}),
+                            true,
+                            true,
+                        );
+                        out.extend(o);
+                        if !missing {
+                            report.kept_state.push(id.to_string());
+                        }
+                    }
+                    if hosted {
+                        report.reloaded.push(id.to_string());
+                    } else {
+                        report.added.push(id.to_string());
+                    }
+                    effective.push(plugin);
+                }
+                Err(message) => self.error(id, format!("could not reload: {message}")),
+            }
+        }
+        let hooks = effective
+            .iter()
+            .filter(|p| self.modules.contains_key(&p.id))
+            .flat_map(|p| p.hooks.iter().map(move |h| (p.id.as_str(), h)));
+        match order_hooks(hooks) {
+            Ok(order) => self.order = order,
+            Err(message) => self.error("", format!("hook order: {message}")),
+        }
+        out.extend(self.drain());
+        (out, report)
     }
 
     /// The run ended. Modules stay loaded; dropping `self` unloads them.
@@ -701,6 +854,10 @@ fn effects_of(plugin: &str, op: &str, answer: &Value) -> Vec<Outcome> {
                 Ok(Effect::Mesh(mesh)) if mesh.check().is_err() => Outcome::Error {
                     plugin: plugin.to_string(),
                     message: format!("{op}: {}", mesh.check().unwrap_err()),
+                },
+                Ok(Effect::Instances(set)) if set.check().is_err() => Outcome::Error {
+                    plugin: plugin.to_string(),
+                    message: format!("{op}: {}", set.check().unwrap_err()),
                 },
                 Ok(effect) => Outcome::Effect {
                     plugin: plugin.to_string(),
@@ -1246,6 +1403,51 @@ mod tests {
         let echoed = world.run_block("com.example.code", "echo_block", &[json!("hi")], "a1");
         assert!(echoed.is_empty(), "{echoed:?}");
         let _ = &rig.dir;
+    }
+
+    #[test]
+    fn a_changed_portable_plugin_is_replaced_and_a_native_one_is_not() {
+        let rig = rig();
+        let records = |_: &str| json!({"records": [], "resources": []});
+        let mut world = WorldPlugins::load(&rig.loadout, "0.0.1");
+
+        // The same loadout changes nothing.
+        let (out, report) = world.reload(&rig.loadout, &rig.loadout, &records);
+        assert!(out.is_empty() && report.is_empty(), "{out:?} {report:?}");
+
+        // A new build of a portable module replaces it.
+        let mut newer = rig.loadout.clone();
+        if let CodeRuntime::Portable(library) = &mut newer.plugins[0].runtime {
+            library.hash = "newer".to_string();
+        }
+        let (_, report) = world.reload(&rig.loadout, &newer, &records);
+        assert_eq!(report.reloaded, ["com.example.code"]);
+        assert!(report.kept_state.is_empty());
+        assert_eq!(world.plugins().collect::<Vec<_>>(), ["com.example.code"]);
+
+        // A native library is never swapped in a running game.
+        let mut native = newer.clone();
+        native.plugins[0].runtime =
+            CodeRuntime::Native(blockloom_plugin_api::loadout::NativeLibrary {
+                path: rig.dir.path().join("lib.so"),
+                hash: "n".to_string(),
+                capabilities: BTreeSet::new(),
+            });
+        let (_, report) = world.reload(&newer, &native, &records);
+        assert!(report.reloaded.is_empty());
+        assert_eq!(report.restart_needed.len(), 1);
+        assert!(report.restart_needed[0].1.contains("restart the run"));
+        assert_eq!(world.plugins().count(), 1);
+
+        // A plugin that goes is stopped and dropped.
+        let (_, report) = world.reload(&newer, &Loadout::default(), &records);
+        assert_eq!(report.removed, ["com.example.code"]);
+        assert!(world.is_empty());
+
+        // And one that comes is opened and started.
+        let (_, report) = world.reload(&Loadout::default(), &rig.loadout, &records);
+        assert_eq!(report.added, ["com.example.code"]);
+        assert_eq!(world.plugins().count(), 1);
     }
 
     #[test]

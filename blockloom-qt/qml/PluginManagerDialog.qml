@@ -14,6 +14,7 @@ BwDialog {
     property var listing: null
     property var check: null
     property var commands: []
+    property var diagnostics: null
     property var inspected: null
     property string message: ""
     property string error: ""
@@ -33,6 +34,30 @@ BwDialog {
         app.invoke("plugin_list", {}, result => root.listing = result, e => root.error = String(e));
         app.invoke("plugin_check", {}, result => root.check = result, e => root.error = String(e));
         app.invoke("plugin_commands", {}, result => root.commands = result.commands || [], e => root.error = String(e));
+        refreshDiagnostics();
+    }
+    function refreshDiagnostics() {
+        app.invoke("plugin_diagnostics", {}, result => root.diagnostics = result, e => root.error = String(e));
+    }
+    // One line per plugin and side ("editor" or "game"): total call time, errors, slowest op.
+    readonly property var diagnosticRows: {
+        const rows = [];
+        if (!diagnostics) return rows;
+        [["editor", diagnostics.editor], ["game", diagnostics.runtime]].forEach(side => {
+            const plugins = side[1] && side[1].plugins ? side[1].plugins : {};
+            Object.keys(plugins).forEach(id => {
+                const p = plugins[id];
+                const ops = Object.keys(p.calls || {}).map(k => ({ op: k, max: p.calls[k].maxMs, count: p.calls[k].count })).sort((a, b) => b.max - a.max);
+                const counters = Object.keys(p.counters || {}).map(k => k + " " + p.counters[k]).join(", ");
+                rows.push({
+                    key: side[0] + "/" + id,
+                    text: id + " (" + side[0] + "): " + Number(p.totalMs).toFixed(1) + " ms in calls, " + p.errors + " error(s)"
+                        + (ops.length > 0 ? ", slowest " + ops[0].op + " " + Number(ops[0].max).toFixed(2) + " ms over " + ops[0].count + " call(s)" : "")
+                        + (counters ? "; " + counters : "")
+                });
+            });
+        });
+        return rows;
     }
 
     function changeText(change) {
@@ -209,6 +234,19 @@ BwDialog {
                 }
             }
             Text {
+                visible: !!root.check && !!root.check.conflicts && root.check.conflicts.length > 0
+                text: "Plugins that clash"; color: Theme.text; font.pixelSize: 14; font.weight: Font.Bold; Layout.topMargin: 6
+            }
+            Repeater {
+                model: root.check && root.check.conflicts ? root.check.conflicts : []
+                delegate: Text {
+                    required property var modelData
+                    Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 12
+                    color: modelData.blocks_run ? Theme.warning : Theme.textDim
+                    text: modelData.message
+                }
+            }
+            Text {
                 visible: !!root.check && !root.check.canRun
                 Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.warning; font.pixelSize: 12
                 text: "Play and Build are stopped until these are fixed. The data is kept: reinstalling the plugin brings it back."
@@ -253,6 +291,25 @@ BwDialog {
                         }
                     }
                 }
+            }
+
+            Text {
+                visible: root.diagnosticRows.length > 0
+                text: "Diagnostics"; color: Theme.text; font.pixelSize: 14; font.weight: Font.Bold; Layout.topMargin: 6
+            }
+            Repeater {
+                model: root.diagnosticRows
+                delegate: Text {
+                    required property var modelData
+                    objectName: "diagnostic-" + modelData.key
+                    Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.text; font.pixelSize: 12
+                    text: modelData.text
+                }
+            }
+            BwButton {
+                visible: root.diagnosticRows.length > 0
+                text: "Refresh"; flat: true
+                onClicked: root.refreshDiagnostics()
             }
 
             Text { text: "Install"; color: Theme.text; font.pixelSize: 14; font.weight: Font.Bold; Layout.topMargin: 6 }

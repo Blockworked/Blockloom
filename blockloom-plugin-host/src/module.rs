@@ -10,6 +10,9 @@ use serde_json::Value;
 pub enum CodeModule {
     Native(NativeModule),
     Portable(Box<PortableModule>),
+    /// Hosted by a worker process (see [`crate::isolated`]).
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    Isolated(Box<crate::isolated::IsolatedModule>),
 }
 
 impl CodeModule {
@@ -24,11 +27,36 @@ impl CodeModule {
         plugin: &str,
         host: &HostServices,
     ) -> Result<CodeModule, String> {
-        Self::open(runtime, host.for_plugin(plugin))
+        Self::open_named(runtime, plugin, host.for_plugin(plugin))
     }
 
-    /// Opens the module with exactly these services.
+    /// Opens the module with exactly these services, in a worker process when
+    /// isolation is on for it and in this one otherwise.
     pub fn open(runtime: &CodeRuntime, services: Box<ServiceFn>) -> Result<CodeModule, String> {
+        Self::open_named(runtime, "", services)
+    }
+
+    /// [`CodeModule::open`], naming the plugin in what a worker reports.
+    pub fn open_named(
+        runtime: &CodeRuntime,
+        plugin: &str,
+        services: Box<ServiceFn>,
+    ) -> Result<CodeModule, String> {
+        #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+        if crate::isolated::wants_isolation(runtime) {
+            return crate::isolated::IsolatedModule::open(runtime, plugin, services)
+                .map(|m| CodeModule::Isolated(Box::new(m)));
+        }
+        #[cfg(any(target_arch = "wasm32", target_os = "android"))]
+        let _ = plugin;
+        Self::open_in_process(runtime, services)
+    }
+
+    /// Opens the module in this process, whatever the isolation mode.
+    pub fn open_in_process(
+        runtime: &CodeRuntime,
+        services: Box<ServiceFn>,
+    ) -> Result<CodeModule, String> {
         match runtime {
             CodeRuntime::Native(library) => {
                 NativeModule::load(&library.path, library.capabilities.clone(), services)
@@ -54,6 +82,8 @@ impl CodeModule {
         match self {
             CodeModule::Native(m) => m.call_json(op, input),
             CodeModule::Portable(m) => m.call_json(op, input),
+            #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+            CodeModule::Isolated(m) => m.call_json(op, input),
         }
     }
 
@@ -65,6 +95,8 @@ impl CodeModule {
                 .call(op, input)
                 .map_err(|status| format!("{op}: {status:?}")),
             CodeModule::Portable(m) => m.call_limited(op, input, limit_ms),
+            #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+            CodeModule::Isolated(m) => m.call(op, input, limit_ms),
         }
     }
 
@@ -73,12 +105,20 @@ impl CodeModule {
         match self {
             CodeModule::Native(m) => m.take_logs(),
             CodeModule::Portable(m) => m.take_logs(),
+            #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+            CodeModule::Isolated(m) => m.take_logs(),
         }
     }
 
-    /// A portable module that ran out of budget or trapped is not reused.
+    /// A portable module that ran out of budget or trapped, and a worker
+    /// that died or ran past its limit, are not reused.
     pub fn is_stopped(&self) -> bool {
-        matches!(self, CodeModule::Portable(m) if m.is_stopped())
+        match self {
+            CodeModule::Native(_) => false,
+            CodeModule::Portable(m) => m.is_stopped(),
+            #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+            CodeModule::Isolated(m) => m.is_stopped(),
+        }
     }
 }
 

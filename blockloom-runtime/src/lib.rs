@@ -66,6 +66,8 @@ mod pbr_patch;
 mod performance;
 pub mod player;
 mod plugin_meshes;
+#[cfg(feature = "plugins")]
+mod plugin_services;
 mod plugins;
 mod post;
 mod preview;

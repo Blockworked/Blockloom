@@ -59,6 +59,11 @@ jobs:
           -p blockloom-core -p blockloom-protocol -p blockloom-app -p blockloom-runtime
           -p blockloom-plugin-api -p blockloom-plugin-host
           -p blockloom-plugin-sdk -p blockloom-example-tally -p blockloom-example-palette -p blockloom-voxel
+      # The harness, the scaffold's source and process isolation sit behind features.
+      - name: Test (plugin kit and isolation)
+        run: |
+          cargo test -p blockloom-plugin-sdk --features testing
+          cargo test -p blockloom-plugin-host --features test-fixtures
 
   # The browser player (Phase 8): the runtime has to keep building for wasm,
   # and a script has to keep compiling to a wasm module. The headless smoke

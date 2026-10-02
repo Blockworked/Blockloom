@@ -446,6 +446,7 @@ impl Backend {
             // ── Plugins ────────────────────────────────────────────────────
             "plugin_list" => to_json(commands::plugins::plugin_list(state)?),
             "plugin_check" => to_json(commands::plugins::plugin_check(state)?),
+            "plugin_diagnostics" => to_json(commands::plugins::plugin_diagnostics(state)?),
             "plugin_commands" => to_json(commands::plugins::plugin_commands(state)?),
             "plugin_install" => to_json(commands::plugins::plugin_install(
                 state,
@@ -494,6 +495,13 @@ impl Backend {
             )?),
             "plugin_gc" => to_json(commands::plugins::plugin_gc(state)?),
             "plugin_inspect" => to_json(commands::plugins::plugin_inspect(arg(&args, "path")?)?),
+            "plugin_new" => to_json(commands::plugins::plugin_new(
+                arg(&args, "path")?,
+                arg(&args, "id")?,
+                arg(&args, "name")?,
+                arg(&args, "template")?,
+                arg(&args, "sdk")?,
+            )?),
             "plugin_seal" => to_json(commands::plugins::plugin_seal(arg(&args, "path")?)?),
             "plugin_publish" => to_json(commands::plugins::plugin_publish(
                 arg(&args, "path")?,

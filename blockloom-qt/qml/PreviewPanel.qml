@@ -70,6 +70,8 @@ Rectangle {
         // The plugin scene tool ("plugin-id/tool") and each tool's options as JSON text.
         property string pluginTool: ""
         property string pluginOptions: "{}"
+        // Which plugin overlays the user switched on or off, as JSON by "plugin/name".
+        property string pluginOverlays: "{}"
     }
     // The reference path tracer is heavy, so it is never remembered on.
     property bool pathTracing: false
@@ -90,12 +92,31 @@ Rectangle {
         tile_brush: { tool: scene.tileTool, tiles: tileList(scene.tileTiles), autotile: scene.tileAutotile, size: scene.tileSize,
                       density: scene.tileDensity, jitter: scene.tileJitter, seed: scene.tileSeed },
         plugin_tool: root.pluginToolView,
+        plugin_overlays: root.overlayView,
         tiles: { collision: scene.tileCollision, regions: scene.tileRegions, rooms: scene.tileRooms, parallax: scene.tileParallax }
     })
     // The scene tools installed plugins add, as [{key, plugin, pluginName, tool}].
     readonly property var pluginTools: {
         const all = appState.plugins && appState.plugins.tools ? appState.plugins.tools : [];
         return root.is3d ? all.map(t => ({ key: t.plugin + "/" + t.tool.name, plugin: t.plugin, pluginName: t.pluginName, tool: t.tool })) : [];
+    }
+    // The overlays plugins draw in the scene view, as [{key, plugin, overlay, title, on}].
+    readonly property var pluginOverlayList: {
+        const all = appState.plugins && appState.plugins.surfaces ? appState.plugins.surfaces.overlays : [];
+        let chosen = {};
+        try { chosen = JSON.parse(scene.pluginOverlays) || {}; } catch (e) { chosen = {}; }
+        return root.is3d ? all.map(o => {
+            const key = o.plugin + "/" + o.name;
+            return { key: key, plugin: o.plugin, pluginName: o.pluginName, overlay: o.name, title: o.title, description: o.description,
+                     intervalMs: o.intervalMs, on: chosen[key] !== undefined ? !!chosen[key] : !!o.defaultOn };
+        }) : [];
+    }
+    readonly property var overlayView: pluginOverlayList.filter(o => o.on).map(o => ({ plugin: o.plugin, overlay: o.overlay, interval_ms: o.intervalMs }))
+    function setOverlay(key, on) {
+        let chosen = {};
+        try { chosen = JSON.parse(scene.pluginOverlays) || {}; } catch (e) { chosen = {}; }
+        chosen[key] = on;
+        scene.pluginOverlays = JSON.stringify(chosen);
     }
     readonly property var activePluginTool: pluginTools.find(t => t.key === scene.pluginTool) || null
     function optionsOf(key) { try { return JSON.parse(scene.pluginOptions)[key] || {}; } catch (e) { return {}; } }
@@ -441,6 +462,16 @@ Rectangle {
                                 tip: modelData.tool.title + " (" + modelData.pluginName + "): " + (modelData.tool.description || "a plugin's tool")
                                 checked: scene.tool === "plugin" && scene.pluginTool === modelData.key
                                 onClicked: { scene.pluginTool = modelData.key; root.setTool("plugin"); }
+                            }
+                        }
+                        Repeater {
+                            model: scene.enabled ? root.pluginOverlayList : []
+                            delegate: ToolToggle {
+                                required property var modelData
+                                icon: "eye"
+                                tip: modelData.title + " (" + modelData.pluginName + "): " + (modelData.description || "a plugin's overlay") + (modelData.on ? "\nClick to hide it." : "\nClick to show it.")
+                                checked: modelData.on
+                                onClicked: root.setOverlay(modelData.key, !modelData.on)
                             }
                         }
                         ToolToggle { visible: scene.enabled && root.is3d; icon: "move-3d"; tip: scene.local ? "Local axes: the actor's own" : "World axes"; checked: scene.local; onClicked: scene.local = !scene.local }

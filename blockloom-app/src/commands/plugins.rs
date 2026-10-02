@@ -69,12 +69,23 @@ pub(crate) fn environment(offline: bool) -> Environment {
 /// can't load is reported by [`ActivePlugins::problems`].
 pub(crate) fn load_active(dir: &Path) -> ActivePlugins {
     let env = environment(true);
-    ActivePlugins::load(
+    let active = ActivePlugins::load(
         &ProjectPlugins::new(dir),
         &env.cache,
         &env.target,
         &env.engine,
-    )
+    );
+    // A surface shader may import what a plugin ships, so the shader check
+    // has to know those modules.
+    blockloom_core::shader_lib::set_extra(
+        active
+            .loadout()
+            .shaders
+            .into_iter()
+            .map(|s| (s.module, s.source))
+            .collect(),
+    );
+    active
 }
 
 /// The open project's folder, refusing a copy that only shares another
@@ -422,6 +433,75 @@ fn tools_json(active: &ActivePlugins) -> Vec<Value> {
         .collect()
 }
 
+/// The menus, shortcuts and overlays plugins add. A command is spelled
+/// `<plugin>/<command>` so the frontend can hand it straight to `plugin_call`.
+fn surfaces_json(active: &ActivePlugins) -> Value {
+    let name_of = |plugin: &str| {
+        active
+            .get(plugin)
+            .map_or_else(String::new, |p| p.package.manifest.name.clone())
+    };
+    let menus: Vec<Value> = active
+        .menus()
+        .into_iter()
+        .map(|(plugin, m)| {
+            json!({
+                "plugin": plugin,
+                "pluginName": name_of(plugin),
+                "name": m.name,
+                "title": m.title,
+                "group": m.group,
+                "command": id::qualified(plugin, &m.command),
+                "args": m.args,
+                "shortcut": m.keys(),
+            })
+        })
+        .collect();
+    let shortcuts: Vec<Value> = active
+        .shortcuts()
+        .into_iter()
+        .map(|(plugin, s)| {
+            json!({
+                "plugin": plugin,
+                "pluginName": name_of(plugin),
+                "name": s.name,
+                "title": s.title,
+                "keys": s.normalized(),
+                "command": id::qualified(plugin, &s.command),
+                "args": s.args,
+            })
+        })
+        .collect();
+    let overlays: Vec<Value> = active
+        .overlays()
+        .into_iter()
+        .map(|(plugin, o)| {
+            json!({
+                "plugin": plugin,
+                "pluginName": name_of(plugin),
+                "name": o.name,
+                "title": o.title,
+                "description": o.description,
+                "defaultOn": o.default_on,
+                "intervalMs": o.interval_ms,
+            })
+        })
+        .collect();
+    json!({ "menus": menus, "shortcuts": shortcuts, "overlays": overlays })
+}
+
+/// `plugin-diagnostics`: what plugin calls cost and report, in the editor's
+/// own modules and in the world the game runs in.
+pub(crate) fn plugin_diagnostics(state: &SharedState) -> Result<Value, String> {
+    let s = lock(state)?;
+    let editor = s
+        .open
+        .as_ref()
+        .map(|o| o.modules.diagnostics.snapshot())
+        .unwrap_or(Value::Null);
+    Ok(json!({ "editor": editor, "runtime": s.plugin_diagnostics }))
+}
+
 /// Every editor panel the installed plugins add, with its owner's name.
 fn panels_json(active: &ActivePlugins) -> Vec<Value> {
     active
@@ -466,6 +546,8 @@ pub(crate) fn summary(s: &AppState) -> Value {
         "types": types_json(active),
         "panels": panels_json(active),
         "tools": tools_json(active),
+        "surfaces": surfaces_json(active),
+        "conflicts": active.conflicts(),
         "editorModules": editor_modules_json(active),
         "problems": active.problems,
         "issues": active.audit(project.plugin_records()),
@@ -487,6 +569,8 @@ pub(crate) fn plugin_list(state: &SharedState) -> Result<Value, String> {
         "types": types_json(active),
         "panels": panels_json(active),
         "tools": tools_json(active),
+        "surfaces": surfaces_json(active),
+        "conflicts": active.conflicts(),
         "editorModules": editor_modules_json(active),
         "problems": active.problems,
         "direct": plugins.plugins,
@@ -504,9 +588,12 @@ pub(crate) fn plugin_check(state: &SharedState) -> Result<Value, String> {
     let project = s.project().ok_or("No project is open")?;
     let active = active(&s)?;
     let issues = active.audit(project.plugin_records());
-    let blocking = issues.iter().filter(|i| i.blocks_run).count();
+    let conflicts = active.conflicts();
+    let blocking = issues.iter().filter(|i| i.blocks_run).count()
+        + conflicts.iter().filter(|c| c.blocks_run).count();
     Ok(json!({
-        "ok": issues.is_empty() && active.problems.is_empty(),
+        "ok": issues.is_empty() && active.problems.is_empty() && conflicts.is_empty(),
+        "conflicts": conflicts,
         "canRun": preflight(active, project).is_ok(),
         "blocking": blocking,
         "issues": issues,
@@ -573,6 +660,13 @@ pub(crate) fn preflight(active: &ActivePlugins, project: &Project) -> Result<(),
         .filter(|i| i.blocks_run)
         .map(describe)
         .collect();
+    lines.extend(
+        active
+            .conflicts()
+            .into_iter()
+            .filter(|c| c.blocks_run)
+            .map(|c| format!("{}; remove one of them", c.message)),
+    );
     for used in project.plugin_blocks() {
         let found = active
             .blocks()
@@ -932,6 +1026,27 @@ pub(crate) fn plugin_inspect(path: String) -> Result<Value, String> {
         "blocks": c.blocks.len(),
         "commands": c.commands.len(),
         "source": format!("path:{path}"),
+    }))
+}
+
+/// Writes a starter package folder (see [`crate::scaffold`]).
+pub(crate) fn plugin_new(
+    path: String,
+    id: String,
+    name: Option<String>,
+    template: Option<String>,
+    sdk: Option<String>,
+) -> Result<Value, String> {
+    let name = name.unwrap_or_else(|| id.rsplit('.').next().unwrap_or(&id).to_string());
+    let template = template.unwrap_or_else(|| "portable".to_string());
+    let made =
+        crate::scaffold::plugin_new(Path::new(&path), &id, &name, &template, sdk.as_deref())?;
+    Ok(json!({
+        "path": path,
+        "id": id,
+        "template": template,
+        "files": made.files,
+        "sealed": made.sealed,
     }))
 }
 

@@ -39,6 +39,12 @@ Rectangle {
             onClicked: pluginPanels.open()
         }
         IconButton {
+            id: pluginMenuButton
+            iconName: "list"; tip: "Plugin menu"
+            visible: root.pluginMenus.length > 0
+            onClicked: pluginMenu.popup(pluginMenuButton, 0, pluginMenuButton.height)
+        }
+        IconButton {
             iconName: "app-window"; tip: "Plugin editors"
             visible: !!(root.appState.plugins && root.appState.plugins.editorModules && root.appState.plugins.editorModules.length > 0)
             onClicked: pluginEditors.open()
@@ -311,6 +317,20 @@ Rectangle {
         fileMode: FileDialog.SaveFile
         nameFilters: ["Blockloom project (*.blockloom)"]
         onAccepted: root.report("export_project", { path: root.app.fromFileUrl(selectedFile) })
+    }
+    // Menu items plugins add, grouped under their plugin and each item's own heading.
+    readonly property var pluginMenus: appState.plugins && appState.plugins.surfaces ? appState.plugins.surfaces.menus : []
+    BwMenu {
+        id: pluginMenu
+        Repeater {
+            model: root.pluginMenus
+            delegate: BwMenuItem {
+                required property var modelData
+                iconName: "plug-zap"
+                text: (modelData.group ? modelData.group + ": " : "") + modelData.title + (modelData.shortcut ? "    " + modelData.shortcut : "")
+                onTriggered: root.app.invoke("plugin_call", { command: modelData.command, args: modelData.args })
+            }
+        }
     }
     BuildDialog { id: buildDialog; app: root.app }
     PluginManagerDialog { id: pluginManager; app: root.app }

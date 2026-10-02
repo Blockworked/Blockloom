@@ -261,6 +261,9 @@ impl Backend {
             RuntimeMessage::PointerLock { locked } => {
                 s.pointer_locked = locked;
             }
+            RuntimeMessage::PluginDiagnostics { snapshot } => {
+                s.plugin_diagnostics = snapshot;
+            }
             RuntimeMessage::RayTracing(status) => {
                 s.ray_tracing = Some(status);
             }

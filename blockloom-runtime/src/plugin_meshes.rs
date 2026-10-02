@@ -3,25 +3,36 @@
 //! A plugin's `mesh` effect names a mesh; this turns it into one entity
 //! (`Mesh3d`, a shared standard material keyed by roughness and emission, and
 //! a fixed trimesh collider when it is solid), and a later mesh of the same
-//! name replaces it. All of a plugin's meshes go when the run ends. 3D only.
+//! name replaces it. An `instances` set is many entities sharing one of those
+//! meshes and its material, which Bevy draws as one batch. All of a plugin's
+//! meshes and sets go when the run ends. 3D only.
 
+use crate::bridge;
 use crate::engine::Engine;
 use crate::plugins::MeshOp;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude as rp;
-use blockloom_plugin_api::mesh::MeshData;
+use blockloom_plugin_api::mesh::{ColliderKind, MeshData};
+use blockloom_protocol::RuntimeMessage;
 use std::collections::HashMap;
 
 /// Marks the entity a plugin's mesh became.
 #[derive(Component)]
 pub struct PluginMesh;
 
+/// Marks an entity that is one copy of an instance set.
+#[derive(Component)]
+pub struct PluginInstance;
+
 /// Which entity holds each (plugin, name), and the materials in use.
 #[derive(Resource, Default)]
 pub struct PluginMeshes {
     live: HashMap<(String, String), Entity>,
+    /// What each mesh draws with, so a set of copies can share it.
+    assets: HashMap<(String, String), (Handle<Mesh>, Handle<StandardMaterial>)>,
+    instances: HashMap<(String, String), Vec<Entity>>,
     materials: HashMap<[u32; 4], Handle<StandardMaterial>>,
 }
 
@@ -32,7 +43,7 @@ impl PluginMeshes {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.live.is_empty()
+        self.live.is_empty() && self.instances.is_empty()
     }
 }
 
@@ -69,7 +80,22 @@ fn collider(data: &MeshData) -> Option<rp::Collider> {
     if triangles.is_empty() {
         return None;
     }
-    rp::Collider::trimesh(vertices, triangles).ok()
+    match data.collider_kind {
+        ColliderKind::Trimesh => rp::Collider::trimesh(vertices, triangles).ok(),
+        ColliderKind::ConvexHull => rp::Collider::convex_hull(&vertices),
+        ColliderKind::Aabb => {
+            let (min, max) = vertices.iter().fold(
+                (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+                |(lo, hi), v| (lo.min(*v), hi.max(*v)),
+            );
+            let half = (max - min) / 2.0;
+            Some(rp::Collider::compound(vec![(
+                (min + max) / 2.0,
+                Quat::IDENTITY,
+                rp::Collider::cuboid(half.x.max(1e-4), half.y.max(1e-4), half.z.max(1e-4)),
+            )]))
+        }
+    }
 }
 
 /// Applies the queued mesh operations in the order the plugins made them.
@@ -108,9 +134,14 @@ pub fn sync(
                         })
                     })
                     .clone();
+                let handle = meshes.add(bevy_mesh(&mesh));
+                state.assets.insert(
+                    (plugin.clone(), mesh.name.clone()),
+                    (handle.clone(), material.clone()),
+                );
                 let mut entity = commands.spawn((
                     PluginMesh,
-                    Mesh3d(meshes.add(bevy_mesh(&mesh))),
+                    Mesh3d(handle),
                     MeshMaterial3d(material),
                     Transform::from_translation(Vec3::from(mesh.origin)),
                 ));
@@ -122,7 +153,50 @@ pub fn sync(
                 state.live.insert((plugin, mesh.name), entity.id());
             }
             MeshOp::Remove { plugin, name } => {
+                state.assets.remove(&(plugin.clone(), name.clone()));
                 if let Some(old) = state.live.remove(&(plugin, name)) {
+                    commands.entity(old).despawn();
+                }
+            }
+            MeshOp::Instances { plugin, set } => {
+                let key = (plugin.clone(), set.name.clone());
+                for old in state.instances.remove(&key).unwrap_or_default() {
+                    commands.entity(old).despawn();
+                }
+                let Some((mesh, material)) = state.assets.get(&(plugin.clone(), set.mesh.clone()))
+                else {
+                    bridge::send(&RuntimeMessage::Error {
+                        actor: String::new(),
+                        message: format!(
+                            "{plugin}: instances {} name the mesh {}, which was never drawn",
+                            set.name, set.mesh
+                        ),
+                    });
+                    continue;
+                };
+                let copies: Vec<Entity> = (0..set.count())
+                    .map(|i| {
+                        let at = &set.positions[i * 3..i * 3 + 3];
+                        commands
+                            .spawn((
+                                PluginInstance,
+                                Mesh3d(mesh.clone()),
+                                MeshMaterial3d(material.clone()),
+                                Transform {
+                                    translation: Vec3::new(at[0], at[1], at[2]),
+                                    rotation: Quat::from_rotation_y(
+                                        set.yaw.get(i).copied().unwrap_or(0.0),
+                                    ),
+                                    scale: Vec3::splat(set.scales.get(i).copied().unwrap_or(1.0)),
+                                },
+                            ))
+                            .id()
+                    })
+                    .collect();
+                state.instances.insert(key, copies);
+            }
+            MeshOp::RemoveInstances { plugin, name } => {
+                for old in state.instances.remove(&(plugin, name)).unwrap_or_default() {
                     commands.entity(old).despawn();
                 }
             }
@@ -130,6 +204,12 @@ pub fn sync(
                 for (_, old) in state.live.drain() {
                     commands.entity(old).despawn();
                 }
+                for (_, copies) in state.instances.drain() {
+                    for old in copies {
+                        commands.entity(old).despawn();
+                    }
+                }
+                state.assets.clear();
                 state.materials.clear();
             }
         }
@@ -140,6 +220,7 @@ pub fn sync(
 mod tests {
     use super::*;
     use blockloom_core::scene::Mode;
+    use blockloom_plugin_api::rendering::InstanceData;
 
     fn cube(name: &str, origin: [f32; 3], collider: bool) -> MeshData {
         // One quad facing +y.
@@ -153,6 +234,7 @@ mod tests {
             emission: None,
             roughness: 0.9,
             collider,
+            collider_kind: ColliderKind::Trimesh,
         }
     }
 
@@ -230,6 +312,56 @@ mod tests {
         assert_eq!(count::<With<PluginMesh>>(&mut app), 1);
         push(&mut app, vec![MeshOp::Clear]);
         assert_eq!(count::<With<PluginMesh>>(&mut app), 0);
+        assert!(app.world().resource::<PluginMeshes>().is_empty());
+    }
+
+    #[test]
+    fn instances_share_their_meshs_buffers_and_go_with_it() {
+        let mut app = app();
+        let set = |name: &str, n: usize| MeshOp::Instances {
+            plugin: "p".to_string(),
+            set: InstanceData {
+                name: name.to_string(),
+                mesh: "a".to_string(),
+                positions: (0..n * 3).map(|i| i as f32).collect(),
+                yaw: vec![0.5; n],
+                scales: vec![],
+            },
+        };
+        push(
+            &mut app,
+            vec![put(cube("a", [0.0; 3], false)), set("rows", 50)],
+        );
+        assert_eq!(count::<With<PluginInstance>>(&mut app), 50);
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 1);
+        // The same name replaces the set.
+        push(&mut app, vec![set("rows", 10)]);
+        assert_eq!(count::<With<PluginInstance>>(&mut app), 10);
+        // A set naming a mesh nobody drew makes nothing.
+        push(
+            &mut app,
+            vec![MeshOp::Instances {
+                plugin: "q".to_string(),
+                set: InstanceData {
+                    name: "x".to_string(),
+                    mesh: "a".to_string(),
+                    positions: vec![0.0; 3],
+                    yaw: vec![],
+                    scales: vec![],
+                },
+            }],
+        );
+        assert_eq!(count::<With<PluginInstance>>(&mut app), 10);
+        push(
+            &mut app,
+            vec![MeshOp::RemoveInstances {
+                plugin: "p".to_string(),
+                name: "rows".to_string(),
+            }],
+        );
+        assert_eq!(count::<With<PluginInstance>>(&mut app), 0);
+        push(&mut app, vec![set("rows", 3), MeshOp::Clear]);
+        assert_eq!(count::<With<PluginInstance>>(&mut app), 0);
         assert!(app.world().resource::<PluginMeshes>().is_empty());
     }
 

@@ -44,6 +44,7 @@ use blockloom_protocol::{
     ActorStatus, EditorMessage, RenderMetric, RuntimeMessage, Status, VariableValue,
 };
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// The one camera the project controls.
 #[derive(Component)]
@@ -57,7 +58,7 @@ pub struct WorldLight;
 /// geometry changes. `None` falls back to a straight step at the target.
 #[derive(Resource, Default)]
 pub struct NavMesh {
-    pub mesh: Option<polyanya::Mesh>,
+    pub mesh: Option<Arc<polyanya::Mesh>>,
     pub mode: Mode,
     pub settings: nav::NavSettings,
     signature: Vec<(String, [f32; 3], Visual)>,
@@ -94,7 +95,10 @@ pub fn sync_navmesh(
         signature.push((id, transform.translation.to_array(), visual));
     }
     signature.sort_by(|a, b| a.0.cmp(b.0));
-    let unchanged = signature.len() == navmesh.signature.len()
+    // A plugin that changed the ground asks for a rebake whatever the actors say.
+    let dirty = engine.plugins.nav_dirty.replace(false);
+    let unchanged = !dirty
+        && signature.len() == navmesh.signature.len()
         && signature
             .iter()
             .zip(&navmesh.signature)
@@ -119,9 +123,11 @@ pub fn sync_navmesh(
     project.actors = actors;
     navmesh.mesh = nav::build_mesh(&project, nav::DEFAULT_AGENT_RADIUS)
         .map_err(|error| tracing::warn!("navmesh rebake failed: {error}"))
-        .ok();
+        .ok()
+        .map(Arc::new);
     navmesh.mode = project.world.mode;
     navmesh.settings = project.world.navigation.clone();
+    crate::plugins::publish_nav(&navmesh);
 }
 
 /// The systems that advance the simulation itself, kept apart from the input
@@ -302,7 +308,11 @@ pub fn pump_editor(
                 crate::plugins::preview(&mut engine);
             }
             EditorMessage::Plugins { loadout } => {
-                engine.plugins.loadout = loadout;
+                if engine.plugins.loadout.shaders != loadout.shaders {
+                    engine.plugins.shaders_serial += 1;
+                }
+                let old = std::mem::replace(&mut engine.plugins.loadout, loadout);
+                crate::plugins::reload(&mut engine, &old);
                 crate::plugins::preview(&mut engine);
             }
             EditorMessage::InterfaceDesign { design: request } => {
@@ -902,9 +912,11 @@ pub fn rebuild_world(
     if let Some(nav) = navmesh.as_deref_mut() {
         nav.mesh = nav::build_mesh(&project, nav::DEFAULT_AGENT_RADIUS)
             .map_err(|error| tracing::warn!("navmesh bake failed: {error}"))
-            .ok();
+            .ok()
+            .map(Arc::new);
         nav.mode = project.world.mode;
         nav.settings = project.world.navigation.clone();
+        crate::plugins::publish_nav(nav);
     }
     open_scripts(&mut engine, &project);
     // A built game answers to nobody, so it says what it built in its own
@@ -3950,6 +3962,13 @@ pub fn report_status(
                 unit: "count".into(),
             });
         }
+    }
+    for (name, value) in crate::plugins::report(&mut engine) {
+        render_metrics.push(RenderMetric {
+            name,
+            value,
+            unit: "plugin".into(),
+        });
     }
     if let Some(state) = destruction {
         for (name, mut value) in state.metrics() {

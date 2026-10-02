@@ -25,7 +25,7 @@ mod ray;
 mod shape;
 mod terrain;
 
-use blockloom_plugin_api::mesh::MeshData;
+use blockloom_plugin_api::mesh::{ColliderKind, MeshData};
 use blockloom_plugin_sdk::{Error, Host, Plugin, Value, export_plugin, json};
 use grid::{CHUNK, Grid, Shape};
 use palette::Palette;
@@ -254,6 +254,7 @@ impl World {
                     emission,
                     roughness: 0.9,
                     collider: self.solid,
+                    collider_kind: ColliderKind::Trimesh,
                 };
                 let mut effect = serde_value(&mesh);
                 effect["effect"] = json!("mesh");

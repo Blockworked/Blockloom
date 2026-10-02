@@ -3,6 +3,7 @@
 //! archive.
 
 use blockloom_plugin_api::manifest::{MANIFEST_FILE, PluginManifest};
+use blockloom_plugin_api::rendering::{LoadoutShader, module_name};
 use blockloom_plugin_api::schema::Contributions;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -209,6 +210,23 @@ impl Package {
             contributions,
             content_hash: hash,
         })
+    }
+
+    /// The package's shader modules with their sources, named as the world
+    /// imports them.
+    pub fn shader_modules(&self) -> Result<Vec<LoadoutShader>, String> {
+        self.contributions
+            .shaders
+            .iter()
+            .map(|shader| {
+                let source = crate::files::read_to_string(&self.root.join(&shader.file))
+                    .map_err(|e| format!("shader {}: {}: {e}", shader.name, shader.file))?;
+                Ok(LoadoutShader {
+                    module: module_name(&self.manifest.id, &shader.name),
+                    source,
+                })
+            })
+            .collect()
     }
 
     /// The artifact hashes a lockfile records per target: each native library

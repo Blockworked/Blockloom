@@ -15,7 +15,9 @@ use bevy::ui::UiScale;
 use bevy::window::PrimaryWindow;
 use blockloom_core::scene::{Mode, Visual};
 use blockloom_core::volume::{VolumeShape, VolumeSpec};
-use blockloom_protocol::{PreviewInput, RuntimeMessage, SceneTool, SceneView, VolumeBounds};
+use blockloom_protocol::{
+    PluginOverlayView, PreviewInput, RuntimeMessage, SceneTool, SceneView, VolumeBounds,
+};
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::FRAC_PI_2;
 
@@ -172,6 +174,11 @@ pub struct SceneEditor {
     /// cast from: the ray, and which preview module answered.
     plugin_hover: Option<[f32; 6]>,
     plugin_cast: Option<(Ray3d, u64)>,
+    /// What the plugin overlays drew when last asked, and when and for which
+    /// overlays and preview module that was.
+    overlay_shapes: Vec<blockloom_plugin_api::surfaces::Shape>,
+    overlay_asked: Option<(bevy::platform::time::Instant, u64, Vec<PluginOverlayView>)>,
+    overlay_error: Option<String>,
 }
 
 /// The casts a plugin tool has made since the button went down.
@@ -222,6 +229,9 @@ impl Default for SceneEditor {
             plugin_stroke: None,
             plugin_hover: None,
             plugin_cast: None,
+            overlay_shapes: Vec::new(),
+            overlay_asked: None,
+            overlay_error: None,
         }
     }
 }
@@ -484,6 +494,50 @@ pub fn interact(
         }
     }
     follow_plugin_tool(&mut engine, editor, &lens);
+    follow_plugin_overlays(&mut engine, editor);
+}
+
+/// Asks each overlay that is on for its shapes, no oftener than its interval
+/// and again whenever the preview module or the set of overlays changes.
+fn follow_plugin_overlays(engine: &mut Engine, editor: &mut SceneEditor) {
+    let wanted = editor.view.plugin_overlays.clone();
+    if wanted.is_empty() {
+        editor.overlay_shapes.clear();
+        editor.overlay_asked = None;
+        editor.overlay_error = None;
+        return;
+    }
+    let every = wanted.iter().map(|o| o.interval_ms).min().unwrap_or(250);
+    let now = bevy::platform::time::Instant::now();
+    if let Some((at, previews, was)) = &editor.overlay_asked
+        && *previews == engine.plugins.previews
+        && *was == wanted
+        && now.duration_since(*at).as_millis() < u128::from(every)
+    {
+        return;
+    }
+    editor.overlay_asked = Some((now, engine.plugins.previews, wanted.clone()));
+    let selected = editor.selected.clone();
+    let camera = editor.fly.position.to_array();
+    let mut shapes = Vec::new();
+    let mut failed = None;
+    for overlay in &wanted {
+        match crate::plugins::overlay_shapes(engine, overlay, selected.as_deref(), camera) {
+            Ok(mut drawn) => shapes.append(&mut drawn),
+            Err(message) => failed = Some(message),
+        }
+    }
+    editor.overlay_shapes = shapes;
+    // Say a failure once, not every interval.
+    if failed != editor.overlay_error {
+        if let Some(message) = &failed {
+            editor.outbox.push(RuntimeMessage::Error {
+                actor: String::new(),
+                message: message.clone(),
+            });
+        }
+        editor.overlay_error = failed;
+    }
 }
 
 /// Casts a plugin tool's ray at `at` and keeps the hit in the stroke, unless
@@ -1803,6 +1857,9 @@ pub fn draw(
         }
     }
 
+    for shape in &editor.overlay_shapes {
+        draw_overlay_shape(&mut lines, shape);
+    }
     if let Some(stroke) = &editor.plugin_stroke {
         for b in &stroke.boxes {
             outline_box(&mut handles, b, GRIP);
@@ -1869,6 +1926,31 @@ pub fn draw(
                 &frame,
                 &lens,
                 tint(Handle::Free, Color::WHITE),
+            );
+        }
+    }
+}
+
+/// One thing a plugin overlay asked to be drawn.
+fn draw_overlay_shape(lines: &mut Gizmos, shape: &blockloom_plugin_api::surfaces::Shape) {
+    use blockloom_plugin_api::surfaces::Shape;
+    let color = |c: &[f32; 4]| Color::srgba(c[0], c[1], c[2], c[3]);
+    match shape {
+        Shape::Line { from, to, color: c } => {
+            lines.line(Vec3::from(*from), Vec3::from(*to), color(c));
+        }
+        Shape::Box { min, max, color: c } => {
+            let (min, max) = (Vec3::from(*min), Vec3::from(*max));
+            lines.cube(
+                Transform::from_translation((min + max) * 0.5).with_scale(max - min),
+                color(c),
+            );
+        }
+        Shape::Point { at, size, color: c } => {
+            lines.sphere(
+                Isometry3d::from_translation(Vec3::from(*at)),
+                *size,
+                color(c),
             );
         }
     }

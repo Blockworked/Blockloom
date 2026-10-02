@@ -235,6 +235,7 @@ mod tests {
                 preview_port: None,
                 pointer_locked: false,
                 ray_tracing: None,
+                plugin_diagnostics: serde_json::Value::Null,
                 embedded: None,
                 scene_view: Default::default(),
                 picked_tile: None,

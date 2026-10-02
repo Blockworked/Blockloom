@@ -10,6 +10,18 @@ use serde::{Deserialize, Serialize};
 /// The most vertices one submitted mesh may hold.
 pub const MAX_VERTICES: usize = 262_144;
 
+/// What a solid mesh collides as. A trimesh is exact and for fixed things; a
+/// convex hull or a box is cheaper and what a moving thing wants.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColliderKind {
+    #[default]
+    Trimesh,
+    ConvexHull,
+    /// The mesh's axis-aligned bounding box.
+    Aabb,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MeshData {
     /// Names the mesh within its plugin; a later mesh with the same name
@@ -37,6 +49,9 @@ pub struct MeshData {
     /// triangles.
     #[serde(default)]
     pub collider: bool,
+    /// The shape of that collider; a trimesh unless the plugin says otherwise.
+    #[serde(default)]
+    pub collider_kind: ColliderKind,
 }
 
 fn default_roughness() -> f32 {
@@ -106,6 +121,7 @@ mod tests {
             emission: None,
             roughness: 0.9,
             collider: false,
+            collider_kind: ColliderKind::Trimesh,
         }
     }
 

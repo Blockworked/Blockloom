@@ -24,6 +24,17 @@ libloading.workspace = true
 [target.'cfg(not(any(target_arch = "wasm32", target_os = "android")))'.dependencies]
 ureq = { version = "3.4", default-features = false, features = ["rustls"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "blockloom-plugin-worker"
+path = "src/bin/worker.rs"
+
+[[test]]
+name = "isolation"
+required-features = ["test-fixtures"]
+
 [features]
 test-fixtures = ["dep:wat"]
 

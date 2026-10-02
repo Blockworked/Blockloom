@@ -221,6 +221,9 @@ pub struct PluginManifest {
     /// cannot be active together.
     #[serde(default)]
     pub provides: Vec<String>,
+    /// Plugin ids this one cannot be active beside.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflicts: Vec<String>,
     #[serde(default)]
     pub capabilities: BTreeSet<Capability>,
     #[serde(default)]

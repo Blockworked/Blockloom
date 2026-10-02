@@ -16,7 +16,8 @@
 //!   runs importers and build hooks over a project's files. [`trust`] is the
 //!   per-user list of plugins allowed to run code in the editor. [`services`]
 //!   answers a module's `blockloom.call`s: [`storage`] for its bytes and
-//!   [`diagnostics`] for what it costs.
+//!   [`diagnostics`] for what it costs. [`isolated`] hosts a module in a
+//!   worker process of its own when asked to.
 
 pub mod active;
 pub mod cache;
@@ -26,6 +27,8 @@ pub mod generation;
 pub mod hooks;
 pub mod imports;
 pub mod install;
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+pub mod isolated;
 pub mod jobs;
 pub mod lifecycle;
 pub mod lock;

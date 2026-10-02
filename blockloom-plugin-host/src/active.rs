@@ -19,6 +19,7 @@ use blockloom_plugin_api::schema::{
     BlockKind, BlockSchema, BuildHookSchema, CommandAction, CommandSchema, ComponentSchema,
     HookSchema, ImporterSchema, PanelSchema, SchemaError, ToolSchema,
 };
+use blockloom_plugin_api::surfaces::{MenuSchema, OverlaySchema, ShortcutSchema};
 use blockloom_plugin_api::{Version, id};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -45,6 +46,29 @@ pub struct ActivePlugins {
     /// plugin's types were editor-only.
     pub locked: BTreeMap<String, LockedPackage>,
     target: String,
+}
+
+/// Two active plugins that don't work together.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PluginConflict {
+    pub plugins: Vec<String>,
+    pub kind: ConflictKind,
+    pub message: String,
+    /// Whether Play and Build stop until it is fixed.
+    pub blocks_run: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictKind {
+    /// One names the other in its `conflicts`.
+    Declared,
+    /// Both provide the same service.
+    Service,
+    /// Their hooks ask to run in an order that can't be met.
+    HookOrder,
+    /// Both bind the same keys.
+    Shortcut,
 }
 
 /// What is wrong, if anything, with one plugin record.
@@ -241,7 +265,93 @@ impl ActivePlugins {
         if let blockloom_plugin_api::manifest::TargetSupport::Unsupported { reason } = support {
             return Err(format!("cannot run on {}: {reason}", self.target));
         }
+        package.shader_modules()?;
         Ok(package)
+    }
+
+    /// The pairs of active plugins that can't work together: declared
+    /// conflicts, a shared service, hook orders that cannot be met, and keys
+    /// bound twice (only the last never blocks a run).
+    pub fn conflicts(&self) -> Vec<PluginConflict> {
+        let mut out = Vec::new();
+        let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+        let mut pair = |a: &str, b: &str| {
+            let key = if a < b {
+                (a.to_string(), b.to_string())
+            } else {
+                (b.to_string(), a.to_string())
+            };
+            seen.insert(key)
+        };
+        for (id, p) in &self.plugins {
+            for other in &p.package.manifest.conflicts {
+                if self.plugins.contains_key(other) && pair(id, other) {
+                    out.push(PluginConflict {
+                        plugins: vec![id.clone(), other.clone()],
+                        kind: ConflictKind::Declared,
+                        message: format!("{id} says it cannot be active beside {other}"),
+                        blocks_run: true,
+                    });
+                }
+            }
+        }
+        let mut services: BTreeMap<&str, &str> = BTreeMap::new();
+        for (id, p) in &self.plugins {
+            for service in &p.package.manifest.provides {
+                if let Some(first) = services.insert(service, id) {
+                    out.push(PluginConflict {
+                        plugins: vec![first.to_string(), id.clone()],
+                        kind: ConflictKind::Service,
+                        message: format!("{first} and {id} both provide {service}"),
+                        blocks_run: true,
+                    });
+                }
+            }
+        }
+        let hooks = self.plugins.iter().flat_map(|(id, p)| {
+            p.package
+                .contributions
+                .hooks
+                .iter()
+                .map(move |h| (id.as_str(), h))
+        });
+        if let Err(message) = crate::hooks::order_hooks(hooks) {
+            let plugins = self
+                .plugins
+                .iter()
+                .filter(|(_, p)| !p.package.contributions.hooks.is_empty())
+                .map(|(id, _)| id.clone())
+                .collect();
+            out.push(PluginConflict {
+                plugins,
+                kind: ConflictKind::HookOrder,
+                message,
+                blocks_run: true,
+            });
+        }
+        let mut keys: BTreeMap<String, &str> = BTreeMap::new();
+        let bound = self
+            .shortcuts()
+            .into_iter()
+            .filter_map(|(plugin, s)| s.normalized().map(|k| (plugin, k)))
+            .chain(
+                self.menus()
+                    .into_iter()
+                    .filter_map(|(plugin, m)| m.keys().map(|k| (plugin, k))),
+            );
+        for (plugin, key) in bound {
+            if let Some(first) = keys.insert(key.clone(), plugin)
+                && first != plugin
+            {
+                out.push(PluginConflict {
+                    plugins: vec![first.to_string(), plugin.to_string()],
+                    kind: ConflictKind::Shortcut,
+                    message: format!("{first} and {plugin} both bind {key}"),
+                    blocks_run: false,
+                });
+            }
+        }
+        out
     }
 
     /// Plugins that run code and could not be loaded: a run without them
@@ -289,7 +399,12 @@ impl ActivePlugins {
             };
             plugins.push(loadout_plugin(id, &loaded.package, runtime));
         }
-        Loadout { plugins }
+        let shaders = self
+            .plugins
+            .values()
+            .flat_map(|loaded| loaded.package.shader_modules().unwrap_or_default())
+            .collect();
+        Loadout { plugins, shaders }
     }
 
     pub fn manifest(&self, plugin: &str) -> Option<&PluginManifest> {
@@ -358,6 +473,48 @@ impl ActivePlugins {
                     .tools
                     .iter()
                     .map(move |tool| (plugin.as_str(), tool))
+            })
+            .collect()
+    }
+
+    /// Every contributed menu item with the plugin that owns it.
+    pub fn menus(&self) -> Vec<(&str, &MenuSchema)> {
+        self.plugins
+            .iter()
+            .flat_map(|(plugin, p)| {
+                p.package
+                    .contributions
+                    .menus
+                    .iter()
+                    .map(move |m| (plugin.as_str(), m))
+            })
+            .collect()
+    }
+
+    /// Every contributed shortcut with the plugin that owns it.
+    pub fn shortcuts(&self) -> Vec<(&str, &ShortcutSchema)> {
+        self.plugins
+            .iter()
+            .flat_map(|(plugin, p)| {
+                p.package
+                    .contributions
+                    .shortcuts
+                    .iter()
+                    .map(move |s| (plugin.as_str(), s))
+            })
+            .collect()
+    }
+
+    /// Every contributed scene-view overlay with the plugin that owns it.
+    pub fn overlays(&self) -> Vec<(&str, &OverlaySchema)> {
+        self.plugins
+            .iter()
+            .flat_map(|(plugin, p)| {
+                p.package
+                    .contributions
+                    .overlays
+                    .iter()
+                    .map(move |o| (plugin.as_str(), o))
             })
             .collect()
     }
@@ -650,6 +807,7 @@ fn has_runtime_content(package: &Package) -> bool {
         || !c.commands.is_empty()
         || !c.hooks.is_empty()
         || !c.nodes.is_empty()
+        || !c.shaders.is_empty()
         || c.components
             .iter()
             .chain(&c.resources)
@@ -1049,5 +1207,52 @@ mod tests {
         let back: Loadout =
             serde_json::from_value(serde_json::to_value(&loadout).unwrap()).unwrap();
         assert_eq!(back, loadout);
+    }
+
+    /// Installs a declarative package after adding `extra` keys to its manifest.
+    fn add_with(rig: &Rig, id: &str, extra: serde_json::Value) {
+        let pkg = declarative(&rig.dir.path().join("src"), id, "1.0.0", json!({}));
+        let path = pkg.join("plugin.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        for (key, value) in extra.as_object().unwrap() {
+            manifest[key] = value.clone();
+        }
+        fs::write(&path, serde_json::to_string(&manifest).unwrap()).unwrap();
+        crate::package::seal(&pkg).unwrap();
+        install(
+            &rig.env,
+            &rig.project,
+            Change::Add {
+                id: id.into(),
+                req: "*".parse().unwrap(),
+                source: Some(Source::Path(pkg)),
+                features: vec![],
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_declared_conflict_blocks_a_run() {
+        let rig = rig();
+        add_with(
+            &rig,
+            "com.example.a",
+            json!({"conflicts": ["com.example.b"]}),
+        );
+        add_with(&rig, "com.example.b", json!({}));
+        let conflicts = rig.load().conflicts();
+        assert_eq!(conflicts.len(), 1, "{conflicts:?}");
+        assert_eq!(conflicts[0].kind, ConflictKind::Declared);
+        assert!(conflicts[0].blocks_run);
+    }
+
+    #[test]
+    fn plugins_that_do_not_clash_have_no_conflicts() {
+        let rig = rig();
+        rig.add("com.example.a", "1.0.0");
+        rig.add("com.example.b", "1.0.0");
+        assert!(rig.load().conflicts().is_empty());
     }
 }
