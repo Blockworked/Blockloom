@@ -364,6 +364,18 @@ pub fn validate_scene(
     mode: Mode,
     library: &MaterialLibrary,
 ) -> Vec<PhysicsIssue> {
+    validate_scene_with(actors, mode, library, None)
+}
+
+/// [`validate_scene`] knowing which meshes cook to convex pieces, so a triangle
+/// mesh among them may sit on a dynamic body. With `None` the question is left
+/// to the plan, which has the cooking settings (an edit can't know them yet).
+pub fn validate_scene_with(
+    actors: &[Actor],
+    mode: Mode,
+    library: &MaterialLibrary,
+    decomposed: Option<&dyn Fn(&str) -> bool>,
+) -> Vec<PhysicsIssue> {
     let mut issues = Vec::new();
     let mut seen_colliders: HashMap<&ColliderId, &str> = HashMap::new();
     let mut seen_bodies: HashMap<&str, &str> = HashMap::new();
@@ -461,11 +473,19 @@ pub fn validate_scene(
         };
         if spec.body_type == BodyType::Dynamic
             && !collider.trigger
-            && collider.shape().is_some_and(ColliderShape::is_concave)
+            && collider.shape().is_some_and(|shape| {
+                shape.is_concave()
+                    && match shape {
+                        ColliderShape::TriangleMesh { mesh } => {
+                            decomposed.is_some_and(|decomposed| !decomposed(mesh))
+                        }
+                        _ => true,
+                    }
+            })
         {
             issues.push(
                 PhysicsIssue::error(format!(
-                    "{} cannot be a solid shape on the dynamic body of \"{body_actor}\"; use a convex hull, a compound of primitives, or make the body kinematic",
+                    "{} cannot be a solid shape on the dynamic body of \"{body_actor}\"; use a convex hull, a compound of primitives, decompose the mesh in the cooking settings, or make the body kinematic",
                     collider.shape().map(ColliderShape::label).unwrap_or("This shape")
                 ))
                 .on(&owned.collider_actor)

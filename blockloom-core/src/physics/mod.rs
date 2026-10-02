@@ -12,6 +12,7 @@
 //! contacts, sleeping) never appears here.
 
 pub mod contacts;
+pub mod cook;
 pub mod edit;
 pub mod geometry;
 pub mod ids;
@@ -29,6 +30,7 @@ pub use contacts::{
     ContactEvent, ContactKind, ContactPayload, ContactPhase, ContactPoint, ContactScope,
     ContactTracker, Endpoint, ExitReason,
 };
+pub use cook::{CollisionLookup, CookSettings, Cooked, MeshKind};
 pub use ids::{ColliderId, ComponentId};
 pub use layers::{ColliderFilter, LayerSettings, layer_bit, needs_exact, pair_collides};
 pub use material::{
@@ -75,6 +77,9 @@ pub struct PhysicsSettings {
     pub materials: MaterialLibrary,
     #[serde(default)]
     pub layers: LayerSettings,
+    /// How collision meshes are cooked.
+    #[serde(default, skip_serializing_if = "CookSettings::is_default")]
+    pub cooking: CookSettings,
 }
 
 impl PhysicsSettings {

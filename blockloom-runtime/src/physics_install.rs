@@ -13,8 +13,8 @@ use bevy::prelude::*;
 use blockloom_core::physics::material::CombineMode;
 use blockloom_core::physics::spec::{BodyType, CollisionDetection};
 use blockloom_core::physics::{
-    ColliderFilter, ColliderId, ExtraMass, LayerSettings, PhysicsPlan, PlannedMaterial,
-    PlannedShape,
+    ColliderFilter, ColliderId, CollisionLookup, ExtraMass, LayerSettings, PhysicsPlan,
+    PlannedMaterial, PlannedShape,
 };
 use blockloom_core::project::Project;
 use blockloom_core::scene::Mode;
@@ -93,9 +93,26 @@ const SPECULATIVE_PREDICTION: f32 = 0.5;
 /// Builds the plan for a project and installs it onto the already spawned actor
 /// entities. A plan with errors installs nothing and says why in the log; Play
 /// refuses such a project before the world is built.
+#[cfg(test)]
 pub fn install(commands: &mut Commands, project: &Project, entities: &HashMap<String, Entity>) {
+    install_with(
+        commands,
+        project,
+        entities,
+        &blockloom_core::physics::cook::NoCollisionData,
+    );
+}
+
+/// [`install`] with mesh colliders cooked (or read, in a shipped game) through
+/// `lookup`.
+pub fn install_with(
+    commands: &mut Commands,
+    project: &Project,
+    entities: &HashMap<String, Entity>,
+    lookup: &dyn CollisionLookup,
+) {
     let mode = project.world.mode;
-    let plan = PhysicsPlan::build(&project.actors, mode, &project.physics);
+    let plan = PhysicsPlan::build_with(&project.actors, mode, &project.physics, lookup);
     commands.insert_resource(PhysicsLayers {
         settings: project.physics.layers.clone(),
         mode: Some(mode),
@@ -111,6 +128,42 @@ pub fn install(commands: &mut Commands, project: &Project, entities: &HashMap<St
     match mode {
         Mode::ThreeD => d3::install(commands, &plan, entities),
         Mode::TwoD => d2::install(commands, &plan, entities),
+    }
+}
+
+/// The backend shape of a cooked mesh.
+fn mesh_collider(
+    mesh: &blockloom_core::physics::geometry::MeshShape,
+) -> Result<bevy_rapier3d::prelude::Collider, String> {
+    use bevy_rapier3d::prelude as rp;
+    use blockloom_core::physics::geometry::MeshShape;
+    let vec3 =
+        |points: &[[f32; 3]]| -> Vec<Vec3> { points.iter().map(|p| Vec3::from(*p)).collect() };
+    match mesh {
+        MeshShape::Hull { points, .. } => rp::Collider::convex_hull(&vec3(&points.0))
+            .ok_or_else(|| "the convex hull could not be built".to_string()),
+        MeshShape::Compound { hulls, .. } => {
+            let mut parts = Vec::new();
+            for hull in hulls {
+                let part = rp::Collider::convex_hull(&vec3(&hull.0))
+                    .ok_or_else(|| "a decomposed hull could not be built".to_string())?;
+                parts.push((Vec3::ZERO, Quat::IDENTITY, part));
+            }
+            Ok(rp::Collider::compound(parts))
+        }
+        MeshShape::Triangles { vertices, indices } => {
+            let triangles = indices
+                .0
+                .chunks_exact(3)
+                .map(|t| [t[0], t[1], t[2]])
+                .collect();
+            rp::Collider::trimesh_with_flags(
+                vec3(&vertices.0),
+                triangles,
+                rp::TriMeshFlags::FIX_INTERNAL_EDGES,
+            )
+            .map_err(|e| format!("the triangle mesh could not be built: {e:?}"))
+        }
     }
 }
 
@@ -260,21 +313,28 @@ pub mod d3 {
             let Some(&frame) = entities.get(frame_actor) else {
                 continue;
             };
-            let PlannedShape::Three(solid) = &planned.shape else {
-                continue;
-            };
-            let collider = match *solid {
-                Solid3::Cuboid { half } => rp::Collider::cuboid(half[0], half[1], half[2]),
-                Solid3::Ball { radius } => rp::Collider::ball(radius),
-                Solid3::Capsule {
-                    axis,
-                    half_segment,
-                    radius,
-                } => match axis {
-                    Axis::X => rp::Collider::capsule_x(half_segment, radius),
-                    Axis::Y => rp::Collider::capsule_y(half_segment, radius),
-                    Axis::Z => rp::Collider::capsule_z(half_segment, radius),
+            let collider = match &planned.shape {
+                PlannedShape::Three(solid) => match *solid {
+                    Solid3::Cuboid { half } => rp::Collider::cuboid(half[0], half[1], half[2]),
+                    Solid3::Ball { radius } => rp::Collider::ball(radius),
+                    Solid3::Capsule {
+                        axis,
+                        half_segment,
+                        radius,
+                    } => match axis {
+                        Axis::X => rp::Collider::capsule_x(half_segment, radius),
+                        Axis::Y => rp::Collider::capsule_y(half_segment, radius),
+                        Axis::Z => rp::Collider::capsule_z(half_segment, radius),
+                    },
                 },
+                PlannedShape::Mesh(mesh) => match mesh_collider(mesh) {
+                    Ok(collider) => collider,
+                    Err(why) => {
+                        warn!("physics: {} on \"{}\": {why}", planned.name, planned.actor);
+                        continue;
+                    }
+                },
+                PlannedShape::Two(_) => continue,
             };
             let PlannedMaterial::Three(material) = planned.material else {
                 continue;
@@ -848,6 +908,13 @@ mod tests {
     }
 
     fn world(project: &Project) -> (App, HashMap<String, Entity>) {
+        world_with(project, &blockloom_core::physics::cook::NoCollisionData)
+    }
+
+    fn world_with(
+        project: &Project,
+        lookup: &dyn CollisionLookup,
+    ) -> (App, HashMap<String, Entity>) {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.add_plugins(TransformPlugin);
@@ -867,7 +934,7 @@ mod tests {
             ids.insert(actor.id.clone(), entity);
         }
         let mut commands = app.world_mut().commands();
-        install(&mut commands, project, &ids);
+        install_with(&mut commands, project, &ids, lookup);
         app.world_mut().flush();
         (app, ids)
     }
@@ -908,6 +975,79 @@ mod tests {
         run(&mut app, 240);
         let y = at(&app, ids[&ball_id]).y;
         assert!((y - 0.5).abs() < 0.05, "resting height {y}");
+    }
+
+    fn mesh_folder(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("blockloom-cook-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        let cube = "v -0.5 -0.5 -0.5\nv 0.5 -0.5 -0.5\nv 0.5 0.5 -0.5\nv -0.5 0.5 -0.5\n\
+                    v -0.5 -0.5 0.5\nv 0.5 -0.5 0.5\nv 0.5 0.5 0.5\nv -0.5 0.5 0.5\n\
+                    f 1 3 2\nf 1 4 3\nf 5 6 7\nf 5 7 8\nf 1 2 6\nf 1 6 5\n\
+                    f 4 7 3\nf 4 8 7\nf 1 5 8\nf 1 8 4\nf 2 3 7\nf 2 7 6\n";
+        std::fs::write(dir.join("assets/cube.obj"), cube).unwrap();
+        let ground = "v -20 0 -20\nv 20 0 -20\nv 20 0 20\nv -20 0 20\nf 1 3 2\nf 1 4 3\n\
+                      f 1 2 3\nf 1 3 4\n";
+        std::fs::write(dir.join("assets/ground.obj"), ground).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_cooked_hull_falls_onto_a_triangle_mesh_floor_and_rests() {
+        use blockloom_core::physics::cook::{FolderCollision, Source};
+        let dir = mesh_folder("rest");
+        let mut p = project();
+        let ground = add(&mut p, "Ground", [0.0, 0.0, 0.0]);
+        scenery(
+            &mut p,
+            &ground,
+            ColliderShape::TriangleMesh {
+                mesh: "assets/ground.obj".into(),
+            },
+        );
+        let crate_id = add(&mut p, "Crate", [0.0, 3.0, 0.0]);
+        body(
+            &mut p,
+            &crate_id,
+            RigidbodySpec::default(),
+            vec![ColliderSpec::new(ColliderShape::ConvexHull {
+                mesh: "assets/cube.obj".into(),
+            })],
+        );
+        let lookup = FolderCollision::new(&dir, Source::Cook);
+        let (mut app, ids) = world_with(&p, &lookup);
+        run(&mut app, 240);
+        let y = at(&app, ids[&crate_id]).y;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!((y - 0.5).abs() < 0.08, "resting height {y}");
+    }
+
+    #[test]
+    fn a_shipped_lookup_without_data_refuses_the_plan_instead_of_cooking() {
+        use blockloom_core::physics::cook::{FolderCollision, Source};
+        let dir = mesh_folder("shipped");
+        let mut p = project();
+        let ground = add(&mut p, "Ground", [0.0, 0.0, 0.0]);
+        scenery(
+            &mut p,
+            &ground,
+            ColliderShape::TriangleMesh {
+                mesh: "assets/ground.obj".into(),
+            },
+        );
+        let ball_id = add(&mut p, "Ball", [0.0, 3.0, 0.0]);
+        body(&mut p, &ball_id, RigidbodySpec::default(), vec![ball()]);
+        let lookup = FolderCollision::new(&dir, Source::Shipped);
+        let (mut app, ids) = world_with(&p, &lookup);
+        run(&mut app, 240);
+        let y = at(&app, ids[&ball_id]).y;
+        let cooked = dir.join(".blockloom").exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            (y - 3.0).abs() < 1e-4,
+            "a refused plan installs nothing, y = {y}"
+        );
+        assert!(!cooked, "a shipped lookup never cooks");
     }
 
     #[test]

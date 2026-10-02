@@ -385,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn a_dynamic_body_refuses_a_solid_triangle_mesh() {
+    fn a_dynamic_body_takes_a_triangle_mesh_only_for_the_plan_to_judge() {
         let mut scene = scene();
         scene
             .set_rigidbody("a", RigidbodySpec::default(), &lib())
@@ -393,14 +393,19 @@ mod tests {
         let mesh = ColliderSpec::new(ColliderShape::TriangleMesh {
             mesh: "assets/rock.glb".into(),
         });
-        let error = scene.add_collider("a", mesh.clone(), &lib()).unwrap_err();
-        assert!(error.contains("dynamic body"), "{error}");
+        // An edit can't know whether the mesh will be decomposed, so the plan
+        // (which has the cooking settings) is what refuses it at Play.
+        scene.add_collider("a", mesh.clone(), &lib()).unwrap();
+        let plan = scene.physics_plan(&Default::default());
+        assert!(plan.errors().any(|e| e.message.contains("dynamic body")));
         // As a trigger it is fine, and so is scenery without a body.
         let mut trigger = mesh.clone();
         trigger.trigger = true;
         trigger.id = ColliderId::generate();
         assert!(scene.add_collider("a", trigger, &lib()).is_ok());
-        assert!(scene.add_collider("b", mesh, &lib()).is_ok());
+        let mut scenery = mesh;
+        scenery.id = ColliderId::generate();
+        assert!(scene.add_collider("b", scenery, &lib()).is_ok());
     }
 
     #[test]

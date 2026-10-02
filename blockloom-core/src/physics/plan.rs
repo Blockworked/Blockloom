@@ -19,7 +19,8 @@ use std::collections::HashMap;
 use glam::{Mat4, Quat, Vec3};
 use serde::Serialize;
 
-use super::geometry::{self, Solid2, Solid3};
+use super::cook::{CollisionLookup, MeshKind, NoCollisionData};
+use super::geometry::{self, MeshShape, Solid2, Solid3};
 use super::ids::ColliderId;
 use super::layers::{ColliderFilter, needs_exact};
 use super::material::{MaterialBody, PhysicsMaterial, PhysicsMaterial2D};
@@ -28,7 +29,7 @@ use super::ownership::{actor_worlds, body_above};
 use super::spec::{
     BodyType, ColliderGeometry, ColliderShape, ColliderSpec, MassSource, RigidbodySpec,
 };
-use super::validate::{PhysicsIssue, validate_scene};
+use super::validate::{PhysicsIssue, validate_scene_with};
 use super::{PhysicsSettings, Severity};
 use crate::project::Actor;
 use crate::scene::Mode;
@@ -41,6 +42,8 @@ pub const DEFAULT_MASS: f32 = 1.0;
 pub enum PlannedShape {
     Three(Solid3),
     Two(Solid2),
+    /// A cooked mesh (3D).
+    Mesh(MeshShape),
 }
 
 /// A collider's resolved surface.
@@ -122,7 +125,23 @@ impl PhysicsPlan {
     /// Plans one scene. `actors` must already have its authored child offsets
     /// resolved into placements.
     pub fn build(actors: &[Actor], mode: Mode, settings: &PhysicsSettings) -> PhysicsPlan {
-        let mut issues = validate_scene(actors, mode, &settings.materials);
+        Self::build_with(actors, mode, settings, &NoCollisionData)
+    }
+
+    /// Plans one scene, asking `lookup` for the cooked data of every mesh
+    /// collider.
+    pub fn build_with(
+        actors: &[Actor],
+        mode: Mode,
+        settings: &PhysicsSettings,
+        lookup: &dyn CollisionLookup,
+    ) -> PhysicsPlan {
+        let mut issues = validate_scene_with(
+            actors,
+            mode,
+            &settings.materials,
+            Some(&|mesh| settings.cooking.decomposition_of(mesh).is_some()),
+        );
         if let Err(message) = settings.layers.validate() {
             issues.push(PhysicsIssue::error(message));
         }
@@ -147,7 +166,7 @@ impl PhysicsPlan {
         for actor in actors {
             for collider in actor.components.colliders() {
                 let carrier = body_above(actor, &by_id);
-                match plan_collider(actor, collider, carrier, &worlds, mode, settings) {
+                match plan_collider(actor, collider, carrier, &worlds, mode, settings, lookup) {
                     Ok(Some(mut planned)) => {
                         planned.body_actor = carrier.map(|a| a.id.clone());
                         filters.push(planned.filter);
@@ -212,6 +231,15 @@ impl crate::project::Scene {
     pub fn physics_plan(&self, settings: &PhysicsSettings) -> PhysicsPlan {
         PhysicsPlan::build(&self.actors, self.world.mode, settings)
     }
+
+    /// The same plan with mesh colliders cooked through `lookup`.
+    pub fn physics_plan_with(
+        &self,
+        settings: &PhysicsSettings,
+        lookup: &dyn CollisionLookup,
+    ) -> PhysicsPlan {
+        PhysicsPlan::build_with(&self.actors, self.world.mode, settings, lookup)
+    }
 }
 
 /// Scale of a world matrix along its own axes.
@@ -262,6 +290,7 @@ fn plan_collider(
     worlds: &HashMap<String, Mat4>,
     mode: Mode,
     settings: &PhysicsSettings,
+    lookup: &dyn CollisionLookup,
 ) -> Result<Option<ColliderPlan>, PhysicsIssue> {
     let fail = |message: String| {
         Err(PhysicsIssue::error(message)
@@ -283,16 +312,8 @@ fn plan_collider(
     if let ColliderShape::Tilemap = shape {
         return fail("A tilemap Look collides through its legacy Body for now; tile colliders arrive with the query and mesh phase".into());
     }
-    if matches!(
-        shape,
-        ColliderShape::ConvexHull { .. }
-            | ColliderShape::TriangleMesh { .. }
-            | ColliderShape::Terrain
-    ) {
-        return fail(format!(
-            "{} colliders need mesh cooking, which arrives with the next physics phase; use a box, sphere or capsule for now",
-            shape.label()
-        ));
+    if let ColliderShape::Terrain = shape {
+        return fail("A terrain collides through its own heightfield for now; terrain colliders arrive with the query pass".into());
     }
 
     let own = worlds.get(&actor.id).copied().unwrap_or(Mat4::IDENTITY);
@@ -344,7 +365,29 @@ fn plan_collider(
         Err(why) => return fail(why),
     };
 
-    let (planned_shape, volume) = if planar {
+    let (planned_shape, volume) = if let ColliderShape::ConvexHull { mesh }
+    | ColliderShape::TriangleMesh { mesh } = &shape
+    {
+        let dynamic = carrier
+            .and_then(|a| a.components.rigidbody())
+            .is_some_and(|spec| spec.body_type == BodyType::Dynamic);
+        let decomposed = settings.cooking.decomposition_of(mesh).is_some();
+        let kind = match &shape {
+            ColliderShape::ConvexHull { .. } if decomposed => MeshKind::Decomposed,
+            ColliderShape::ConvexHull { .. } => MeshKind::Hull,
+            _ if dynamic && decomposed && !collider.trigger => MeshKind::Decomposed,
+            _ => MeshKind::Triangles,
+        };
+        let cooked = match lookup.cooked(mesh, kind, &settings.cooking) {
+            Ok(cooked) => cooked,
+            Err(why) => return fail(why),
+        };
+        // Signed, so a mirrored actor mirrors its mesh and keeps its winding.
+        let (signed, _, _) = own.to_scale_rotation_translation();
+        let mesh_shape = MeshShape::from_cooked(&cooked, signed.to_array());
+        let volume = mesh_shape.volume();
+        (PlannedShape::Mesh(mesh_shape), volume)
+    } else if planar {
         let Some(solid) = geometry::solid2(&shape, [scale.x, scale.y]) else {
             return fail(format!("{} has no 2D form", shape.label()));
         };
@@ -793,7 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_shapes_say_so() {
+    fn a_mesh_collider_without_cooked_data_says_so() {
         let mut project = project();
         let id = add(&mut project, "Rock");
         let library = project.physics.materials.clone();
@@ -809,7 +852,168 @@ mod tests {
             .unwrap();
         let plan = plan_of(&project);
         assert!(!plan.is_runnable());
-        assert!(plan.errors().any(|e| e.message.contains("mesh cooking")));
+        assert!(
+            plan.errors()
+                .any(|e| e.message.contains("rock.glb") && e.message.contains("not available"))
+        );
+    }
+
+    mod meshes {
+        use super::*;
+        use crate::physics::cook::{Decompose, FolderCollision, Source};
+
+        /// A project folder holding a unit-ish crate (2 on a side) and an L.
+        fn folder(name: &str) -> std::path::PathBuf {
+            let dir = std::env::temp_dir().join(format!("blockloom-plan-{name}"));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(dir.join("assets")).unwrap();
+            let cube = crate::physics::cook::tests::cube(2.0);
+            let mut crate_obj = String::new();
+            for p in &cube.positions {
+                crate_obj.push_str(&format!("v {} {} {}\n", p[0], p[1], p[2]));
+            }
+            for t in cube.indices.chunks(3) {
+                crate_obj.push_str(&format!("f {} {} {}\n", t[0] + 1, t[1] + 1, t[2] + 1));
+            }
+            std::fs::write(dir.join("assets/crate.obj"), crate_obj).unwrap();
+            dir
+        }
+
+        fn with_mesh(
+            project: &mut Project,
+            name: &str,
+            shape: ColliderShape,
+            body: Option<RigidbodySpec>,
+        ) -> String {
+            let id = add(project, name);
+            let library = project.physics.materials.clone();
+            let scene = project.active_scene_mut();
+            if let Some(body) = body {
+                scene.set_rigidbody(&id, body, &library).unwrap();
+            }
+            scene
+                .add_collider(&id, ColliderSpec::new(shape), &library)
+                .unwrap();
+            id
+        }
+
+        fn plan_in(project: &Project, dir: &std::path::Path) -> PhysicsPlan {
+            let lookup = FolderCollision::new(dir, Source::Cook);
+            project
+                .active_scene()
+                .physics_plan_with(&project.physics, &lookup)
+        }
+
+        #[test]
+        fn a_hull_carries_mass_by_its_cooked_volume_under_scale() {
+            let dir = folder("hull");
+            let mut project = project();
+            let id = with_mesh(
+                &mut project,
+                "Crate",
+                ColliderShape::ConvexHull {
+                    mesh: "assets/crate.obj".into(),
+                },
+                Some(RigidbodySpec {
+                    mass: MassSource::Explicit { mass: 4.0 },
+                    ..Default::default()
+                }),
+            );
+            project
+                .active_scene_mut()
+                .actors
+                .iter_mut()
+                .find(|a| a.id == id)
+                .unwrap()
+                .components
+                .placement_mut()
+                .scale = 2.0;
+            let plan = plan_in(&project, &dir);
+            assert!(plan.is_runnable(), "{:?}", plan.issues);
+            let planned = &plan.colliders[0];
+            // A 2 m crate at scale 2 is 4 m on a side.
+            assert!((planned.volume - 64.0).abs() < 1e-2, "{}", planned.volume);
+            assert!((plan.bodies[0].total_mass - 4.0).abs() < 1e-3);
+            assert!((planned.density - 4.0 / 64.0).abs() < 1e-4);
+            let PlannedShape::Mesh(MeshShape::Hull { points, .. }) = &planned.shape else {
+                panic!("{:?}", planned.shape);
+            };
+            assert_eq!(points.0.len(), 8);
+            assert!(
+                points
+                    .0
+                    .iter()
+                    .flatten()
+                    .all(|v| (v.abs() - 2.0).abs() < 1e-4)
+            );
+        }
+
+        #[test]
+        fn a_triangle_mesh_is_scenery_unless_its_body_is_decomposed() {
+            let dir = folder("trimesh");
+            let mut project = project();
+            let ground = with_mesh(
+                &mut project,
+                "Ground",
+                ColliderShape::TriangleMesh {
+                    mesh: "assets/crate.obj".into(),
+                },
+                None,
+            );
+            let plan = plan_in(&project, &dir);
+            assert!(plan.is_runnable(), "{:?}", plan.issues);
+            assert!(matches!(
+                plan.collider(&plan.colliders[0].collider).unwrap().shape,
+                PlannedShape::Mesh(MeshShape::Triangles { .. })
+            ));
+            assert_eq!(plan.colliders[0].volume, 0.0);
+            assert_eq!(plan.colliders[0].actor, ground);
+
+            // On a dynamic body it is refused, until the mesh is set to decompose.
+            let mut project = super::project();
+            with_mesh(
+                &mut project,
+                "Barrel",
+                ColliderShape::TriangleMesh {
+                    mesh: "assets/crate.obj".into(),
+                },
+                Some(RigidbodySpec::default()),
+            );
+            let plan = plan_in(&project, &dir);
+            assert!(plan.errors().any(|e| e.message.contains("dynamic body")));
+            project
+                .physics
+                .cooking
+                .decompose
+                .insert("assets/crate.obj".into(), Decompose::default());
+            let plan = plan_in(&project, &dir);
+            assert!(plan.is_runnable(), "{:?}", plan.issues);
+            let PlannedShape::Mesh(MeshShape::Compound { hulls, volume }) =
+                &plan.colliders[0].shape
+            else {
+                panic!("{:?}", plan.colliders[0].shape);
+            };
+            assert_eq!(hulls.len(), 1, "a crate is already convex");
+            assert!(*volume > 7.0 && plan.colliders[0].volume == *volume);
+        }
+
+        #[test]
+        fn a_missing_model_is_one_error_naming_it() {
+            let dir = folder("missing");
+            let mut project = project();
+            with_mesh(
+                &mut project,
+                "Ghost",
+                ColliderShape::ConvexHull {
+                    mesh: "assets/ghost.obj".into(),
+                },
+                None,
+            );
+            let plan = plan_in(&project, &dir);
+            let errors: Vec<_> = plan.errors().collect();
+            assert_eq!(errors.len(), 1, "{errors:?}");
+            assert!(errors[0].message.contains("assets/ghost.obj"));
+        }
     }
 
     #[test]

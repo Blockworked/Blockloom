@@ -935,7 +935,21 @@ pub fn rebuild_world(
         }
     }
     // Rigidbody and Collider components become rapier bodies and child shapes.
-    crate::physics_install::install(&mut commands, &project, &engine.entities);
+    // A game in the editor cooks (and caches) meshes from their model files; a
+    // shipped one only reads what its build carried.
+    let collision: Box<dyn blockloom_core::physics::CollisionLookup> =
+        match engine.project_dir.as_deref() {
+            Some(dir) => Box::new(blockloom_core::physics::cook::FolderCollision::new(
+                dir,
+                if bridge::attached() {
+                    blockloom_core::physics::cook::Source::Cook
+                } else {
+                    blockloom_core::physics::cook::Source::Shipped
+                },
+            )),
+            None => Box::new(blockloom_core::physics::cook::NoCollisionData),
+        };
+    crate::physics_install::install_with(&mut commands, &project, &engine.entities, &*collision);
     // The dimension's own effect system owns the physics pipeline, so gravity
     // is set the same way a `set gravity` block would set it.
     effects.0.push(Effect::SetGravity {
