@@ -8,7 +8,7 @@
 use crate::cache::{Cache, Staging};
 use crate::lock::{DirectDependency, LockFile, LockedPackage, PluginsFile, ProjectPlugins};
 use crate::package::Package;
-use crate::registry::{DirRegistry, Registry};
+use crate::registry::{Registry, open_registry};
 use crate::resolver::{Candidate, CandidateProvider, Options, Request, Resolution, resolve};
 use crate::source::{CACHE_REGISTRY, Source, fetch_local};
 use blockloom_plugin_api::{Version, VersionReq};
@@ -162,7 +162,7 @@ impl Provider<'_> {
 
     fn versions_in(&self, name: &str, id: &str) -> Result<Vec<Candidate>, String> {
         let entries = if let Some(path) = self.plugins.registries.get(name) {
-            DirRegistry::open(self.project.dir.join(path)).versions(id)?
+            open_registry(&self.project.dir, path)?.versions(id)?
         } else if let Some(registry) = self.env.registries.get(name) {
             registry.versions(id)?
         } else {
@@ -444,11 +444,7 @@ fn ensure_cached(
         )),
         Source::Registry(name) => {
             if let Some(path) = plugins.registries.get(name) {
-                DirRegistry::open(project.dir.join(path)).fetch(
-                    &locked.id,
-                    &locked.version,
-                    &dir,
-                )?;
+                open_registry(&project.dir, path)?.fetch(&locked.id, &locked.version, &dir)?;
             } else if let Some(registry) = env.registries.get(name) {
                 registry.fetch(&locked.id, &locked.version, &dir)?;
             } else {
@@ -620,6 +616,7 @@ pub fn tree(plugins: &PluginsFile, lock: &LockFile, only: Option<&str>) -> Strin
 mod tests {
     use super::*;
     use crate::package::fixtures::declarative;
+    use crate::registry::DirRegistry;
     use serde_json::json;
     use std::fs;
 

@@ -3014,7 +3014,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "plugin-registry",
         cmd: "plugin_registry",
         aliases: &[],
-        summary: "Add a folder registry to plugins.json under a name.",
+        summary: "Add a registry to plugins.json under a name: a folder (relative to the project) or an https:// URL serving a published registry folder (index.json and archives/).",
         args: &[
             ArgSpec {
                 name: "name",
@@ -3023,7 +3023,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             },
             ArgSpec {
                 name: "path",
-                ty: "folder path",
+                ty: "string",
                 required: true,
             },
         ],

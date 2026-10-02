@@ -102,7 +102,7 @@ and tracked in `TODO.md`:
 - Plugin statement blocks run in the editor only (see "Plugin blocks" below).
   Reporters, hats, the script ABI, palette entries and built games are not
   done.
-- Registry transport is a local folder (`DirRegistry`); no HTTP registry.
+- Registry transport is a local folder (`DirRegistry`) or, since the twelfth batch, the same folder served over HTTP (`HttpRegistry`).
 - Shell and MCP expose plugin commands through `plugin-id/command` shell lines
   and the `plugin-call` tool. MCP does not yet list each plugin command as a
   tool of its own.
@@ -407,3 +407,19 @@ the remaining proof.
 - Not yet: importer UI in the asset tray, automatic re-import when a source
   changes on disk, importer-declared thumbnails, and hooks whose output a
   shipped plugin reads (there is no host service to open a cooked file).
+
+## HTTP registry and attached copies (twelfth batch)
+
+- The registry protocol was already files (an index and immutable archives),
+  so the HTTP transport is a reader of a published folder: any static host
+  works and there is no server to run. Every archive is checked against the
+  sha256 in the index, so a mirror can't swap a package; trust rests on the
+  index's channel, which must be https (plain http only for this machine).
+  Redirects are limited to https for the same reason. The archive path in an
+  index must be plain-relative so an index can't send the client elsewhere.
+- Not yet: authentication, an index signature, a search or yank API, and
+  publishing over HTTP (upload the published folder with your own tooling).
+- A package change only writes `plugins.json` and the lock, which the revision
+  counter did not cover, so an attached copy kept its old active set. The
+  owner now bumps the revision after every package change and an attached
+  copy reloads its plugins whenever it reloads the folder.

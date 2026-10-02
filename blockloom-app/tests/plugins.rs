@@ -446,3 +446,53 @@ fn an_importer_runs_when_a_file_is_imported_and_its_outputs_follow_the_source() 
             .is_empty()
     );
 }
+
+#[test]
+fn an_attached_copy_follows_the_owners_package_changes() {
+    let root = data_root().join("attached");
+    let owner = Backend::start(AppHandle::new(|_| {}));
+    let own = |cmd: &str, args: Value| owner.dispatch(cmd, args).unwrap();
+    own(
+        "create_project",
+        json!({"name": "Shared", "mode": "TwoD", "location": root.join("projects")}),
+    );
+    let dir = own("get_state", json!({}))["project_path"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let follower = Backend::start(AppHandle::new(|_| {}));
+    let report = follower
+        .dispatch("open_project", json!({"path": dir}))
+        .unwrap();
+    assert_eq!(report["attached"], true);
+    let installed = |b: &Backend| {
+        b.dispatch("plugin_list", json!({})).unwrap()["installed"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    assert_eq!(installed(&follower), 0);
+
+    // An install touches only plugins.json and the lock, yet the follower
+    // hears about it and loads the package.
+    own(
+        "plugin_install",
+        json!({"id": "com.example.health", "source": format!("path:{}", example())}),
+    );
+    assert_eq!(installed(&follower), 1);
+    // The owner doesn't re-read its own change.
+    assert_eq!(installed(&owner), 1);
+
+    own("plugin_remove", json!({"id": "com.example.health"}));
+    assert_eq!(installed(&follower), 0);
+    // And a follower may not change packages.
+    assert!(
+        follower
+            .dispatch(
+                "plugin_install",
+                json!({"id": "com.example.health", "source": format!("path:{}", example())}),
+            )
+            .is_err()
+    );
+}

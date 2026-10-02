@@ -614,8 +614,20 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `plugins/examples/palette` imports GIMP `.gpl` palettes as a one-row
   `palette.png` (stored-deflate PNG, no compressor) plus `palette.json`, and
   its `cook` hook fails a build that has an unimported palette.
+- **HTTP registries** (`blockloom-plugin-host/src/registry.rs`): a `plugins.json`
+  registry value that starts with `https://` (or `http://` for localhost,
+  127.0.0.1 and ::1) is an `HttpRegistry`, which reads a published registry
+  folder (`index.json`, `archives/`) from any static host through `ureq`
+  (not on wasm32). The index is read once per value, size-capped, and every
+  archive is checked against the hash in it before it is unpacked, so only the
+  index has to arrive over a trusted channel; an index naming a path that is
+  not plain-relative is refused. `open_registry(base, value)` is the one place
+  a value becomes a registry. Publishing stays a folder (`plugin-publish`):
+  upload the folder. After a package change the owner bumps the folder's
+  revision (`plugins::reload(s, true)`), so an attached copy's live reload
+  also reloads its active plugins.
 - **Not yet**: plugin code in an Android build, a faster browser host (the page's own WebAssembly instead of wasmi in
-  wasm), a headless browser proof, an HTTP registry, dynamic QML for
+  wasm), a headless browser proof, dynamic QML for
   plugin editor panels.
   `plugins/examples/com.example.health` is the sealed proof package;
   `plugins/examples/tally` is the SDK one, with code, and

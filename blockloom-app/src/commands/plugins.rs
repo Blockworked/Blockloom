@@ -110,10 +110,18 @@ pub(crate) fn loadout(s: &AppState) -> blockloom_plugin_api::loadout::Loadout {
         .unwrap_or_default()
 }
 
-fn reload(s: &mut AppState) {
+/// Reloads what the lock names. Another editor attached to this folder only
+/// follows a revision bump, so `bump` is set after a package change this copy
+/// made, which also keeps it from reloading its own change.
+pub(crate) fn reload(s: &mut AppState, bump: bool) {
     if let Some(open) = s.open.as_mut() {
         open.plugins = load_active(&open.dir);
         open.modules.retain(&open.plugins);
+        if bump {
+            let revision = blockloom_core::sync::bump_revision(&open.dir);
+            open.revision
+                .store(revision, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 }
 
@@ -504,7 +512,7 @@ pub(crate) fn plugin_change(
     if !dry_run {
         install::apply(&env, &project, plan)?;
         let mut s = lock(state)?;
-        reload(&mut s);
+        reload(&mut s, true);
         sync_runtime(&mut s);
         emit(app, &s);
     }
@@ -613,13 +621,14 @@ pub(crate) fn plugin_rollback(state: &SharedState, app: &AppHandle) -> Result<Va
     let env = environment(true);
     let changes = install::rollback(&env, &ProjectPlugins::new(&dir))?;
     let mut s = lock(state)?;
-    reload(&mut s);
+    reload(&mut s, true);
     sync_runtime(&mut s);
     emit(app, &s);
     Ok(json!({ "changes": changes_json(&changes) }))
 }
 
-/// Registers a folder registry in `plugins.json`.
+/// Registers a registry in `plugins.json`: a folder under the project, or an
+/// `https://` URL serving a published folder.
 pub(crate) fn plugin_registry(
     state: &SharedState,
     app: &AppHandle,
@@ -636,7 +645,8 @@ pub(crate) fn plugin_registry(
     plugins.registries.insert(name, path);
     let lock_file = project.read_lock()?;
     project.commit(&plugins, &lock_file)?;
-    let s = lock(state)?;
+    let mut s = lock(state)?;
+    reload(&mut s, true);
     emit(app, &s);
     Ok(())
 }

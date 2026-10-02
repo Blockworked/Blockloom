@@ -150,6 +150,8 @@ pub(crate) fn poll_live_reload(backend: &Backend) {
         open.project = project;
         open.revision.store(disk, Ordering::SeqCst);
     }
+    // The other side may have changed packages as well as the document.
+    plugins::reload(&mut s, false);
     sync_runtime(&mut s);
     emit(&backend.app, &s);
 }
