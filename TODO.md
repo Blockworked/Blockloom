@@ -1522,12 +1522,12 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Voxel edit persistence: saved `edits` lines on the `world` resource, `add_voxel_edit`/`clear_voxel_edits`, and a general `set_resource_field` command action.
     - [x] Voxel shaped cells: slab, top slab, post, stairs and ramps (four facings), `shape_voxel`, and a `shape` saved-edit line.
     - [x] Plugin scene tools: a package's `tools` (cast op, command, `$hit`/`$option` argument sources, typed options) are toolbar tools in the 3D scene view; a click casts the pointer ray through the hosted preview module and runs the command (`plugin-run-tool`). Voxel paint, erase, ball and shape tools, and `paint_voxel*` template commands, use it.
-    - [x] Scene tool follow-ups: `drag` strokes (one undo step, batched hits) and `outline` boxes under the pointer; voxel tools use both (`PROTOCOL_VERSION` 25).
+    - [x] Scene tool follow-ups: `drag` strokes (one undo step, batched hits) and `outline` boxes under the pointer; voxel tools use both (`PROTOCOL_VERSION` 28).
     - [x] Host services hub (`host.*`, `rng.*`, `storage.*`, `save.*`, `diag.*`, `jobs.*`, plus chained providers) with atomic project and player-save stores.
     - [x] Jobs (sliced, prioritised, cancellable, event on end) and node-graph generation (`nodes`, `graph.evaluate`, tile cache with margins).
     - [x] Physics and navigation services for plugins (`physics.ray|overlap_point|overlap_sphere`, `nav.available|path`, `nav_dirty` effect, collider kinds).
     - [x] Diagnostics: per-plugin counters, timings, errors and faults in the Plugin Manager, shell (`plugin-diagnostics`) and profiler.
-    - [x] Editor surfaces: plugin menus, shortcuts and scene overlays (`PROTOCOL_VERSION` 26), and plugin conflicts (`conflicts`, shared services, hook orders) that block Play and Build.
+    - [x] Editor surfaces: plugin menus, shortcuts and scene overlays (`PROTOCOL_VERSION` 29), and plugin conflicts (`conflicts`, shared services, hook orders) that block Play and Build.
     - [x] Rendering service: instanced plugin meshes and plugin WESL shader modules (`blockloom::plugin_<id>_<name>`).
     - [x] Reliability: live reload of portable modules (`world.save`/`world.restore`), process isolation of native libraries (`blockloom-plugin-worker`, `BLOCKLOOM_PLUGIN_ISOLATION`), wall-clock call limits.
     - [x] Authoring kit: SDK `testing` harness, `plugin-new` scaffolds (tested), `docs/plugin-api.md`, CI steps for the kit and isolation.

@@ -388,7 +388,7 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
 - **Plugin code in the game world** (`blockloom-runtime/src/plugins.rs`,
   `blockloom-plugin-host/src/world.rs`, `blockloom-plugin-api/src/loadout.rs`).
   Play sends `EditorMessage::Plugins { loadout }` between `Load` and `Start`
-  (`PROTOCOL_VERSION` 23): per plugin its code runtime, hooks and the blocks
+  (`PROTOCOL_VERSION` 26): per plugin its code runtime, hooks and the blocks
   whose commands are module ops (`ActivePlugins::loadout`). `world::begin_run`
   opens each module (`WorldPlugins::load`) and calls `world.start` with the
   plugin's records and resources; `end_run` calls `world.stop` and drops them,
@@ -515,7 +515,7 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   scene view's toolbar gets a toggle per tool in 3D, with the options drawn by
   `PluginValueEditor` under it (kept in the QML `Settings` as JSON per tool).
   `SceneTool::Plugin` plus `SceneView::plugin_tool` (`PluginToolView`: plugin,
-  tool, cast op, reach, outline, drag, option values; `PROTOCOL_VERSION` 25) tell the world
+  tool, cast op, reach, outline, drag, option values; `PROTOCOL_VERSION` 28) tell the world
   which tool is out. A left click casts the pointer ray through the hosted
   preview module (`plugins::tool_click`, `WorldPlugins::query`: `{x y z dx dy dz
   reach}` in, `{hit, ...}` out, read only) and a hit goes back as
@@ -705,7 +705,7 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `Instantiator` of `Shortcut`s call `plugin_call`. An overlay is a scene-view
   toggle that asks the hosted preview module for `overlay.<name>` and draws
   the answered `Shape`s as gizmos (`SceneView::plugin_overlays`,
-  `PROTOCOL_VERSION` 26); overlays only look. `surfaces_json` in
+  `PROTOCOL_VERSION` 29); overlays only look. `surfaces_json` in
   `commands/plugins.rs` builds the snapshot. `conflicts` in a manifest, two
   packages providing one service and hook orders that cannot be met are
   `ActivePlugins::conflicts()`; a blocking one stops Play and Build and is

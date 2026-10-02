@@ -506,7 +506,7 @@ the remaining proof.
   edit line it saves with its arguments filled in. `paint_voxel*` need no
   module op, so they work from the shell and MCP as well as from a click.
 - `SceneView` grew a boxed `plugin_tool` rather than a field per tool, so the
-  protocol never needs to know a plugin's tools (`PROTOCOL_VERSION` 24).
+  protocol never needs to know a plugin's tools (`PROTOCOL_VERSION` 27).
 
 ## Trusted editor modules (twentieth batch)
 
@@ -534,7 +534,7 @@ the remaining proof.
 - A stroke is the hits of every pointer move between press and release, sent
   once on release, so the editor keeps one undo step however long the drag.
   The cast answers a `cell_box` for the outline and the stroke dedupes by
-  cell. `PROTOCOL_VERSION` 25.
+  cell. `PROTOCOL_VERSION` 28.
 - An inspector section is a trusted QML module for one component, so it rides
   the existing trust ledger and hash; without trust the schema form shows.
   Nothing new is exposed beyond what `host.app` already gave a module.
