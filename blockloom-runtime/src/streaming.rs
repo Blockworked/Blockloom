@@ -664,7 +664,11 @@ pub fn warm_up(
     if !warmup.active {
         // A Start with no rebuild to wait for still has to begin.
         if engine.starting && !engine.rebuild {
-            crate::world::begin_run(&mut engine, time.elapsed_secs() as f64);
+            crate::world::begin_run(
+                &mut engine,
+                time.elapsed_secs_f64(),
+                real.elapsed_secs_f64(),
+            );
         }
         return;
     }
@@ -698,7 +702,11 @@ pub fn warm_up(
             .try_remove::<(NoFrustumCulling, Warming)>();
     }
     if engine.starting {
-        crate::world::begin_run(&mut engine, time.elapsed_secs() as f64);
+        crate::world::begin_run(
+            &mut engine,
+            time.elapsed_secs_f64(),
+            real.elapsed_secs_f64(),
+        );
     }
 }
 

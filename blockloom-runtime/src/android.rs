@@ -240,11 +240,11 @@ fn auto_pause(
     for event in focus.read() {
         if event.focused {
             if state.0 && engine.running {
-                crate::world::set_paused(&mut engine, false, time.elapsed_secs() as f64);
+                crate::world::set_paused(&mut engine, false, time.elapsed_secs_f64());
                 state.0 = false;
             }
         } else if engine.running && !engine.paused {
-            crate::world::set_paused(&mut engine, true, time.elapsed_secs() as f64);
+            crate::world::set_paused(&mut engine, true, time.elapsed_secs_f64());
             state.0 = true;
         }
     }
@@ -274,7 +274,7 @@ fn smoke_log(
     if state.stage >= 2 || !engine.running {
         return;
     }
-    let now = time.elapsed_secs() as f64;
+    let now = time.elapsed_secs_f64();
     if state.stage == 0 {
         eprintln!("blockloom: run started");
         eprintln!("blockloom: actors {}", actor_snapshot());

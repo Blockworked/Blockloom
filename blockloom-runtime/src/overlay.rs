@@ -277,7 +277,7 @@ pub fn apply_ui_effects(
             }
             Effect::SetUiTheme { theme } => manager.set_theme(*theme),
             Effect::SetPaused { paused } => {
-                let now = time.elapsed_secs() as f64;
+                let now = time.elapsed_secs_f64();
                 world::set_paused(&mut engine, *paused, now);
             }
             _ => {}

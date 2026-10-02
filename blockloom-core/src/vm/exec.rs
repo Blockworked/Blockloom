@@ -739,6 +739,11 @@ impl Vm {
         self.paused
     }
 
+    /// The wall clock the last tick was given.
+    pub fn wall(&self) -> f64 {
+        self.wall
+    }
+
     /// Runs every live script for one frame. `now` is seconds since the run
     /// started; effects are appended to `out` in the order they happened.
     pub fn tick(&mut self, now: f64, out: &mut Vec<Effect>) {

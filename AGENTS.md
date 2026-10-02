@@ -2785,6 +2785,13 @@ strand where it stands, the way `delete myself` does; in a UI strand it
 doesn't. `world::set_paused` is the one place that flips it, whether the
 editor's Pause button or the block asked.
 
+The wall clock is real time: `Engine::wall_time` counts `Time<Real>` seconds
+from `begin_run`'s `wall_started_at`, so a pause, a game speed below 1 or a
+stalled frame doesn't slow or rewind it (it used to be the fixed clock minus the
+run start, which jumped back by the paused span on resume). Run clocks read
+`elapsed_secs_f64`, since the `f32` form loses about a quarter millisecond an
+hour in.
+
 Pointer lock is fully manual: game code unlocks around a menu and re-locks on
 close. In the Game view the editor holds it on the world's behalf (see Game
 view above). The one safety net is that showing a modal while the pointer is locked
