@@ -12,6 +12,7 @@
 //! contacts, sleeping) never appears here.
 
 pub mod contacts;
+pub mod controller;
 pub mod cook;
 pub mod edit;
 pub mod geometry;
@@ -41,7 +42,7 @@ pub use material::{
 pub use migrate::{ActorMigration, shape_from_look};
 pub use ops::{ForceMode, world_inertia};
 pub use ownership::{BodyEntry, ColliderOwnership, LocalPose, PhysicsOwnership};
-pub use plan::{BodyPlan, ColliderPlan, ExtraMass, PhysicsPlan, PlannedMaterial, PlannedShape};
+pub use plan::{BodyPlan, ColliderPlan, ControllerPlan, ExtraMass, PhysicsPlan, PlannedMaterial, PlannedShape};
 pub use spec::{
     Axis, BodyType, ColliderGeometry, ColliderShape, ColliderSpec, CollisionDetection, Constraints,
     Interpolation, LayerOverrides, MassSource, RigidbodySpec,

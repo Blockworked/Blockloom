@@ -1442,6 +1442,27 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[A],
     },
     CommandSpec {
+        name: "set-character-controller",
+        cmd: "set_character_controller",
+        aliases: &[],
+        summary: "Give an actor a CharacterController, or replace the one it has (its id stays). The object is {radius, height, slope_limit, step_offset, skin_width, min_move_distance, detect_collisions, overlap_recovery, layer, center, up}; omitted fields take Unity's defaults. Answers the component's id.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "controller",
+                ty: "object {...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-character-controller",
+        cmd: "remove_character_controller",
+        aliases: &[],
+        summary: "Take the CharacterController off an actor.",
+        args: &[A],
+    },
+    CommandSpec {
         name: "set-physics-profile",
         cmd: "set_physics_profile",
         aliases: &[],

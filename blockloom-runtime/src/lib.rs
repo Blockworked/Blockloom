@@ -33,6 +33,7 @@ mod cinematic;
 mod cloud_layers;
 mod clouds;
 mod contacts;
+mod controller;
 mod culling;
 mod decals;
 mod decals_deferred;
@@ -500,6 +501,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 world::apply_saved_data,
                 (world::apply_lifetimes, world::sync_navmesh).chain(),
                 (
+                    controller::apply_motion,
                     world::apply_common,
                     environment::apply_exposure_effects,
                     hdr::apply_hdr_effects,

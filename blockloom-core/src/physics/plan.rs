@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use glam::{Mat4, Quat, Vec3};
 use serde::Serialize;
 
+use super::controller::CharacterControllerSpec;
 use super::cook::{CollisionLookup, MeshKind, NoCollisionData};
 use super::geometry::{self, MeshShape, Solid2, Solid3};
 use super::ids::ColliderId;
@@ -110,11 +111,27 @@ pub struct BodyPlan {
     pub total_mass: f32,
 }
 
+/// One CharacterController capsule to install. It is not a Collider
+/// component: the backend gives its actor a kinematic body and this shape.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ControllerPlan {
+    pub actor: String,
+    pub name: String,
+    pub spec: CharacterControllerSpec,
+    pub filter: ColliderFilter,
+    pub memberships: u32,
+    pub accepts: u32,
+    /// Whether the actor also has a Rigidbody of its own, which already
+    /// gives it a body.
+    pub has_body: bool,
+}
+
 /// A scene's physics, ready to install.
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct PhysicsPlan {
     pub bodies: Vec<BodyPlan>,
     pub colliders: Vec<ColliderPlan>,
+    pub controllers: Vec<ControllerPlan>,
     pub issues: Vec<PhysicsIssue>,
     /// True when a pair rule needs the exact test from a hook (an include override
     /// or a priority is in play) instead of group masks alone.
@@ -178,7 +195,34 @@ impl PhysicsPlan {
             }
         }
 
+        for actor in actors {
+            if let Some(spec) = actor.components.character_controller() {
+                let filter = ColliderFilter {
+                    layer: spec.layer.clamp(1, super::spec::LAYER_SLOTS),
+                    overrides: spec.layer_overrides,
+                    legacy_mask: None,
+                };
+                filters.push(filter);
+                plan.controllers.push(ControllerPlan {
+                    actor: actor.id.clone(),
+                    name: actor.name.clone(),
+                    spec: spec.clone(),
+                    filter,
+                    memberships: 0,
+                    accepts: 0,
+                    has_body: actor.components.rigidbody().is_some(),
+                });
+            }
+        }
+
         plan.exact_filtering = needs_exact(&filters);
+        for planned in &mut plan.controllers {
+            let bits = planned
+                .filter
+                .groups(&settings.layers, mode, plan.exact_filtering);
+            planned.memberships = bits.memberships;
+            planned.accepts = bits.filter;
+        }
         for planned in &mut plan.colliders {
             let bits = planned
                 .filter
@@ -214,7 +258,7 @@ impl PhysicsPlan {
 
     /// True when the scene has anything for the new system to install.
     pub fn is_empty(&self) -> bool {
-        self.bodies.is_empty() && self.colliders.is_empty()
+        self.bodies.is_empty() && self.colliders.is_empty() && self.controllers.is_empty()
     }
 
     pub fn collider(&self, id: &ColliderId) -> Option<&ColliderPlan> {

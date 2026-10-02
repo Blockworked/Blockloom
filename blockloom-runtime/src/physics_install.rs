@@ -133,6 +133,11 @@ pub fn install_with(
             askers.entry(body.clone()).or_insert(collider.filter);
         }
     }
+    for controller in &plan.controllers {
+        askers
+            .entry(controller.actor.clone())
+            .or_insert(controller.filter);
+    }
     commands.insert_resource(PhysicsLayers {
         settings: project.physics.layers.clone(),
         mode: Some(mode),
@@ -143,6 +148,8 @@ pub fn install_with(
             warn!("physics: {}", issue.message);
         }
     }
+    crate::controller::clear();
+    commands.insert_resource(crate::controller::ControllerEntities::default());
     if !plan.is_runnable() || plan.is_empty() {
         return;
     }
@@ -150,6 +157,12 @@ pub fn install_with(
         Mode::ThreeD => d3::install(commands, &plan, entities),
         Mode::TwoD => d2::install(commands, &plan, entities),
     }
+    let installed = match mode {
+        Mode::ThreeD => crate::controller::d3::install(commands, &plan, entities),
+        Mode::TwoD => crate::controller::d2::install(commands, &plan, entities),
+    };
+    crate::controller::register_plan(&plan);
+    commands.insert_resource(installed);
 }
 
 /// The backend shape of a cooked mesh.
@@ -3068,5 +3081,484 @@ mod query_tests_2d {
             QueryFilter::default(),
         );
         assert!((near.hits[0].distance - 2.0).abs() < 1e-3);
+    }
+}
+
+#[cfg(test)]
+mod controller_tests {
+    use super::tests::{add, at, floor, run, scenery};
+    use super::*;
+    use crate::controller;
+    use bevy_rapier3d::prelude as rp;
+    use std::time::Duration;
+    use blockloom_core::physics::controller::{
+        CharacterControllerSpec, MoveMode, MoveResult, move_call,
+    };
+    use blockloom_core::physics::{ColliderShape, ColliderSpec};
+
+    #[derive(Resource, Default)]
+    struct Moves {
+        actor: String,
+        todo: Vec<(MoveMode, [f32; 3])>,
+        done: Vec<MoveResult>,
+    }
+
+    fn drive(
+        _main: NonSend<crate::engine::Engine>,
+        queries: crate::queries::QueryAccess,
+        mut moves: ResMut<Moves>,
+    ) {
+        let todo = std::mem::take(&mut moves.todo);
+        let actor = moves.actor.clone();
+        let done = queries.scope(0, || {
+            todo.into_iter()
+                .map(|(mode, vector)| move_call(&actor, mode, vector))
+                .collect::<Vec<_>>()
+        });
+        moves.done.extend(done);
+    }
+
+    fn player(project: &mut Project, at: [f32; 3], tweak: impl FnOnce(&mut CharacterControllerSpec)) -> String {
+        let id = add(project, "Player", at);
+        let mut spec = CharacterControllerSpec::default();
+        tweak(&mut spec);
+        let library = project.physics.materials.clone();
+        project
+            .active_scene_mut()
+            .set_character_controller(&id, spec, &library)
+            .unwrap();
+        id
+    }
+
+    fn start(project: &Project) -> (App, HashMap<String, Entity>) {
+        // The same shape the runtime has: physics in the fixed schedule, the
+        // moves and their transform write ahead of it.
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(TransformPlugin);
+        app.init_resource::<Assets<Mesh>>();
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f32(1.0 / 60.0),
+        ));
+        app.insert_resource(Time::<Fixed>::from_hz(60.0));
+        app.init_resource::<PhysicsLayers>();
+        app.add_plugins(rp::RapierPhysicsPlugin::<d3::Hooks3>::default().in_fixed_schedule());
+        let mut ids = HashMap::new();
+        for actor in &project.actors {
+            let entity = app
+                .world_mut()
+                .spawn(crate::world::transform_for(actor))
+                .id();
+            ids.insert(actor.id.clone(), entity);
+        }
+        let mut commands = app.world_mut().commands();
+        install_with(
+            &mut commands,
+            project,
+            &ids,
+            &blockloom_core::physics::cook::NoCollisionData,
+        );
+        app.world_mut().flush();
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        app.insert_non_send(crate::engine::Engine::new(incoming, Mode::ThreeD));
+        let actor = project
+            .actors
+            .iter()
+            .find(|a| a.name == "Player")
+            .map(|a| a.id.clone())
+            .unwrap_or_default();
+        app.insert_resource(Moves {
+            actor,
+            ..Default::default()
+        });
+        app.add_systems(
+            FixedUpdate,
+            (drive, controller::apply_motion)
+                .chain()
+                .before(rp::PhysicsSet::SyncBackend),
+        );
+        // Let the broad phase see the colliders before anything is swept.
+        run(&mut app, 4);
+        (app, ids)
+    }
+
+    fn go(app: &mut App, mode: MoveMode, vector: [f32; 3]) -> MoveResult {
+        app.world_mut().resource_mut::<Moves>().todo.push((mode, vector));
+        run(app, 1);
+        app.world_mut().resource_mut::<Moves>().done.pop().expect("a move ran")
+    }
+
+    fn wall(project: &mut Project, name: &str, centre: [f32; 3], size: [f32; 3]) {
+        let id = add(project, name, centre);
+        scenery(project, &id, ColliderShape::Box { size });
+    }
+
+    #[test]
+    fn a_walker_stays_on_the_floor_and_reports_it() {
+        let mut p = super::tests::project();
+        floor(&mut p);
+        let id = player(&mut p, [0.0, 1.0, 0.0], |_| {});
+        let (mut app, ids) = start(&p);
+        let mut grounded = false;
+        for _ in 0..30 {
+            let r = go(&mut app, MoveMode::Simple, [2.0, 0.0, 0.0]);
+            grounded = r.grounded;
+            assert!(r.error.is_none(), "{:?}", r.error);
+        }
+        let pos = at(&app, ids[&id]);
+        assert!(grounded, "standing on the floor");
+        assert!(pos.x > 0.5, "walked: {pos:?}");
+        assert!((pos.y - 1.0).abs() < 0.2, "kept its height: {pos:?}");
+    }
+
+    #[test]
+    fn simple_move_falls_and_lands() {
+        let mut p = super::tests::project();
+        floor(&mut p);
+        let id = player(&mut p, [0.0, 4.0, 0.0], |_| {});
+        let (mut app, ids) = start(&p);
+        let mut first_ground = None;
+        for tick in 0..120 {
+            let r = go(&mut app, MoveMode::Simple, [0.0; 3]);
+            if r.grounded && first_ground.is_none() {
+                first_ground = Some(tick);
+            }
+        }
+        assert!(first_ground.is_some(), "it landed");
+        let y = at(&app, ids[&id]).y;
+        assert!((y - 1.0).abs() < 0.25, "resting height {y}");
+    }
+
+    #[test]
+    fn a_wall_sets_the_side_flag_and_its_normal_faces_the_controller() {
+        let mut p = super::tests::project();
+        floor(&mut p);
+        wall(&mut p, "Wall", [3.0, 1.0, 0.0], [1.0, 2.0, 6.0]);
+        player(&mut p, [0.0, 1.0, 0.0], |_| {});
+        let (mut app, _) = start(&p);
+        let mut hit = None;
+        for _ in 0..90 {
+            let r = go(&mut app, MoveMode::Move, [0.2, 0.0, 0.0]);
+            if r.flags.sides {
+                hit = Some(r);
+                break;
+            }
+        }
+        let r = hit.expect("the wall stopped it");
+        let wall_hit = r.hits.iter().find(|h| h.normal[0].abs() > 0.9).expect("a wall hit");
+        assert!(wall_hit.normal[0] < -0.9, "points back at the walker: {wall_hit:?}");
+        assert!(wall_hit.point[0] > 2.0 && wall_hit.point[0] < 3.1, "{wall_hit:?}");
+    }
+
+    #[test]
+    fn a_ceiling_sets_the_above_flag() {
+        let mut p = super::tests::project();
+        floor(&mut p);
+        wall(&mut p, "Roof", [0.0, 3.5, 0.0], [6.0, 1.0, 6.0]);
+        player(&mut p, [0.0, 1.0, 0.0], |_| {});
+        let (mut app, _) = start(&p);
+        let mut flagged = false;
+        for _ in 0..30 {
+            let r = go(&mut app, MoveMode::Move, [0.0, 0.2, 0.0]);
+            if r.flags.above {
+                flagged = true;
+                assert!(r.hits.iter().any(|h| h.normal[1] < -0.9), "{:?}", r.hits);
+                break;
+            }
+        }
+        assert!(flagged, "the roof was met");
+    }
+
+    #[test]
+    fn a_low_step_is_walked_onto_and_a_tall_one_blocks() {
+        for (height, climbs) in [(0.2_f32, true), (0.8_f32, false)] {
+            let mut p = super::tests::project();
+            floor(&mut p);
+            wall(&mut p, "Step", [3.0, height * 0.5, 0.0], [2.0, height, 6.0]);
+            let id = player(&mut p, [0.0, 1.0, 0.0], |_| {});
+            let (mut app, ids) = start(&p);
+            for _ in 0..90 {
+                let _ = go(&mut app, MoveMode::Simple, [3.0, 0.0, 0.0]);
+            }
+            let pos = at(&app, ids[&id]);
+            if climbs {
+                assert!(pos.x > 3.5, "stepped up ({height}): {pos:?}");
+                assert!(pos.y > 1.0 + height * 0.5, "rose with the step: {pos:?}");
+            } else {
+                assert!(pos.x < 2.5, "blocked by {height}: {pos:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_gentle_slope_is_climbed_and_a_steep_one_is_not() {
+        for (degrees, climbs) in [(25.0_f32, true), (65.0_f32, false)] {
+            let mut p = super::tests::project();
+            floor(&mut p);
+            let id = add(&mut p, "Ramp", [4.0, 0.0, 0.0]);
+            p.active_scene_mut()
+                .actors
+                .iter_mut()
+                .find(|a| a.id == id)
+                .unwrap()
+                .components
+                .placement_mut()
+                .rotation = [0.0, 0.0, degrees];
+            scenery(&mut p, &id, ColliderShape::Box { size: [10.0, 0.4, 6.0] });
+            let walker = player(&mut p, [0.0, 1.0, 0.0], |_| {});
+            let (mut app, ids) = start(&p);
+            for _ in 0..180 {
+                let _ = go(&mut app, MoveMode::Simple, [3.0, 0.0, 0.0]);
+            }
+            let y = at(&app, ids[&walker]).y;
+            if climbs {
+                assert!(y > 1.8, "climbed a {degrees} degree ramp, y {y}");
+            } else {
+                assert!(y < 1.6, "refused a {degrees} degree ramp, y {y}");
+            }
+        }
+    }
+
+    #[test]
+    fn triggers_are_never_obstacles() {
+        let mut p = super::tests::project();
+        floor(&mut p);
+        let id = add(&mut p, "Zone", [3.0, 1.0, 0.0]);
+        let library = p.physics.materials.clone();
+        let mut zone = ColliderSpec::new(ColliderShape::Box { size: [1.0, 2.0, 6.0] });
+        zone.trigger = true;
+        p.active_scene_mut().add_collider(&id, zone, &library).unwrap();
+        let walker = player(&mut p, [0.0, 1.0, 0.0], |_| {});
+        let (mut app, ids) = start(&p);
+        for _ in 0..60 {
+            let r = go(&mut app, MoveMode::Move, [0.1, 0.0, 0.0]);
+            assert!(!r.flags.sides, "{:?}", r.hits);
+        }
+        assert!(at(&app, ids[&walker]).x > 5.0);
+    }
+
+    #[test]
+    fn detect_collisions_off_removes_the_capsule_from_the_world() {
+        let mut p = super::tests::project();
+        floor(&mut p);
+        player(&mut p, [0.0, 1.0, 0.0], |s| s.detect_collisions = false);
+        let (mut app, _) = start(&p);
+        let disabled = app
+            .world_mut()
+            .query_filtered::<(), (With<controller::ControllerCapsule>, With<rp::ColliderDisabled>)>()
+            .iter(app.world())
+            .count();
+        assert_eq!(disabled, 1);
+        // It still sweeps against the floor.
+        let r = go(&mut app, MoveMode::Move, [0.0, -2.0, 0.0]);
+        assert!(r.flags.below, "{r:?}");
+    }
+
+    #[test]
+    fn an_obstacle_inside_the_capsule_is_pushed_out_before_the_move() {
+        let mut p = super::tests::project();
+        floor(&mut p);
+        let walker = player(&mut p, [0.0, 0.8, 0.0], |_| {});
+        let (mut app, ids) = start(&p);
+        let before = at(&app, ids[&walker]).y;
+        let r = go(&mut app, MoveMode::Move, [0.0; 3]);
+        let after = at(&app, ids[&walker]).y;
+        assert!(r.recovered[1] > 0.1, "{r:?}");
+        assert!(after > before + 0.1, "{before} -> {after}");
+        assert!(r.grounded);
+    }
+
+    #[test]
+    fn a_controller_that_stood_still_for_seconds_still_moves() {
+        let mut p = super::tests::project();
+        floor(&mut p);
+        let walker = player(&mut p, [0.0, 1.0, 0.0], |_| {});
+        let (mut app, ids) = start(&p);
+        run(&mut app, 300);
+        for _ in 0..10 {
+            let _ = go(&mut app, MoveMode::Move, [0.1, 0.0, 0.0]);
+        }
+        let x = at(&app, ids[&walker]).x;
+        assert!((x - 1.0).abs() < 0.05, "x {x}");
+    }
+
+    #[test]
+    fn a_controller_the_plan_names_is_registered() {
+        let mut p = super::tests::project();
+        floor(&mut p);
+        let id = player(&mut p, [0.0, 1.0, 0.0], |_| {});
+        let (_app, _) = start(&p);
+        assert!(blockloom_core::physics::controller::has(&id));
+    }
+}
+
+#[cfg(test)]
+mod controller_tests_2d {
+    use super::tests_2d::{add, project, run};
+    use super::*;
+    use crate::controller;
+    use bevy_rapier2d::prelude as rp;
+    use blockloom_core::physics::controller::{
+        CharacterControllerSpec, MoveMode, MoveResult, move_call,
+    };
+    use blockloom_core::physics::{ColliderShape, ColliderSpec};
+    use std::time::Duration;
+
+    #[derive(Resource, Default)]
+    struct Moves {
+        actor: String,
+        todo: Vec<(MoveMode, [f32; 3])>,
+        done: Vec<MoveResult>,
+    }
+
+    fn drive(
+        _main: NonSend<crate::engine::Engine>,
+        queries: crate::queries::QueryAccess,
+        mut moves: ResMut<Moves>,
+    ) {
+        let todo = std::mem::take(&mut moves.todo);
+        let actor = moves.actor.clone();
+        let done = queries.scope(0, || {
+            todo.into_iter()
+                .map(|(mode, vector)| move_call(&actor, mode, vector))
+                .collect::<Vec<_>>()
+        });
+        moves.done.extend(done);
+    }
+
+    fn solid(project: &mut Project, name: &str, at: [f32; 2], size: [f32; 2]) {
+        let id = add(project, name, at);
+        let library = project.physics.materials.clone();
+        project
+            .active_scene_mut()
+            .add_collider(&id, ColliderSpec::new(ColliderShape::Rect { size }), &library)
+            .unwrap();
+    }
+
+    fn start(project: &Project) -> (App, String, Entity) {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(TransformPlugin);
+        app.init_resource::<Assets<Mesh>>();
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f32(1.0 / 60.0),
+        ));
+        app.insert_resource(Time::<Fixed>::from_hz(60.0));
+        app.init_resource::<PhysicsLayers>();
+        app.add_plugins(
+            rp::RapierPhysicsPlugin::<crate::dim2::OneWayHooks>::pixels_per_meter(
+                crate::dim2::PIXELS_PER_METER,
+            )
+            .in_fixed_schedule(),
+        );
+        let mut ids = HashMap::new();
+        for actor in &project.actors {
+            let entity = app
+                .world_mut()
+                .spawn(crate::world::transform_for(actor))
+                .id();
+            ids.insert(actor.id.clone(), entity);
+        }
+        let mut commands = app.world_mut().commands();
+        install(&mut commands, project, &ids);
+        app.world_mut().flush();
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        app.insert_non_send(crate::engine::Engine::new(incoming, Mode::TwoD));
+        let actor = project
+            .actors
+            .iter()
+            .find(|a| a.name == "Player")
+            .map(|a| a.id.clone())
+            .unwrap();
+        app.insert_resource(Moves {
+            actor: actor.clone(),
+            ..Default::default()
+        });
+        app.add_systems(
+            FixedUpdate,
+            (drive, controller::apply_motion)
+                .chain()
+                .before(rp::PhysicsSet::SyncBackend),
+        );
+        run(&mut app, 4);
+        let entity = ids[&actor];
+        (app, actor, entity)
+    }
+
+    fn go(app: &mut App, mode: MoveMode, vector: [f32; 3]) -> MoveResult {
+        app.world_mut().resource_mut::<Moves>().todo.push((mode, vector));
+        run(app, 1);
+        app.world_mut().resource_mut::<Moves>().done.pop().expect("a move ran")
+    }
+
+    fn level() -> (Project, String) {
+        let mut p = project();
+        solid(&mut p, "Ground", [0.0, -8.0], [4000.0, 16.0]);
+        solid(&mut p, "Wall", [300.0, 100.0], [16.0, 400.0]);
+        let id = add(&mut p, "Player", [0.0, 32.0]);
+        let library = p.physics.materials.clone();
+        p.active_scene_mut()
+            .set_character_controller(&id, CharacterControllerSpec::for_mode(Mode::TwoD), &library)
+            .unwrap();
+        (p, id)
+    }
+
+    #[test]
+    fn a_2d_walker_stays_on_the_ground_until_a_wall_stops_it() {
+        let (p, _) = level();
+        let (mut app, _, entity) = start(&p);
+        let mut side = None;
+        for _ in 0..240 {
+            let r = go(&mut app, MoveMode::Simple, [240.0, 0.0, 0.0]);
+            assert!(r.error.is_none(), "{:?}", r.error);
+            if r.flags.sides {
+                side = Some(r);
+                break;
+            }
+        }
+        let r = side.expect("the wall was met");
+        assert!(r.grounded, "still standing: {r:?}");
+        let hit = r.hits.iter().find(|h| h.normal[0].abs() > 0.9).expect("a wall hit");
+        assert!(hit.normal[0] < -0.9, "faces the walker: {hit:?}");
+        assert!(!hit.actor.is_empty());
+        let at = app.world().get::<Transform>(entity).unwrap().translation;
+        assert!(at.x > 200.0 && at.x < 300.0, "{at:?}");
+        assert!((at.y - 32.0).abs() < 4.0, "{at:?}");
+    }
+
+    #[test]
+    fn a_2d_simple_move_falls_and_lands() {
+        let (mut p, id) = level();
+        p.active_scene_mut()
+            .actors
+            .iter_mut()
+            .find(|a| a.id == id)
+            .unwrap()
+            .components
+            .placement_mut()
+            .position = [0.0, 400.0, 0.0];
+        let (mut app, _, entity) = start(&p);
+        let mut landed = false;
+        for _ in 0..180 {
+            landed |= go(&mut app, MoveMode::Simple, [0.0; 3]).grounded;
+        }
+        assert!(landed);
+        let y = app.world().get::<Transform>(entity).unwrap().translation.y;
+        assert!((y - 32.0).abs() < 6.0, "resting height {y}");
+    }
+
+    #[test]
+    fn a_2d_ceiling_sets_above() {
+        let (mut p, _) = level();
+        solid(&mut p, "Roof", [0.0, 130.0], [400.0, 20.0]);
+        let (mut app, _, _) = start(&p);
+        let mut above = false;
+        for _ in 0..60 {
+            if go(&mut app, MoveMode::Move, [0.0, 4.0, 0.0]).flags.above {
+                above = true;
+                break;
+            }
+        }
+        assert!(above);
     }
 }

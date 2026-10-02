@@ -12,6 +12,7 @@ use crate::AppHandle;
 use crate::state::{EditSession, SharedState};
 use blockloom_core::build::ExtraFile;
 use blockloom_core::components::ActorComponent;
+use blockloom_core::physics::controller::CharacterControllerSpec;
 use blockloom_core::physics::cook::{
     CollisionLookup, CookControl, Decompose, FolderCollision, NoCollisionData, Source, cook_project,
 };
@@ -157,6 +158,34 @@ pub(crate) fn remove_rigidbody(
     edit(state, app, None, |project| {
         with_scene(project, |scene, library| {
             scene.remove_rigidbody(&actor_id, library)
+        })
+    })
+}
+
+pub(crate) fn set_character_controller(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    controller: CharacterControllerSpec,
+) -> Result<String, String> {
+    let session = Some(format!("physics-controller:{actor_id}"));
+    edit(state, app, session, |project| {
+        with_scene(project, |scene, library| {
+            scene
+                .set_character_controller(&actor_id, controller, library)
+                .map(|id| id.to_string())
+        })
+    })
+}
+
+pub(crate) fn remove_character_controller(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+) -> Result<(), String> {
+    edit(state, app, None, |project| {
+        with_scene(project, |scene, library| {
+            scene.remove_character_controller(&actor_id, library)
         })
     })
 }
@@ -476,6 +505,9 @@ pub(crate) fn refuse_generic(component: &ActorComponent) -> Result<(), String> {
             "Use add-collider and set-collider for colliders: they are addressed by id".to_string(),
         ),
         ActorComponent::Rigidbody { .. } => Err("Use set-rigidbody for a Rigidbody".to_string()),
+        ActorComponent::CharacterController { .. } => {
+            Err("Use set-character-controller for a CharacterController".to_string())
+        }
         _ => Ok(()),
     }
 }

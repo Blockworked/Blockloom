@@ -7,6 +7,7 @@
 
 use std::collections::HashSet;
 
+use super::controller::CharacterControllerSpec;
 use super::ids::{ColliderId, ComponentId};
 use super::material::MaterialLibrary;
 use super::migrate::shape_from_look;
@@ -185,6 +186,61 @@ impl Scene {
                 .position(|c| matches!(c, ActorComponent::Rigidbody { .. }))
             else {
                 return Err("This actor has no Rigidbody".to_string());
+            };
+            components.0.remove(index);
+            Ok(())
+        })
+    }
+
+    /// Adds or replaces the actor's CharacterController. Its identity is kept
+    /// across edits, like a Rigidbody's.
+    pub fn set_character_controller(
+        &mut self,
+        actor_id: &str,
+        mut spec: CharacterControllerSpec,
+        library: &MaterialLibrary,
+    ) -> Result<ComponentId, String> {
+        if spec.id.is_empty() {
+            spec.id = ComponentId::generate();
+        }
+        if let Some(existing) = self
+            .actors
+            .iter()
+            .find(|a| a.id == actor_id)
+            .and_then(|a| a.components.character_controller())
+        {
+            spec.id = existing.id.clone();
+        }
+        let id = spec.id.clone();
+        let touched = vec![id.to_string()];
+        self.transact(actor_id, &touched, library, |components| {
+            let next = ActorComponent::CharacterController { controller: spec };
+            match components
+                .0
+                .iter_mut()
+                .find(|c| matches!(c, ActorComponent::CharacterController { .. }))
+            {
+                Some(slot) => *slot = next,
+                None => components.0.push(next),
+            }
+            Ok(())
+        })?;
+        Ok(id)
+    }
+
+    /// Takes the CharacterController off the actor.
+    pub fn remove_character_controller(
+        &mut self,
+        actor_id: &str,
+        library: &MaterialLibrary,
+    ) -> Result<(), String> {
+        self.transact(actor_id, &[], library, |components| {
+            let Some(index) = components
+                .0
+                .iter()
+                .position(|c| matches!(c, ActorComponent::CharacterController { .. }))
+            else {
+                return Err("This actor has no CharacterController".to_string());
             };
             components.0.remove(index);
             Ok(())

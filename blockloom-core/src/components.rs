@@ -18,6 +18,7 @@
 use crate::ai::BrainSpec;
 use crate::animation::AnimationSpec;
 use crate::material::{ParticleSpec, SurfaceMaterial, TrailSpec};
+use crate::physics::controller::CharacterControllerSpec;
 use crate::physics::{ColliderId, ColliderSpec, RigidbodySpec};
 use crate::probe::ProbeSpec;
 use crate::scene::{Physics, Placement, Visual};
@@ -39,6 +40,7 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Body",
     "Rigidbody",
     "Collider",
+    "CharacterController",
     "Joint",
     "Brain",
     "Camera",
@@ -322,6 +324,9 @@ pub enum ActorComponent {
     /// One collision shape. Repeatable: an actor may carry several, each addressed
     /// by its [`ColliderId`], never by name.
     Collider { collider: ColliderSpec },
+    /// A capsule moved by blocks or scripts against the world (see
+    /// [`crate::physics::controller`]). At most one per actor.
+    CharacterController { controller: CharacterControllerSpec },
     /// Constrains this body to another actor. A chain of hinged bodies makes
     /// a ragdoll while the usual parent hierarchy remains independent.
     Joint { joint: JointSpec },
@@ -411,6 +416,7 @@ impl ActorComponent {
             ActorComponent::Body { .. } => "Body",
             ActorComponent::Rigidbody { .. } => "Rigidbody",
             ActorComponent::Collider { .. } => "Collider",
+            ActorComponent::CharacterController { .. } => "CharacterController",
             ActorComponent::Joint { .. } => "Joint",
             ActorComponent::Brain { .. } => "Brain",
             ActorComponent::Camera { .. } => "Camera",
@@ -674,6 +680,14 @@ impl Components {
     pub fn rigidbody(&self) -> Option<&RigidbodySpec> {
         self.0.iter().find_map(|c| match c {
             ActorComponent::Rigidbody { rigidbody } => Some(rigidbody),
+            _ => None,
+        })
+    }
+
+    /// The CharacterController, if the actor has one.
+    pub fn character_controller(&self) -> Option<&CharacterControllerSpec> {
+        self.0.iter().find_map(|c| match c {
+            ActorComponent::CharacterController { controller } => Some(controller),
             _ => None,
         })
     }

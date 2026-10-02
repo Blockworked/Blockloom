@@ -17,12 +17,12 @@ use blockloom_core::physics::query::{
 use blockloom_core::physics::{ColliderFilter, ColliderId, layer_bit, pair_collides};
 
 /// Who a collider entity is, as far as queries are concerned.
-struct Ident {
-    actor: String,
-    body: Option<String>,
-    collider: ColliderId,
-    trigger: bool,
-    filter: Option<ColliderFilter>,
+pub(crate) struct Ident {
+    pub(crate) actor: String,
+    pub(crate) body: Option<String>,
+    pub(crate) collider: ColliderId,
+    pub(crate) trigger: bool,
+    pub(crate) filter: Option<ColliderFilter>,
 }
 
 /// What every dimension looks collider entities up with.
@@ -35,7 +35,7 @@ pub struct Lookups<'w, 's> {
 }
 
 impl Lookups<'_, '_> {
-    fn ident(&self, entity: Entity, sensor: bool, carried: bool) -> Ident {
+    pub(crate) fn ident(&self, entity: Entity, sensor: bool, carried: bool) -> Ident {
         if let Ok(planned) = self.planned.get(entity) {
             return Ident {
                 actor: planned.actor.clone(),
@@ -81,7 +81,7 @@ impl Lookups<'_, '_> {
     }
 
     /// Whether `filter` lets a collider be found.
-    fn admits(&self, ident: &Ident, queryable: bool, filter: &QueryFilter) -> bool {
+    pub(crate) fn admits(&self, ident: &Ident, queryable: bool, filter: &QueryFilter) -> bool {
         if !queryable
             || (ident.trigger && !filter.triggers.includes_triggers())
             || filter.exclude_colliders.contains(&ident.collider)
@@ -115,6 +115,7 @@ pub struct QueryAccess<'w, 's> {
     two: d2::World2<'w, 's>,
     three: d3::World3<'w, 's>,
     layers: Option<Res<'w, PhysicsLayers>>,
+    controllers: crate::controller::ControllerAccess<'w, 's>,
 }
 
 impl QueryAccess<'_, '_> {
@@ -125,8 +126,12 @@ impl QueryAccess<'_, '_> {
         use blockloom_core::physics::query::with_service;
         use blockloom_core::scene::Mode;
         match self.layers.as_ref().and_then(|layers| layers.mode) {
-            Some(Mode::TwoD) => with_service(&self.two.service(), tick, f),
-            Some(Mode::ThreeD) => with_service(&self.three.service(), tick, f),
+            Some(Mode::TwoD) => with_service(&self.two.service(), tick, || {
+                self.controllers.scope(tick, f)
+            }),
+            Some(Mode::ThreeD) => with_service(&self.three.service(), tick, || {
+                self.controllers.scope(tick, f)
+            }),
             None => f(),
         }
     }

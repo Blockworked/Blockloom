@@ -476,6 +476,15 @@ impl Backend {
                 app,
                 arg(&args, "actorId")?,
             )?),
+            "set_character_controller" => to_json(commands::physics::set_character_controller(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "controller")?,
+            )?),
+            "remove_character_controller" => to_json(
+                commands::physics::remove_character_controller(state, app, arg(&args, "actorId")?)?,
+            ),
             "set_physics_profile" => to_json(commands::physics::set_physics_profile(
                 state,
                 app,

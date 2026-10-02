@@ -397,6 +397,20 @@ pub fn validate_scene_with(
             );
         }
         let has_new = bodies > 0 || actor.components.colliders().next().is_some();
+        let controllers = actor
+            .components
+            .iter()
+            .filter(|c| matches!(c, ActorComponent::CharacterController { .. }))
+            .count();
+        if controllers > 1 {
+            issues.push(
+                PhysicsIssue::error(format!(
+                    "\"{}\" has {controllers} CharacterControllers; an actor has at most one",
+                    actor.name
+                ))
+                .on(id),
+            );
+        }
         if has_new && actor.components.contains("Body") {
             issues.push(
                 PhysicsIssue::error(format!(
@@ -448,6 +462,36 @@ pub fn validate_scene_with(
                         );
                     }
                     check_sources(actor, collider, mode, &mut issues);
+                }
+                ActorComponent::CharacterController { controller } => {
+                    for (field, message) in controller.validate(mode) {
+                        issues.push(
+                            PhysicsIssue::error(message)
+                                .on(id)
+                                .of(controller.id.as_str())
+                                .field(&field),
+                        );
+                    }
+                    if rigidbody_of(actor).is_some_and(|b| b.body_type == BodyType::Dynamic) {
+                        issues.push(
+                            PhysicsIssue::error(format!(
+                                "\"{}\" has a CharacterController and a dynamic Rigidbody; the controller moves the actor, so make the body kinematic or remove it",
+                                actor.name
+                            ))
+                            .on(id)
+                            .of(controller.id.as_str()),
+                        );
+                    }
+                    if actor.components.contains("Body") {
+                        issues.push(
+                            PhysicsIssue::warning(format!(
+                                "\"{}\" has a CharacterController beside a legacy Body; migrate the Body so one system owns its physics",
+                                actor.name
+                            ))
+                            .on(id)
+                            .of(controller.id.as_str()),
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -507,6 +551,10 @@ pub fn validate_scene_with(
         }
     }
     issues
+}
+
+fn rigidbody_of(actor: &Actor) -> Option<&RigidbodySpec> {
+    actor.components.rigidbody()
 }
 
 /// A collider whose shape comes from a sibling component needs that component.
