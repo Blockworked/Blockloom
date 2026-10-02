@@ -56,6 +56,38 @@ impl Default for UiLayout {
     }
 }
 
+impl UiLayout {
+    pub fn validate_edit(&self) -> Result<(), String> {
+        let layout = self;
+        let length_valid = |v: UiLength| match v {
+            UiLength::Auto => true,
+            UiLength::Px(n) | UiLength::Percent(n) => n.is_finite() && n >= 0.,
+        };
+        if !length_valid(layout.width)
+            || !length_valid(layout.height)
+            || layout.columns == 0
+            || layout.columns > 256
+            || !layout.row_height.is_finite()
+            || layout.row_height <= 0.
+            || !layout.gap.is_finite()
+            || layout.gap < 0.
+            || !layout.grow.is_finite()
+            || layout.grow < 0.
+            || layout
+                .min_size
+                .iter()
+                .chain(layout.max_size.iter())
+                .chain(layout.padding.iter())
+                .any(|v| !v.is_finite() || *v < 0.)
+            || layout.margin.iter().any(|v| !v.is_finite())
+            || (0..2).any(|i| layout.max_size[i] > 0. && layout.max_size[i] < layout.min_size[i])
+        {
+            return Err("Invalid layout dimensions or spacing".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiPaint {
@@ -223,10 +255,76 @@ impl Default for UiDocument {
         }
     }
 }
+/// Canonical authored property paths with their accepted value types.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "path", content = "value", deny_unknown_fields)]
+pub enum UiPropertyEdit {
+    #[serde(rename = "element.kind")]
+    Kind(UiKind),
+    #[serde(rename = "element.content")]
+    Content(String),
+    #[serde(rename = "element.anchor")]
+    Anchor(UiAnchor),
+    #[serde(rename = "element.modal")]
+    Modal(bool),
+    #[serde(rename = "layout")]
+    Layout(#[serde(deserialize_with = "deserialize_edit_layout")] Option<UiLayout>),
+}
+
+fn deserialize_edit_layout<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<UiLayout>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let fields = [
+        "width",
+        "height",
+        "min_size",
+        "max_size",
+        "margin",
+        "padding",
+        "gap",
+        "columns",
+        "grow",
+        "align",
+        "absolute",
+        "row_height",
+    ];
+    if let Some(object) = value.as_object() {
+        if let Some(key) = object.keys().find(|key| !fields.contains(&key.as_str())) {
+            return Err(serde::de::Error::custom(format!(
+                "Unknown layout property: {key}"
+            )));
+        }
+    }
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
+}
+
+/// Free placement uses explicit pixel dimensions; flow retains authored sizing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", deny_unknown_fields)]
+pub enum UiPlacement {
+    Free { offset: [f32; 2], size: [f32; 2] },
+    Flow,
+}
+
 /// Absolute authored values, applied to a transaction's starting document.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum UiEdit {
+    SetProperty {
+        id: String,
+        property: UiPropertyEdit,
+    },
+    Reparent {
+        id: String,
+        parent: String,
+        placement: UiPlacement,
+    },
     Move {
         id: String,
         offset: [f32; 2],
@@ -240,15 +338,101 @@ pub enum UiEdit {
 
 impl UiDocument {
     pub fn apply_edit(&mut self, edit: &UiEdit) -> Result<(), String> {
-        let (UiEdit::Move { id, offset } | UiEdit::Resize { id, offset, .. }) = edit;
-        if offset.iter().any(|v| !v.is_finite()) {
-            return Err("Invalid widget offset".into());
-        }
+        let mut next = self.clone();
+        next.apply_edit_inner(edit)?;
+        next.validate()?;
+        *self = next;
+        Ok(())
+    }
+
+    fn apply_edit_inner(&mut self, edit: &UiEdit) -> Result<(), String> {
+        let id = match edit {
+            UiEdit::Move { id, .. }
+            | UiEdit::Resize { id, .. }
+            | UiEdit::SetProperty { id, .. }
+            | UiEdit::Reparent { id, .. } => id,
+        };
         let index = self
             .widgets
             .iter()
             .position(|w| &w.element.id == id)
             .ok_or_else(|| format!("Unknown widget: {id}"))?;
+        if let UiEdit::SetProperty { property, .. } = edit {
+            let w = &mut self.widgets[index];
+            match property {
+                UiPropertyEdit::Kind(value) => w.element.kind = *value,
+                UiPropertyEdit::Content(value) => w.element.content = value.clone(),
+                UiPropertyEdit::Anchor(value) => w.element.anchor = *value,
+                UiPropertyEdit::Modal(value) => w.element.modal = *value,
+                UiPropertyEdit::Layout(value) => {
+                    if let Some(layout) = value {
+                        layout.validate_edit()?;
+                    }
+                    w.layout = value.clone();
+                }
+            }
+            return Ok(());
+        }
+        if let UiEdit::Reparent {
+            parent, placement, ..
+        } = edit
+        {
+            if !self.widgets[index].world_actor.is_empty() {
+                return Err("Projected widgets cannot be reparented".into());
+            }
+            if !parent.is_empty() {
+                let target = self
+                    .widgets
+                    .iter()
+                    .find(|w| &w.element.id == parent)
+                    .ok_or_else(|| format!("Unknown parent: {parent}"))?;
+                if !target.world_actor.is_empty() {
+                    return Err("Cannot reparent into a projected widget".into());
+                }
+                if matches!(placement, UiPlacement::Free { .. })
+                    && target.element.kind != UiKind::Canvas
+                {
+                    return Err("Free placement requires a Canvas parent".into());
+                }
+                if matches!(placement, UiPlacement::Flow) && target.element.kind == UiKind::Canvas {
+                    return Err("Canvas children require free placement".into());
+                }
+            } else if matches!(placement, UiPlacement::Flow) {
+                return Err("Flow placement requires a parent".into());
+            }
+            let w = &mut self.widgets[index];
+            w.element.parent = parent.clone();
+            match placement {
+                UiPlacement::Free { offset, size } => {
+                    if offset.iter().any(|n| !n.is_finite())
+                        || size.iter().any(|n| !n.is_finite() || *n <= 0.)
+                    {
+                        return Err("Invalid free placement dimensions".into());
+                    }
+                    w.element.offset = *offset;
+                    w.element.size = *size;
+                    let layout = w.layout.get_or_insert_with(UiLayout::default);
+                    layout.absolute = true;
+                    layout.margin = [0.; 4];
+                    layout.width = UiLength::Px(size[0]);
+                    layout.height = UiLength::Px(size[1]);
+                }
+                UiPlacement::Flow => {
+                    w.element.offset = [0.; 2];
+                    if let Some(layout) = &mut w.layout {
+                        layout.absolute = false;
+                    }
+                }
+            }
+            return Ok(());
+        }
+        let offset = match edit {
+            UiEdit::Move { offset, .. } | UiEdit::Resize { offset, .. } => offset,
+            _ => unreachable!(),
+        };
+        if offset.iter().any(|v| !v.is_finite()) {
+            return Err("Invalid widget offset".into());
+        }
         let widget = &self.widgets[index];
         if !widget.world_actor.is_empty() {
             return Err("Projected widgets cannot be moved or resized".into());
@@ -423,6 +607,59 @@ pub fn effective_safe_area(authored: [f32; 4], device: [f32; 4]) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_properties_and_reparenting_are_atomic() {
+        let mut doc: UiDocument = serde_json::from_value(serde_json::json!({"widgets": [
+            {"element": {"id": "canvas", "kind": "Canvas"}},
+            {"element": {"id": "flow", "kind": "VerticalBox"}},
+            {"element": {"id": "child", "parent": "canvas", "content": "before"}},
+            {"element": {"id": "grandchild", "parent": "child"}, "scroll_target": "child"}
+        ]}))
+        .unwrap();
+        let parse = |value| serde_json::from_value::<UiEdit>(value).unwrap();
+        doc.apply_edit(&parse(serde_json::json!({"kind": "SetProperty", "id": "child", "property": {"path": "element.content", "value": "after"}}))).unwrap();
+        assert_eq!(doc.widgets[2].element.content, "after");
+        for value in [
+            serde_json::json!({"kind": "SetProperty", "id": "child", "property": {"path": "layout", "value": {"gap": -1}}}),
+            serde_json::json!({"kind": "SetProperty", "id": "child", "property": {"path": "layout", "value": {"width": {"Percent": -1}}}}),
+            serde_json::json!({"kind": "SetProperty", "id": "child", "property": {"path": "layout", "value": {"min_size": [20,0], "max_size": [10,0]}}}),
+            serde_json::json!({"kind": "Reparent", "id": "child", "parent": "grandchild", "placement": {"mode": "Flow"}}),
+            serde_json::json!({"kind": "Reparent", "id": "child", "parent": "flow", "placement": {"mode": "Free", "offset": [1,2], "size": [30,40]}}),
+            serde_json::json!({"kind": "Reparent", "id": "child", "parent": "missing", "placement": {"mode": "Flow"}}),
+        ] {
+            let before = doc.clone();
+            assert!(doc.apply_edit(&parse(value)).is_err());
+            assert_eq!(doc, before);
+        }
+        for property in [
+            serde_json::json!({"path": "element.id", "value": "renamed"}),
+            serde_json::json!({"path": "element.modal", "value": "yes"}),
+            serde_json::json!({"path": "layout", "value": {"typo": 1}}),
+        ] {
+            assert!(
+                serde_json::from_value::<UiEdit>(
+                    serde_json::json!({"kind": "SetProperty", "id": "child", "property": property})
+                )
+                .is_err()
+            );
+        }
+        doc.apply_edit(&parse(serde_json::json!({"kind": "Reparent", "id": "child", "parent": "", "placement": {"mode": "Free", "offset": [40,60], "size": [30,40]}}))).unwrap();
+        assert!(doc.widgets[2].layout.as_ref().unwrap().absolute);
+        assert_eq!(doc.widgets[2].element.offset, [40., 60.]);
+        doc.apply_edit(&parse(serde_json::json!({"kind": "Reparent", "id": "child", "parent": "flow", "placement": {"mode": "Flow"}}))).unwrap();
+        assert!(!doc.widgets[2].layout.as_ref().unwrap().absolute);
+        assert_eq!(doc.widgets[2].element.size, [30., 40.]);
+        assert_eq!(doc.widgets[3].element.parent, "child");
+        assert_eq!(doc.widgets[3].scroll_target, "child");
+        assert_eq!(
+            doc.widgets
+                .iter()
+                .map(|w| w.element.id.as_str())
+                .collect::<Vec<_>>(),
+            ["canvas", "flow", "child", "grandchild"]
+        );
+    }
 
     #[test]
     fn typed_edits_preserve_layout_and_reject_invalid_dimensions() {

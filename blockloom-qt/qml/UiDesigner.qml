@@ -42,7 +42,7 @@ Item {
         return !w.element.parent || (w.layout && w.layout.absolute) || (parent && parent.element.kind === "Canvas");
     }
     function startEdit(kind, x, y) {
-        if (gesture || !widget || !editable(widget)) return false;
+        if (gesture || !widget || ((kind === "Move" || kind === "Resize") && !editable(widget))) return false;
         const bound = selectedBounds;
         if (x !== null && (!layoutReady || !bound)) return false;
         const parent = bounds.find(w => w.id === widget.element.parent);
@@ -125,6 +125,46 @@ Item {
         if (index < 2) offset[index] = value; else size[index-2] = value;
         g.edit = index < 2 ? {kind:"Move", id:g.id, offset:offset} : {kind:"Resize", id:g.id, size:size, offset:offset};
         finishEdit();
+    }
+    function submitEdit(edit) {
+        if (!startEdit(edit.kind, null, null)) return;
+        gesture.edit = edit;
+        finishEdit();
+    }
+    function propertyEdit(path, value) {
+        if (widget) submitEdit({kind: "SetProperty", id: selectedId, property: {path: path, value: value}});
+    }
+    function descendant(id, ancestor) {
+        const visited = [];
+        let w = document.widgets.find(w => w.element.id === id);
+        while (w && visited.indexOf(w.element.id) < 0) {
+            if (w.element.id === ancestor) return true;
+            visited.push(w.element.id);
+            w = document.widgets.find(p => p.element.id === w.element.parent);
+        }
+        return false;
+    }
+    function reparent(parentId) {
+        if (!widget || (widget.element.parent || "") === parentId) return;
+        const target = document.widgets.find(w => w.element.id === parentId);
+        let placement = {mode: "Flow"};
+        if (!target || target.element.kind === "Canvas") {
+            const bound = selectedBounds, parent = bounds.find(w => w.id === parentId);
+            if (!layoutReady || !bound || (target && !parent)) { error = "Wait for matching geometry before reparenting."; return; }
+            if (!bound.visible || (parent && !parent.visible)) { error = "Show all screens before reparenting into a hidden tree."; return; }
+            const transform = parent ? geometry.inverse(parent.transform) : [1/designScale,0,0,1/designScale,-safe[0]/designScale,-safe[1]/designScale];
+            if (!transform) { error = "The parent transform cannot be inverted."; return; }
+            const corner = geometry.point(bound.transform,-bound.size[0]/2,-bound.size[1]/2);
+            const at = geometry.point(transform,corner.x,corner.y);
+            const x = geometry.point(bound.transform,bound.size[0]/2,-bound.size[1]/2);
+            const y = geometry.point(bound.transform,-bound.size[0]/2,bound.size[1]/2);
+            const right = geometry.point(transform,x.x,x.y), bottom = geometry.point(transform,y.x,y.y);
+            if (Math.abs(right.y-at.y)>0.01 || Math.abs(bottom.x-at.x)>0.01 || right.x<=at.x || bottom.y<=at.y) {
+                error = "This transform cannot preserve placement in the new parent."; return;
+            }
+            placement = {mode: "Free", offset: [at.x+(parent ? parent.size[0]/2 : 0),at.y+(parent ? parent.size[1]/2 : 0)], size: [right.x-at.x,bottom.y-at.y]};
+        }
+        submitEdit({kind: "Reparent", id: selectedId, parent: parentId, placement: placement});
     }
     Keys.onEscapePressed: cancelEdit()
     property string error: ""
@@ -221,7 +261,7 @@ Item {
     }
     function change(field, value) {
         if (!widget) return;
-        const next = copy(document); next.widgets[selected].element[field] = value; save(next);
+        propertyEdit("element." + field, value);
     }
     function extra(field, value) {
         if (!widget) return;
@@ -407,7 +447,9 @@ Item {
                 Label { text: root.widget ? root.widget.element.id : "Select a widget" }
                 ComboBox { Layout.fillWidth: true; model: root.kinds; currentIndex: root.widget ? root.kinds.indexOf(root.widget.element.kind) : -1; enabled: !!root.widget; onActivated: root.change("kind",currentText) }
                 TextField { Layout.fillWidth: true; placeholderText: "Text or image asset"; text: root.widget ? root.widget.element.content || "" : ""; enabled: !!root.widget; onEditingFinished: root.change("content",text) }
-                ComboBox { Layout.fillWidth: true; model: [""].concat(root.document.widgets.filter(w=>!root.widget || w.element.id!==root.widget.element.id).map(w=>w.element.id)); currentIndex: root.widget ? model.indexOf(root.widget.element.parent || "") : 0; enabled: !!root.widget; onActivated: root.change("parent",currentText) }
+                Label { text: "Parent (flow containers control placement)"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                ComboBox { Layout.fillWidth: true; model: [""].concat(root.document.widgets.filter(w=>!w.world_actor && !root.descendant(w.element.id,root.selectedId)).map(w=>w.element.id)); currentIndex: root.widget ? model.indexOf(root.widget.element.parent || "") : 0; enabled: !!root.widget && !root.widget.world_actor && !root.gesture; onActivated: root.reparent(currentText) }
+                Label { text: "Anchor (unused with absolute placement)"; wrapMode: Text.Wrap; Layout.fillWidth: true }
                 ComboBox { Layout.fillWidth: true; model: ["TopLeft","Top","TopRight","Left","Center","Right","BottomLeft","Bottom","BottomRight"]; currentIndex: root.widget ? model.indexOf(root.widget.element.anchor || "Center") : 0; onActivated: root.change("anchor",currentText) }
                 Repeater {
                     model: ["X","Y","Width","Height"]
@@ -419,6 +461,12 @@ Item {
                             enabled: root.editable(root.widget) && !root.gesture
                             onEditingFinished: root.editDimension(index, Number(text)) }
                     }
+                }
+                UiLayoutInspector {
+                    Layout.fillWidth: true
+                    enabled: !!root.widget && !root.gesture
+                    layoutValue: root.widget ? root.widget.layout || null : null
+                    onEdited: value => root.propertyEdit("layout", value)
                 }
                 CheckBox { text: "Modal"; checked: root.widget ? root.widget.element.modal === true : false; onToggled: root.change("modal",checked) }
                 TextField { Layout.fillWidth: true; placeholderText: "Tooltip"; text: root.widget ? root.widget.tooltip || "" : ""; onEditingFinished: root.extra("tooltip",text) }

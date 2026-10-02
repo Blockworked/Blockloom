@@ -658,3 +658,67 @@ fn interface_transactions_save_once_undo_cancel_and_reject_stale_edits() {
     );
     backend.dispatch("close_project", json!({})).unwrap();
 }
+
+#[test]
+fn interface_property_and_parent_transactions_round_trip_and_undo() {
+    let (_guard, _data, projects) = isolated("interface-properties");
+    let backend = backend();
+    let dir = create_project(&backend, projects.path(), "Properties");
+    backend
+        .dispatch("open_project", json!({"path": dir}))
+        .unwrap();
+    backend
+        .dispatch(
+            "set_interface",
+            json!({"document": {"widgets": [
+                {"element": {"id": "canvas", "kind": "Canvas"}},
+                {"element": {"id": "flow", "kind": "VerticalBox"}},
+                {"element": {"id": "child", "parent": "canvas", "content": "old"}}
+            ]}}),
+        )
+        .unwrap();
+    for edit in [
+        json!({"kind": "SetProperty", "id": "child", "property": {"path": "element.content", "value": "new"}}),
+        json!({"kind": "SetProperty", "id": "child", "property": {"path": "layout", "value": {"width": {"Percent": 50}, "padding": [1,2,3,4], "gap": 12}}}),
+        json!({"kind": "Reparent", "id": "child", "parent": "flow", "placement": {"mode": "Flow"}}),
+        json!({"kind": "Reparent", "id": "child", "parent": "", "placement": {"mode": "Free", "offset": [40,60], "size": [80,30]}}),
+        json!({"kind": "SetProperty", "id": "child", "property": {"path": "layout", "value": null}}),
+    ] {
+        let before =
+            backend.dispatch("get_state", json!({})).unwrap()["project"]["world"]["interface"]
+                .clone();
+        let revision = blockloom_core::sync::read_revision(&dir);
+        let bytes = std::fs::read(dir.join("project.blockloom")).unwrap();
+        let token = backend
+            .dispatch("begin_interface_edit", json!({"revision": revision}))
+            .unwrap();
+        let draft = backend
+            .dispatch(
+                "update_interface_edit",
+                json!({"token": token, "edit": edit}),
+            )
+            .unwrap();
+        assert_eq!(std::fs::read(dir.join("project.blockloom")).unwrap(), bytes);
+        assert!(backend.dispatch("update_interface_edit", json!({"token": token, "edit": {"kind": "Reparent", "id": "canvas", "parent": "canvas", "placement": {"mode": "Flow"}}})).is_err());
+        backend
+            .dispatch("commit_interface_edit", json!({"token": token}))
+            .unwrap();
+        assert_eq!(blockloom_core::sync::read_revision(&dir), revision + 1);
+        assert_eq!(
+            backend.dispatch("get_state", json!({})).unwrap()["project"]["world"]["interface"],
+            draft
+        );
+        let saved = blockloom_core::project::read_project_dir(&dir).unwrap();
+        assert_eq!(serde_json::to_value(&saved.world.interface).unwrap(), draft);
+        backend.dispatch("undo", json!({})).unwrap();
+        assert_eq!(
+            backend.dispatch("get_state", json!({})).unwrap()["project"]["world"]["interface"],
+            before
+        );
+        backend.dispatch("redo", json!({})).unwrap();
+        assert_eq!(
+            backend.dispatch("get_state", json!({})).unwrap()["project"]["world"]["interface"],
+            draft
+        );
+    }
+}

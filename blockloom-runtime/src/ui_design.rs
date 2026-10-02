@@ -382,7 +382,11 @@ mod tests {
             .resource_scope(|world, mut session: Mut<DesignSession>| {
                 world.resource_scope(|world, mut manager: Mut<UiManager>| {
                     session
-                        .apply(Some(design), world.non_send::<Engine>(), &mut manager)
+                        .apply(
+                            Some(design.clone()),
+                            world.non_send::<Engine>(),
+                            &mut manager,
+                        )
                         .unwrap();
                 });
             });
@@ -405,6 +409,112 @@ mod tests {
                 assert_eq!(after.transform, before.transform);
                 assert_eq!(after.visible, before.visible);
             }
+        }
+        // Preserve a measured box while moving it into a padded Canvas.
+        let before = find("nested").clone();
+        let parent = find("other");
+        let manager = app.world().resource::<UiManager>();
+        let scale = parent.transform[0];
+        let origin = manager.canvas_origin;
+        let logical_size = before.size;
+        design
+            .document
+            .widgets
+            .iter_mut()
+            .find(|w| w.element.id == "other")
+            .unwrap()
+            .element
+            .kind = blockloom_core::ui::UiKind::Canvas;
+        design
+            .document
+            .apply_edit(&blockloom_core::ui::UiEdit::Reparent {
+                id: "nested".into(),
+                parent: "other".into(),
+                placement: blockloom_core::ui::UiPlacement::Free {
+                    offset: [
+                        (before.transform[4] - parent.transform[4]) / scale
+                            + (parent.size[0] - before.size[0]) / 2.,
+                        (before.transform[5] - parent.transform[5]) / scale
+                            + (parent.size[1] - before.size[1]) / 2.,
+                    ],
+                    size: logical_size,
+                },
+            })
+            .unwrap();
+        design.revision = 9;
+        design.screen = None;
+        app.world_mut()
+            .resource_scope(|world, mut session: Mut<DesignSession>| {
+                world.resource_scope(|world, mut manager: Mut<UiManager>| {
+                    session
+                        .apply(
+                            Some(design.clone()),
+                            world.non_send::<Engine>(),
+                            &mut manager,
+                        )
+                        .unwrap();
+                });
+            });
+        for _ in 0..6 {
+            app.update();
+        }
+        let after = app
+            .world()
+            .resource::<DesignSession>()
+            .last
+            .as_ref()
+            .unwrap()
+            .widgets
+            .iter()
+            .find(|w| w.id == "nested")
+            .unwrap();
+        assert_eq!(after.size, before.size);
+        for (a, b) in after.transform.iter().zip(before.transform.iter()) {
+            assert!((a - b).abs() < 0.01, "{after:?} vs {before:?}");
+        }
+        design
+            .document
+            .apply_edit(&blockloom_core::ui::UiEdit::Reparent {
+                id: "nested".into(),
+                parent: String::new(),
+                placement: blockloom_core::ui::UiPlacement::Free {
+                    offset: [
+                        (before.transform[4] - origin.x) / scale - before.size[0] / 2.,
+                        (before.transform[5] - origin.y) / scale - before.size[1] / 2.,
+                    ],
+                    size: logical_size,
+                },
+            })
+            .unwrap();
+        design.revision = 10;
+        app.world_mut()
+            .resource_scope(|world, mut session: Mut<DesignSession>| {
+                world.resource_scope(|world, mut manager: Mut<UiManager>| {
+                    session
+                        .apply(
+                            Some(design.clone()),
+                            world.non_send::<Engine>(),
+                            &mut manager,
+                        )
+                        .unwrap();
+                });
+            });
+        for _ in 0..6 {
+            app.update();
+        }
+        let root = app
+            .world()
+            .resource::<DesignSession>()
+            .last
+            .as_ref()
+            .unwrap()
+            .widgets
+            .iter()
+            .find(|w| w.id == "nested")
+            .unwrap();
+        assert_eq!(root.size, before.size);
+        for (a, b) in root.transform.iter().zip(before.transform.iter()) {
+            assert!((a - b).abs() < 0.01, "{root:?} vs {before:?}");
         }
         assert!(!app.world().non_send::<Engine>().running);
     }

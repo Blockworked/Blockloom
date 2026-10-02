@@ -957,7 +957,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "update-interface-edit",
         cmd: "update_interface_edit",
         aliases: &["update_interface_edit"],
-        summary: "Replace the draft with a typed edit: {kind: Move, id, offset} or {kind: Resize, id, size, offset}. Does not save.",
+        summary: "Replace the draft with Move, Resize, SetProperty {id, property: {path, value}} or Reparent {id, parent, placement: {mode: Free, offset, size} or {mode: Flow}}. Property paths: element.kind/content/anchor/modal, layout (object or null). Does not save.",
         args: &[
             ArgSpec {
                 name: "token",

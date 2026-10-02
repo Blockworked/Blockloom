@@ -481,13 +481,14 @@ pub fn draw_ui(
                 })
                 .unwrap_or_default(),
         ));
-        if (element.parent.is_empty() || canvas)
-            && element.layout.as_ref().is_none_or(|l| !l.absolute)
-        {
-            let at = crate::ui::anchoring(element.spec.anchor, element.spec.offset);
-            commands
-                .entity(element.entity)
-                .insert(UiTransform::from_translation(at.self_shift));
+        if element.parent.is_empty() || canvas {
+            let transform = if element.layout.as_ref().is_some_and(|l| l.absolute) {
+                UiTransform::default()
+            } else {
+                let at = crate::ui::anchoring(element.spec.anchor, element.spec.offset);
+                UiTransform::from_translation(at.self_shift)
+            };
+            commands.entity(element.entity).insert(transform);
         }
         if element.kind == UiKind::Image && !element.spec.content.trim().is_empty() {
             commands
@@ -662,7 +663,7 @@ fn spawn_element(
     }
     // A top-level element takes its anchor's share of its own size back off,
     // so a right-anchored one ends up inside the window rather than past it.
-    if !parented {
+    if !parented && node.layout.as_ref().is_none_or(|l| !l.absolute) {
         let at = crate::ui::anchoring(node.spec.anchor, node.spec.offset);
         entity.insert(UiTransform::from_translation(at.self_shift));
     }

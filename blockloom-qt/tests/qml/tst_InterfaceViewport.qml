@@ -31,8 +31,20 @@ TestCase {
             } else if (command === "update_interface_edit") {
                 const next = JSON.parse(JSON.stringify(test.draft));
                 const w = next.widgets.find(w => w.element.id === args.edit.id);
-                w.element.offset = args.edit.offset;
+                if (args.edit.kind === "Move" || args.edit.kind === "Resize") w.element.offset = args.edit.offset;
                 if (args.edit.kind === "Resize") w.element.size = args.edit.size;
+                if (args.edit.kind === "SetProperty") {
+                    const property = args.edit.property;
+                    if (property.path === "layout") w.layout = property.value;
+                    else w.element[property.path.split(".")[1]] = property.value;
+                }
+                if (args.edit.kind === "Reparent") {
+                    w.element.parent = args.edit.parent;
+                    if (args.edit.placement.mode === "Free") {
+                        w.element.offset = args.edit.placement.offset;
+                        w.element.size = args.edit.placement.size;
+                    } else w.element.offset = [0,0];
+                }
                 if (test.deferUpdate) test.pendingUpdate = () => done(next);
                 else if (done) done(next);
             } else if (command === "commit_interface_edit") {
@@ -58,6 +70,76 @@ TestCase {
             {id: "front", size: [100,60], transform: [0,1,-1,0,300,300], visible: true, paint_order: 2, clips: []},
             {id: "back", size: [200,200], transform: [1,0,0,1,300,300], visible: true, paint_order: 1, clips: []}
         ]};
+    }
+    function test_typed_properties_and_layout_allow_flow_children() {
+        const d = panel.copy(panel.document);
+        d.widgets[1].element.parent = "back";
+        panel.document = d;
+        backend.appState.project.world.interface = d;
+        panel.selectedId = "front";
+        verify(!panel.editable(panel.widget));
+        panel.propertyEdit("layout", {width: {Percent: 50}, gap: 12});
+        compare(panel.document.widgets[1].layout.width.Percent, 50);
+        compare(calls.filter(c => c.command === "commit_interface_edit").length, 1);
+        panel.change("content", "Hello");
+        compare(panel.document.widgets[1].element.content, "Hello");
+        verify(!calls.some(c => c.command === "set_interface"));
+    }
+    function test_reparent_preserves_canvas_bounds_and_flow_is_explicit() {
+        const d = panel.copy(panel.document);
+        d.widgets[0].element.kind = "Canvas";
+        panel.document = d; backend.appState.project.world.interface = d;
+        panel.selectedId = "front";
+        const g = geometry(panel.revision, panel.generation);
+        g.widgets[0].transform = [1,0,0,1,300,300];
+        panel.receiveLayout(JSON.stringify(g));
+        panel.reparent("back");
+        const edit = calls.find(c => c.command === "update_interface_edit").args.edit;
+        compare(edit.kind, "Reparent"); compare(edit.placement.mode, "Free");
+        compare(edit.placement.offset, [50,70]); compare(edit.placement.size, [100,60]);
+        compare(panel.document.widgets[1].element.parent, "back");
+        verify(panel.descendant("front", "back"));
+        verify(!panel.descendant("back", "front"));
+        panel.reparent("");
+        verify(panel.error.indexOf("geometry") >= 0);
+        const flow = panel.copy(panel.document); flow.widgets[0].element.kind = "VerticalBox";
+        flow.widgets[1].element.parent = "";
+        panel.document = flow; backend.appState.project.world.interface = flow;
+        panel.reparent("back");
+        compare(calls.filter(c => c.command === "update_interface_edit").slice(-1)[0].args.edit.placement.mode, "Flow");
+    }
+    function test_reparent_uses_canvas_scale_and_safe_area() {
+        const d = panel.copy(panel.document);
+        d.scale = "ScaleWithSize"; d.reference_size = [480,360]; d.safe_area = [10,20,10,20];
+        d.widgets[0].element.kind = "Canvas";
+        panel.document = d; backend.appState.project.world.interface = d;
+        panel.selectedId = "front";
+        const scale = panel.designScale;
+        function frame() {
+            const g = geometry(panel.revision, panel.generation);
+            g.widgets[0].transform = [scale,0,0,scale,10+150*scale,20+140*scale];
+            g.widgets[1].transform = [scale,0,0,scale,10+200*scale,20+150*scale];
+            panel.receiveLayout(JSON.stringify(g));
+        }
+        frame(); panel.reparent("back");
+        const free = calls.filter(c => c.command === "update_interface_edit").slice(-1)[0].args.edit.placement;
+        fuzzyCompare(free.offset[0], 0, 0.001); fuzzyCompare(free.offset[1], 60, 0.001);
+        compare(free.size, [100,60]);
+        frame(); panel.reparent("");
+        const root = calls.filter(c => c.command === "update_interface_edit").slice(-1)[0].args.edit.placement;
+        fuzzyCompare(root.offset[0], 100, 0.001); fuzzyCompare(root.offset[1], 110, 0.001);
+        compare(root.size, [100,60]);
+    }
+    function test_reparent_rejects_unrepresentable_transform() {
+        panel.selectedId = "front";
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
+        panel.reparent(""); // Already a root, so no edit.
+        const d = panel.copy(panel.document); d.widgets[0].element.kind = "Canvas";
+        panel.document = d;
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
+        panel.reparent("back");
+        verify(panel.error.indexOf("transform") >= 0);
+        verify(!calls.some(c => c.command === "begin_interface_edit"));
     }
     function test_pick_matches_runtime_order_and_never_saves() {
         panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
