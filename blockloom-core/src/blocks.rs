@@ -121,10 +121,15 @@ pub enum InstructionKind {
     WhenTouched,
     /// Runs when this actor is clicked.
     WhenClicked,
-    /// Runs when this actor starts touching `with` (an actor name, or an
-    /// empty string for "anything").
+    /// Runs when this actor starts (Enter), keeps (Stay) or stops (Exit)
+    /// touching `with` (an actor name, or an empty string for "anything").
+    /// `scope` narrows it to solid touches or trigger overlaps.
     WhenCollision {
         with: String,
+        #[serde(default)]
+        phase: crate::physics::ContactPhase,
+        #[serde(default)]
+        scope: crate::physics::ContactScope,
     },
     /// Runs when any actor broadcasts `name`.
     WhenMessage {
@@ -526,6 +531,22 @@ pub enum InstructionKind {
         z: Value,
     },
     SetVelocity {
+        x: Value,
+        y: Value,
+        z: Value,
+    },
+    /// A force on this body for one fixed step, read per `mode`. Only a
+    /// dynamic body responds.
+    AddForce {
+        mode: crate::physics::ForceMode,
+        x: Value,
+        y: Value,
+        z: Value,
+    },
+    /// A torque on this body for one fixed step, read per `mode`. 2D bodies
+    /// turn about z only.
+    AddTorque {
+        mode: crate::physics::ForceMode,
         x: Value,
         y: Value,
         z: Value,
@@ -1151,6 +1172,8 @@ impl BlockKind for InstructionKind {
             | K::SetCloudDrift { x, y, z }
             | K::ApplyImpulse { x, y, z }
             | K::SetVelocity { x, y, z }
+            | K::AddForce { x, y, z, .. }
+            | K::AddTorque { x, y, z, .. }
             | K::SetGravity { x, y, z } => {
                 f(x, InputValueType::Any);
                 f(y, InputValueType::Any);

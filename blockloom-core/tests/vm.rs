@@ -5,6 +5,7 @@ use blockloom_core::blocks::{
     BlockDef, BlockPiece, BlockShape, DictDef, DictEntry, DictItem, Instruction, InstructionKind,
     ListDef, ListItem, Strand,
 };
+use blockloom_core::physics::{ContactKind, ContactPhase};
 use blockloom_core::project::{Actor, Project, Scene};
 use blockloom_core::scene::{Axis, Mode, Visual};
 use blockloom_core::sense::Sensors;
@@ -771,6 +772,8 @@ fn a_collision_only_starts_the_strand_whose_target_matches() {
         vec![
             ins(InstructionKind::WhenCollision {
                 with: "Ground".to_string(),
+                phase: Default::default(),
+                scope: Default::default(),
             }),
             ins(say("landed")),
         ],
@@ -782,11 +785,28 @@ fn a_collision_only_starts_the_strand_whose_target_matches() {
     vm.vm.fire(Event::Collision {
         actor: player.clone(),
         with: wall,
+        phase: Default::default(),
+        kind: ContactKind::Collision,
+        impulse: 0.0,
+        speed: 0.0,
     });
     assert!(says(&vm.run(1)).is_empty());
     vm.vm.fire(Event::Collision {
+        actor: player.clone(),
+        with: ground.clone(),
+        phase: ContactPhase::Stay,
+        kind: ContactKind::Collision,
+        impulse: 0.0,
+        speed: 0.0,
+    });
+    assert!(says(&vm.run(1)).is_empty(), "the hat listens to Enter");
+    vm.vm.fire(Event::Collision {
         actor: player,
         with: ground,
+        phase: ContactPhase::Enter,
+        kind: ContactKind::Collision,
+        impulse: 0.0,
+        speed: 0.0,
     });
     assert_eq!(says(&vm.run(1)), vec!["landed".to_string()]);
 }

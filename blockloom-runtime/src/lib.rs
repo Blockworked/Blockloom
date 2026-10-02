@@ -32,6 +32,7 @@ mod capture;
 mod cinematic;
 mod cloud_layers;
 mod clouds;
+mod contacts;
 mod culling;
 mod decals;
 mod decals_deferred;
@@ -504,7 +505,13 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     volumes::apply_volume_effects,
                 )
                     .chain(),
-                (dim2::apply_effects, dim3::apply_effects).chain(),
+                (
+                    dim2::apply_effects,
+                    dim3::apply_effects,
+                    physics_install::d2::apply_forces.run_if(is_2d),
+                    physics_install::d3::apply_forces.run_if(is_3d),
+                )
+                    .chain(),
                 (
                     world::apply_component_effects,
                     lights::apply_light_effects.run_if(is_3d),
@@ -541,6 +548,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 world::apply_parenting,
                 dim2::record_poses,
                 dim3::record_poses,
+                dim2::track_contacts.run_if(is_2d),
+                dim3::track_contacts.run_if(is_3d),
             )
                 .chain(),
         )
@@ -573,7 +582,6 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         .run_if(is_3d),
                 )
                     .chain(),
-                (dim2::relay_collisions, dim3::relay_collisions).chain(),
                 (
                     ui_systems::canvas,
                     ui_systems::collections,
@@ -755,11 +763,11 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .before(volumes::gather_volumes),
                 performance::mark_update_segment
                     .after(environment::apply_environment)
-                    .before(dim2::relay_collisions)
+                    .before(ui_systems::canvas)
                     .run_if(is_2d),
                 performance::mark_update_segment
                     .after(light_probes::sync_probes)
-                    .before(dim3::relay_collisions)
+                    .before(ui_systems::canvas)
                     .run_if(is_3d),
                 performance::mark_update_segment
                     .after(world::detect_clicks)

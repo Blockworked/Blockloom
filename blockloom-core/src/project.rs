@@ -499,7 +499,7 @@ impl Scene {
                     InstructionKind::PointTowards { target } if *target == old => {
                         *target = trimmed.clone()
                     }
-                    InstructionKind::WhenCollision { with } if *with == old => {
+                    InstructionKind::WhenCollision { with, .. } if *with == old => {
                         *with = trimmed.clone()
                     }
                     _ => {}

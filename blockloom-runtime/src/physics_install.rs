@@ -7,6 +7,7 @@
 //! Core decides everything (poses, dimensions, mass, groups); this file only maps
 //! those answers onto the backend.
 
+use crate::engine::{Engine, PendingEffects};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use blockloom_core::physics::material::CombineMode;
@@ -17,6 +18,7 @@ use blockloom_core::physics::{
 };
 use blockloom_core::project::Project;
 use blockloom_core::scene::Mode;
+use blockloom_core::vm::Effect;
 use std::collections::HashMap;
 
 /// The layer rules the pair hooks consult.
@@ -34,6 +36,37 @@ pub struct PlannedBody {
     /// Axes the body may not move along or turn about, however it is pushed.
     pub frozen_linear: [bool; 3],
     pub frozen_angular: [bool; 3],
+    /// The fastest a contact may push this body out of an overlap, in world
+    /// units a second.
+    pub max_depenetration: f32,
+}
+
+/// The slowest depenetration speed either body of a pair allows, if either
+/// is a planned body.
+pub fn depenetration_cap(a: Option<&PlannedBody>, b: Option<&PlannedBody>) -> Option<f32> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.max_depenetration.min(b.max_depenetration)),
+        (Some(one), None) | (None, Some(one)) => Some(one.max_depenetration),
+        (None, None) => None,
+    }
+}
+
+/// Rapier's own cap on how fast a contact pushes bodies apart, in metres a
+/// second. A body's `max_depenetration_velocity` above it changes nothing.
+const RAPIER_CORRECTIVE_VELOCITY: f32 = 3.0;
+
+/// True when the collider's body asks for a gentler depenetration than the
+/// solver's own cap, so the contact hook has something to do.
+fn caps_depenetration(
+    plan: &PhysicsPlan,
+    collider: &blockloom_core::physics::ColliderPlan,
+    solver_cap: f32,
+) -> bool {
+    collider
+        .body_actor
+        .as_deref()
+        .and_then(|actor| plan.body(actor))
+        .is_some_and(|body| body.spec.max_depenetration_velocity < solver_cap)
 }
 
 /// A collider entity this module installed.
@@ -150,6 +183,7 @@ pub mod d3 {
                     max_angular: spec.max_angular_velocity,
                     frozen_linear: spec.constraints.freeze_position,
                     frozen_angular: spec.constraints.freeze_rotation,
+                    max_depenetration: spec.max_depenetration_velocity,
                 },
             ));
             let sleeping = match sleep_speed(spec.sleep_threshold) {
@@ -161,6 +195,9 @@ pub mod d3 {
                 None => rp::Sleeping::disabled(),
             };
             e.insert(sleeping);
+            if let Some(extra) = spec.solver_iterations.filter(|extra| *extra > 0) {
+                e.insert(rp::AdditionalSolverIterations(extra as usize));
+            }
             let mut locked = rp::LockedAxes::empty();
             for (frozen, flag) in spec.constraints.freeze_position.iter().zip([
                 rp::LockedAxes::TRANSLATION_LOCKED_X,
@@ -249,7 +286,9 @@ pub mod d3 {
                 hooks |= rp::ActiveHooks::FILTER_CONTACT_PAIRS
                     | rp::ActiveHooks::FILTER_INTERSECTION_PAIR;
             }
-            if material.static_friction != material.dynamic_friction {
+            if material.static_friction != material.dynamic_friction
+                || caps_depenetration(plan, planned, RAPIER_CORRECTIVE_VELOCITY)
+            {
                 hooks |= rp::ActiveHooks::MODIFY_SOLVER_CONTACTS;
             }
             let mut e = commands.spawn((
@@ -300,6 +339,8 @@ pub mod d3 {
         colliders: Query<'w, 's, &'static PlannedCollider>,
         surfaces: Query<'w, 's, &'static Surface3>,
         bodies: Query<'w, 's, (&'static rp::Velocity, &'static GlobalTransform)>,
+        planned: Query<'w, 's, &'static PlannedBody>,
+        time: Res<'w, Time>,
     }
 
     impl Hooks3<'_, '_> {
@@ -334,6 +375,18 @@ pub mod d3 {
         }
 
         fn modify_solver_contacts(&self, mut context: rp::ContactModificationContextView) {
+            let planned = |body: Option<Entity>| body.and_then(|b| self.planned.get(b).ok());
+            if let Some(cap) = depenetration_cap(
+                planned(context.rigid_body1()),
+                planned(context.rigid_body2()),
+            ) && cap.is_finite()
+                && let Some(contacts) = context.solver_contacts_mut()
+            {
+                let deepest = -cap * self.time.delta_secs();
+                for contact in contacts.iter_mut() {
+                    contact.dist = contact.dist.max(deepest);
+                }
+            }
             let (Ok(a), Ok(b)) = (
                 self.surfaces.get(context.collider1()),
                 self.surfaces.get(context.collider2()),
@@ -397,6 +450,61 @@ pub mod d3 {
             }
         }
     }
+
+    /// `add force` and `add torque`, as the impulse the mode reduces to over this
+    /// fixed step. Only a dynamic body responds.
+    pub fn apply_forces(
+        effects: Res<PendingEffects>,
+        engine: NonSend<Engine>,
+        time: Res<Time>,
+        mut bodies: Query<(
+            &rp::RigidBody,
+            &Transform,
+            Option<&rp::ReadMassProperties>,
+            &mut rp::ExternalImpulse,
+        )>,
+    ) {
+        if !engine.running || engine.paused {
+            return;
+        }
+        let dt = time.delta_secs().max(1.0 / 1000.0);
+        for effect in &effects.0 {
+            let Effect::AddForce {
+                actor,
+                mode,
+                torque,
+                vector,
+            } = effect
+            else {
+                continue;
+            };
+            let Some(entity) = engine.entities.get(actor).copied() else {
+                continue;
+            };
+            let Ok((kind, transform, mass, mut pending)) = bodies.get_mut(entity) else {
+                continue;
+            };
+            if *kind != rp::RigidBody::Dynamic {
+                continue;
+            }
+            let Some(mass) = mass.map(|mass| *mass.get()) else {
+                continue;
+            };
+            if *torque {
+                let impulse = mode.torque_impulse_3d(
+                    *vector,
+                    mass.principal_inertia.to_array(),
+                    mass.principal_inertia_local_frame.to_array(),
+                    transform.rotation.to_array(),
+                    dt,
+                );
+                pending.torque_impulse += Vec3::from_array(impulse);
+            } else {
+                pending.impulse +=
+                    Vec3::from_array(mode.linear_impulse_array(*vector, mass.mass, dt));
+            }
+        }
+    }
 }
 
 pub mod d2 {
@@ -444,6 +552,7 @@ pub mod d2 {
                         false,
                     ],
                     frozen_angular: [false, false, spec.constraints.freeze_rotation[2]],
+                    max_depenetration: spec.max_depenetration_velocity * PPM,
                 },
             ));
             let sleeping = match sleep_speed(spec.sleep_threshold) {
@@ -455,6 +564,9 @@ pub mod d2 {
                 None => rp::Sleeping::disabled(),
             };
             e.insert(sleeping);
+            if let Some(extra) = spec.solver_iterations.filter(|extra| *extra > 0) {
+                e.insert(rp::AdditionalSolverIterations(extra as usize));
+            }
             let mut locked = rp::LockedAxes::empty();
             if spec.constraints.freeze_position[0] {
                 locked |= rp::LockedAxes::TRANSLATION_LOCKED_X;
@@ -554,7 +666,7 @@ pub mod d2 {
                 hooks |= rp::ActiveHooks::FILTER_CONTACT_PAIRS
                     | rp::ActiveHooks::FILTER_INTERSECTION_PAIR;
             }
-            if planned.one_way {
+            if planned.one_way || caps_depenetration(plan, planned, RAPIER_CORRECTIVE_VELOCITY) {
                 hooks |= rp::ActiveHooks::MODIFY_SOLVER_CONTACTS;
             }
             let mut e = commands.spawn((
@@ -634,6 +746,53 @@ pub mod d2 {
             let speed = velocity.linear.length();
             if speed > limits.max_linear && limits.max_linear > 0.0 {
                 velocity.linear *= limits.max_linear / speed;
+            }
+        }
+    }
+    /// `add force` and `add torque` in 2D. The 2D world is in pixel units, so the
+    /// vector is used as is, like `set velocity`; a torque is about z.
+    pub fn apply_forces(
+        effects: Res<PendingEffects>,
+        engine: NonSend<Engine>,
+        time: Res<Time>,
+        mut bodies: Query<(
+            &rp::RigidBody,
+            Option<&rp::ReadMassProperties>,
+            &mut rp::ExternalImpulse,
+        )>,
+    ) {
+        if !engine.running || engine.paused {
+            return;
+        }
+        let dt = time.delta_secs().max(1.0 / 1000.0);
+        for effect in &effects.0 {
+            let Effect::AddForce {
+                actor,
+                mode,
+                torque,
+                vector,
+            } = effect
+            else {
+                continue;
+            };
+            let Some(entity) = engine.entities.get(actor).copied() else {
+                continue;
+            };
+            let Ok((kind, mass, mut pending)) = bodies.get_mut(entity) else {
+                continue;
+            };
+            if *kind != rp::RigidBody::Dynamic {
+                continue;
+            }
+            let Some(mass) = mass.map(|mass| *mass.get()) else {
+                continue;
+            };
+            if *torque {
+                pending.torque_impulse +=
+                    mode.torque_impulse_2d(vector[2], mass.principal_inertia, dt);
+            } else {
+                let impulse = mode.linear_impulse_array([vector[0], vector[1], 0.0], mass.mass, dt);
+                pending.impulse += Vec2::new(impulse[0], impulse[1]);
             }
         }
     }
@@ -1092,6 +1251,216 @@ mod tests {
         );
     }
 
+    /// Runs `apply_forces` once for `effect`, with the engine marked running.
+    fn push(app: &mut App, ids: &HashMap<String, Entity>, effect: Effect) {
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(rx, Mode::ThreeD);
+        engine.running = true;
+        engine.entities = ids.clone();
+        app.insert_non_send(engine);
+        app.insert_resource(PendingEffects(vec![effect]));
+        let mut system = IntoSystem::into_system(d3::apply_forces);
+        system.initialize(app.world_mut());
+        system.run((), app.world_mut()).unwrap();
+    }
+
+    fn drifter(p: &mut Project, name: &str, mass: f32) -> String {
+        let id = add(p, name, [0.0, 0.0, 0.0]);
+        body(
+            p,
+            &id,
+            RigidbodySpec {
+                use_gravity: false,
+                mass: MassSource::Explicit { mass },
+                ..Default::default()
+            },
+            vec![ball()],
+        );
+        id
+    }
+
+    fn velocity_of(app: &App, entity: Entity) -> rp::Velocity {
+        *app.world().get::<rp::Velocity>(entity).unwrap()
+    }
+
+    #[test]
+    fn force_modes_change_velocity_as_documented() {
+        let cases = [
+            // mode, vector, mass, expected dv along x after one 1/60 s step
+            (blockloom_core::physics::ForceMode::Force, 120.0, 2.0, 1.0),
+            (
+                blockloom_core::physics::ForceMode::Acceleration,
+                60.0,
+                9.0,
+                1.0,
+            ),
+            (blockloom_core::physics::ForceMode::Impulse, 8.0, 4.0, 2.0),
+            (
+                blockloom_core::physics::ForceMode::VelocityChange,
+                3.0,
+                7.0,
+                3.0,
+            ),
+        ];
+        for (mode, amount, mass, dv) in cases {
+            let mut p = project();
+            let id = drifter(&mut p, "Drifter", mass);
+            let (mut app, ids) = world(&p);
+            run(&mut app, 3);
+            push(
+                &mut app,
+                &ids,
+                Effect::AddForce {
+                    actor: id.clone(),
+                    mode,
+                    torque: false,
+                    vector: [amount, 0.0, 0.0],
+                },
+            );
+            run(&mut app, 1);
+            let got = velocity_of(&app, ids[&id]).linear.x;
+            assert!((got - dv).abs() < 0.02, "{mode:?}: {got} vs {dv}");
+        }
+    }
+
+    #[test]
+    fn a_force_acts_for_one_step_only() {
+        let mut p = project();
+        let id = drifter(&mut p, "Drifter", 1.0);
+        let (mut app, ids) = world(&p);
+        run(&mut app, 3);
+        push(
+            &mut app,
+            &ids,
+            Effect::AddForce {
+                actor: id.clone(),
+                mode: blockloom_core::physics::ForceMode::Force,
+                torque: false,
+                vector: [60.0, 0.0, 0.0],
+            },
+        );
+        run(&mut app, 1);
+        let once = velocity_of(&app, ids[&id]).linear.x;
+        run(&mut app, 30);
+        let later = velocity_of(&app, ids[&id]).linear.x;
+        assert!((once - 1.0).abs() < 0.02, "{once}");
+        assert!((later - once).abs() < 0.01, "{once} then {later}");
+    }
+
+    #[test]
+    fn a_torque_spins_the_body_by_its_inertia() {
+        let mut p = project();
+        let id = drifter(&mut p, "Spinner", 3.0);
+        let (mut app, ids) = world(&p);
+        run(&mut app, 3);
+        push(
+            &mut app,
+            &ids,
+            Effect::AddForce {
+                actor: id.clone(),
+                mode: blockloom_core::physics::ForceMode::VelocityChange,
+                torque: true,
+                vector: [0.0, 2.0, 0.0],
+            },
+        );
+        run(&mut app, 1);
+        let spin = velocity_of(&app, ids[&id]).angular;
+        assert!((spin.y - 2.0).abs() < 0.05, "{spin:?}");
+        assert!(spin.x.abs() < 0.01 && spin.z.abs() < 0.01);
+    }
+
+    #[test]
+    fn only_a_dynamic_body_answers_a_force() {
+        let mut p = project();
+        let id = add(&mut p, "Wall", [0.0, 0.0, 0.0]);
+        body(
+            &mut p,
+            &id,
+            RigidbodySpec {
+                body_type: BodyType::Kinematic,
+                ..Default::default()
+            },
+            vec![ball()],
+        );
+        let (mut app, ids) = world(&p);
+        run(&mut app, 3);
+        push(
+            &mut app,
+            &ids,
+            Effect::AddForce {
+                actor: id.clone(),
+                mode: blockloom_core::physics::ForceMode::VelocityChange,
+                torque: false,
+                vector: [5.0, 0.0, 0.0],
+            },
+        );
+        run(&mut app, 2);
+        assert!(at(&app, ids[&id]).x.abs() < 1e-3);
+    }
+
+    #[test]
+    fn solver_iterations_become_the_bodys_extra_substeps() {
+        let mut p = project();
+        let busy = add(&mut p, "Busy", [0.0, 5.0, 0.0]);
+        body(
+            &mut p,
+            &busy,
+            RigidbodySpec {
+                solver_iterations: Some(4),
+                ..Default::default()
+            },
+            vec![ball()],
+        );
+        let plain = add(&mut p, "Plain", [5.0, 5.0, 0.0]);
+        body(&mut p, &plain, RigidbodySpec::default(), vec![ball()]);
+        let (app, ids) = world(&p);
+        let extra = app
+            .world()
+            .get::<rp::AdditionalSolverIterations>(ids[&busy]);
+        assert_eq!(extra.map(|extra| extra.0), Some(4));
+        assert!(
+            app.world()
+                .get::<rp::AdditionalSolverIterations>(ids[&plain])
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_lower_depenetration_cap_slows_the_push_out_of_an_overlap() {
+        // A ball sunk half way into a floor; how fast is it shoved up?
+        let peak = |cap: f32| {
+            let mut p = project();
+            floor(&mut p);
+            let id = add(&mut p, "Sunk", [0.0, -0.1, 0.0]);
+            body(
+                &mut p,
+                &id,
+                RigidbodySpec {
+                    use_gravity: false,
+                    max_depenetration_velocity: cap,
+                    ..Default::default()
+                },
+                vec![ball()],
+            );
+            let (mut app, ids) = world(&p);
+            // The solver's push-out moves the body without giving it velocity,
+            // so measure the climb.
+            let mut peak = 0.0f32;
+            let mut last = at(&app, ids[&id]).y;
+            for _ in 0..30 {
+                app.update();
+                let now = at(&app, ids[&id]).y;
+                peak = peak.max((now - last) * 60.0);
+                last = now;
+            }
+            peak
+        };
+        let slow = peak(0.3);
+        let fast = peak(10.0);
+        assert!(slow < 0.4, "capped peak {slow}");
+        assert!(fast > slow * 1.5, "uncapped {fast} vs capped {slow}");
+    }
+
     #[test]
     fn speed_caps_apply_after_the_step() {
         let mut p = project();
@@ -1179,6 +1548,252 @@ mod tests {
             (at(&app, ids[&id]).y - 3.0).abs() < 1e-4,
             "nothing installed"
         );
+    }
+
+    // ─── Contact lifecycle ─────────────────────────────────────────────────
+
+    use blockloom_core::physics::{ContactEvent, ContactKind, ContactPhase, ExitReason};
+
+    /// A world whose contacts are tracked on the fixed tick, `frame` apart.
+    fn contact_world(project: &Project, frame: f32) -> (App, HashMap<String, Entity>) {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(TransformPlugin);
+        app.init_resource::<Assets<Mesh>>();
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f32(frame),
+        ));
+        app.init_resource::<PhysicsLayers>();
+        app.add_plugins(rp::RapierPhysicsPlugin::<d3::Hooks3>::default().in_fixed_schedule());
+        app.add_systems(FixedUpdate, d3::refresh_masses);
+        app.add_systems(
+            FixedPostUpdate,
+            crate::dim3::track_contacts.after(rp::PhysicsSet::Writeback),
+        );
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::ThreeD);
+        engine.running = true;
+        let mut ids = HashMap::new();
+        for actor in &project.actors {
+            let entity = app
+                .world_mut()
+                .spawn((
+                    crate::world::transform_for(actor),
+                    crate::engine::ActorId(actor.id.clone()),
+                ))
+                .id();
+            ids.insert(actor.id.clone(), entity);
+            engine.entities.insert(actor.id.clone(), entity);
+        }
+        app.insert_non_send(engine);
+        let mut commands = app.world_mut().commands();
+        install(&mut commands, project, &ids);
+        app.world_mut().flush();
+        (app, ids)
+    }
+
+    /// Runs until `ticks` fixed ticks have closed, then everything made so far.
+    fn contact_events(app: &mut App, ticks: u64) -> Vec<ContactEvent> {
+        for _ in 0..2000 {
+            if app.world().non_send::<Engine>().contact_ticks >= ticks {
+                break;
+            }
+            app.update();
+        }
+        let mut engine = app.world_mut().non_send_mut::<Engine>();
+        engine.contacts.deliver(u64::MAX)
+    }
+
+    fn lifecycle(events: &[ContactEvent], phase: ContactPhase) -> Vec<&ContactEvent> {
+        events.iter().filter(|e| e.phase == phase).collect()
+    }
+
+    #[test]
+    fn a_resting_ball_enters_once_and_stays_each_tick_it_moves() {
+        let mut p = project();
+        floor(&mut p);
+        let ball_id = add(&mut p, "Ball", [0.0, 1.0, 0.0]);
+        body(&mut p, &ball_id, RigidbodySpec::default(), vec![ball()]);
+        let (mut app, _) = contact_world(&p, 1.0 / 64.0);
+        let events = contact_events(&mut app, 40);
+        let enters = lifecycle(&events, ContactPhase::Enter);
+        assert_eq!(enters.len(), 1, "{events:#?}");
+        assert_eq!(enters[0].kind, ContactKind::Collision);
+        let payload = enters[0].payload.as_ref().expect("collision payload");
+        assert!(payload.normal[1].abs() > 0.9, "{payload:?}");
+        assert!(!payload.points.is_empty());
+        assert!(lifecycle(&events, ContactPhase::Exit).is_empty());
+        let stays = lifecycle(&events, ContactPhase::Stay);
+        let mut seen = std::collections::HashSet::new();
+        assert!(
+            stays.iter().all(|e| seen.insert(e.tick)),
+            "at most one Stay per pair per tick"
+        );
+        assert!(stays.iter().all(|e| e.tick > enters[0].tick));
+    }
+
+    #[test]
+    fn events_made_in_a_tick_are_heard_in_the_next() {
+        let mut p = project();
+        floor(&mut p);
+        let ball_id = add(&mut p, "Ball", [0.0, 0.52, 0.0]);
+        body(&mut p, &ball_id, RigidbodySpec::default(), vec![ball()]);
+        let (mut app, _) = contact_world(&p, 1.0 / 64.0);
+        for _ in 0..200 {
+            app.update();
+            let mut engine = app.world_mut().non_send_mut::<Engine>();
+            let now = engine.contact_ticks;
+            let heard = engine.contacts.deliver(now);
+            assert!(
+                heard.iter().all(|event| event.tick < now),
+                "tick {now} must not hear itself: {heard:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_events_do_not_depend_on_the_render_rate() {
+        let scenario = |frame: f32| {
+            let mut p = project();
+            let zone = add(&mut p, "Zone", [0.0, 0.0, 0.0]);
+            let mut sensor = ColliderSpec::new(ColliderShape::Box {
+                size: [4.0, 4.0, 4.0],
+            });
+            sensor.trigger = true;
+            let library = p.physics.materials.clone();
+            p.active_scene_mut()
+                .add_collider(&zone, sensor, &library)
+                .unwrap();
+            let probe = add(&mut p, "Probe", [0.0, 6.0, 0.0]);
+            body(&mut p, &probe, RigidbodySpec::default(), vec![ball()]);
+            let names: HashMap<_, _> = p
+                .active_scene()
+                .actors
+                .iter()
+                .map(|a| (a.id.clone(), a.name.clone()))
+                .collect();
+            let (mut app, _) = contact_world(&p, frame);
+            let events = contact_events(&mut app, 240);
+            events
+                .iter()
+                .filter(|e| e.phase != ContactPhase::Stay)
+                .map(|e| {
+                    (
+                        e.phase,
+                        e.kind,
+                        names[&e.a.actor].clone(),
+                        names[&e.b.actor].clone(),
+                        e.reason,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let steady = scenario(1.0 / 64.0);
+        let slow = scenario(1.0 / 16.0);
+        assert_eq!(steady.len(), 2, "{steady:?}");
+        assert_eq!(steady, slow, "same events whether a frame ran 1 or 4 ticks");
+    }
+
+    #[test]
+    fn a_trigger_enters_and_exits_with_no_contact_force() {
+        let mut p = project();
+        let zone = add(&mut p, "Zone", [0.0, 0.0, 0.0]);
+        let mut sensor = ColliderSpec::new(ColliderShape::Box {
+            size: [4.0, 4.0, 4.0],
+        });
+        sensor.trigger = true;
+        let library = p.physics.materials.clone();
+        p.active_scene_mut()
+            .add_collider(&zone, sensor, &library)
+            .unwrap();
+        let probe = add(&mut p, "Probe", [0.0, 6.0, 0.0]);
+        body(&mut p, &probe, RigidbodySpec::default(), vec![ball()]);
+        let (mut app, _) = contact_world(&p, 1.0 / 64.0);
+        let events = contact_events(&mut app, 200);
+        let enters = lifecycle(&events, ContactPhase::Enter);
+        let exits = lifecycle(&events, ContactPhase::Exit);
+        assert_eq!((enters.len(), exits.len()), (1, 1), "{events:#?}");
+        assert_eq!(enters[0].kind, ContactKind::Trigger);
+        assert!(enters[0].payload.is_none(), "a trigger fabricates no force");
+        assert_eq!(exits[0].reason, Some(ExitReason::Separated));
+        assert!(enters[0].tick < exits[0].tick);
+    }
+
+    #[test]
+    fn a_compound_floor_is_one_actor_level_enter() {
+        let mut p = project();
+        let id = add(&mut p, "Floor", [0.0, -0.5, 0.0]);
+        for x in [-10.0, 10.0] {
+            let mut part = ColliderSpec::new(ColliderShape::Box {
+                size: [20.0, 1.0, 20.0],
+            });
+            part.center = [x, 0.0, 0.0];
+            let library = p.physics.materials.clone();
+            p.active_scene_mut()
+                .add_collider(&id, part, &library)
+                .unwrap();
+        }
+        let ball_id = add(&mut p, "Ball", [0.0, 0.52, 0.0]);
+        body(&mut p, &ball_id, RigidbodySpec::default(), vec![ball()]);
+        let (mut app, ids) = contact_world(&p, 1.0 / 64.0);
+        let events = contact_events(&mut app, 30);
+        let enters = lifecycle(&events, ContactPhase::Enter);
+        assert_eq!(enters.len(), 2, "one per collider pair: {enters:#?}");
+        assert_eq!(enters.iter().filter(|e| e.edge).count(), 1);
+        let engine = app.world().non_send::<Engine>();
+        assert_eq!(engine.contacts.pairs_between(&ball_id, &id), 2);
+        assert!(engine.touching[&ball_id].contains(&id));
+        assert!(engine.touching[&id].contains(&ball_id));
+        let _ = ids;
+    }
+
+    #[test]
+    fn deleting_an_actor_makes_a_synthetic_exit_with_a_reason() {
+        let mut p = project();
+        let floor_id = floor(&mut p);
+        let ball_id = add(&mut p, "Ball", [0.0, 0.52, 0.0]);
+        body(&mut p, &ball_id, RigidbodySpec::default(), vec![ball()]);
+        let (mut app, ids) = contact_world(&p, 1.0 / 64.0);
+        let _ = contact_events(&mut app, 20);
+        {
+            let mut engine = app.world_mut().non_send_mut::<Engine>();
+            assert!(engine.touching[&ball_id].contains(&floor_id));
+            engine.contacts.remove_actor(&floor_id);
+            engine.entities.remove(&floor_id);
+        }
+        app.world_mut().despawn(ids[&floor_id]);
+        let events = contact_events(&mut app, 24);
+        let exits = lifecycle(&events, ContactPhase::Exit);
+        assert_eq!(exits.len(), 1, "{events:#?}");
+        assert_eq!(exits[0].reason, Some(ExitReason::ActorRemoved));
+        let engine = app.world().non_send::<Engine>();
+        assert!(!engine.touching.contains_key(&ball_id));
+    }
+
+    #[test]
+    fn switching_a_collider_off_ends_its_pair_with_that_reason() {
+        let mut p = project();
+        let floor_id = floor(&mut p);
+        let ball_id = add(&mut p, "Ball", [0.0, 0.52, 0.0]);
+        body(&mut p, &ball_id, RigidbodySpec::default(), vec![ball()]);
+        let (mut app, _) = contact_world(&p, 1.0 / 64.0);
+        let _ = contact_events(&mut app, 20);
+        let collider = {
+            let world = app.world_mut();
+            let mut query = world.query::<(Entity, &PlannedCollider)>();
+            query
+                .iter(world)
+                .find(|(_, planned)| planned.actor == floor_id)
+                .map(|(entity, _)| entity)
+                .expect("the floor's collider")
+        };
+        app.world_mut()
+            .entity_mut(collider)
+            .insert(rp::ColliderDisabled);
+        let events = contact_events(&mut app, 40);
+        let exits = lifecycle(&events, ContactPhase::Exit);
+        assert_eq!(exits.len(), 1, "{events:#?}");
+        assert_eq!(exits[0].reason, Some(ExitReason::ColliderDisabled));
     }
 }
 
@@ -1274,6 +1889,73 @@ mod tests_2d {
     }
 
     #[test]
+    fn a_2d_landing_is_one_enter_with_a_payload_and_an_ordered_stay() {
+        use blockloom_core::physics::ContactPhase;
+        let mut p = project();
+        ground(&mut p);
+        let ball = add(&mut p, "Ball", [0.0, 0.6]);
+        body(&mut p, &ball, RigidbodySpec::default(), vec![circle()]);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(TransformPlugin);
+        app.init_resource::<Assets<Mesh>>();
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f32(1.0 / 64.0),
+        ));
+        app.init_resource::<PhysicsLayers>();
+        app.add_plugins(
+            rp::RapierPhysicsPlugin::<crate::dim2::OneWayHooks>::pixels_per_meter(
+                crate::dim2::PIXELS_PER_METER,
+            )
+            .in_fixed_schedule(),
+        );
+        app.add_systems(FixedUpdate, d2::refresh_masses);
+        app.add_systems(
+            FixedPostUpdate,
+            crate::dim2::track_contacts.after(rp::PhysicsSet::Writeback),
+        );
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.running = true;
+        let mut ids = HashMap::new();
+        for actor in &p.actors {
+            let entity = app
+                .world_mut()
+                .spawn((
+                    crate::world::transform_for(actor),
+                    crate::engine::ActorId(actor.id.clone()),
+                ))
+                .id();
+            ids.insert(actor.id.clone(), entity);
+            engine.entities.insert(actor.id.clone(), entity);
+        }
+        app.insert_non_send(engine);
+        let mut commands = app.world_mut().commands();
+        install(&mut commands, &p, &ids);
+        app.world_mut().flush();
+        for _ in 0..400 {
+            if app.world().non_send::<Engine>().contact_ticks >= 40 {
+                break;
+            }
+            app.update();
+        }
+        let events = app
+            .world_mut()
+            .non_send_mut::<Engine>()
+            .contacts
+            .deliver(u64::MAX);
+        let enters: Vec<_> = events
+            .iter()
+            .filter(|e| e.phase == ContactPhase::Enter)
+            .collect();
+        assert_eq!(enters.len(), 1, "{events:#?}");
+        let payload = enters[0].payload.as_ref().expect("payload");
+        assert!(payload.normal[1].abs() > 0.9, "{payload:?}");
+        let ticks: Vec<_> = events.iter().map(|e| e.tick).collect();
+        assert!(ticks.windows(2).all(|w| w[0] <= w[1]), "ordered by tick");
+    }
+
+    #[test]
     fn a_circle_lands_on_invisible_ground_and_the_mass_is_exact() {
         let mut p = project();
         ground(&mut p);
@@ -1337,6 +2019,175 @@ mod tests_2d {
         run(&mut app, 90);
         assert!(y(&app, ids[&falling]) > 0.4, "{}", y(&app, ids[&falling]));
         assert!(y(&app, ids[&rising]) > 1.0, "{}", y(&app, ids[&rising]));
+    }
+
+    fn push(app: &mut App, ids: &HashMap<String, Entity>, effect: Effect) {
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(rx, Mode::TwoD);
+        engine.running = true;
+        engine.entities = ids.clone();
+        app.insert_non_send(engine);
+        app.insert_resource(PendingEffects(vec![effect]));
+        let mut system = IntoSystem::into_system(d2::apply_forces);
+        system.initialize(app.world_mut());
+        system.run((), app.world_mut()).unwrap();
+    }
+
+    /// A 2D world at the runtime's pixel scale, which forces are authored in.
+    fn scaled_world(project: &Project) -> (App, HashMap<String, Entity>) {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(TransformPlugin);
+        app.init_resource::<Assets<Mesh>>();
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f32(1.0 / 60.0),
+        ));
+        app.init_resource::<PhysicsLayers>();
+        app.add_plugins(
+            rp::RapierPhysicsPlugin::<crate::dim2::OneWayHooks>::pixels_per_meter(
+                crate::dim2::PIXELS_PER_METER,
+            ),
+        );
+        app.add_systems(Update, d2::refresh_masses);
+        let mut ids = HashMap::new();
+        for actor in &project.actors {
+            let entity = app
+                .world_mut()
+                .spawn(crate::world::transform_for(actor))
+                .id();
+            ids.insert(actor.id.clone(), entity);
+        }
+        let mut commands = app.world_mut().commands();
+        install(&mut commands, project, &ids);
+        app.world_mut().flush();
+        (app, ids)
+    }
+
+    #[test]
+    fn a_2d_force_speaks_world_units_and_modes_hold() {
+        use blockloom_core::physics::ForceMode;
+        let cases = [
+            // mode, torque, vector, mass, expected velocity (x px/s or spin rad/s)
+            (
+                ForceMode::VelocityChange,
+                false,
+                [300.0, 0.0, 0.0],
+                5.0,
+                300.0,
+            ),
+            (
+                ForceMode::Acceleration,
+                false,
+                [6000.0, 0.0, 0.0],
+                2.0,
+                100.0,
+            ),
+            (ForceMode::Impulse, false, [200.0, 0.0, 0.0], 2.0, 100.0),
+            (ForceMode::Force, false, [12000.0, 0.0, 0.0], 2.0, 100.0),
+        ];
+        for (mode, torque, vector, mass, expect) in cases {
+            let mut p = project();
+            let id = add(&mut p, "Drifter", [0.0, 0.0]);
+            body(
+                &mut p,
+                &id,
+                RigidbodySpec {
+                    use_gravity: false,
+                    mass: MassSource::Explicit { mass },
+                    ..Default::default()
+                },
+                vec![circle()],
+            );
+            let (mut app, ids) = scaled_world(&p);
+            run(&mut app, 3);
+            push(
+                &mut app,
+                &ids,
+                Effect::AddForce {
+                    actor: id.clone(),
+                    mode,
+                    torque,
+                    vector,
+                },
+            );
+            run(&mut app, 1);
+            let got = app.world().get::<rp::Velocity>(ids[&id]).unwrap().linear.x;
+            assert!(
+                (got - expect).abs() < expect * 0.03,
+                "{mode:?}: {got} vs {expect}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_2d_torque_turns_by_inertia() {
+        let mut p = project();
+        let id = add(&mut p, "Spinner", [0.0, 0.0]);
+        body(
+            &mut p,
+            &id,
+            RigidbodySpec {
+                use_gravity: false,
+                mass: MassSource::Explicit { mass: 4.0 },
+                ..Default::default()
+            },
+            vec![circle()],
+        );
+        let (mut app, ids) = scaled_world(&p);
+        run(&mut app, 3);
+        push(
+            &mut app,
+            &ids,
+            Effect::AddForce {
+                actor: id.clone(),
+                mode: blockloom_core::physics::ForceMode::VelocityChange,
+                torque: true,
+                vector: [0.0, 0.0, 3.0],
+            },
+        );
+        run(&mut app, 1);
+        let spin = app.world().get::<rp::Velocity>(ids[&id]).unwrap().angular;
+        assert!((spin - 3.0).abs() < 0.1, "{spin}");
+    }
+
+    #[test]
+    fn a_lower_depenetration_cap_slows_the_push_out_in_2d() {
+        let peak = |cap: f32| {
+            let mut p = project();
+            let floor = add(&mut p, "Floor", [0.0, -0.5]);
+            let library = p.physics.materials.clone();
+            p.active_scene_mut()
+                .add_collider(
+                    &floor,
+                    ColliderSpec::new(ColliderShape::Rect { size: [40.0, 1.0] }),
+                    &library,
+                )
+                .unwrap();
+            let id = add(&mut p, "Sunk", [0.0, -0.1]);
+            body(
+                &mut p,
+                &id,
+                RigidbodySpec {
+                    use_gravity: false,
+                    max_depenetration_velocity: cap,
+                    ..Default::default()
+                },
+                vec![circle()],
+            );
+            let (mut app, ids) = scaled_world(&p);
+            let mut peak = 0.0f32;
+            let mut last = y(&app, ids[&id]);
+            for _ in 0..30 {
+                app.update();
+                let now = y(&app, ids[&id]);
+                peak = peak.max((now - last) * 60.0);
+                last = now;
+            }
+            peak
+        };
+        let slow = peak(0.01);
+        let fast = peak(10.0);
+        assert!(fast > slow * 1.5, "uncapped {fast} vs capped {slow}");
     }
 
     #[test]

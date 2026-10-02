@@ -1117,6 +1117,11 @@ fn line_of(act: &Act) -> String {
             args,
         } => format!("PluginCall {plugin}/{block} {}", plugin_args_json(args)),
         Act::SetBody { body } => format!("SetBody {body}"),
+        Act::AddForce {
+            mode,
+            torque,
+            vector,
+        } => format!("AddForce {mode} {torque} {vector:?}"),
         Act::SetTrigger { trigger } => format!("SetTrigger {trigger}"),
         Act::SetCollisionLayer { layer } => format!("SetCollisionLayer {layer}"),
         Act::SetCollisionMask { mask } => format!("SetCollisionMask {mask}"),
@@ -1481,6 +1486,12 @@ fn line_of(effect: &Effect) -> Option<String> {
             serde_json::Value::Array(args.clone())
         ),
         Effect::SetBody { actor, body } => format!("{actor}|SetBody {body:?}"),
+        Effect::AddForce {
+            actor,
+            mode,
+            torque,
+            vector,
+        } => format!("{actor}|AddForce {} {torque} {vector:?}", mode.name()),
         Effect::SetTrigger { actor, trigger } => format!("{actor}|SetTrigger {trigger}"),
         Effect::SetCollisionLayer { actor, layer } => format!("{actor}|SetCollisionLayer {layer}"),
         Effect::SetCollisionMask { actor, mask } => format!("{actor}|SetCollisionMask {mask}"),
@@ -3704,6 +3715,34 @@ fn level_blocks_ask_the_same_things_in_order() {
                 layer: op("Join", vec![Value::text("Sk"), Value::text("y")]),
                 axis: ParallaxAxis::Both,
                 value: number(0.0),
+            },
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn force_blocks_ask_the_same_things_in_order() {
+    assert_same(
+        "forces",
+        vec![
+            K::AddForce {
+                mode: blockloom_core::physics::ForceMode::Force,
+                x: number(1.5),
+                y: op("Mul", vec![number(2.0), number(3.0)]),
+                z: number(-4.0),
+            },
+            K::AddTorque {
+                mode: blockloom_core::physics::ForceMode::VelocityChange,
+                x: Value::text("2"),
+                y: number(0.0),
+                z: op("Sub", vec![number(1.0), number(3.0)]),
+            },
+            K::AddForce {
+                mode: blockloom_core::physics::ForceMode::Impulse,
+                x: number(0.0),
+                y: number(0.0),
+                z: number(0.0),
             },
         ],
         &[],

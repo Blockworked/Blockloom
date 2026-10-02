@@ -223,6 +223,38 @@ impl ScriptEvent {
         self
     }
 
+    /// The touch as `Event::Contact`, for every phase. A script that listens to
+    /// `Event::Collision` still hears Enter on its own.
+    pub fn contact_of(
+        event: &blockloom_core::vm::Event,
+        name_of: impl Fn(&str) -> String,
+    ) -> Option<(String, ScriptEvent)> {
+        use blockloom_core::physics::{ContactKind, ContactPhase};
+        let blockloom_core::vm::Event::Collision {
+            actor,
+            with,
+            phase,
+            kind,
+            impulse,
+            speed,
+        } = event
+        else {
+            return None;
+        };
+        let mut heard = ScriptEvent::new(abi::EVENT_CONTACT, name_of(with)).detail(with.clone());
+        heard.numbers = [
+            match phase {
+                ContactPhase::Enter => 0.0,
+                ContactPhase::Stay => 1.0,
+                ContactPhase::Exit => 2.0,
+            },
+            f64::from(*kind == ContactKind::Trigger),
+            f64::from(*impulse),
+            f64::from(*speed),
+        ];
+        Some((actor.clone(), heard))
+    }
+
     /// What a script hears of a VM event, and whose script: `None` for every
     /// script, `Some(actor)` for that actor's alone. `name_of` turns an
     /// actor id into its name. Starts and clones are what `start` is for.
@@ -260,10 +292,17 @@ impl ScriptEvent {
                 Some(actor.clone()),
                 ScriptEvent::new(abi::EVENT_CLICKED, ""),
             ),
-            Event::Collision { actor, with } => (
+            // The old event is Enter only; `contact_of` carries every phase.
+            Event::Collision {
+                actor,
+                with,
+                phase: blockloom_core::physics::ContactPhase::Enter,
+                ..
+            } => (
                 Some(actor.clone()),
                 ScriptEvent::new(abi::EVENT_COLLISION, name_of(with)).detail(with.clone()),
             ),
+            Event::Collision { .. } => return None,
             Event::Particles { actor, event } => {
                 let particles = me(actor).map(|me| (me.particles, me.position));
                 let (count, at) = particles.map_or((0, [0.0; 3]), |(particles, position)| {
@@ -948,6 +987,18 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
         abi::ACT_APPLY_IMPULSE => Effect::ApplyImpulse {
             actor,
             impulse: vector,
+        },
+        abi::ACT_ADD_FORCE => match blockloom_core::physics::ForceMode::parse(a) {
+            Some(mode) => Effect::AddForce {
+                actor,
+                mode,
+                torque: b == "torque",
+                vector,
+            },
+            None => Effect::Error {
+                actor,
+                message: format!("there's no force mode called \"{a}\""),
+            },
         },
         abi::ACT_SET_VELOCITY => Effect::SetVelocity {
             actor,
@@ -1717,6 +1768,7 @@ fn water_reading(sample: &blockloom_core::water::WaterSample, what: &str) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use blockloom_core::physics::{ContactKind, ContactPhase};
     use blockloom_core::sense::{ActorSense, Sensors};
     use std::collections::HashMap;
 
@@ -1834,6 +1886,10 @@ blockloom::export!(event = event);
             Event::Collision {
                 actor: "a1".to_string(),
                 with: "b2".to_string(),
+                phase: ContactPhase::Enter,
+                kind: ContactKind::Collision,
+                impulse: 0.0,
+                speed: 0.0,
             },
             Event::EnteredRoom {
                 actor: "a1".to_string(),

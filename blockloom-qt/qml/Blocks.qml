@@ -53,6 +53,9 @@ QtObject {
     readonly property var enableOptions: [{value:"true",label:"enable"},{value:"false",label:"disable"}]
     readonly property var uiThemeOptions: [{value:"Dark",label:"dark"},{value:"Light",label:"light"},{value:"HighContrast",label:"high contrast"}]
     readonly property var waterOptions: [{value:"Level",label:"level"},{value:"Chop",label:"chop"},{value:"Foam",label:"foam"}]
+    readonly property var forceModeOptions: [{value:"Force",label:"force (N)"},{value:"Acceleration",label:"acceleration"},{value:"Impulse",label:"impulse"},{value:"VelocityChange",label:"velocity change"}]
+    readonly property var contactPhaseOptions: [{value:"Enter",label:"start touching"},{value:"Stay",label:"keep touching"},{value:"Exit",label:"stop touching"}]
+    readonly property var contactScopeOptions: [{value:"Any",label:"any touch"},{value:"Collision",label:"solid"},{value:"Trigger",label:"trigger"}]
     readonly property var parallaxAxisOptions: [{value:"Both",label:"both axes"},{value:"X",label:"x"},{value:"Y",label:"y"}]
     readonly property var windOptions: [{value:"Direction",label:"direction"},{value:"Speed",label:"speed"},{value:"Gust",label:"gust"},{value:"Storm",label:"storm"}]
     readonly property var cloudLayerOptions: [{value:"Coverage",label:"coverage"},{value:"Opacity",label:"opacity"},{value:"Contrast",label:"contrast"},{value:"Altitude",label:"altitude"},{value:"Spin",label:"spin"}]
@@ -138,7 +141,7 @@ QtObject {
         WhenQualityDrops:"gauge", SetRenderSetting:"gauge", WhenCollision:"crosshair", WhenMessage:"radio", WhenCloned:"copy", WhenParticles:"sparkles", WhenAnimationMarker:"flag", WhenEnterRoom:"square-dashed", WhenUiEvent:"square-mouse-pointer", WhenWeather:"cloud", WhenUiClicked:"square-mouse-pointer", WhenUiChanged:"sliders-horizontal",
         BlockHeader:"blocks", Move:"arrow-right", GoTo:"move", NavigateTo:"navigation", ChangePosition:"move-3d", Glide:"wind", TweenScale:"maximize", TweenRotation:"rotate-cw", TweenColor:"palette", StopTweens:"square", PlayAnimation:"play", StopAnimation:"square", SetAnimationSpeed:"gauge", FireAnimationTrigger:"zap", SetRigSlot:"git-branch", SetSlotTint:"palette", SetIkTarget:"crosshair", SetSpriteDial:"sliders-horizontal", Turn:"rotate-cw",
         SetRotation:"rotate-cw", PointTowards:"target", SetScale:"maximize", SetBody:"boxes", SetTrigger:"ghost", SetCollisionLayer:"layers",
-        SetCollisionMask:"filter", ApplyImpulse:"zap", SetVelocity:"trending-up", SetGravity:"cloud", SetDensity:"weight", SetMass:"weight",
+        SetCollisionMask:"filter", ApplyImpulse:"zap", AddForce:"arrow-right", AddTorque:"rotate-cw", SetVelocity:"trending-up", SetGravity:"cloud", SetDensity:"weight", SetMass:"weight",
         Say:"message-square", SetVisible:"eye", SetColor:"palette", SetExposure:"sun", SetLightIntensity:"zap", SetEmissiveStrength:"sparkles", SetHdrOutput:"monitor", SetPeakBrightness:"sun", EnableVolume:"box", SetVolumeWeight:"weight", CaptureProbes:"aperture", SetShadowDistance:"sun-dim", SetLightShadows:"lamp", SetRayTracing:"sparkles", SetGiBounces:"repeat", SetGiSamples:"layers", SetFogDensity:"cloud", SetAurora:"moon", StrikeLightning:"zap", SetLightningRate:"wind", SetWind:"wind", SetCloudDrift:"cloud", SetClouds:"cloud", SetCloudLayer:"layers", SetWater:"wind", SetTimeOfDay:"clock", AdvanceTime:"clock", SetPrecipitation:"cloud-rain", BlendWeather:"cloud", PaintTile:"palette", SetParallax:"layers", BurstParticles:"sparkles", SetEmitterDial:"sliders-horizontal", SetTrailEnabled:"wind", SetEmitterPlaying:"play", PlaySound:"volume-2", PlaySoundAt:"map-pin", StopSound:"square",
         SetSoundVolume:"volume-1", SetSoundPitch:"music", SetBusVolume:"sliders-horizontal", SetComponentField:"panels-top-left",
         SetCameraView:"camera", SetCameraPitch:"video", SetCameraFov:"video", AttachComponent:"plus", DetachComponent:"x", SetParent:"link",
@@ -166,7 +169,7 @@ QtObject {
             WhenActionPressed: header([lb("when action"), dd("action", actionOptions, { placeholder: "action" }), lb("pressed")]),
             WhenTouched: header([lb("when the screen is touched")]),
             WhenClicked: header([lb("when I am clicked")]),
-            WhenCollision: header([lb("when I touch"), dd("with", () => [{ value: "", label: "anything" }].concat(actorOptions(false)), { placeholder: "anything" })]),
+            WhenCollision: header([lb("when I"), dd("phase", contactPhaseOptions), dd("with", () => [{ value: "", label: "anything" }].concat(actorOptions(false)), { placeholder: "anything" }), lb("as"), dd("scope", contactScopeOptions)]),
             WhenMessage: header([lb("when I get"), field("name", "message")]),
             WhenCloned: header([lb("when I start as a clone")]),
             WhenParticles: header([lb("when my particles"), dd("event", () => particleEventOptions)]),
@@ -207,6 +210,8 @@ QtObject {
             // Physics
             SetBody: row([lb("set body to"), dd("body", bodyOptions)]),
             ApplyImpulse: row(vector("push", ["ImpulseX","ImpulseY","ImpulseZ"], ["x","y","z"])),
+            AddForce: row([lb("add force"), dd("mode", forceModeOptions), lb("x:"), slot("ForceX", "x"), lb("y:"), slot("ForceY", "y"), lb("z:", true), slot("ForceZ", "z", { when: is3d })]),
+            AddTorque: row([lb("add torque"), dd("mode", forceModeOptions), lb("x:", true), slot("ForceX", "x", { when: is3d }), lb("y:", true), slot("ForceY", "y", { when: is3d }), lb("z:"), slot("ForceZ", "z")]),
             SetVelocity: row(vector("set velocity", ["VelocityX","VelocityY","VelocityZ"], ["x","y","z"])),
             SetGravity: row(vector("set world gravity", ["GravityX","GravityY","GravityZ"], ["x","y","z"])),
             SetDensity: row([lb("set density to"), slot("Density", "density")]),
@@ -466,7 +471,7 @@ QtObject {
         switch (type) {
         case "WhenKeyPressed": return { key: "space" };
         case "WhenActionPressed": return { action: "Jump" };
-        case "WhenCollision": return { with: "" };
+        case "WhenCollision": return { with: "", phase: "Enter", scope: "Any" };
         case "WhenMessage": case "Broadcast": return { name: "message1" };
         case "BlockHeader": return { block_id: "" };
         case "Move": return { steps: num(10) };
@@ -493,6 +498,8 @@ QtObject {
         case "SetScale": return { factor: num(1) };
         case "SetBody": return { body: "Dynamic" };
         case "ApplyImpulse": return { x: num(0), y: num(5), z: num(0) };
+        case "AddForce": return { mode: "Force", x: num(0), y: num(10), z: num(0) };
+        case "AddTorque": return { mode: "Force", x: num(0), y: num(0), z: num(1) };
         case "SetVelocity": return { x: num(0), y: num(0), z: num(0) };
         case "SetGravity": return { x: num(0), y: num(-9.81), z: num(0) };
         case "SetDensity": return { density: num(1) };
@@ -733,7 +740,7 @@ QtObject {
     readonly property var blockGroups: [
         { label: "Events", types: ["WhenStarted","WhenQualityDrops","WhenSceneStarts","WhenSceneEnds","WhenWeather","WhenCutsceneSignal","WhenCutsceneEnds","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenParticles","WhenAnimationEnds","WhenAnimationMarker","WhenEnterRoom","WhenUiEvent","WhenUiClicked","WhenUiChanged","Broadcast"] },
         { label: "Motion", types: ["Move","GoTo","NavigateTo","ChangePosition","Glide","TweenScale","TweenRotation","TweenColor","StopTweens","Turn","SetRotation","PointTowards","SetScale"] },
-        { label: "Physics", types: ["SetBody","ApplyImpulse","SetVelocity","SetGravity","SetDensity","SetMass","SetTrigger","SetCollisionLayer","SetCollisionMask"] },
+        { label: "Physics", types: ["SetBody","ApplyImpulse","AddForce","AddTorque","SetVelocity","SetGravity","SetDensity","SetMass","SetTrigger","SetCollisionLayer","SetCollisionMask"] },
         { label: "Looks", types: ["Say","SetVisible","SetColor","SetRenderSetting","SetExposure","SetLightIntensity","SetEmissiveStrength","SetHdrOutput","SetPeakBrightness","EnableVolume","SetVolumeWeight","CaptureProbes","SetShadowDistance","SetLightShadows","SetRayTracing","SetGiBounces","SetGiSamples","SetFogDensity","SetAurora","StrikeLightning","SetLightningRate","SetWind","SetCloudDrift","SetClouds","SetCloudLayer","SetWater","SetTimeOfDay","AdvanceTime","SetPrecipitation","BlendWeather","Fracture","Splash","PuffSmoke","SpawnDecal","FadeDecals","PaintTile","SetParallax","BurstParticles","SetEmitterDial","SetTrailEnabled","SetEmitterPlaying","PlayAnimation","StopAnimation","SetAnimationSpeed","FireAnimationTrigger","SetRigSlot","SetSlotTint","SetIkTarget","SetSpriteDial"] },
         { label: "Sound", types: ["PlaySound","PlaySoundAt","StopSound","SetSoundVolume","SetSoundPitch","SetBusVolume"] },
         { label: "Components", types: ["SetComponentField","SetCameraView","SetCameraPitch","SetCameraFov","AttachComponent","DetachComponent","SetParent"] },
@@ -786,7 +793,7 @@ QtObject {
         BlockHeader:"block definition", Move:"move forward", GoTo:"go to", NavigateTo:"navigate to", ChangePosition:"change position",
         Glide:"glide to", TweenScale:"tween size", TweenRotation:"tween rotation", TweenColor:"tween color", StopTweens:"stop my tweens", PlayAnimation:"play animation", StopAnimation:"stop my animation", SetAnimationSpeed:"set animation speed", FireAnimationTrigger:"fire an animation trigger", SetRigSlot:"swap a rig slot", SetSlotTint:"tint a rig slot", SetIkTarget:"point a rig IK chain", SetSpriteDial:"set a sprite dial", Turn:"turn", SetRotation:"point in direction", PointTowards:"point towards", SetScale:"set size", SetBody:"set body",
         SetTrigger:"make me solid or a trigger", SetCollisionLayer:"set my collision layer", SetCollisionMask:"set my collision mask",
-        ApplyImpulse:"push", SetVelocity:"set velocity", SetGravity:"set gravity", SetDensity:"set density", SetMass:"set mass", Say:"say",
+        ApplyImpulse:"push", AddForce:"add force", AddTorque:"add torque", SetVelocity:"set velocity", SetGravity:"set gravity", SetDensity:"set density", SetMass:"set mass", Say:"say",
         SetVisible:"show or hide", SetColor:"set color", SetExposure:"set exposure", SetLightIntensity:"set my light brightness", SetEmissiveStrength:"set my glow", SetHdrOutput:"turn HDR output on or off", SetPeakBrightness:"set peak brightness", EnableVolume:"enable or disable a volume", SetVolumeWeight:"set a volume's weight", CaptureProbes:"capture light probes", SetShadowDistance:"set shadow distance", SetLightShadows:"turn my light's shadows on or off", SetRayTracing:"turn ray tracing on or off", SetGiBounces:"set GI bounces", SetGiSamples:"set GI samples", SetFogDensity:"set fog density", SetAurora:"set aurora", StrikeLightning:"strike lightning", SetLightningRate:"set lightning storm", SetWind:"set the wind", SetCloudDrift:"set cloud drift", SetClouds:"set clouds", SetCloudLayer:"set a cloud layer", SetWater:"set water level, chop or foam", SetTimeOfDay:"set time of day", AdvanceTime:"advance time", SetPrecipitation:"set rain or snow", BlendWeather:"blend weather to a preset", PaintTile:"paint a tile", SetParallax:"set a layer's parallax", BurstParticles:"burst particles", SetEmitterDial:"set an emitter dial", SetTrailEnabled:"start or stop my trail", SetEmitterPlaying:"start or stop my particles", PlaySound:"play sound", PlaySoundAt:"play sound at an actor", StopSound:"stop sound",
         SetSoundVolume:"set sound volume", SetSoundPitch:"set sound pitch", SetBusVolume:"set bus volume", SetComponentField:"set a component field",
         SetCameraView:"set my camera view", SetCameraPitch:"set camera pitch", SetCameraFov:"set camera fov", AttachComponent:"attach a component",

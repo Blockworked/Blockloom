@@ -1714,6 +1714,33 @@ impl Actor {
         );
     }
 
+    /// A force on this body for one fixed step. `mode` is `"Force"`,
+    /// `"Acceleration"`, `"Impulse"` or `"VelocityChange"`.
+    pub fn add_force(&self, mode: &str, x: f32, y: f32, z: f32) {
+        self.act(
+            ACT_ADD_FORCE,
+            Str::borrow(mode),
+            Str::EMPTY,
+            Str::EMPTY,
+            x as f64,
+            y as f64,
+            z as f64,
+        );
+    }
+
+    /// The same for a torque. A 2D body turns about z only.
+    pub fn add_torque(&self, mode: &str, x: f32, y: f32, z: f32) {
+        self.act(
+            ACT_ADD_FORCE,
+            Str::borrow(mode),
+            Str::borrow("torque"),
+            Str::EMPTY,
+            x as f64,
+            y as f64,
+            z as f64,
+        );
+    }
+
     pub fn set_velocity(&self, x: f32, y: f32, z: f32) {
         self.act(
             ACT_SET_VELOCITY,
@@ -2567,6 +2594,17 @@ pub enum Event {
     Touched,
     /// This actor started touching another: its name and its id.
     Collision { with: String, id: String },
+    /// This actor entered, kept or left a touch: the other actor's name and
+    /// id, the phase, whether it is a trigger overlap, and for a solid touch
+    /// the impulse the solver spent and the relative speed.
+    Contact {
+        with: String,
+        id: String,
+        phase: ContactPhase,
+        trigger: bool,
+        impulse: f32,
+        speed: f32,
+    },
     /// This actor's particles spawned, died or collided this frame: how many,
     /// and where the last one did.
     Particles {
@@ -2682,6 +2720,14 @@ fn plugin_args_json(args: &[PluginArg]) -> String {
     out
 }
 
+/// Which part of a touch an [`Event::Contact`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContactPhase {
+    Enter,
+    Stay,
+    Exit,
+}
+
 /// Which particle event an [`Event::Particles`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParticleKind {
@@ -2709,6 +2755,18 @@ impl Event {
             EVENT_COLLISION => Event::Collision {
                 with: subject,
                 id: word("detail"),
+            },
+            EVENT_CONTACT => Event::Contact {
+                with: subject,
+                id: word("detail"),
+                phase: match n[0] as u32 {
+                    0 => ContactPhase::Enter,
+                    1 => ContactPhase::Stay,
+                    _ => ContactPhase::Exit,
+                },
+                trigger: n[1] != 0.0,
+                impulse: n[2] as f32,
+                speed: n[3] as f32,
             },
             EVENT_PARTICLES => Event::Particles {
                 kind: match subject.as_str() {

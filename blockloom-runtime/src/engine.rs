@@ -183,6 +183,13 @@ pub struct Engine {
     pub started_at: f64,
     /// Who is touching whom, from collision messages, by actor id.
     pub touching: HashMap<String, HashSet<String>>,
+    /// Every collider pair that touches, with the events they made.
+    pub contacts: blockloom_core::physics::ContactTracker,
+    /// Fixed ticks the contact tracker has closed this run.
+    pub contact_ticks: u64,
+    /// Actors whose collision filter changed since the last tick closed, so an
+    /// Exit it causes says why.
+    pub filter_touched: HashSet<String>,
     /// The current speech bubble for each actor. A later `say` replaces the
     /// earlier one, and an empty `say` clears it.
     pub speech: HashMap<String, String>,
@@ -351,6 +358,9 @@ impl Engine {
             pause_began: None,
             started_at: 0.0,
             touching: HashMap::new(),
+            contacts: Default::default(),
+            contact_ticks: 0,
+            filter_touched: HashSet::new(),
             speech: HashMap::new(),
             next_report: 0.0,
             rebuild: true,
@@ -483,6 +493,7 @@ impl Engine {
         trigger: Option<bool>,
     ) {
         let (old_layer, old_mask, old_trigger) = self.filter_of(id);
+        self.filter_touched.insert(id.to_string());
         self.physics_filter.insert(
             id.to_string(),
             (

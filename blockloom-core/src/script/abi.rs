@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 36;
+pub const ABI_VERSION: u32 = 38;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -451,6 +451,10 @@ pub const ACT_FADE_SCREEN: u32 = 99;
 /// `a` = plugin id, `b` = block id, `c` = the slot values as a JSON array
 /// (whole numbers as integers). Runs the block's command, as the block does.
 pub const ACT_PLUGIN_CALL: u32 = 100;
+/// `a` = force mode (`Force`, `Acceleration`, `Impulse`, `VelocityChange`),
+/// `b` = `torque` to turn the body instead of pushing it; `n0..n2` = the
+/// vector. Acts for one fixed step.
+pub const ACT_ADD_FORCE: u32 = 101;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per
@@ -525,6 +529,10 @@ pub const EVENT_CUTSCENE_ENDED: u32 = 19;
 /// the event; detail: the plugin id, then each slot's text, all joined by
 /// [`PLUGIN_SEP`].
 pub const EVENT_PLUGIN: u32 = 20;
+/// This actor entered, kept or left a touch, in every phase. Subject: the other
+/// actor's name; detail: its id; `n0` = phase (0 enter, 1 stay, 2 exit), `n1` =
+/// 1 for a trigger overlap, `n2` = impulse, `n3` = relative speed.
+pub const EVENT_CONTACT: u32 = 21;
 
 // ─── The same three calls in a browser ─────────────────────────────────────
 // A web build loads each script as its own wasm module, and one module can't

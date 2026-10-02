@@ -67,6 +67,44 @@ impl ForceMode {
     }
 }
 
+impl ForceMode {
+    /// [`Self::linear_impulse`] over plain arrays, for callers on another
+    /// math library.
+    pub fn linear_impulse_array(self, vector: [f32; 3], mass: f32, dt: f32) -> [f32; 3] {
+        self.linear_impulse(Vec3::from_array(vector), mass, dt)
+            .to_array()
+    }
+
+    /// The 3D angular impulse for a torque, from the body's principal moments,
+    /// the frame they are measured in and its rotation (both `[x, y, z, w]`).
+    pub fn torque_impulse_3d(
+        self,
+        vector: [f32; 3],
+        principal: [f32; 3],
+        frame: [f32; 4],
+        body: [f32; 4],
+        dt: f32,
+    ) -> [f32; 3] {
+        let inertia = world_inertia(
+            Vec3::from_array(principal),
+            Quat::from_array(frame).normalize(),
+            Quat::from_array(body).normalize(),
+        );
+        self.angular_impulse(Vec3::from_array(vector), inertia, dt)
+            .to_array()
+    }
+
+    /// The 2D angular impulse for a torque about z.
+    pub fn torque_impulse_2d(self, torque: f32, inertia: f32, dt: f32) -> f32 {
+        match self {
+            ForceMode::Force => torque * dt,
+            ForceMode::Acceleration => torque * dt * inertia,
+            ForceMode::Impulse => torque,
+            ForceMode::VelocityChange => torque * inertia,
+        }
+    }
+}
+
 /// A body's inertia tensor in world axes, from its principal moments, the frame
 /// those moments are measured in and the body's rotation.
 pub fn world_inertia(principal: Vec3, frame: Quat, body: Quat) -> Mat3 {
@@ -105,6 +143,22 @@ mod tests {
         assert!((spin - Vec3::X * 2.0).length() < 1e-5);
         let accel = ForceMode::Acceleration.angular_impulse(Vec3::Y, inertia, DT);
         assert!((accel - Vec3::Y * DT).length() < 1e-5);
+    }
+
+    #[test]
+    fn array_helpers_match_the_vector_ones() {
+        let spin = ForceMode::VelocityChange.torque_impulse_3d(
+            [1.0, 0.0, 0.0],
+            [1.0, 2.0, 3.0],
+            [0.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0, 1.0],
+            DT,
+        );
+        assert!((spin[0] - 1.0).abs() < 1e-6);
+        let push = ForceMode::Acceleration.linear_impulse_array([0.0, 1.0, 0.0], 3.0, DT);
+        assert!((push[1] - 3.0 * DT).abs() < 1e-6);
+        assert!((ForceMode::Acceleration.torque_impulse_2d(2.0, 5.0, DT) - 10.0 * DT).abs() < 1e-6);
+        assert_eq!(ForceMode::Impulse.torque_impulse_2d(2.0, 5.0, DT), 2.0);
     }
 
     #[test]

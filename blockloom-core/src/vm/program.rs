@@ -25,6 +25,8 @@ pub enum Trigger {
     /// An empty `with` means "anything".
     Collision {
         with: String,
+        phase: crate::physics::ContactPhase,
+        scope: crate::physics::ContactScope,
     },
     Message(String),
     /// A fresh clone starting up, in the clone itself.
@@ -253,6 +255,12 @@ pub enum Action {
     SetCloudDrift([Value; 3]),
     SetBody(BodyKind),
     ApplyImpulse([Value; 3]),
+    /// A force (or, with `torque`, a torque) read per `mode`.
+    AddForce {
+        mode: crate::physics::ForceMode,
+        torque: bool,
+        vector: [Value; 3],
+    },
     SetVelocity([Value; 3]),
     SetGravity([Value; 3]),
     SetDensity(Value),
@@ -591,8 +599,10 @@ pub fn compile(graph: &ActorGraph) -> Program {
                 Some(Trigger::KeyPressed(crate::sense::normalize_key(key)))
             }
             InstructionKind::WhenClicked => Some(Trigger::Clicked),
-            InstructionKind::WhenCollision { with } => Some(Trigger::Collision {
+            InstructionKind::WhenCollision { with, phase, scope } => Some(Trigger::Collision {
                 with: with.trim().to_string(),
+                phase: *phase,
+                scope: *scope,
             }),
             InstructionKind::WhenMessage { name } => {
                 Some(Trigger::Message(name.trim().to_string()))
@@ -803,6 +813,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
         Action::SetRigSlot { slot, attachment } => vec![slot, attachment],
         Action::SetSlotTint { slot, color } => vec![slot, color],
         Action::SetIkTarget { constraint, x, y } => vec![constraint, x, y],
+        Action::AddForce { vector, .. } => vector.iter().collect(),
         Action::GoTo(target)
         | Action::ApplyImpulse(target)
         | Action::SetVelocity(target)
@@ -1177,6 +1188,20 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
                 *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
             }
             Action::ApplyImpulse(t)
+        }
+        Action::AddForce {
+            mode,
+            torque,
+            mut vector,
+        } => {
+            for v in &mut vector {
+                *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
+            }
+            Action::AddForce {
+                mode,
+                torque,
+                vector,
+            }
         }
         Action::SetVelocity(mut t) => {
             for v in &mut t {
@@ -1873,6 +1898,16 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             y.clone(),
             z.clone(),
         ]))),
+        K::AddForce { mode, x, y, z } => steps.push(Step::Action(Action::AddForce {
+            mode: *mode,
+            torque: false,
+            vector: [x.clone(), y.clone(), z.clone()],
+        })),
+        K::AddTorque { mode, x, y, z } => steps.push(Step::Action(Action::AddForce {
+            mode: *mode,
+            torque: true,
+            vector: [x.clone(), y.clone(), z.clone()],
+        })),
         K::SetVelocity { x, y, z } => steps.push(Step::Action(Action::SetVelocity([
             x.clone(),
             y.clone(),

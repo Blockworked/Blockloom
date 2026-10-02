@@ -216,34 +216,59 @@ pub fn actor_bundle(actor: &Actor) -> impl Bundle {
     )
 }
 
-/// Records (or clears) a contact between two entities, and starts any
-/// `when I touch` strand it satisfies - in both directions, since either
-/// actor may be the one listening.
-pub fn note_contact(engine: &mut Engine, a: Entity, b: Entity, started: bool) {
-    let Some(first) = engine.actor_id_of(a).map(str::to_string) else {
-        return;
-    };
-    let Some(second) = engine.actor_id_of(b).map(str::to_string) else {
-        return;
-    };
-    for (actor, other) in [(&first, &second), (&second, &first)] {
-        let contacts = engine.touching.entry(actor.clone()).or_default();
-        if started {
-            contacts.insert(other.clone());
-        } else {
-            contacts.remove(other);
+/// Hands the VM the contact events the last closed tick made, for both actors
+/// of each pair. Only the actor-level edge of a pair starts a `when I touch`
+/// strand, so a compound wall is still one Enter and one Exit.
+pub fn deliver_contacts(engine: &mut Engine) {
+    let tick = engine.contact_ticks + 1;
+    for event in engine.contacts.deliver(tick) {
+        if !event.edge {
+            continue;
+        }
+        let (impulse, speed) = event.payload.as_ref().map_or((0.0, 0.0), |payload| {
+            let v = payload.relative_velocity;
+            (
+                payload.impulse,
+                (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt(),
+            )
+        });
+        let sides = [
+            (event.a.actor.clone(), event.b.actor.clone()),
+            (event.b.actor.clone(), event.a.actor.clone()),
+        ];
+        for (actor, with) in sides {
+            engine.fire(Event::Collision {
+                actor,
+                with,
+                phase: event.phase,
+                kind: event.kind,
+                impulse,
+                speed,
+            });
         }
     }
-    if started {
-        engine.fire(Event::Collision {
-            actor: first.clone(),
-            with: second.clone(),
-        });
-        engine.fire(Event::Collision {
-            actor: second,
-            with: first,
-        });
+}
+
+/// Mirrors the tracker's actor-level answer into `touching`, which the
+/// reporters read, when a tick changed it.
+pub fn sync_touching(engine: &mut Engine) {
+    if !engine.contacts.take_changed() {
+        return;
     }
+    let mut touching: HashMap<String, HashSet<String>> = HashMap::new();
+    for (a, b, _) in engine.contacts.active_pairs() {
+        if a.actor != b.actor {
+            touching
+                .entry(a.actor.clone())
+                .or_default()
+                .insert(b.actor.clone());
+            touching
+                .entry(b.actor.clone())
+                .or_default()
+                .insert(a.actor.clone());
+        }
+    }
+    engine.touching = touching;
 }
 
 // ─── Editor messages ───────────────────────────────────────────────────────
@@ -342,6 +367,8 @@ pub fn pump_editor(
                     logic.reset();
                 }
                 engine.touching.clear();
+                engine.contacts.clear();
+                engine.contact_ticks = 0;
                 engine.speech.clear();
                 engine.pending_scene = None;
                 engine.veil.reset();
@@ -680,6 +707,8 @@ pub fn rebuild_world(
     sound.reset(project_sound(&engine));
     engine.entities.clear();
     engine.touching.clear();
+    engine.contacts.clear();
+    engine.contact_ticks = 0;
     // Remaps last exactly as long as the run, like everything else live.
     engine.reset_input_run();
     // Everything the last run made goes with it - except opt-in survivors
@@ -1034,15 +1063,20 @@ pub fn step_scripts(
 
     // What happened since the last step, as each script will hear it.
     let fired = std::mem::take(&mut engine.script_events);
+    let name_of = |id: &str| {
+        engine
+            .actor(id)
+            .map(|actor| actor.name.clone())
+            .unwrap_or_default()
+    };
     let heard: Vec<_> = fired
         .iter()
-        .filter_map(|event| {
-            crate::script::ScriptEvent::of(event, |id| {
-                engine
-                    .actor(id)
-                    .map(|actor| actor.name.clone())
-                    .unwrap_or_default()
-            })
+        .flat_map(|event| {
+            let touch = crate::script::ScriptEvent::contact_of(event, name_of)
+                .map(|(to, heard)| (Some(to), heard));
+            crate::script::ScriptEvent::of(event, name_of)
+                .into_iter()
+                .chain(touch)
         })
         .collect();
 
@@ -2162,6 +2196,7 @@ pub fn step_vm(
             perform_scene_switch(&mut engine, &transforms, &scene, &transition);
         }
     }
+    deliver_contacts(&mut engine);
     let elapsed = time.elapsed_secs() as f64;
     let now = engine.run_time(elapsed);
     let wall = (elapsed - engine.started_at).max(0.0);
@@ -2347,6 +2382,8 @@ fn perform_scene_switch(
     engine.last_created.clear();
     engine.speech.retain(|id, _| keep.contains(id));
     engine.touching.clear();
+    engine.contacts.clear();
+    engine.contact_ticks = 0;
     engine.driven.retain(|id| keep.contains(id));
     let project = engine.project.clone();
     if let Some(logic) = &mut engine.logic {
@@ -3584,6 +3621,7 @@ pub(crate) fn delete_actor(commands: &mut Commands, engine: &mut Engine, actor: 
     engine.attached.remove(actor);
     engine.physics_filter.remove(actor);
     engine.touching.remove(actor);
+    engine.contacts.remove_actor(actor);
     engine.speech.remove(actor);
     engine.scripts.remove(actor);
     engine.scripts_started.remove(actor);
@@ -4445,6 +4483,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetBody { actor, .. }
         | Effect::ApplyImpulse { actor, .. }
         | Effect::SetVelocity { actor, .. }
+        | Effect::AddForce { actor, .. }
         | Effect::SetDensity { actor, .. }
         | Effect::SetMass { actor, .. }
         | Effect::SetTrigger { actor, .. }

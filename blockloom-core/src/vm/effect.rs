@@ -330,6 +330,14 @@ pub enum Effect {
         actor: String,
         impulse: [f32; 3],
     },
+    /// A force on the actor's body for one fixed step, read per `mode`. With
+    /// `torque` the vector turns it instead (2D bodies use z only).
+    AddForce {
+        actor: String,
+        mode: crate::physics::ForceMode,
+        torque: bool,
+        vector: [f32; 3],
+    },
     SetVelocity {
         actor: String,
         velocity: [f32; 3],

@@ -11,6 +11,7 @@
 //! playing and saving an existing project is unchanged. Run state (velocity,
 //! contacts, sleeping) never appears here.
 
+pub mod contacts;
 pub mod edit;
 pub mod geometry;
 pub mod ids;
@@ -24,6 +25,10 @@ pub mod plan;
 pub mod spec;
 pub mod validate;
 
+pub use contacts::{
+    ContactEvent, ContactKind, ContactPayload, ContactPhase, ContactPoint, ContactScope,
+    ContactTracker, Endpoint, ExitReason,
+};
 pub use ids::{ColliderId, ComponentId};
 pub use layers::{ColliderFilter, LayerSettings, layer_bit, needs_exact, pair_collides};
 pub use material::{

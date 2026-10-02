@@ -94,6 +94,9 @@ const CLOUD_PROPERTIES: &[&str] = &["Coverage", "Density", "Type"];
 const PRECIPITATION_KINDS: &[&str] = &["Rain", "Snow"];
 const WATER_PROPERTIES: &[&str] = &["Level", "Chop", "Foam"];
 const PARALLAX_AXES: &[&str] = &["Both", "X", "Y"];
+const CONTACT_PHASES: &[&str] = &["Enter", "Stay", "Exit"];
+const CONTACT_SCOPES: &[&str] = &["Any", "Collision", "Trigger"];
+const FORCE_MODES: &[&str] = &["Force", "Acceleration", "Impulse", "VelocityChange"];
 const CLOUD_LAYER_PROPERTIES: &[&str] = &["Coverage", "Opacity", "Contrast", "Altitude", "Spin"];
 const UI_ANCHORS: &[&str] = &[
     "TopLeft",
@@ -264,11 +267,20 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "WhenCollision",
         category: "Events",
-        purpose: "Runs when this actor starts touching with (an actor name; blank means anything).",
+        purpose: "Runs when this actor starts (Enter), keeps (Stay, once a tick) or stops (Exit) touching with (an actor name; blank means anything); scope picks solid touches (Collision), trigger overlaps (Trigger) or both (Any).",
         header: true,
         three_d: false,
         slots: NO_SLOTS,
-        dropdowns: NO_DROPDOWNS,
+        dropdowns: &[
+            Dropdown {
+                field: "phase",
+                options: CONTACT_PHASES,
+            },
+            Dropdown {
+                field: "scope",
+                options: CONTACT_SCOPES,
+            },
+        ],
         strings: &["with"],
         bools: NO_BOOLS,
         bodies: NO_BODIES,
@@ -873,6 +885,68 @@ pub const BLOCKS: &[BlockSpec] = &[
             },
         ],
         dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "AddForce",
+        category: "Physics",
+        purpose: "Pushes this body for one fixed step. Force is newtons, Acceleration ignores mass, Impulse is newton seconds, VelocityChange ignores mass and changes velocity at once. Only a dynamic body responds; a 2D body reads x and y and speaks the same units as set velocity.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "x",
+                id: "ForceX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "ForceY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "ForceZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "mode",
+            options: FORCE_MODES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "AddTorque",
+        category: "Physics",
+        purpose: "Turns this body for one fixed step, in the same four modes as add force and with the body's inertia where force uses mass. A 2D body turns about z only.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "x",
+                id: "ForceX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "ForceY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "ForceZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "mode",
+            options: FORCE_MODES,
+        }],
         strings: NO_STRINGS,
         bools: NO_BOOLS,
         bodies: NO_BODIES,

@@ -5,18 +5,18 @@ use blockloom_core::blocks::{
     parse_json_array, parse_json_object,
 };
 use blockloom_core::codegen::{
-    ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_ADVANCE_TIME, ACT_APPLY_IMPULSE, ACT_ATTACH,
-    ACT_BIND_ACTION, ACT_BLEND_WEATHER, ACT_BROADCAST, ACT_BURST_PARTICLES, ACT_CAMERA_SHAKE,
-    ACT_CAPTURE_PROBES, ACT_CHANGE_POSITION, ACT_CLEAR_ACTION_BINDINGS, ACT_CREATE_ACTOR,
-    ACT_CREATE_CLONE, ACT_DELETE_ACTOR, ACT_DELETE_ELEMENT, ACT_DETACH, ACT_DICT_CLEAR,
-    ACT_DICT_DELETE_KEY, ACT_DICT_SET, ACT_ENABLE_VOLUME, ACT_ERROR, ACT_FADE_DECALS,
-    ACT_FADE_SCREEN, ACT_FIRE_ANIMATION_TRIGGER, ACT_FRACTURE, ACT_GLIDE, ACT_GO_TO,
-    ACT_HIDE_ELEMENT, ACT_HITSTOP, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD,
-    ACT_LIST_CLEAR, ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE,
-    ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_PAINT_TILE, ACT_PLAY_ANIMATION,
-    ACT_PLAY_CUTSCENE, ACT_PLAY_SOUND, ACT_PLUGIN_CALL, ACT_POINT_TOWARDS, ACT_PUFF_SMOKE,
-    ACT_RUMBLE_GAMEPAD, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_ANIMATION_SPEED, ACT_SET_AURORA,
-    ACT_SET_BODY, ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH,
+    ABI_MISSING, ABI_OK, ABI_PANIC, ABI_TOO_LONG, ACT_ADD_FORCE, ACT_ADVANCE_TIME,
+    ACT_APPLY_IMPULSE, ACT_ATTACH, ACT_BIND_ACTION, ACT_BLEND_WEATHER, ACT_BROADCAST,
+    ACT_BURST_PARTICLES, ACT_CAMERA_SHAKE, ACT_CAPTURE_PROBES, ACT_CHANGE_POSITION,
+    ACT_CLEAR_ACTION_BINDINGS, ACT_CREATE_ACTOR, ACT_CREATE_CLONE, ACT_DELETE_ACTOR,
+    ACT_DELETE_ELEMENT, ACT_DETACH, ACT_DICT_CLEAR, ACT_DICT_DELETE_KEY, ACT_DICT_SET,
+    ACT_ENABLE_VOLUME, ACT_ERROR, ACT_FADE_DECALS, ACT_FADE_SCREEN, ACT_FIRE_ANIMATION_TRIGGER,
+    ACT_FRACTURE, ACT_GLIDE, ACT_GO_TO, ACT_HIDE_ELEMENT, ACT_HITSTOP, ACT_JSON_TO_DICT,
+    ACT_JSON_TO_LIST, ACT_LIST_ADD, ACT_LIST_CLEAR, ACT_LIST_DELETE, ACT_LIST_INSERT,
+    ACT_LIST_REPLACE, ACT_LIST_REVERSE, ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_PAINT_TILE,
+    ACT_PLAY_ANIMATION, ACT_PLAY_CUTSCENE, ACT_PLAY_SOUND, ACT_PLUGIN_CALL, ACT_POINT_TOWARDS,
+    ACT_PUFF_SMOKE, ACT_RUMBLE_GAMEPAD, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_ANIMATION_SPEED,
+    ACT_SET_AURORA, ACT_SET_BODY, ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH,
     ACT_SET_CAMERA_VIEW, ACT_SET_CLOUD_DRIFT, ACT_SET_CLOUD_LAYER, ACT_SET_CLOUDS,
     ACT_SET_COLLISION_LAYER, ACT_SET_COLLISION_MASK, ACT_SET_COLOR, ACT_SET_DENSITY,
     ACT_SET_EMISSIVE_STRENGTH, ACT_SET_EMITTER_DIAL, ACT_SET_EMITTER_PLAYING, ACT_SET_EXPOSURE,
@@ -214,14 +214,21 @@ impl LoadedLogic {
             Event::Key(key) => self.fire_raw("Key", "", &key, ""),
             Event::Click { actor } => self.fire_raw("Clicked", &actor, "", ""),
             Event::Message(message) => self.fire_raw("Message", "", &message, ""),
-            Event::Collision { actor, with } => {
+            Event::Collision {
+                actor,
+                with,
+                phase,
+                kind,
+                ..
+            } => {
                 let other_name = project
                     .actors
                     .iter()
                     .find(|candidate| candidate.id == with)
                     .map(|candidate| candidate.name.as_str())
                     .unwrap_or("");
-                self.fire_raw("Collision", &actor, &with, other_name);
+                let detail = format!("{with}\u{1f}{}\u{1f}{}", phase.name(), kind.name());
+                self.fire_raw("Collision", &actor, &detail, other_name);
             }
             Event::UiEvent { id, event } => {
                 self.fire_raw("UiEvent", "", &format!("{event}\n{id}"), "")
@@ -848,6 +855,18 @@ extern "C" fn act(
         ACT_APPLY_IMPULSE => Effect::ApplyImpulse {
             actor,
             impulse: vector,
+        },
+        ACT_ADD_FORCE => match blockloom_core::physics::ForceMode::parse(a) {
+            Some(mode) => Effect::AddForce {
+                actor,
+                mode,
+                torque: b == "torque",
+                vector,
+            },
+            None => Effect::Error {
+                actor,
+                message: format!("there's no force mode called \"{a}\""),
+            },
         },
         ACT_SET_VELOCITY => Effect::SetVelocity {
             actor,
