@@ -68,6 +68,22 @@ fn a_plugin_installs_owns_records_and_leaves_them_when_removed() {
     let list = invoke("plugin_list", json!({}));
     assert_eq!(list["installed"][0]["id"], "com.example.health");
 
+    // The schemas an inspector builds its forms from come with the listing.
+    let types = list["types"].as_array().unwrap();
+    let health = types
+        .iter()
+        .find(|t| t["name"] == "com.example.health/Health")
+        .unwrap();
+    assert_eq!(health["kind"], "component");
+    assert_eq!(health["fields"][0]["name"], "hp");
+    assert_eq!(health["fields"][0]["type"], "int");
+    assert_eq!(health["defaults"]["hp"], 100);
+    assert!(
+        types
+            .iter()
+            .any(|t| t["name"] == "com.example.health/Difficulty" && t["kind"] == "resource")
+    );
+
     // A command the plugin declares is reachable by name and checked by its schema.
     let commands = invoke("plugin_commands", json!({}));
     assert!(commands.to_string().contains("com.example.health/set_hp"));

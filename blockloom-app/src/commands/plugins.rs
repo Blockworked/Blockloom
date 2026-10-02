@@ -219,6 +219,36 @@ fn installed(active: &ActivePlugins) -> Vec<InstalledDto> {
         .collect()
 }
 
+/// Every component and resource type the installed plugins declare, with the
+/// fields and defaults the inspector builds its forms from.
+fn types_json(active: &ActivePlugins) -> Vec<Value> {
+    let mut out = Vec::new();
+    for (plugin, p) in &active.plugins {
+        let c = &p.package.contributions;
+        for (kind, list) in [("component", &c.components), ("resource", &c.resources)] {
+            for schema in list {
+                out.push(json!({
+                    "name": id::qualified(plugin, &schema.type_id),
+                    "plugin": plugin,
+                    "pluginName": p.package.manifest.name,
+                    "type": schema.type_id,
+                    "displayName": if schema.display_name.is_empty() {
+                        &schema.type_id
+                    } else {
+                        &schema.display_name
+                    },
+                    "kind": kind,
+                    "version": schema.version,
+                    "editorOnly": schema.editor_only,
+                    "fields": schema.fields,
+                    "defaults": schema.defaults(),
+                }));
+            }
+        }
+    }
+    out
+}
+
 /// Every block the installed plugins add, with the plugin that owns it.
 fn blocks_json(active: &ActivePlugins) -> Vec<Value> {
     active
@@ -241,6 +271,7 @@ pub(crate) fn summary(s: &AppState) -> Value {
     json!({
         "installed": installed(active),
         "blocks": blocks_json(active),
+        "types": types_json(active),
         "problems": active.problems,
         "issues": active.audit(project.plugin_records()),
     })
@@ -258,6 +289,7 @@ pub(crate) fn plugin_list(state: &SharedState) -> Result<Value, String> {
     Ok(json!({
         "installed": installed(active),
         "blocks": blocks_json(active),
+        "types": types_json(active),
         "problems": active.problems,
         "direct": plugins.plugins,
         "registries": plugins.registries,

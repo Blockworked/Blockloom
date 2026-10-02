@@ -546,8 +546,24 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
 - **Plugin Manager**: `PluginManagerDialog.qml`, opened from the top bar's plug
   button. It lists `plugin_list`/`plugin_check`/`plugin_commands` and runs the
   same `plugin_*` commands the shell does (install with a dry-run preview,
-  update, remove, sync, undo the last change, clean the cache). It has a QML
-  test (`tests/qml/tst_Plugins.qml`) but no inspector or contribution host yet.
+  update, remove, sync, undo the last change, clean the cache). A "Settings"
+  section edits each plugin resource in place. It has QML tests
+  (`tests/qml/tst_Plugins.qml`).
+- **Schema-generated inspectors** (`PluginRecordForm.qml`, `PluginValueEditor.qml`):
+  `plugin_list` and the state snapshot's `plugins.types` list every component
+  and resource type (`name`, `displayName`, `kind`, `version`, `fields`,
+  `defaults`), built by `types_json` from the installed schemas. A form has a
+  row per field and a `PluginValueEditor` per value (`bool`, `int`, `number`,
+  `text`, `color`, `vec3`, `choice`, `asset`, `actor`, and `list` of any of
+  those, recursively), clamped to the schema's bounds. An edit reports the whole
+  next payload with any key the schema doesn't name kept, so an older plugin
+  never trims a newer document. `InspectorPanel.qml` draws a `Plugin` component
+  as that form (`pluginCard`), says so when the plugin is missing or the record
+  needs a migration and keeps the data, and lists installed component types in
+  Add component (`plugin:<name>` -> `add_plugin_component`). Editing goes
+  through `set_plugin_component`/`set_plugin_resource`, so validation and undo
+  are the backend's. QML tests: `tests/qml/tst_PluginInspector.qml`. A new
+  `FieldType` must be taught to `PluginValueEditor.qml` (and `src/plugins.ts`).
 - **Mesh service** (`blockloom-plugin-api/src/mesh.rs`, `blockloom-runtime/src/
   plugin_meshes.rs`): a module answers with `{"effect": "mesh", name,
   positions, normals, colors, indices, origin, emission, roughness, collider}`
@@ -627,8 +643,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   revision (`plugins::reload(s, true)`), so an attached copy's live reload
   also reloads its active plugins.
 - **Not yet**: plugin code in an Android build, a faster browser host (the page's own WebAssembly instead of wasmi in
-  wasm), a headless browser proof, dynamic QML for
-  plugin editor panels.
+  wasm), a headless browser proof, plugin editor panels
+  and trusted editor modules (QML loaded at run time).
   `plugins/examples/com.example.health` is the sealed proof package;
   `plugins/examples/tally` is the SDK one, with code, and
   `plugins/examples/palette` the importer/build-hook one.

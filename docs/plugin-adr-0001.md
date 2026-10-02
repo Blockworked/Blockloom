@@ -88,11 +88,11 @@ tools.
 Implemented from phase 2 only the data, command and migration parts. Not done,
 and tracked in `TODO.md`:
 
-- The Plugin Manager is a dialog over the backend commands. There is no
-  contribution host yet: no inspector sections for plugin components, no
-  panels, no dynamic loading of trusted editor modules. QML for those would
-  have to be loaded at run time, which the compile-time `QmlModule` list
-  cannot do.
+- The Plugin Manager is a dialog over the backend commands. Plugin components
+  and resources are edited through schema-generated forms (see the thirteenth
+  batch); panels and dynamically loaded trusted editor modules do not exist yet,
+  and QML for those would have to be loaded at run time, which the compile-time
+  `QmlModule` list cannot do.
 - The portable tier runs through a native interpreter in the editor only. There
   is no browser host, so no browser proof, and a built game does not carry the
   executor.
@@ -423,3 +423,20 @@ the remaining proof.
   counter did not cover, so an attached copy kept its old active set. The
   owner now bumps the revision after every package change and an attached
   copy reloads its plugins whenever it reloads the folder.
+
+## Schema-generated inspectors (thirteenth batch)
+
+- The inspector needs no plugin code for a declarative plugin: the backend
+  sends each type's fields and defaults (`types` in `plugin_list` and the
+  snapshot), and two compile-time QML files draw them. Every field type has an
+  editor, lists nest, and numbers are clamped to the schema's bounds, but the
+  backend still validates and is what undo records, so a form can't write
+  something the schema refuses.
+- A form's edit is the whole next payload built from the held one, so keys a
+  newer plugin wrote survive an older plugin's edit. A record whose plugin is
+  missing shows a note and stays untouched, and one at another schema version
+  asks for `plugin-migrate` rather than being edited in a shape the form
+  doesn't know.
+- Not yet: a plugin drawing its own inspector section, panels, and loading
+  trusted editor QML at run time. The QML tests were written without a Qt
+  install in the build container, so run `just qml-test` locally.

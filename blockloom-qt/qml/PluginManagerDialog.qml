@@ -82,6 +82,17 @@ BwDialog {
         else if (issue.status === "invalid") why = "its data fails the plugin's schema";
         return issue.record + " on " + issue.location + ": " + why + (issue.blocks_run ? " (stops Play)" : "");
     }
+    // The project-wide records plugins own (their settings), edited in place.
+    readonly property var resourceTypes: listing && listing.types ? listing.types.filter(t => t.kind === "resource") : []
+    readonly property var resourceRecords: app.appState && app.appState.project && app.appState.project.plugin_resources ? app.appState.project.plugin_resources : []
+    function resourceRecord(name) { return resourceRecords.find(r => r.plugin + "/" + r.type_id === name) || null; }
+    function resourcePayload(type) { const r = resourceRecord(type.name); return r ? r.payload : ({}); }
+    function writeResource(type, payload) {
+        app.invoke("set_plugin_resource", { resource: type.name, payload: payload }, null, e => root.error = String(e));
+    }
+    function resetResource(type) {
+        app.invoke("remove_plugin_resource", { resource: type.name }, null, e => root.error = String(e));
+    }
     function supportText(support) {
         if (!support) return "";
         if (support.kind === "unsupported") return "Not available on this machine: " + support.reason;
@@ -201,6 +212,47 @@ BwDialog {
                 visible: !!root.check && !root.check.canRun
                 Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.warning; font.pixelSize: 12
                 text: "Play and Build are stopped until these are fixed. The data is kept: reinstalling the plugin brings it back."
+            }
+
+            Text {
+                visible: root.resourceTypes.length > 0
+                text: "Settings"; color: Theme.text; font.pixelSize: 14; font.weight: Font.Bold; Layout.topMargin: 6
+            }
+            Repeater {
+                model: root.resourceTypes
+                delegate: Rectangle {
+                    id: resource
+                    required property var modelData
+                    objectName: "resource-" + modelData.name
+                    Layout.fillWidth: true
+                    implicitHeight: resourceColumn.implicitHeight + 16
+                    radius: 8; color: Theme.panelRaised; border.color: Theme.borderSoft
+                    ColumnLayout {
+                        id: resourceColumn
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                        anchors.margins: 8; spacing: 6
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 8
+                            Text {
+                                Layout.fillWidth: true; elide: Text.ElideRight
+                                color: Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold
+                                text: resource.modelData.displayName + "  (" + resource.modelData.pluginName + ")"
+                            }
+                            BwButton {
+                                text: "Reset"; flat: true
+                                visible: !!root.resourceRecord(resource.modelData.name)
+                                onClicked: root.resetResource(resource.modelData)
+                            }
+                        }
+                        PluginRecordForm {
+                            app: root.app; type: resource.modelData; payload: root.resourcePayload(resource.modelData)
+                            actors: root.app.appState && root.app.appState.project
+                                ? [{ value: "", label: "nothing" }].concat(root.app.appState.project.actors.map(a => ({ value: a.id, label: a.name })))
+                                : []
+                            onChanged: next => root.writeResource(resource.modelData, next)
+                        }
+                    }
+                }
             }
 
             Text { text: "Install"; color: Theme.text; font.pixelSize: 14; font.weight: Font.Bold; Layout.topMargin: 6 }
