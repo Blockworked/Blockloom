@@ -18,6 +18,7 @@
 use crate::ai::BrainSpec;
 use crate::animation::AnimationSpec;
 use crate::material::{ParticleSpec, SurfaceMaterial, TrailSpec};
+use crate::physics::{ColliderId, ColliderSpec, RigidbodySpec};
 use crate::probe::ProbeSpec;
 use crate::scene::{Physics, Placement, Visual};
 use crate::sprite2d::SpriteSpec;
@@ -36,6 +37,8 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Look",
     "Render",
     "Body",
+    "Rigidbody",
+    "Collider",
     "Joint",
     "Brain",
     "Camera",
@@ -313,6 +316,12 @@ pub enum ActorComponent {
     /// A rigid body and collider. Absent means blocks move the actor and
     /// nothing else does.
     Body { physics: Physics },
+    /// Motion, mass and integration, independent of any shape (see
+    /// [`crate::physics`]). At most one per actor.
+    Rigidbody { rigidbody: RigidbodySpec },
+    /// One collision shape. Repeatable: an actor may carry several, each addressed
+    /// by its [`ColliderId`], never by name.
+    Collider { collider: ColliderSpec },
     /// Constrains this body to another actor. A chain of hinged bodies makes
     /// a ragdoll while the usual parent hierarchy remains independent.
     Joint { joint: JointSpec },
@@ -400,6 +409,8 @@ impl ActorComponent {
             ActorComponent::Look { .. } => "Look",
             ActorComponent::Render { .. } => "Render",
             ActorComponent::Body { .. } => "Body",
+            ActorComponent::Rigidbody { .. } => "Rigidbody",
+            ActorComponent::Collider { .. } => "Collider",
             ActorComponent::Joint { .. } => "Joint",
             ActorComponent::Brain { .. } => "Brain",
             ActorComponent::Camera { .. } => "Camera",
@@ -422,6 +433,14 @@ impl ActorComponent {
             ActorComponent::Persist => "Persist",
             ActorComponent::Plugin { record } => record.name(),
             ActorComponent::Custom { name, .. } => name,
+        }
+    }
+
+    /// The id of a collider component, which is how a repeated one is addressed.
+    pub fn collider_id(&self) -> Option<&ColliderId> {
+        match self {
+            ActorComponent::Collider { collider } => Some(&collider.id),
+            _ => None,
         }
     }
 
@@ -555,8 +574,26 @@ impl Components {
     }
 
     /// Adds `component`, replacing one of the same name. Returns whether it
-    /// was new.
+    /// was new. A [`ActorComponent::Collider`] is repeatable, so it replaces the
+    /// collider with the same id and otherwise joins the list.
     pub fn insert(&mut self, component: ActorComponent) -> bool {
+        if let ActorComponent::Collider { collider } = &component {
+            let id = collider.id.clone();
+            return match self
+                .0
+                .iter_mut()
+                .find(|slot| slot.collider_id() == Some(&id))
+            {
+                Some(slot) => {
+                    *slot = component;
+                    false
+                }
+                None => {
+                    self.0.push(component);
+                    true
+                }
+            };
+        }
         match self.get_mut(component.name()) {
             Some(slot) => {
                 *slot = component;
@@ -570,8 +607,13 @@ impl Components {
     }
 
     /// Drops the named component. The required one stays; everything else
-    /// goes, and reads of it fall back to its default.
+    /// goes, and reads of it fall back to its default. A name that more than
+    /// one component answers to (several colliders) removes nothing: use
+    /// [`Components::remove_collider`].
     pub fn remove(&mut self, name: &str) -> bool {
+        if self.count(name) > 1 {
+            return false;
+        }
         let Some(index) = self
             .0
             .iter()
@@ -581,6 +623,59 @@ impl Components {
         };
         self.0.remove(index);
         true
+    }
+
+    /// How many components answer to `name`.
+    pub fn count(&self, name: &str) -> usize {
+        self.0.iter().filter(|c| c.name() == name).count()
+    }
+
+    /// The one component called `name`. A name more than one component answers
+    /// to is an error that says to address it by id, never the first match.
+    pub fn unique(&self, name: &str) -> Result<Option<&ActorComponent>, String> {
+        match self.count(name) {
+            0 => Ok(None),
+            1 => Ok(self.get(name)),
+            n => Err(format!(
+                "This actor has {n} \"{name}\" components; address one by its id"
+            )),
+        }
+    }
+
+    /// Every collider, in list order.
+    pub fn colliders(&self) -> impl Iterator<Item = &ColliderSpec> {
+        self.0.iter().filter_map(|c| match c {
+            ActorComponent::Collider { collider } => Some(collider),
+            _ => None,
+        })
+    }
+
+    pub fn collider(&self, id: &ColliderId) -> Option<&ColliderSpec> {
+        self.colliders().find(|c| &c.id == id)
+    }
+
+    pub fn collider_mut(&mut self, id: &ColliderId) -> Option<&mut ColliderSpec> {
+        self.0.iter_mut().find_map(|c| match c {
+            ActorComponent::Collider { collider } if &collider.id == id => Some(collider),
+            _ => None,
+        })
+    }
+
+    /// Takes the collider with `id` off. Returns whether there was one.
+    pub fn remove_collider(&mut self, id: &ColliderId) -> bool {
+        let Some(index) = self.0.iter().position(|c| c.collider_id() == Some(id)) else {
+            return false;
+        };
+        self.0.remove(index);
+        true
+    }
+
+    /// The Rigidbody, if the actor has one.
+    pub fn rigidbody(&self) -> Option<&RigidbodySpec> {
+        self.0.iter().find_map(|c| match c {
+            ActorComponent::Rigidbody { rigidbody } => Some(rigidbody),
+            _ => None,
+        })
     }
 
     // ─── The built-ins, as the rest of the engine reads them ───────────────

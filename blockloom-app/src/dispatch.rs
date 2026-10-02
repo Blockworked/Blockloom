@@ -443,6 +443,68 @@ impl Backend {
                 arg(&args, "actorId")?,
                 arg(&args, "name")?,
             )?),
+            // ── Physics ────────────────────────────────────────────────────
+            "add_collider" => to_json(commands::physics::add_collider(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "collider")?,
+            )?),
+            "set_collider" => to_json(commands::physics::set_collider(
+                state,
+                app,
+                arg(&args, "collider")?,
+            )?),
+            "remove_collider" => to_json(commands::physics::remove_collider(
+                state,
+                app,
+                arg(&args, "colliderId")?,
+            )?),
+            "fit_collider_to_look" => to_json(commands::physics::fit_collider_to_look(
+                state,
+                app,
+                arg(&args, "colliderId")?,
+            )?),
+            "set_rigidbody" => to_json(commands::physics::set_rigidbody(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "rigidbody")?,
+            )?),
+            "remove_rigidbody" => to_json(commands::physics::remove_rigidbody(
+                state,
+                app,
+                arg(&args, "actorId")?,
+            )?),
+            "set_physics_profile" => to_json(commands::physics::set_physics_profile(
+                state,
+                app,
+                arg(&args, "profile")?,
+            )?),
+            "add_physics_material" => to_json(commands::physics::add_physics_material(
+                state,
+                app,
+                arg(&args, "name")?,
+                arg(&args, "material")?,
+            )?),
+            "set_physics_material" => to_json(commands::physics::set_physics_material(
+                state,
+                app,
+                arg(&args, "id")?,
+                arg(&args, "name").ok(),
+                arg(&args, "material")?,
+            )?),
+            "remove_physics_material" => to_json(commands::physics::remove_physics_material(
+                state,
+                app,
+                arg(&args, "id")?,
+            )?),
+            "physics_check" => to_json(commands::physics::physics_check(state)?),
+            "physics_ownership" => to_json(commands::physics::physics_ownership(state)?),
+            "physics_properties" => to_json(commands::physics::physics_properties()),
+            "physics_migration_preview" => {
+                to_json(commands::physics::physics_migration_preview(state)?)
+            }
             // ── Plugins ────────────────────────────────────────────────────
             "plugin_list" => to_json(commands::plugins::plugin_list(state)?),
             "plugin_check" => to_json(commands::plugins::plugin_check(state)?),

@@ -54,6 +54,7 @@ pub mod lightning;
 pub mod material;
 pub mod nav;
 pub mod pack;
+pub mod physics;
 pub mod physics_query;
 pub mod pipeline;
 pub mod probe;

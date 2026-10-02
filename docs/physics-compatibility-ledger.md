@@ -133,3 +133,19 @@ Read at rev `09ca067a`; items that changed a design are in the ledger above.
 Phase 0 therefore passes its gate for the 3D contact, event, query, CCD and
 controller rows. It does not pass for the open rows above, which carry into the phase
 named in each row.
+
+## Phase 1 notes
+
+Phase 1 is the document layer (`blockloom-core/src/physics/`); it changes no runtime
+behavior, so no ledger row moves from Design to Verified. What it fixed, for the
+phases that read it:
+
+- The Blockloom-chosen defaults (`DEFAULT_MAX_LINEAR_VELOCITY` and the sleep and
+  solver values) are not from Unity's documentation and stay Open until a Unity
+  editor confirms or replaces them.
+- Legacy `Body` fields keep their meaning on migration; a capsule's old height plus
+  radius becomes an end to end height, and a plane gets a thin box
+  (`LEGACY_PLANE_THICKNESS`). Phase 2 must check both against how `dim2`/`dim3`
+  build colliders today before the migration is applied to a real project.
+- The 2D material rule (geometric mean of frictions, larger bounce) is the documented
+  Unity 2D rule and has no probe yet (see "Still Open").

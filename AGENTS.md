@@ -323,6 +323,61 @@ the actor, and the world camera named the actor it followed. Both still load:
 `Actor` deserializes through `ActorRepr`, and `Project::normalize` moves the
 old `follow` onto its actor as a camera component.
 
+### Physics document (Rigidbody, Collider)
+
+Phase 1 of the physics plan, `blockloom-core/src/physics/`. It is the saved model
+and its rules only: **the runtime still plays the legacy `Body` component**, and
+nothing converts a project until a later phase wires migration into the editor.
+
+- `ActorComponent::Rigidbody { rigidbody }` (`RigidbodySpec`: body type, mass
+  or density, damping, gravity, interpolation, collision detection, constraints,
+  velocity caps) and `ActorComponent::Collider { collider }` (`ColliderSpec`: a
+  `ColliderGeometry` of a saved `ColliderShape` or `FromLook`, center, rotation,
+  material, trigger, layer, overrides). One body per actor; **colliders repeat**,
+  so `Components::collider(id)`/`colliders()` address them by `ColliderId` and the
+  name-based `get`/`remove` refuse an ambiguous repeated name. Ids are generated,
+  unique per scene, and kept by undo (snapshots), save/load and reparenting;
+  `Actor::refresh_physics_ids` gives a duplicate its own. A capsule's `height` is
+  end to end.
+- Ownership (`ownership.rs`, `PhysicsOwnership::resolve`): a collider belongs to
+  its own actor's Rigidbody or the nearest ancestor's (via `Parent`); no body above
+  it makes it static; a nested Rigidbody starts a separate body. The shape's pose in
+  the body's frame is derived from the same world matrices `place_authored_children`
+  builds, honoring `Parent` offsets. Static colliders need no Look and a body may
+  have no shape; both are valid.
+- Settings and materials live on `Project.physics` (`PhysicsSettings`: schema
+  version, `CompatibilityProfile` Legacy or Unity, `MaterialLibrary`), written only
+  when not default so an untouched legacy project re-saves byte for byte. A newer
+  `schema_version` fails to load with a clear error. Built-in materials (Default,
+  Ice, Rubber, No Bounce) are referenced by name; stored ones by `MaterialRef::Asset`.
+  3D combine priority is Maximum, Multiply, Minimum, Average; 2D uses the geometric
+  mean of frictions and the larger bounce.
+- `meta.rs` holds one property table per component (unit, bounds, world, advanced);
+  a test keeps it in step with the serialized defaults, so a new field needs a row.
+  `validate.rs` checks specs and a whole scene (shape in the wrong dimension, a
+  solid concave shape on a dynamic body, a trigger that is also one way, an
+  unresolved material, a legacy `Body` beside the new components, ...).
+- Edits (`edit.rs`) run on one actor, validate and roll back that actor on failure;
+  only errors on the edited actor or its touched ids refuse an edit, so a
+  hand-edited bad actor elsewhere does not lock the scene.
+- Migration (`migrate.rs`): `Scene::physics_migration_preview` shows what each legacy
+  `Body` becomes (Rigidbody plus `FromLook` collider plus a stored legacy material,
+  ids `{actor}-rigidbody`/`{actor}-collider`); `migrate_physics` applies it
+  idempotently. Only the preview is exposed (`physics-migration-preview`) because
+  the runtime cannot read the result yet.
+- Commands (`blockloom-app/src/commands/physics.rs`): `add-collider`,
+  `set-collider`, `remove-collider`, `fit-collider-to-look`, `set-rigidbody`,
+  `remove-rigidbody`, `set-physics-profile`, `add|set|remove-physics-material`, and
+  the reads `physics-check`, `physics-ownership`, `physics-properties`,
+  `physics-migration-preview`. A refused edit leaves no undo step. The generic
+  `add|set-actor-component` refuse these two components and point at the typed
+  commands. The wire spelling is `{"kind": "Shape", "shape": {"kind": "Sphere", ...}}`.
+- Not yet: any UI (the inspector shows an empty card for these components), the
+  runtime reading them, and verified Unity defaults for the Blockloom-chosen values
+  (`DEFAULT_MAX_LINEAR_VELOCITY` and the sleep and solver defaults).
+  Tests: `cargo test -p blockloom-core physics` (`tests/physics_gate.rs` holds the
+  gate fixtures) and `cargo test -p blockloom-app --test physics`.
+
 ### Actors that come and go
 
 An actor's id is what everything keys it by, and a run can mint ids the

@@ -43,6 +43,7 @@ use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
 use std::sync::atomic::Ordering;
 
+pub(crate) mod physics;
 pub(crate) mod plugins;
 
 type Guard<'a> = MutexGuard<'a, AppState>;
@@ -1774,6 +1775,8 @@ pub(crate) fn duplicate_actor(
     copy.graph.comments.clear();
     // There is one camera, so the copy doesn't get to keep it.
     copy.components.remove("Camera");
+    // A copy's colliders and body are its own, not shared with the original.
+    copy.refresh_physics_ids();
     let id = project.add_actor(copy);
     s.selected_actor = Some(id.clone());
     auto_save(&s);
@@ -1930,6 +1933,7 @@ pub(crate) fn add_actor_component(
     actor_id: String,
     mut component: ActorComponent,
 ) -> Result<String, String> {
+    physics::refuse_generic(&component)?;
     let mut s = lock(state)?;
     check_parent(s.project(), &actor_id, &component)?;
     push_undo(&mut s);
@@ -1961,6 +1965,7 @@ pub(crate) fn set_actor_component(
     name: String,
     mut component: ActorComponent,
 ) -> Result<(), String> {
+    physics::refuse_generic(&component)?;
     let mut s = lock(state)?;
     check_parent(s.project(), &actor_id, &component)?;
     if let ActorComponent::Material { material } = &mut component {

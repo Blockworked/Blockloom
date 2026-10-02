@@ -676,6 +676,11 @@ pub struct ProjectFile {
     pub global_dicts: Vec<DictDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plugin_resources: Vec<PluginRecord>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::physics::PhysicsSettings::is_default"
+    )]
+    pub physics: crate::physics::PhysicsSettings,
 }
 
 /// A scene asset file: its settings as components plus its actors. Older
@@ -918,6 +923,9 @@ pub struct Project {
     /// Records plugins keep on the project itself rather than on an actor.
     /// Opaque to the document: see [`PluginRecord`].
     pub plugin_resources: Vec<PluginRecord>,
+    /// Physics schema version, compatibility profile and stored materials. Absent
+    /// (and written absent) for a project that has none of that.
+    pub physics: crate::physics::PhysicsSettings,
 }
 
 // ─── Scene-backed project ────────────────────────────────────────────────
@@ -956,6 +964,9 @@ impl Serialize for Project {
         if !self.plugin_resources.is_empty() {
             s.serialize_field("plugin_resources", &self.plugin_resources)?;
         }
+        if !self.physics.is_default() {
+            s.serialize_field("physics", &self.physics)?;
+        }
         s.end()
     }
 }
@@ -990,8 +1001,13 @@ impl<'de> Deserialize<'de> for Project {
             global_dicts: Vec<DictDef>,
             #[serde(default)]
             plugin_resources: Vec<PluginRecord>,
+            #[serde(default)]
+            physics: crate::physics::PhysicsSettings,
         }
         let de = ProjectDe::deserialize(deserializer)?;
+        de.physics
+            .check_version()
+            .map_err(<D::Error as serde::de::Error>::custom)?;
         let mut scenes = de.scenes.unwrap_or_default();
         if scenes.is_empty() {
             // Old single-scene document: migrate as scene one.
@@ -1028,6 +1044,7 @@ impl<'de> Deserialize<'de> for Project {
             global_lists: de.global_lists,
             global_dicts: de.global_dicts,
             plugin_resources: de.plugin_resources,
+            physics: de.physics,
         };
         project.ensure_scene_invariants();
         Ok(project)
@@ -1296,6 +1313,7 @@ impl Project {
             global_lists: Vec::new(),
             global_dicts: Vec::new(),
             plugin_resources: Vec::new(),
+            physics: crate::physics::PhysicsSettings::default(),
         }
     }
 
@@ -1884,6 +1902,7 @@ impl Project {
         self.migrate_sky();
         for scene in &mut self.scenes {
             scene.normalize_scene();
+            scene.normalize_physics_ids();
         }
     }
 
@@ -2371,6 +2390,9 @@ pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
     }
     let file: ProjectFile =
         serde_json::from_value(value).map_err(|e| format!("{}: {e}", path.display()))?;
+    file.physics
+        .check_version()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     let mut scenes = Vec::with_capacity(file.scenes.len());
     for scene_ref in &file.scenes {
         let mut relative = if scene_ref.path.is_empty() {
@@ -2426,6 +2448,7 @@ pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
         global_lists: file.global_lists,
         global_dicts: file.global_dicts,
         plugin_resources: file.plugin_resources,
+        physics: file.physics,
     };
     project.normalize();
     project.resolve_lighting_assets(dir);
@@ -2455,6 +2478,7 @@ pub fn project_to_file(project: &Project) -> ProjectFile {
         global_lists: project.global_lists.clone(),
         global_dicts: project.global_dicts.clone(),
         plugin_resources: project.plugin_resources.clone(),
+        physics: project.physics.clone(),
     }
 }
 

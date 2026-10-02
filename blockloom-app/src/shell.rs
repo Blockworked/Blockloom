@@ -1372,6 +1372,166 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             },
         ],
     },
+    // ── Physics ───────────────────────────────────────────────────────────
+    CommandSpec {
+        name: "add-collider",
+        cmd: "add_collider",
+        aliases: &[],
+        summary: "Add a collider to an actor and answer its id. The object is a collider spec: {geometry: {kind: \"Shape\", shape: {...}} or {kind: \"FromLook\"}, center, rotation, material, trigger, layer, ...}. Refused when it would leave the actor invalid.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "collider",
+                ty: "object {\"geometry\", ...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "set-collider",
+        cmd: "set_collider",
+        aliases: &[],
+        summary: "Replace the collider whose id the object carries, in place. The id never changes.",
+        args: &[ArgSpec {
+            name: "collider",
+            ty: "object {\"id\", \"geometry\", ...}",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "remove-collider",
+        cmd: "remove_collider",
+        aliases: &[],
+        summary: "Remove a collider by id. Answers the actor it was on.",
+        args: &[ArgSpec {
+            name: "colliderId",
+            ty: "id",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "fit-collider-to-look",
+        cmd: "fit_collider_to_look",
+        aliases: &[],
+        summary: "Save a collider's shape from its actor's Look, so it stops following the Look.",
+        args: &[ArgSpec {
+            name: "colliderId",
+            ty: "id",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-rigidbody",
+        cmd: "set_rigidbody",
+        aliases: &[],
+        summary: "Give an actor a Rigidbody, or replace the one it has (its id stays). The object is a rigidbody spec: {body_type, mass, use_gravity, constraints, ...}. Answers the body's id.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "rigidbody",
+                ty: "object {...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-rigidbody",
+        cmd: "remove_rigidbody",
+        aliases: &[],
+        summary: "Take the Rigidbody off an actor. Its colliders stay, as static scenery or on an ancestor's body.",
+        args: &[A],
+    },
+    CommandSpec {
+        name: "set-physics-profile",
+        cmd: "set_physics_profile",
+        aliases: &[],
+        summary: "Choose how the project's collisions behave: Legacy (as before this system) or Unity (the documented matrix).",
+        args: &[ArgSpec {
+            name: "profile",
+            ty: "Legacy|Unity",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "add-physics-material",
+        cmd: "add_physics_material",
+        aliases: &[],
+        summary: "Store a reusable surface material and answer its id. 3D: {dimension: \"Three\", material: {static_friction, dynamic_friction, bounciness, friction_combine, bounce_combine}}; 2D: {dimension: \"Two\", material: {friction, bounciness}}.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "material",
+                ty: "object {\"dimension\", \"material\"}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "set-physics-material",
+        cmd: "set_physics_material",
+        aliases: &[],
+        summary: "Change a stored material's values (and name, when given). Colliders using it follow.",
+        args: &[
+            ArgSpec {
+                name: "id",
+                ty: "id",
+                required: true,
+            },
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "material",
+                ty: "object {\"dimension\", \"material\"}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-physics-material",
+        cmd: "remove_physics_material",
+        aliases: &[],
+        summary: "Forget a stored material. Refused while a collider still uses it.",
+        args: &[ArgSpec {
+            name: "id",
+            ty: "id",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "physics-check",
+        cmd: "physics_check",
+        aliases: &[],
+        summary: "Every physics problem in the project's scenes: errors block Play, warnings do not.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "physics-ownership",
+        cmd: "physics_ownership",
+        aliases: &[],
+        summary: "Which body carries each collider in the active scene (itself or the nearest ancestor with a Rigidbody), the shape's pose in the body's frame, static colliders, bodies with no shape and actors still on the legacy Body.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "physics-properties",
+        cmd: "physics_properties",
+        aliases: &[],
+        summary: "The units, bounds and visibility of every Rigidbody, Collider and material field.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "physics-migration-preview",
+        cmd: "physics_migration_preview",
+        aliases: &[],
+        summary: "What converting each legacy Body in the active scene to a Rigidbody and Collider would store. Changes nothing.",
+        args: &[],
+    },
     // ── Assets ────────────────────────────────────────────────────────────
     CommandSpec {
         name: "list-assets",

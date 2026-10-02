@@ -271,7 +271,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 - [ ] Physics, collision and character controller overhaul (`docs/physics-and-character-controller-plan.md`, ledger in `docs/physics-compatibility-ledger.md`):
   - [x] Phase 0: probes against pinned Rapier for materials, compounds, events, queries, CCD and the controller; compatibility ledger.
   - [ ] Phase 0 leftovers: 2D probes, joints, mesh cooking, per-body solver overrides, a platform-carry backend switch, Unity-editor confirmation of the documented values.
-  - [ ] Phase 1: document and ownership foundation.
+  - [x] Phase 1: document and ownership foundation (specs, ids, ownership, materials, validation, transactions, migration preview, shell/MCP commands). Not yet: inspector UI, runtime reading the components, applying migration.
   - [ ] Phase 2: bodies, geometry and solver policy.
   - [ ] Phase 3: events, queries and cooking.
   - [ ] Phase 4: character controllers.
