@@ -122,7 +122,7 @@ class HubTests(unittest.TestCase):
                     data.write(file, file.relative_to(self.bundle).as_posix())
         checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
         entry = {"version": "0.2.0", "size": archive.stat().st_size, "unpacked_size": 10000,
-                 "format": "zip", "sha256": checksum, "github": {"repo": "Blockworked/Blockloom", "tag": "v0.2.0", "asset": "editor.zip"}}
+                 "format": "zip", "sha256": checksum, "github": {"repo": "Blockworked/Blockloom", "tag": "0.2.0", "asset": "editor.zip"}}
 
         def asset(repo, tag, name, destination):
             destination.write_bytes(archive.read_bytes())

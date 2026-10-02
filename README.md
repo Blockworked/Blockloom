@@ -63,7 +63,7 @@ projects that are in use. See
 [the Hub plan](docs/hub-plan.md) for current behavior and remaining work.
 
 Build artifacts runs the editor and players concurrently on Windows, Linux and
-macOS. Release runs for `vX.Y.Z` tags matching the workspace version, or a manual
+macOS. Release runs for `X.Y.Z` tags matching the workspace version, or a manual
 existing-tag dispatch. It builds native and web players with the `dist` profile,
 then publishes editor/Hub archives and `blockloom-catalog.json`. Editor archives
 include Qt, the pinned Rust compiler, web support and optional Android Rust targets.

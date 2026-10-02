@@ -18,8 +18,8 @@ class GitHubTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "editor.zip"
             with patch.object(github, "cli", return_value="gh"), patch.object(github, "run") as run:
-                github.asset("Blockworked/Blockloom", "v0.1.0", "editor.zip", path)
-                self.assertEqual(run.call_args.args[0], ["gh", "release", "download", "v0.1.0", "--repo",
+                github.asset("Blockworked/Blockloom", "0.1.0", "editor.zip", path)
+                self.assertEqual(run.call_args.args[0], ["gh", "release", "download", "0.1.0", "--repo",
                     "Blockworked/Blockloom", "--pattern", "editor.zip", "--output", str(path)])
                 with self.assertRaises(ValueError):
                     github.asset("a/b", "--clobber", "editor.zip", path)
@@ -31,16 +31,16 @@ class GitHubTests(unittest.TestCase):
 
     def test_catalog_uses_authenticated_assets(self):
         entry = {"version": "0.1.0", "target": "fixture", "asset": "editor.zip",
-                 "url": "https://github.com/Blockworked/Blockloom/releases/download/v0.1.0/editor.zip",
+                 "url": "https://github.com/Blockworked/Blockloom/releases/download/0.1.0/editor.zip",
                  "size": 12, "unpacked_size": 20, "sha256": "0" * 64, "format": "zip"}
-        release = {"tag_name": "v0.1.0", "assets": [{"name": github.CATALOG_ASSET, "size": 500}, {"name": "editor.zip", "size": 12}]}
+        release = {"tag_name": "0.1.0", "assets": [{"name": github.CATALOG_ASSET, "size": 500}, {"name": "editor.zip", "size": 12}]}
 
         def asset(repo, tag, name, path):
             path.write_text(json.dumps({"schema": 1, "releases": [entry]}))
 
         with patch.object(github, "capture", return_value=[release]), patch.object(github, "asset", side_effect=asset):
             entries = github.catalog(github.DEFAULT_REPO, "fixture")
-            self.assertEqual(entries[0]["github"], {"repo": github.DEFAULT_REPO, "tag": "v0.1.0", "asset": "editor.zip"})
+            self.assertEqual(entries[0]["github"], {"repo": github.DEFAULT_REPO, "tag": "0.1.0", "asset": "editor.zip"})
         with patch.object(github, "capture", return_value=[release, release]), patch.object(github, "asset", side_effect=asset):
             with self.assertRaisesRegex(ValueError, "duplicate"):
                 github.catalog(github.DEFAULT_REPO, "fixture")

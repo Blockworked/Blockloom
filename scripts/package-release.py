@@ -89,8 +89,8 @@ def main():
     args = parser.parse_args()
     version = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"]
     hub_download.version(version)
-    tag = args.tag or "v" + version
-    if tag != "v" + version:
+    tag = args.tag or version
+    if tag != version:
         raise ValueError("Release tag must match the editor package version")
     args.output.mkdir(parents=True, exist_ok=True)
     target = hub.host_target()
