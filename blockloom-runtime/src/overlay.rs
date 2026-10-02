@@ -339,7 +339,21 @@ pub fn draw_ui(
     let focused = manager.focus().unwrap_or_default().to_string();
     let theme = manager.theme();
     let mut screen = roots.iter().next();
-    for id in manager.take_pending() {
+    let mut pending = manager.take_pending();
+    // Draw parents first so deferred children keep their authored sibling order.
+    pending.sort_by_cached_key(|id| {
+        let mut depth = 0;
+        let mut current = manager.get(id);
+        while let Some(node) = current {
+            if node.parent.is_empty() || depth >= manager.ids().len() {
+                break;
+            }
+            depth += 1;
+            current = manager.get(&node.parent);
+        }
+        depth
+    });
+    for id in pending {
         let Some(node) = manager.get(&id) else {
             continue;
         };

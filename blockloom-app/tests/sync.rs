@@ -683,6 +683,7 @@ fn interface_property_and_parent_transactions_round_trip_and_undo() {
         json!({"kind": "Reparent", "id": "child", "parent": "flow", "placement": {"mode": "Flow"}}),
         json!({"kind": "Reparent", "id": "child", "parent": "", "placement": {"mode": "Free", "offset": [40,60], "size": [80,30]}}),
         json!({"kind": "SetProperty", "id": "child", "property": {"path": "layout", "value": null}}),
+        json!({"kind": "Reorder", "id": "canvas", "index": 1}),
     ] {
         let before =
             backend.dispatch("get_state", json!({})).unwrap()["project"]["world"]["interface"]

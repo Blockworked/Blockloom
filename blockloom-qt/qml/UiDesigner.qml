@@ -216,6 +216,34 @@ Item {
         gesture.edit = edit;
         finishEdit();
     }
+    readonly property var siblings: widget ? document.widgets.filter(w => (w.element.parent || "") === (widget.element.parent || "")) : []
+    readonly property int siblingIndex: siblings.findIndex(w => w.element.id === selectedId)
+    function reorderSibling(delta) {
+        const index = siblingIndex+delta;
+        if (!designing || gesture || index < 0 || index >= siblings.length) return;
+        submitEdit({kind:"Reorder", id:selectedId, index:index});
+    }
+    function nudge(event) {
+        if (!activeFocus || !designing || !editable(widget) || (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) return false;
+        const directions = {};
+        directions[Qt.Key_Left] = [-1,0]; directions[Qt.Key_Right] = [1,0];
+        directions[Qt.Key_Up] = [0,-1]; directions[Qt.Key_Down] = [0,1];
+        const direction = directions[event.key];
+        if (!direction) return false;
+        if (!gesture) {
+            if (!startEdit("Move",null,null)) return false;
+            gesture.keyboard = true; gesture.held = {};
+        }
+        const g = gesture;
+        if (!g.keyboard || g.committing) return false;
+        g.released = false;
+        g.held[event.key] = true;
+        const offset = g.edit ? g.edit.offset.slice() : g.offset.slice();
+        const step = event.modifiers & Qt.ShiftModifier ? 10 : 1;
+        g.edit = {kind:"Move", id:g.id, offset:[offset[0]+direction[0]*step,offset[1]+direction[1]*step]};
+        flushEdit(g);
+        return true;
+    }
     function propertyEdit(path, value) {
         if (widget) submitEdit({kind: "SetProperty", id: selectedId, property: {path: path, value: value}});
     }
@@ -251,7 +279,20 @@ Item {
         }
         submitEdit({kind: "Reparent", id: selectedId, parent: parentId, placement: placement});
     }
-    Keys.onEscapePressed: cancelEdit()
+    Keys.priority: Keys.AfterItem
+    Keys.onPressed: event => {
+        if (event.key === Qt.Key_Escape && gesture) { cancelEdit(); event.accepted = true; }
+        else event.accepted = nudge(event);
+    }
+    Keys.onReleased: event => {
+        const g = gesture;
+        if (!g || !g.keyboard || !g.held[event.key]) { event.accepted = false; return; }
+        event.accepted = true;
+        if (event.isAutoRepeat) return;
+        delete g.held[event.key];
+        if (!Object.keys(g.held).length) finishEdit();
+    }
+    onActiveFocusChanged: { if (!activeFocus && gesture && gesture.keyboard) cancelEdit(); }
     property string error: ""
     readonly property bool designing: visible && app.appState.running !== true
     readonly property bool embedded: app.appState.runtime_embedded === true
@@ -303,7 +344,7 @@ Item {
     }
     onPreviewWidthChanged: { cancelEdit(); ++generation; frameLayout = null; if (designing) previewDelay.restart(); }
     onPreviewHeightChanged: { cancelEdit(); ++generation; frameLayout = null; if (designing) previewDelay.restart(); }
-    onSelectedIdChanged: overlay.requestPaint()
+    onSelectedIdChanged: { if (gesture && gesture.keyboard) cancelEdit(); overlay.requestPaint(); }
     onHoveredIdChanged: overlay.requestPaint()
     onSnapLinesChanged: overlay.requestPaint()
     onFrameLayoutChanged: overlay.requestPaint()
@@ -412,9 +453,14 @@ Item {
                     width: ListView.view.width; height: 30
                     text: (modelData.element.parent ? "    " : "")+modelData.element.id
                     highlighted: root.selectedId === modelData.element.id
-                    onClicked: root.selectedId=modelData.element.id
+                    onClicked: { root.selectedId=modelData.element.id; root.forceActiveFocus(); }
                 }
             }
+            RowLayout {
+                Button { objectName: "interfaceEarlier"; text: "Earlier"; enabled: root.designing && !root.gesture && root.siblingIndex > 0; onClicked: root.reorderSibling(-1) }
+                Button { objectName: "interfaceLater"; text: "Later"; enabled: root.designing && !root.gesture && root.siblingIndex >= 0 && root.siblingIndex+1 < root.siblings.length; onClicked: root.reorderSibling(1) }
+            }
+            Label { Layout.fillWidth: true; wrapMode: Text.Wrap; text: "Sibling order controls flow layout and draw order." }
             Button { text: "Delete widget"; enabled: !!root.widget; onClicked: root.removeSelected() }
         }
         ColumnLayout {
@@ -504,6 +550,7 @@ Item {
                         }
                         onExited: root.hoveredId = ""
                         onPressed: mouse => {
+                            root.forceActiveFocus();
                             root.selectedId = geometry.pick(root.bounds, mouse.x, mouse.y);
                             pressX = mouse.x; pressY = mouse.y;
                         }
@@ -538,7 +585,7 @@ Item {
                     }
                 }
             }
-            Label { text: root.error || "Drag to move; drag an edge or corner to resize. Escape cancels. Parent layout controls flow widgets."; color: root.error ? "#ff8888" : Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: root.error || "Drag to move/resize. Arrows nudge 1 px; Shift+arrows 10 px. Escape cancels. Parent layout controls flow widgets."; color: root.error ? "#ff8888" : Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
         }
         ScrollView {
             Layout.preferredWidth: 245; Layout.fillHeight: true

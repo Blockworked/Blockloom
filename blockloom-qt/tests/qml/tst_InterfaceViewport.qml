@@ -38,6 +38,12 @@ TestCase {
                     if (property.path === "layout") w.layout = property.value;
                     else w.element[property.path.split(".")[1]] = property.value;
                 }
+                if (args.edit.kind === "Reorder") {
+                    const slots = next.widgets.map((item,index) => (item.element.parent || "") === (w.element.parent || "") ? index : -1).filter(index => index >= 0);
+                    const siblings = slots.map(index => next.widgets[index]);
+                    siblings.splice(args.edit.index,0,siblings.splice(siblings.findIndex(item => item.element.id === w.element.id),1)[0]);
+                    slots.forEach((slot,index) => next.widgets[slot] = siblings[index]);
+                }
                 if (args.edit.kind === "Reparent") {
                     w.element.parent = args.edit.parent;
                     if (args.edit.placement.mode === "Free") {
@@ -247,6 +253,77 @@ TestCase {
         fuzzyCompare(panel.document.widgets[0].element.size[1],220,1.5);
         mouseRelease(handle,handle.width/2+30,handle.height/2+20);
         compare(calls.filter(c => c.command === "commit_interface_edit").length,1);
+    }
+    function test_nudge_groups_repeats_and_multiple_arrow_keys() {
+        panel.selectedId = "back"; panel.forceActiveFocus(); panel.snapGrid = true;
+        keyPress(Qt.Key_Right); keyPress(Qt.Key_Right); keyPress(Qt.Key_Down,Qt.ShiftModifier);
+        compare(panel.document.widgets[0].element.offset,[202,210]);
+        compare(calls.filter(c=>c.command === "begin_interface_edit").length,1);
+        compare(calls.filter(c=>c.command === "commit_interface_edit").length,0);
+        keyRelease(Qt.Key_Right);
+        compare(calls.filter(c=>c.command === "commit_interface_edit").length,0);
+        keyRelease(Qt.Key_Down,Qt.ShiftModifier);
+        compare(calls.filter(c=>c.command === "commit_interface_edit").length,1);
+        compare(panel.gesture,null);
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
+    function test_nudge_delayed_reply_escape_and_focus_loss() {
+        panel.selectedId = "back"; panel.forceActiveFocus(); deferBegin = true;
+        keyPress(Qt.Key_Left); keyPress(Qt.Key_Up); keyRelease(Qt.Key_Left); keyRelease(Qt.Key_Up);
+        verify(panel.gesture.released); compare(calls.filter(c=>c.command === "commit_interface_edit").length,0);
+        pendingBegin("draft-token"); compare(panel.document.widgets[0].element.offset,[199,199]);
+        compare(calls.filter(c=>c.command === "commit_interface_edit").length,1);
+        deferBegin = false;
+        keyPress(Qt.Key_Right); keyClick(Qt.Key_Escape); keyRelease(Qt.Key_Right);
+        compare(panel.document.widgets[0].element.offset,[199,199]); compare(panel.gesture,null);
+        keyPress(Qt.Key_Right);
+        findChild(panel,"interfaceLater").forceActiveFocus();
+        compare(panel.gesture,null); compare(panel.document.widgets[0].element.offset,[199,199]);
+    }
+    function test_nudge_rejects_flow_and_inspector_focus() {
+        panel.selectedId = "back";
+        findChild(panel,"interfaceLater").forceActiveFocus();
+        keyClick(Qt.Key_Right);
+        verify(!calls.some(c=>c.command === "begin_interface_edit"));
+        const d = panel.copy(panel.document); d.widgets[1].element.parent = "back";
+        panel.document = d; panel.selectedId = "front"; panel.forceActiveFocus();
+        keyClick(Qt.Key_Left); keyClick(Qt.Key_Right,Qt.ControlModifier);
+        verify(!calls.some(c=>c.command === "begin_interface_edit"));
+    }
+    function test_sibling_order_controls_use_typed_transaction_and_keep_selection() {
+        panel.selectedId = "back";
+        verify(!findChild(panel,"interfaceEarlier").enabled);
+        verify(findChild(panel,"interfaceLater").enabled);
+        mouseClick(findChild(panel,"interfaceLater"));
+        compare(panel.document.widgets.map(w=>w.element.id),["front","back"]);
+        compare(panel.selectedId,"back");
+        verify(!findChild(panel,"interfaceLater").enabled);
+        verify(findChild(panel,"interfaceEarlier").enabled);
+        compare(calls.filter(c=>c.command === "commit_interface_edit").length,1);
+        const edit = calls.find(c=>c.command === "update_interface_edit").args.edit;
+        compare(edit,{kind:"Reorder",id:"back",index:1});
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
+    function test_nudge_reopens_release_while_update_is_pending() {
+        deferUpdate = true; panel.selectedId = "back"; panel.forceActiveFocus();
+        keyClick(Qt.Key_Right);
+        verify(panel.gesture.released);
+        keyPress(Qt.Key_Right);
+        verify(!panel.gesture.released);
+        deferUpdate = false; pendingUpdate();
+        compare(panel.document.widgets[0].element.offset,[202,200]);
+        compare(calls.filter(c=>c.command === "commit_interface_edit").length,0);
+        keyRelease(Qt.Key_Right);
+        compare(calls.filter(c=>c.command === "commit_interface_edit").length,1);
+    }
+    function test_flow_sibling_reorder_keeps_other_tree_slots() {
+        const d = {widgets:[{element:{id:"root",kind:"VerticalBox"}}, {element:{id:"a",parent:"root"}}, {element:{id:"other"}}, {element:{id:"b",parent:"root"}}]};
+        panel.document = d; backend.appState.project.world.interface = d; panel.selectedId = "a";
+        verify(!panel.editable(panel.widget));
+        mouseClick(findChild(panel,"interfaceLater"));
+        compare(panel.document.widgets.map(w=>w.element.id),["root","b","other","a"]);
+        compare(panel.selectedId,"a");
+        compare(calls.filter(c=>c.command === "commit_interface_edit").length,1);
     }
     function test_all_resize_handles_data() {
         return [

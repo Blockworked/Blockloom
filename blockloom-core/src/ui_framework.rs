@@ -316,6 +316,10 @@ pub enum UiPlacement {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum UiEdit {
+    Reorder {
+        id: String,
+        index: usize,
+    },
     SetProperty {
         id: String,
         property: UiPropertyEdit,
@@ -350,13 +354,38 @@ impl UiDocument {
             UiEdit::Move { id, .. }
             | UiEdit::Resize { id, .. }
             | UiEdit::SetProperty { id, .. }
-            | UiEdit::Reparent { id, .. } => id,
+            | UiEdit::Reparent { id, .. }
+            | UiEdit::Reorder { id, .. } => id,
         };
         let index = self
             .widgets
             .iter()
             .position(|w| &w.element.id == id)
             .ok_or_else(|| format!("Unknown widget: {id}"))?;
+        if let UiEdit::Reorder { index: target, .. } = edit {
+            let parent = &self.widgets[index].element.parent;
+            let slots: Vec<_> = self
+                .widgets
+                .iter()
+                .enumerate()
+                .filter(|(_, w)| &w.element.parent == parent)
+                .map(|(i, _)| i)
+                .collect();
+            if *target >= slots.len() {
+                return Err("Sibling index is out of range".into());
+            }
+            let current = slots.iter().position(|slot| *slot == index).unwrap();
+            let mut siblings: Vec<_> = slots
+                .iter()
+                .map(|slot| self.widgets[*slot].clone())
+                .collect();
+            let widget = siblings.remove(current);
+            siblings.insert(*target, widget);
+            for (slot, widget) in slots.into_iter().zip(siblings) {
+                self.widgets[slot] = widget;
+            }
+            return Ok(());
+        }
         if let UiEdit::SetProperty { property, .. } = edit {
             let w = &mut self.widgets[index];
             match property {
@@ -607,6 +636,66 @@ pub fn effective_safe_area(authored: [f32; 4], device: [f32; 4]) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sibling_reorder_preserves_other_slots_and_references() {
+        let mut doc: UiDocument = serde_json::from_value(serde_json::json!({"widgets": [
+            {"element": {"id": "root"}},
+            {"element": {"id": "a", "parent": "root"}},
+            {"element": {"id": "grandchild", "parent": "a"}, "scroll_target": "b"},
+            {"element": {"id": "other"}},
+            {"element": {"id": "b", "parent": "root"}},
+            {"element": {"id": "c", "parent": "root"}}
+        ]}))
+        .unwrap();
+        let original = doc.clone();
+        doc.apply_edit(&UiEdit::Reorder {
+            id: "c".into(),
+            index: 0,
+        })
+        .unwrap();
+        assert_eq!(
+            doc.widgets
+                .iter()
+                .map(|w| w.element.id.as_str())
+                .collect::<Vec<_>>(),
+            ["root", "c", "grandchild", "other", "a", "b"]
+        );
+        assert_eq!(doc.widgets[2], original.widgets[2]);
+        assert_eq!(doc.widgets[3], original.widgets[3]);
+        for (id, index) in [("missing", 0), ("a", 3), ("root", 2)] {
+            let before = doc.clone();
+            assert!(
+                doc.apply_edit(&UiEdit::Reorder {
+                    id: id.into(),
+                    index
+                })
+                .is_err()
+            );
+            assert_eq!(doc, before);
+        }
+        let before = doc.clone();
+        doc.apply_edit(&UiEdit::Reorder {
+            id: "c".into(),
+            index: 0,
+        })
+        .unwrap();
+        assert_eq!(doc, before);
+        doc.apply_edit(&UiEdit::Reorder {
+            id: "c".into(),
+            index: 2,
+        })
+        .unwrap();
+        assert_eq!(doc, original);
+        doc.apply_edit(&UiEdit::Reorder {
+            id: "other".into(),
+            index: 0,
+        })
+        .unwrap();
+        assert_eq!(doc.widgets[0].element.id, "other");
+        assert_eq!(doc.widgets[3].element.id, "root");
+        assert_eq!(doc.widgets[2], original.widgets[2]);
+    }
 
     #[test]
     fn typed_properties_and_reparenting_are_atomic() {

@@ -516,6 +516,100 @@ mod tests {
         for (a, b) in root.transform.iter().zip(before.transform.iter()) {
             assert!((a - b).abs() < 0.01, "{root:?} vs {before:?}");
         }
+        let before_order = app
+            .world()
+            .resource::<DesignSession>()
+            .last
+            .as_ref()
+            .unwrap();
+        let heading_y = before_order
+            .widgets
+            .iter()
+            .find(|w| w.id == "heading")
+            .unwrap()
+            .transform[5];
+        let slider_y = before_order
+            .widgets
+            .iter()
+            .find(|w| w.id == "slider")
+            .unwrap()
+            .transform[5];
+        assert!(heading_y < slider_y);
+        design
+            .document
+            .apply_edit(&blockloom_core::ui::UiEdit::Reorder {
+                id: "slider".into(),
+                index: 0,
+            })
+            .unwrap();
+        design.revision = 11;
+        app.world_mut()
+            .resource_scope(|world, mut session: Mut<DesignSession>| {
+                world.resource_scope(|world, mut manager: Mut<UiManager>| {
+                    session
+                        .apply(
+                            Some(design.clone()),
+                            world.non_send::<Engine>(),
+                            &mut manager,
+                        )
+                        .unwrap();
+                });
+            });
+        for _ in 0..6 {
+            app.update();
+        }
+        let after_order = app
+            .world()
+            .resource::<DesignSession>()
+            .last
+            .as_ref()
+            .unwrap();
+        let heading = after_order
+            .widgets
+            .iter()
+            .find(|w| w.id == "heading")
+            .unwrap();
+        let slider = after_order
+            .widgets
+            .iter()
+            .find(|w| w.id == "slider")
+            .unwrap();
+        assert!(slider.transform[5] < heading.transform[5]);
+        assert!(slider.paint_order < heading.paint_order);
+        // Moving a root past an earlier child must not change its sibling order.
+        design
+            .document
+            .apply_edit(&blockloom_core::ui::UiEdit::Reorder {
+                id: "screen".into(),
+                index: 1,
+            })
+            .unwrap();
+        design.revision = 12;
+        app.world_mut()
+            .resource_scope(|world, mut session: Mut<DesignSession>| {
+                world.resource_scope(|world, mut manager: Mut<UiManager>| {
+                    session
+                        .apply(
+                            Some(design.clone()),
+                            world.non_send::<Engine>(),
+                            &mut manager,
+                        )
+                        .unwrap();
+                });
+            });
+        for _ in 0..6 {
+            app.update();
+        }
+        let reordered_root = app
+            .world()
+            .resource::<DesignSession>()
+            .last
+            .as_ref()
+            .unwrap();
+        let find = |id: &str| reordered_root.widgets.iter().find(|w| w.id == id).unwrap();
+        assert!(find("slider").transform[5] < find("heading").transform[5]);
+        assert!(find("nested").paint_order < find("screen").paint_order);
+        assert!(find("screen").paint_order < find("other").paint_order);
         assert!(!app.world().non_send::<Engine>().running);
     }
 }
