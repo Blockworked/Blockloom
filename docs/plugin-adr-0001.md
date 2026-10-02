@@ -473,3 +473,11 @@ the remaining proof.
   the whole resource, which includes its edits.
 - Editor brushes that write these lines from the scene view are still open.
 
+## Declarative panels (seventeenth batch)
+
+- Editor panels are data, like inspectors: a package lists items (text, a
+  resource form, a command button) and the editor draws them, so a plugin
+  can have a settings and tools window with no UI code and nothing to trust.
+  Running QML a plugin ships needs a trust decision per package and a way to
+  keep it from the document; that stays open.
+

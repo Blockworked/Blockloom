@@ -49,6 +49,7 @@ fn main() {
                 "qml/AppSettingsDialog.qml",
                 "qml/BuildDialog.qml",
                 "qml/PluginManagerDialog.qml",
+                "qml/PluginPanelDialog.qml",
                 "qml/PluginRecordForm.qml",
                 "qml/PluginValueEditor.qml",
                 "qml/BuildProgress.qml",

@@ -499,6 +499,14 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   wrong type, or draws a field twice; the form draws ungrouped fields first,
   then each group under a foldable heading, and hides a row while its
   `visible_when` fails (the value stays in the record).
+- **Plugin panels** (`PluginPanelDialog.qml`, `Contributions::panels`): a
+  package's `panels` list a name, title and items - `text`, `resource` (a
+  `PluginRecordForm` over one of its resources, written through
+  `set_plugin_resource`) and `command` (a form over the command's arguments and
+  a button that runs `plugin_call`). `check_definition` refuses an unknown
+  resource or command. The snapshot's `plugins.panels` carries each panel with
+  its owner and the commands its buttons run; the top bar shows a panel button
+  while any exist. QML test: `tests/qml/tst_PluginPanels.qml`.
 - **Mesh service** (`blockloom-plugin-api/src/mesh.rs`, `blockloom-runtime/src/
   plugin_meshes.rs`): a module answers with `{"effect": "mesh", name,
   positions, normals, colors, indices, origin, emission, roughness, collider}`
@@ -588,8 +596,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   revision (`plugins::reload(s, true)`), so an attached copy's live reload
   also reloads its active plugins.
 - **Not yet**: plugin code in an Android build, a faster browser host (the page's own WebAssembly instead of wasmi in
-  wasm), a headless browser proof, plugin editor panels
-  and trusted editor modules (QML loaded at run time).
+  wasm), a headless browser proof, and trusted editor modules
+  (QML a plugin ships and the editor loads at run time).
   `plugins/examples/com.example.health` is the sealed proof package;
   `plugins/examples/tally` is the SDK one, with code, and
   `plugins/examples/palette` the importer/build-hook one.

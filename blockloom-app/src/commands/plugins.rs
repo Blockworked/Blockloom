@@ -19,7 +19,9 @@ use blockloom_plugin_api::abi::LOG_WARN;
 use blockloom_plugin_api::id::{self, validate_plugin_id};
 use blockloom_plugin_api::manifest::TargetSupport;
 use blockloom_plugin_api::record::PluginRecord;
-use blockloom_plugin_api::schema::{BlockKind, CommandAction, ComponentSchema, FieldType};
+use blockloom_plugin_api::schema::{
+    BlockKind, CommandAction, ComponentSchema, FieldType, PanelItem,
+};
 use blockloom_plugin_api::{Version, VersionReq};
 use blockloom_plugin_host::active::{ActivePlugins, RecordIssue, RecordStatus, migrate_records};
 use blockloom_plugin_host::cache::{self, Cache};
@@ -259,6 +261,34 @@ fn blocks_json(active: &ActivePlugins) -> Vec<Value> {
         .collect()
 }
 
+/// Every editor panel the installed plugins add, with its owner's name.
+fn panels_json(active: &ActivePlugins) -> Vec<Value> {
+    active
+        .panels()
+        .into_iter()
+        .map(|(plugin, panel)| {
+            let name = active
+                .get(plugin)
+                .map_or_else(String::new, |p| p.package.manifest.name.clone());
+            // The commands its buttons run, so the panel needs no second lookup.
+            let mut commands = serde_json::Map::new();
+            if let Some(loaded) = active.get(plugin) {
+                for item in &panel.items {
+                    if let PanelItem::Command { command, .. } = item
+                        && let Some(c) = loaded.package.contributions.command(command)
+                    {
+                        commands.insert(
+                            command.clone(),
+                            json!({ "summary": c.summary, "args": c.args }),
+                        );
+                    }
+                }
+            }
+            json!({ "plugin": plugin, "pluginName": name, "panel": panel, "commands": commands })
+        })
+        .collect()
+}
+
 /// The part of the snapshot the frontend reads: what is installed, what
 /// failed to load, and which records need attention.
 pub(crate) fn summary(s: &AppState) -> Value {
@@ -273,6 +303,7 @@ pub(crate) fn summary(s: &AppState) -> Value {
         "installed": installed(active),
         "blocks": blocks_json(active),
         "types": types_json(active),
+        "panels": panels_json(active),
         "problems": active.problems,
         "issues": active.audit(project.plugin_records()),
     })
@@ -291,6 +322,7 @@ pub(crate) fn plugin_list(state: &SharedState) -> Result<Value, String> {
         "installed": installed(active),
         "blocks": blocks_json(active),
         "types": types_json(active),
+        "panels": panels_json(active),
         "problems": active.problems,
         "direct": plugins.plugins,
         "registries": plugins.registries,

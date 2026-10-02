@@ -1495,7 +1495,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Plugin Manager dialog in QML (list, install with preview, update, remove, sync, undo, cache clean, record issues, commands).
     - [x] Schema-generated inspectors for plugin components (every field type, lists, missing/migration notes, Add component) and plugin settings in the Plugin Manager.
     - [x] Declarative inspector layout: field `ui` hints (label, slider, multiline, unit, step, `visible_when`) and component `inspector` groups.
-    - [ ] Contribution host next: plugin editor panels and dynamic loading of trusted editor modules (QML at run time), inspector sections a plugin draws itself.
+    - [x] Declarative plugin panels (text, resource forms, command buttons) in a top bar dialog.
+    - [ ] Contribution host next: trusted editor modules (QML a plugin ships, loaded at run time) and inspector sections a plugin draws itself.
     - [x] Native modules load in the editor for `module` commands (`Modules` cache, run-log output, panic containment).
     - [x] Portable (WASM) executor in the editor: wasmi, linear-memory ABI, memory and work limits, stop-and-reload on a fault.
     - [x] Plugin SDK crate (`blockloom-plugin-sdk`): one `Plugin` trait and `export_plugin!` for native and WebAssembly, `NativeModule::from_entry`, and the `plugins/examples/tally` example (`just example-plugin`).

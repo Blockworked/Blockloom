@@ -15,7 +15,7 @@ use blockloom_plugin_api::manifest::{DependencyScope, PluginManifest, Tier};
 use blockloom_plugin_api::record::PluginRecord;
 use blockloom_plugin_api::schema::{
     BlockKind, BlockSchema, BuildHookSchema, CommandAction, CommandSchema, ComponentSchema,
-    HookSchema, ImporterSchema, SchemaError,
+    HookSchema, ImporterSchema, PanelSchema, SchemaError,
 };
 use blockloom_plugin_api::{Version, id};
 use serde::Serialize;
@@ -330,6 +330,20 @@ impl ActivePlugins {
             loaded.package.manifest.id.as_str(),
             loaded.package.contributions.command(name)?,
         ))
+    }
+
+    /// Every contributed editor panel with the plugin that owns it.
+    pub fn panels(&self) -> Vec<(&str, &PanelSchema)> {
+        self.plugins
+            .iter()
+            .flat_map(|(plugin, p)| {
+                p.package
+                    .contributions
+                    .panels
+                    .iter()
+                    .map(move |panel| (plugin.as_str(), panel))
+            })
+            .collect()
     }
 
     pub fn blocks(&self) -> Vec<(&str, &BlockSchema)> {

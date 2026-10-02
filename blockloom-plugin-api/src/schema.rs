@@ -894,6 +894,67 @@ pub struct Contributions {
     pub blocks: Vec<BlockSchema>,
     #[serde(default)]
     pub commands: Vec<CommandSchema>,
+    #[serde(default)]
+    pub panels: Vec<PanelSchema>,
+}
+
+/// An editor panel a package adds, drawn by the editor from this list so a
+/// plugin needs no UI code: text, a form for one of its resources, and
+/// buttons that run its commands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PanelSchema {
+    pub name: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    pub items: Vec<PanelItem>,
+}
+
+/// The most items one panel may hold.
+pub const MAX_PANEL_ITEMS: usize = 64;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PanelItem {
+    /// A paragraph.
+    Text { text: String },
+    /// A form for one of the package's resources.
+    Resource { resource: String },
+    /// A form for a command's arguments with a button that runs it.
+    Command {
+        command: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        label: String,
+    },
+}
+
+impl PanelSchema {
+    fn check_definition(&self, all: &Contributions) -> Result<(), String> {
+        validate_type_id(&self.name)?;
+        if self.title.trim().is_empty() {
+            return Err(format!("panel {}: needs a title", self.name));
+        }
+        if self.items.is_empty() || self.items.len() > MAX_PANEL_ITEMS {
+            return Err(format!(
+                "panel {}: holds 1 to {MAX_PANEL_ITEMS} items, not {}",
+                self.name,
+                self.items.len()
+            ));
+        }
+        for item in &self.items {
+            match item {
+                PanelItem::Text { .. } => {}
+                PanelItem::Resource { resource } if all.resource(resource).is_none() => {
+                    return Err(format!("panel {}: unknown resource {resource}", self.name));
+                }
+                PanelItem::Command { command, .. } if all.command(command).is_none() => {
+                    return Err(format!("panel {}: unknown command {command}", self.name));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Contributions {
@@ -903,6 +964,7 @@ impl Contributions {
         self.resources.extend(other.resources);
         self.blocks.extend(other.blocks);
         self.commands.extend(other.commands);
+        self.panels.extend(other.panels);
         self.hooks.extend(other.hooks);
         self.importers.extend(other.importers);
         self.build_hooks.extend(other.build_hooks);
@@ -977,6 +1039,13 @@ impl Contributions {
             hook.check_definition()?;
             if !builds.insert(hook.name.as_str()) {
                 return Err(format!("two build hooks named {}", hook.name));
+            }
+        }
+        let mut panels = BTreeSet::new();
+        for panel in &self.panels {
+            panel.check_definition(self)?;
+            if !panels.insert(panel.name.as_str()) {
+                return Err(format!("two panels named {}", panel.name));
             }
         }
         let mut commands = BTreeSet::new();
@@ -1195,6 +1264,30 @@ mod tests {
             json!({"do": "set_resource_field", "resource": "Log", "field": "title", "append": true}),
         );
         assert!(e.unwrap_err().contains("not a list"));
+    }
+
+    #[test]
+    fn panels_name_real_resources_and_commands() {
+        let with = |items: Value| -> Result<(), String> {
+            let c: Contributions = serde_json::from_value(json!({
+                "resources": [{"type_id": "Log", "fields": [{"name": "t", "type": "text", "default": ""}]}],
+                "commands": [{"name": "go", "summary": "go", "action": {"do": "module", "op": "go"}}],
+                "panels": [{"name": "main", "title": "Main", "items": items}]
+            }))
+            .unwrap();
+            c.check_definition()
+        };
+        with(json!([
+            {"kind": "text", "text": "Hello"},
+            {"kind": "resource", "resource": "Log"},
+            {"kind": "command", "command": "go", "label": "Go"}
+        ]))
+        .unwrap();
+        assert!(with(json!([])).is_err());
+        let e = with(json!([{"kind": "resource", "resource": "Nope"}]));
+        assert!(e.unwrap_err().contains("unknown resource"));
+        let e = with(json!([{"kind": "command", "command": "nope"}]));
+        assert!(e.unwrap_err().contains("unknown command"));
     }
 
     #[test]

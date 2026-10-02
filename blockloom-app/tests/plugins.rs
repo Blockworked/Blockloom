@@ -557,6 +557,10 @@ fn a_command_can_set_or_append_to_a_resource_field() {
                 {"name": "title", "type": "text", "default": "none"},
                 {"name": "lines", "type": "list", "item": {"type": "text"}, "max_len": 2, "default": []}
             ]}],
+            "panels": [{"name": "main", "title": "Journal", "items": [
+                {"kind": "resource", "resource": "journal"},
+                {"kind": "command", "command": "add_line", "label": "Add"}
+            ]}],
             "commands": [
                 {"name": "add_line", "summary": "Append a line.",
                  "args": [{"name": "value", "type": "text", "default": ""}],
@@ -589,6 +593,10 @@ fn a_command_can_set_or_append_to_a_resource_field() {
         "plugin_install",
         json!({"id": "com.example.journal", "source": format!("path:{}", pkg.display())}),
     );
+    let shown = invoke("get_state", json!({}))["plugins"]["panels"].clone();
+    assert_eq!(shown[0]["plugin"], "com.example.journal");
+    assert_eq!(shown[0]["panel"]["title"], "Journal");
+    assert_eq!(shown[0]["commands"]["add_line"]["args"][0]["name"], "value");
     let add = |text: &str| {
         backend.dispatch(
             "plugin_call",
