@@ -185,7 +185,7 @@ pub fn acceleration(emulator: &Path) -> Acceleration {
                 .to_string(),
         };
     }
-    match std::process::Command::new(emulator)
+    match crate::process::background_command(emulator)
         .arg("-accel-check")
         .output()
     {

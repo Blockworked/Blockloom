@@ -37,6 +37,7 @@ Q_SIGNALS:
     void completed(const QString &command, bool ok, const QString &response);
 
 private:
+    void finishSmoke(int projects, int installations);
     void appendLog(const QString &text);
     void finish(bool ok, const QString &error = {});
     QTemporaryDir m_scripts;

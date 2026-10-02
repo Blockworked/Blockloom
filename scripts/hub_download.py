@@ -1,8 +1,11 @@
 """Bounded HTTPS downloads and archive extraction for Hub installations."""
 
 import hashlib
+import io
 import json
 import os
+import platform
+import posixpath
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -15,6 +18,7 @@ import tomllib
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 import zipfile
+import xml.etree.ElementTree as ET
 
 from hub_process import checkpoint, copy_file
 
@@ -104,9 +108,14 @@ def catalog_data(data, target):
     return entries
 
 
-def download(url, destination, sha256, size=None, limit=MAX_ARCHIVE):
-    expected = digest(sha256)
-    amount, last, hash_value = 0, 0, hashlib.sha256()
+def download(url, destination, sha256, size=None, limit=MAX_ARCHIVE, algorithm="sha256"):
+    if algorithm not in ("sha256", "sha1"):
+        raise ValueError("Unsupported download checksum")
+    length = 64 if algorithm == "sha256" else 40
+    if not isinstance(sha256, str) or not re.fullmatch(rf"[0-9a-fA-F]{{{length}}}", sha256):
+        raise ValueError("Archive must declare its checksum")
+    expected = sha256.lower()
+    amount, last, hash_value = 0, 0, hashlib.new(algorithm)
     created = False
     try:
         with response(url) as stream, destination.open("xb") as output:
@@ -127,7 +136,7 @@ def download(url, destination, sha256, size=None, limit=MAX_ARCHIVE):
                           (f" / {size / 1024**2:.1f} MiB" if size else ""), file=sys.stderr, flush=True)
                     last = now
         if (size is not None and amount != size) or hash_value.hexdigest() != expected:
-            raise ValueError("Download size or SHA-256 does not match the manifest")
+            raise ValueError(f"Download size or {algorithm} does not match the manifest")
         checkpoint()
     except BaseException:
         if created:
@@ -147,9 +156,19 @@ def verify_file(path, sha256, size):
         raise ValueError("Downloaded asset SHA-256 does not match the catalog")
 
 
-def extract(archive, destination, format, limit=MAX_EXTRACTED):
+def extract(archive, destination, format, limit=MAX_EXTRACTED, allow_file_links=False):
     destination.mkdir(parents=True)
     names, total, count, last = set(), 0, 0, 0
+    links = []
+
+    def file_link(path, target, relative=True):
+        if target.startswith("/") or "\\" in target or ":" in target:
+            raise ValueError("Archive contains an unsafe link")
+        name = posixpath.normpath(posixpath.join(path.parent.relative_to(destination).as_posix(), target)
+                                 if relative else target)
+        if name == ".." or name.startswith("../"):
+            raise ValueError("Archive link escapes its destination")
+        links.append((path, destination / name))
 
     def path_for(name, size):
         nonlocal count, total, last
@@ -191,6 +210,12 @@ def extract(archive, destination, format, limit=MAX_EXTRACTED):
         with zipfile.ZipFile(archive) as bundle:
             for info in bundle.infolist():
                 mode = info.external_attr >> 16
+                if stat.S_ISLNK(mode) and allow_file_links:
+                    path = path_for(info.orig_filename, info.file_size)
+                    if info.file_size > 4096:
+                        raise ValueError("Archive link target is too long")
+                    file_link(path, bundle.read(info).decode("utf-8"))
+                    continue
                 if stat.S_ISLNK(mode) or (stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR)):
                     raise ValueError("Archive links and special files are not supported")
                 path = path_for(info.orig_filename, info.file_size)
@@ -202,6 +227,10 @@ def extract(archive, destination, format, limit=MAX_EXTRACTED):
     else:
         with tarfile.open(archive, "r|xz" if format == "tar.xz" else "r|gz") as bundle:
             for info in bundle:
+                if (info.issym() or info.islnk()) and allow_file_links:
+                    path = path_for(info.name, 0)
+                    file_link(path, info.linkname, relative=info.issym())
+                    continue
                 if not info.isfile() and not info.isdir():
                     raise ValueError("Archive links and special files are not supported")
                 path = path_for(info.name, info.size)
@@ -210,6 +239,23 @@ def extract(archive, destination, format, limit=MAX_EXTRACTED):
                 else:
                     with bundle.extractfile(info) as stream:
                         write(stream, path, info.size, info.mode)
+    # Tool archives contain compiler aliases. Store regular files in the bundle.
+    while links:
+        pending = []
+        for path, target in links:
+            checkpoint()
+            if not target.is_file():
+                pending.append((path, target))
+                continue
+            size = target.stat().st_size
+            total += size
+            if total > limit:
+                raise ValueError("Archive exceeds extraction limits")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            copy_file(target, path)
+        if len(pending) == len(links):
+            raise ValueError("Archive contains unresolved or non-file links")
+        links = pending
     checkpoint()
 
 
@@ -245,3 +291,129 @@ def install_rust_targets(rust, channel, targets, temporary):
         if len(matches) != 1 or not any((matches[0] / "lib").iterdir()):
             raise ValueError("Rust component archive has an unexpected layout")
         shutil.copytree(matches[0], rust / "lib/rustlib" / target, copy_function=copy_file)
+
+
+def android_versions(repo):
+    source = (repo / "blockloom-core/src/android.rs").read_text(encoding="utf-8")
+    result = {}
+    for name in ("JDK_MAJOR", "PLATFORM", "BUILD_TOOLS", "NDK_MAJOR", "EMULATOR_IMAGE"):
+        match = re.search(rf'pub const {name}: [^=]+ = (?:"([^"]+)"|([0-9]+));', source)
+        if not match:
+            raise ValueError(f"Development repository is missing Android pin: {name}")
+        result[name] = match[1] or match[2]
+    return result
+
+
+def tool_archive(url, checksum, size, temporary, name, algorithm="sha256"):
+    format = "zip" if urlsplit(url).path.endswith(".zip") else "tar.gz"
+    archive = temporary / (name + "." + format)
+    download(url, archive, checksum, size=size, algorithm=algorithm)
+    output = temporary / name
+    extract(archive, output, format, allow_file_links=True)
+    roots = [path for path in output.iterdir() if path.is_dir() and path.name != "__MACOSX"]
+    if len(roots) != 1:
+        raise ValueError("Tool archive has an unexpected layout")
+    return roots[0]
+
+
+def install_android_tools(directory, versions, components, temporary):
+    selected = {}
+    host = {"win32": "windows", "darwin": "macosx"}.get(sys.platform, "linux")
+    arch = "aarch64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
+    if "java" in components:
+        java_os = "mac" if host == "macosx" else host
+        url = (f"https://api.adoptium.net/v3/assets/latest/{versions['JDK_MAJOR']}/hotspot"
+               f"?architecture={arch}&image_type=jdk&os={java_os}&vendor=eclipse")
+        print(f"Downloading Java {versions['JDK_MAJOR']}...", file=sys.stderr, flush=True)
+        assets = json.loads(read_remote(url))
+        if not isinstance(assets, list) or len(assets) != 1:
+            raise ValueError("Adoptium did not publish one matching JDK")
+        java_version = assets[0].get("version", {}).get("semver")
+        if not isinstance(java_version, str) or not java_version:
+            raise ValueError("Adoptium package metadata is missing the Java version")
+        package = assets[0]["binary"]["package"]
+        if urlsplit(package["link"]).hostname != "github.com" or not urlsplit(package["link"]).path.startswith("/adoptium/"):
+            raise ValueError("Java package must come from Adoptium")
+        root = tool_archive(package["link"], package["checksum"], package["size"], temporary, "java-download")
+        if (root / "Contents/Home").is_dir():
+            root = root / "Contents/Home"
+        shutil.copytree(root, directory / "tools/java", copy_function=copy_file)
+        selected["java"] = {"version": java_version}
+    if not any(name in components for name in ("android-sdk", "android-ndk")):
+        return selected
+    print("Checking official Android packages...", file=sys.stderr, flush=True)
+    def repository(base, manifest):
+        raw = read_remote(base + manifest, 16 * 1024**2)
+        data = ET.fromstring(raw)
+        tag = data.tag
+        namespaces = {"xmlns:" + prefix: url for _, (prefix, url) in ET.iterparse(io.BytesIO(raw), events=["start-ns"]) if prefix}
+        for node in data.iter():
+            node.tag = node.tag.rsplit("}", 1)[-1]
+        packages = {node.attrib["path"]: node for node in data.findall("remotePackage")
+                    if node.find("channelRef") is None or node.find("channelRef").get("ref") == "channel-0"}
+        return base, data, tag, namespaces, packages
+
+    main_repository = repository("https://dl.google.com/android/repository/", "repository2-3.xml")
+    packages = main_repository[-1]
+
+    def revision(node):
+        return tuple(int(node.findtext("revision/" + field, "0")) for field in ("major", "minor", "micro"))
+
+    def install_package(key, destination, label, catalog=main_repository):
+        base, data, repository_tag, namespaces, catalog_packages = catalog
+        node = catalog_packages.get(key)
+        if node is None:
+            raise ValueError(f"Android repository does not publish {key}")
+        archives = [item for item in node.findall("archives/archive")
+                    if item.findtext("host-os", host) == host and item.findtext("host-arch", arch) == arch]
+        if len(archives) != 1:
+            raise ValueError(f"Android package {key} does not support this host")
+        complete = archives[0].find("complete")
+        relative = complete.findtext("url", "")
+        if not relative or "/" in relative or "\\" in relative or ":" in relative:
+            raise ValueError("Android package must come from the official repository")
+        checksum = complete.find("checksum")
+        print(f"Downloading {key}...", file=sys.stderr, flush=True)
+        root = tool_archive(base + relative, checksum.text,
+                            int(complete.findtext("size")), temporary, label, checksum.get("type", "sha1"))
+        shutil.copytree(root, destination, copy_function=copy_file)
+        # SDK Manager needs package metadata to recognize the bundled packages.
+        for index, uri in enumerate(dict.fromkeys(namespaces.values())):
+            ET.register_namespace("hub_schema_" + str(index), uri)
+        local = ET.Element("localPackage", {"path": key})
+        for child in node:
+            if child.tag not in ("archives", "channelRef"):
+                local.append(ET.fromstring(ET.tostring(child)))
+        repository = ET.Element(repository_tag, namespaces)
+        license_ref = node.find("uses-license")
+        if license_ref is not None:
+            for license_node in data.findall("license"):
+                if license_node.get("id") == license_ref.get("ref"):
+                    repository.append(ET.fromstring(ET.tostring(license_node)))
+        repository.append(local)
+        ET.ElementTree(repository).write(destination / "package.xml", encoding="utf-8", xml_declaration=True)
+        return ".".join(map(str, revision(node)))
+
+    if "android-sdk" in components:
+        sdk = directory / "tools/android-sdk"
+        versions_installed = {}
+        for key, relative, label in (("cmdline-tools;latest", "cmdline-tools/latest", "command-tools"),
+                                     ("platform-tools", "platform-tools", "platform-tools"),
+                                     ("platforms;" + versions["PLATFORM"], "platforms/" + versions["PLATFORM"], "platform"),
+                                     ("build-tools;" + versions["BUILD_TOOLS"], "build-tools/" + versions["BUILD_TOOLS"], "build-tools"),
+                                     ("emulator", "emulator", "emulator")):
+            versions_installed[key] = install_package(key, sdk / relative, label)
+        image = versions.get("EMULATOR_IMAGE", f"system-images;{versions['PLATFORM']};google_apis;x86_64")
+        image_parts = image.split(";")
+        if len(image_parts) != 4 or image_parts[0] != "system-images" or any(not re.fullmatch(r"[a-zA-Z0-9_-]+", part) for part in image_parts):
+            raise ValueError("Repository has an invalid emulator image pin")
+        image_repository = repository(f"https://dl.google.com/android/repository/sys-img/{image_parts[2]}/", "sys-img2-3.xml")
+        versions_installed[image] = install_package(image, sdk.joinpath(*image_parts), "system-image", image_repository)
+        selected["android-sdk"] = {"version": versions_installed["platform-tools"], "packages": versions_installed}
+    if "android-ndk" in components:
+        ndks = [key for key in packages if key.startswith("ndk;" + versions["NDK_MAJOR"] + ".")]
+        if not ndks:
+            raise ValueError("Android repository does not publish the pinned NDK major")
+        key = max(ndks, key=lambda item: revision(packages[item]))
+        selected["android-ndk"] = {"version": install_package(key, directory / "tools/android-ndk", "ndk")}
+    return selected

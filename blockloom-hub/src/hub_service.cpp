@@ -1,6 +1,7 @@
 #include "hub_service.h"
 #include <QMouseEvent>
 #include <QQuickItem>
+#include <QWheelEvent>
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
@@ -123,6 +124,62 @@ void HubService::smokeReady(int projects, int installations)
         }
     }
     if (smokePage() == "log") appendLog("[Editor] Building Blockloom...\n[Web] Compiling player...\n[Native] Waiting for editor build.\n");
+    if (smokePage() == "log-scroll") {
+        for (int line = 0; line < 200; ++line) appendLog(QString("Build output line %1\n").arg(line));
+        QTimer::singleShot(150, this, [this, projects, installations] {
+            for (auto *window : QGuiApplication::allWindows()) {
+                auto *quick = qobject_cast<QQuickWindow *>(window);
+                if (!quick) continue;
+                auto *root = quick->contentItem();
+                auto *viewport = root->findChild<QQuickItem *>("smokeLogViewport");
+                auto *scrollbar = root->findChild<QQuickItem *>("smokeLogScrollBar");
+                auto *follow = root->findChild<QQuickItem *>("smokeLogFollow");
+                auto *cancel = root->findChild<QQuickItem *>("smokeLogCancel");
+                auto *close = root->findChild<QQuickItem *>("smokeLogClose");
+                if (!viewport || !scrollbar || !follow || !cancel || !close) { QCoreApplication::exit(6); return; }
+                const auto viewportRight = viewport->mapToScene(QPointF(viewport->width(), 0));
+                const auto scrollbarTop = scrollbar->mapToScene(QPointF(0, 0));
+                if (!scrollbar->isVisible() || scrollbar->width() < 12
+                    || qAbs(scrollbar->height() - viewport->height()) > 4
+                    || qAbs(scrollbarTop.x() - viewportRight.x()) > 4
+                    || qAbs(scrollbarTop.y() - viewportRight.y()) > 4) {
+                    QCoreApplication::exit(12); return;
+                }
+                cancel->setVisible(true);
+                const double bottom = viewport->property("contentHeight").toDouble() - viewport->height();
+                if (qAbs(viewport->property("contentY").toDouble() - bottom) > 1) { QCoreApplication::exit(7); return; }
+                const auto position = viewport->mapToScene(QPointF(100, 100));
+                QWheelEvent wheel(position, quick->mapToGlobal(position), QPoint(), QPoint(0, 120),
+                                  Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+                QCoreApplication::sendEvent(quick, &wheel);
+                QTimer::singleShot(350, this, [this, viewport, follow, cancel, close, bottom, projects, installations] {
+                    const double reading = viewport->property("contentY").toDouble();
+                    if (follow->property("checked").toBool() || reading >= bottom - 1) { QCoreApplication::exit(8); return; }
+                    const auto cancelCenter = cancel->mapToScene(QPointF(0, cancel->height() / 2));
+                    const auto closeCenter = close->mapToScene(QPointF(0, close->height() / 2));
+                    if (qAbs(cancelCenter.y() - closeCenter.y()) > 1) { QCoreApplication::exit(9); return; }
+                    appendLog("More output while reading earlier lines.\n");
+                    QTimer::singleShot(100, this, [this, viewport, follow, reading, projects, installations] {
+                        if (qAbs(viewport->property("contentY").toDouble() - reading) > 1) { QCoreApplication::exit(10); return; }
+                        follow->setProperty("checked", true);
+                        QTimer::singleShot(100, this, [this, viewport, projects, installations] {
+                            const double bottom = viewport->property("contentHeight").toDouble() - viewport->height();
+                            if (qAbs(viewport->property("contentY").toDouble() - bottom) > 1) { QCoreApplication::exit(11); return; }
+                            finishSmoke(projects, installations);
+                        });
+                    });
+                });
+                return;
+            }
+            QCoreApplication::exit(6);
+        });
+        return;
+    }
+    finishSmoke(projects, installations);
+}
+
+void HubService::finishSmoke(int projects, int installations)
+{
     QTimer::singleShot(400, this, [projects, installations] {
         const auto args = QCoreApplication::arguments();
         const int output = args.indexOf("--smoke-output");

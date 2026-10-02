@@ -7,7 +7,7 @@
 use super::{Context, Event, Frame, frames};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -20,7 +20,7 @@ struct Slot {
 
 /// Streams until the session stops (Ok) or the device stops answering.
 pub(super) fn run(ctx: &Context) -> Result<(), String> {
-    let mut child = Command::new(&ctx.adb)
+    let mut child = blockloom_core::process::background_command(&ctx.adb)
         .args(["-s", &ctx.serial, "exec-out"])
         // The loop sleeps on failure so a locked or asleep display doesn't
         // spin the device.

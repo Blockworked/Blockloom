@@ -57,7 +57,11 @@ The development Hub requires Python 3.11+ on PATH, or
 HTTPS catalog or the GitHub CLI setting for private `Blockworked/Blockloom`
 releases using your `gh auth login` session. Shipping Python runtime packaging
 is still pending. Local builds open an
-installation options dialog before replacing their current editor. The Hub can
+installation options dialog before replacing their current editor. Java, Android
+SDK/NDK and both Android Rust targets are selected by default. The Hub downloads
+these tools, including the emulator and its system image, into the editor
+installation using the repository's Android version requirements, without copying
+local Java or Android installations. The Hub can
 cancel builds, keeps build logs, and blocks rebuilding installations or changing
 projects that are in use. See
 [the Hub plan](docs/hub-plan.md) for current behavior and remaining work.

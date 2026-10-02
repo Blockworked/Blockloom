@@ -106,33 +106,6 @@ def write_json(path, value):
         Path(temporary).unlink(missing_ok=True)
 
 
-def local_tools(registry, overrides=None):
-    settings = registry.parent / "android.json"
-    config = read_json(settings) if settings.exists() else {}
-    default_sdk = registry.parent / "android-sdk" if os.environ.get("BLOCKLOOM_DATA_DIR") else Path.home() / "Blockloom" / "android-sdk"
-    sdk = Path(config.get("sdk_path") or os.environ.get("ANDROID_HOME") or default_sdk)
-    ndk = config.get("ndk_path") or os.environ.get("ANDROID_NDK_HOME")
-    if not ndk and (sdk / "ndk").is_dir():
-        versions = sorted((sdk / "ndk").iterdir())
-        ndk = str(versions[-1]) if versions else None
-    sources = {"java": os.environ.get("JAVA_HOME"), "android-sdk": str(sdk), "android-ndk": ndk}
-    sources.update(overrides or {})
-    result = {}
-    for name, source in sources.items():
-        if not source:
-            continue
-        directory = Path(source).expanduser().resolve()
-        metadata = directory / ("release" if name == "java" else
-                                "platform-tools/source.properties" if name == "android-sdk" else "source.properties")
-        if not metadata.is_file():
-            continue
-        text = metadata.read_text(encoding="utf-8")
-        match = re.search(r'^JAVA_VERSION="([^"]+)"' if name == "java" else r"^Pkg.Revision\s*=\s*(\S+)", text, re.MULTILINE)
-        if match:
-            result[name] = {"source": str(directory), "version": match[1]}
-    return result
-
-
 class Hub:
     def __init__(self, root=None, registry=None):
         self.root = Path(root or hub_root()).resolve()
@@ -396,7 +369,7 @@ class Hub:
 
     def rebuild(self, identity, jobs=None):
         self.prepare_dev(identity, jobs)
-        return self.install_dev(identity)
+        return self.install_dev(identity, OPTIONAL_TOOLS, android_rust_targets=True)
 
     def require_installation_idle(self, identity):
         if any(p["installation"] == identity for p in self.running_editors()):
@@ -430,14 +403,12 @@ class Hub:
                 print(f"Bundling Rust {channel} for the prepared editor...", file=sys.stderr)
                 rustc = subprocess.check_output(["rustup", "which", "--toolchain", channel, "rustc"],
                                                cwd=repo, text=True).strip()
-                bundle_rust(Path(rustc).parent.parent, tool_path(output, "rust"), channel)
+                bundle_rust(Path(rustc).parent.parent, tool_path(output, "rust"), channel, exclude_targets=ANDROID_TARGETS)
                 manifest["tools"] = {"rust": {"channel": channel}}
                 validate_tools(output, manifest["tools"])
-                sources = local_tools(self.registry)
-                targets = [target for target in ANDROID_TARGETS if
-                           (tool_path(output, "rust") / "lib" / "rustlib" / target / "lib").is_dir()]
-                manifest["sources"] = sources
-                manifest["android_targets_available"] = len(targets) == len(ANDROID_TARGETS)
+                manifest.pop("sources", None)
+                manifest.pop("android_targets_available", None)
+                manifest["android_versions"] = hub_download.android_versions(repo)
                 checkpoint()
                 promote(output, self.candidate_path(identity), manifest, replace=True, checkpoint=checkpoint)
                 print("Build prepared. Choose installation options in the Hub.", file=sys.stderr)
@@ -463,18 +434,12 @@ class Hub:
                 raise ValueError("Invalid prepared development installation")
             if build_id is not None and manifest.get("build_id") != build_id:
                 raise ValueError("A newer development build was prepared. Reopen its installation options before installing")
-            available = manifest.get("sources", {})
             if sources:
-                discovered = local_tools(self.registry, sources)
-                for name in sources:
-                    if name not in discovered:
-                        raise ValueError(f"Select a complete local {name} installation with version metadata")
-                    available[name] = discovered[name]
+                raise ValueError("Development tools are downloaded; local tool sources are not supported")
             selected = {"rust": manifest["tools"]["rust"]}
             for name in components:
-                if name not in OPTIONAL_TOOLS or name not in available:
-                    raise ValueError(f"Select a local installation for {name}")
-                selected[name] = {"version": available[name]["version"]}
+                if name not in OPTIONAL_TOOLS:
+                    raise ValueError(f"Unknown development tool: {name}")
             if android_rust_targets:
                 selected["android-rust-targets"] = list(ANDROID_TARGETS)
             excluded = [] if android_rust_targets else [f"tools/rust/lib/rustlib/{target}" for target in ANDROID_TARGETS]
@@ -483,14 +448,12 @@ class Hub:
                 output = Path(temporary) / "installation"
                 print("Preparing editor and Rust toolchain...", file=sys.stderr)
                 stage(candidate, output, excluded=excluded, checkpoint=checkpoint)
+                if components:
+                    versions = manifest.get("android_versions") or hub_download.android_versions(Path(manifest["repo"]))
+                    selected.update(hub_download.install_android_tools(output, versions, components, Path(temporary)))
                 if android_rust_targets:
                     hub_download.install_rust_targets(tool_path(output, "rust"), selected["rust"]["channel"],
                                                       ANDROID_TARGETS, Path(temporary))
-                for name in components:
-                    checkpoint()
-                    print(f"Including {name} {selected[name]['version']}...", file=sys.stderr)
-                    shutil.copytree(available[name]["source"], tool_path(output, name), copy_function=copy_file,
-                                    ignore=shutil.ignore_patterns("ndk") if name == "android-sdk" else None)
                 manifest.pop("sources", None)
                 manifest.pop("android_targets_available", None)
                 manifest["tools"] = selected
@@ -524,6 +487,10 @@ class Hub:
                     env[variable] = str(tool_path(directory, name))
                     if name == "java":
                         bins.append(str(tool_path(directory, name) / "bin"))
+                    elif name == "android-sdk":
+                        env["ANDROID_HOME"] = env["ANDROID_SDK_ROOT"] = env[variable]
+                    elif name == "android-ndk":
+                        env["ANDROID_NDK_HOME"] = env["ANDROID_NDK_ROOT"] = env[variable]
             env["PATH"] = os.pathsep.join(bins + [env.get("PATH", "")])
             logs = self.root / "logs"
             logs.mkdir(exist_ok=True)
@@ -584,7 +551,6 @@ def main(argv=None):
     developer.add_argument("installation")
     for component in OPTIONAL_TOOLS:
         developer.add_argument("--" + component, action="store_true")
-        developer.add_argument("--" + component + "-source")
     developer.add_argument("--android-rust-targets", action="store_true")
     developer.add_argument("--build-id")
     args = parser.parse_args(argv)
@@ -622,15 +588,13 @@ def main(argv=None):
             result = hub.dev_options(args.installation)
         elif args.command == "install-dev":
             components = [name for name in OPTIONAL_TOOLS if getattr(args, name.replace("-", "_"))]
-            sources = {name: getattr(args, name.replace("-", "_") + "_source") for name in components
-                       if getattr(args, name.replace("-", "_") + "_source")}
-            result = hub.install_dev(args.installation, components, args.android_rust_targets, sources, args.build_id)
+            result = hub.install_dev(args.installation, components, args.android_rust_targets, build_id=args.build_id)
         else:
             result = hub.launch(args.project)
         print(json.dumps(result, indent=2))
         return 0
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError,
-            hub_download.zipfile.BadZipFile, hub_download.tarfile.TarError) as error:
+            hub_download.zipfile.BadZipFile, hub_download.tarfile.TarError, hub_download.ET.ParseError) as error:
         print(f"hub: {error}", file=sys.stderr)
         return 1
     except Cancelled as error:

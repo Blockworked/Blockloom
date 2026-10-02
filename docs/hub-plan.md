@@ -191,18 +191,18 @@ so they cannot corrupt the service's JSON responses.
 
 The development Build button uses `prepare-dev`: it keeps the current installation
 and saves a candidate under `Hub/pending/<installation>`. When the build finishes,
-the Hub opens Install development build. Rust is required; Java, SDK and NDK can
-be copied from local folders chosen in the dialog. Saved editor Android paths and
-`JAVA_HOME` provide initial folder suggestions. These folders must contain
-version metadata and required binaries. SDK copying excludes its NDK folder so
-the NDK checkbox remains independent. Missing Android Rust targets are fetched
+the Hub opens Install development build. Rust is required; Java, SDK, NDK and
+both Android Rust targets are selected by default. Java is downloaded from
+Adoptium and Android packages from Google's repository, with published checksums
+verified before extraction. Their versions follow the repository's Android pins.
+Local Java and Android installations are not copied. Android Rust targets are fetched
 from the exact pinned Rust distribution into the private installation candidate,
 with official manifest and component checksum validation. Cancelling the options dialog leaves the current installation
 intact; Install prepared build reopens it without rebuilding. `install-dev`
 performs the final validated transaction. The dialog's build ID rejects a candidate
 changed by another Hub between preparation and installation.
 
-`rebuild` remains a CLI convenience that prepares and installs with Rust only.
+`rebuild` prepares and installs with Rust and all Android tools.
 Hub replacement builds exclude the companion Hub target to avoid relinking the
 running launcher on Windows; they still build the editor, runtime and players.
 

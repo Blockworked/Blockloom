@@ -317,6 +317,9 @@ class HubTests(unittest.TestCase):
         (repo / "Cargo.toml").write_text('[workspace]\nmembers = ["blockloom-qt"]\n[workspace.package]\nversion = "0.0.1"\n')
         (repo / "rust-toolchain.toml").write_text('[toolchain]\nchannel = "1.98.1"\n')
         (repo / "justfile").touch()
+        android = repo / "blockloom-core/src/android.rs"
+        android.parent.mkdir(parents=True)
+        android.write_text((Path(__file__).resolve().parent.parent / "blockloom-core/src/android.rs").read_text())
         return repo
 
     def test_repo_registration_is_idempotent(self):
@@ -350,8 +353,12 @@ class HubTests(unittest.TestCase):
             self.binary(output, "blockloom-runtime")
 
         rustc = hub.tool_path(self.bundle, "rust") / "bin" / ("rustc.exe" if os.name == "nt" else "rustc")
+        for target in hub.ANDROID_TARGETS:
+            (hub.tool_path(self.bundle, "rust") / "lib/rustlib" / target / "lib").mkdir(parents=True)
         with patch.object(hub, "run", build), patch.object(hub.subprocess, "check_output", return_value=str(rustc)):
             prepared = self.service.prepare_dev(dev["id"], 2)
+        for target in hub.ANDROID_TARGETS:
+            self.assertFalse((self.service.candidate_path(dev["id"]) / "tools/rust/lib/rustlib" / target).exists())
         self.assertEqual(self.service.installation(dev["id"])["status"], "unbuilt")
         result = self.service.install_dev(dev["id"], build_id=prepared["build_id"])
         self.assertEqual(result["tools"]["rust"]["channel"], "1.98.1")
@@ -377,6 +384,26 @@ class HubTests(unittest.TestCase):
         self.assertEqual(kwargs["stderr"], subprocess.STDOUT)
         self.assertEqual(Path(kwargs["stdout"].name).parent, self.service.root / "logs")
 
+    def test_launch_overrides_local_android_environment_with_bundled_tools(self):
+        self.binary(self.bundle / "tools/java/bin", "java")
+        self.binary(self.bundle / "tools/android-sdk/platform-tools", "adb")
+        ndk = self.bundle / "tools/android-ndk"
+        ndk.mkdir()
+        (ndk / "source.properties").write_text("Pkg.Revision=27.2.1")
+        self.manifest["tools"].update({name: {"version": "test"} for name in hub.OPTIONAL_TOOLS})
+        self.save_manifest()
+        self.service.install(self.bundle, hub.OPTIONAL_TOOLS)
+        self.service.bind(self.project, "release-0.1.0")
+        with patch.dict(os.environ, {"JAVA_HOME": "local-java", "ANDROID_HOME": "local-sdk", "ANDROID_SDK_ROOT": "local-sdk", "ANDROID_NDK_HOME": "local-ndk"}), \
+                patch.object(hub.subprocess, "Popen") as launch, patch.object(hub, "process_token", return_value="birth"):
+            launch.return_value.pid = 42
+            self.service.launch(self.project)
+        env = launch.call_args.kwargs["env"]
+        for name, variables in (("java", ("JAVA_HOME",)), ("android-sdk", ("ANDROID_HOME", "ANDROID_SDK_ROOT", "BLOCKLOOM_HUB_ANDROID_SDK")),
+                                ("android-ndk", ("ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "BLOCKLOOM_HUB_ANDROID_NDK"))):
+            for variable in variables:
+                self.assertEqual(env[variable], str(self.service.slot("release-0.1.0") / "tools" / name))
+
     def prepare_fake_dev(self):
         dev = self.service.add_dev(self.repo())
         manifest = {**dev, "status": "ready", "tools": self.manifest["tools"],
@@ -394,26 +421,28 @@ class HubTests(unittest.TestCase):
         self.service.installation(dev["id"], ready=True)
         self.assertEqual(self.service.install_dev(dev["id"]), result)
 
-    def test_dev_optional_tools_use_selected_local_sources(self):
+    def test_dev_optional_tools_are_downloaded_into_private_installation(self):
         dev = self.prepare_fake_dev()
-        sources = {}
-        for name in hub.OPTIONAL_TOOLS:
-            directory = self.base / name
-            directory.mkdir()
-            if name == "java":
-                self.binary(directory / "bin", "java")
-                (directory / "release").write_text('JAVA_VERSION="21.0.9"\n')
-            elif name == "android-sdk":
-                self.binary(directory / "platform-tools", "adb")
-                (directory / "platform-tools" / "source.properties").write_text("Pkg.Revision=36.0.0\n")
-                (directory / "ndk").mkdir()
-                (directory / "ndk" / "should-not-ship").touch()
-            else:
-                (directory / "source.properties").write_text("Pkg.Revision = 29.0.1\n")
-            sources[name] = str(directory)
-        result = self.service.install_dev(dev["id"], hub.OPTIONAL_TOOLS, sources=sources)
-        self.assertEqual(result["tools"]["java"]["version"], "21.0.9")
-        self.assertEqual(result["tools"]["android-ndk"]["version"], "29.0.1")
+
+        def download(directory, versions, components, temporary):
+            self.assertNotEqual(directory, self.service.slot(dev["id"]))
+            self.assertEqual(versions["JDK_MAJOR"], "25")
+            self.assertEqual(versions["NDK_MAJOR"], "27")
+            self.assertEqual(components, hub.OPTIONAL_TOOLS)
+            self.binary(hub.tool_path(directory, "java") / "bin", "java")
+            self.binary(hub.tool_path(directory, "android-sdk") / "platform-tools", "adb")
+            ndk = hub.tool_path(directory, "android-ndk")
+            ndk.mkdir()
+            (ndk / "source.properties").write_text("Pkg.Revision=27.2.12479018\n")
+            return {"java": {"version": "25.0.1"}, "android-sdk": {"version": "36.0.0"},
+                    "android-ndk": {"version": "27.2.12479018"}}
+
+        with patch.object(hub.hub_download, "install_android_tools", side_effect=download) as fetch, \
+                patch.dict(os.environ, {"JAVA_HOME": "local-java-must-not-be-used", "ANDROID_HOME": "local-sdk-must-not-be-used"}):
+            result = self.service.install_dev(dev["id"], hub.OPTIONAL_TOOLS)
+        fetch.assert_called_once()
+        self.assertEqual(result["tools"]["java"]["version"], "25.0.1")
+        self.assertEqual(result["tools"]["android-ndk"]["version"], "27.2.12479018")
         self.assertFalse((self.service.slot(dev["id"]) / "tools/android-sdk/ndk").exists())
         self.service.install_dev(dev["id"])
         self.assertFalse((self.service.slot(dev["id"]) / "tools/java").exists())
@@ -422,10 +451,21 @@ class HubTests(unittest.TestCase):
         dev = self.prepare_fake_dev()
         self.service.install_dev(dev["id"])
         before = (self.service.slot(dev["id"]) / hub.MANIFEST).read_bytes()
-        with self.assertRaisesRegex(ValueError, "complete local"):
-            self.service.install_dev(dev["id"], ["java"], sources={"java": str(self.base / "absent")})
+        with patch.object(hub.hub_download, "install_android_tools", side_effect=ValueError("Download failed")):
+            with self.assertRaisesRegex(ValueError, "Download failed"):
+                self.service.install_dev(dev["id"], ["java"])
         self.assertEqual((self.service.slot(dev["id"]) / hub.MANIFEST).read_bytes(), before)
         self.assertFalse((self.service.root / ".operation-lock").exists())
+
+    def test_dev_local_tool_sources_are_rejected(self):
+        dev = self.prepare_fake_dev()
+        with self.assertRaisesRegex(ValueError, "local tool sources are not supported"):
+            self.service.install_dev(dev["id"], ["java"], sources={"java": str(self.base)})
+
+    def test_rebuild_includes_all_android_tools_by_default(self):
+        with patch.object(self.service, "prepare_dev"), patch.object(self.service, "install_dev") as install:
+            self.service.rebuild("development", 2)
+        install.assert_called_once_with("development", hub.OPTIONAL_TOOLS, android_rust_targets=True)
 
     def test_changed_candidate_requires_reviewing_new_build(self):
         dev = self.prepare_fake_dev()

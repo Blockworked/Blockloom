@@ -246,13 +246,13 @@ class CopyProgress:
             self.last = now
 
 
-def bundle_rust(source, destination, channel):
+def bundle_rust(source, destination, channel, exclude_targets=()):
     import shutil
     roots = [source / name for name in ("bin", "lib", "libexec", "etc") if (source / name).is_dir()]
 
     def ignore(directory, names):
         checkpoint()
-        return ["src"] if Path(directory) == source / "lib" / "rustlib" and "src" in names else []
+        return [name for name in names if name == "src" or name in exclude_targets] if Path(directory) == source / "lib" / "rustlib" else []
 
     files = []
     for root in roots:

@@ -47,6 +47,7 @@ ApplicationWindow {
         color: "#ecedf3"
         placeholderTextColor: "#a7b0c4"
         padding: 10
+        verticalAlignment: TextInput.AlignVCenter
         selectByMouse: true
         background: Rectangle {
             implicitHeight: 40
@@ -54,6 +55,21 @@ ApplicationWindow {
             color: "#202633"
             border.color: control.activeFocus ? "#b4a7ff" : "#46516a"
         }
+    }
+    component HubScrollBar: T.ScrollBar {
+        id: control
+        implicitWidth: 12
+        implicitHeight: 12
+        padding: 2
+        minimumSize: 0.08
+        hoverEnabled: true
+        visible: policy === T.ScrollBar.AlwaysOn || (policy === T.ScrollBar.AsNeeded && size < 1)
+        contentItem: Rectangle {
+            radius: 4
+            color: control.pressed ? "#8171eb" : control.hovered ? "#a79bdf" : "#626d85"
+            opacity: control.active || control.hovered || control.pressed ? 1 : 0.65
+        }
+        background: Rectangle { radius: 6; color: "#222938" }
     }
     component HubTab: TabButton {
         id: control
@@ -170,7 +186,6 @@ ApplicationWindow {
     property var preparedDev: ({})
     property var availableReleases: []
     property var selectedRelease: ({})
-    property string devSourceField: ""
 
     function perform(command, args) {
         error = ""
@@ -178,6 +193,12 @@ ApplicationWindow {
         service.run(command, args || [])
     }
     function refresh() { service.run("installations", []) }
+    function displayPath(path) {
+        const text = String(path || "")
+        if (text.startsWith("\\\\?\\UNC\\")) return "\\\\" + text.slice(8)
+        if (text.startsWith("\\\\?\\")) return text.slice(4)
+        return text
+    }
     function label(installation) {
         return installation.kind === "dev"
             ? "Development: " + installation.name + " (" + installation.version + ")"
@@ -240,7 +261,7 @@ ApplicationWindow {
                             window.choose(result[0])
                             versionChooser.currentIndex = versionDialog.choices.findIndex(i => i.id === "release-0.1.0")
                         }
-                        if (service.smokePage() === "log") logDialog.open()
+                        if (service.smokePage().startsWith("log")) logDialog.open()
                         if (service.smokePage() === "releases") {
                             releaseDialog.open()
                             githubReleases.checked = true
@@ -258,7 +279,10 @@ ApplicationWindow {
                     devDialog.open()
                     if (service.smokeTest()) {
                         if (service.smokePage() === "checkbox-checked") devSdk.checked = true
-                        if (service.smokePage() === "dev-install") devDialog.accept()
+                        if (service.smokePage() === "dev-install") {
+                            devJava.checked = false; devSdk.checked = false; devNdk.checked = false; devTargets.checked = false
+                            devDialog.accept()
+                        }
                         else service.smokeReady(window.projects.length, window.installations.length)
                     }
                 } else if (command === "remember") {
@@ -333,12 +357,6 @@ ApplicationWindow {
                     HubButton { text: "Add project folder"; enabled: !service.busy; onClicked: projectFolder.open() }
                 }
                 Label {
-                    text: "Projects change versions only when you select a different editor."
-                    color: "#a7b0c4"
-                    wrapMode: Text.Wrap
-                    Layout.fillWidth: true
-                }
-                Label {
                     visible: window.projects.length === 0
                     text: "No projects yet. Add an existing project folder to get started."
                     color: "#a7b0c4"
@@ -350,10 +368,10 @@ ApplicationWindow {
                     clip: true
                     spacing: 8
                     model: window.projects.filter(entry => window.matches(entry))
-                    ScrollBar.vertical: ScrollBar {}
+                    ScrollBar.vertical: HubScrollBar { id: projectsScrollBar }
                     delegate: Rectangle {
                         required property var modelData
-                        width: ListView.view.width
+                        width: ListView.view.width - (projectsScrollBar.visible ? projectsScrollBar.width + 8 : 0)
                         height: projectRow.implicitHeight + 28
                         radius: 10
                         color: "#222938"
@@ -365,7 +383,7 @@ ApplicationWindow {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 Label { text: modelData.name || "Unavailable project"; font.bold: true; font.pixelSize: 17 }
-                                Label { text: modelData.path; color: "#a7b0c4"; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                                Label { text: window.displayPath(modelData.path); color: "#a7b0c4"; elide: Text.ElideMiddle; Layout.fillWidth: true }
                                 Label {
                                     text: modelData.error ? "Folder unavailable" : (modelData.mode === "ThreeD" ? "3D" : "2D")
                                         + "  ·  " + window.selection(modelData.installation)
@@ -419,10 +437,10 @@ ApplicationWindow {
                     clip: true
                     spacing: 8
                     model: window.installations
-                    ScrollBar.vertical: ScrollBar {}
+                    ScrollBar.vertical: HubScrollBar { id: installationsScrollBar }
                     delegate: Rectangle {
                         required property var modelData
-                        width: ListView.view.width
+                        width: ListView.view.width - (installationsScrollBar.visible ? installationsScrollBar.width + 8 : 0)
                         height: installRow.implicitHeight + 28
                         radius: 10
                         color: "#222938"
@@ -434,7 +452,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Label { text: window.label(modelData); font.bold: true; font.pixelSize: 17 }
                                 Label {
-                                    text: modelData.repo || modelData.target
+                                    text: window.displayPath(modelData.repo || modelData.target)
                                     color: "#a7b0c4"
                                     elide: Text.ElideMiddle
                                     Layout.fillWidth: true
@@ -566,10 +584,10 @@ ApplicationWindow {
                 clip: true
                 model: window.availableReleases
                 spacing: 8
-                ScrollBar.vertical: ScrollBar {}
+                ScrollBar.vertical: HubScrollBar { id: releasesScrollBar }
                 delegate: Rectangle {
                     required property var modelData
-                    width: ListView.view.width
+                    width: ListView.view.width - (releasesScrollBar.visible ? releasesScrollBar.width + 8 : 0)
                     height: 72
                     radius: 6
                     color: "#171b24"
@@ -635,16 +653,6 @@ ApplicationWindow {
             }
         }
     }
-    FolderDialog {
-        id: devSourceFolder
-        title: "Choose a local " + window.devSourceField + " installation"
-        onAccepted: {
-            const path = service.localPath(selectedFolder)
-            if (window.devSourceField === "Java") devJavaPath.text = path
-            else if (window.devSourceField === "Android SDK") devSdkPath.text = path
-            else devNdkPath.text = path
-        }
-    }
     HubDialog {
         id: devDialog
         anchors.centerIn: parent
@@ -653,29 +661,22 @@ ApplicationWindow {
         modal: true
         standardButtons: Dialog.Ok | Dialog.Cancel
         onOpened: {
-            const sources = window.preparedDev.sources || {}
-            devJava.checked = false; devSdk.checked = false; devNdk.checked = false; devTargets.checked = false
-            devJavaPath.text = sources.java ? sources.java.source : ""
-            devSdkPath.text = sources["android-sdk"] ? sources["android-sdk"].source : ""
-            devNdkPath.text = sources["android-ndk"] ? sources["android-ndk"].source : ""
+            devJava.checked = true; devSdk.checked = true; devNdk.checked = true; devTargets.checked = true
         }
         onRejected: window.notice = "Build prepared. The current installation was kept."
         onAccepted: {
             let args = [window.preparedDev.id]
             if (window.preparedDev.build_id) args.push("--build-id", window.preparedDev.build_id)
-            if (devJava.checked) args.push("--java", "--java-source", devJavaPath.text)
-            if (devSdk.checked) args.push("--android-sdk", "--android-sdk-source", devSdkPath.text)
-            if (devNdk.checked) args.push("--android-ndk", "--android-ndk-source", devNdkPath.text)
+            if (devJava.checked) args.push("--java")
+            if (devSdk.checked) args.push("--android-sdk")
+            if (devNdk.checked) args.push("--android-ndk")
             if (devTargets.checked) args.push("--android-rust-targets")
             perform("install-dev", args)
             logDialog.open()
         }
         Component.onCompleted: {
             standardButton(Dialog.Ok).text = "Install"
-            standardButton(Dialog.Ok).enabled = Qt.binding(() => !service.busy
-                && (!devJava.checked || devJavaPath.text.trim().length > 0)
-                && (!devSdk.checked || devSdkPath.text.trim().length > 0)
-                && (!devNdk.checked || devNdkPath.text.trim().length > 0))
+            standardButton(Dialog.Ok).enabled = Qt.binding(() => !service.busy)
         }
         ColumnLayout {
             anchors.fill: parent
@@ -683,29 +684,14 @@ ApplicationWindow {
             Label { text: "Build complete. Choose what to include in this installation."; color: "#ecedf3"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             HubCheck { text: "Rust toolchain (required)"; checked: true; enabled: false }
             HubCheck { id: devJava; text: "Java" }
-            RowLayout {
-                visible: devJava.checked
-                HubField { id: devJavaPath; placeholderText: "Local Java installation"; Layout.fillWidth: true }
-                HubButton { text: "Browse"; onClicked: { window.devSourceField = "Java"; devSourceFolder.open() } }
-            }
             HubCheck { id: devSdk; objectName: "smokeCheckbox"; text: "Android SDK" }
-            RowLayout {
-                visible: devSdk.checked
-                HubField { id: devSdkPath; placeholderText: "Local Android SDK"; Layout.fillWidth: true }
-                HubButton { text: "Browse"; onClicked: { window.devSourceField = "Android SDK"; devSourceFolder.open() } }
-            }
             HubCheck { id: devNdk; text: "Android NDK" }
-            RowLayout {
-                visible: devNdk.checked
-                HubField { id: devNdkPath; placeholderText: "Local Android NDK"; Layout.fillWidth: true }
-                HubButton { text: "Browse"; onClicked: { window.devSourceField = "Android NDK"; devSourceFolder.open() } }
-            }
             HubCheck {
                 id: devTargets
                 text: "Android Rust targets (ARM64 and x86-64)"
             }
             Label {
-                text: "\n "
+                text: "Selected tools are downloaded and bundled with this editor. Versions follow the repository's Android requirements. Local tool installations are not used."
                 color: "#a7b0c4"
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
@@ -719,34 +705,83 @@ ApplicationWindow {
         height: window.height - 100
         title: "Operation log"
         modal: true
-        footer: RowLayout {
-            spacing: 10
-            HubCheck { id: followOutput; text: "Follow output"; checked: true; Layout.leftMargin: 18 }
-            Item { Layout.fillWidth: true }
-            HubButton { text: service.cancelling ? "Stopping..." : "Cancel operation"; visible: service.canCancel; enabled: !service.cancelling; onClicked: service.cancel() }
-            HubButton { text: "Close"; Layout.rightMargin: 18; Layout.bottomMargin: 12; onClicked: logDialog.close() }
+        function followLog() {
+            if (followOutput.checked)
+                logViewport.contentY = Math.max(0, logViewport.contentHeight - logViewport.height)
+        }
+        footer: Item {
+            implicitHeight: logFooter.implicitHeight + 24
+            RowLayout {
+                id: logFooter
+                anchors.fill: parent
+                anchors.leftMargin: 18
+                anchors.rightMargin: 18
+                anchors.topMargin: 12
+                anchors.bottomMargin: 12
+                spacing: 10
+                HubCheck {
+                    id: followOutput
+                    objectName: "smokeLogFollow"
+                    text: "Follow output"
+                    checked: true
+                    onCheckedChanged: if (checked) Qt.callLater(logDialog.followLog)
+                }
+                Item { Layout.fillWidth: true }
+                HubButton { objectName: "smokeLogCancel"; text: service.cancelling ? "Stopping..." : "Cancel operation"; visible: service.canCancel; enabled: !service.cancelling; onClicked: service.cancel() }
+                HubButton { objectName: "smokeLogClose"; text: "Close"; onClicked: logDialog.close() }
+            }
         }
         ScrollView {
             id: logScroll
             anchors.fill: parent
             clip: true
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ScrollBar.vertical: HubScrollBar {
+                objectName: "smokeLogScrollBar"
+                parent: logScroll
+                orientation: Qt.Vertical
+                x: logScroll.width - width - 2
+                y: 2
+                width: 14
+                height: logScroll.height - 4
+                onPressedChanged: if (pressed) followOutput.checked = false
+            }
+            rightPadding: 16
             background: Rectangle { color: "#141922"; radius: 6; border.color: "#46516a" }
-            TextArea {
-                id: logText
-                width: logScroll.availableWidth
-                text: service.log || "No output for this operation."
-                color: "#dbe2f2"
-                selectionColor: "#5b4d94"
-                selectedTextColor: "#ffffff"
-                background: null
-                padding: 14
-                readOnly: true
-                wrapMode: TextEdit.Wrap
-                font.family: Qt.platform.os === "windows" ? "Consolas" : "monospace"
-                font.pixelSize: 13
-                selectByMouse: true
-                onTextChanged: if (followOutput.checked) cursorPosition = length
+            Flickable {
+                id: logViewport
+                objectName: "smokeLogViewport"
+                contentWidth: width
+                contentHeight: logText.implicitHeight
+                boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: Flickable.VerticalFlick
+                onContentHeightChanged: if (followOutput.checked) Qt.callLater(logDialog.followLog)
+                onHeightChanged: if (followOutput.checked) Qt.callLater(logDialog.followLog)
+                onMovementStarted: followOutput.checked = false
+                WheelHandler {
+                    target: null
+                    blocking: false
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    onWheel: event => {
+                        if (event.angleDelta.y > 0 || event.pixelDelta.y > 0)
+                            followOutput.checked = false
+                    }
+                }
+                TextArea {
+                    id: logText
+                    width: logViewport.width
+                    text: service.log || "No output for this operation."
+                    color: "#dbe2f2"
+                    selectionColor: "#5b4d94"
+                    selectedTextColor: "#ffffff"
+                    background: null
+                    padding: 14
+                    readOnly: true
+                    wrapMode: TextEdit.Wrap
+                    font.family: Qt.platform.os === "windows" ? "Consolas" : "monospace"
+                    font.pixelSize: 13
+                    selectByMouse: true
+                }
             }
         }
     }

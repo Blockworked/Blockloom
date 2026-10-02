@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import zipfile
+import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True
 import hub
@@ -38,6 +39,129 @@ class DownloadTests(unittest.TestCase):
                     downloads.download("https://example.org/editor.zip", path, checksum, size)
             self.assertFalse(path.exists())
             path.touch()
+
+    def test_android_repository_sha1_is_verified(self):
+        value = b"official Android package"
+        path = self.root / "android.zip"
+        with patch.object(downloads, "response", return_value=io.BytesIO(value)):
+            downloads.download("https://dl.google.com/android/repository/tools.zip", path,
+                               hashlib.sha1(value).hexdigest(), len(value), algorithm="sha1")
+        self.assertEqual(path.read_bytes(), value)
+        path.unlink()
+        with patch.object(downloads, "response", return_value=io.BytesIO(value)), self.assertRaises(ValueError):
+            downloads.download("https://dl.google.com/android/repository/tools.zip", path, "0" * 40, algorithm="sha1")
+        self.assertFalse(path.exists())
+
+    def test_tool_file_links_are_materialized_and_bounded(self):
+        info = zipfile.ZipInfo("tools/bin/alias")
+        info.create_system = 3
+        info.external_attr = (stat.S_IFLNK | 0o777) << 16
+        archive = self.zip([(info, b"compiler"), ("tools/bin/compiler", b"exe")])
+        destination = self.root / "tool-links"
+        downloads.extract(archive, destination, "zip", allow_file_links=True)
+        self.assertEqual((destination / "tools/bin/alias").read_bytes(), b"exe")
+        self.assertFalse((destination / "tools/bin/alias").is_symlink())
+        with self.assertRaisesRegex(ValueError, "limits"):
+            downloads.extract(archive, self.root / "tool-budget", "zip", limit=12, allow_file_links=True)
+        archive = self.zip([(info, b"../../../outside")])
+        with self.assertRaisesRegex(ValueError, "escapes"):
+            downloads.extract(archive, self.root / "tool-escape", "zip", allow_file_links=True)
+        archive = self.zip([(info, b"alias")])
+        with self.assertRaisesRegex(ValueError, "unresolved"):
+            downloads.extract(archive, self.root / "tool-cycle", "zip", allow_file_links=True)
+
+    def test_tool_tar_hardlinks_and_symlinks_are_regular_files(self):
+        path = self.root / "jdk.tar.gz"
+        with tarfile.open(path, "w:gz") as archive:
+            for name, kind, target in (("jdk/bin/hardlink", tarfile.LNKTYPE, "jdk/bin/java"),
+                                       ("jdk/bin/symlink", tarfile.SYMTYPE, "java")):
+                info = tarfile.TarInfo(name)
+                info.type, info.linkname = kind, target
+                archive.addfile(info)
+            info = tarfile.TarInfo("jdk/bin/java")
+            info.size, info.mode = 3, 0o755
+            archive.addfile(info, io.BytesIO(b"jdk"))
+        output = self.root / "jdk-out"
+        downloads.extract(path, output, "tar.gz", allow_file_links=True)
+        for name in ("hardlink", "symlink"):
+            self.assertEqual((output / "jdk/bin" / name).read_bytes(), b"jdk")
+
+    def test_downloaded_android_tools_follow_pins_on_each_host(self):
+        versions = {"JDK_MAJOR": "25", "PLATFORM": "android-35", "BUILD_TOOLS": "35.0.0", "NDK_MAJOR": "27"}
+
+        def zipped(entries):
+            data = io.BytesIO()
+            with zipfile.ZipFile(data, "w") as archive:
+                for name, value in entries.items():
+                    archive.writestr(name, value)
+            return data.getvalue()
+
+        for host, python_os, machine in (("windows", "win32", "AMD64"), ("linux", "linux", "x86_64"), ("macosx", "darwin", "arm64")):
+            with self.subTest(host=host):
+                archives, packages = {}, []
+                java_url = "https://github.com/adoptium/temurin25-binaries/releases/download/jdk/jdk.zip"
+                home = "jdk/Contents/Home" if host == "macosx" else "jdk"
+                java = zipped({home + "/bin/java": b"jdk", home + "/release": b'JAVA_VERSION="25.0.1"'})
+                archives[java_url] = java
+                assets = [{"binary": {"package": {"link": java_url, "checksum": hashlib.sha256(java).hexdigest(), "size": len(java)}},
+                           "version": {"semver": "25.0.1+1"}}]
+                for key, root, entries, major, minor in (
+                        ("cmdline-tools;latest", "cmdline-tools", {"bin/sdkmanager": b"sdk"}, 19, 0),
+                        ("platform-tools", "platform-tools", {"adb": b"adb"}, 36, 0),
+                        ("platforms;android-35", "android-35", {"android.jar": b"jar"}, 2, 0),
+                        ("build-tools;35.0.0", "android-15", {"aapt2": b"aapt", "lib/apksigner.jar": b"jar"}, 35, 0),
+                        ("emulator", "emulator", {"emulator.exe" if host == "windows" else "emulator": b"emulator"}, 36, 0),
+                        ("system-images;android-35;google_apis;x86_64", "x86_64", {"system.img": b"image"}, 9, 0),
+                        ("ndk;27.1.1", "ndk-old", {"source.properties": b"old"}, 27, 1),
+                        ("ndk;27.2.1", "ndk-pinned", {"source.properties": b"Pkg.Revision=27.2.1"}, 27, 2),
+                        ("ndk;28.0.1", "ndk-new", {"source.properties": b"new"}, 28, 0)):
+                    label = key.replace(";", "-")
+                    value = zipped({root + "/" + name: data for name, data in entries.items()})
+                    archive_base = "https://dl.google.com/android/repository/sys-img/google_apis/" if key.startswith("system-images;") else "https://dl.google.com/android/repository/"
+                    archives[archive_base + label + ".zip"] = value
+                    architecture = "<host-arch>aarch64</host-arch>" if host == "macosx" else ""
+                    packages.append(f'''<remotePackage path="{key}"><type-details xsi:type="generic:genericDetailsType"/><revision><major>{major}</major><minor>{minor}</minor><micro>1</micro></revision>
+                        <channelRef ref="channel-0"/><archives><archive><host-os>{host}</host-os>{architecture}<complete>
+                        <url>{label}.zip</url><size>{len(value)}</size><checksum type="sha1">{hashlib.sha1(value).hexdigest()}</checksum>
+                        </complete></archive></archives></remotePackage>''')
+                repository = ('<ns0:sdk-repository xmlns:ns0="urn:sdk" xmlns:ns1="urn:common" xmlns:generic="urn:generic" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+                              + ''.join(packages) + '</ns0:sdk-repository>').encode()
+
+                def metadata(url, *args):
+                    if url.startswith("https://api.adoptium.net/"):
+                        self.assertIn("/25/", url)
+                        self.assertIn("architecture=" + ("aarch64" if host == "macosx" else "x64"), url)
+                        return json.dumps(assets).encode()
+                    return repository
+
+                destination = self.root / host
+                temporary = self.root / (host + "-temporary")
+                temporary.mkdir()
+                with patch.object(downloads, "read_remote", side_effect=metadata), \
+                        patch.object(downloads, "response", side_effect=lambda url: io.BytesIO(archives[url])), \
+                        patch.object(downloads.sys, "platform", python_os), \
+                        patch.object(downloads.platform, "machine", return_value=machine):
+                    tools = downloads.install_android_tools(destination, versions, hub.OPTIONAL_TOOLS, temporary)
+                self.assertEqual(tools["android-ndk"]["version"], "27.2.1")
+                self.assertEqual(tools["java"]["version"], "25.0.1+1")
+                self.assertEqual((destination / "tools/java/bin/java").read_bytes(), b"jdk")
+                self.assertTrue((destination / "tools/android-sdk/platforms/android-35/android.jar").is_file())
+                self.assertTrue((destination / "tools/android-sdk/build-tools/35.0.0/lib/apksigner.jar").is_file())
+                self.assertTrue((destination / "tools/android-sdk/emulator" / ("emulator.exe" if host == "windows" else "emulator")).is_file())
+                self.assertEqual((destination / "tools/android-sdk/system-images/android-35/google_apis/x86_64/system.img").read_bytes(), b"image")
+                self.assertIn("emulator", tools["android-sdk"]["packages"])
+                self.assertIn("system-images;android-35;google_apis;x86_64", tools["android-sdk"]["packages"])
+                self.assertTrue((destination / "tools/android-sdk/cmdline-tools/latest/package.xml").is_file())
+                for package in destination.rglob("package.xml"):
+                    ET.parse(package)
+                self.assertEqual((destination / "tools/android-ndk/source.properties").read_bytes(), b"Pkg.Revision=27.2.1")
+
+    def test_java_version_metadata_is_checked_before_downloading(self):
+        with patch.object(downloads, "read_remote", return_value=b'[{"binary": {}}]'), \
+                patch.object(downloads, "tool_archive") as archive:
+            with self.assertRaisesRegex(ValueError, "missing the Java version"):
+                downloads.install_android_tools(self.root, {"JDK_MAJOR": "25"}, ("java",), self.root)
+        archive.assert_not_called()
 
     def test_cancellation_removes_partial_download(self):
         path = self.root / "partial"

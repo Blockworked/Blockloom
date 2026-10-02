@@ -64,7 +64,15 @@ def main():
             env["PATH"] = str(kit / "bin") + os.pathsep + env.get("PATH", "")
             env["QT_PLUGIN_PATH"] = str(kit / "plugins")
             env["QML_IMPORT_PATH"] = str(kit / "qml")
-        for page in ("projects", "installations", "install", "version", "bind", "log", "releases", "upgrade", "upgrade-bind", "dev-options", "checkbox-hover", "checkbox-checked", "dev-install"):
+        for page in ("projects", "projects-scroll", "installations", "install", "version", "bind", "log", "log-scroll", "releases", "upgrade", "upgrade-bind", "dev-options", "checkbox-hover", "checkbox-checked", "dev-install"):
+            projects = [{"path": str(project)}]
+            if page == "projects-scroll":
+                for index in range(12):
+                    extra = base / ("Example project " + str(index + 1))
+                    hub.write_json(extra / "project.blockloom", {"name": extra.name, "world": {"mode": "TwoD"}})
+                    hub.write_json(extra / ".blockloom/hub.json", {"schema": 1, "installation": "release-0.1.0"})
+                    projects.append({"path": str(extra)})
+            hub.write_json(root / "projects.json", {"projects": projects})
             if page in ("upgrade", "upgrade-bind"):
                 hub.write_json(project / ".blockloom/hub.json", {"schema": 1, "installation": "release-0.0.1"})
             result = subprocess.run([str(binary), "--smoke-test", "--smoke-page", page,
@@ -72,7 +80,7 @@ def main():
                                     env=env, capture_output=True, text=True, encoding="utf-8", timeout=30)
             if result.returncode or "Error" in result.stderr or "ReferenceError" in result.stderr or "TypeError" in result.stderr:
                 raise RuntimeError(f"Qt smoke test failed for {page} ({result.returncode}):\n{result.stdout}\n{result.stderr}")
-            if json.loads(result.stdout) != {"projects": 1, "installations": 2}:
+            if json.loads(result.stdout) != {"projects": len(projects), "installations": 2}:
                 raise RuntimeError("The Qt window did not load the fixture data")
             print(f"PASS: {page}")
         if hub.read_json(project / ".blockloom" / "hub.json")["installation"] != "release-0.1.0":

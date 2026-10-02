@@ -5,7 +5,7 @@
 use super::{DeviceSize, Phase, TouchSink};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -26,7 +26,7 @@ pub(crate) struct Shell {
 
 impl Shell {
     pub fn start(adb: &Path, serial: &str) -> Result<Shell, String> {
-        let motion = Command::new(adb)
+        let motion = blockloom_core::process::background_command(adb)
             .args(["-s", serial, "shell", "input"])
             .stdin(Stdio::null())
             .output()
@@ -36,7 +36,7 @@ impl Shell {
                 text.contains("motionevent")
             })
             .unwrap_or(false);
-        let mut child = Command::new(adb)
+        let mut child = blockloom_core::process::background_command(adb)
             .args(["-s", serial, "shell"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

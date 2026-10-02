@@ -329,7 +329,9 @@ fn missing(detail: impl Into<String>) -> ToolStatus {
 
 /// `java -version` on PATH, parsed for the major version.
 pub fn jdk_status() -> ToolStatus {
-    let output = Command::new("java").arg("-version").output();
+    let output = crate::process::background_command("java")
+        .arg("-version")
+        .output();
     let Ok(output) = output else {
         return missing(format!(
             "No `java` on PATH. Install JDK {JDK_MAJOR} (the latest LTS), then point the SDK rows at it."
@@ -445,21 +447,20 @@ fn tool_command(tool: &Path) -> Command {
         Some(ext) if ext.eq_ignore_ascii_case("bat") || ext.eq_ignore_ascii_case("cmd")
     );
     if cfg!(windows) && is_script {
-        let mut command = Command::new("cmd");
+        let mut command = crate::process::background_command("cmd");
         command.arg("/C").arg(tool);
         command
     } else {
-        Command::new(tool)
+        crate::process::background_command(tool)
     }
 }
 
 /// Finds `bash` the way `scripts/run-bash.py` does: PATH first, then the
 /// default Git for Windows spots. The Android runtime build needs it for
-/// `scripts/prepare-patched-deps.sh`, and a plain `Command::new("bash")`
-/// fails on Windows where Git Bash isn't on PATH.
+/// `scripts/prepare-patched-deps.sh`, even when Git Bash isn't on PATH.
 fn bash_program() -> PathBuf {
     // `bash --version` succeeding means PATH already resolves it.
-    let on_path = std::process::Command::new("bash")
+    let on_path = crate::process::background_command("bash")
         .arg("--version")
         .output()
         .is_ok();
@@ -719,7 +720,7 @@ pub fn device_status() -> Result<Vec<Device>, String> {
 }
 
 fn devices_with_adb(adb: &Path) -> Result<Vec<Device>, String> {
-    let output = Command::new(adb)
+    let output = crate::process::background_command(adb)
         .arg("devices")
         .output()
         .map_err(|e| format!("Couldn't run {}: {e}", adb.display()))?;
@@ -936,7 +937,7 @@ fn list_avds_with(emulator: &Path) -> Result<Vec<String>, String> {
     if !emulator.is_file() {
         return Err("No emulator: run Install / update SDK to fetch it.".to_string());
     }
-    let output = Command::new(emulator)
+    let output = crate::process::background_command(emulator)
         .arg("-list-avds")
         .output()
         .map_err(|e| format!("Couldn't run {}: {e}", emulator.display()))?;
@@ -1247,7 +1248,7 @@ fn start_emulator_with(
             .map(std::process::Stdio::from)
             .unwrap_or_else(|_| std::process::Stdio::null())
     };
-    let child = Command::new(emulator)
+    let child = crate::process::background_command(emulator)
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(sink())
@@ -1300,7 +1301,7 @@ fn booted_with_adb(adb: &Path, serial: &str) -> bool {
 }
 
 fn boot_prop_with_adb(adb: &Path, serial: &str) -> Option<String> {
-    let output = Command::new(adb)
+    let output = crate::process::background_command(adb)
         .arg("-s")
         .arg(serial)
         .arg("shell")
@@ -1317,7 +1318,7 @@ fn boot_prop_with_adb(adb: &Path, serial: &str) -> Option<String> {
 /// The AVD name a running emulator booted, through `adb emu avd name`.
 /// Empty when adb can't say (offline emulator, old image).
 fn avd_name_with_adb(adb: &Path, serial: &str) -> Option<String> {
-    let output = Command::new(adb)
+    let output = crate::process::background_command(adb)
         .arg("-s")
         .arg(serial)
         .arg("emu")
@@ -1373,7 +1374,7 @@ pub fn stop_emulator(serial: Option<&str>) -> Result<String, String> {
             }
         }
     };
-    let output = Command::new(&adb)
+    let output = crate::process::background_command(&adb)
         .arg("-s")
         .arg(&serial)
         .arg("emu")
@@ -1426,7 +1427,7 @@ pub fn mirror_frame(device: Option<&str>, max_width: Option<u32>) -> Result<Mirr
         return Err("No adb: install platform-tools in App Settings first.".to_string());
     }
     let serial = resolve_mirror_serial(&adb, device)?;
-    let output = Command::new(&adb)
+    let output = crate::process::background_command(&adb)
         .arg("-s")
         .arg(&serial)
         .arg("exec-out")
@@ -1531,7 +1532,7 @@ pub fn device_size(device: Option<&str>) -> Result<(u32, u32), String> {
 }
 
 fn device_size_with_adb(adb: &Path, serial: &str) -> Result<(u32, u32), String> {
-    let output = Command::new(adb)
+    let output = crate::process::background_command(adb)
         .arg("-s")
         .arg(serial)
         .arg("shell")
@@ -1581,7 +1582,7 @@ pub fn mirror_tap(device: Option<&str>, x: f32, y: f32) -> Result<String, String
     let serial = resolve_mirror_serial(&adb, device)?;
     let (dw, dh) = device_size_with_adb(&adb, &serial)?;
     let (px, py) = mirror_point(x, y, dw, dh);
-    let output = Command::new(&adb)
+    let output = crate::process::background_command(&adb)
         .arg("-s")
         .arg(&serial)
         .arg("shell")
@@ -1618,7 +1619,7 @@ pub fn mirror_swipe(
     let (dw, dh) = device_size_with_adb(&adb, &serial)?;
     let (x1, y1) = mirror_point(x1, y1, dw, dh);
     let (x2, y2) = mirror_point(x2, y2, dw, dh);
-    let output = Command::new(&adb)
+    let output = crate::process::background_command(&adb)
         .arg("-s")
         .arg(&serial)
         .arg("shell")
@@ -1671,7 +1672,7 @@ pub fn mirror_key(device: Option<&str>, code: &str) -> Result<String, String> {
         return Err("No adb: install platform-tools in App Settings first.".to_string());
     }
     let serial = resolve_mirror_serial(&adb, device)?;
-    let output = Command::new(&adb)
+    let output = crate::process::background_command(&adb)
         .arg("-s")
         .arg(&serial)
         .arg("shell")
@@ -2456,7 +2457,7 @@ pub fn keytool() -> Result<PathBuf, String> {
     let name = exe("keytool");
     let path = PathBuf::from(&name);
     // A bare name runs through PATH; only accept it when it exists there.
-    if std::process::Command::new(&path)
+    if crate::process::background_command(&path)
         .arg("-help")
         .output()
         .is_ok()
@@ -2728,7 +2729,7 @@ pub fn create_keystore(
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    let output = std::process::Command::new(keytool()?)
+    let output = crate::process::background_command(keytool()?)
         .arg("-genkeypair")
         .arg("-keystore")
         .arg(path)
@@ -2760,7 +2761,7 @@ pub fn create_keystore(
 /// The key aliases a keystore file holds, for the create step's duplicate
 /// check. Needs the store password; a wrong one reads as keytool failing.
 pub fn keystore_aliases(path: &Path, store_pass: &str) -> Result<Vec<String>, String> {
-    let output = std::process::Command::new(keytool()?)
+    let output = crate::process::background_command(keytool()?)
         .arg("-list")
         .arg("-keystore")
         .arg(path)
@@ -2813,7 +2814,7 @@ pub fn ensure_debug_keystore_at(keystore: &Path) -> Result<(), String> {
     if let Some(dir) = keystore.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    let status = std::process::Command::new(keytool()?)
+    let status = crate::process::background_command(keytool()?)
         .arg("-genkeypair")
         .arg("-keystore")
         .arg(keystore)
@@ -3269,7 +3270,7 @@ pub fn build_runtime_so(config: &AppConfig, triple: &str) -> Result<PathBuf, Str
     let (_, linker) = cargo_linker_env(config, triple)
         .ok_or_else(|| format!("No NDK linker for {triple}. Run android-install-sdk first."))?;
     let prepared = crate::build_control::output(
-        std::process::Command::new(bash_program())
+        crate::process::background_command(bash_program())
             .arg(root.join("scripts/prepare-patched-deps.sh"))
             .current_dir(&root),
     )
@@ -3308,7 +3309,7 @@ pub fn build_runtime_so(config: &AppConfig, triple: &str) -> Result<PathBuf, Str
     }
     let _ = std::fs::remove_file(runtime_stamp_path(&so));
     crate::build_control::step("Compiling Android runtime")?;
-    let mut command = std::process::Command::new("cargo");
+    let mut command = crate::process::background_command("cargo");
     command
         .arg("build")
         .arg("--release")
@@ -3431,7 +3432,7 @@ fn install_apk_with_adb(
     device: Option<&str>,
 ) -> Result<ApkInstall, String> {
     crate::build_control::step("Installing APK on device")?;
-    let mut install = std::process::Command::new(adb);
+    let mut install = crate::process::background_command(adb);
     if let Some(serial) = device {
         install.arg("-s").arg(serial);
     }
@@ -3445,7 +3446,7 @@ fn install_apk_with_adb(
     }
     crate::build_control::step("Launching game on device")?;
     let component = format!("{application_id}/android.app.NativeActivity");
-    let mut start = std::process::Command::new(adb);
+    let mut start = crate::process::background_command(adb);
     if let Some(serial) = device {
         start.arg("-s").arg(serial);
     }
@@ -3541,7 +3542,7 @@ fn clear_logcat_with_adb(adb: &Path, device: Option<&str>) -> Result<(), String>
     if !adb.is_file() {
         return Err("No adb: install platform-tools in App Settings first.".to_string());
     }
-    let mut clear = std::process::Command::new(adb);
+    let mut clear = crate::process::background_command(adb);
     if let Some(serial) = device {
         clear.arg("-s").arg(serial);
     }
@@ -3563,7 +3564,7 @@ fn logcat_with_adb(adb: &Path, device: Option<&str>, needle: &str) -> Result<Log
     if !adb.is_file() {
         return Err("No adb: install platform-tools in App Settings first.".to_string());
     }
-    let mut dump = std::process::Command::new(adb);
+    let mut dump = crate::process::background_command(adb);
     if let Some(serial) = device {
         dump.arg("-s").arg(serial);
     }
