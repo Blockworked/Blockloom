@@ -28,8 +28,10 @@ use crate::hooks::{HookRef, order_hooks};
 use crate::jobs::JobTable;
 use crate::module::{CodeModule, is_unsupported};
 use crate::services::HostServices;
+use blockloom_plugin_api::compute::{GpuCommand, RESULT_OP, ReadAs, Words};
 use blockloom_plugin_api::generation::NodeSchema;
 use blockloom_plugin_api::loadout::{CodeRuntime, Loadout, LoadoutBlock, LoadoutPlugin, ops};
+use blockloom_plugin_api::manifest::Capability;
 use blockloom_plugin_api::mesh::MeshData;
 use blockloom_plugin_api::rendering::InstanceData;
 use blockloom_plugin_api::schema::{FieldSchema, FieldType, HookSchema, Stage};
@@ -76,6 +78,111 @@ pub enum Effect {
         #[serde(default)]
         max: Option<[f32; 3]>,
     },
+    /// Makes (or replaces, zeroed) a GPU buffer of `words` 32-bit words.
+    /// The GPU effects need the `gpu-compute` capability.
+    GpuBuffer { name: String, words: u32 },
+    /// Writes `f32`, `u32` or `i32` values into a buffer at a word offset.
+    GpuWrite {
+        buffer: String,
+        #[serde(default)]
+        offset: u32,
+        #[serde(flatten)]
+        data: Words,
+    },
+    /// Runs one of the plugin's kernels: `bindings` maps each of the kernel's
+    /// binding names to a buffer, `groups` is the workgroup count per axis
+    /// (missing axes are 1).
+    GpuDispatch {
+        kernel: String,
+        bindings: BTreeMap<String, String>,
+        #[serde(default)]
+        groups: Vec<u32>,
+    },
+    /// Reads words back; the plugin's `gpu.result` op gets them a few frames
+    /// later, tagged with `tag`.
+    GpuRead {
+        buffer: String,
+        #[serde(default)]
+        offset: u32,
+        words: u32,
+        tag: String,
+        #[serde(default, rename = "as")]
+        as_type: ReadAs,
+    },
+    /// Frees a buffer.
+    GpuFree { buffer: String },
+}
+
+impl Effect {
+    /// Whether this is one of the GPU effects.
+    pub fn is_gpu(&self) -> bool {
+        matches!(
+            self,
+            Effect::GpuBuffer { .. }
+                | Effect::GpuWrite { .. }
+                | Effect::GpuDispatch { .. }
+                | Effect::GpuRead { .. }
+                | Effect::GpuFree { .. }
+        )
+    }
+
+    /// The command a GPU effect asks the world's compute engine for.
+    pub fn gpu_command(&self) -> Option<Result<GpuCommand, String>> {
+        Some(match self {
+            Effect::GpuBuffer { name, words } => Ok(GpuCommand::Buffer {
+                name: name.clone(),
+                words: *words,
+            }),
+            Effect::GpuWrite {
+                buffer,
+                offset,
+                data,
+            } => data
+                .bits()
+                .map_err(|e| format!("write to {buffer}: {e}"))
+                .map(|data| GpuCommand::Write {
+                    buffer: buffer.clone(),
+                    offset: *offset,
+                    data,
+                }),
+            Effect::GpuDispatch {
+                kernel,
+                bindings,
+                groups,
+            } => {
+                if groups.is_empty() || groups.len() > 3 {
+                    return Some(Err(format!("dispatch {kernel}: groups are 1 to 3 numbers")));
+                }
+                let mut padded = [1u32; 3];
+                padded[..groups.len()].copy_from_slice(groups);
+                Ok(GpuCommand::Dispatch {
+                    kernel: kernel.clone(),
+                    bindings: bindings
+                        .iter()
+                        .map(|(a, b)| (a.clone(), b.clone()))
+                        .collect(),
+                    groups: padded,
+                })
+            }
+            Effect::GpuRead {
+                buffer,
+                offset,
+                words,
+                tag,
+                as_type,
+            } => Ok(GpuCommand::Read {
+                buffer: buffer.clone(),
+                offset: *offset,
+                words: *words,
+                tag: tag.clone(),
+                as_type: *as_type,
+            }),
+            Effect::GpuFree { buffer } => Ok(GpuCommand::Free {
+                buffer: buffer.clone(),
+            }),
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -107,6 +214,8 @@ struct Hosted {
     missing_hooks: BTreeSet<String>,
     /// Answers to reads since the module last did anything else.
     reads: BTreeMap<String, Value>,
+    /// The plugin declared `gpu-compute`, so its GPU effects are honoured.
+    gpu: bool,
 }
 
 #[derive(Default)]
@@ -176,6 +285,13 @@ impl WorldPlugins {
             match CodeModule::load_with(&plugin.runtime, &plugin.id, host) {
                 Ok(module) => {
                     world.insert(plugin.id.clone(), module, &plugin.blocks);
+                    world.allow_gpu(
+                        &plugin.id,
+                        plugin
+                            .runtime
+                            .capabilities()
+                            .contains(&Capability::GpuCompute),
+                    );
                     world.set_nodes(&plugin.id, plugin.nodes.clone());
                     hooks.extend(plugin.hooks.iter().map(|h| (plugin.id.as_str(), h)));
                 }
@@ -214,8 +330,30 @@ impl WorldPlugins {
                     .collect(),
                 missing_hooks: BTreeSet::new(),
                 reads: BTreeMap::new(),
+                gpu: false,
             },
         );
+    }
+
+    /// Lets (or stops) a plugin's GPU effects being honoured.
+    pub fn allow_gpu(&mut self, plugin: &str, allowed: bool) {
+        if let Some(hosted) = self.modules.get_mut(plugin) {
+            hosted.gpu = allowed;
+        }
+    }
+
+    /// Hands a finished GPU read to the plugin's `gpu.result` op. A module
+    /// with no such op ignores it.
+    pub fn deliver_gpu(
+        &mut self,
+        plugin: &str,
+        tag: &str,
+        buffer: &str,
+        offset: u32,
+        values: Value,
+    ) -> Vec<Outcome> {
+        let input = json!({"tag": tag, "buffer": buffer, "offset": offset, "values": values});
+        self.call(plugin, RESULT_OP, &input, true)
     }
 
     fn error(&mut self, plugin: &str, message: String) {
@@ -497,6 +635,13 @@ impl WorldPlugins {
             match CodeModule::load_with(&plugin.runtime, id, &host) {
                 Ok(module) => {
                     self.insert(id.to_string(), module, &plugin.blocks);
+                    self.allow_gpu(
+                        id,
+                        plugin
+                            .runtime
+                            .capabilities()
+                            .contains(&Capability::GpuCompute),
+                    );
                     self.nodes.remove(id);
                     self.set_nodes(id, plugin.nodes.clone());
                     let mut input = records(id);
@@ -793,7 +938,7 @@ impl WorldPlugins {
         let mut value = None;
         match answer {
             Ok(answer) => {
-                out.extend(effects_of(plugin, op, &answer));
+                out.extend(effects_of(plugin, op, &answer, hosted.gpu));
                 value = Some(answer);
             }
             Err(error) if is_unsupported(&error) => {
@@ -838,7 +983,7 @@ fn block_input(spec: &LoadoutBlock, args: &[Value], actor: &str) -> Value {
     Value::Object(object)
 }
 
-fn effects_of(plugin: &str, op: &str, answer: &Value) -> Vec<Outcome> {
+fn effects_of(plugin: &str, op: &str, answer: &Value, gpu_allowed: bool) -> Vec<Outcome> {
     let Some(list) = answer.get("effects") else {
         return Vec::new();
     };
@@ -858,6 +1003,14 @@ fn effects_of(plugin: &str, op: &str, answer: &Value) -> Vec<Outcome> {
                 Ok(Effect::Instances(set)) if set.check().is_err() => Outcome::Error {
                     plugin: plugin.to_string(),
                     message: format!("{op}: {}", set.check().unwrap_err()),
+                },
+                Ok(effect) if effect.is_gpu() && !gpu_allowed => Outcome::Error {
+                    plugin: plugin.to_string(),
+                    message: format!("{op}: GPU effects need the gpu-compute capability"),
+                },
+                Ok(effect) if matches!(effect.gpu_command(), Some(Err(_))) => Outcome::Error {
+                    plugin: plugin.to_string(),
+                    message: format!("{op}: {}", effect.gpu_command().unwrap().unwrap_err()),
                 },
                 Ok(effect) => Outcome::Effect {
                     plugin: plugin.to_string(),
@@ -1336,6 +1489,7 @@ mod tests {
             "p",
             "build",
             &json!({"effects": [triangle, bad, {"effect": "remove_mesh", "name": "t"}]}),
+            false,
         );
         assert!(matches!(
             &outcomes[0],
@@ -1354,6 +1508,61 @@ mod tests {
                 }
             }
         );
+    }
+
+    #[test]
+    fn gpu_effects_need_the_capability_and_become_commands() {
+        let effects = json!({"effects": [
+            {"effect": "gpu_buffer", "name": "a", "words": 8},
+            {"effect": "gpu_write", "buffer": "a", "offset": 2, "f32": [1.5, 2.0]},
+            {"effect": "gpu_dispatch", "kernel": "k", "bindings": {"input": "a"}, "groups": [4]},
+            {"effect": "gpu_read", "buffer": "a", "words": 8, "tag": "t", "as": "f32"},
+            {"effect": "gpu_free", "buffer": "a"},
+            {"effect": "gpu_write", "buffer": "a", "f32": [1.0], "u32": [1]},
+            {"effect": "gpu_dispatch", "kernel": "k", "bindings": {}, "groups": [1, 2, 3, 4]},
+        ]});
+        let refused = effects_of("p", "go", &effects, false);
+        assert_eq!(refused.len(), 7);
+        for outcome in &refused[..5] {
+            assert!(
+                errors(std::slice::from_ref(outcome))[0].contains("gpu-compute"),
+                "{outcome:?}"
+            );
+        }
+        let allowed = effects_of("p", "go", &effects, true);
+        let commands: Vec<GpuCommand> = allowed[..5]
+            .iter()
+            .map(|o| match o {
+                Outcome::Effect { effect, .. } => effect.gpu_command().unwrap().unwrap(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            commands[1],
+            GpuCommand::Write {
+                buffer: "a".to_string(),
+                offset: 2,
+                data: vec![1.5f32.to_bits(), 2.0f32.to_bits()],
+            }
+        );
+        assert_eq!(
+            commands[2],
+            GpuCommand::Dispatch {
+                kernel: "k".to_string(),
+                bindings: vec![("input".to_string(), "a".to_string())],
+                groups: [4, 1, 1],
+            }
+        );
+        assert!(matches!(
+            commands[3],
+            GpuCommand::Read {
+                as_type: ReadAs::F32,
+                ..
+            }
+        ));
+        // Mixed value types and too many axes are refused with a reason.
+        assert!(errors(&allowed[5..6])[0].contains("exactly one"));
+        assert!(errors(&allowed[6..7])[0].contains("1 to 3"));
     }
 
     struct Rig {

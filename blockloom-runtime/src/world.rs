@@ -311,6 +311,10 @@ pub fn pump_editor(
                 if engine.plugins.loadout.shaders != loadout.shaders {
                     engine.plugins.shaders_serial += 1;
                 }
+                #[cfg(feature = "plugins")]
+                if engine.plugins.loadout.kernels != loadout.kernels {
+                    engine.plugins.kernels_serial += 1;
+                }
                 let old = std::mem::replace(&mut engine.plugins.loadout, loadout);
                 crate::plugins::reload(&mut engine, &old);
                 crate::plugins::preview(&mut engine);

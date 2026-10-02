@@ -40,6 +40,8 @@ pub enum Capability {
     NativeExecution,
     /// Ships QML or native editor modules with host-level access.
     TrustedEditor,
+    /// Asks the world to run its compute kernels on the GPU, through host-owned buffers.
+    GpuCompute,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

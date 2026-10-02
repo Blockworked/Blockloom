@@ -32,6 +32,7 @@ pub struct Shipped<'a> {
 pub fn shipped_loadout(plugins: &[Shipped], target: &str) -> Result<Loadout, Vec<String>> {
     let mut loaded = Vec::new();
     let mut shaders = Vec::new();
+    let mut kernels = Vec::new();
     let mut errors = Vec::new();
     for shipped in plugins {
         let package = match Package::load_shipped(shipped.dir, shipped.files, shipped.hash) {
@@ -43,6 +44,10 @@ pub fn shipped_loadout(plugins: &[Shipped], target: &str) -> Result<Loadout, Vec
         };
         match package.shader_modules() {
             Ok(modules) => shaders.extend(modules),
+            Err(e) => errors.push(e),
+        }
+        match package.kernels() {
+            Ok(found) => kernels.extend(found),
             Err(e) => errors.push(e),
         }
         if package.manifest.tier == Tier::Declarative {
@@ -57,6 +62,7 @@ pub fn shipped_loadout(plugins: &[Shipped], target: &str) -> Result<Loadout, Vec
         Ok(Loadout {
             plugins: loaded,
             shaders,
+            kernels,
         })
     } else {
         Err(errors)

@@ -967,6 +967,8 @@ pub struct Contributions {
     pub overlays: Vec<crate::surfaces::OverlaySchema>,
     #[serde(default)]
     pub shaders: Vec<crate::rendering::ShaderSchema>,
+    #[serde(default)]
+    pub kernels: Vec<crate::compute::KernelSchema>,
 }
 
 /// A scene-view tool a package adds. A click casts the pointer's ray through
@@ -1190,6 +1192,7 @@ impl Contributions {
         self.shortcuts.extend(other.shortcuts);
         self.overlays.extend(other.overlays);
         self.shaders.extend(other.shaders);
+        self.kernels.extend(other.kernels);
         self.hooks.extend(other.hooks);
         self.importers.extend(other.importers);
         self.build_hooks.extend(other.build_hooks);
@@ -1257,6 +1260,13 @@ impl Contributions {
             shader.check_definition()?;
             if !shaders.insert(shader.name.as_str()) {
                 return Err(format!("two shaders named {}", shader.name));
+            }
+        }
+        let mut kernels = BTreeSet::new();
+        for kernel in &self.kernels {
+            kernel.check_definition()?;
+            if !kernels.insert(kernel.name.as_str()) {
+                return Err(format!("two kernels named {}", kernel.name));
             }
         }
         let mut importers = BTreeSet::new();

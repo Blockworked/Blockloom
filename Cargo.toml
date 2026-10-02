@@ -9,6 +9,7 @@ members = [
     "blockloom-plugin-api",
     "blockloom-plugin-host",
     "blockloom-plugin-sdk",
+    "blockloom-plugin-gpu",
     "plugins/examples/tally",
     "plugins/examples/palette",
     "plugins/voxel",
@@ -23,6 +24,7 @@ default-members = [
     "blockloom-plugin-api",
     "blockloom-plugin-host",
     "blockloom-plugin-sdk",
+    "blockloom-plugin-gpu",
 ]
 
 [workspace.package]

@@ -11,6 +11,7 @@
 //! - [`loadout`] is what a running world needs to host a plugin's code.
 //! - [`mesh`] is a mesh a plugin submits for the world to draw.
 //! - [`assets`] is what an importer or a build hook is asked and answers.
+//! - [`compute`] is the GPU kernels a plugin ships and the buffer commands it may ask for.
 //! - [`generation`] is typed graph nodes a plugin offers and the graphs built from them.
 //! - [`surfaces`] is menu items, shortcuts and scene-view overlays.
 //! - [`data`] is where a plugin's project data lives and how a build lists it.
@@ -22,6 +23,7 @@
 
 pub mod abi;
 pub mod assets;
+pub mod compute;
 pub mod data;
 pub mod generation;
 pub mod id;

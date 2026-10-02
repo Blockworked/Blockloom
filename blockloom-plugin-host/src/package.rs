@@ -2,6 +2,7 @@
 //! manifest claims, sealing one (writing its hashes) and packing it into an
 //! archive.
 
+use blockloom_plugin_api::compute::LoadoutKernel;
 use blockloom_plugin_api::manifest::{MANIFEST_FILE, PluginManifest};
 use blockloom_plugin_api::rendering::{LoadoutShader, module_name};
 use blockloom_plugin_api::schema::Contributions;
@@ -108,6 +109,24 @@ pub fn scan_files(root: &Path) -> Result<BTreeMap<String, String>, String> {
     Ok(out)
 }
 
+/// A package with kernels must say so in its manifest.
+fn check_kernel_capability(
+    manifest: &PluginManifest,
+    contributions: &Contributions,
+) -> Result<(), String> {
+    if contributions.kernels.is_empty()
+        || manifest
+            .capabilities
+            .contains(&blockloom_plugin_api::manifest::Capability::GpuCompute)
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "{}: kernels need the gpu-compute capability",
+        manifest.id
+    ))
+}
+
 impl Package {
     /// Loads and fully verifies the package at `root`.
     pub fn load(root: &Path) -> Result<Package, String> {
@@ -148,6 +167,7 @@ impl Package {
             .check_definition()
             .map_err(|e| format!("{}: {e}", manifest.id))?;
         let content_hash = content_hash(&bytes, &manifest.files);
+        check_kernel_capability(&manifest, &contributions)?;
         Ok(Package {
             root: root.to_path_buf(),
             manifest,
@@ -204,6 +224,7 @@ impl Package {
         contributions
             .check_definition()
             .map_err(|e| format!("{}: {e}", manifest.id))?;
+        check_kernel_capability(&manifest, &contributions)?;
         Ok(Package {
             root: root.to_path_buf(),
             manifest,
@@ -223,6 +244,26 @@ impl Package {
                     .map_err(|e| format!("shader {}: {}: {e}", shader.name, shader.file))?;
                 Ok(LoadoutShader {
                     module: module_name(&self.manifest.id, &shader.name),
+                    source,
+                })
+            })
+            .collect()
+    }
+
+    /// The package's compute kernels with their sources, each checked:
+    /// valid WGSL, bindings that match the schema and only bounded loops.
+    pub fn kernels(&self) -> Result<Vec<LoadoutKernel>, String> {
+        self.contributions
+            .kernels
+            .iter()
+            .map(|schema| {
+                let source = crate::files::read_to_string(&self.root.join(&schema.file))
+                    .map_err(|e| format!("kernel {}: {}: {e}", schema.name, schema.file))?;
+                blockloom_plugin_gpu::check_kernel(schema, &source)
+                    .map_err(|e| format!("{}: {e}", self.manifest.id))?;
+                Ok(LoadoutKernel {
+                    plugin: self.manifest.id.clone(),
+                    schema: schema.clone(),
                     source,
                 })
             })
@@ -270,7 +311,8 @@ pub fn seal(root: &Path) -> Result<(), String> {
     let mut out = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
     out.push('\n');
     fs::write(&path, out).map_err(|e| format!("{}: {e}", path.display()))?;
-    Package::load(root).map(|_| ())
+    // An author learns of a bad kernel here, not at the player's install.
+    Package::load(root)?.kernels().map(|_| ())
 }
 
 /// Copies a directory tree. Refuses symlinks.
@@ -458,6 +500,64 @@ mod tests {
             first.content_hash
         );
         assert_eq!(first.content_hash.len(), 64);
+    }
+
+    /// A sealed declarative package shipping one kernel, with `source` as its
+    /// file and `capabilities` in the manifest.
+    fn with_kernel(
+        dir: &Path,
+        source: &str,
+        capabilities: serde_json::Value,
+    ) -> Result<PathBuf, String> {
+        let root = dir.join("k");
+        fs::create_dir_all(root.join("schemas")).unwrap();
+        fs::create_dir_all(root.join("kernels")).unwrap();
+        fs::write(root.join("kernels/fill.wgsl"), source).unwrap();
+        fs::write(
+            root.join("schemas/main.json"),
+            serde_json::to_string(&json!({"kernels": [{
+                "name": "fill", "file": "kernels/fill.wgsl", "workgroup_size": [64, 1, 1],
+                "bindings": [{"name": "out", "binding": 0, "kind": "read_write"}]
+            }]}))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            root.join(MANIFEST_FILE),
+            serde_json::to_string(&json!({
+                "format": 1, "id": "com.example.k", "name": "k", "version": "1.0.0",
+                "engine": ">=0.0.1", "capabilities": capabilities,
+                "contributions": ["schemas/main.json"]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        seal(&root)?;
+        Ok(root)
+    }
+
+    const FILL: &str = "
+        @group(0) @binding(0) var<storage, read_write> out: array<f32>;
+        @compute @workgroup_size(64)
+        fn main(@builtin(global_invocation_id) id: vec3<u32>) { out[id.x] = 1.0; }";
+
+    #[test]
+    fn kernels_need_the_capability_and_are_checked_when_sealed() {
+        let dir = tempfile::tempdir().unwrap();
+        // Sealing loads the package, so the missing capability stops it there.
+        let error = with_kernel(dir.path(), FILL, json!([])).unwrap_err();
+        assert!(error.contains("gpu-compute"), "{error}");
+        fs::remove_dir_all(dir.path().join("k")).unwrap();
+
+        let root = with_kernel(dir.path(), FILL, json!(["gpu-compute"])).unwrap();
+        let kernels = Package::load(&root).unwrap().kernels().unwrap();
+        assert_eq!(kernels.len(), 1);
+        assert_eq!(kernels[0].plugin, "com.example.k");
+        fs::remove_dir_all(&root).unwrap();
+
+        let looping = FILL.replace("out[id.x] = 1.0;", "loop { out[id.x] += 1.0; }");
+        let error = with_kernel(dir.path(), &looping, json!(["gpu-compute"])).unwrap_err();
+        assert!(error.contains("loop"), "{error}");
     }
 
     #[test]

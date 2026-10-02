@@ -183,7 +183,7 @@ uploads those bytes as an image. Elsewhere it is a child process.
   `sense.rs` (the world state reporter blocks read), `ui.rs` (the screen-space
   interface a game builds out of blocks - see Interface below), and `wire.rs`
   (the one shape difference between documents and the frontend).
-- **`blockloom-plugin-api`**, **`blockloom-plugin-host`**, **`blockloom-plugin-sdk`** - the plugin platform:
+- **`blockloom-plugin-api`**, **`blockloom-plugin-host`**, **`blockloom-plugin-sdk`**, **`blockloom-plugin-gpu`** - the plugin platform:
   manifests, schemas, records and the C ABI (api, wasm-safe), resolver, cache,
   install transactions and the native loader (host). See Plugins below.
 - **`blockstitch-core`** (sibling repo, see above) - the shared block-editor
@@ -674,8 +674,14 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   with atomic multi-key `commit`; `DiskStore` writes through a temp file and a
   rename, `MemoryStore` serves tests. Content blobs live under
   `blobs/<sha256>` (`put`/`get`) and every write is held to `StoreLimits`
-  (16 MiB a blob, 256 MiB and 4096 keys a plugin). Web builds keep saves in
-  memory only so far.
+  (16 MiB a blob, 256 MiB and 4096 keys a plugin). `KvStore<B: KvBackend>` keeps
+  a plugin's saves in any key-value backend (base64 values under a per-project
+  prefix, a failed commit puts back what it changed); the web player's backend
+  is localStorage (`web::LocalKv`). `plugin-data-gc [dryRun=true]`
+  (`storage::collect_blobs`, `commands::plugins::plugin_data_gc`) removes content
+  blobs nothing names: a `blob:<sha256>` string in a record, another stored key
+  or a reachable blob, over the project's data and its saves; refused while a
+  game runs.
 - **Jobs and generation** (`jobs.rs`, `generation.rs`): `jobs.start` runs
   `job.<name>` in slices under a per-frame budget (`WorldPlugins::run_jobs`),
   highest priority first. A slice answers `{progress, state}`, `{done,
@@ -714,7 +720,28 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   registry (`set_extra`, so the editor's surface check can link them and a
   plugin cannot replace a built-in module) and the runtime's
   `passes::sync_plugin_shaders` adds each as a Shader asset when the loadout's
-  shaders change. Compute kernels a plugin dispatches itself are not offered.
+  shaders change.
+- **GPU compute** (`blockloom-plugin-api/src/compute.rs`, the `blockloom-plugin-gpu`
+  crate, `blockloom-runtime/src/plugin_compute.rs`; ADR 0001's twenty-third
+  batch): a plugin never holds the device. A package's `kernels` (`.wgsl`, an
+  entry, a workgroup size, named group-0 bindings `read|read_write|uniform`)
+  need the `gpu-compute` capability, and `check_kernel` (naga, no optional
+  capabilities) refuses a kernel whose bindings differ from its schema or whose
+  loops aren't `for`s over a constant-bounded counter (total iterations within
+  `MAX_STATIC_COST`), at seal, install and load. A module answers `gpu_buffer`,
+  `gpu_write`, `gpu_dispatch`, `gpu_read` and `gpu_free` effects
+  (`Effect::gpu_command` -> `GpuCommand`; no capability is an error), a read
+  comes back as the module's `gpu.result` op. `ComputeEngine` (feature `engine`,
+  wgpu) owns the buffers and queues per plugin; each frame it runs commands in
+  order in one encoder under `FRAME_INVOCATIONS`, round-robin, writes through a
+  staging copy so they stay ordered, and reads back through mapped staging
+  buffers. The runtime's `ComputeLink` carries commands to the render world
+  (`run` in `RenderSystems::Cleanup`, on Bevy's device) and reports back;
+  `Loadout::kernels` carries the kernels, `PluginHost::kernels_serial` says when
+  they changed, and a run's end clears buffers. The SDK's `gpu` module builds the
+  effects. Tests: `cargo test -p blockloom-plugin-gpu --features engine --
+  --include-ignored` with `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json`.
+  Not offered: textures, push constants, indirect dispatch, WESL imports.
 - **Reload and isolation**: a changed loadout reaches the running world as
   `WorldPlugins::reload`: a portable module answers `world.save`, is replaced
   and gets `world.restore`; a native change needs the run restarted
@@ -724,13 +751,19 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   modules there too): `isolated.rs` speaks length-prefixed JSON frames over its
   stdin/stdout, host services stay in the host and cross the pipe, and a call
   past its wall-clock limit or a worker that dies stops the module, not the
-  game. The worker has to ship beside the editor to be usable.
-- **Authoring kit**: `plugin-new path=... id=... template=declarative|portable`
+  game. The worker ships beside the editor (the Linux install, the CI editor
+  archives and the Windows installer carry it); a built game does not.
+- **Authoring kit**: `plugin-new path=... id=... template=declarative|portable|native`
   (`blockloom-app/src/scaffold.rs`) writes a starter package: a declarative
   one is sealed at once, a portable one is a crate (`src/lib.rs` is
   `blockloom-plugin-sdk/templates/lib.rs`, which the SDK's `tests/scaffold.rs`
   compiles and runs), schemas, `build.sh` (wasm build plus `plugin-seal`) and
-  a CI workflow. The SDK's `testing` feature adds `Harness` and `harness!(T)`
+  a CI workflow. A native one is the same crate plus a native library: its
+  `build.sh` also builds this machine's `cdylib` and runs `plugin-add-native
+  path=... target=... library=...` (`scaffold::add_native`: records the
+  library under its target triple, makes the tier `native`, adds the
+  `native-execution` capability and seals again), so each platform's library
+  is one more run of it. The SDK's `testing` feature adds `Harness` and `harness!(T)`
   (`harness!(T, [Capability::ProjectStorage])`): the plugin runs in-process
   through the host's loader with memory stores. `docs/plugin-api.md` is the
   author guide. CI runs `cargo test -p blockloom-plugin-sdk --features testing`

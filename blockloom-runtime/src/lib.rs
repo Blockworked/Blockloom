@@ -65,6 +65,8 @@ mod passes;
 mod pbr_patch;
 mod performance;
 pub mod player;
+#[cfg(feature = "plugins")]
+mod plugin_compute;
 mod plugin_meshes;
 #[cfg(feature = "plugins")]
 mod plugin_services;
@@ -307,6 +309,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     app.init_resource::<anim2d::RigCache>()
         .init_resource::<plugin_meshes::PluginMeshes>()
         .add_systems(Update, plugin_meshes::sync.run_if(is_3d));
+    #[cfg(feature = "plugins")]
+    plugin_compute::register(app);
     passes::register(app);
     hdr::register(app);
     luminance::register(app);

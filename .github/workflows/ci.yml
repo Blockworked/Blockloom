@@ -46,7 +46,7 @@ jobs:
         run: >
           cargo clippy --all-targets
           -p blockloom-core -p blockloom-protocol -p blockloom-app -p blockloom-runtime
-          -p blockloom-plugin-api -p blockloom-plugin-host
+          -p blockloom-plugin-api -p blockloom-plugin-host -p blockloom-plugin-gpu
           -p blockloom-plugin-sdk -p blockloom-example-tally -p blockloom-example-palette -p blockloom-voxel
       # GPU tests are #[ignore]d and stay manual. Tests that only start the
       # renderer run on lavapipe, Mesa's software Vulkan.
@@ -57,13 +57,18 @@ jobs:
         run: >
           cargo test
           -p blockloom-core -p blockloom-protocol -p blockloom-app -p blockloom-runtime
-          -p blockloom-plugin-api -p blockloom-plugin-host
+          -p blockloom-plugin-api -p blockloom-plugin-host -p blockloom-plugin-gpu
           -p blockloom-plugin-sdk -p blockloom-example-tally -p blockloom-example-palette -p blockloom-voxel
       # The harness, the scaffold's source and process isolation sit behind features.
       - name: Test (plugin kit and isolation)
         run: |
           cargo test -p blockloom-plugin-sdk --features testing
           cargo test -p blockloom-plugin-host --features test-fixtures
+      # The compute engine's tests open a device, so they are #[ignore]d; lavapipe runs them.
+      - name: Test (plugin GPU compute on lavapipe)
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+        run: cargo test -p blockloom-plugin-gpu --features engine -- --include-ignored
 
   # The browser player (Phase 8): the runtime has to keep building for wasm,
   # and a script has to keep compiling to a wasm module. The headless smoke

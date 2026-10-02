@@ -266,6 +266,7 @@ impl ActivePlugins {
             return Err(format!("cannot run on {}: {reason}", self.target));
         }
         package.shader_modules()?;
+        package.kernels()?;
         Ok(package)
     }
 
@@ -404,7 +405,16 @@ impl ActivePlugins {
             .values()
             .flat_map(|loaded| loaded.package.shader_modules().unwrap_or_default())
             .collect();
-        Loadout { plugins, shaders }
+        let kernels = self
+            .plugins
+            .values()
+            .flat_map(|loaded| loaded.package.kernels().unwrap_or_default())
+            .collect();
+        Loadout {
+            plugins,
+            shaders,
+            kernels,
+        }
     }
 
     pub fn manifest(&self, plugin: &str) -> Option<&PluginManifest> {
@@ -808,6 +818,7 @@ fn has_runtime_content(package: &Package) -> bool {
         || !c.hooks.is_empty()
         || !c.nodes.is_empty()
         || !c.shaders.is_empty()
+        || !c.kernels.is_empty()
         || c.components
             .iter()
             .chain(&c.resources)

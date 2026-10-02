@@ -79,6 +79,15 @@ pub struct PluginHost {
     pub nav_dirty: std::cell::Cell<bool>,
     /// Bumped when the plugins' shader modules change, so they are registered again.
     pub shaders_serial: u64,
+    /// Bumped when the plugins' compute kernels change.
+    #[cfg(feature = "plugins")]
+    pub kernels_serial: u64,
+    /// GPU commands plugins asked for, waiting for `plugin_compute::feed`.
+    #[cfg(feature = "plugins")]
+    pub gpu: Vec<(String, blockloom_plugin_api::compute::GpuCommand)>,
+    /// The run ended: the compute engine drops the plugins' buffers.
+    #[cfg(feature = "plugins")]
+    pub gpu_clear: bool,
     /// Status reports since the plugin diagnostics last went to the editor.
     reports: u32,
     /// The diagnostics the editor last heard, so an unchanged set is not resent.
@@ -139,6 +148,10 @@ enum Applied {
         plugin: String,
         name: String,
     },
+    Gpu {
+        plugin: String,
+        command: blockloom_plugin_api::compute::GpuCommand,
+    },
 }
 
 #[cfg(feature = "plugins")]
@@ -171,6 +184,14 @@ fn applied(outcomes: Vec<Outcome>) -> Vec<Applied> {
                 Effect::NavDirty { .. } => Applied::NavDirty,
                 Effect::Instances(set) => Applied::Instances { plugin, set },
                 Effect::RemoveInstances { name } => Applied::RemoveInstances { plugin, name },
+                gpu => match gpu.gpu_command() {
+                    Some(Ok(command)) => match command.check() {
+                        Ok(()) => Applied::Gpu { plugin, command },
+                        Err(e) => Applied::Error(format!("{plugin}: {e}")),
+                    },
+                    Some(Err(e)) => Applied::Error(format!("{plugin}: {e}")),
+                    None => Applied::Error(format!("{plugin}: an effect the world cannot apply")),
+                },
             },
         })
         .collect()
@@ -226,6 +247,7 @@ fn apply(engine: &mut Engine, outcomes: Vec<Applied>) {
                 .meshes
                 .push(MeshOp::RemoveInstances { plugin, name }),
             Applied::NavDirty => engine.plugins.nav_dirty.set(true),
+            Applied::Gpu { plugin, command } => engine.plugins.gpu.push((plugin, command)),
         }
     }
 }
@@ -478,16 +500,26 @@ fn preview_with(engine: &mut Engine, open: impl FnOnce(&Loadout) -> WorldPlugins
         if engine.running || engine.starting || engine.link.is_some() {
             return;
         }
+        let plugins: Vec<_> = engine
+            .plugins
+            .loadout
+            .plugins
+            .iter()
+            .filter(|p| p.preview)
+            .cloned()
+            .collect();
+        let kernels = engine
+            .plugins
+            .loadout
+            .kernels
+            .iter()
+            .filter(|k| plugins.iter().any(|p| p.id == k.plugin))
+            .cloned()
+            .collect();
         let wanted = Loadout {
-            plugins: engine
-                .plugins
-                .loadout
-                .plugins
-                .iter()
-                .filter(|p| p.preview)
-                .cloned()
-                .collect(),
+            plugins,
             shaders: Vec::new(),
+            kernels,
         };
         if wanted.is_empty() || !engine.project.active_scene().world.mode.is_3d() {
             if engine.plugins.previewing.is_some() {
@@ -534,9 +566,39 @@ pub fn end(engine: &mut Engine) {
         engine.plugins.previewing = None;
         apply(engine, applied(stopped));
         engine.plugins.meshes.push(MeshOp::Clear);
+        engine.plugins.gpu.clear();
+        engine.plugins.gpu_clear = true;
     }
     #[cfg(not(feature = "plugins"))]
     let _ = engine;
+}
+
+/// Hands the compute engine's reports back: an error goes to the run log and
+/// a finished read to the plugin that asked for it, as its `gpu.result` op.
+#[cfg(feature = "plugins")]
+pub fn gpu_reports(engine: &mut Engine, reports: Vec<blockloom_plugin_gpu::engine::Report>) {
+    use blockloom_plugin_gpu::engine::Report;
+    let Some(world) = engine.plugins.world.clone() else {
+        return;
+    };
+    for report in reports {
+        let outcomes = match report {
+            Report::Error { plugin, message } => vec![Outcome::Error { plugin, message }],
+            Report::Read {
+                plugin,
+                tag,
+                buffer,
+                offset,
+                as_type,
+                words,
+            } => {
+                world
+                    .borrow_mut()
+                    .deliver_gpu(&plugin, &tag, &buffer, offset, as_type.json(&words))
+            }
+        };
+        apply(engine, applied(outcomes));
+    }
 }
 
 /// Answers a plugin reporter: slot values in as JSON, the module's `value`
@@ -835,6 +897,78 @@ mod tests {
                 (stage(Stage::Input), stage(Stage::Presentation)).chain(),
             );
         app.update();
+    }
+
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn gpu_effects_become_queued_commands_and_bad_ones_do_not() {
+        use blockloom_plugin_api::compute::GpuCommand;
+        let mut engine = engine();
+        let effect = |effect| Outcome::Effect {
+            plugin: "p".to_string(),
+            effect,
+        };
+        let outcomes = vec![
+            effect(Effect::GpuBuffer {
+                name: "a".to_string(),
+                words: 8,
+            }),
+            // Too many words for one buffer: refused before it is queued.
+            effect(Effect::GpuBuffer {
+                name: "b".to_string(),
+                words: u32::MAX,
+            }),
+            effect(Effect::GpuFree {
+                buffer: "a".to_string(),
+            }),
+        ];
+        let applied = applied(outcomes);
+        assert!(matches!(applied[1], Applied::Error(_)));
+        apply(&mut engine, applied);
+        assert_eq!(
+            engine.plugins.gpu,
+            vec![
+                (
+                    "p".to_string(),
+                    GpuCommand::Buffer {
+                        name: "a".to_string(),
+                        words: 8
+                    }
+                ),
+                (
+                    "p".to_string(),
+                    GpuCommand::Free {
+                        buffer: "a".to_string()
+                    }
+                ),
+            ]
+        );
+    }
+
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_world_without_a_renderer_takes_the_commands_and_says_so() {
+        use blockloom_plugin_api::compute::GpuCommand;
+        let mut app = App::new();
+        let mut host = engine();
+        host.plugins.gpu.push((
+            "p".to_string(),
+            GpuCommand::Free {
+                buffer: "a".to_string(),
+            },
+        ));
+        app.insert_non_send(host);
+        crate::plugin_compute::register(&mut app);
+        app.update();
+        assert!(
+            app.world_mut()
+                .non_send_mut::<Engine>()
+                .plugins
+                .gpu
+                .is_empty()
+        );
+        let link = app.world().resource::<crate::plugin_compute::ComputeLink>();
+        assert_eq!(link.available(), Some(false));
     }
 
     /// A real voxel module, through the effect path to meshes in the ECS.

@@ -561,8 +561,8 @@ the remaining proof.
   native, portable and isolated modules.
 - Storage is two namespaced stores with atomic multi-key commits and hard
   limits. Saves are separate from project blobs because a built game's
-  project data is read-only while saves are written during play. Web saves are
-  memory only: localStorage persistence is not done.
+  project data is read-only while saves are written during play. Web saves
+  were memory only here and moved to localStorage in the twenty-third batch.
 - Jobs run in slices inside a per-frame budget and carry their state through
   the answer, so a plugin never needs a thread and a runaway job costs one
   slice. Generation graphs are data checked before they run; the cache is
@@ -576,8 +576,9 @@ the remaining proof.
 - Rendering stays in effects: instances reuse one mesh's buffers and the
   material so Bevy batches them, and a shader module is only importable by
   surface shaders, never a replacement for a Blockloom module. Plugin-owned
-  compute passes are deliberately not offered: a plugin dispatching GPU work
-  has no budget, ordering or memory limit the host can enforce.
+  compute passes were left out of this batch because a plugin holding the
+  device has no budget, ordering or memory limit the host can enforce; the
+  twenty-third batch offers compute with the host holding the device.
 - Live reload is `world.save`/`world.restore` for portable modules only. A
   native library cannot be unloaded safely while its code may be on a stack,
   so a native change says a restart is needed.
@@ -586,7 +587,7 @@ the remaining proof.
   bypassed from the worker. A call past its wall-clock limit kills the worker
   and the module is reloaded on the next call. The cost is a frame per call
   over a pipe, which is why it is not the default. The worker binary must
-  ship beside the editor; nothing packages it yet.
+  ship beside the editor (packaged in the twenty-third batch).
 - Kit: the scaffold's portable source is the SDK's own tested template, so
   what `plugin-new` writes compiles. A portable scaffold cannot be sealed
   until its wasm exists, so `build.sh` seals. The harness reuses the host's
@@ -597,3 +598,108 @@ the remaining proof.
   wasm32 and aarch64-linux-android checks of the host. Not run here: QML
   (menus, shortcuts, overlays, manager rows), the GPU half of instancing and
   shader modules, and the Android runtime.
+
+## GPU compute, blob GC, web saves, native template, worker packaging (twenty-third batch)
+
+### GPU compute: the host holds the device
+
+A plugin never gets a device, queue or pipeline. Compute is a conversation in
+effects, like meshes:
+
+- The package ships **kernels** (`kernels` in a schema file): a `.wgsl` file,
+  an entry point, a workgroup size and the named bindings it uses (`read`,
+  `read_write` or `uniform` buffers in group 0). The `gpu-compute` capability
+  is required to ship one or to ask for any GPU effect, so the Plugin Manager
+  and the install preview show it like any other capability.
+- The module answers `gpu_buffer`, `gpu_write`, `gpu_dispatch`, `gpu_read` and
+  `gpu_free` effects. Buffers are host-owned, named per plugin and made of
+  32-bit words; a dispatch binds the kernel's binding names to buffer names.
+  A read is answered later through the module's `gpu.result` op, so a plugin
+  never blocks on the GPU and a frame never waits on a readback.
+- **Validation** is `blockloom-plugin-gpu::check_kernel`, run when a package
+  loads (so an install, a Play and a build all refuse a bad kernel): naga
+  parses and validates with no optional capabilities (no textures, subgroup,
+  ray or f16 features), the schema's entry point and workgroup size must
+  match, group 0 buffers must match the schema's names, slots and access,
+  and workgroup memory is capped. The device already clamps out-of-range
+  buffer accesses, so the one way left to hang a GPU is a loop. Every loop
+  must therefore be a `for` over a local counter that starts at a constant,
+  is compared with a constant and steps by a constant, and the sum of all
+  iterations (nested loops multiply, a call costs its callee) must stay within
+  `MAX_STATIC_COST` (2^20). A `while`, `loop`, a limit read from a variable or
+  `arrayLength`, a counter written in the body, or a counter that could wrap
+  is refused, with the message showing the accepted shape. This is stricter
+  than WGSL needs and that is intended: it is a proof, not a heuristic, and it
+  was cheaper to write over naga's IR than a watchdog the platform cannot
+  offer (wgpu has no kernel timeout and a hung GPU takes the editor's window
+  with it).
+- **Budget and ordering.** Commands wait in a per-plugin queue (at most 4096)
+  and run in order inside one encoder per frame. A frame has an invocation
+  budget (2^27, a single dispatch at most 2^26); a dispatch that does not fit
+  waits for the next frame, in order, and queues are served round-robin so one
+  plugin cannot starve the others. A write goes through a staging copy so it
+  lands in order with the dispatches around it, not at the start of the frame
+  as `queue.write_buffer` would. Each plugin may hold 64 buffers and 128 MiB,
+  a buffer is at most 64 MiB, a read at most 4 Mi words with 16 in flight,
+  and a buffer both written and bound twice in one dispatch is refused (it
+  would be a wgpu usage conflict). Every refusal is an error in the run log;
+  the commands after it still run.
+- **Where it runs.** The engine (`ComputeEngine`) lives in the render world
+  and runs once a frame in `RenderSystems::Cleanup` on Bevy's own device, so
+  there is one device, no second adapter and no cross-device copy. The two
+  worlds meet at `plugin_compute::ComputeLink`, a mutex of commands going in
+  and reports coming out, because modules run on the main thread and the
+  device does not. A world with no renderer says so once instead of dropping
+  commands silently. A run ending drops every plugin's buffers and queued
+  commands; kernels stay.
+- **Not offered, on purpose.** Textures and samplers (a kernel cannot read or
+  write what is drawn), push constants, indirect dispatch, shared buffers
+  between plugins, and WESL imports in kernels (a kernel is one self-contained
+  WGSL file; a library module would have to be linked and re-checked, which is
+  worth doing only once a real kernel wants one). Portable (wasm) plugins use
+  the same effects, so compute works for web and Android players wherever the
+  world has a device.
+- Verified here on lavapipe (a CPU Vulkan device): the engine runs a kernel
+  over host buffers and reads the result back, an overwritten buffer is seen
+  in order, bad commands are reported while the rest run, memory limits hold
+  and free returns words, and work over the frame budget carries to the next
+  frame (`cargo test -p blockloom-plugin-gpu --features engine -- --ignored`
+  with `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json`). Not run: a
+  real GPU, the web player, and a plugin kernel inside a running game (the
+  render-world system is compile-checked, and the effect path is tested up to
+  the commands it produces).
+
+### Blob GC
+
+`plugin-data-gc [dryRun=true]` removes content blobs (`blobs/<sha256>`) that
+nothing reaches, from the project's plugin data and from its player saves
+(blobs only: a save's keys are the player's). A blob is reachable when a record
+or resource payload in the document, or any other key its plugin has stored,
+holds the string `blob:<sha256>` (the shape `put` returns); a reachable blob is
+read too, so blobs may name blobs. It refuses while a game runs, because a blob
+written but not yet named anywhere is garbage until it is, and it refuses to
+collect from a read-only store while still reporting a dry run. It is
+conservative about keys and aggressive about blobs: a plugin that keeps a hash
+in some other shape loses the blob, so `dryRun=true` first is the habit and the
+author guide says what counts as a reference.
+
+### Web saves
+
+`KvStore` stores player saves in any key-value backend (`KvBackend`, base64
+values under a per-project prefix) and undoes the writes of a commit that
+fails part way, so the browser gets the same atomic multi-key commit the disk
+store has. The web player's backend is localStorage. Quota errors surface as
+a failed commit, not a lost write.
+
+### Native template and worker packaging
+
+`plugin-new template=native` writes the portable crate plus a `build.sh` that
+also builds this machine's `cdylib` and records it with
+`plugin-add-native path=... target=... library=...` (manifest tier `native`,
+the `native-execution` capability, the library under its target triple, sealed
+again). Each platform's library is one more run of the script, and a target
+with no library falls back to the portable module. The editor install, the CI archives and the Windows installer
+now carry `blockloom-plugin-worker` beside the editor, which is where
+isolation looks for it. A built game does not ship the worker: isolation is an
+editor and developer setting, and a built game runs the plugin where it
+always did.

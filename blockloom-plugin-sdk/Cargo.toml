@@ -24,3 +24,7 @@ required-features = ["testing"]
 [[test]]
 name = "scaffold"
 required-features = ["testing"]
+
+[[test]]
+name = "gpu"
+required-features = ["testing"]

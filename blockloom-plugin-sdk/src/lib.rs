@@ -40,6 +40,8 @@ use blockloom_plugin_api::abi::Status;
 pub use blockloom_plugin_api::assets::{Produced, ProducedFile, Request, build_op, importer_op};
 pub use serde_json::{self, Value, json};
 
+pub mod gpu;
+
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]

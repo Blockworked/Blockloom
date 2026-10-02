@@ -18,6 +18,7 @@ blockloom-core = { path = "../blockloom-core" }
 blockloom-protocol = { path = "../blockloom-protocol" }
 blockloom-plugin-api = { path = "../blockloom-plugin-api" }
 blockloom-plugin-host = { path = "../blockloom-plugin-host", optional = true }
+blockloom-plugin-gpu = { path = "../blockloom-plugin-gpu", optional = true, features = ["engine"] }
 tracing-log = { workspace = true }
 polyanya.workspace = true
 half = "2"
@@ -118,7 +119,7 @@ compressed_textures = ["bevy/ktx2", "bevy/basis-universal"]
 # Hosts plugin code (native libraries and WebAssembly modules) in the world.
 # The web and Android players turn it on (portable modules only, run by
 # wasmi: neither can load a native library).
-plugins = ["dep:blockloom-plugin-host"]
+plugins = ["dep:blockloom-plugin-host", "dep:blockloom-plugin-gpu"]
 # NVIDIA DLSS Super Resolution (and Ray Reconstruction for Solari) through
 # Bevy's `dlss` path. Off by default: building it needs the DLSS SDK
 # (`DLSS_SDK` set to an absolute path), the Vulkan SDK, clang, and agreement

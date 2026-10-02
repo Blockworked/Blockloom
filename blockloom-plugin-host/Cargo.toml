@@ -6,6 +6,7 @@ description = "Installs, resolves and runs plugin packages: cache, lockfile, lif
 
 [dependencies]
 blockloom-plugin-api = { path = "../blockloom-plugin-api" }
+blockloom-plugin-gpu = { path = "../blockloom-plugin-gpu" }
 serde.workspace = true
 serde_json.workspace = true
 semver.workspace = true

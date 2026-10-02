@@ -1531,7 +1531,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Rendering service: instanced plugin meshes and plugin WESL shader modules (`blockloom::plugin_<id>_<name>`).
     - [x] Reliability: live reload of portable modules (`world.save`/`world.restore`), process isolation of native libraries (`blockloom-plugin-worker`, `BLOCKLOOM_PLUGIN_ISOLATION`), wall-clock call limits.
     - [x] Authoring kit: SDK `testing` harness, `plugin-new` scaffolds (tested), `docs/plugin-api.md`, CI steps for the kit and isolation.
-    - [ ] Plugin follow-ups: GPU compute kernels a plugin dispatches itself, web persistence of plugin saves (memory only now), a `plugin-gc` for unreferenced content blobs, native templates in `plugin-new`, a published SDK crate, QML and GPU runs of the new surfaces and instancing (written here without Qt or a GPU).
+    - [x] Plugin follow-ups (twenty-third batch): GPU compute kernels (host-owned buffers, validated and loop-bounded WGSL, per-frame budget, async reads; `gpu-compute` capability, `blockloom-plugin-gpu`), web persistence of plugin saves (localStorage `KvStore`), `plugin-data-gc`, native template and `plugin-add-native`, and the plugin worker packaged beside the editor.
+    - [ ] Plugin follow-ups left: a published SDK crate, QML and real-GPU runs of the new surfaces, instancing and compute (the GPU half was run on lavapipe only), WESL imports and textures for kernels, a plugin kernel inside a running game.
     - [ ] Voxel next: smooth terrain, streaming/LOD, instancing, GPU meshing, fracture.
     - [ ] Phases 4-7 (procedural graph, GPU path, fracture, ecosystem).
 

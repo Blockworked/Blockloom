@@ -48,6 +48,13 @@ impl CodeRuntime {
             CodeRuntime::Portable(p) => &p.hash,
         }
     }
+
+    pub fn capabilities(&self) -> &BTreeSet<Capability> {
+        match self {
+            CodeRuntime::Native(n) => &n.capabilities,
+            CodeRuntime::Portable(p) => &p.capabilities,
+        }
+    }
 }
 
 /// A block whose command is a module op: the world calls the op itself, with
@@ -90,11 +97,14 @@ pub struct Loadout {
     /// Every plugin's shader modules, code or not.
     #[serde(default)]
     pub shaders: Vec<crate::rendering::LoadoutShader>,
+    /// Every plugin's compute kernels, checked.
+    #[serde(default)]
+    pub kernels: Vec<crate::compute::LoadoutKernel>,
 }
 
 impl Loadout {
     pub fn is_empty(&self) -> bool {
-        self.plugins.is_empty() && self.shaders.is_empty()
+        self.plugins.is_empty() && self.shaders.is_empty() && self.kernels.is_empty()
     }
 }
 
