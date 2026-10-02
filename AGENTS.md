@@ -412,9 +412,11 @@ Phase 2 of the physics plan. Core decides, the runtime installs.
 - **Unsupported on purpose** (errors, not silent): convex hull, triangle mesh,
   terrain and tilemap colliders (Phase 3: cooking), a polygon that is not convex, a
   shape for the other dimension, a concave solid on a dynamic body, a custom center of
-  mass without an inertia. Open: `contact_offset`, `queryable` and `interpolation` are
-  stored and validated but have no runtime effect yet (the world renderer already
-  interpolates every actor).
+  mass without an inertia. A collider's `contact_offset` is Rapier's `ContactSkin`
+  (times pixels per metre in 2D), `queryable` filters ray/cast/overlap queries, and a
+  body's `interpolation` is a `PoseSmoothing` component read by `world::blend_pose`
+  (None draws the fixed-step pose, Interpolate blends, Extrapolate carries the last step on;
+  an actor with no Rigidbody keeps blending, and migrated bodies are Interpolate).
 - **Runtime** (`blockloom-runtime/src/physics_install.rs`): `install` runs at the end
   of `rebuild_world` for the scene's plan (an erroring plan installs nothing and logs).
   A body gets `RigidBody`, `Velocity`, `ExternalImpulse`, gravity scale (Use Gravity off is
@@ -497,6 +499,14 @@ VM, compiled logic (`ACT_PHYSICS_QUERY` is the script ABI's) and scripts
 `tests/codegen.rs` holds them together with a one-wall harness world.
 `RayHit`/`RayDistance`/`CircleHit` reporters ask the same service. With no world
 installed a query reports an error and reads as a miss.
+
+### Physics inspector
+
+`RigidbodyForm.qml` and `ColliderForm.qml` are the cards for the two components
+(`InspectorPanel.qml` loads them; a collider is removed by id with `remove_collider`, the
+Rigidbody with `remove_rigidbody`, and Add component gives an actor a Rigidbody or another
+Collider). Every edit sends the whole next spec to `set_rigidbody`/`set_collider`, so
+validation and undo are the backend's. QML test: `tests/qml/tst_PhysicsInspector.qml`.
 
 ### Actors that come and go
 

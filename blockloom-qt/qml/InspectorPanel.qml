@@ -36,6 +36,7 @@ Rectangle {
     readonly property var pluginTypes: appState.plugins && appState.plugins.types ? appState.plugins.types : []
     function pluginType(name) { return pluginTypes.find(t => t.name === name) || null; }
     function componentTitle(c) {
+        if (c.component === "Collider") return c.collider && c.collider.name ? "Collider: " + c.collider.name : "Collider";
         if (c.component !== "Plugin") return componentName(c);
         const t = pluginType(componentName(c));
         return t ? t.displayName : c.record.type_id;
@@ -44,6 +45,14 @@ Rectangle {
     readonly property var actorOptions: appState.project ? [{ value: "", label: "nothing" }].concat(appState.project.actors.map(a => ({ value: a.id, label: a.name }))) : []
     function write(name, component) { if (actor) app.invoke("set_actor_component", { actorId: actor.id, name: name, component: component }); }
     function remove(name) { if (actor) app.invoke("remove_actor_component", { actorId: actor.id, name: name }); }
+    // Physics components have their own commands: a collider is named by its id,
+    // since an actor may carry several.
+    function removeComponent(c) {
+        if (!actor) return;
+        if (c.component === "Collider") app.invoke("remove_collider", { colliderId: c.collider.id });
+        else if (c.component === "Rigidbody") app.invoke("remove_rigidbody", { actorId: actor.id });
+        else remove(componentName(c));
+    }
     function copy(o) { return JSON.parse(JSON.stringify(o)); }
     function withIndex(array, index, value) { const next = array.slice(); next[index] = value; return next; }
     function merged(base, next) { return Object.assign(copy(base), next); }
@@ -339,10 +348,10 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
+        return ["Look","Render","Body","Rigidbody","Collider","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
             .filter(n => n !== "Sprite" || !is3d)
             .filter(n => n !== "Fracture" || is3d)
-            .filter(n => n === "Custom" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }))
+            .filter(n => n === "Custom" || n === "Collider" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }))
             .concat(pluginTypes.filter(t => t.kind === "component" && held.indexOf(t.name) < 0).map(t => ({ value: "plugin:" + t.name, label: t.displayName + " (" + t.pluginName + ")" })));
     }
     function blank(name) {
@@ -379,6 +388,11 @@ Rectangle {
         if (!actor) return;
         // A script needs a file on disk, so the backend makes both at once.
         if (name === "Script") { app.invoke("create_script", { actorId: actor.id }); return; }
+        if (name === "Rigidbody") { app.invoke("set_rigidbody", { actorId: actor.id, rigidbody: { body_type: "Dynamic" } }); return; }
+        if (name === "Collider") {
+            app.invoke("add_collider", { actorId: actor.id, collider: { geometry: { kind: "Shape", shape: is3d ? { kind: "Box", size: [1, 1, 1] } : { kind: "Rect", size: [60, 60] } } } });
+            return;
+        }
         if (name.indexOf("plugin:") === 0) { app.invoke("add_plugin_component", { actorId: actor.id, component: name.slice(7) }); return; }
         const c = blank(name);
         if (c) app.invoke("add_actor_component", { actorId: actor.id, component: c });
@@ -439,11 +453,11 @@ Rectangle {
                             Layout.fillWidth: true; spacing: 6
                             heading: root.componentTitle(card.c)
                             removable: card.c.component !== "Place"
-                            onRemoveRequested: root.remove(root.componentName(card.c))
+                            onRemoveRequested: root.removeComponent(card.c)
                             Loader {
                                 Layout.fillWidth: true
                                 readonly property var c: card.c
-                                sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
+                                sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Rigidbody: rigidbodyCard, Collider: colliderCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
                                                     Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Plugin: pluginCard })[card.c.component] || null
                             }
                         }
@@ -794,6 +808,20 @@ Rectangle {
                     Item { Layout.fillWidth: true }
                 }
             }
+        }
+    }
+    Component {
+        id: rigidbodyCard
+        RigidbodyForm {
+            readonly property var c: parent.c
+            app: root.app; actorId: root.actor ? root.actor.id : ""; component: c; is3d: root.is3d
+        }
+    }
+    Component {
+        id: colliderCard
+        ColliderForm {
+            readonly property var c: parent.c
+            app: root.app; component: c; is3d: root.is3d
         }
     }
     Component {

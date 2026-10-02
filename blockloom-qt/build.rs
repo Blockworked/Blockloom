@@ -28,6 +28,8 @@ fn main() {
                 "qml/BlockSidebar.qml",
                 "qml/InspectorPanel.qml",
                 "qml/InspectorComponentCard.qml",
+                "qml/RigidbodyForm.qml",
+                "qml/ColliderForm.qml",
                 "qml/InspectorRow.qml",
                 "qml/SurfaceDetailRows.qml",
                 "qml/EmitterGraphRows.qml",

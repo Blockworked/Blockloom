@@ -3004,6 +3004,36 @@ pub fn restore_poses(engine: NonSend<Engine>, mut posed: Query<(&mut Transform, 
     }
 }
 
+/// Where an actor is drawn, `alpha` of the way through a fixed step.
+pub fn blend_pose(
+    mode: blockloom_core::physics::Interpolation,
+    previous: &Transform,
+    current: &Transform,
+    alpha: f32,
+) -> Transform {
+    use blockloom_core::physics::Interpolation;
+    // At rest there is nothing to blend, and a slerp of equal rotations can
+    // still come back an ulp off.
+    if previous == current || mode == Interpolation::None {
+        return *current;
+    }
+    // Extrapolating carries the last step's motion on by the fraction shown.
+    let t = if mode == Interpolation::Extrapolate {
+        1.0 + alpha
+    } else {
+        alpha
+    };
+    Transform {
+        translation: previous.translation.lerp(current.translation, t),
+        rotation: previous.rotation.slerp(current.rotation, t),
+        scale: if mode == Interpolation::Extrapolate {
+            current.scale
+        } else {
+            previous.scale.lerp(current.scale, t)
+        },
+    }
+}
+
 /// Renders actors between the poses they settled at, so nothing on screen
 /// marches along at the fixed step rate - whether physics wrote the pose or a
 /// step's effects did. On a high-refresh display that step pattern would
@@ -3011,14 +3041,19 @@ pub fn restore_poses(engine: NonSend<Engine>, mut posed: Query<(&mut Transform, 
 pub fn interpolate_poses(
     engine: NonSend<Engine>,
     fixed: Res<Time<Fixed>>,
-    mut posed: Query<(&mut Transform, &PhysicsPose, &PrevPose)>,
+    mut posed: Query<(
+        &mut Transform,
+        &PhysicsPose,
+        &PrevPose,
+        Option<&crate::physics_install::PoseSmoothing>,
+    )>,
 ) {
     // Writes only what differs: an assignment through `DerefMut` marks the
     // transform changed, and a frame of that on every actor makes Bevy
     // propagate, re-bound and re-extract the whole scene.
     if !engine.running || engine.paused {
         // Frozen: put each actor back exactly where its last step left it.
-        for (mut transform, current, _) in &mut posed {
+        for (mut transform, current, _, _) in &mut posed {
             if *transform != current.0 {
                 *transform = current.0;
             }
@@ -3026,18 +3061,10 @@ pub fn interpolate_poses(
         return;
     }
     let alpha = fixed.overstep_fraction();
-    for (mut transform, current, previous) in &mut posed {
-        // At rest there is nothing to blend, and a slerp of equal rotations
-        // can still come back an ulp off.
-        let next = if previous.0 == current.0 {
-            current.0
-        } else {
-            Transform {
-                translation: previous.0.translation.lerp(current.0.translation, alpha),
-                rotation: previous.0.rotation.slerp(current.0.rotation, alpha),
-                scale: previous.0.scale.lerp(current.0.scale, alpha),
-            }
-        };
+    for (mut transform, current, previous, smoothing) in &mut posed {
+        use blockloom_core::physics::Interpolation;
+        let mode = smoothing.map_or(Interpolation::Interpolate, |s| s.0);
+        let next = blend_pose(mode, &previous.0, &current.0, alpha);
         if *transform != next {
             *transform = next;
         }
@@ -4828,6 +4855,23 @@ fn key_name(code: &KeyCode) -> Option<String> {
 mod tests {
     use super::*;
     use bevy::time::{TimePlugin, TimeUpdateStrategy};
+
+    #[test]
+    fn a_pose_mode_decides_how_a_step_is_drawn() {
+        use blockloom_core::physics::Interpolation;
+        let before = Transform::from_xyz(0.0, 0.0, 0.0);
+        let after = Transform::from_xyz(10.0, 0.0, 0.0);
+        let x = |mode, alpha| blend_pose(mode, &before, &after, alpha).translation.x;
+        // None snaps to the step, Interpolate lags it, Extrapolate leads it.
+        assert_eq!(x(Interpolation::None, 0.5), 10.0);
+        assert_eq!(x(Interpolation::Interpolate, 0.5), 5.0);
+        assert_eq!(x(Interpolation::Extrapolate, 0.5), 15.0);
+        // A body at rest is left exactly where it is.
+        assert_eq!(
+            blend_pose(Interpolation::Extrapolate, &after, &after, 0.9),
+            after
+        );
+    }
 
     #[test]
     fn an_idle_vm_keeps_the_play_session_running() {

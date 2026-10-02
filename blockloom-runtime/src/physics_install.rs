@@ -44,6 +44,11 @@ pub struct PlannedBody {
     pub max_depenetration: f32,
 }
 
+/// How a body's drawn pose follows its fixed-step poses (Unity's Interpolation).
+/// Actors without one are drawn interpolated, as every actor was before.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PoseSmoothing(pub blockloom_core::physics::Interpolation);
+
 /// The slowest depenetration speed either body of a pair allows, if either
 /// is a planned body.
 pub fn depenetration_cap(a: Option<&PlannedBody>, b: Option<&PlannedBody>) -> Option<f32> {
@@ -230,6 +235,7 @@ pub mod d3 {
             };
             let spec = &body.spec;
             let mut e = commands.entity(entity);
+            e.insert(PoseSmoothing(spec.interpolation));
             e.insert((
                 match spec.body_type {
                     BodyType::Dynamic => rp::RigidBody::Dynamic,
@@ -404,6 +410,9 @@ pub mod d3 {
                     rp::Sensor,
                     rp::ActiveCollisionTypes::all() - rp::ActiveCollisionTypes::STATIC_STATIC,
                 ));
+            }
+            if let Some(offset) = planned.contact_offset.filter(|o| o.is_finite() && *o > 0.0) {
+                e.insert(rp::ContactSkin(offset));
             }
             if !planned.enabled {
                 e.insert(rp::ColliderDisabled);
@@ -605,6 +614,7 @@ pub mod d2 {
             };
             let spec = &body.spec;
             let mut e = commands.entity(entity);
+            e.insert(PoseSmoothing(spec.interpolation));
             e.insert((
                 match spec.body_type {
                     BodyType::Dynamic => rp::RigidBody::Dynamic,
@@ -789,6 +799,9 @@ pub mod d2 {
                     rp::Sensor,
                     rp::ActiveCollisionTypes::all() - rp::ActiveCollisionTypes::STATIC_STATIC,
                 ));
+            }
+            if let Some(offset) = planned.contact_offset.filter(|o| o.is_finite() && *o > 0.0) {
+                e.insert(rp::ContactSkin(offset * PPM));
             }
             if !planned.enabled {
                 e.insert(rp::ColliderDisabled);
@@ -1002,6 +1015,29 @@ mod tests {
         run(&mut app, 240);
         let y = at(&app, ids[&ball_id]).y;
         assert!((y - 0.5).abs() < 0.05, "resting height {y}");
+    }
+
+    #[test]
+    fn a_contact_offset_becomes_a_contact_skin_and_interpolation_a_pose_mode() {
+        use blockloom_core::physics::Interpolation;
+        let mut p = project();
+        let id = add(&mut p, "Ball", [0.0, 3.0, 0.0]);
+        let mut spec = RigidbodySpec::default();
+        spec.interpolation = Interpolation::Extrapolate;
+        let mut shape = ball();
+        shape.contact_offset = Some(0.05);
+        body(&mut p, &id, spec, vec![shape]);
+        let (mut app, ids) = world(&p);
+        let mode = app.world().get::<PoseSmoothing>(ids[&id]).unwrap();
+        assert_eq!(mode.0, Interpolation::Extrapolate);
+        let skins: Vec<f32> = app
+            .world_mut()
+            .query::<&rp::ContactSkin>()
+            .iter(app.world())
+            .map(|skin| skin.0)
+            .collect();
+        assert_eq!(skins.len(), 1);
+        assert!((skins[0] - 0.05).abs() < 1e-6);
     }
 
     pub(super) fn mesh_folder(tag: &str) -> std::path::PathBuf {

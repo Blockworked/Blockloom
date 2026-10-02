@@ -169,6 +169,8 @@ pub fn convert_body(actor: &Actor, physics: &Physics, mode: Mode) -> Converted {
                 gravity_scale: physics.gravity_scale,
                 // The old runtime had no separate Use Gravity switch.
                 use_gravity: true,
+                // Old bodies were always drawn between their steps.
+                interpolation: crate::physics::Interpolation::Interpolate,
                 ..RigidbodySpec::default()
             };
             if physics.lock_rotation {
