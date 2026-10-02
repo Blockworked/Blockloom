@@ -2140,6 +2140,7 @@ pub(crate) fn run_project(
     state: &SharedState,
     app: &AppHandle,
 ) -> Result<(), String> {
+    plugins::refresh_imports(state, app);
     let mut s = lock(state)?;
     let Some(project) = s.project().cloned() else {
         return Err("No project is open".to_string());
@@ -2760,6 +2761,8 @@ pub(crate) fn run_build_game(
         }
     }
 
+    blockloom_core::build_control::step("Refreshing imports")?;
+    plugins::refresh_imports(state, app);
     let options = build::BuildOptions {
         fast,
         sdr_only: target.is_web() || !hdr.unwrap_or(target.hdr_default().0),

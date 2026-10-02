@@ -1281,6 +1281,93 @@ pub(crate) fn auto_import(state: &SharedState, app: &AppHandle, paths: &[String]
     }
 }
 
+/// What `plugin-reimport` did.
+#[derive(Debug, Default, Serialize)]
+pub(crate) struct Reimported {
+    /// Sources imported again.
+    pub reimported: Vec<String>,
+    /// Sources left alone, with why: an output edited by hand, a source that
+    /// is gone, or one nothing imports now.
+    pub skipped: Vec<Value>,
+    /// Sources whose import failed, with the error.
+    pub failed: Vec<Value>,
+}
+
+/// Imports again every file whose source, dependency or output changed since
+/// its last import. With `path`, that one file is imported again whatever its
+/// state, which is how a hand-edited output is replaced on purpose.
+pub(crate) fn plugin_reimport(
+    state: &SharedState,
+    app: &AppHandle,
+    path: Option<String>,
+) -> Result<Reimported, String> {
+    use imports::ImportState;
+    let statuses = {
+        let s = lock(state)?;
+        imports::status(&open_dir(&s)?)
+    };
+    let mut out = Reimported::default();
+    let mut found = path.is_none();
+    for status in statuses {
+        if path.as_deref().is_some_and(|p| p != status.source) {
+            continue;
+        }
+        found = true;
+        match &status.state {
+            ImportState::Fresh => continue,
+            ImportState::SourceMissing => {
+                out.skipped
+                    .push(json!({ "path": status.source, "reason": "its source is gone" }));
+                continue;
+            }
+            ImportState::OutputEdited { path: edited } if path.is_none() => {
+                out.skipped.push(json!({
+                    "path": status.source,
+                    "reason": format!("{edited} was edited by hand; import it by name to replace it"),
+                }));
+                continue;
+            }
+            _ => {}
+        }
+        let importer = id::qualified(&status.plugin, &status.importer);
+        match plugin_import(state, app, status.source.clone(), Some(importer)) {
+            Ok(_) => out.reimported.push(status.source),
+            Err(error) => out
+                .failed
+                .push(json!({ "path": status.source, "error": error })),
+        }
+    }
+    if !found && let Some(path) = path {
+        return Err(format!("{path} was never imported"));
+    }
+    Ok(out)
+}
+
+/// Brings stale imports up to date before a run or a build, logging what
+/// couldn't be. Never fails the caller: the old output is still there.
+pub(crate) fn refresh_imports(state: &SharedState, app: &AppHandle) {
+    // An attached copy can't write the owner's files.
+    if !lock(state).is_ok_and(|s| owned_dir(&s).is_ok()) {
+        return;
+    }
+    let Ok(done) = plugin_reimport(state, app, None) else {
+        return;
+    };
+    if done.failed.is_empty() {
+        return;
+    }
+    if let Ok(mut s) = lock(state) {
+        for failure in &done.failed {
+            s.push_log(LogLine {
+                kind: "error".to_string(),
+                actor: "Blockloom".to_string(),
+                text: format!("Couldn't import {failure}"),
+            });
+        }
+        emit(app, &s);
+    }
+}
+
 /// Forgets what an import of `path` made, for a source that was deleted.
 pub(crate) fn forget_import(dir: &Path, path: &str) {
     let _ = imports::forget(dir, path);

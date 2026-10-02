@@ -21,6 +21,7 @@ TestCase {
                      { id: "two", name: "Scene 2", path: "assets/Scene 2.blockscene", world: Fixture.world() }]
         } };
     }
+    property var pluginImports: []
     QtObject {
         id: backend
         property var appState: test.projectState()
@@ -40,6 +41,7 @@ TestCase {
             else if (command === "list_assets" && done) done([test.lightingEntry,
                 { name: "Scene 2.blockscene", path: "assets/Scene 2.blockscene", kind: "scene", size: 100, modified: 0, protected: false }]);
             else if (command === "pipeline_status" && done) done([]);
+            else if (command === "plugin_imports" && done) done({ imports: test.pluginImports });
             else if (done) done({});
         }
         function assetUrl(path) { return ""; }
@@ -181,5 +183,22 @@ TestCase {
         compare(calls[1].command, "write_lighting_asset");
         compare(calls[2].command, "set_scene_lighting_asset");
         compare(backend.inspectedLighting, "assets/Scene Lighting.blocklighting");
+    }
+    function test_trayShowsWhetherAPluginImportIsCurrent() {
+        pluginImports = [
+            { source: "assets/a.gpl", plugin: "com.example.palette", importer: "gpl", state: "fresh", outputs: [], warnings: [] },
+            { source: "assets/b.gpl", plugin: "com.example.palette", importer: "gpl", state: "source_changed", outputs: [], warnings: [] }
+        ];
+        panel.visible = false;
+        const editor = createTemporaryObject(editorFactory, test);
+        const tray = findChild(editor, "tray");
+        tray.refresh();
+        tryVerify(() => tray.staleImports.length === 1);
+        compare(tray.staleImports[0].source, "assets/b.gpl");
+        verify(!tray.importStale({ path: "assets/a.gpl" }));
+        verify(tray.importStale({ path: "assets/b.gpl" }));
+        verify(!tray.imported({ path: "assets/other.png" }));
+        verify(tray.importText(pluginImports[1]).indexOf("changed") >= 0);
+        pluginImports = [];
     }
 }

@@ -3104,6 +3104,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        name: "plugin-reimport",
+        cmd: "plugin_reimport",
+        aliases: &[],
+        summary: "Import again every file whose source, dependency or output changed since its last import (Play and Build do this too). With a path, imports that one file again even if its output was edited by hand.",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "asset path",
+            required: false,
+        }],
+    },
+    CommandSpec {
         name: "plugin-run-block",
         cmd: "plugin_run_block",
         aliases: &[],

@@ -529,12 +529,6 @@ pub fn build(
             plugin.entry.id, target.label
         ));
     }
-    if target.is_android() && !options.extras.is_empty() {
-        return Err(format!(
-            "build hook files are not supported on {} builds yet",
-            target.label
-        ));
-    }
     if target.is_web() {
         return build_web(
             project,
@@ -886,6 +880,7 @@ fn build_android_with_config(
     copy_probes(project, project_dir, &game)?;
     crate::build_control::step("Packing terrain and scripts")?;
     copy_terrain(project, project_dir, &game)?;
+    copy_extras(&options.extras, &game)?;
     let native_libs = android_native_libs(project, project_dir, target, runtime_so, options.fast)?;
 
     let manifest = android::render_manifest(&project.android, &project.name)?;
@@ -1081,6 +1076,13 @@ fn android_build_fingerprint(
     project_json.hash(&mut hasher);
     target.triple.hash(&mut hasher);
     options.fast.hash(&mut hasher);
+    // Hook output is restaged on every build, so its bytes count, not its mtimes.
+    for extra in &options.extras {
+        extra.to.hash(&mut hasher);
+        std::fs::read(&extra.from)
+            .unwrap_or_default()
+            .hash(&mut hasher);
+    }
     hash_file_meta(&mut hasher, runtime_so);
     for relative in script_paths(project) {
         let library = script::library_path_for(project_dir, relative, Some(target.triple));
@@ -1128,7 +1130,7 @@ fn hash_file_meta(hasher: &mut std::collections::hash_map::DefaultHasher, path: 
 }
 
 /// Every file under the project folder, sorted, minus the script build
-/// cache and the output dir. Host Play builds touch that cache constantly;
+/// cache, staged hook output and the output dir. Host Play builds touch that cache constantly;
 /// the triple libs above already cover what Android ships. The output dir
 /// is skipped since a previous APK inside the project would bust every
 /// fingerprint on its own mtime.
@@ -1138,16 +1140,21 @@ fn hash_project_files(
     output_dir: &Path,
 ) -> Result<(), String> {
     let build_cache = project_dir.join(".blockloom").join("build");
+    let cooked = project_dir.join(".blockloom").join("cooked");
     let mut files: Vec<(String, u64, u64, u32)> = Vec::new();
     let mut stack = vec![project_dir.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        if dir.starts_with(&build_cache) || dir.starts_with(output_dir) {
+        if dir.starts_with(&build_cache) || dir.starts_with(&cooked) || dir.starts_with(output_dir)
+        {
             continue;
         }
         let entries = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.starts_with(&build_cache) || path.starts_with(output_dir) {
+            if path.starts_with(&build_cache)
+                || path.starts_with(&cooked)
+                || path.starts_with(output_dir)
+            {
                 continue;
             }
             if path.is_dir() {
@@ -2613,17 +2620,27 @@ mod tests {
         let runtime = root.join("libblockloom_runtime.so");
         std::fs::write(&runtime, b"fake-so").unwrap();
 
+        let cooked = root.join("cooked.bin");
+        std::fs::write(&cooked, b"cooked").unwrap();
         let built = build_android_with_config(
             &project,
             &project_dir,
             target,
             &runtime,
             &root.join("out"),
-            BuildOptions::default(),
+            BuildOptions {
+                extras: vec![ExtraFile {
+                    to: "plugins/a/cooked/x.bin".to_string(),
+                    from: cooked,
+                }],
+                ..BuildOptions::default()
+            },
             &config,
         )
         .unwrap();
 
+        // A build hook's file rides in the APK's assets like on desktop.
+        assert!(built.dir.join("assets/plugins/a/cooked/x.bin").is_file());
         assert!(built.binary.is_file());
         assert_eq!(built.binary.extension().unwrap().to_string_lossy(), "apk");
         assert!(built.size > 0);

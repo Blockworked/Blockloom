@@ -402,10 +402,9 @@ the remaining proof.
   what the previous run wrote and the new one did not.
 - A build hook sees the target and every asset path and may add files, which
   ship under `game/plugins/<id>/cooked/` through `BuildOptions::extras`, or
-  fail the build. Android builds refuse extras for now. A package that only
+  fail the build. Android builds ship extras too (fourteenth batch). A package that only
   has importers and hooks is not shipped: it runs in the editor.
-- Not yet: importer UI in the asset tray, automatic re-import when a source
-  changes on disk, importer-declared thumbnails, and hooks whose output a
+- Not yet: importer-declared thumbnails, and hooks whose output a
   shipped plugin reads (there is no host service to open a cooked file).
 
 ## HTTP registry and attached copies (twelfth batch)
@@ -440,3 +439,15 @@ the remaining proof.
 - Not yet: a plugin drawing its own inspector section, panels, and loading
   trusted editor QML at run time. The QML tests were written without a Qt
   install in the build container, so run `just qml-test` locally.
+
+## Import freshness and Android hooks (fourteenth batch)
+
+- An import records hashes, so staleness is a comparison, not a watcher: a
+  source changed outside the editor is noticed when the tray refreshes and is
+  imported again before Play or a Build (`plugin-reimport`). Output the user
+  edited by hand is never overwritten by that sweep; naming the file does it.
+  An attached copy never sweeps, since it can't write the owner's files.
+- Android builds copy build hook files into the APK's assets next to the
+  game, and the Android cache fingerprint hashes their bytes (the staged
+  `.blockloom/cooked` folder is rewritten every build, so its mtimes are not
+  part of it). Plugin code is still refused on Android.

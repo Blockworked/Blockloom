@@ -505,6 +505,11 @@ impl Backend {
                 arg(&args, "path")?,
                 arg(&args, "importer").ok(),
             )?),
+            "plugin_reimport" => to_json(commands::plugins::plugin_reimport(
+                state,
+                app,
+                arg(&args, "path").ok(),
+            )?),
             "plugin_call" => to_json(commands::plugins::plugin_call(
                 state,
                 app,

@@ -452,6 +452,38 @@ fn an_importer_runs_when_a_file_is_imported_and_its_outputs_follow_the_source() 
             .is_err()
     );
 
+    // A source edited outside the editor is imported again on request, and
+    // an output edited by hand is only replaced when asked for by name.
+    std::fs::write(
+        dir.join("assets/sunset.gpl"),
+        "GIMP Palette\nName: Sunset\n255 0 0 Red\n0 255 0 Green\n0 0 255 Blue\n",
+    )
+    .unwrap();
+    assert_eq!(
+        invoke("plugin_imports", json!({}))["imports"][0]["state"],
+        "source_changed"
+    );
+    let done = invoke("plugin_reimport", json!({}));
+    assert_eq!(done["reimported"], json!(["assets/sunset.gpl"]));
+    assert_eq!(
+        invoke("plugin_imports", json!({}))["imports"][0]["state"],
+        "fresh"
+    );
+    let json_out = dir.join("assets/sunset.gpl.imported/palette.json");
+    std::fs::write(&json_out, "{}").unwrap();
+    let skipped = invoke("plugin_reimport", json!({}));
+    assert!(skipped["reimported"].as_array().unwrap().is_empty());
+    assert_eq!(skipped["skipped"][0]["path"], "assets/sunset.gpl");
+    assert_eq!(std::fs::read_to_string(&json_out).unwrap(), "{}");
+    let forced = invoke("plugin_reimport", json!({"path": "assets/sunset.gpl"}));
+    assert_eq!(forced["reimported"], json!(["assets/sunset.gpl"]));
+    assert_ne!(std::fs::read_to_string(&json_out).unwrap(), "{}");
+    assert!(
+        backend
+            .dispatch("plugin_reimport", json!({"path": "assets/other.gpl"}))
+            .is_err()
+    );
+
     // Deleting the source takes what it made with it.
     invoke("delete_asset", json!({"path": "assets/sunset.gpl"}));
     assert!(!dir.join("assets/sunset.gpl.imported").exists());

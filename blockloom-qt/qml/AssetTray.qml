@@ -28,6 +28,7 @@ Rectangle {
     property var reports: ({})
     property string error: ""
     property bool busy: false
+    property var imports: ({})      // plugin imports by source path, from plugin_imports
     property var menuEntry: null
     property var draft: null        // { mode: "folder"|"file"|"rename", path, name }
     property string previewing: ""
@@ -48,6 +49,7 @@ Rectangle {
         app.invoke("list_assets", { path: path }, list => {
             busy = false; entries = list; error = "";
             app.invoke("pipeline_status", {}, statuses => { const next = {}; for (const r of statuses) next[r.path] = r; reports = next; }, () => {});
+            app.invoke("plugin_imports", {}, result => { const next = {}; for (const i of result.imports || []) next[i.source] = i; imports = next; }, () => imports = ({}));
         }, e => {
             busy = false; entries = [];
             // A folder deleted from under us drops back to the top.
@@ -102,6 +104,15 @@ Rectangle {
         else if (name !== d.name) run("rename_asset", { path: d.path, name: name });
     }
     function report(entry) { return reports[entry.path] || null; }
+    // What a plugin's importer made of a file, and whether it is current.
+    function imported(entry) { return imports[entry.path] || null; }
+    function importStale(entry) { const i = imported(entry); return !!i && i.state !== "fresh"; }
+    readonly property var staleImports: Object.values(imports).filter(i => i.state !== "fresh" && i.state !== "source_missing")
+    function importText(i) {
+        const names = { fresh: "up to date", source_changed: "the file changed since", dependency_changed: "a file it read changed",
+                        output_missing: "something it made is missing", output_edited: "something it made was edited by hand", source_missing: "the file is gone" };
+        return "Imported by " + i.plugin + "/" + i.importer + ": " + (names[i.state] || i.state);
+    }
     // Double-clicking a scene file opens it; its filename is the scene name.
     function openSceneAsset(entry) {
         const scenes = root.appState.project ? root.appState.project.scenes : [];
@@ -286,7 +297,7 @@ Rectangle {
                             active: root.selected === modelData.path || root.dropTarget === modelData.path
                             ToolTip.visible: tileHoverTip.hovered && !renaming
                             ToolTip.delay: 700
-                            ToolTip.text: modelData.path + (modelData.kind === "folder" ? "" : " · " + root.fileSize(modelData.size)) + (root.report(modelData) ? "\n" + root.report(modelData).summary : "")
+                            ToolTip.text: modelData.path + (modelData.kind === "folder" ? "" : " · " + root.fileSize(modelData.size)) + (root.report(modelData) ? "\n" + root.report(modelData).summary : "") + (root.imported(modelData) ? "\n" + root.importText(root.imported(modelData)) : "")
                             HoverHandler { id: tileHoverTip }
                             Image {
                                 id: thumb
@@ -298,6 +309,12 @@ Rectangle {
                             }
                             LucideIcon { visible: !thumb.visible; anchors.horizontalCenter: parent.horizontalCenter; y: 14; name: root.icons[tile.modelData.kind] || "file"; width: 30; height: 30; color: tile.modelData.kind === "folder" ? Theme.accent : Theme.textDim }
                             Rectangle { visible: !!root.report(tile.modelData) && root.report(tile.modelData).dirty; x: parent.width - 18; y: 8; width: 8; height: 8; radius: 4; color: Theme.warning }
+                            Rectangle {
+                                objectName: "import-badge"
+                                visible: !!root.imported(tile.modelData)
+                                x: 8; y: 8; width: 8; height: 8; radius: 4
+                                color: root.importStale(tile.modelData) ? Theme.warning : Theme.accent
+                            }
                             Text {
                                 visible: !tile.renaming
                                 anchors.left: parent.left; anchors.right: parent.right; anchors.margins: 4; y: 58
@@ -388,6 +405,16 @@ Rectangle {
             onTriggered: root.run("reimport_assets", { paths: Object.values(root.reports).filter(r => r.dirty).map(r => r.path) })
         }
         BwMenuItem { visible: !!root.menuEntry && !!root.report(root.menuEntry) && root.report(root.menuEntry).dirty; iconName: "sparkles"; text: "Reimport this file"; onTriggered: root.run("reimport_assets", { paths: [root.menuEntry.path] }) }
+        BwMenuItem {
+            visible: !root.menuEntry && root.staleImports.length > 0
+            iconName: "plug-zap"; text: "Update plugin imports"
+            onTriggered: root.run("plugin_reimport", {})
+        }
+        BwMenuItem {
+            visible: !!root.menuEntry && !!root.imported(root.menuEntry)
+            iconName: "plug-zap"; text: root.menuEntry && root.importStale(root.menuEntry) ? "Import again (plugin)" : "Import again with the plugin"
+            onTriggered: root.run("plugin_reimport", { path: root.menuEntry.path })
+        }
         BwMenuItem { visible: root.canRole("texture"); iconName: "image"; text: "Import as texture"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "auto" }) }
         BwMenuItem { visible: root.canRole("heightmap"); iconName: "trending-up"; text: "Import as heightmap"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "heightmap" }) }
         BwMenuItem { visible: root.canRole("cookie"); iconName: "sun"; text: "Import as light cookie"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "cookie" }) }

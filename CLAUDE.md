@@ -551,7 +551,11 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   target and the asset list, stages the files under `.blockloom/cooked/`, and
   `BuildOptions::extras` (`ExtraFile`) copies them to
   `game/plugins/<id>/cooked/` (refusing an escape or an overwrite); an error
-  from a hook stops the build, and Android builds refuse extras. A package
+  from a hook stops the build, and Android builds ship them in the APK's assets
+  like desktop ones. `plugin-reimport` imports again what a source, dependency or
+  output change left stale (an output edited by hand only when named); Play and
+  Build call it first (`plugins::refresh_imports`, owner only), and the asset
+  tray marks imported files and offers it. A package
   that is only importers and hooks is an editor tool and is not shipped.
   `plugins/examples/palette` imports GIMP `.gpl` palettes as a one-row
   `palette.png` (stored-deflate PNG, no compressor) plus `palette.json`, and
