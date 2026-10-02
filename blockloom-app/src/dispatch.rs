@@ -493,6 +493,10 @@ impl Backend {
                 arg(&args, "name")?,
                 arg(&args, "path")?,
             )?),
+            "plugin_data_gc" => to_json(commands::plugins::plugin_data_gc(
+                state,
+                arg(&args, "dryRun").unwrap_or_default(),
+            )?),
             "plugin_gc" => to_json(commands::plugins::plugin_gc(state)?),
             "plugin_inspect" => to_json(commands::plugins::plugin_inspect(arg(&args, "path")?)?),
             "plugin_new" => to_json(commands::plugins::plugin_new(
@@ -501,6 +505,11 @@ impl Backend {
                 arg(&args, "name")?,
                 arg(&args, "template")?,
                 arg(&args, "sdk")?,
+            )?),
+            "plugin_add_native" => to_json(commands::plugins::plugin_add_native(
+                arg(&args, "path")?,
+                arg(&args, "target")?,
+                arg(&args, "library")?,
             )?),
             "plugin_seal" => to_json(commands::plugins::plugin_seal(arg(&args, "path")?)?),
             "plugin_publish" => to_json(commands::plugins::plugin_publish(

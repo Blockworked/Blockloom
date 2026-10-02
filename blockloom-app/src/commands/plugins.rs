@@ -993,6 +993,82 @@ pub(crate) fn plugin_gc(state: &SharedState) -> Result<Value, String> {
     Ok(json!({ "removed": removed }))
 }
 
+/// Removes content blobs no record, stored key or other blob of their plugin
+/// names, from the project's plugin data and its player saves.
+pub(crate) fn plugin_data_gc(state: &SharedState, dry_run: bool) -> Result<Value, String> {
+    use blockloom_plugin_host::storage::{BlobStore, DiskStore, blob_refs, collect_blobs};
+    use std::collections::BTreeMap;
+    let (dir, project_id, named) = {
+        let s = lock(state)?;
+        if s.running {
+            return Err(
+                "Stop the game first: a running plugin may hold blobs it has not named yet"
+                    .to_string(),
+            );
+        }
+        let project = s.project().ok_or("No project is open")?;
+        let dir = s.project_dir().ok_or("No project is open")?.to_path_buf();
+        let mut named: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let records = project
+            .actors
+            .iter()
+            .flat_map(|a| a.components.plugin_records())
+            .chain(project.plugin_resources.iter());
+        for record in records {
+            blob_refs(
+                &record.payload,
+                named.entry(record.plugin.clone()).or_default(),
+            );
+        }
+        (dir, project.id.clone(), named)
+    };
+    let stores: [(&str, Box<dyn BlobStore>); 2] = [
+        (
+            "project",
+            Box::new(DiskStore::new(
+                dir.join(blockloom_plugin_api::data::DATA_DIR),
+                false,
+            )),
+        ),
+        (
+            "saves",
+            Box::new(DiskStore::new(
+                blockloom_core::save::path(&project_id).with_extension("plugins"),
+                false,
+            )),
+        ),
+    ];
+    let none = BTreeSet::new();
+    let mut report = Vec::new();
+    for (scope, store) in &stores {
+        let plugins: BTreeSet<String> = store
+            .list("")?
+            .into_iter()
+            .filter_map(|(key, _)| key.split_once('/').map(|(plugin, _)| plugin.to_string()))
+            .collect();
+        for plugin in plugins {
+            // Saves are the player's, so only their own keys and blobs count.
+            let document = if *scope == "project" {
+                named.get(&plugin).unwrap_or(&none)
+            } else {
+                &none
+            };
+            let gc = collect_blobs(store.as_ref(), &plugin, document, dry_run)?;
+            if !gc.removed.is_empty() || gc.kept > 0 {
+                report.push(json!({
+                    "plugin": plugin,
+                    "store": scope,
+                    "kept": gc.kept,
+                    "removed": gc.removed.len(),
+                    "bytes": gc.bytes,
+                }));
+            }
+        }
+    }
+    let bytes: u64 = report.iter().filter_map(|r| r["bytes"].as_u64()).sum();
+    Ok(json!({ "dryRun": dry_run, "stores": report, "bytes": bytes }))
+}
+
 // ─── Author tooling ─────────────────────────────────────────────────────────
 
 /// Recomputes a package folder's file hashes in its `plugin.json` and
@@ -1047,6 +1123,22 @@ pub(crate) fn plugin_new(
         "template": template,
         "files": made.files,
         "sealed": made.sealed,
+    }))
+}
+
+/// Adds a built native library to a package folder's manifest and seals it.
+pub(crate) fn plugin_add_native(
+    path: String,
+    target: String,
+    library: String,
+) -> Result<Value, String> {
+    crate::scaffold::add_native(Path::new(&path), &target, &library)?;
+    let package = package::Package::load(Path::new(&path))?;
+    Ok(json!({
+        "id": package.manifest.id,
+        "target": target,
+        "targets": package.manifest.runtime.native.keys().collect::<Vec<_>>(),
+        "hash": package.content_hash,
     }))
 }
 

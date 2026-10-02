@@ -3036,6 +3036,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        name: "plugin-data-gc",
+        cmd: "plugin_data_gc",
+        aliases: &[],
+        summary: "Remove content blobs (storage put/get) that no plugin record, stored key or other blob names, from the project's plugin data and saves. dryRun=true only reports. Refused while a game runs.",
+        args: &[ArgSpec {
+            name: "dryRun",
+            ty: "bool",
+            required: false,
+        }],
+    },
+    CommandSpec {
         name: "plugin-gc",
         cmd: "plugin_gc",
         aliases: &[],
@@ -3197,7 +3208,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "plugin-new",
         cmd: "plugin_new",
         aliases: &[],
-        summary: "Author tool: write a starter package folder (template declarative, sealed and installable, or portable, a Rust crate with a test harness and build.sh).",
+        summary: "Author tool: write a starter package folder (template declarative, sealed and installable; portable, a Rust crate with a test harness and build.sh; or native, the same crate plus native libraries).",
         args: &[
             ArgSpec {
                 name: "path",
@@ -3216,13 +3227,36 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             },
             ArgSpec {
                 name: "template",
-                ty: "declarative | portable",
+                ty: "declarative | portable | native",
                 required: false,
             },
             ArgSpec {
                 name: "sdk",
                 ty: "folder path",
                 required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "plugin-add-native",
+        cmd: "plugin_add_native",
+        aliases: &[],
+        summary: "Author tool: record a built native library (a file in the package) under a target triple in a package folder's plugin.json, mark it native and seal it.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "folder path",
+                required: true,
+            },
+            ArgSpec {
+                name: "target",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "library",
+                ty: "file path",
+                required: true,
             },
         ],
     },

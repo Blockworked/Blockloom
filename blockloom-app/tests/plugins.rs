@@ -832,3 +832,35 @@ fn the_notes_example_ships_a_screen_and_saves_through_its_command() {
         .unwrap();
     assert_eq!(saved["payload"]["text"], "first draft");
 }
+
+#[test]
+fn data_gc_removes_blobs_nothing_names_and_keeps_the_rest() {
+    let root = data_root().join("gc");
+    let backend = Backend::start(AppHandle::new(|_| {}));
+    let invoke = |cmd: &str, args: Value| backend.dispatch(cmd, args).unwrap();
+    invoke(
+        "create_project",
+        json!({"name": "GcProject", "mode": "TwoD", "location": root.join("projects")}),
+    );
+    let data = root
+        .join("projects/GcProject")
+        .join(".blockloom/plugin-data/com.example.store");
+    let hash = |text: &[u8]| blockloom_plugin_host::storage::hash_of(text);
+    let (kept, orphan) = (hash(b"kept"), hash(b"orphan"));
+    std::fs::create_dir_all(data.join("blobs")).unwrap();
+    std::fs::write(data.join("blobs").join(&kept), b"kept").unwrap();
+    std::fs::write(data.join("blobs").join(&orphan), b"orphan").unwrap();
+    std::fs::write(
+        data.join("index.json"),
+        format!("{{\"a\":\"blob:{kept}\"}}"),
+    )
+    .unwrap();
+
+    let dry = invoke("plugin_data_gc", json!({"dryRun": true}));
+    assert_eq!(dry["bytes"], 6, "{dry}");
+    assert!(data.join("blobs").join(&orphan).is_file());
+    let done = invoke("plugin_data_gc", json!({}));
+    assert_eq!(done["stores"][0]["removed"], 1, "{done}");
+    assert!(!data.join("blobs").join(&orphan).exists());
+    assert!(data.join("blobs").join(&kept).is_file());
+}

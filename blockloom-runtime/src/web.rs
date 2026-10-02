@@ -302,6 +302,47 @@ pub(crate) fn store_save(project_id: &str, data: &SaveData) -> Result<(), String
         .map_err(|_| "this browser won't keep saves".to_string())
 }
 
+/// localStorage as the plain table plugin saves are kept in.
+pub(crate) struct LocalKv;
+
+impl blockloom_plugin_host::storage::KvBackend for LocalKv {
+    fn get(&self, key: &str) -> Result<Option<String>, String> {
+        let store = storage().ok_or("this browser won't keep saves")?;
+        store
+            .get_item(key)
+            .map_err(|_| "could not read a save".to_string())
+    }
+
+    fn set(&self, key: &str, value: &str) -> Result<(), String> {
+        let store = storage().ok_or("this browser won't keep saves")?;
+        store
+            .set_item(key, value)
+            .map_err(|_| "this browser has no room for that save".to_string())
+    }
+
+    fn remove(&self, key: &str) -> Result<(), String> {
+        let store = storage().ok_or("this browser won't keep saves")?;
+        store
+            .remove_item(key)
+            .map_err(|_| "could not remove a save".to_string())
+    }
+
+    fn keys(&self) -> Result<Vec<String>, String> {
+        let store = storage().ok_or("this browser won't keep saves")?;
+        let count = store
+            .length()
+            .map_err(|_| "could not list saves".to_string())?;
+        Ok((0..count)
+            .filter_map(|i| store.key(i).ok().flatten())
+            .collect())
+    }
+}
+
+/// A project's plugin saves, kept beside its variable saves.
+pub(crate) fn plugin_save_prefix(project_id: &str) -> String {
+    format!("blockloom-plugin-save:{project_id}/")
+}
+
 fn save_key(project_id: &str) -> String {
     format!("blockloom-save:{project_id}")
 }

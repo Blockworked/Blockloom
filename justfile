@@ -383,10 +383,12 @@ blockstitch-published commit="": prepare-patched-deps
 
 [linux]
 install:
-    # The editor starts `blockloom-runtime` from beside itself, so both live
+    # The editor starts `blockloom-runtime` (and the plugin worker) from beside itself, so all live
     # in a private libdir with a symlink on the PATH.
     sudo install -Dm0755 {{TARGET}} {{LIBDIR}}/blockloom
     sudo install -Dm0755 target/release/blockloom-runtime {{LIBDIR}}/blockloom-runtime
+    # Native plugins load in this worker when BLOCKLOOM_PLUGIN_ISOLATION is set.
+    sudo install -Dm0755 target/release/blockloom-plugin-worker {{LIBDIR}}/blockloom-plugin-worker
     sudo ln -sf {{LIBDIR}}/blockloom /usr/bin/blockloom
     sudo install -Dm0644 res/blockloom.desktop /usr/share/applications/com.blockworked.Blockloom.desktop
     sudo install -Dm0644 res/icons/blockloom.png /usr/share/icons/hicolor/256x256/apps/blockloom.png

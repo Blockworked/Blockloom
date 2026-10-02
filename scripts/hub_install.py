@@ -103,6 +103,7 @@ def stage(source, destination, manifest=None, replace=False, build_output=False,
             if build_output and not (
                 item.name in ("blockloom", "blockloom.exe", "blockloom-runtime",
                               "blockloom-runtime.exe", "blockloom-shell", "blockloom-shell.exe",
+                              "blockloom-plugin-worker", "blockloom-plugin-worker.exe",
                               "players", "plugins", "qml", "qt.conf")
                 or item.suffix in (".dll", ".dylib") or ".so" in item.name
             ):

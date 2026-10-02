@@ -156,7 +156,7 @@ fn manifest(id: &str, name: &str, template: &str, slug: &str) -> Value {
         "tier": template,
         "contributions": [format!("schemas/{slug}.json")],
     });
-    if template == "portable" {
+    if template != "declarative" {
         manifest["abi"] = json!(versions::PLUGIN_ABI);
         manifest["sdk"] = json!("^0.0");
         manifest["runtime"] = json!({
@@ -166,6 +166,9 @@ fn manifest(id: &str, name: &str, template: &str, slug: &str) -> Value {
                 "call_limit_ms": 20
             }
         });
+    }
+    if template == "native" {
+        manifest["capabilities"] = json!(["native-execution"]);
     }
     manifest
 }
@@ -199,7 +202,33 @@ lto = true
     )
 }
 
-fn build_script(slug: &str) -> String {
+fn build_script(slug: &str, template: &str) -> String {
+    if template == "native" {
+        return format!(
+            r#"#!/bin/sh
+# Builds the portable module (the web, Android and fallback) and this machine's
+# native library into the package, then seals it. Run it on each platform, or
+# with TARGET=<triple> for a cross build, to add that target. Needs
+# `rustup target add wasm32-unknown-unknown` and blockloom-shell on PATH (or set
+# BLOCKLOOM_SHELL).
+set -eu
+SHELL_BIN="${{BLOCKLOOM_SHELL:-blockloom-shell}}"
+TARGET="${{TARGET:-$(rustc -vV | sed -n 's/^host: //p')}}"
+cargo build --release --target wasm32-unknown-unknown
+mkdir -p portable
+cp target/wasm32-unknown-unknown/release/{slug}.wasm portable/{slug}.wasm
+cargo build --release --target "$TARGET"
+case "$TARGET" in
+  *windows*) lib={slug}.dll ;;
+  *apple*) lib=lib{slug}.dylib ;;
+  *) lib=lib{slug}.so ;;
+esac
+mkdir -p "native/$TARGET"
+cp "target/$TARGET/release/$lib" "native/$TARGET/$lib"
+"$SHELL_BIN" --no-state --eval "plugin-add-native path=\"$(pwd)\" target=$TARGET library=native/$TARGET/$lib"
+"#
+        );
+    }
     format!(
         r#"#!/bin/sh
 # Builds the portable module into the package and seals it. Needs
@@ -209,7 +238,7 @@ set -eu
 cargo build --release --target wasm32-unknown-unknown
 mkdir -p portable
 cp target/wasm32-unknown-unknown/release/{slug}.wasm portable/{slug}.wasm
-"${{BLOCKLOOM_SHELL:-blockloom-shell}}" --no-state --eval "plugin-seal path=$(pwd)"
+"${{BLOCKLOOM_SHELL:-blockloom-shell}}" --no-state --eval "plugin-seal path=\"$(pwd)\""
 "#
     )
 }
@@ -221,13 +250,25 @@ fn readme(name: &str, id: &str, template: &str, slug: &str) -> String {
              Edit `schemas/{slug}.json`, then reseal:\n\n    blockloom-shell --no-state --eval 'plugin-seal path=.'\n\n\
              Install it in a project with `plugin-install id={id} source=path:<this folder>`.\n"
         )
+    } else if template == "native" {
+        format!(
+            "# {name}\n\nA native plugin (`{id}`): Rust in `src/lib.rs`, schemas in `schemas/{slug}.json`. \
+             It ships a native library per target and the same code as a portable module, so it also runs \
+             where libraries cannot load (the web, Android) and wherever no library is built. A project that \
+             installs it must trust its native code (the `native-execution` capability).\n\n\
+             - `cargo test` runs it through the SDK harness.\n\
+             - `./build.sh` builds the wasm module and this machine's library and seals the package. Run it on each \
+             platform you ship (or `TARGET=<triple> ./build.sh` to cross build) and every target is kept.\n\
+             - `plugin-install id={id} source=path:<this folder>` adds it to a project.\n\n\
+             Native code runs in the editor's process: set `BLOCKLOOM_PLUGIN_ISOLATION=process` to host it out of process.\n"
+        )
     } else {
         format!(
             "# {name}\n\nA portable plugin (`{id}`): Rust in `src/lib.rs`, schemas in `schemas/{slug}.json`.\n\n\
              - `cargo test` runs it through the SDK harness (`blockloom-plugin-sdk` feature `testing`).\n\
              - `./build.sh` builds the wasm module and seals the package.\n\
              - `plugin-install id={id} source=path:<this folder>` adds it to a project.\n\n\
-             The same crate also builds as a native library (`cargo build --release`); see the plugin guide for native packages.\n"
+             `plugin-new template=native` makes the same crate with native libraries as well.\n"
         )
     }
 }
@@ -246,8 +287,8 @@ jobs:
 "#
 }
 
-/// Writes a new package folder at `path`. `template` is `declarative` or
-/// `portable`; `sdk` is a checkout path or git URL for the portable crate's SDK.
+/// Writes a new package folder at `path`. `template` is `declarative`,
+/// `portable` or `native` (a portable module plus native libraries); `sdk` is a checkout path or git URL for the portable crate's SDK.
 pub fn plugin_new(
     path: &Path,
     id: &str,
@@ -259,9 +300,9 @@ pub fn plugin_new(
     if name.trim().is_empty() {
         return Err("a plugin needs a name".to_string());
     }
-    if !matches!(template, "declarative" | "portable") {
+    if !matches!(template, "declarative" | "portable" | "native") {
         return Err(format!(
-            "template must be declarative or portable, not \"{template}\""
+            "template must be declarative, portable or native, not \"{template}\""
         ));
     }
     if path.exists()
@@ -297,10 +338,10 @@ pub fn plugin_new(
         "README.md",
         &readme(name, id, template, &slug),
     )?;
-    if template == "portable" {
+    if template != "declarative" {
         write(path, &mut files, "Cargo.toml", &cargo_toml(&slug, sdk))?;
         write(path, &mut files, "src/lib.rs", STARTER_SOURCE)?;
-        write(path, &mut files, "build.sh", &build_script(&slug))?;
+        write(path, &mut files, "build.sh", &build_script(&slug, template))?;
         write(path, &mut files, ".gitignore", "target/\n")?;
         write(path, &mut files, ".github/workflows/plugin.yml", workflow())?;
     }
@@ -319,6 +360,41 @@ pub fn plugin_new(
         contributions.check_definition()?;
     }
     Ok(Scaffold { files, sealed })
+}
+
+/// Records a native library in a package's manifest under its target triple
+/// and seals the package. The library is a file already in the package.
+pub fn add_native(root: &Path, target: &str, library: &str) -> Result<(), String> {
+    blockloom_plugin_api::id::validate_package_path(library)?;
+    if target.is_empty()
+        || !target
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+    {
+        return Err(format!("\"{target}\" is not a target triple"));
+    }
+    if !root.join(library).is_file() {
+        return Err(format!("{library} is not a file in the package"));
+    }
+    let path = root.join(MANIFEST_FILE);
+    let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut manifest: Value =
+        serde_json::from_str(&text).map_err(|e| format!("{MANIFEST_FILE}: {e}"))?;
+    if manifest["tier"] == "declarative" {
+        return Err("a declarative package has no code to add a library to".to_string());
+    }
+    manifest["tier"] = json!("native");
+    manifest["runtime"]["native"][target] = json!({"library": library});
+    let mut capabilities: Vec<Value> = manifest["capabilities"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !capabilities.iter().any(|c| c == "native-execution") {
+        capabilities.push(json!("native-execution"));
+    }
+    manifest["capabilities"] = Value::Array(capabilities);
+    fs::write(&path, pretty(&manifest)).map_err(|e| format!("{}: {e}", path.display()))?;
+    package::seal(root)
 }
 
 #[cfg(test)]
@@ -361,8 +437,51 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("x");
         assert!(plugin_new(&root, "nodots", "X", "declarative", None).is_err());
-        assert!(plugin_new(&root, "com.example.x", "X", "native", None).is_err());
+        assert!(plugin_new(&root, "com.example.x", "X", "adapter", None).is_err());
         plugin_new(&root, "com.example.x", "X", "declarative", None).unwrap();
         assert!(plugin_new(&root, "com.example.x", "X", "declarative", None).is_err());
+    }
+
+    #[test]
+    fn a_native_package_gains_a_target_when_a_library_is_added_and_sealed() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("greeter");
+        let made = plugin_new(&root, "com.example.greeter", "Greeter", "native", None).unwrap();
+        assert!(!made.sealed);
+        let build = fs::read_to_string(root.join("build.sh")).unwrap();
+        assert!(build.contains("plugin-add-native"), "{build}");
+        // The script has to at least parse (skipped where there is no sh).
+        if let Ok(out) = std::process::Command::new("sh")
+            .arg("-n")
+            .arg(root.join("build.sh"))
+            .output()
+        {
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let manifest: Value =
+            serde_json::from_str(&fs::read_to_string(root.join("plugin.json")).unwrap()).unwrap();
+        assert_eq!(manifest["tier"], "native");
+        assert_eq!(manifest["capabilities"][0], "native-execution");
+        // Stand-ins for what build.sh produces.
+        fs::create_dir_all(root.join("portable")).unwrap();
+        fs::write(root.join("portable/greeter.wasm"), b"\0asm").unwrap();
+        let triple = "x86_64-unknown-linux-gnu";
+        fs::create_dir_all(root.join("native").join(triple)).unwrap();
+        fs::write(
+            root.join("native").join(triple).join("libgreeter.so"),
+            b"elf",
+        )
+        .unwrap();
+        let library = format!("native/{triple}/libgreeter.so");
+        add_native(&root, triple, &library).unwrap();
+        let package = package::Package::load(&root).unwrap();
+        assert!(package.target_hashes().contains_key(triple));
+        assert!(package.target_hashes().contains_key("portable"));
+        assert!(add_native(&root, triple, "native/missing.so").is_err());
+        assert!(add_native(&root, "bad triple", &library).is_err());
     }
 }

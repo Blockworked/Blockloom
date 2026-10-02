@@ -16,7 +16,8 @@ def archive_outputs(component):
     suffix = ".exe" if os.name == "nt" else ""
     if component == "editor":
         paths = [directory / (name + suffix) for name in
-                 ("blockloom", "blockloom-hub", "blockloom-runtime", "blockloom-shell")]
+                 ("blockloom", "blockloom-hub", "blockloom-runtime", "blockloom-shell",
+                  "blockloom-plugin-worker")]
         paths += [path for path in directory.iterdir()
                   if path.suffix in (".dll", ".dylib") or ".so" in path.name]
     else:

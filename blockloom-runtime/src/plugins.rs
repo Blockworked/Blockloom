@@ -349,9 +349,12 @@ fn host_services(engine: &Engine) -> blockloom_plugin_host::services::HostServic
         };
         host = host.with_project_store(store);
     }
-    // The browser keeps variable saves in localStorage; plugin saves last the run there.
+    // The browser keeps plugin saves in localStorage beside the variable saves.
     #[cfg(target_arch = "wasm32")]
-    let saves: Arc<dyn BlobStore> = Arc::new(blockloom_plugin_host::storage::MemoryStore::new());
+    let saves: Arc<dyn BlobStore> = Arc::new(blockloom_plugin_host::storage::KvStore::new(
+        crate::web::LocalKv,
+        crate::web::plugin_save_prefix(&engine.project.id),
+    ));
     #[cfg(not(target_arch = "wasm32"))]
     let saves: Arc<dyn BlobStore> =
         Arc::new(DiskStore::new(save_dir_for(&engine.project.id), false));

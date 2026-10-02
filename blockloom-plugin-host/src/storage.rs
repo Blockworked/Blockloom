@@ -333,6 +333,97 @@ impl BlobStore for MemoryStore {
     }
 }
 
+/// A flat string-to-string table, which is all a browser's localStorage is.
+pub trait KvBackend: Send + Sync {
+    fn get(&self, key: &str) -> Result<Option<String>, String>;
+    fn set(&self, key: &str, value: &str) -> Result<(), String>;
+    fn remove(&self, key: &str) -> Result<(), String>;
+    fn keys(&self) -> Result<Vec<String>, String>;
+}
+
+/// A [`BlobStore`] over a [`KvBackend`], under one key prefix. Bytes are kept
+/// as base64. A commit remembers what it overwrote and puts it back if a write
+/// is refused (a full quota), so it is all or nothing like the folder's.
+pub struct KvStore<B: KvBackend> {
+    backend: B,
+    prefix: String,
+}
+
+impl<B: KvBackend> KvStore<B> {
+    pub fn new(backend: B, prefix: impl Into<String>) -> Self {
+        Self {
+            backend,
+            prefix: prefix.into(),
+        }
+    }
+
+    fn slot(&self, key: &str) -> String {
+        format!("{}{key}", self.prefix)
+    }
+
+    fn decode(text: &str) -> Result<Vec<u8>, String> {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD
+            .decode(text)
+            .map_err(|e| format!("a stored value is not base64: {e}"))
+    }
+}
+
+impl<B: KvBackend> BlobStore for KvStore<B> {
+    fn read(&self, key: &str) -> Result<Option<Vec<u8>>, String> {
+        self.backend
+            .get(&self.slot(key))?
+            .map(|text| Self::decode(&text))
+            .transpose()
+    }
+
+    fn list(&self, prefix: &str) -> Result<Vec<(String, u64)>, String> {
+        let mut out = Vec::new();
+        for slot in self.backend.keys()? {
+            let Some(key) = slot.strip_prefix(&self.prefix) else {
+                continue;
+            };
+            if !key.starts_with(prefix) {
+                continue;
+            }
+            if let Some(text) = self.backend.get(&slot)? {
+                out.push((key.to_string(), Self::decode(&text)?.len() as u64));
+            }
+        }
+        out.sort();
+        Ok(out)
+    }
+
+    fn commit(&self, ops: &[BlobOp]) -> Result<(), String> {
+        use base64::Engine as _;
+        let mut undo: Vec<(String, Option<String>)> = Vec::new();
+        let apply = |op: &BlobOp, undo: &mut Vec<(String, Option<String>)>| {
+            let slot = self.slot(op.key());
+            undo.push((slot.clone(), self.backend.get(&slot)?));
+            match op {
+                BlobOp::Write { data, .. } => self.backend.set(
+                    &slot,
+                    &base64::engine::general_purpose::STANDARD.encode(data),
+                ),
+                BlobOp::Delete { .. } => self.backend.remove(&slot),
+            }
+        };
+        for op in ops {
+            if let Err(e) = apply(op, &mut undo) {
+                // Oldest first would restore a later write's first value last.
+                for (slot, old) in undo.into_iter().rev() {
+                    let _ = match old {
+                        Some(text) => self.backend.set(&slot, &text),
+                        None => self.backend.remove(&slot),
+                    };
+                }
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Checks a batch against `limits` for `plugin`'s namespace and applies it.
 /// `ops` carry keys relative to the plugin; the namespace is added here.
 pub fn commit_for(
@@ -423,6 +514,90 @@ pub fn unreferenced_blobs(
                 .is_some_and(|hash| is_hash(hash) && !referenced.contains(hash))
         })
         .collect())
+}
+
+/// Every `blob:<sha256>` named anywhere in `bytes`, text or not.
+pub fn blob_refs_in_bytes(bytes: &[u8], out: &mut std::collections::BTreeSet<String>) {
+    const TAG: &[u8] = b"blob:";
+    let mut at = 0;
+    while let Some(found) = bytes[at..].windows(TAG.len()).position(|w| w == TAG) {
+        let start = at + found + TAG.len();
+        if let Some(hash) = bytes.get(start..start + 64)
+            && hash.iter().all(u8::is_ascii_hexdigit)
+            && !bytes.get(start + 64).is_some_and(u8::is_ascii_hexdigit)
+        {
+            out.insert(String::from_utf8_lossy(hash).to_ascii_lowercase());
+        }
+        at = start;
+    }
+}
+
+/// What a blob collection did to one plugin's store.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BlobGc {
+    pub kept: usize,
+    pub removed: Vec<String>,
+    pub bytes: u64,
+}
+
+/// Removes the content blobs of `plugin` that nothing reaches. Roots are
+/// `document` (hashes the project's own records name) and every other key the
+/// plugin has stored; a reached blob is read too, so blobs may name blobs.
+/// With `dry_run` it only reports. Run it while nothing is playing: a blob
+/// written but not yet named anywhere is garbage until it is.
+pub fn collect_blobs(
+    store: &dyn BlobStore,
+    plugin: &str,
+    document: &std::collections::BTreeSet<String>,
+    dry_run: bool,
+) -> Result<BlobGc, String> {
+    use std::collections::BTreeSet;
+    let prefix = format!("{plugin}/");
+    let blob_prefix = format!("{plugin}/blobs/");
+    let mut reached: BTreeSet<String> = document.clone();
+    for (key, _) in store.list(&prefix)? {
+        if key.starts_with(&blob_prefix) {
+            continue;
+        }
+        if let Some(data) = store.read(&key)? {
+            blob_refs_in_bytes(&data, &mut reached);
+        }
+    }
+    let mut queue: Vec<String> = reached.iter().cloned().collect();
+    while let Some(hash) = queue.pop() {
+        let Some(data) = store.read(&format!("{blob_prefix}{hash}"))? else {
+            continue;
+        };
+        let mut inner = BTreeSet::new();
+        blob_refs_in_bytes(&data, &mut inner);
+        for next in inner {
+            if reached.insert(next.clone()) {
+                queue.push(next);
+            }
+        }
+    }
+    let dead = unreferenced_blobs(store, plugin, &reached)?;
+    let total = store
+        .list(&blob_prefix)?
+        .into_iter()
+        .filter(|(key, _)| key.strip_prefix(&blob_prefix).is_some_and(is_hash))
+        .count();
+    let report = BlobGc {
+        kept: total - dead.len(),
+        bytes: dead.iter().map(|(_, size)| size).sum(),
+        removed: dead
+            .iter()
+            .filter_map(|(key, _)| key.strip_prefix(&blob_prefix).map(str::to_string))
+            .collect(),
+    };
+    if !dry_run && !dead.is_empty() {
+        let ops: Vec<BlobOp> = dead
+            .into_iter()
+            .map(|(key, _)| BlobOp::Delete { key })
+            .collect();
+        store.commit(&ops)?;
+    }
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -575,5 +750,144 @@ mod tests {
         let gone = unreferenced_blobs(&store, "p", &referenced).unwrap();
         assert_eq!(gone.len(), 1);
         assert!(gone[0].0.ends_with(&lost));
+    }
+
+    #[test]
+    fn collecting_blobs_keeps_what_a_key_a_record_or_another_blob_reaches() {
+        let store = MemoryStore::new();
+        let limits = StoreLimits::default();
+        let put = |data: &[u8]| {
+            let hash = hash_of(data);
+            commit_for(
+                &store,
+                "p",
+                &[write(&format!("blobs/{hash}"), data)],
+                &limits,
+            )
+            .unwrap();
+            hash
+        };
+        let leaf = put(b"leaf");
+        let by_blob = put(format!("tree blob:{leaf}").as_bytes());
+        let second_orphan = put(b"also nobody");
+        let by_record = put(b"named by the document");
+        let orphan = put(b"nobody wants me");
+        commit_for(
+            &store,
+            "p",
+            &[write(
+                "index.json",
+                format!("{{\"a\":\"blob:{by_blob}\"}}").as_bytes(),
+            )],
+            &limits,
+        )
+        .unwrap();
+        let _ = second_orphan;
+        let document = [by_record.clone()].into_iter().collect();
+        let dry = collect_blobs(&store, "p", &document, true).unwrap();
+        assert_eq!(dry.removed.len(), 2, "{dry:?}");
+        assert!(store.read(&format!("p/blobs/{orphan}")).unwrap().is_some());
+        let done = collect_blobs(&store, "p", &document, false).unwrap();
+        assert_eq!(done.kept, 3);
+        assert!(done.removed.contains(&orphan));
+        assert!(store.read(&format!("p/blobs/{orphan}")).unwrap().is_none());
+        for kept in [&leaf, &by_blob, &by_record] {
+            assert!(store.read(&format!("p/blobs/{kept}")).unwrap().is_some());
+        }
+    }
+
+    #[test]
+    fn a_read_only_store_refuses_collection_but_still_reports_a_dry_run() {
+        let hash = hash_of(b"x");
+        let files = [(format!("p/blobs/{hash}"), b"x".to_vec())]
+            .into_iter()
+            .collect();
+        let store = MemoryStore::read_only(files);
+        let none = Default::default();
+        assert_eq!(
+            collect_blobs(&store, "p", &none, true)
+                .unwrap()
+                .removed
+                .len(),
+            1
+        );
+        assert!(collect_blobs(&store, "p", &none, false).is_err());
+    }
+
+    #[derive(Default)]
+    struct Table {
+        map: Mutex<BTreeMap<String, String>>,
+        /// Refuses a write once this many keys exist, like a full quota.
+        cap: Option<usize>,
+    }
+
+    impl KvBackend for Table {
+        fn get(&self, key: &str) -> Result<Option<String>, String> {
+            Ok(self.map.lock().unwrap().get(key).cloned())
+        }
+        fn set(&self, key: &str, value: &str) -> Result<(), String> {
+            let mut map = self.map.lock().unwrap();
+            if self
+                .cap
+                .is_some_and(|c| !map.contains_key(key) && map.len() >= c)
+            {
+                return Err("quota".to_string());
+            }
+            map.insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+        fn remove(&self, key: &str) -> Result<(), String> {
+            self.map.lock().unwrap().remove(key);
+            Ok(())
+        }
+        fn keys(&self) -> Result<Vec<String>, String> {
+            Ok(self.map.lock().unwrap().keys().cloned().collect())
+        }
+    }
+
+    #[test]
+    fn a_kv_store_round_trips_bytes_under_its_prefix() {
+        let table = Table::default();
+        table.set("other:thing", "x").unwrap();
+        let store = KvStore::new(table, "save:g/");
+        commit_for(
+            &store,
+            "p",
+            &[write("a/one", &[0, 255, 7]), write("two", b"22")],
+            &StoreLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(store.read("p/a/one").unwrap().unwrap(), [0, 255, 7]);
+        let all = store.list("").unwrap();
+        assert_eq!(all, [("p/a/one".to_string(), 3), ("p/two".to_string(), 2)]);
+        assert_eq!(store.list("p/a/").unwrap().len(), 1);
+        commit_for(
+            &store,
+            "p",
+            &[BlobOp::Delete { key: "two".into() }],
+            &StoreLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(store.read("p/two").unwrap(), None);
+    }
+
+    #[test]
+    fn a_refused_kv_write_puts_back_what_the_commit_changed() {
+        let table = Table {
+            cap: Some(1),
+            ..Table::default()
+        };
+        let store = KvStore::new(table, "k/");
+        store.commit(&[write("a", b"old")]).unwrap();
+        let failed = store.commit(&[
+            write("a", b"new"),
+            BlobOp::Delete { key: "a".into() },
+            write("b", b"b"),
+            write("c", b"c"),
+        ]);
+        assert!(failed.is_err());
+        assert_eq!(store.read("a").unwrap().unwrap(), b"old");
+        assert_eq!(store.read("b").unwrap(), None);
+        assert_eq!(store.list("").unwrap().len(), 1);
     }
 }

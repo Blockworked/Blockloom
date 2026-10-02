@@ -74,7 +74,8 @@ class PackageTests(unittest.TestCase):
                 directory = Path("target/release")
                 directory.mkdir(parents=True)
                 suffix = ".exe" if os.name == "nt" else ""
-                for name in ("blockloom", "blockloom-hub", "blockloom-runtime", "blockloom-shell"):
+                for name in ("blockloom", "blockloom-hub", "blockloom-runtime", "blockloom-shell",
+                             "blockloom-plugin-worker"):
                     binary = directory / (name + suffix)
                     binary.write_bytes(b"exe")
                     binary.chmod(0o755)
@@ -88,7 +89,7 @@ class PackageTests(unittest.TestCase):
                     with tarfile.open("build-output.tar") as archive:
                         names = archive.getnames()
                         if component == "editor":
-                            self.assertEqual(len(names), 4)
+                            self.assertEqual(len(names), 5)
                             self.assertEqual(archive.getmember("target/release/blockloom" + suffix).mode & 0o111, 0o111)
                         else:
                             target = "fixture" if component == "native" else "wasm32-unknown-unknown"
