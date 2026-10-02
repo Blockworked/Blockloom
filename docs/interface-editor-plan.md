@@ -1,6 +1,6 @@
 # Interface editor overhaul
 
-Status: implementation started. Phase 0 has a runtime design-session foundation and Interface workspace shell; its preview gate is still open.
+Status: implementation started. Phase 0 has a runtime design session, frame-matched selection and screen isolation in the Interface workspace; its preview gate is still open.
 
 ## Goal
 
@@ -174,12 +174,22 @@ This is a major subsystem project. Do not claim engine-level parity after a cosm
 - Added ID-based click selection and hover/selection outlines from runtime affine transforms, effective visibility, paint order and inherited clips. Picking consumes editor input locally. The approximate rectangle layout and direct tile drag implementation are removed; property edits remain in the inspector.
 - Added Qt Quick tests for transformed/clipped picking, stale metadata, viewport changes, selection without saves/gameplay input and cancellation, plus runtime tests for slot metadata ownership and process viewport restoration. Added an ignored GPU smoke test for a windowless design session.
 
-The next increment is screen isolation and a typed, undoable move/resize transaction. The current preview still shows the idle scene behind the interface.
+### Screen isolation (third increment)
+
+- Added a Screen selector for top-level widget trees, with an All screens option. The hierarchy follows the isolated tree and preserves ID-based selection for its descendants. Removing or reparenting the active root returns to All screens. Adding a new top-level widget also returns to All screens so it remains visible.
+- Design requests accept an optional `screen` root ID. Backend and runtime share validation, reject missing or non-root IDs atomically, and retain the previous preview on invalid requests. Protocol version is now 23; requests without `screen` keep the existing all-widget behavior.
+- Isolation hides other roots only in the temporary runtime manager. The authored document, gameplay visibility, project files, save revisions and undo history stay unchanged. Geometry reports retain all IDs with effective visibility for hidden trees; the retained player layout remains authoritative.
+- Switching screens or documents invalidates the preview revision immediately, including the debounce interval before sending a new request. Picking and overlays wait for matching frame geometry.
+- Added runtime checks for nested visibility, atomic validation, restoration and unchanged Bevy geometry of the selected tree; backend checks for no saves or world restart; and Qt Quick checks for hierarchy membership, selection and stale frames.
+
+The next increment is a typed, undoable move/resize transaction. The current preview still shows the idle scene behind the interface.
 
 Open phase 0 checks: embedded/process rendering and teardown on actual platforms; native presentation timing and process screenshot metadata on actual platforms; viewport resize/DPI/safe-area matrices; real image/font asset loading; screenshot baselines and gameplay input isolation with held inputs. Rotation, text editing/IME, nine-slice and animation capabilities remain unproven. The fixture image node currently has no asset.
 
-To exercise the spike through an attached shell/MCP session, stop the game and send `preview-interface design={"revision":1,"generation":1,"document":{...}}`, then read `interface-layout`. Geometry is asynchronous and initially null. Increase revision for a new draft and generation for a new viewport. Omit `design` to return to the scene view. The Interface viewport shows the rendered UI over the idle scene, and both frame transports carry design revision metadata. Requests may include `viewport: [960,720]` for a physical-pixel resolution. A committed project edit cancels the draft rather than rebasing it.
+To exercise the spike through an attached shell/MCP session, stop the game and send `preview-interface design={"revision":1,"generation":1,"document":{...}}`, then read `interface-layout`. Geometry is asynchronous and initially null. Increase revision for a new draft and generation for a new viewport. Omit `design` to return to the scene view. The Interface viewport shows the rendered UI over the idle scene, and both frame transports carry design revision metadata. Requests may include `viewport: [960,720]` for a physical-pixel resolution and `screen: "root-id"` to isolate a top-level widget tree. Omit `screen` or pass null to show all trees. A committed project edit cancels the draft rather than rebasing it.
 
 Verification for this increment: `cargo check --workspace --offline`; runtime library suite (392 passed, 61 ignored); app/protocol suites (all passed); Qt 6 `qmllint` on the two edited QML files (passed with unqualified-access warnings); formatting and diff checks. Existing attach/audio tests require local socket access outside the sandbox. GPU/platform screenshot checks remain outstanding.
 
 Verification for the second increment: `cargo build --workspace --offline` passed; runtime library suite passed (396 tests, 62 ignored); backend/protocol suites passed; Qt Quick suite passed (43 tests, including viewport interaction tests with a mock frame source); Qt 6 QML lint passed with existing access warnings. The Vulkan design smoke test passed for projects saved with resolution scales of 1.0 and 0.5, checking rendered pixels and matching slot metadata. Formatting and diff checks passed. Actual Qt GPU presentation and process previews on other desktop platforms remain open checks.
+
+Verification for screen isolation: `cargo build --workspace --offline` passed; all four runtime design-session tests passed, including real Bevy geometry before/after isolation; backend/protocol suites passed (59 tests) with local socket access; Qt Quick suite passed (46 tests); Qt 6 QML lint completed with existing warnings. Formatting and diff checks passed. Actual platform presentation and the other phase 0 checks remain open.

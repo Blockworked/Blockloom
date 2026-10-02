@@ -84,6 +84,8 @@ hub-build jobs="": prepare-patched-deps
 hub-install:
     sudo install -Dm0755 target/release/blockloom-hub /usr/lib/blockloom-hub/blockloom-hub
     sudo ln -sf /usr/lib/blockloom-hub/blockloom-hub /usr/bin/blockloom-hub
+    sudo install -Dm0644 res/blockloom-hub.desktop /usr/share/applications/blockloom-hub.desktop
+    sudo install -Dm0644 res/icons/blockloom.png /usr/share/icons/hicolor/256x256/apps/blockloom-hub.png
 
 [windows]
 hub-install:

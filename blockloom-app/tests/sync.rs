@@ -472,6 +472,26 @@ fn interface_preview_never_saves_a_draft_and_cancel_uses_the_same_runtime() {
     );
     assert_eq!(std::fs::read(dir.join("project.blockloom")).unwrap(), saved);
     assert_eq!(blockloom_core::sync::read_revision(&dir), revision);
+    let isolated =
+        json!({"revision": 3, "generation": 1, "document": document, "screen": "screen"});
+    backend
+        .dispatch("preview_interface", json!({"design": isolated}))
+        .unwrap();
+    for screen in ["missing", "nested", ""] {
+        let invalid =
+            json!({"revision": 4, "generation": 1, "document": document, "screen": screen});
+        assert!(
+            backend
+                .dispatch("preview_interface", json!({"design": invalid}))
+                .is_err()
+        );
+    }
+    assert_eq!(
+        backend.dispatch("get_state", json!({})).unwrap()["project"],
+        project
+    );
+    assert_eq!(std::fs::read(dir.join("project.blockloom")).unwrap(), saved);
+    assert_eq!(blockloom_core::sync::read_revision(&dir), revision);
     backend.dispatch("preview_interface", json!({})).unwrap();
     let receiver = host.0.lock().unwrap().take().unwrap();
     let messages: Vec<_> = receiver.try_iter().collect();
@@ -487,7 +507,7 @@ fn interface_preview_never_saves_a_draft_and_cancel_uses_the_same_runtime() {
             .iter()
             .filter(|m| matches!(m, EditorMessage::InterfaceDesign { .. }))
             .count(),
-        2
+        3
     );
     assert!(messages.iter().all(|m| !matches!(m, EditorMessage::Start)));
     assert!(matches!(

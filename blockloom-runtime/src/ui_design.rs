@@ -37,13 +37,7 @@ impl DesignSession {
             manager.clear();
             return Ok(());
         };
-        request.document.validate()?;
-        if request
-            .viewport
-            .is_some_and(|v| v.into_iter().any(|n| !(16..=8192).contains(&n)))
-        {
-            return Err("Interface viewport dimensions must be between 16 and 8192 pixels".into());
-        }
+        request.validate()?;
         if self.request.as_ref().is_some_and(|old| {
             (request.generation, request.revision) <= (old.generation, old.revision)
         }) {
@@ -54,6 +48,17 @@ impl DesignSession {
             None => request.document.clone(),
         };
         manager.load(&document);
+        if let Some(screen) = &request.screen {
+            for widget in &document.widgets {
+                if widget.element.parent.is_empty() && widget.element.id != *screen {
+                    manager.set(
+                        &widget.element.id,
+                        blockloom_core::ui::UiProp::Visible,
+                        &blockloom_core::value::Evaluated::Bool(false),
+                    );
+                }
+            }
+        }
         self.request = Some(request);
         self.last = None;
         Ok(())
@@ -166,6 +171,7 @@ mod tests {
 
     fn fixture(revision: u64) -> InterfaceDesign {
         InterfaceDesign {
+            screen: None,
             viewport: Some([960, 720]),
             revision,
             generation: 1,
@@ -220,6 +226,41 @@ mod tests {
     }
 
     #[test]
+    fn isolation_preserves_document_and_rejects_invalid_screens_atomically() {
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let engine = Engine::new(receiver, Mode::TwoD);
+        let mut manager = UiManager::default();
+        let mut session = DesignSession::default();
+        let mut design = fixture(1);
+        let mut other = design.document.widgets[0].clone();
+        other.element.id = "other".into();
+        design.document.widgets.push(other);
+        design.screen = Some("other".into());
+        let document = design.document.clone();
+        session
+            .apply(Some(design.clone()), &engine, &mut manager)
+            .unwrap();
+        assert_eq!(manager.document, document);
+        assert!(manager.shown(manager.get("other").unwrap()));
+        assert!(!manager.shown(manager.get("screen").unwrap()));
+        assert!(!manager.shown(manager.get("image").unwrap()));
+        for id in ["missing", "nested", ""] {
+            let mut invalid = design.clone();
+            invalid.revision = 2;
+            invalid.screen = Some(id.into());
+            assert!(session.apply(Some(invalid), &engine, &mut manager).is_err());
+            assert_eq!(session.request.as_ref().unwrap(), &design);
+            assert!(!manager.shown(manager.get("image").unwrap()));
+        }
+        design.revision = 2;
+        design.screen = None;
+        session.apply(Some(design), &engine, &mut manager).unwrap();
+        assert_eq!(manager.document, document);
+        assert!(manager.shown(manager.get("image").unwrap()));
+        assert!(manager.shown(manager.get("other").unwrap()));
+    }
+
+    #[test]
     fn design_resizes_and_restores_the_process_window() {
         let mut app = App::new();
         let mut session = DesignSession::default();
@@ -259,8 +300,12 @@ mod tests {
         let engine = Engine::new(receiver, Mode::TwoD);
         let mut manager = UiManager::default();
         let mut session = DesignSession::default();
+        let mut design = fixture(7);
+        let mut other = design.document.widgets[0].clone();
+        other.element.id = "other".into();
+        design.document.widgets.push(other);
         session
-            .apply(Some(fixture(7)), &engine, &mut manager)
+            .apply(Some(design.clone()), &engine, &mut manager)
             .unwrap();
         let mut app = App::new();
         app.add_plugins((
@@ -314,7 +359,7 @@ mod tests {
             .clone()
             .unwrap();
         assert_eq!((layout.revision, layout.generation), (7, 1));
-        assert_eq!(layout.widgets.len(), 6);
+        assert_eq!(layout.widgets.len(), 7);
         for widget in &layout.widgets {
             let entity = app
                 .world()
@@ -331,6 +376,36 @@ mod tests {
         let find = |id: &str| layout.widgets.iter().find(|w| w.id == id).unwrap();
         assert!(find("slider").transform[5] > find("nested").transform[5]);
         assert!(find("list").paint_order > find("slider").paint_order);
+        design.revision = 8;
+        design.screen = Some("screen".into());
+        app.world_mut()
+            .resource_scope(|world, mut session: Mut<DesignSession>| {
+                world.resource_scope(|world, mut manager: Mut<UiManager>| {
+                    session
+                        .apply(Some(design), world.non_send::<Engine>(), &mut manager)
+                        .unwrap();
+                });
+            });
+        for _ in 0..6 {
+            app.update();
+        }
+        let isolated = app
+            .world()
+            .resource::<DesignSession>()
+            .last
+            .as_ref()
+            .unwrap();
+        assert_eq!(isolated.revision, 8);
+        for before in &layout.widgets {
+            let after = isolated.widgets.iter().find(|w| w.id == before.id).unwrap();
+            if before.id == "other" {
+                assert!(!after.visible);
+            } else {
+                assert_eq!(after.size, before.size);
+                assert_eq!(after.transform, before.transform);
+                assert_eq!(after.visible, before.visible);
+            }
+        }
         assert!(!app.world().non_send::<Engine>().running);
     }
 }

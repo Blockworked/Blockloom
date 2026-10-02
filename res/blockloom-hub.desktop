@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Blockloom Hub
+GenericName=Blockloom project and installation manager
+Comment=Manage Blockloom projects and editor installations
+Exec=blockloom-hub
+Icon=blockloom-hub
+Terminal=false
+Categories=Development;IDE;
+StartupWMClass=blockloom-hub

@@ -944,6 +944,7 @@ mod tests {
         session
             .apply(
                 Some(blockloom_protocol::InterfaceDesign {
+                    screen: None,
                     viewport: None,
                     revision: 1,
                     generation: 1,

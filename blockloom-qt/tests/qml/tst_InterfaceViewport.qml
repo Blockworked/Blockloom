@@ -63,4 +63,39 @@ TestCase {
         panel.visible = false;
         verify(calls.some(c => c.command === "preview_interface" && !c.args.design));
     }
+    function test_screen_isolation_invalidates_geometry_without_saving() {
+        panel.selectedId = "front";
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
+        verify(panel.layoutReady);
+        const oldRevision = panel.revision;
+        panel.screenId = "back";
+        panel.receiveLayout(JSON.stringify(geometry(oldRevision, panel.generation)));
+        verify(!panel.layoutReady);
+        compare(panel.selectedId, "");
+        compare(panel.screenWidgets.length, 1);
+        const revision = panel.revision;
+        tryVerify(() => panel.revision > revision);
+        compare(calls[calls.length - 1].args.design.screen, "back");
+        compare(calls[calls.length - 1].args.design.document.widgets.length, 2);
+        verify(!calls.some(c => c.command === "set_interface" || c.command === "preview_input"));
+        panel.document = {widgets: [{element: {id: "front", kind: "Label"}}]};
+        compare(panel.screenId, "");
+    }
+    function test_screen_membership_follows_nested_parents_and_ids() {
+        panel.document = {widgets: [
+            {element: {id: "child", parent: "parent"}},
+            {element: {id: "front"}},
+            {element: {id: "parent", parent: "back"}},
+            {element: {id: "back"}}
+        ]};
+        panel.selectedId = "child";
+        panel.screenId = "back";
+        compare(panel.selectedId, "child");
+        compare(panel.screenWidgets.map(w => w.element.id).join(","), "child,parent,back");
+        panel.screenId = "front";
+        compare(panel.selectedId, "");
+        compare(panel.screenWidgets.length, 1);
+        panel.screenId = "";
+        compare(panel.screenWidgets.length, 4);
+    }
 }

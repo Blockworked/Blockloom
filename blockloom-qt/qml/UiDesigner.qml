@@ -10,6 +10,27 @@ Item {
     required property var app
     property var document: ({widgets: [], styles: {}, prefabs: {}, reference_size: [960,720], safe_area: [0,0,0,0], theme: "Dark", scale: "ConstantPixel"})
     property string selectedId: ""
+    property string screenId: ""
+    readonly property var screens: document.widgets.filter(w => !w.element.parent).map(w => w.element.id)
+    readonly property var screenWidgets: document.widgets.filter(w => inScreen(w.element.id))
+    function inScreen(id) {
+        if (!screenId) return true;
+        let current = document.widgets.find(w => w.element.id === id);
+        const visited = [];
+        while (current && visited.indexOf(current.element.id) < 0) {
+            if (current.element.id === screenId) return true;
+            visited.push(current.element.id);
+            current = document.widgets.find(w => w.element.id === current.element.parent);
+        }
+        return false;
+    }
+    onScreenIdChanged: {
+        ++revision;
+        frameLayout = null;
+        hoveredId = "";
+        if (!inScreen(selectedId)) selectedId = "";
+        if (designing) previewDelay.restart();
+    }
     readonly property int selected: document.widgets.findIndex(w => w.element.id === selectedId)
     property string error: ""
     readonly property bool designing: visible && app.appState.running !== true
@@ -31,7 +52,7 @@ Item {
         ++revision;
         frameLayout = null;
         app.invoke("preview_interface", {design: {revision: revision, generation: generation,
-            viewport: [previewWidth, previewHeight], document: copy(document)}},
+            viewport: [previewWidth, previewHeight], screen: screenId || null, document: copy(document)}},
             function() { root.error = ""; }, function(e) { root.error = String(e); });
     }
     function updateSession() {
@@ -49,7 +70,13 @@ Item {
         }
     }
     onDesigningChanged: updateSession()
-    onDocumentChanged: if (designing) previewDelay.restart()
+    onDocumentChanged: {
+        ++revision;
+        frameLayout = null;
+        if (screenId && !document.widgets.some(w => w.element.id === screenId && !w.element.parent)) screenId = "";
+        if (!inScreen(selectedId)) selectedId = "";
+        if (designing) previewDelay.restart();
+    }
     onPreviewWidthChanged: { ++generation; frameLayout = null; if (designing) previewDelay.restart(); }
     onPreviewHeightChanged: { ++generation; frameLayout = null; if (designing) previewDelay.restart(); }
     onSelectedIdChanged: overlay.requestPaint()
@@ -104,6 +131,7 @@ Item {
         next.widgets.push({element: {id: id+n, kind: kind, content: ["Label","Button","RichText","Toggle"].indexOf(kind) >= 0 ? kind : "", anchor: "TopLeft", offset: [Math.round(x),Math.round(y)], size: [180, kind === "Panel" || kind === "ListView" ? 180 : 40], parent: "", modal: false, range: [0,100], value: {Number: 0}}, style: {}, bindings: [], items: []});
         // Values use the core's tagged representation; default values can be omitted.
         delete next.widgets[next.widgets.length-1].element.value;
+        screenId = "";
         selectedId = id+n; save(next);
     }
     function removeSelected() {
@@ -141,13 +169,13 @@ Item {
             Label { text: "Hierarchy"; font.bold: true; padding: 8 }
             ListView {
                 Layout.fillWidth: true; Layout.fillHeight: true; clip: true
-                model: root.document.widgets
+                model: root.screenWidgets
                 delegate: ItemDelegate {
                     required property var modelData
                     required property int index
                     width: ListView.view.width; height: 30
                     text: (modelData.element.parent ? "    " : "")+modelData.element.id
-                    highlighted: root.selected === index
+                    highlighted: root.selectedId === modelData.element.id
                     onClicked: root.selectedId=modelData.element.id
                 }
             }
@@ -156,6 +184,13 @@ Item {
         ColumnLayout {
             Layout.fillWidth: true; Layout.fillHeight: true
             RowLayout {
+                Label { text: "Screen" }
+                ComboBox {
+                    objectName: "interfaceScreen"
+                    model: ["All screens"].concat(root.screens)
+                    currentIndex: root.screenId ? root.screens.indexOf(root.screenId) + 1 : 0
+                    onActivated: root.screenId = currentIndex > 0 ? root.screens[currentIndex - 1] : ""
+                }
                 ComboBox { model: ["960 × 720","1280 × 720","1920 × 1080","720 × 1280"]; onActivated: { const sizes=[[960,720],[1280,720],[1920,1080],[720,1280]]; root.previewWidth=sizes[currentIndex][0]; root.previewHeight=sizes[currentIndex][1]; } }
                 ComboBox { model: ["Dark","Light","HighContrast"]; currentIndex: model.indexOf(root.document.theme || "Dark"); onActivated: { const d=root.copy(root.document); d.theme=currentText; root.save(d); } }
                 ComboBox { model: ["ConstantPixel","ScaleWithSize"]; currentIndex: model.indexOf(root.document.scale || "ConstantPixel"); onActivated: { const d=root.copy(root.document); d.scale=currentText; root.save(d); } }

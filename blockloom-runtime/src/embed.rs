@@ -1868,6 +1868,7 @@ mod tests {
                 |p| p[0] > 180 && p[1] < 30,
                 vec![EditorMessage::InterfaceDesign {
                     design: Some(blockloom_protocol::InterfaceDesign {
+                        screen: None,
                         revision: 1,
                         generation: 1,
                         viewport: None,

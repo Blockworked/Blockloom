@@ -197,6 +197,29 @@ class DownloadTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate"):
             downloads.extract(archive, self.root / "duplicate", "zip")
 
+    def test_tool_archive_preserves_case_distinct_headers(self):
+        if not downloads.filesystem_case_sensitive(self.root):
+            self.skipTest("Requires a case-sensitive filesystem")
+        headers = {"ndk/include/xt_CONNMARK.h": b"upper", "ndk/include/xt_connmark.h": b"lower"}
+        archive = self.zip(list(headers.items())).read_bytes()
+        with patch.object(downloads, "response", return_value=io.BytesIO(archive)):
+            root = downloads.tool_archive("https://dl.google.com/android/repository/ndk.zip",
+                                          hashlib.sha256(archive).hexdigest(), len(archive), self.root, "ndk")
+        for name, content in headers.items():
+            self.assertEqual((root / Path(name).relative_to("ndk")).read_bytes(), content)
+
+    def test_case_insensitive_tool_destination_rejects_case_collisions(self):
+        archive = self.zip([("ndk/xt_CONNMARK.h", b"upper"), ("ndk/xt_connmark.h", b"lower")])
+        with patch.object(downloads, "filesystem_case_sensitive", return_value=False):
+            with self.assertRaisesRegex(ValueError, "duplicate paths: ndk/xt_connmark.h"):
+                downloads.extract(archive, self.root / "insensitive", "zip", allow_case_sensitive_paths=True)
+
+    def test_case_sensitive_tool_destination_still_rejects_duplicate_paths(self):
+        archive = self.zip([("ndk/file", b"first"), ("ndk/./file", b"second")])
+        with patch.object(downloads, "filesystem_case_sensitive", return_value=True):
+            with self.assertRaisesRegex(ValueError, "duplicate paths"):
+                downloads.extract(archive, self.root / "exact-duplicate", "zip", allow_case_sensitive_paths=True)
+
     def test_archive_links_and_oversize_content_are_rejected(self):
         info = zipfile.ZipInfo("link")
         info.create_system = 3

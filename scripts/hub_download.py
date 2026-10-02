@@ -156,8 +156,18 @@ def verify_file(path, sha256, size):
         raise ValueError("Downloaded asset SHA-256 does not match the catalog")
 
 
-def extract(archive, destination, format, limit=MAX_EXTRACTED, allow_file_links=False):
+def filesystem_case_sensitive(directory):
+    with tempfile.TemporaryDirectory(prefix=".hub-case-", dir=directory) as temporary:
+        probe = Path(temporary) / "case"
+        probe.touch()
+        return not (probe.parent / "CASE").exists()
+
+
+def extract(archive, destination, format, limit=MAX_EXTRACTED, allow_file_links=False,
+            allow_case_sensitive_paths=False):
     destination.mkdir(parents=True)
+    # Linux tool archives can contain headers whose names differ only by case.
+    case_sensitive = allow_case_sensitive_paths and filesystem_case_sensitive(destination)
     names, total, count, last = set(), 0, 0, 0
     links = []
 
@@ -178,9 +188,11 @@ def extract(archive, destination, format, limit=MAX_EXTRACTED, allow_file_links=
             raise ValueError("Archive contains an unsafe path")
         if any(p.endswith((".", " ")) or p.split(".")[0].upper() in ("CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1, 10)], *[f"LPT{i}" for i in range(1, 10)]) for p in parts):
             raise ValueError("Archive contains a nonportable path")
-        key = "/".join(parts).casefold()
+        key = "/".join(parts)
+        if not case_sensitive:
+            key = key.casefold()
         if key in names:
-            raise ValueError("Archive contains duplicate paths")
+            raise ValueError(f"Archive contains duplicate paths: {name}")
         names.add(key)
         count += 1
         total += size
@@ -309,7 +321,7 @@ def tool_archive(url, checksum, size, temporary, name, algorithm="sha256"):
     archive = temporary / (name + "." + format)
     download(url, archive, checksum, size=size, algorithm=algorithm)
     output = temporary / name
-    extract(archive, output, format, allow_file_links=True)
+    extract(archive, output, format, allow_file_links=True, allow_case_sensitive_paths=True)
     roots = [path for path in output.iterdir() if path.is_dir() and path.name != "__MACOSX"]
     if len(roots) != 1:
         raise ValueError("Tool archive has an unexpected layout")

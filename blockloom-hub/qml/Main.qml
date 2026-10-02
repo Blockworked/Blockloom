@@ -172,6 +172,12 @@ ApplicationWindow {
             font.bold: true
             wrapMode: Text.Wrap
         }
+        footer: DialogButtonBox {
+            visible: count > 0
+            padding: 18
+            background: null
+            delegate: HubButton {}
+        }
     }
 
     property var projects: []
