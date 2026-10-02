@@ -35,23 +35,77 @@ Item {
     readonly property int selected: document.widgets.findIndex(w => w.element.id === selectedId)
     property var gesture: null
     readonly property var selectedBounds: bounds.find(w => w.id === selectedId) || null
-    readonly property var resizePoint: selectedBounds ? geometry.point(selectedBounds.transform, selectedBounds.size[0]/2, selectedBounds.size[1]/2) : ({x: 0, y: 0})
+    property bool snapGrid: false
+    property bool snapAlign: false
+    property real snapStep: 8
+    property var snapLines: []
+    readonly property var resizeHandles: [
+        {name: "TopLeft", x: -1, y: -1}, {name: "Top", x: 0, y: -1},
+        {name: "TopRight", x: 1, y: -1}, {name: "Right", x: 1, y: 0},
+        {name: "BottomRight", x: 1, y: 1}, {name: "Bottom", x: 0, y: 1},
+        {name: "BottomLeft", x: -1, y: 1}, {name: "Left", x: -1, y: 0}]
+    function handlePoint(handle) {
+        const bound = gesture ? gesture.bound : selectedBounds;
+        return bound ? geometry.point(bound.transform, handle.x*bound.size[0]/2, handle.y*bound.size[1]/2) : {x:0,y:0};
+    }
+    function resizeCursor(handle) {
+        const bound = gesture ? gesture.bound : selectedBounds;
+        if (!bound) return Qt.ArrowCursor;
+        const matrix = bound.transform;
+        const angle = (Math.atan2(matrix[1]*handle.x+matrix[3]*handle.y,matrix[0]*handle.x+matrix[2]*handle.y)*180/Math.PI+180)%180;
+        return [Qt.SizeHorCursor,Qt.SizeFDiagCursor,Qt.SizeVerCursor,Qt.SizeBDiagCursor][Math.round(angle/45)%4];
+    }
+    function boxInFrame(bound, inverse) {
+        const points = geometry.rectangle(bound.transform, [-bound.size[0]/2,-bound.size[1]/2,bound.size[0]/2,bound.size[1]/2]).map(p => geometry.point(inverse,p.x,p.y));
+        return [Math.min(...points.map(p=>p.x)), Math.min(...points.map(p=>p.y)), Math.max(...points.map(p=>p.x)), Math.max(...points.map(p=>p.y))];
+    }
+    function alignAxis(values, targets, tolerance) {
+        let result = {delta:0, target:null}, distance = tolerance;
+        targets.forEach(target => values.forEach(value => {
+            const d = Math.abs(target-value);
+            if (d < distance) { distance = d; result = {delta:target-value, target:target}; }
+        }));
+        return result;
+    }
+    function showSnapLines(g, hits) {
+        snapLines = hits.map((target,axis) => target === null ? null : {
+            a: geometry.point(g.frame, axis === 0 ? target : g.extent[0], axis === 0 ? g.extent[1] : target),
+            b: geometry.point(g.frame, axis === 0 ? target : g.extent[2], axis === 0 ? g.extent[3] : target)
+        }).filter(line => line !== null);
+    }
     function editable(w) {
         if (!w || w.world_actor) return false;
         const parent = document.widgets.find(p => p.element.id === w.element.parent);
         return !w.element.parent || (w.layout && w.layout.absolute) || (parent && parent.element.kind === "Canvas");
     }
-    function startEdit(kind, x, y) {
+    function startEdit(kind, x, y, handle) {
         if (gesture || !widget || ((kind === "Move" || kind === "Resize") && !editable(widget))) return false;
         const bound = selectedBounds;
-        if (x !== null && (!layoutReady || !bound)) return false;
+        if (x !== null && (!layoutReady || !bound || !bound.visible)) return false;
         const parent = bounds.find(w => w.id === widget.element.parent);
+        const frame = parent ? parent.transform.slice() : [designScale,0,0,designScale,safe[0],safe[1]];
+        const frameInverse = geometry.inverse(frame);
+        if (x !== null && (!geometry.inverse(bound.transform) || !frameInverse)) return false;
+        const extent = parent ? [-parent.size[0]/2,-parent.size[1]/2,parent.size[0]/2,parent.size[1]/2] : [0,0,(previewWidth-safe[0]-safe[2])/designScale,(previewHeight-safe[1]-safe[3])/designScale];
+        const targets = [[extent[0],(extent[0]+extent[2])/2,extent[2]], [extent[1],(extent[1]+extent[3])/2,extent[3]]];
+        if (frameInverse) bounds.forEach(b => {
+            const w = document.widgets.find(w => w.element.id === b.id);
+            if (b.id === selectedId || !b.visible || !w || w.world_actor || (w.element.parent || "") !== (widget.element.parent || "")) return;
+            const box = boxInFrame(b, frameInverse);
+            for (let axis=0;axis<2;++axis) targets[axis].push(box[axis],(box[axis]+box[axis+2])/2,box[axis+2]);
+        });
         const g = {kind: kind, id: selectedId, original: copy(document), token: null,
             offset: (widget.element.offset || [0,0]).slice(), start: {x: x, y: y},
             inverse: bound ? geometry.inverse(bound.transform) : null,
             parentInverse: parent ? geometry.inverse(parent.transform) : null,
             size: bound ? [bound.size[0], bound.size[1]] : (widget.element.size || [0,0]).slice(),
-            handle: {x: resizePoint.x, y: resizePoint.y}, scale: designScale, committing: false, edit: null, sent: null, busy: false, released: false, canceled: false};
+            bound: bound, direction: handle || {x:1,y:1}, frame: frame, frameInverse: frameInverse,
+            box: bound && frameInverse ? boxInFrame(bound,frameInverse) : null, targets: targets, extent: extent,
+            minimum: [0,1].map(axis => Math.max(1,widget.layout ? widget.layout.min_size?.[axis] || 0 : 0)),
+            maximum: [0,1].map(axis => { const max = widget.layout ? widget.layout.max_size?.[axis] || 0 : 0; const min = widget.layout ? widget.layout.min_size?.[axis] || 0 : 0; return max > 0 ? Math.max(1,min,max) : Infinity; }),
+            grid: snapGrid, align: snapAlign, step: Math.max(1,snapStep),
+            tolerance: [6/(Math.max(0.05,zoom)*Math.hypot(frame[0],frame[1])),6/(Math.max(0.05,zoom)*Math.hypot(frame[2],frame[3]))],
+            scale: designScale, committing: false, edit: null, sent: null, busy: false, released: false, canceled: false};
         gesture = g;
         forceActiveFocus();
         const backend = app;
@@ -66,7 +120,7 @@ Item {
         if (g.canceled) return;
         if (g.token) app.invoke("cancel_interface_edit", {token: g.token});
         if (gesture !== g) return;
-        g.canceled = true; gesture = null; refresh(); error = String(e);
+        g.canceled = true; gesture = null; snapLines = []; refresh(); error = String(e);
         if (designing) previewDelay.restart();
     }
     function flushEdit(g) {
@@ -83,30 +137,61 @@ Item {
             g.busy = true; g.committing = true;
             app.invoke("commit_interface_edit", {token: g.token}, function() {
                 if (g.canceled || root.gesture !== g) return;
-                root.gesture = null; root.refresh(); root.error = "";
+                root.gesture = null; root.snapLines = []; root.refresh(); root.error = "";
                 if (root.designing) previewDelay.restart();
             }, function(e) { root.failEdit(g, e); });
         }
     }
-    function dragEdit(x, y) {
+    function dragEdit(x, y, modifiers) {
         const g = gesture;
         if (!g || g.released || !g.inverse) return;
         let dx = x-g.start.x, dy = y-g.start.y;
+        const snapping = !(modifiers & Qt.ShiftModifier);
         let offset = g.offset.slice();
+        snapLines = [];
         if (g.kind === "Move") {
             if (g.parentInverse) {
                 const a = geometry.point(g.parentInverse, g.start.x, g.start.y), b = geometry.point(g.parentInverse, x, y);
                 dx = b.x-a.x; dy = b.y-a.y;
             } else { dx /= g.scale; dy /= g.scale; }
             offset = [g.offset[0]+dx, g.offset[1]+dy];
+            if (g.grid && snapping) offset = offset.map(v => Math.round(v/g.step)*g.step);
+            if (g.align && snapping) {
+                const delta = [offset[0]-g.offset[0],offset[1]-g.offset[1]];
+                const hits = [0,1].map(axis => alignAxis([g.box[axis]+delta[axis],(g.box[axis]+g.box[axis+2])/2+delta[axis],g.box[axis+2]+delta[axis]],g.targets[axis],g.tolerance[axis]));
+                offset = offset.map((v,axis)=>v+hits[axis].delta);
+                showSnapLines(g,hits.map(hit=>hit.target));
+            }
             g.edit = {kind: "Move", id: g.id, offset: offset};
         } else {
             const a = geometry.point(g.inverse, g.start.x, g.start.y), b = geometry.point(g.inverse, x, y);
-            const size = [Math.max(1,g.size[0]+b.x-a.x), Math.max(1,g.size[1]+b.y-a.y)];
+            const direction = g.direction;
+            const constrain = (value,axis) => Math.min(g.maximum[axis],Math.max(g.minimum[axis],value));
+            let size = [direction.x ? g.size[0]+direction.x*(b.x-a.x) : g.size[0], direction.y ? g.size[1]+direction.y*(b.y-a.y) : g.size[1]];
+            size = size.map((v,axis) => (axis === 0 ? direction.x : direction.y) ? constrain(g.grid && snapping ? Math.round(v/g.step)*g.step : v,axis) : v);
+            // Edge alignment is representable only when widget axes match its parent.
+            const origin = geometry.point(g.frameInverse,g.bound.transform[4],g.bound.transform[5]);
+            const axisX = geometry.point(g.frameInverse,g.bound.transform[4]+g.bound.transform[0],g.bound.transform[5]+g.bound.transform[1]);
+            const axisY = geometry.point(g.frameInverse,g.bound.transform[4]+g.bound.transform[2],g.bound.transform[5]+g.bound.transform[3]);
+            const relative = [axisX.x-origin.x,axisX.y-origin.y,axisY.x-origin.x,axisY.y-origin.y];
+            if (g.align && snapping && Math.abs(relative[1])<0.001 && Math.abs(relative[2])<0.001 && relative[0]>0 && relative[3]>0) {
+                const hits = [null,null];
+                [direction.x,direction.y].forEach((d,axis) => {
+                    if (!d) return;
+                    const scale = relative[axis === 0 ? 0 : 3];
+                    const edge = g.box[axis+(d>0 ? 2 : 0)]+d*(size[axis]-g.size[axis])*scale;
+                    const hit = alignAxis([edge],g.targets[axis],g.tolerance[axis]);
+                    const snapped = size[axis]+d*hit.delta/scale;
+                    if (snapped >= g.minimum[axis] && snapped <= g.maximum[axis]) { size[axis] = snapped; hits[axis] = hit.target; }
+                });
+                showSnapLines(g,hits);
+            }
             const w = g.original.widgets.find(w => w.element.id === g.id);
             const fractions = {TopLeft:[0,0], Top:[0.5,0], TopRight:[1,0], Left:[0,0.5], Center:[0.5,0.5], Right:[1,0.5], BottomLeft:[0,1], Bottom:[0.5,1], BottomRight:[1,1]};
             const f = w.layout && w.layout.absolute ? [0,0] : fractions[w.element.anchor || "Center"];
-            offset = [g.offset[0]+f[0]*(size[0]-g.size[0]), g.offset[1]+f[1]*(size[1]-g.size[1])];
+            const delta = [size[0]-g.size[0],size[1]-g.size[1]];
+            const center = [direction.x*delta[0]/2,direction.y*delta[1]/2];
+            offset = [g.offset[0]+relative[0]*center[0]+relative[2]*center[1]+(f[0]-0.5)*delta[0], g.offset[1]+relative[1]*center[0]+relative[3]*center[1]+(f[1]-0.5)*delta[1]];
             g.edit = {kind: "Resize", id: g.id, size: size, offset: offset};
         }
         flushEdit(g);
@@ -115,7 +200,7 @@ Item {
     function cancelEdit() {
         const g = gesture;
         if (!g || g.committing) return;
-        g.canceled = true; gesture = null;
+        g.canceled = true; gesture = null; snapLines = [];
         if (g.token) app.invoke("cancel_interface_edit", {token: g.token});
         refresh(); if (designing) previewDelay.restart();
     }
@@ -220,6 +305,7 @@ Item {
     onPreviewHeightChanged: { cancelEdit(); ++generation; frameLayout = null; if (designing) previewDelay.restart(); }
     onSelectedIdChanged: overlay.requestPaint()
     onHoveredIdChanged: overlay.requestPaint()
+    onSnapLinesChanged: overlay.requestPaint()
     onFrameLayoutChanged: overlay.requestPaint()
     onLayoutReadyChanged: overlay.requestPaint()
     Timer { id: previewDelay; interval: 80; onTriggered: root.requestPreview() }
@@ -346,6 +432,13 @@ Item {
                 ComboBox { model: ["ConstantPixel","ScaleWithSize"]; currentIndex: model.indexOf(root.document.scale || "ConstantPixel"); onActivated: { const d=root.copy(root.document); d.scale=currentText; root.save(d); } }
                 Item { Layout.fillWidth: true }
             }
+            RowLayout {
+                CheckBox { text: "Grid"; checked: root.snapGrid; onToggled: root.snapGrid = checked }
+                SpinBox { from: 1; to: 256; value: root.snapStep; editable: true; onValueModified: root.snapStep = value }
+                Label { text: "px" }
+                CheckBox { text: "Align edges/centers"; checked: root.snapAlign; onToggled: root.snapAlign = checked }
+                Label { text: "Hold Shift to bypass snapping" }
+            }
             Rectangle {
                 id: stage; Layout.fillWidth: true; Layout.fillHeight: true; color: "#171a21"; clip: true
                 Rectangle {
@@ -375,7 +468,7 @@ Item {
                         id: overlay
                         objectName: "interfaceSelection"
                         anchors.fill: parent
-                        visible: root.layoutReady
+                        visible: root.layoutReady || !!root.gesture
                         onPaint: {
                             const ctx = getContext("2d");
                             ctx.clearRect(0, 0, width, height);
@@ -390,6 +483,9 @@ Item {
                             }
                             if (root.hoveredId !== root.selectedId) outline(root.hoveredId, "#b9dfff");
                             outline(root.selectedId, "#70baff");
+                            ctx.strokeStyle = "#ffcc70";
+                            ctx.lineWidth = 1/Math.max(0.05,root.zoom);
+                            root.snapLines.forEach(line => { ctx.beginPath(); ctx.moveTo(line.a.x,line.a.y); ctx.lineTo(line.b.x,line.b.y); ctx.stroke(); });
                         }
                     }
                     MouseArea {
@@ -402,7 +498,7 @@ Item {
                         onPositionChanged: mouse => {
                             if (pressed) {
                                 if (!root.gesture && Math.hypot(mouse.x-pressX, mouse.y-pressY) > 3/Math.max(0.05,root.zoom)) root.startEdit("Move", pressX, pressY);
-                                root.dragEdit(mouse.x, mouse.y);
+                                root.dragEdit(mouse.x, mouse.y, mouse.modifiers);
                             }
                             else root.hoveredId = geometry.pick(root.bounds, mouse.x, mouse.y);
                         }
@@ -414,19 +510,24 @@ Item {
                         onReleased: root.finishEdit()
                         onCanceled: root.cancelEdit()
                     }
-                    Rectangle {
-                        objectName: "interfaceResizeHandle"
-                        visible: (root.gesture && root.gesture.kind === "Resize") || (root.layoutReady && !!root.selectedBounds && root.editable(root.widget))
-                        x: (root.gesture ? root.gesture.handle.x : root.resizePoint.x)-width/2; y: (root.gesture ? root.gesture.handle.y : root.resizePoint.y)-height/2
-                        width: 10/Math.max(0.05,root.zoom); height: width
-                        color: "#70baff"
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.SizeFDiagCursor
-                            onPressed: mouse => { const p = canvas.mapFromItem(parent,mouse.x,mouse.y); root.startEdit("Resize",p.x,p.y); }
-                            onPositionChanged: mouse => { if (pressed) { const p = canvas.mapFromItem(parent,mouse.x,mouse.y); root.dragEdit(p.x,p.y); } }
-                            onReleased: root.finishEdit()
-                            onCanceled: root.cancelEdit()
+                    Repeater {
+                        model: root.resizeHandles
+                        delegate: Rectangle {
+                            required property var modelData
+                            readonly property var point: root.handlePoint(modelData)
+                            objectName: modelData.name === "BottomRight" ? "interfaceResizeHandle" : "interfaceResize"+modelData.name
+                            visible: (root.gesture && root.gesture.kind === "Resize") || (root.layoutReady && !!root.selectedBounds && root.selectedBounds.visible && root.editable(root.widget))
+                            x: point.x-width/2; y: point.y-height/2
+                            width: 10/Math.max(0.05,root.zoom); height: width
+                            color: "#70baff"
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: root.resizeCursor(modelData)
+                                onPressed: mouse => { const p = canvas.mapFromItem(parent,mouse.x,mouse.y); root.startEdit("Resize",p.x,p.y,modelData); }
+                                onPositionChanged: mouse => { if (pressed) { const p = canvas.mapFromItem(parent,mouse.x,mouse.y); root.dragEdit(p.x,p.y,mouse.modifiers); } }
+                                onReleased: root.finishEdit()
+                                onCanceled: root.cancelEdit()
+                            }
                         }
                     }
                     Rectangle {
@@ -437,7 +538,7 @@ Item {
                     }
                 }
             }
-            Label { text: root.error || "Drag to move; drag the corner to resize. Escape cancels. Parent layout controls flow widgets."; color: root.error ? "#ff8888" : Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: root.error || "Drag to move; drag an edge or corner to resize. Escape cancels. Parent layout controls flow widgets."; color: root.error ? "#ff8888" : Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
         }
         ScrollView {
             Layout.preferredWidth: 245; Layout.fillHeight: true

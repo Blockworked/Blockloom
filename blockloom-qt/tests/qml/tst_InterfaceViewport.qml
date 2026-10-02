@@ -227,7 +227,7 @@ TestCase {
         verify(panel.startEdit("Resize",300,300));
         panel.dragEdit(300,320);
         compare(panel.document.widgets[1].element.size.join(","), "120,60");
-        compare(panel.document.widgets[1].element.offset.join(","), "260,270");
+        compare(panel.document.widgets[1].element.offset.join(","), "250,280");
         keyClick(Qt.Key_Escape);
         compare(panel.gesture,null);
         compare(panel.document.widgets[1].element.size.join(","), "100,60");
@@ -247,6 +247,173 @@ TestCase {
         fuzzyCompare(panel.document.widgets[0].element.size[1],220,1.5);
         mouseRelease(handle,handle.width/2+30,handle.height/2+20);
         compare(calls.filter(c => c.command === "commit_interface_edit").length,1);
+    }
+    function test_all_resize_handles_data() {
+        return [
+            {tag:"TopLeft", direction:{x:-1,y:-1}, size:[190,180], offset:[210,220]},
+            {tag:"Top", direction:{x:0,y:-1}, size:[200,180], offset:[200,220]},
+            {tag:"TopRight", direction:{x:1,y:-1}, size:[210,180], offset:[200,220]},
+            {tag:"Right", direction:{x:1,y:0}, size:[210,200], offset:[200,200]},
+            {tag:"BottomRight", direction:{x:1,y:1}, size:[210,220], offset:[200,200]},
+            {tag:"Bottom", direction:{x:0,y:1}, size:[200,220], offset:[200,200]},
+            {tag:"BottomLeft", direction:{x:-1,y:1}, size:[190,220], offset:[210,200]},
+            {tag:"Left", direction:{x:-1,y:0}, size:[190,200], offset:[210,200]}
+        ];
+    }
+    function test_all_resize_handles(data) {
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision,panel.generation)));
+        panel.selectedId = "back";
+        const handle = findChild(panel,data.tag === "BottomRight" ? "interfaceResizeHandle" : "interfaceResize"+data.tag);
+        verify(handle.visible);
+        mousePress(handle,handle.width/2,handle.height/2);
+        mouseMove(handle,handle.width/2+10,handle.height/2+20);
+        verify(panel.gesture !== null);
+        verify(handle.visible);
+        for (let i=0;i<2;++i) {
+            fuzzyCompare(panel.document.widgets[0].element.size[i],data.size[i],1.5);
+            fuzzyCompare(panel.document.widgets[0].element.offset[i],data.offset[i],1.5);
+        }
+        mouseRelease(handle,handle.width/2+10,handle.height/2+20);
+        compare(calls.filter(c => c.command === "commit_interface_edit").length,1);
+        verify(!calls.some(c => c.command === "set_interface"));
+    }
+    function test_left_resize_anchor_and_minimum_size() {
+        const d = panel.copy(panel.document);
+        d.widgets[0].element.anchor = "BottomRight";
+        panel.document = d; backend.appState.project.world.interface = d;
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision,panel.generation)));
+        panel.selectedId = "back";
+        verify(panel.startEdit("Resize",200,300,{x:-1,y:0}));
+        panel.dragEdit(210,330);
+        compare(panel.document.widgets[0].element.size,[190,200]);
+        compare(panel.document.widgets[0].element.offset,[200,200]);
+        panel.dragEdit(700,300);
+        compare(panel.document.widgets[0].element.size,[1,200]);
+        compare(panel.document.widgets[0].element.offset,[200,200]);
+        panel.cancelEdit();
+    }
+    function test_resize_in_transformed_parent_keeps_opposite_corner() {
+        const d = panel.copy(panel.document);
+        d.widgets[0].element.kind = "Canvas";
+        d.widgets[1].element.parent = "back";
+        d.widgets[1].layout = {absolute:true};
+        panel.document = d; backend.appState.project.world.interface = d;
+        const g = geometry(panel.revision,panel.generation);
+        g.widgets[0].transform = [0,2,-2,0,300,300];
+        g.widgets[1].transform = [0,2,-2,0,300,300];
+        panel.receiveLayout(JSON.stringify(g)); panel.selectedId = "front";
+        compare(panel.resizeCursor({x:0,y:-1}),Qt.SizeHorCursor);
+        verify(panel.startEdit("Resize",300,300,{x:-1,y:-1}));
+        panel.dragEdit(260,320);
+        compare(panel.document.widgets[1].element.size,[90,40]);
+        compare(panel.document.widgets[1].element.offset,[260,290]);
+        panel.cancelEdit();
+    }
+    function test_grid_move_resize_and_shift_bypass() {
+        panel.snapGrid = true; panel.snapStep = 8;
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision,panel.generation)));
+        panel.selectedId = "back";
+        verify(panel.startEdit("Move",300,300));
+        panel.dragEdit(311,314);
+        compare(panel.document.widgets[0].element.offset,[208,216]);
+        panel.dragEdit(311,314,Qt.ShiftModifier);
+        compare(panel.document.widgets[0].element.offset,[211,214]);
+        panel.cancelEdit();
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision,panel.generation)));
+        verify(panel.startEdit("Resize",200,200,{x:-1,y:-1}));
+        panel.dragEdit(211,214);
+        compare(panel.document.widgets[0].element.size,[192,184]);
+        compare(panel.document.widgets[0].element.offset,[208,216]);
+        panel.finishEdit();
+        compare(calls.filter(c => c.command === "commit_interface_edit").length,1);
+        compare(panel.snapLines.length,0);
+    }
+    function test_alignment_uses_frozen_siblings_and_guides() {
+        panel.snapAlign = true;
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision,panel.generation)));
+        panel.selectedId = "back";
+        verify(panel.startEdit("Move",300,300));
+        panel.dragEdit(369,300);
+        compare(panel.document.widgets[0].element.offset,[270,200]);
+        verify(panel.snapLines.some(line => line.a.x === 270 && line.b.x === 270));
+        verify(findChild(panel,"interfaceSelection").visible);
+        verify(!panel.layoutReady);
+        panel.dragEdit(369,300,Qt.ShiftModifier);
+        compare(panel.document.widgets[0].element.offset,[269,200]);
+        compare(panel.snapLines.length,0);
+        panel.cancelEdit();
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision,panel.generation)));
+        verify(panel.startEdit("Resize",200,300,{x:-1,y:0}));
+        panel.dragEdit(269,300);
+        compare(panel.document.widgets[0].element.size,[130,200]);
+        compare(panel.document.widgets[0].element.offset,[270,200]);
+        verify(panel.snapLines.length > 0);
+        panel.cancelEdit(); compare(panel.snapLines.length,0);
+        compare(calls.filter(c => c.command === "commit_interface_edit").length,0);
+    }
+    function test_snapping_in_parent_coordinates_and_screen_tolerance() {
+        const d = panel.copy(panel.document);
+        d.widgets[0].element.kind = "Canvas";
+        d.widgets[1].element.parent = "back";
+        d.widgets[1].layout = {absolute:true};
+        panel.document = d; backend.appState.project.world.interface = d;
+        const g = geometry(panel.revision,panel.generation);
+        g.widgets[0].transform = [0,2,-2,0,300,300];
+        g.widgets[1].transform = [0,2,-2,0,300,300];
+        panel.snapGrid = true; panel.snapStep = 8;
+        panel.receiveLayout(JSON.stringify(g)); panel.selectedId = "front";
+        verify(panel.startEdit("Move",300,300)); panel.dragEdit(280,322);
+        compare(panel.document.widgets[1].element.offset,[264,280]); panel.cancelEdit();
+        d.widgets[1].element.parent = "";
+        panel.document = d; backend.appState.project.world.interface = d;
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision,panel.generation)));
+        panel.selectedId = "back"; panel.snapGrid = false; panel.snapAlign = true;
+        panel.zoom = 2;
+        verify(panel.startEdit("Move",300,300)); panel.dragEdit(366,300);
+        compare(panel.document.widgets[0].element.offset[0],266); // Four logical pixels exceed six screen pixels.
+        panel.dragEdit(368,300); compare(panel.document.widgets[0].element.offset[0],270);
+        panel.cancelEdit();
+    }
+    function test_resize_grid_preserves_inactive_dimension_and_clamped_edge() {
+        panel.snapGrid = true; panel.snapStep = 8;
+        const d = panel.copy(panel.document); d.widgets[0].element.size = [203,201];
+        panel.document = d; backend.appState.project.world.interface = d;
+        const g = geometry(panel.revision,panel.generation); g.widgets[1].size = [203,201];
+        panel.receiveLayout(JSON.stringify(g)); panel.selectedId = "back";
+        verify(panel.startEdit("Resize",300,200,{x:0,y:-1})); panel.dragEdit(330,208);
+        compare(panel.document.widgets[0].element.size,[203,192]);
+        compare(panel.document.widgets[0].element.offset,[200,209]);
+        panel.dragEdit(300,1000);
+        compare(panel.document.widgets[0].element.size,[203,1]);
+        compare(panel.document.widgets[0].element.offset,[200,400]);
+        panel.cancelEdit();
+    }
+    function test_resize_limits_preserve_opposite_corner_with_grid() {
+        const d = panel.copy(panel.document); d.widgets[0].layout = {min_size:[80,60],max_size:[240,230]};
+        panel.document = d; backend.appState.project.world.interface = d;
+        panel.snapGrid = true; panel.snapStep = 8;
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision,panel.generation))); panel.selectedId = "back";
+        verify(panel.startEdit("Resize",200,200,{x:-1,y:-1}));
+        panel.dragEdit(700,700);
+        compare(panel.document.widgets[0].element.size,[80,60]);
+        compare(panel.document.widgets[0].element.offset,[320,340]);
+        panel.dragEdit(-300,-300);
+        compare(panel.document.widgets[0].element.size,[240,230]);
+        compare(panel.document.widgets[0].element.offset,[160,170]);
+        panel.cancelEdit();
+    }
+    function test_alignment_excludes_hidden_and_other_parent_widgets() {
+        panel.snapAlign = true;
+        const d = panel.copy(panel.document); d.widgets[1].element.parent = "missing";
+        panel.document = d;
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision,panel.generation)));
+        panel.selectedId = "back";
+        verify(panel.startEdit("Move",300,300)); panel.dragEdit(369,300);
+        compare(panel.document.widgets[0].element.offset,[269,200]); panel.cancelEdit();
+        const g = geometry(panel.revision,panel.generation); g.widgets[0].visible = false;
+        panel.receiveLayout(JSON.stringify(g));
+        verify(panel.startEdit("Move",300,300)); panel.dragEdit(369,300);
+        compare(panel.document.widgets[0].element.offset,[269,200]); panel.cancelEdit();
     }
     function test_inspector_uses_typed_edit_and_flow_widgets_are_disabled() {
         panel.selectedId = "back";
