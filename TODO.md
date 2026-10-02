@@ -1506,7 +1506,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
     - [x] Plugin reporters and hats: `PluginRead` values answered on demand by the world's modules, `WhenPlugin` hats started by `event` effects; palette, canvas, preflight, tally example (needs blockstitch's operator `layout`).
     - [x] Per-plugin MCP tools: `plugin-commands` becomes one typed tool per command (`plugin-id__name`), kept in step after install, remove, open and undo.
     - [x] Codegen for plugin statements, reporters and hats, held against the VM in `tests/codegen.rs` and through the player boundary in `logic.rs`.
-    - [ ] The script ABI for plugin blocks (call, read, hear events); importer/build hooks.
+    - [x] The script ABI for plugin blocks: `plugin_call`, `plugin_number`/`plugin_text`, `Event::Plugin` (`ABI_VERSION` 36), tested through a built script.
+    - [ ] Importer/build hooks.
     - [ ] HTTP registry transport; revision bump for attached copies on package changes.
     - [x] Mesh submission service: `mesh`/`remove_mesh` effects become named 3D entities with an optional trimesh collider.
     - [x] Voxel plugin first slice (`plugins/voxel`): finite cube world, seeded terrain presets, greedy chunk mesher, glowing materials, live set/fill/sphere/generate, reporters, rays (distance, break, place), schema and sealed package (`just voxel-plugin`).

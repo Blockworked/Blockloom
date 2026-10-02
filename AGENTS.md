@@ -512,10 +512,18 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   U+001F), started by `fire("Plugin", actor, detail, "")` - with an actor only
   that actor's strand, without one every copy's - and matched as the VM does
   (`plugin_hat_matches`). `tests/codegen.rs` holds statement, reporter and hat
-  against the VM line for line, and `LOGIC_ABI_VERSION` is 34. Scripts do not
-  hear plugin events, and `Project::plugin_blocks` reports all three shapes
-  (`PluginBlockShape`) so `preflight` checks each one (kind, slot count, and
-  that a reporter's command is a module op) and a Build is refused. In the
+  against the VM line for line, and `LOGIC_ABI_VERSION` is 34. A script
+  reaches the same three through the script ABI (`ABI_VERSION` 36):
+  `Actor::plugin_call(plugin, block, &[PluginArg])` is `ACT_PLUGIN_CALL`
+  (`c` = slots as JSON), `plugin_number`/`plugin_text` are `READ_PLUGIN`/
+  `TEXT_PLUGIN` (`a` = plugin, `b` = block, U+001F, slots as JSON; answered by
+  the thread's plugin reader, failures go to the run log), and `Event::Plugin`
+  is `EVENT_PLUGIN` (subject the event, detail plugin then slot texts joined
+  by U+001F), sent to every script or only the actor the event names.
+  `Project::plugin_blocks` reports all three shapes (`PluginBlockShape`) so
+  `preflight` checks each one (kind, slot count, and that a reporter's command
+  is a module op), and a Build is refused only for a statement whose command
+  runs in the editor. In the
   palette the operator `PluginRead` has a `layout` and `result` that are
   functions of the value, and the `WhenPlugin` header's `head` uses text pieces
   with an `index` (both blockstitch features). `plugins/examples/tally` has
@@ -577,8 +585,7 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   GPU meshing, fracture, editor brushes. Its manifest asks for `editor.preview`,
   so the scene view shows the generated world without Play (edits made by
   blocks still last only for a run).
-- **Not yet**: plugin code in an Android build, in the script
-  ABI, a faster browser host (the page's own WebAssembly instead of wasmi in
+- **Not yet**: plugin code in an Android build, a faster browser host (the page's own WebAssembly instead of wasmi in
   wasm), a headless browser proof, an HTTP registry, dynamic QML for
   plugin editor panels.
   `plugins/examples/com.example.health` is the sealed proof package;

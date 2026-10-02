@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 35;
+pub const ABI_VERSION: u32 = 36;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -217,6 +217,15 @@ pub const TEXT_CURRENT_WEATHER: u32 = 19;
 /// The cutscene playing right now, by name, or empty for none. What
 /// `is cutscene playing?` reads.
 pub const TEXT_CUTSCENE_NAME: u32 = 20;
+
+/// Separates the parts a plugin call or event is spelled with in one string.
+pub const PLUGIN_SEP: char = '\u{1f}';
+/// A plugin reporter's answer as a number (a switch as 1 or 0, text only if
+/// it reads as a number). `a` = plugin id; `b` = block id, a [`PLUGIN_SEP`],
+/// then the slot values as a JSON array. Only answers while the game runs.
+pub const READ_PLUGIN: u32 = 53;
+/// The same reporter's answer as text, asked the same way.
+pub const TEXT_PLUGIN: u32 = 21;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -439,6 +448,9 @@ pub const ACT_HITSTOP: u32 = 97;
 pub const ACT_SET_LETTERBOX: u32 = 98;
 /// `a` = fade color (`black`, `white` or `none`). Window-global.
 pub const ACT_FADE_SCREEN: u32 = 99;
+/// `a` = plugin id, `b` = block id, `c` = the slot values as a JSON array
+/// (whole numbers as integers). Runs the block's command, as the block does.
+pub const ACT_PLUGIN_CALL: u32 = 100;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per
@@ -509,6 +521,10 @@ pub const EVENT_WEATHER: u32 = 17;
 pub const EVENT_CUTSCENE_SIGNAL: u32 = 18;
 /// The playing cutscene reached its end marker. Subject: its name.
 pub const EVENT_CUTSCENE_ENDED: u32 = 19;
+/// A plugin raised an event, for every script or only this actor's. Subject:
+/// the event; detail: the plugin id, then each slot's text, all joined by
+/// [`PLUGIN_SEP`].
+pub const EVENT_PLUGIN: u32 = 20;
 
 // ─── The same three calls in a browser ─────────────────────────────────────
 // A web build loads each script as its own wasm module, and one module can't
