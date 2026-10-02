@@ -412,9 +412,9 @@ Phase 2 of the physics plan. Core decides, the runtime installs.
 - **Unsupported on purpose** (errors, not silent): convex hull, triangle mesh,
   terrain and tilemap colliders (Phase 3: cooking), a polygon that is not convex, a
   shape for the other dimension, a concave solid on a dynamic body, a custom center of
-  mass without an inertia. Open: `contact_offset`, `queryable`, `interpolation`,
-  `solver_iterations` and `max_depenetration_velocity` are stored and validated but
-  have no runtime effect yet (the world renderer already interpolates every actor).
+  mass without an inertia. Open: `contact_offset`, `queryable` and `interpolation` are
+  stored and validated but have no runtime effect yet (the world renderer already
+  interpolates every actor).
 - **Runtime** (`blockloom-runtime/src/physics_install.rs`): `install` runs at the end
   of `rebuild_world` for the scene's plan (an erroring plan installs nothing and logs).
   A body gets `RigidBody`, `Velocity`, `ExternalImpulse`, gravity scale (Use Gravity off is
@@ -425,8 +425,8 @@ Phase 2 of the physics plan. Core decides, the runtime installs.
   for triggers (`ActiveCollisionTypes::all() - STATIC_STATIC`), `ColliderDisabled`, and
   one-way (2D). Removing a collider entity is how a shape goes away;
   `refresh_masses` nudges every planned body so the mass totals again (Rapier keeps
-  the old one otherwise). Contacts on a collider entity are relayed as touches on the
-  actor that owns the component.
+  the old one otherwise). Contacts on a collider entity are tracked as touches on the
+  actor that owns the component (see Contact lifecycle below).
 - **Hooks**: 3D uses `Hooks3` (`RapierPhysicsPlugin::<Hooks3>`) for the stick/slip
   friction (static friction below `STICK_SPEED` of sliding at the contact point,
   dynamic above; only on colliders whose two coefficients differ) and the exact pair test;
@@ -438,6 +438,40 @@ Phase 2 of the physics plan. Core decides, the runtime installs.
   (a true Discrete would need `max_ccd_substeps = 0`, a world switch, so it is not
   applied while legacy bodies exist); Continuous Dynamic is `Ccd`; Speculative is
   `SoftCcd` with a 0.5 m prediction. See the ledger's CCD table for what each holds.
+- **Solver overrides**: `solver_iterations` becomes Rapier's `AdditionalSolverIterations`
+  on the body (Rapier's solver has no per-body iteration count, so this is extra
+  substeps, not a Unity iteration count). `max_depenetration_velocity` caps how fast a
+  contact pushes the body out of an overlap: Rapier's soft contacts correct position at
+  the world's `normalized_max_corrective_velocity` (3 m/s) without touching velocity, and
+  the per-body cap clamps each `SolverContact.dist` to at least `-cap * dt` in the
+  `modify_solver_contacts` hook of both dimensions (`depenetration_cap`, the slower of
+  the two bodies wins). A cap at or above 3 m/s changes nothing and installs no hook.
+- **Force blocks**: `add force` and `add torque` (`Action::AddForce`, `Effect::AddForce`,
+  `Act::AddForce`, `ACT_ADD_FORCE` 123 in the logic ABI and 101 in the script ABI, a
+  script's `add_force`/`add_torque`) pick a `ForceMode` and a vector. `d2/d3::apply_forces`
+  reduces the mode to one impulse for the fixed step (`ForceMode::linear_impulse_array`,
+  `torque_impulse_3d/2d`, with the body's mass and world inertia from
+  `ReadMassProperties`) and adds it to `ExternalImpulse`, so nothing lingers. Only dynamic
+  bodies answer; the 2D world is in pixel units, so a 2D impulse is not rescaled.
+- **Contact lifecycle** (`physics/contacts.rs`, `blockloom-runtime/src/contacts.rs`):
+  `ContactTracker` is pure core. The runtime's `track_contacts` (`dim2`/`dim3`, in
+  `FixedPostUpdate` after the writeback) feeds it Rapier's Started/Stopped reports once
+  per fixed tick (sensor pairs are `ContactKind::Trigger`, with no payload; solid ones carry
+  normal, points, relative velocity and impulse read from the contact pair), closes the tick
+  and queues Enter, Stay (at most once per pair and tick, while either body is awake) and
+  Exit in tick/pair/phase order. `step_vm` hands the VM what earlier ticks made
+  (`world::deliver_contacts`), so an event made in tick N is heard in N+1 whatever the
+  render rate. A pair is keyed by its two collider ids; the actor-level answer is a
+  refcount over pairs (`touching`, `pairs_between`, mirrored into `engine.touching` for the
+  `touching?` reporters), and `ContactEvent::edge` marks the actor-level transition that
+  `when I touch` listens to, so a compound wall is one Enter and one Exit. A pair that
+  ends because an actor was deleted (`delete_actor`) or a collider was removed/disabled
+  (Rapier's REMOVED flag, `ColliderDisabled`) or a filter changed (`engine.filter_touched`)
+  gets an Exit with an `ExitReason`; a run reset clears the tracker without delivering.
+  `when I touch` gained `phase` (Enter/Stay/Exit, default Enter) and `scope` (Any/Collision/
+  Trigger, default Any) so old documents behave as before; scripts hear `Event::Contact`
+  (`EVENT_CONTACT` 21) for every phase. Still open: the shape-replacement and teleport
+  reasons (a replaced collider entity ends its pairs as Separated).
 - **Legacy effects**: `world::is_dynamic` also recognizes a simulated dynamic
   Rigidbody, so `push`, `set velocity` and the like act on planned bodies. The navmesh
   and fracture still read the legacy `Body` only.
@@ -447,7 +481,7 @@ Phase 2 of the physics plan. Core decides, the runtime installs.
 - Tests: `cargo test -p blockloom-core physics`, `cargo test -p blockloom-runtime
   --lib physics_install` (headless mini-apps with a real Rapier world: resting, mass
   totals and removal, modes, triggers, layers, exact filtering, stick/slip on a slope,
-  CCD, one-way, caps), `cargo test -p blockloom-app --test physics`.
+  CCD, one-way, caps, forces, depenetration caps, contact events at two frame rates), `cargo test -p blockloom-app --test physics`.
 
 ### Actors that come and go
 
@@ -657,8 +691,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   U+001F), started by `fire("Plugin", actor, detail, "")` - with an actor only
   that actor's strand, without one every copy's - and matched as the VM does
   (`plugin_hat_matches`). `tests/codegen.rs` holds statement, reporter and hat
-  against the VM line for line, and `LOGIC_ABI_VERSION` is 34. A script
-  reaches the same three through the script ABI (`ABI_VERSION` 36):
+  against the VM line for line, and `LOGIC_ABI_VERSION` is 35. A script
+  reaches the same three through the script ABI (`ABI_VERSION` 38):
   `Actor::plugin_call(plugin, block, &[PluginArg])` is `ACT_PLUGIN_CALL`
   (`c` = slots as JSON), `plugin_number`/`plugin_text` are `READ_PLUGIN`/
   `TEXT_PLUGIN` (`a` = plugin, `b` = block, U+001F, slots as JSON; answered by
